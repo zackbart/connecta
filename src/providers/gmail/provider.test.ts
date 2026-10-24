@@ -6,14 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
-import { attachCaller } from "../../connector-caller.js";
+import type { ConnectorCaller } from "../../connector-caller.js";
 import { index, verdicts, refusalReasons } from "./lib/index.js";
 import { skill } from "./skill.generated.js";
 import { TABLE } from "./safety.js";
 import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
+import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -605,7 +605,14 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     expect(Object.keys(verdicts).sort()).toEqual(index.ops.map((op) => `${op.method} ${op.path}`).sort());
     expect(Object.keys(TABLE.operations).length).toBeGreaterThan(0);
     for (const [key, verdict] of Object.entries(verdicts))
-      if (verdict === "refuse") expect(refusalReasons[key]).toBeTruthy();
+      if (verdict === "refuse") {
+        expect(refusalReasons[key]).toBeTruthy();
+        const summary = index.ops.find((op) => `${op.method} ${op.path}` === key)!.summary;
+        expect(summary).toMatch(/^Refused: /);
+        expect(summary).toContain("create_draft");
+        expect(summary).toContain("update_draft");
+        expect(summary.length).toBeLessThanOrEqual(120);
+      }
     const c = connection();
     const tools = await c.listTools(context());
     expect(tools).toHaveLength(12);
@@ -654,6 +661,15 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     expect(JSON.stringify(search)).toContain("create_draft");
     for (const [query, operation] of [
       ["find unread messages", "GET /messages"],
+      ["search unread threads by sender subject date", "GET /threads"],
+      ["read thread messages and labels", "GET /threads/{id}"],
+      ["list mailbox labels and names", "GET /labels"],
+      ["read label message counts", "GET /labels/{id}"],
+      ["find saved drafts", "GET /drafts"],
+      ["read saved draft headers", "GET /drafts/{id}"],
+      ["read full message MIME metadata", "GET /messages/{id}"],
+      ["send mail", "POST /messages/send"],
+      ["send draft", "POST /drafts/send"],
       ["message headers", "GET /messages/{id}"],
       ["read message attachments", "GET /messages/{messageId}/attachments/{id}"],
       ["draft reply", "POST /drafts"],
@@ -711,9 +727,72 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
         ],
       },
     });
-    const clippedLabels = await call(c, "list_labels");
+    const clippedLabels = await call(c, "list_labels", { fields: ["id"] });
     expect(clippedLabels.truncated).toEqual(expect.arrayContaining(["items[]", "items[].name"]));
     expect(clippedLabels.items[0].id).toBe("valid");
+
+    // Every named read retains size provenance when fields omit the cut value.
+    const longMessage = {
+      id: "m1",
+      threadId: "t1",
+      payload: {
+        mimeType: "text/plain",
+        headers: [{ name: "Subject", value: "x".repeat(10000) }],
+        body: { size: 100, data: b64url("x".repeat(100)) },
+      },
+    };
+    route = (request) => ({
+      body: request.url.pathname.endsWith("/threads")
+        ? { threads: [{ id: "t1" }] }
+        : request.url.pathname.endsWith("/threads/t1")
+          ? { id: "t1", messages: [longMessage] }
+          : request.url.pathname.endsWith("/drafts")
+            ? { drafts: [{ id: "d1" }] }
+            : request.url.pathname.endsWith("/drafts/d1")
+              ? { id: "d1", message: longMessage }
+              : longMessage,
+    });
+    for (const [tool, args, selected, cut] of [
+      ["get_thread", { threadId: "t1", maxBodyChars: 1 }, "id", "messages[].body"],
+      ["get_message", { messageId: "m1", maxBodyChars: 1 }, "id", "body"],
+      ["get_draft", { draftId: "d1", maxBodyChars: 1 }, "draftId", "body"],
+      ["search_threads", {}, "id", "items[].subject"],
+      ["list_drafts", {}, "draftId", "items[].subject"],
+    ] as const) {
+      const narrowed = await call(c, tool, { ...args, fields: [selected] });
+      expect(narrowed.truncated).toContain(cut);
+      if (narrowed.items) expect(Object.keys(narrowed.items[0])).toEqual([selected]);
+      else expect(Object.keys(narrowed).sort()).toEqual([selected, "truncated"].sort());
+      const before = calls.length;
+      await expect(call(c, tool, { ...args, fields: ["unknown"] })).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toHaveLength(before);
+    }
+    route = () => ({
+      body: {
+        id: "m1",
+        payload: {
+          mimeType: "multipart/mixed",
+          parts: [
+            {
+              ...attachmentFixtures.csv,
+              body: { size: 100, data: b64url("x".repeat(100)) },
+            },
+          ],
+        },
+      },
+    });
+    const attachment = await call(c, "get_attachment", {
+      messageId: "m1",
+      partId: "1",
+      maxChars: 1,
+      fields: ["partId"],
+    });
+    expect(attachment).toEqual({ partId: "1", truncated: expect.arrayContaining(["content"]) });
+    const beforeAttachment = calls.length;
+    await expect(
+      call(c, "get_attachment", { messageId: "m1", partId: "1", fields: ["unknown"] }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(beforeAttachment);
 
     let nested: Record<string, unknown> = { mimeType: "text/plain", body: { data: b64url("token"), size: 5 } };
     for (let depth = 0; depth < 42; depth++) nested = { mimeType: "multipart/mixed", parts: [nested] };
@@ -766,11 +845,14 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
       const mapped = connection({
         subject: (identity: { principal?: { id: string } }) => `${identity.principal?.id}@example.com`,
       });
+      const registry = makeRegistry([mapped], { storage });
+      const delegatedContext = (caller: ConnectorCaller) =>
+        registry.scoped({ connectorIds: "all", caller }).contextFor("mail", "https://connecta.example");
       const actorCall = (actor: string, tool: string, args: Record<string, unknown>) =>
         mapped.callTool(
           tool,
           args,
-          attachCaller(context(), {
+          delegatedContext({
             authenticated: true,
             identity: {
               actor: { kind: "user", id: actor },
@@ -792,7 +874,7 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
         mapped.callTool(
           tool,
           args,
-          attachCaller(context(), {
+          delegatedContext({
             authenticated: true,
             pool: "notes",
             poolOwner: `${owner}@example.com`,
@@ -805,21 +887,19 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
         poolCall("bob", "get_thread", { threadId: "t1", maxBodyChars: 100000, cursor: poolNamed.page.nextCursor }),
       ).rejects.toMatchObject({ code: "invalid_args" });
       expect(calls).toHaveLength(beforePool);
-      // Core prerequisite: shared Google hatches must bind both caller and pool owner before either product merges.
+      // Shared binding rejects hatch continuations across both delegated callers and pool owners.
       route = () => ({ body: { messages: [], nextPageToken: "mail-next" } });
       for (const delegatedCall of [actorCall, poolCall]) {
         const indexed = await delegatedCall("alice", "gmail_api_read", { path: "/messages", query: { maxResults: 1 } });
         const beforeHatch = calls.length;
-        await expect
-          .soft(
-            delegatedCall("bob", "gmail_api_read", {
-              path: "/messages",
-              query: { maxResults: 1 },
-              cursor: indexed.page.nextCursor,
-            }),
-          )
-          .rejects.toMatchObject({ code: "invalid_args" });
-        expect.soft(calls).toHaveLength(beforeHatch);
+        await expect(
+          delegatedCall("bob", "gmail_api_read", {
+            path: "/messages",
+            query: { maxResults: 1 },
+            cursor: indexed.page.nextCursor,
+          }),
+        ).rejects.toMatchObject({ code: "invalid_args" });
+        expect(calls).toHaveLength(beforeHatch);
       }
     });
 

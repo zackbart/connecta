@@ -43,6 +43,7 @@ const compose = {
   htmlBody: optional(string("Optional HTML alternative to the plain-text body.", 500000)),
   replyToMessageId: optional(id("Message to reply to; sets its thread and guarded In-Reply-To/References.")),
 };
+const resultFields = optional(fieldsInput("Dot paths to keep in the result. It only narrows the result."));
 const itemFields = optional(fieldsInput("Dot paths to keep in each item. It only narrows the projection."));
 export const inputs = {
   search_threads: Schema.Struct({
@@ -56,9 +57,15 @@ export const inputs = {
     threadId: id("Thread id from search_threads or a message."),
     maxBodyChars: bodyChars(3000),
     cursor,
+    fields: resultFields,
   }),
-  get_message: Schema.Struct({ messageId: id("Message id from a thread or draft."), maxBodyChars: bodyChars(12000) }),
+  get_message: Schema.Struct({
+    messageId: id("Message id from a thread or draft."),
+    maxBodyChars: bodyChars(12000),
+    fields: resultFields,
+  }),
   get_attachment: Schema.Struct({
+    fields: resultFields,
     messageId: id("Message carrying the attachment."),
     partId: optional(
       string(
@@ -88,6 +95,7 @@ export const inputs = {
   list_labels: Schema.Struct({ limit, cursor, fields: itemFields }),
   list_drafts: Schema.Struct({ query, limit, cursor, fields: itemFields }),
   get_draft: Schema.Struct({
+    fields: resultFields,
     draftId: id("Stable draft id from list_drafts or create_draft."),
     maxBodyChars: bodyChars(12000),
   }),
@@ -169,7 +177,7 @@ export const outputs = {
     id: Schema.String,
     messageCount: Integer,
     messages: Schema.Array(Message),
-    page: StandardPage,
+    page: loose({ hasMore: Schema.Boolean, nextCursor: Schema.String }),
     truncated: Schema.Array(Schema.String),
   }),
   get_message: Schema.Struct({ ...Message.fields, truncated }),

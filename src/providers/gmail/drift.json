@@ -20,8 +20,8 @@
     "evidence": {
       "discovery.document.json": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
       "discovery.json": "sha256:a2bd789138a168bef6ba8a5e41b7fd29dec6f27ea179c014dfddbfdd51eeafb9",
-      "openapi.document.json": "sha256:4409659b9ee7a314660764078946a80345de2c867ff80a3b9feb9378ac9a7c0a",
-      "openapi.json": "sha256:dc586b9fe5836c9a57836be78fd5ca446d3f186db6e027ddcf3e130033c4c981",
+      "openapi.document.json": "sha256:0c9681931a2ae422fbfa4bdb9f2a22e6f16c7a24ebf2e36af22df13eb89c444d",
+      "openapi.json": "sha256:b6018eac672fa18a562b27986c4b1e75ed273e48c378d21ccbf8abde33affc5b",
       "value-safety.json": "sha256:35986d340aced04abb08d5847d7f9bf70a55e6ee3e6b51f6a356522c366b3b04"
     }
   },

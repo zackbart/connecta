@@ -627,10 +627,12 @@ reads; refused draft operations point to the guarded named tools.
   `labelIdsOmitted`, `attachmentsOmitted` and `labelsOmitted` with top-level
   `truncated` dot paths such as `body`, `content`, `messages[].body` and
   `items[].labelIds[]`. Charset notices, unavailable-body reasons and saved
-  state remain semantic metadata.
+  state remain semantic metadata. `truncated` survives `fields` selection even
+  when the selected result omits the cut value.
 - Discard every pre-upgrade private cursor. New cursors are signed and bound
-  to the connection, owner and call. Named content cursors additionally bind
-  earlier safe content. For paged hatches omit `query.pageToken` on the first
+  to the connection, owner and call. Connections with mapped Workspace
+  subjects also bind the admitted caller and pool owner. Named content cursors
+  additionally bind earlier safe content. For paged hatches omit `query.pageToken` on the first
   call and pass `page.nextCursor` as top-level `cursor` thereafter, keeping
   path, query and fields fixed. A nonempty token can continue an empty page.
 - Copied Message-ID, In-Reply-To and References now require bounded ASCII

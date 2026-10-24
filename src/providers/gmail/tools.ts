@@ -13,8 +13,7 @@ import { errors, GMAIL, gmailBodyProvenance } from "./api.js";
 import { read, write } from "../../http/tools.js";
 import { boundCursor } from "../../http/paging.js";
 import { fieldsProblem, selectFields } from "../../http/fields.js";
-import { Caller, Operation } from "../../runtime/call.js";
-import type { GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
+import { Operation } from "../../runtime/call.js";
 import { index } from "./lib/index.js";
 import { inputs, outputs, rows, type GmailToolName } from "./lib/schemas.js";
 
@@ -1682,13 +1681,7 @@ function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
 }
 
 /** Gmail only reads mail and saves drafts. Sending has no dispatch path. */
-export function gmailTools({
-  connection,
-  options,
-}: {
-  connection: Connection;
-  options: GoogleWorkspaceOptions;
-}): ApiTool[] {
+export function gmailTools({ connection }: { connection: Connection }): ApiTool[] {
   return declarations(googleClient(connection, GMAIL.provider, { standard: true, index })).map((declaration) => {
     const name = declaration.name;
     const isList = name === "search_threads" || name === "list_labels" || name === "list_drafts";
@@ -1705,29 +1698,25 @@ export function gmailTools({
             return yield* Effect.die(new Error("Gmail needs its call context."));
           const ctx = active.value;
           const { fields, ...args } = supplied;
-          if (isList) {
-            const problem = fieldsProblem(
-              fields,
-              new Set(Object.keys(rows[name as keyof typeof rows].fields)),
-              "an item",
-            );
-            if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
-          }
-          // Temporary product-local partition until the shared delegated-subject binding lands.
-          // Reading admitted caller metadata never resolves a Workspace subject a second time.
-          const cursorScope =
-            typeof options.subject === "string" ? args : { ...args, delegatedCaller: (yield* Caller) ?? null };
-          if (args["cursor"] !== undefined)
-            args["cursor"] = yield* boundCursor.decode(name, cursorScope, args["cursor"]);
-          const result = standardResult(yield* declaration.run(args, ctx), name);
+          const problem = fieldsProblem(
+            fields,
+            new Set(Object.keys(isList ? rows[name as keyof typeof rows].fields : outputs[name].fields)),
+            isList ? "an item" : "the result",
+          );
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
+          if (args["cursor"] !== undefined) args["cursor"] = yield* boundCursor.decode(name, args, args["cursor"]);
+          let result = standardResult(yield* declaration.run(args, ctx), name);
           if (result["page"]?.nextCursor)
-            result["page"].nextCursor = yield* boundCursor.encode(
-              name,
-              cursorScope,
-              result["page"].nextCursor,
-              (json) => encodeForAgent(ctx, json, { url: true, claims: true }),
+            result["page"].nextCursor = yield* boundCursor.encode(name, args, result["page"].nextCursor, (json) =>
+              encodeForAgent(ctx, json, { url: true, claims: true }),
             );
           if (isList) result["items"] = selectFields(result["items"], fields);
+          else {
+            const truncated = result["truncated"];
+            result = asRecord(selectFields(result, fields));
+            // Size provenance describes the full projection even when fields omit the cut value.
+            if (truncated !== undefined) result["truncated"] = truncated;
+          }
           return deliverable(
             name,
             result,
@@ -1740,7 +1729,7 @@ export function gmailTools({
         ),
     };
     return declaration.annotations.readOnlyHint === true
-      ? read(connection, { ...spec, ...(!isList ? { fields: true as const } : {}) })
+      ? read(connection, spec)
       : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint === true });
   });
 }

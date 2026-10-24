@@ -150,7 +150,7 @@
           "fields": {
             "type": "array",
             "maxItems": 50,
-            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "description": "Dot paths to keep in the result. It only narrows the result.",
             "items": {
               "type": "string",
               "minLength": 1,
@@ -306,7 +306,7 @@
           "fields": {
             "type": "array",
             "maxItems": 50,
-            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "description": "Dot paths to keep in the result. It only narrows the result.",
             "items": {
               "type": "string",
               "minLength": 1,
@@ -420,6 +420,16 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
           "messageId": {
             "type": "string",
             "minLength": 1,
@@ -453,16 +463,6 @@
             "maximum": 4194304,
             "description": "Whole-result byte budget. Raise only for a direct call_tool; execute_code cannot receive large results.",
             "default": 196608
-          },
-          "fields": {
-            "type": "array",
-            "maxItems": 50,
-            "description": "Dot paths to keep in the result, e.g. [\"messageId\"]. It only narrows the result.",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            }
           }
         },
         "required": [
@@ -708,6 +708,16 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
           "draftId": {
             "type": "string",
             "minLength": 1,
@@ -721,16 +731,6 @@
             "maximum": 100000,
             "description": "Body characters kept per message; size cuts appear in truncated.",
             "default": 12000
-          },
-          "fields": {
-            "type": "array",
-            "maxItems": 50,
-            "description": "Dot paths to keep in the result, e.g. [\"draftId\"]. It only narrows the result.",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            }
           }
         },
         "required": [

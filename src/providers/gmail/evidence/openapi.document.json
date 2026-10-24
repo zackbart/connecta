@@ -2836,7 +2836,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users drafts",
+        "summary": "List search find saved drafts with Gmail query filters.",
         "tags": [
           "users.drafts"
         ],
@@ -2896,7 +2896,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create save a draft reply; use create_draft.",
+        "summary": "Refused: create save a draft reply via the hatch; use create_draft or update_draft.",
         "tags": [
           "users.drafts"
         ],
@@ -2958,7 +2958,7 @@
             "description": "Success"
           }
         },
-        "summary": "Send deliver users drafts",
+        "summary": "Refused: send mail; sending is never available; use create_draft or update_draft to save for review.",
         "tags": [
           "users.drafts"
         ],
@@ -3013,7 +3013,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users drafts",
+        "summary": "Refused: delete drafts; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.drafts"
         ],
@@ -3090,7 +3090,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users drafts",
+        "summary": "Read get a saved draft message with headers, MIME parts and body metadata.",
         "tags": [
           "users.drafts"
         ],
@@ -3160,7 +3160,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit a draft; use update_draft.",
+        "summary": "Refused: update edit a draft via the hatch; use update_draft or create_draft.",
         "tags": [
           "users.drafts"
         ],
@@ -3276,7 +3276,7 @@
             "description": "Success"
           }
         },
-        "summary": "List mail history changes after a history id.",
+        "summary": "List read mail history changes after a history id.",
         "tags": [
           "users.history"
         ],
@@ -3328,7 +3328,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users labels",
+        "summary": "List find mailbox labels and their human names.",
         "tags": [
           "users.labels"
         ],
@@ -3389,7 +3389,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add users labels",
+        "summary": "Refused: create labels; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.labels"
         ],
@@ -3443,7 +3443,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users labels",
+        "summary": "Refused: delete labels; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.labels"
         ],
@@ -3502,7 +3502,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users labels",
+        "summary": "Read get a mailbox label name and message or thread counts.",
         "tags": [
           "users.labels"
         ],
@@ -3573,7 +3573,7 @@
             "description": "Success"
           }
         },
-        "summary": "Patch update edit users labels",
+        "summary": "Refused: patch labels; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.labels"
         ],
@@ -3642,7 +3642,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit modify users labels",
+        "summary": "Refused: update labels; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.labels"
         ],
@@ -3751,7 +3751,7 @@
             "description": "Success"
           }
         },
-        "summary": "List search find unread messages with Gmail query filters.",
+        "summary": "List search find unread messages by sender, subject, date and Gmail query filters.",
         "tags": [
           "users.messages"
         ],
@@ -3837,7 +3837,7 @@
             "description": "Success"
           }
         },
-        "summary": "insert users messages",
+        "summary": "Refused: insert messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -3891,7 +3891,7 @@
             "description": "Success"
           }
         },
-        "summary": "Batch delete remove users messages",
+        "summary": "Refused: batch delete messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -3943,7 +3943,7 @@
             "description": "Success"
           }
         },
-        "summary": "Batch modify update users messages",
+        "summary": "Refused: batch modify messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -4051,7 +4051,7 @@
             "description": "Success"
           }
         },
-        "summary": "import users messages",
+        "summary": "Refused: import messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -4112,7 +4112,7 @@
             "description": "Success"
           }
         },
-        "summary": "Send deliver users messages",
+        "summary": "Refused: send mail; sending is never available; use create_draft or update_draft to save for review.",
         "tags": [
           "users.messages"
         ],
@@ -4168,7 +4168,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users messages",
+        "summary": "Refused: delete messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -4257,7 +4257,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read message headers, full MIME parts and body metadata.",
+        "summary": "Read get message headers, labels, full MIME parts and body metadata.",
         "tags": [
           "users.messages"
         ],
@@ -4332,7 +4332,7 @@
             "description": "Success"
           }
         },
-        "summary": "modify users messages",
+        "summary": "Refused: modify messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -4392,7 +4392,7 @@
             "description": "Success"
           }
         },
-        "summary": "Trash move to trash users messages",
+        "summary": "Refused: trash messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -4452,7 +4452,7 @@
             "description": "Success"
           }
         },
-        "summary": "Untrash restore users messages",
+        "summary": "Refused: untrash messages; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.messages"
         ],
@@ -4522,7 +4522,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read message attachments as base64url JSON data.",
+        "summary": "Read get download message attachments as base64url JSON data.",
         "tags": [
           "users.messages.attachments"
         ],
@@ -4575,7 +4575,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read mailbox profile email address and message counts.",
+        "summary": "Read get mailbox profile email address and message counts.",
         "tags": [
           "users"
         ],
@@ -4628,7 +4628,7 @@
             "description": "Success"
           }
         },
-        "summary": "get Auto Forwarding users settings",
+        "summary": "Refused: get auto forwarding settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -4688,7 +4688,7 @@
             "description": "Success"
           }
         },
-        "summary": "update Auto Forwarding users settings",
+        "summary": "Refused: update auto forwarding settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -4759,7 +4759,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users settings cse identities",
+        "summary": "Refused: list settings cse identities; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.identities"
         ],
@@ -4820,7 +4820,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add users settings cse identities",
+        "summary": "Refused: create settings cse identities; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.identities"
         ],
@@ -4873,7 +4873,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users settings cse identities",
+        "summary": "Refused: delete settings cse identities; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.identities"
         ],
@@ -4931,7 +4931,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users settings cse identities",
+        "summary": "Refused: get settings cse identities; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.identities"
         ],
@@ -5004,7 +5004,7 @@
             "description": "Success"
           }
         },
-        "summary": "Patch update edit users settings cse identities",
+        "summary": "Refused: patch settings cse identities; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.identities"
         ],
@@ -5076,7 +5076,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users settings cse keypairs",
+        "summary": "Refused: list settings cse keypairs; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.keypairs"
         ],
@@ -5152,7 +5152,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add users settings cse keypairs",
+        "summary": "Refused: create settings cse keypairs; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.keypairs"
         ],
@@ -5212,7 +5212,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users settings cse keypairs",
+        "summary": "Refused: get settings cse keypairs; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.keypairs"
         ],
@@ -5285,7 +5285,7 @@
             "description": "Success"
           }
         },
-        "summary": "disable users settings cse keypairs",
+        "summary": "Refused: disable settings cse keypairs; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.keypairs"
         ],
@@ -5355,7 +5355,7 @@
             "description": "Success"
           }
         },
-        "summary": "enable users settings cse keypairs",
+        "summary": "Refused: enable settings cse keypairs; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.keypairs"
         ],
@@ -5418,7 +5418,7 @@
             "description": "Success"
           }
         },
-        "summary": "obliterate users settings cse keypairs",
+        "summary": "Refused: obliterate settings cse keypairs; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.cse.keypairs"
         ],
@@ -5468,7 +5468,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users settings delegates",
+        "summary": "Refused: list settings delegates; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.delegates"
         ],
@@ -5528,7 +5528,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add users settings delegates",
+        "summary": "Refused: create settings delegates; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.delegates"
         ],
@@ -5580,7 +5580,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users settings delegates",
+        "summary": "Refused: delete settings delegates; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.delegates"
         ],
@@ -5637,7 +5637,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users settings delegates",
+        "summary": "Refused: get settings delegates; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.delegates"
         ],
@@ -5689,7 +5689,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users settings filters",
+        "summary": "Refused: list settings filters; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.filters"
         ],
@@ -5749,7 +5749,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add users settings filters",
+        "summary": "Refused: create settings filters; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.filters"
         ],
@@ -5801,7 +5801,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users settings filters",
+        "summary": "Refused: delete settings filters; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.filters"
         ],
@@ -5858,7 +5858,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users settings filters",
+        "summary": "Refused: get settings filters; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.filters"
         ],
@@ -5910,7 +5910,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users settings forwarding Addresses",
+        "summary": "Refused: list settings forwarding addresses; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.forwardingAddresses"
         ],
@@ -5970,7 +5970,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add users settings forwarding Addresses",
+        "summary": "Refused: create settings forwarding addresses; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.forwardingAddresses"
         ],
@@ -6022,7 +6022,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users settings forwarding Addresses",
+        "summary": "Refused: delete settings forwarding addresses; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.forwardingAddresses"
         ],
@@ -6079,7 +6079,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users settings forwarding Addresses",
+        "summary": "Refused: get settings forwarding addresses; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.forwardingAddresses"
         ],
@@ -6131,7 +6131,7 @@
             "description": "Success"
           }
         },
-        "summary": "get Imap users settings",
+        "summary": "Refused: get imap settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -6191,7 +6191,7 @@
             "description": "Success"
           }
         },
-        "summary": "update Imap users settings",
+        "summary": "Refused: update imap settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -6240,7 +6240,7 @@
             "description": "Success"
           }
         },
-        "summary": "get Language users settings",
+        "summary": "Refused: get language settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -6300,7 +6300,7 @@
             "description": "Success"
           }
         },
-        "summary": "update Language users settings",
+        "summary": "Refused: update language settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -6349,7 +6349,7 @@
             "description": "Success"
           }
         },
-        "summary": "get Pop users settings",
+        "summary": "Refused: get pop settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -6409,7 +6409,7 @@
             "description": "Success"
           }
         },
-        "summary": "update Pop users settings",
+        "summary": "Refused: update pop settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -6458,7 +6458,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users settings send As",
+        "summary": "Refused: list settings send as; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs"
         ],
@@ -6518,7 +6518,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add users settings send As",
+        "summary": "Refused: create settings send as; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs"
         ],
@@ -6570,7 +6570,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users settings send As",
+        "summary": "Refused: delete settings send as; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs"
         ],
@@ -6627,7 +6627,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users settings send As",
+        "summary": "Refused: get settings send as; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs"
         ],
@@ -6697,7 +6697,7 @@
             "description": "Success"
           }
         },
-        "summary": "Patch update edit users settings send As",
+        "summary": "Refused: patch settings send as; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs"
         ],
@@ -6765,7 +6765,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit modify users settings send As",
+        "summary": "Refused: update settings send as; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs"
         ],
@@ -6825,7 +6825,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users settings send As smime Info",
+        "summary": "Refused: list settings send as smime info; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs.smimeInfo"
         ],
@@ -6896,7 +6896,7 @@
             "description": "Success"
           }
         },
-        "summary": "insert users settings send As smime Info",
+        "summary": "Refused: insert settings send as smime info; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs.smimeInfo"
         ],
@@ -6959,7 +6959,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users settings send As smime Info",
+        "summary": "Refused: delete settings send as smime info; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs.smimeInfo"
         ],
@@ -7027,7 +7027,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users settings send As smime Info",
+        "summary": "Refused: get settings send as smime info; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs.smimeInfo"
         ],
@@ -7093,7 +7093,7 @@
             "description": "Success"
           }
         },
-        "summary": "set Default users settings send As smime Info",
+        "summary": "Refused: set default settings send as smime info; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs.smimeInfo"
         ],
@@ -7146,7 +7146,7 @@
             "description": "Success"
           }
         },
-        "summary": "verify users settings send As",
+        "summary": "Refused: verify settings send as; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings.sendAs"
         ],
@@ -7195,7 +7195,7 @@
             "description": "Success"
           }
         },
-        "summary": "get Vacation users settings",
+        "summary": "Refused: get vacation settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -7255,7 +7255,7 @@
             "description": "Success"
           }
         },
-        "summary": "update Vacation users settings",
+        "summary": "Refused: update vacation settings; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.settings"
         ],
@@ -7297,7 +7297,7 @@
             "description": "Success"
           }
         },
-        "summary": "stop users",
+        "summary": "Refused: stop ; use create_draft or update_draft only for drafts.",
         "tags": [
           "users"
         ],
@@ -7407,7 +7407,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search users threads",
+        "summary": "List search find unread threads by sender, subject, date and Gmail query filters.",
         "tags": [
           "users.threads"
         ],
@@ -7462,7 +7462,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove users threads",
+        "summary": "Refused: delete threads; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.threads"
         ],
@@ -7550,7 +7550,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve users threads",
+        "summary": "Read get thread messages with headers, labels, MIME parts and body metadata.",
         "tags": [
           "users.threads"
         ],
@@ -7625,7 +7625,7 @@
             "description": "Success"
           }
         },
-        "summary": "modify users threads",
+        "summary": "Refused: modify threads; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.threads"
         ],
@@ -7685,7 +7685,7 @@
             "description": "Success"
           }
         },
-        "summary": "Trash move to trash users threads",
+        "summary": "Refused: trash threads; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.threads"
         ],
@@ -7745,7 +7745,7 @@
             "description": "Success"
           }
         },
-        "summary": "Untrash restore users threads",
+        "summary": "Refused: untrash threads; use create_draft or update_draft only for drafts.",
         "tags": [
           "users.threads"
         ],
@@ -7805,7 +7805,7 @@
             "description": "Success"
           }
         },
-        "summary": "watch users",
+        "summary": "Refused: watch ; use create_draft or update_draft only for drafts.",
         "tags": [
           "users"
         ],

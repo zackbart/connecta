@@ -15,14 +15,14 @@
             "method": "POST",
             "path": "/drafts",
             "operationId": "gmail.users.drafts.create",
-            "summary": "Create save a draft reply; use create_draft.",
+            "summary": "Refused: create save a draft reply via the hatch; use create_draft or update_draft.",
             "named": "create_draft"
           },
           {
             "method": "GET",
             "path": "/drafts",
             "operationId": "gmail.users.drafts.list",
-            "summary": "List find search users drafts",
+            "summary": "List search find saved drafts with Gmail query filters.",
             "tool": "gmail_api_read",
             "named": "list_drafts"
           },
@@ -30,7 +30,7 @@
             "method": "GET",
             "path": "/drafts/{id}",
             "operationId": "gmail.users.drafts.get",
-            "summary": "Get read retrieve users drafts",
+            "summary": "Read get a saved draft message with headers, MIME parts and body metadata.",
             "tool": "gmail_api_read",
             "named": "get_draft"
           },
@@ -38,26 +38,26 @@
             "method": "PUT",
             "path": "/drafts/{id}",
             "operationId": "gmail.users.drafts.update",
-            "summary": "Update edit a draft; use update_draft.",
+            "summary": "Refused: update edit a draft via the hatch; use update_draft or create_draft.",
             "named": "update_draft"
           },
           {
             "method": "DELETE",
             "path": "/drafts/{id}",
             "operationId": "gmail.users.drafts.delete",
-            "summary": "Delete remove users drafts"
+            "summary": "Refused: delete drafts; use create_draft or update_draft only for drafts."
           },
           {
             "method": "POST",
             "path": "/drafts/send",
             "operationId": "gmail.users.drafts.send",
-            "summary": "Send deliver users drafts"
+            "summary": "Refused: send mail; sending is never available; use create_draft or update_draft to save for review."
           }
         ],
         "revision": "20261019",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiYTBkYWMxMTYzZDNkZjg1ZGIzYmE5MWJlOWIyNzRmMjEiLCJjIjoiNiIsIm0iOiJtV2ZQZV9LN3IyS3I5bldvNk9Ea2RLYVo2TXhsUUdVVHNBLXVKbW9Mejh3In0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiN2JmNGJhMzUyNmMzZmUyMDQ4YTUzMjQzZmNlOWQ5MTciLCJjIjoiNiIsIm0iOiJ0V3p4UHZuX0VWTHByb1FVdGlmbGY5VEk2YXpuRjUwMkt4M3NxcjAxSnpRIn0"
         }
       }
     }
@@ -77,7 +77,7 @@
         "method": "GET",
         "path": "/messages/{id}",
         "operationId": "gmail.users.messages.get",
-        "summary": "Read message headers, full MIME parts and body metadata.",
+        "summary": "Read get message headers, labels, full MIME parts and body metadata.",
         "parameters": [
           {
             "name": "prettyPrint",
