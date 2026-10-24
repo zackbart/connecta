@@ -3,261 +3,2333 @@
   "provider": "ccb",
   "generated": {
     "operations": [
+      "DELETE /events/{id}",
+      "DELETE /events/{id}/photo",
+      "DELETE /events/{id}/{occurrence}",
+      "DELETE /families/{id}/photo",
+      "DELETE /form_automations/{id}",
+      "DELETE /forms/{id}/managers/{manager_id}",
+      "DELETE /groups/{id}/members",
+      "DELETE /groups/{id}/photo",
+      "DELETE /individual_message_replies/{id}",
+      "DELETE /individual_messages/{id}",
+      "DELETE /individuals/background_checks/{id}",
+      "DELETE /individuals/{id}/files/{file_id}",
+      "DELETE /individuals/{id}/groups/{group_id}",
+      "DELETE /individuals/{id}/photo",
+      "DELETE /individuals/{individual_id}/favorite_campuses/{campus_id}",
+      "DELETE /individuals/{individual_id}/sacraments/{id}",
+      "DELETE /messages/{id}",
+      "DELETE /messages/{id}/comments/{comment_id}",
+      "DELETE /need_items/{id}/assigned_to",
+      "DELETE /needs/{id}",
+      "DELETE /needs/{id}/items/{item_id}",
+      "DELETE /notes/{id}",
+      "DELETE /processes/{process_id}",
+      "DELETE /processes/{process_id}/managers/{manager_id}",
+      "DELETE /queue_individuals/{queue_individual_id}",
+      "DELETE /queues/{queue_id}",
+      "DELETE /queues/{queue_id}/managers/{manager_id}",
+      "DELETE /saved_searches/{individual_id}/search/{id}",
+      "DELETE /saved_searches/{individual_id}/search/{saved_search_id}/leave",
+      "DELETE /scheduling/assignments",
+      "DELETE /scheduling/assignments/{id}",
+      "DELETE /scheduling/blockout_dates/{id}",
+      "DELETE /scheduling/blockout_dates/{id}/{occurrence}",
+      "DELETE /scheduling/categories/{id}",
+      "DELETE /scheduling/categories/{id}/events",
+      "DELETE /scheduling/categories/{id}/plan_organizers/{individualId}",
+      "DELETE /scheduling/categories/{id}/schedules",
+      "DELETE /scheduling/categories/{id}/serving_rotations",
+      "DELETE /scheduling/individuals/{id}/preferences",
+      "DELETE /scheduling/preference_times/{id}",
+      "DELETE /scheduling/schedules/{id}",
+      "DELETE /scheduling/schedules/{id}/organizers",
+      "DELETE /scheduling/service_plan_items/{id}",
+      "DELETE /scheduling/service_plans/{id}",
+      "DELETE /scheduling/serving_reminder_times/{id}",
+      "DELETE /scheduling/teams/{id}/organizers/{individual_id}",
+      "DELETE /templates/{id}",
+      "GET /calendar",
+      "GET /campuses",
+      "GET /campuses/{id}/leadership_roles",
+      "GET /campuses/{id}/service_times",
+      "GET /church",
+      "GET /church/areas_of_town",
+      "GET /church/attendance_groupings",
+      "GET /church/countries",
+      "GET /church/custom_fields",
+      "GET /church/envelope_user_options",
+      "GET /church/ethnicities",
+      "GET /church/homebound_ministries",
+      "GET /church/membership_types",
+      "GET /church/mobile_carriers",
+      "GET /church/preferred_languages",
+      "GET /church/privacy_defaults",
+      "GET /church/reasons_left",
+      "GET /church/religions",
+      "GET /church/school_grades",
+      "GET /church/schools",
+      "GET /church/services",
+      "GET /church/social_networks",
+      "GET /departments",
       "GET /events",
+      "GET /events/search",
+      "GET /events/shared_campuses",
+      "GET /events/{eventId}/occurrences/{occurrence}",
       "GET /events/{id}",
+      "GET /events/{id}/attendance/candidates",
       "GET /events/{id}/attendance/{occurrence}",
       "GET /events/{id}/attendance/{occurrence}/attendees",
+      "GET /events/{id}/calendar",
+      "GET /events/{id}/guests",
+      "GET /events/{id}/resources",
+      "GET /events/{id}/rooms",
+      "GET /events/{id}/shared_campuses",
+      "GET /events/{id}/shared_campuses/{campus_id}",
       "GET /families",
       "GET /families/{id}",
       "GET /families/{id}/metrics/giving",
+      "GET /families/{id}/notes",
+      "GET /files/{id}",
+      "GET /form_responses/{id}",
       "GET /forms",
+      "GET /forms/{id}",
+      "GET /forms/{id}/automations",
+      "GET /forms/{id}/questions",
+      "GET /forms/{id}/respondents",
       "GET /forms/{id}/responses",
+      "GET /group_areas",
+      "GET /group_meet_days",
+      "GET /group_meet_times",
+      "GET /group_types",
       "GET /groups",
+      "GET /groups/admin",
+      "GET /groups/{group_id}/settings",
       "GET /groups/{id}",
+      "GET /groups/{id}/attendance",
+      "GET /groups/{id}/attendance/needed",
+      "GET /groups/{id}/attendance_groupings",
+      "GET /groups/{id}/calendar",
+      "GET /groups/{id}/event_owner_candidates",
+      "GET /groups/{id}/events",
+      "GET /groups/{id}/leaders",
       "GET /groups/{id}/members",
+      "GET /groups/{id}/messages",
+      "GET /groups/{id}/needs",
+      "GET /groups/{id}/requesting",
+      "GET /groups/{id}/special_days",
+      "GET /individual_messages/{id}/replies",
       "GET /individuals",
+      "GET /individuals/background_checks",
+      "GET /individuals/duplicates",
+      "GET /individuals/merge_history",
+      "GET /individuals/metrics/duplicates",
       "GET /individuals/{id}",
+      "GET /individuals/{id}/abilities",
+      "GET /individuals/{id}/admin/events",
       "GET /individuals/{id}/assignments",
+      "GET /individuals/{id}/background_checks",
+      "GET /individuals/{id}/calendar",
+      "GET /individuals/{id}/categorized_timelines",
+      "GET /individuals/{id}/departments",
+      "GET /individuals/{id}/duplicates",
+      "GET /individuals/{id}/events/{event_id}",
+      "GET /individuals/{id}/files",
+      "GET /individuals/{id}/form_responses",
+      "GET /individuals/{id}/forms",
+      "GET /individuals/{id}/gifts",
       "GET /individuals/{id}/groups",
+      "GET /individuals/{id}/groups/{group_id}",
+      "GET /individuals/{id}/history",
+      "GET /individuals/{id}/history/groups",
+      "GET /individuals/{id}/ignored",
+      "GET /individuals/{id}/messages",
+      "GET /individuals/{id}/metrics/attendance",
+      "GET /individuals/{id}/metrics/attendance/summary",
+      "GET /individuals/{id}/metrics/form_responses",
       "GET /individuals/{id}/metrics/giving",
+      "GET /individuals/{id}/metrics/giving/summary",
+      "GET /individuals/{id}/metrics/groups",
+      "GET /individuals/{id}/metrics/groups_history",
+      "GET /individuals/{id}/metrics/process_queues",
+      "GET /individuals/{id}/metrics/serving",
+      "GET /individuals/{id}/metrics/serving/summary",
+      "GET /individuals/{id}/needs",
       "GET /individuals/{id}/notes",
+      "GET /individuals/{id}/notes/leaders",
+      "GET /individuals/{id}/passions",
       "GET /individuals/{id}/pledges",
+      "GET /individuals/{id}/privacy_settings",
+      "GET /individuals/{id}/sacraments",
+      "GET /individuals/{id}/scheduled_gifts",
+      "GET /individuals/{id}/social_networks",
+      "GET /individuals/{id}/timelines",
+      "GET /individuals/{id}/timelines/{context_type}/{context_id}",
+      "GET /individuals/{individual_id}/admin/processes",
+      "GET /individuals/{individual_id}/admin/queues",
+      "GET /integrations/checkr",
       "GET /me",
+      "GET /merge/individuals",
+      "GET /messages/{id}",
+      "GET /messages/{id}/comments",
+      "GET /needs/{id}/items",
+      "GET /notes",
+      "GET /notes/{id}",
       "GET /processes",
+      "GET /processes/{process_id}",
+      "GET /processes/{process_id}/managers",
       "GET /queues",
+      "GET /queues/{queue_id}",
+      "GET /queues/{queue_id}/individuals/{individual_id}",
+      "GET /queues/{queue_id}/managers/queue",
       "GET /queues_individuals",
+      "GET /queues_individuals/{queueIndividualId}",
+      "GET /saved_searches/search/{id}",
+      "GET /saved_searches/search/{search_id}/individual/{individual_id}",
+      "GET /saved_searches/search/{search_id}/individuals",
+      "GET /saved_searches/{individual_id}",
+      "GET /saved_searches/{individual_id}/list",
+      "GET /scheduling/assignment_swaps/{id}",
+      "GET /scheduling/assignments/{id}",
+      "GET /scheduling/assignments/{id}/associated_times",
+      "GET /scheduling/assignments/{id}/available_swaps",
+      "GET /scheduling/auto_schedule/needed_volunteers",
       "GET /scheduling/categories",
+      "GET /scheduling/categories/{id}",
+      "GET /scheduling/categories/{id}/available_schedule_dates",
+      "GET /scheduling/categories/{id}/events",
+      "GET /scheduling/categories/{id}/individuals",
+      "GET /scheduling/categories/{id}/notifications/metrics",
+      "GET /scheduling/categories/{id}/organizers",
+      "GET /scheduling/categories/{id}/plan_organizers",
       "GET /scheduling/categories/{id}/schedules",
+      "GET /scheduling/categories/{id}/service_plans",
+      "GET /scheduling/categories/{id}/serving_rotations",
+      "GET /scheduling/event_positions/{id}/candidates",
+      "GET /scheduling/events/{event_id}/serving_rotations/{serving_rotation_id}/conflicts",
+      "GET /scheduling/events/{id}",
+      "GET /scheduling/families/{id}/assignments",
+      "GET /scheduling/families/{id}/blockout_dates",
+      "GET /scheduling/families/{id}/open_event_positions",
+      "GET /scheduling/individuals/{id}/blockout_dates",
+      "GET /scheduling/individuals/{id}/open_event_positions",
+      "GET /scheduling/individuals/{id}/open_event_positions/{event_position_id}",
+      "GET /scheduling/individuals/{id}/positions",
+      "GET /scheduling/individuals/{id}/preferences",
+      "GET /scheduling/individuals/{individual_id}/preference_times",
+      "GET /scheduling/positions",
+      "GET /scheduling/schedules/{id}",
+      "GET /scheduling/schedules/{id}/assignment_metrics",
+      "GET /scheduling/schedules/{id}/open_schedule_notifications/recipients",
+      "GET /scheduling/schedules/{id}/organizers",
+      "GET /scheduling/schedules/{id}/serving_reminder_times",
+      "GET /scheduling/serving_rotation_positions/{id}/candidates",
+      "GET /scheduling/song_versions/{version_id}/links",
+      "GET /scheduling/songs/{song_id}",
+      "GET /scheduling/teams",
+      "GET /scheduling/teams/{id}/organizers",
+      "GET /settings/financial",
+      "GET /templates",
+      "GET /templates/{id}",
+      "POST /church/privacy_defaults",
+      "POST /data_import/individuals",
+      "POST /data_import/sacraments",
+      "POST /events",
+      "POST /events/{id}/attendance/{occurrence}",
+      "POST /events/{id}/attendance/{occurrence}/attendees",
+      "POST /events/{id}/photo",
+      "POST /events/{id}/shared_campuses",
+      "POST /families",
+      "POST /families/{id}/photo",
+      "POST /files",
+      "POST /forms/{id}/automations",
+      "POST /forms/{id}/managers",
+      "POST /forms/{id}/responses",
+      "POST /groups/{group_id}/participant_candidates/search",
+      "POST /groups/{id}/attendance_groupings/sync",
+      "POST /groups/{id}/members",
+      "POST /groups/{id}/photo",
+      "POST /individual_messages/{id}/replies",
+      "POST /individuals",
+      "POST /individuals/events/{event_id}",
+      "POST /individuals/{id}/background_checks",
+      "POST /individuals/{id}/events/{event_id}",
+      "POST /individuals/{id}/files",
+      "POST /individuals/{id}/files/{file_id}",
+      "POST /individuals/{id}/groups/{group_id}",
+      "POST /individuals/{id}/messages",
+      "POST /individuals/{id}/notes",
+      "POST /individuals/{id}/photo",
+      "POST /individuals/{id}/sacraments",
+      "POST /individuals/{id}/social_networks",
+      "POST /individuals/{individual_id}/favorite_campuses/{campus_id}",
+      "POST /individuals/{winner_id}/merge",
+      "POST /messages/{id}/comments",
+      "POST /needs",
+      "POST /needs/{id}/inform",
+      "POST /needs/{id}/items",
       "POST /oauth/token",
+      "POST /processes",
+      "POST /processes/{process_id}/duplicate",
+      "POST /processes/{process_id}/manager",
+      "POST /queues/{queue_id}/individuals",
+      "POST /queues/{queue_id}/manager",
+      "POST /reset_password",
+      "POST /saved_searches/duplicate/{id}",
+      "POST /scheduling/assignments/{id}/assignment_swaps",
+      "POST /scheduling/auto_schedule",
+      "POST /scheduling/categories",
+      "POST /scheduling/categories/{id}/files",
+      "POST /scheduling/categories/{id}/messages",
+      "POST /scheduling/categories/{id}/notifications",
+      "POST /scheduling/categories/{id}/organizers",
+      "POST /scheduling/categories/{id}/plan_organizers",
+      "POST /scheduling/categories/{id}/schedules",
+      "POST /scheduling/categories/{id}/service_plans",
+      "POST /scheduling/categories/{id}/serving_rotations",
+      "POST /scheduling/event_positions/{id}/assignments",
+      "POST /scheduling/event_positions/{source_id}/copy_to/{target_id}",
+      "POST /scheduling/events/{id}/files",
+      "POST /scheduling/families/{id}/blockout_dates",
+      "POST /scheduling/individual/{id}/positions",
+      "POST /scheduling/individuals/{id}/blockout_dates",
+      "POST /scheduling/individuals/{individual_id}/preference_times",
+      "POST /scheduling/positions/{id}/volunteer-migrations",
+      "POST /scheduling/positions/{id}/volunteers",
+      "POST /scheduling/schedules/{id}/message_schedulers",
+      "POST /scheduling/schedules/{id}/open_schedule_notifications",
+      "POST /scheduling/schedules/{id}/organizers",
+      "POST /scheduling/schedules/{id}/serving_reminder_times",
+      "POST /scheduling/service_plans/{id}/items",
+      "POST /scheduling/serving_rotation_positions/{id}/assignments",
+      "POST /scheduling/teams/{id}/organizers",
       "POST /search/assignments/results",
       "POST /search/categories/results",
       "POST /search/department_detail/results",
       "POST /search/groups/results",
       "POST /search/individual_event_attendance/results",
       "POST /search/individual_groups/results",
+      "POST /search/individuals/actions/mass_edit_sacraments",
       "POST /search/individuals/results",
       "POST /search/organizers/results",
       "POST /search/positions/results",
+      "POST /search/save",
       "POST /search/schedules/results",
       "POST /search/schedules_totals/results",
       "POST /search/scheduling_files/results",
       "POST /search/scheduling_individuals/results",
       "POST /search/songs/results",
-      "POST /search/volunteers/results"
+      "POST /search/volunteers/results",
+      "POST /templates",
+      "POST /templates/{id}/entities",
+      "PUT /campuses",
+      "PUT /events/{event_id}/attendance_grouping",
+      "PUT /events/{id}",
+      "PUT /events/{id}/invitation_settings",
+      "PUT /events/{id}/shared_campuses/{campus_id}",
+      "PUT /families/{id}",
+      "PUT /form_automations/{id}",
+      "PUT /groups/{group_id}/members/roles",
+      "PUT /groups/{group_id}/settings",
+      "PUT /groups/{id}",
+      "PUT /groups/{id}/members",
+      "PUT /individual_message_replies/{id}",
+      "PUT /individual_messages/{id}",
+      "PUT /individuals/background_checks/{id}",
+      "PUT /individuals/{id}",
+      "PUT /individuals/{id}/assignments",
+      "PUT /individuals/{id}/contact_info",
+      "PUT /individuals/{id}/groups/bulk",
+      "PUT /individuals/{id}/groups/{group_id}",
+      "PUT /individuals/{id}/privacy_settings",
+      "PUT /individuals/{id}/scheduled_gifts/{gift_id}",
+      "PUT /individuals/{individual_id}/sacraments/{id}",
+      "PUT /messages/{id}",
+      "PUT /messages/{id}/comments/{comment_id}",
+      "PUT /need_items/{id}/assigned_to",
+      "PUT /needs/{id}",
+      "PUT /needs/{id}/coordinator",
+      "PUT /needs/{id}/items/{item_id}",
+      "PUT /notes/{id}",
+      "PUT /processes/{process_id}",
+      "PUT /queues_individuals/{queueIndividualId}",
+      "PUT /queues_individuals/{queueIndividualId}/queue",
+      "PUT /saved_searches/search/{search_id}/individual/{individual_id}",
+      "PUT /saved_searches/search/{search_id}/individual/{individual_id}/star",
+      "PUT /scheduling/assignment_swaps/{id}",
+      "PUT /scheduling/assignments/{assignment_id}/associated_times/{associated_time_id}",
+      "PUT /scheduling/assignments/{id}",
+      "PUT /scheduling/blockout_dates/{id}",
+      "PUT /scheduling/categories/{id}",
+      "PUT /scheduling/categories/{id}/serving_rotations",
+      "PUT /scheduling/event_positions/{event_position_id}/associated_times/{associated_time_id}",
+      "PUT /scheduling/event_positions/{id}",
+      "PUT /scheduling/event_teams/{event_team_id}/associated_times/{associated_time_id}",
+      "PUT /scheduling/events/{event_id}/event_position_associated_times",
+      "PUT /scheduling/events/{event_id}/serving_rotations/{serving_rotation_id}",
+      "PUT /scheduling/events/{id}",
+      "PUT /scheduling/events/{id}/copy_assignments",
+      "PUT /scheduling/events/{id}/copy_assignments/{copyFromEventId}",
+      "PUT /scheduling/events/{id}/set_checkin_labels",
+      "PUT /scheduling/families/{id}/assignments",
+      "PUT /scheduling/individuals/{id}/preferences",
+      "PUT /scheduling/individuals/{id}/unified_preferences",
+      "PUT /scheduling/position/{id}",
+      "PUT /scheduling/preference_times/{id}",
+      "PUT /scheduling/schedules/{id}",
+      "PUT /scheduling/schedules/{id}/open_event_positions",
+      "PUT /scheduling/service_plan_items/{id}",
+      "PUT /scheduling/service_plans/{id}",
+      "PUT /scheduling/service_plans/{id}/items",
+      "PUT /scheduling/serving_reminder_times/{id}",
+      "PUT /scheduling/serving_rotation_positions/{id}",
+      "PUT /scheduling/volunteers/{id}",
+      "PUT /search/save/{id}",
+      "PUT /settings/financial",
+      "PUT /templates/{id}"
     ],
-    "evidence": {}
+    "evidence": {
+      "openapi.document.json": "sha256:2f532bfdcd2c4d40add8373218d3ea371c215ad7d754cfa72fb241fc7c45348d",
+      "openapi.json": "sha256:385ad931af88bc5f7ec25d6d4f62c5146e4d1d415b8ff4a2011aa996e3f96e61",
+      "value-safety.json": "sha256:b6a3c375f2554b488274abf4a1d548e8b10a0ed4928b25bbd2cc4b7660b38fbe"
+    }
   },
   "checks": [
     {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
+    {
       "type": "endpoints",
       "specification": {
-        "url": "https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json"
+        "url": "https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json?download=1"
       },
       "endpoints": [
         {
+          "operation": "DELETE /events/{id}",
           "specRevision": "v2",
-          "contract": "sha256:3317797fa9abd2fe6dbaa04d723feb3909281d99ed468f4c76efa1fd5171748f",
-          "operation": "POST /oauth/token"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /events/{id}/photo",
           "specRevision": "v2",
-          "contract": "sha256:dbf6871bb74d127dff691c572df686448806fb03d726abbef8efc4f77d518e36",
-          "operation": "GET /me"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /events/{id}/{occurrence}",
           "specRevision": "v2",
-          "contract": "sha256:8517ab49fdc4fd71412872cf4737f6fb146a93ded952761839f94f343b417fd0",
-          "operation": "GET /individuals"
+          "contract": "sha256:eccea0ccc98e2d2565091ba31ba3c4aeff585044bd284f5d4b0feec8630a55d2"
         },
         {
+          "operation": "DELETE /families/{id}/photo",
           "specRevision": "v2",
-          "contract": "sha256:aa145e0843112a8ac90507472dbac893daf444f6df640f655af085afec6482f6",
-          "operation": "GET /individuals/{id}"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /form_automations/{id}",
           "specRevision": "v2",
-          "contract": "sha256:98171f81e625b0cb17c999c6dc91f6ba25263400d86fba9d92ab0da67fca6e6b",
-          "operation": "GET /families"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /forms/{id}/managers/{manager_id}",
           "specRevision": "v2",
-          "contract": "sha256:5d4c2deb655a2d30bbef53293e024241dec96092d9cea8041a929de53a78da83",
-          "operation": "GET /families/{id}"
+          "contract": "sha256:c200d52d21cab1223d8d7d00090f7b04df21b4466a7a66a8cee35598adad1325"
         },
         {
+          "operation": "DELETE /groups/{id}/members",
           "specRevision": "v2",
-          "contract": "sha256:c3beb1e8abb6fbdeefc5f0bc4cf390e358b5547bc86a90e4d771f8af47f12cbc",
-          "operation": "GET /groups"
+          "contract": "sha256:e27c7e4e1aaa6dc2601175e413d9ba234b445221db4382f1e75b8835b85b21e3"
         },
         {
+          "operation": "DELETE /groups/{id}/photo",
           "specRevision": "v2",
-          "contract": "sha256:4108af4e08b6efced32935130a67436f8ad5c738d0bedf8014e19a1f5be5b84a",
-          "operation": "GET /groups/{id}"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /individual_message_replies/{id}",
           "specRevision": "v2",
-          "contract": "sha256:dd82c2fa7e246c73719772b25339f83ae2d3224c867b441a4e4cdcb124038ea1",
-          "operation": "GET /groups/{id}/members"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /individual_messages/{id}",
           "specRevision": "v2",
-          "contract": "sha256:6a4e950c885596c976220372c28e835cef9ef2e858be388d3c3fa59cf06a6b08",
-          "operation": "GET /individuals/{id}/groups"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /individuals/background_checks/{id}",
           "specRevision": "v2",
-          "contract": "sha256:cf35a2afa7c094a56587ff3edda49a928b86d082f93a25b736f85d9fed68f7f1",
-          "operation": "GET /events"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /individuals/{id}/files/{file_id}",
           "specRevision": "v2",
-          "contract": "sha256:1c00918e290145409e7bb192519fb02127f493e21a96a02ebd3e356121d4b204",
-          "operation": "GET /events/{id}"
+          "contract": "sha256:efa55cc011048751316c058e10968c49e5ce646164804617db371eaf511370c2"
         },
         {
+          "operation": "DELETE /individuals/{id}/groups/{group_id}",
           "specRevision": "v2",
-          "contract": "sha256:b0a1d33bcb30364c0fe947f93d9209865b4f7ff18138db4b4c257b3ba08c80f0",
-          "operation": "GET /events/{id}/attendance/{occurrence}"
+          "contract": "sha256:4d0685b2c5cbe43da73cdac3e1c9149745449d3b7b78bf8c73b48f109e9d1fdb"
         },
         {
+          "operation": "DELETE /individuals/{id}/photo",
           "specRevision": "v2",
-          "contract": "sha256:68e9c968bbdb67daeb4a321136c1f0104638cb2ba86ab9560fa014c2d4265884",
-          "operation": "GET /events/{id}/attendance/{occurrence}/attendees"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /individuals/{individual_id}/favorite_campuses/{campus_id}",
           "specRevision": "v2",
-          "contract": "sha256:2a2ce2e879b580c06f98f420f5dfc99c024422799f1f66fdd4b51b07a973095a",
-          "operation": "GET /forms"
+          "contract": "sha256:b802fbe9a34c8ade56a76b07d3001b3c65e9b2d003f8caeedb9a3100ab12b043"
         },
         {
+          "operation": "DELETE /individuals/{individual_id}/sacraments/{id}",
           "specRevision": "v2",
-          "contract": "sha256:3909a9d80ff1aeadea1137132cb53722f319e70d4bbfab35b6f95c2217b09b1d",
-          "operation": "GET /forms/{id}/responses"
+          "contract": "sha256:07c3b78bba16570731e329d4ed22be83be72eddb73b4667def18cf1ae073cb38"
         },
         {
+          "operation": "DELETE /messages/{id}",
           "specRevision": "v2",
-          "contract": "sha256:470e6ecc2c486adc1a0d7c7a87de5a2041f736396907bf667a7e5e4d2875a77e",
-          "operation": "GET /processes"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /messages/{id}/comments/{comment_id}",
           "specRevision": "v2",
-          "contract": "sha256:e14f6c7085dfae8db8ed435a46c5f33af2f86ae5b0e02a716db02f11e0c135b7",
-          "operation": "GET /queues"
+          "contract": "sha256:5bb6bcddc707a30ea931f78f8e68e5ba2429d595f4bb24b3b0c121ecd7e42676"
         },
         {
+          "operation": "DELETE /need_items/{id}/assigned_to",
           "specRevision": "v2",
-          "contract": "sha256:4d045a15775aa129f99a9f677733a2cf13cbfe868373895ed42e4154a4e16140",
-          "operation": "GET /queues_individuals"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /needs/{id}",
           "specRevision": "v2",
-          "contract": "sha256:97f3ae97d5694b2746baf3815c43f90c14875bc55b857534f5f7e44dbd5b1dab",
-          "operation": "GET /scheduling/categories"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /needs/{id}/items/{item_id}",
           "specRevision": "v2",
-          "contract": "sha256:3ff06077cd757f1084343018c8bfa9d84b709cff687afa3b2d877f6138ca9480",
-          "operation": "GET /scheduling/categories/{id}/schedules"
+          "contract": "sha256:ad7d2ac17a66f31af0dd4319f57a1d5e321dece94c6fb605dac051b451102b46"
         },
         {
+          "operation": "DELETE /notes/{id}",
           "specRevision": "v2",
-          "contract": "sha256:4950cae5a6c9169996f795f55a054700b5140378629962b1ece518a47ef7701a",
-          "operation": "GET /individuals/{id}/assignments"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /processes/{process_id}",
           "specRevision": "v2",
-          "contract": "sha256:8d17cc202e98296da5efa14faa71008ccde7fb612c9b9720bc603a93646eab44",
-          "operation": "GET /individuals/{id}/notes"
+          "contract": "sha256:8e63ae6c93bd891eceef6744e02bff0ec545cb55ba05c9d10431b6ce8f76f386"
         },
         {
+          "operation": "DELETE /processes/{process_id}/managers/{manager_id}",
           "specRevision": "v2",
-          "contract": "sha256:33b19582af257ddec706271a1bc764b48d8b752b7b29c2049ffbd04da8dc9f4a",
-          "operation": "GET /individuals/{id}/metrics/giving"
+          "contract": "sha256:7283c436e060d186d73cebcf9bc03b472727aeeac86a0dc936936f6ba0e1f128"
         },
         {
+          "operation": "DELETE /queue_individuals/{queue_individual_id}",
           "specRevision": "v2",
-          "contract": "sha256:72d06c8288a35e8ac7b0b93b93274532f31712b810d20280249a2f14a920457e",
-          "operation": "GET /families/{id}/metrics/giving"
+          "contract": "sha256:35e8b0478e6526dddd7190b5f23282d23c153a5b80adc2746e6207eafbb9043b"
         },
         {
+          "operation": "DELETE /queues/{queue_id}",
           "specRevision": "v2",
-          "contract": "sha256:9dbec4cf604ed5557c241c3686cd25de7b985e30df9b17c2ea30abb45bae69af",
-          "operation": "GET /individuals/{id}/pledges"
+          "contract": "sha256:4bdc6e441899239bb8bce5aafe9cbc6d041f932c1d8094e3e4d794b0900d3de8"
         },
         {
+          "operation": "DELETE /queues/{queue_id}/managers/{manager_id}",
           "specRevision": "v2",
-          "contract": "sha256:a2b087df14a364fc067064a94ed29e8d23d616dc6fb9c0d567d70a3aa392f4f8",
-          "operation": "POST /search/assignments/results"
+          "contract": "sha256:a0993143ac5f0a3324481517a89ece32c6916fd2cf795997c0afa507e3f71b2d"
         },
         {
+          "operation": "DELETE /saved_searches/{individual_id}/search/{id}",
           "specRevision": "v2",
-          "contract": "sha256:f3d052e1716ff29e40e5bc2d9c80e9d902c579bef1f2b19afd922b315d2b8cf8",
-          "operation": "POST /search/categories/results"
+          "contract": "sha256:07c3b78bba16570731e329d4ed22be83be72eddb73b4667def18cf1ae073cb38"
         },
         {
+          "operation": "DELETE /saved_searches/{individual_id}/search/{saved_search_id}/leave",
           "specRevision": "v2",
-          "contract": "sha256:59663501a83c8ff7a8b2db39eb52477be566114927d909c5444ed9afadc60810",
-          "operation": "POST /search/department_detail/results"
+          "contract": "sha256:acf2a503f362d5ff77c8070360e36f92813ccc98d54b9c65d0a88d25be6ca20e"
         },
         {
+          "operation": "DELETE /scheduling/assignments",
           "specRevision": "v2",
-          "contract": "sha256:808ae6dfa539250b833caf350011174050faf4734dfd016cbe63914519e87813",
-          "operation": "POST /search/groups/results"
+          "contract": "sha256:4fb9b3b5b15c0d34d69a506810964819aeb01a095ac12fe176ccbc388e9b5946"
         },
         {
+          "operation": "DELETE /scheduling/assignments/{id}",
           "specRevision": "v2",
-          "contract": "sha256:a4ad3f8aea15ca7c266b170ba564aa84ba900d4b5f2cc0f952ae99680e37d4e8",
-          "operation": "POST /search/individual_event_attendance/results"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /scheduling/blockout_dates/{id}",
           "specRevision": "v2",
-          "contract": "sha256:f71ea633de5ad74fc3d78230d3771669871830287b04a3569b581c548d8fa267",
-          "operation": "POST /search/individual_groups/results"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /scheduling/blockout_dates/{id}/{occurrence}",
           "specRevision": "v2",
-          "contract": "sha256:e6405913d461b0626ad3038fa0079e657c7422b47fd1a13ac30a9ccfdb9080b2",
-          "operation": "POST /search/individuals/results"
+          "contract": "sha256:ce4d6d704e304387f007d5793003c848dbedd4cd5a63c0c11e86d9ead83c5661"
         },
         {
+          "operation": "DELETE /scheduling/categories/{id}",
           "specRevision": "v2",
-          "contract": "sha256:f5f2cf37a596b0c32b2a3c8839700f45c8abfe0761b33270176c31f229ab485e",
-          "operation": "POST /search/organizers/results"
+          "contract": "sha256:5753767fcc717d0b5436ecb0a2d18d562ad0a6732afefa901a5ea4bfd319831c"
         },
         {
+          "operation": "DELETE /scheduling/categories/{id}/events",
           "specRevision": "v2",
-          "contract": "sha256:c9ae5926b740758cf1c6f0ec6acf9c30b507ae81515d5a732bdce034b022d8ac",
-          "operation": "POST /search/positions/results"
+          "contract": "sha256:95b9c0a136334194026f36e835b8eb042ddef4f4d99c4ea7d6a25245f70dab7e"
         },
         {
+          "operation": "DELETE /scheduling/categories/{id}/plan_organizers/{individualId}",
           "specRevision": "v2",
-          "contract": "sha256:6edbd8c5ac65f9e73fb2f965215b7d32c18add73f5e5536e5f9a3b18dbdfef0f",
-          "operation": "POST /search/schedules/results"
+          "contract": "sha256:117ec55e4c40617d0389719a094a14f03dca9ea659835d8dafdc352faa9b4e35"
         },
         {
+          "operation": "DELETE /scheduling/categories/{id}/schedules",
           "specRevision": "v2",
-          "contract": "sha256:abd46c9d986745e7edf32ec7aac6296c8ae9db951f5b9696b3b184daf32ce13e",
-          "operation": "POST /search/schedules_totals/results"
+          "contract": "sha256:cb0598f271fcd9d38c91ad766c968fad12f6e454c2c22aadc223ccb7803c4f49"
         },
         {
+          "operation": "DELETE /scheduling/categories/{id}/serving_rotations",
           "specRevision": "v2",
-          "contract": "sha256:2f7c4884938015e8ffefa414377d75d611960b92110b821485a146eb1f46d5df",
-          "operation": "POST /search/scheduling_files/results"
+          "contract": "sha256:1b546e934367bda589ae4aed6cc3a1619c6b1ccf6dd61669518cd592b5150871"
         },
         {
+          "operation": "DELETE /scheduling/individuals/{id}/preferences",
           "specRevision": "v2",
-          "contract": "sha256:5de29c5d12511259b896af922284f8fad00d08c9558d0168bf9e5c0094ad0c39",
-          "operation": "POST /search/scheduling_individuals/results"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /scheduling/preference_times/{id}",
           "specRevision": "v2",
-          "contract": "sha256:d28792b8b68b9bcbf1ff41e2446f7d6b8b7c8bb724c34fdadb7c591faa2afd8c",
-          "operation": "POST /search/songs/results"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
         },
         {
+          "operation": "DELETE /scheduling/schedules/{id}",
           "specRevision": "v2",
-          "contract": "sha256:fad66e467eec8615b374e6085cefe902140c29be05de7bf6c7457380923998b5",
-          "operation": "POST /search/volunteers/results"
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
+        },
+        {
+          "operation": "DELETE /scheduling/schedules/{id}/organizers",
+          "specRevision": "v2",
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
+        },
+        {
+          "operation": "DELETE /scheduling/service_plan_items/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
+        },
+        {
+          "operation": "DELETE /scheduling/service_plans/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
+        },
+        {
+          "operation": "DELETE /scheduling/serving_reminder_times/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:5da60afb756f22f109c94b9b6fa1458cf7900d0c4211cf2fa613f3b13e363169"
+        },
+        {
+          "operation": "DELETE /scheduling/teams/{id}/organizers/{individual_id}",
+          "specRevision": "v2",
+          "contract": "sha256:dde0f7bf7002de6eef4417871d82f0a5b0faa36522325e138cafb24b1d58a394"
+        },
+        {
+          "operation": "DELETE /templates/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:b88e0e80d52c86fa3eb157883b2afbf6eb4d0d598bf546b88fd1a11d4854e038"
+        },
+        {
+          "operation": "GET /calendar",
+          "specRevision": "v2",
+          "contract": "sha256:6118a8c7ec401d5e1f0b3f9117d2b0c5b9de0ea1b5da9eb34ed6991cf02708cb"
+        },
+        {
+          "operation": "GET /campuses",
+          "specRevision": "v2",
+          "contract": "sha256:879e3fe414cbf773681ce8e64872583b1032e17c9b8cc97fc75bd215d1b94666"
+        },
+        {
+          "operation": "GET /campuses/{id}/leadership_roles",
+          "specRevision": "v2",
+          "contract": "sha256:e98879508168b2549df58a8c16ba4e103cbbb24799d4445593f6245e589970d5"
+        },
+        {
+          "operation": "GET /campuses/{id}/service_times",
+          "specRevision": "v2",
+          "contract": "sha256:53c005dfa3792faf5c9bd69c7beed62449bee749761f3f6376e5b07f0202062a"
+        },
+        {
+          "operation": "GET /church",
+          "specRevision": "v2",
+          "contract": "sha256:b0b4f8dea7deea8e34232483fb3606e72cdc8fa529bb9c8d241e103fbbc9bb8e"
+        },
+        {
+          "operation": "GET /church/areas_of_town",
+          "specRevision": "v2",
+          "contract": "sha256:e0fd3eea3f429a8e2d7b3704ab57e33d8091cc2dfc8c6d434fc2a11bb9927129"
+        },
+        {
+          "operation": "GET /church/attendance_groupings",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/countries",
+          "specRevision": "v2",
+          "contract": "sha256:9b0fb055c4fcc158c717e6c4a2be37fa8e262cacf6783053348eb2619508a37f"
+        },
+        {
+          "operation": "GET /church/custom_fields",
+          "specRevision": "v2",
+          "contract": "sha256:0cb48fff22e060396c21016dda7c641002b88c0afc7e51cc4d57797ee6cd853b"
+        },
+        {
+          "operation": "GET /church/envelope_user_options",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/ethnicities",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/homebound_ministries",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/membership_types",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/mobile_carriers",
+          "specRevision": "v2",
+          "contract": "sha256:3e81eb78d6185683b8d5938e4eaffe5baa95c75f2691f5771aaa4919f73ae633"
+        },
+        {
+          "operation": "GET /church/preferred_languages",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/privacy_defaults",
+          "specRevision": "v2",
+          "contract": "sha256:8ab6111df0cfd1350583209f919243efa00f23fdc601c2499d4b87ec17cf5112"
+        },
+        {
+          "operation": "GET /church/reasons_left",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/religions",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/school_grades",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/schools",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/services",
+          "specRevision": "v2",
+          "contract": "sha256:af0630ea563e94bd7d86f283160c126a83e4b77c90a99ab2dd947656c3a72d5c"
+        },
+        {
+          "operation": "GET /church/social_networks",
+          "specRevision": "v2",
+          "contract": "sha256:f25b3678538b1fb0e50c31f30c7b055024d634642bd9ff3f68ad15e00c2c972b"
+        },
+        {
+          "operation": "GET /departments",
+          "specRevision": "v2",
+          "contract": "sha256:c57468d29269ba622c9ea17be5d67d3c6fa24610eed618e04735d6604f712710"
+        },
+        {
+          "operation": "GET /events",
+          "specRevision": "v2",
+          "contract": "sha256:cf35a2afa7c094a56587ff3edda49a928b86d082f93a25b736f85d9fed68f7f1"
+        },
+        {
+          "operation": "GET /events/search",
+          "specRevision": "v2",
+          "contract": "sha256:c9036858b0d070448ca552bb4f7cbf7854de5cdaa29a9a174a05fb7bf19a2d34"
+        },
+        {
+          "operation": "GET /events/shared_campuses",
+          "specRevision": "v2",
+          "contract": "sha256:b49c1e8043c888e2ed06053eda95d5dcf5527653dd8da418e59d8deb33ac486b"
+        },
+        {
+          "operation": "GET /events/{eventId}/occurrences/{occurrence}",
+          "specRevision": "v2",
+          "contract": "sha256:d506b4761e5ffef2a9d767b5c0d43ebf8a98bd0b1f280d3b07e1896c263c2d2f"
+        },
+        {
+          "operation": "GET /events/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:1c00918e290145409e7bb192519fb02127f493e21a96a02ebd3e356121d4b204"
+        },
+        {
+          "operation": "GET /events/{id}/attendance/candidates",
+          "specRevision": "v2",
+          "contract": "sha256:68d79cd2b2cada3f5377a08e4f4c9f1fd6caa07d23882af7959dcfb5c718eb7f"
+        },
+        {
+          "operation": "GET /events/{id}/attendance/{occurrence}",
+          "specRevision": "v2",
+          "contract": "sha256:b0a1d33bcb30364c0fe947f93d9209865b4f7ff18138db4b4c257b3ba08c80f0"
+        },
+        {
+          "operation": "GET /events/{id}/attendance/{occurrence}/attendees",
+          "specRevision": "v2",
+          "contract": "sha256:68e9c968bbdb67daeb4a321136c1f0104638cb2ba86ab9560fa014c2d4265884"
+        },
+        {
+          "operation": "GET /events/{id}/calendar",
+          "specRevision": "v2",
+          "contract": "sha256:b7aea79c775cbeb9e528734ac81cf70e759c3b4657d0dc6e41117010dca00700"
+        },
+        {
+          "operation": "GET /events/{id}/guests",
+          "specRevision": "v2",
+          "contract": "sha256:ab1313973d02cdaa0f890022dfd9ee689f6478a40c718d3913ffd0a6affab511"
+        },
+        {
+          "operation": "GET /events/{id}/resources",
+          "specRevision": "v2",
+          "contract": "sha256:25de532cc84c3ca690f1417001a772d444d5a0d57d8250385d677a0765059b76"
+        },
+        {
+          "operation": "GET /events/{id}/rooms",
+          "specRevision": "v2",
+          "contract": "sha256:337e8eeb0f83eb85b51d9dbdd129c553145fe9d469767f6a2f6080dd811cb9f2"
+        },
+        {
+          "operation": "GET /events/{id}/shared_campuses",
+          "specRevision": "v2",
+          "contract": "sha256:090e1f23caa27b4eb3fc81e03857534109f00dbb0eaef26edacb3f3e6a91fe91"
+        },
+        {
+          "operation": "GET /events/{id}/shared_campuses/{campus_id}",
+          "specRevision": "v2",
+          "contract": "sha256:c0b4c3b2ffb054e276513f74d43cb7aee5627d6f2d367c5c728037ae756da821"
+        },
+        {
+          "operation": "GET /families",
+          "specRevision": "v2",
+          "contract": "sha256:98171f81e625b0cb17c999c6dc91f6ba25263400d86fba9d92ab0da67fca6e6b"
+        },
+        {
+          "operation": "GET /families/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:5d4c2deb655a2d30bbef53293e024241dec96092d9cea8041a929de53a78da83"
+        },
+        {
+          "operation": "GET /families/{id}/metrics/giving",
+          "specRevision": "v2",
+          "contract": "sha256:72d06c8288a35e8ac7b0b93b93274532f31712b810d20280249a2f14a920457e"
+        },
+        {
+          "operation": "GET /families/{id}/notes",
+          "specRevision": "v2",
+          "contract": "sha256:b4b32d99ba8818983e23d140d3a152adaeb34accd33e56eefedf588eff4bfaed"
+        },
+        {
+          "operation": "GET /files/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:08f047f08312edeae415c49486a4023fcf6935ac3369cffa7bb61d33a278f6f0"
+        },
+        {
+          "operation": "GET /form_responses/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:efaa6eee463fea68631d7a193d54135511e042b8413aedbd7b3786843b487129"
+        },
+        {
+          "operation": "GET /forms",
+          "specRevision": "v2",
+          "contract": "sha256:2a2ce2e879b580c06f98f420f5dfc99c024422799f1f66fdd4b51b07a973095a"
+        },
+        {
+          "operation": "GET /forms/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:a739f6fb5e202da24f65acc15f338b9d7eaa365513836dae7ac6b7173c9c02e1"
+        },
+        {
+          "operation": "GET /forms/{id}/automations",
+          "specRevision": "v2",
+          "contract": "sha256:9e4c876369e2a1d76756b70d9c93cfdcdd3e0c4d5c0347b693296f8f7edb1ec1"
+        },
+        {
+          "operation": "GET /forms/{id}/questions",
+          "specRevision": "v2",
+          "contract": "sha256:92608ff0b84a90b6c9c5003d225494fe99c054e9a850786e2325e1549a948fbe"
+        },
+        {
+          "operation": "GET /forms/{id}/respondents",
+          "specRevision": "v2",
+          "contract": "sha256:23f962c885f74ea87111d30cb8ababbdbeb737c934c002ea036c664cf46d86f7"
+        },
+        {
+          "operation": "GET /forms/{id}/responses",
+          "specRevision": "v2",
+          "contract": "sha256:3909a9d80ff1aeadea1137132cb53722f319e70d4bbfab35b6f95c2217b09b1d"
+        },
+        {
+          "operation": "GET /group_areas",
+          "specRevision": "v2",
+          "contract": "sha256:a2c8b454e25d13f629ad3cd5c7435598a09cba9fa4c97f24a11ba2815b468723"
+        },
+        {
+          "operation": "GET /group_meet_days",
+          "specRevision": "v2",
+          "contract": "sha256:a2c8b454e25d13f629ad3cd5c7435598a09cba9fa4c97f24a11ba2815b468723"
+        },
+        {
+          "operation": "GET /group_meet_times",
+          "specRevision": "v2",
+          "contract": "sha256:a2c8b454e25d13f629ad3cd5c7435598a09cba9fa4c97f24a11ba2815b468723"
+        },
+        {
+          "operation": "GET /group_types",
+          "specRevision": "v2",
+          "contract": "sha256:a2c8b454e25d13f629ad3cd5c7435598a09cba9fa4c97f24a11ba2815b468723"
+        },
+        {
+          "operation": "GET /groups",
+          "specRevision": "v2",
+          "contract": "sha256:c3beb1e8abb6fbdeefc5f0bc4cf390e358b5547bc86a90e4d771f8af47f12cbc"
+        },
+        {
+          "operation": "GET /groups/admin",
+          "specRevision": "v2",
+          "contract": "sha256:1b80daf35b749921e1e72fea3b1ba4d004b2452812e32bbb2dcb4a70cac33737"
+        },
+        {
+          "operation": "GET /groups/{group_id}/settings",
+          "specRevision": "v2",
+          "contract": "sha256:baaf5140d9eb111d0e9e539c47d1687de766936c7579cb3270600e34b5f06e33"
+        },
+        {
+          "operation": "GET /groups/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:39bc6daa3bf6cf0c3b5b245acc0d50dcbcaec4c24a2d754fa42c0299b0781dcf"
+        },
+        {
+          "operation": "GET /groups/{id}/attendance",
+          "specRevision": "v2",
+          "contract": "sha256:8be840b22734fe32c4adad390efc292b4f7a6d555e8f5e445056ac62a3c7d8c0"
+        },
+        {
+          "operation": "GET /groups/{id}/attendance/needed",
+          "specRevision": "v2",
+          "contract": "sha256:42a84754e6593efe8c4fc054d4523bc5bcf7eaecf5cacfe850af593ee55aa55c"
+        },
+        {
+          "operation": "GET /groups/{id}/attendance_groupings",
+          "specRevision": "v2",
+          "contract": "sha256:4d09f860a732ef7a837d3834690b7d28d4ac195cd1d8909dc7a1d25897ba8af0"
+        },
+        {
+          "operation": "GET /groups/{id}/calendar",
+          "specRevision": "v2",
+          "contract": "sha256:e413260dded1f979fe0f7cadfc62cf1b5cc83c86bea2b41a6ca7cc63d6720368"
+        },
+        {
+          "operation": "GET /groups/{id}/event_owner_candidates",
+          "specRevision": "v2",
+          "contract": "sha256:cf971efb58e55cdecf4a4fd6c77439db05485c63954dfceb21c94350217c3106"
+        },
+        {
+          "operation": "GET /groups/{id}/events",
+          "specRevision": "v2",
+          "contract": "sha256:b16a25b6e11b4942aa69c9d98db558854f3d6b37ba3ba6fbd517d8138d61577c"
+        },
+        {
+          "operation": "GET /groups/{id}/leaders",
+          "specRevision": "v2",
+          "contract": "sha256:542c144ebd956c3e538d4932573e502d74367e5e71af6024ae49c152b4cb4ddb"
+        },
+        {
+          "operation": "GET /groups/{id}/members",
+          "specRevision": "v2",
+          "contract": "sha256:dd82c2fa7e246c73719772b25339f83ae2d3224c867b441a4e4cdcb124038ea1"
+        },
+        {
+          "operation": "GET /groups/{id}/messages",
+          "specRevision": "v2",
+          "contract": "sha256:dd6ecd41ab3a08c4f08a0528f609da532c52d6f08bb0a512e9f8660a5261a254"
+        },
+        {
+          "operation": "GET /groups/{id}/needs",
+          "specRevision": "v2",
+          "contract": "sha256:0ef37545b13a8d4e662bf476a0d4d6d20260783e862f6b278c54cbb228b7caf6"
+        },
+        {
+          "operation": "GET /groups/{id}/requesting",
+          "specRevision": "v2",
+          "contract": "sha256:9709136babc1b6caaa644648ad21cd23866e1a8458d4f76318a415cc684f405c"
+        },
+        {
+          "operation": "GET /groups/{id}/special_days",
+          "specRevision": "v2",
+          "contract": "sha256:9b1356454b990986088087ae384eb9989650b1ba5cd73d57116426a3fdd5b725"
+        },
+        {
+          "operation": "GET /individual_messages/{id}/replies",
+          "specRevision": "v2",
+          "contract": "sha256:3413114a89da8dddfb7d4baa004be5fbfe36d3c297934e911801e8a26a0560e7"
+        },
+        {
+          "operation": "GET /individuals",
+          "specRevision": "v2",
+          "contract": "sha256:8517ab49fdc4fd71412872cf4737f6fb146a93ded952761839f94f343b417fd0"
+        },
+        {
+          "operation": "GET /individuals/background_checks",
+          "specRevision": "v2",
+          "contract": "sha256:c70bb6657297a761234f380c60add50401780aa37e531d0a67b55aa0c7edf258"
+        },
+        {
+          "operation": "GET /individuals/duplicates",
+          "specRevision": "v2",
+          "contract": "sha256:d0b7fa550afaa96a25aca97659197aef5ae3c97172fdc33a7eb39ec87461c919"
+        },
+        {
+          "operation": "GET /individuals/merge_history",
+          "specRevision": "v2",
+          "contract": "sha256:2c6af24ce7129a5764aa30ed6690375777fb9239756eb3190e4208207b83f7f4"
+        },
+        {
+          "operation": "GET /individuals/metrics/duplicates",
+          "specRevision": "v2",
+          "contract": "sha256:b17eb403e5f7ebd19e7b9fb1634948db3dedcc752f704df587aea8912347e038"
+        },
+        {
+          "operation": "GET /individuals/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:aa145e0843112a8ac90507472dbac893daf444f6df640f655af085afec6482f6"
+        },
+        {
+          "operation": "GET /individuals/{id}/abilities",
+          "specRevision": "v2",
+          "contract": "sha256:f380171d1710ebfcb275b8ffc2c2d06696376d7ae25d6da0916cdb578019dd64"
+        },
+        {
+          "operation": "GET /individuals/{id}/admin/events",
+          "specRevision": "v2",
+          "contract": "sha256:e11ba25acbba7ce2f92c49ca38a60509bc7d85bf2593fa68f33b72f57e4be0e0"
+        },
+        {
+          "operation": "GET /individuals/{id}/assignments",
+          "specRevision": "v2",
+          "contract": "sha256:1f792672e1e62760eb266242a6ffc0271a270797cb29807de8ee88072ab18ab4"
+        },
+        {
+          "operation": "GET /individuals/{id}/background_checks",
+          "specRevision": "v2",
+          "contract": "sha256:29d455615f3ab6c652474036e52cccde820b75b5e9d1db94cf51491cc2ec9bfd"
+        },
+        {
+          "operation": "GET /individuals/{id}/calendar",
+          "specRevision": "v2",
+          "contract": "sha256:3655289538e84b75fc5ec91ad93db871ba51742b36bba3df6d4632beb6b037a4"
+        },
+        {
+          "operation": "GET /individuals/{id}/categorized_timelines",
+          "specRevision": "v2",
+          "contract": "sha256:ddaecdc653cca112037016c43883708c5dd46705144e68d066b13f46b30935a5"
+        },
+        {
+          "operation": "GET /individuals/{id}/departments",
+          "specRevision": "v2",
+          "contract": "sha256:1392d08ca7781c6c89e5836a906bfd9605c73941979740e690066dfb6ade081e"
+        },
+        {
+          "operation": "GET /individuals/{id}/duplicates",
+          "specRevision": "v2",
+          "contract": "sha256:625a7ad9d5aa6c273538b46099f80e9a1e52f6907a1019c72426a5d9bf4187d8"
+        },
+        {
+          "operation": "GET /individuals/{id}/events/{event_id}",
+          "specRevision": "v2",
+          "contract": "sha256:22792eaa6231048e0280bf8620c82a2802b9a5104f47c3c8de14007a3bfde387"
+        },
+        {
+          "operation": "GET /individuals/{id}/files",
+          "specRevision": "v2",
+          "contract": "sha256:05b6dbddfdae66c5fb53950cc9999ac73942de6649fb639ea4288f4c310d8e72"
+        },
+        {
+          "operation": "GET /individuals/{id}/form_responses",
+          "specRevision": "v2",
+          "contract": "sha256:e2bea6755e392a13b2f7452549dc712314bdf82cc61a283fe0254ab5cadcdd2f"
+        },
+        {
+          "operation": "GET /individuals/{id}/forms",
+          "specRevision": "v2",
+          "contract": "sha256:2050cb53098d0ad811f374a087e5e14fc2ac49ae72d1f6a61b60b26b6022fd15"
+        },
+        {
+          "operation": "GET /individuals/{id}/gifts",
+          "specRevision": "v2",
+          "contract": "sha256:f380171d1710ebfcb275b8ffc2c2d06696376d7ae25d6da0916cdb578019dd64"
+        },
+        {
+          "operation": "GET /individuals/{id}/groups",
+          "specRevision": "v2",
+          "contract": "sha256:6a4e950c885596c976220372c28e835cef9ef2e858be388d3c3fa59cf06a6b08"
+        },
+        {
+          "operation": "GET /individuals/{id}/groups/{group_id}",
+          "specRevision": "v2",
+          "contract": "sha256:95b94c542ca842fe7a3e7b5b77fc3c2a53c95eee247a9b11b852081b6f75e358"
+        },
+        {
+          "operation": "GET /individuals/{id}/history",
+          "specRevision": "v2",
+          "contract": "sha256:35419c58c181de874c56d603b93f1cc972800d26211249e8dfcb6e76e5e40268"
+        },
+        {
+          "operation": "GET /individuals/{id}/history/groups",
+          "specRevision": "v2",
+          "contract": "sha256:7933cd4219f23b2a41beb97374aa34d2edd1588a10e0c418ef72b3e5c170d90a"
+        },
+        {
+          "operation": "GET /individuals/{id}/ignored",
+          "specRevision": "v2",
+          "contract": "sha256:625a7ad9d5aa6c273538b46099f80e9a1e52f6907a1019c72426a5d9bf4187d8"
+        },
+        {
+          "operation": "GET /individuals/{id}/messages",
+          "specRevision": "v2",
+          "contract": "sha256:b1f22c8db2152282959d3b2434c031445fd3b5537dafc6c20422222725fd7ae8"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/attendance",
+          "specRevision": "v2",
+          "contract": "sha256:33b19582af257ddec706271a1bc764b48d8b752b7b29c2049ffbd04da8dc9f4a"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/attendance/summary",
+          "specRevision": "v2",
+          "contract": "sha256:7ece7fc123d76912298dd366b4d07350bffec29ee03ad6a0177b2c7429a5ac77"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/form_responses",
+          "specRevision": "v2",
+          "contract": "sha256:aa3492c97e421f491fe58ab59a2dcee8f8bee08da6bcf6e074c5e1817c363cb6"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/giving",
+          "specRevision": "v2",
+          "contract": "sha256:33b19582af257ddec706271a1bc764b48d8b752b7b29c2049ffbd04da8dc9f4a"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/giving/summary",
+          "specRevision": "v2",
+          "contract": "sha256:7ece7fc123d76912298dd366b4d07350bffec29ee03ad6a0177b2c7429a5ac77"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/groups",
+          "specRevision": "v2",
+          "contract": "sha256:efd61e04c8e61da72929400c786b70c7cf615544b0881db7332cb086a1e4c380"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/groups_history",
+          "specRevision": "v2",
+          "contract": "sha256:341bdfb4bfb2a2070779e356d09c206cd33b085297cae3892ce6b2a3109fcc41"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/process_queues",
+          "specRevision": "v2",
+          "contract": "sha256:ddb16d4f44b23df4bd68312e6b27118952d09e5dcfbf41042e1907a504c6192e"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/serving",
+          "specRevision": "v2",
+          "contract": "sha256:33b19582af257ddec706271a1bc764b48d8b752b7b29c2049ffbd04da8dc9f4a"
+        },
+        {
+          "operation": "GET /individuals/{id}/metrics/serving/summary",
+          "specRevision": "v2",
+          "contract": "sha256:7ece7fc123d76912298dd366b4d07350bffec29ee03ad6a0177b2c7429a5ac77"
+        },
+        {
+          "operation": "GET /individuals/{id}/needs",
+          "specRevision": "v2",
+          "contract": "sha256:603c9bb3f32b048383010da5ae8224fa605a0e78336bceeca06817c788bcb34f"
+        },
+        {
+          "operation": "GET /individuals/{id}/notes",
+          "specRevision": "v2",
+          "contract": "sha256:8d17cc202e98296da5efa14faa71008ccde7fb612c9b9720bc603a93646eab44"
+        },
+        {
+          "operation": "GET /individuals/{id}/notes/leaders",
+          "specRevision": "v2",
+          "contract": "sha256:69c531367b774b2ccb18269dc5e64e4eb16a6ca4a88129dcbe193383573b2e8f"
+        },
+        {
+          "operation": "GET /individuals/{id}/passions",
+          "specRevision": "v2",
+          "contract": "sha256:f380171d1710ebfcb275b8ffc2c2d06696376d7ae25d6da0916cdb578019dd64"
+        },
+        {
+          "operation": "GET /individuals/{id}/pledges",
+          "specRevision": "v2",
+          "contract": "sha256:9dbec4cf604ed5557c241c3686cd25de7b985e30df9b17c2ea30abb45bae69af"
+        },
+        {
+          "operation": "GET /individuals/{id}/privacy_settings",
+          "specRevision": "v2",
+          "contract": "sha256:d7944de954d5f0b3103548e3e658ff486988487401fb7bfb62c8d20537591f15"
+        },
+        {
+          "operation": "GET /individuals/{id}/sacraments",
+          "specRevision": "v2",
+          "contract": "sha256:64bd6dd6140ca2eb8b09e88070ee64171a560156398a24037b93efc851ac460c"
+        },
+        {
+          "operation": "GET /individuals/{id}/scheduled_gifts",
+          "specRevision": "v2",
+          "contract": "sha256:11cabb8b42db69e88f1fc7678e6fc4bf4a7b428caa81ade8af1804560acffd38"
+        },
+        {
+          "operation": "GET /individuals/{id}/social_networks",
+          "specRevision": "v2",
+          "contract": "sha256:c067f7092ba11a797e18bfbef4ab2c390179ac4b6daa855ccc0b125a65961edc"
+        },
+        {
+          "operation": "GET /individuals/{id}/timelines",
+          "specRevision": "v2",
+          "contract": "sha256:52df435e0216d08d9926dafb2cad83a4f586daadeb6f5abee7f4607bc0541dfa"
+        },
+        {
+          "operation": "GET /individuals/{id}/timelines/{context_type}/{context_id}",
+          "specRevision": "v2",
+          "contract": "sha256:106702736539ee779e74c0785c77005a0e7bcedb5fcdb850a2de57b8b7f6d56f"
+        },
+        {
+          "operation": "GET /individuals/{individual_id}/admin/processes",
+          "specRevision": "v2",
+          "contract": "sha256:67c78305baf21e8f4133a2b22c8a1c688f03b1ad0ee25af6285437a714774889"
+        },
+        {
+          "operation": "GET /individuals/{individual_id}/admin/queues",
+          "specRevision": "v2",
+          "contract": "sha256:b0f4633f29d6195b932a1b41b216eae5b22fc58f4cd2f42cf9f0ec0d265182e6"
+        },
+        {
+          "operation": "GET /integrations/checkr",
+          "specRevision": "v2",
+          "contract": "sha256:60914cf6e11723d73c449ecfb07c2dc699ff7f10fae29ff51d72c899cc25580d"
+        },
+        {
+          "operation": "GET /me",
+          "specRevision": "v2",
+          "contract": "sha256:dbf6871bb74d127dff691c572df686448806fb03d726abbef8efc4f77d518e36"
+        },
+        {
+          "operation": "GET /merge/individuals",
+          "specRevision": "v2",
+          "contract": "sha256:934c9523940b42089c4c171c62a0dcba1f16dba570010b11f434c8925fb742b2"
+        },
+        {
+          "operation": "GET /messages/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:9dc03fa2cfd17e499672c666a64c2551eddc4156703386ff2b7fe3a31a36a69b"
+        },
+        {
+          "operation": "GET /messages/{id}/comments",
+          "specRevision": "v2",
+          "contract": "sha256:c26a97151a0268fa13b638ccb904e37fc78249f64d3cac396b0c258fd67b7e37"
+        },
+        {
+          "operation": "GET /needs/{id}/items",
+          "specRevision": "v2",
+          "contract": "sha256:6aecf0d88726ffd4ecee84eda6bcbfd2e797e4d1b4d5b9e37468baa8be424941"
+        },
+        {
+          "operation": "GET /notes",
+          "specRevision": "v2",
+          "contract": "sha256:0d5063bf8169c3c395f9377914d6dd5166e319b28f2cfe80f07cb43b2bc467d8"
+        },
+        {
+          "operation": "GET /notes/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:d4f34eea8e483429cde9eab1bc3e3ed275a04619484361ffb46238846afd8d6b"
+        },
+        {
+          "operation": "GET /processes",
+          "specRevision": "v2",
+          "contract": "sha256:470e6ecc2c486adc1a0d7c7a87de5a2041f736396907bf667a7e5e4d2875a77e"
+        },
+        {
+          "operation": "GET /processes/{process_id}",
+          "specRevision": "v2",
+          "contract": "sha256:71dd7ffe88ea222e5ace0c23195137e190dc4d350a18a9741ca898caa0ffa8d4"
+        },
+        {
+          "operation": "GET /processes/{process_id}/managers",
+          "specRevision": "v2",
+          "contract": "sha256:715c1de9d3db807e1451fb75d764db9c7e1e99efffafdc7c7b70c750a7b518bd"
+        },
+        {
+          "operation": "GET /queues",
+          "specRevision": "v2",
+          "contract": "sha256:e14f6c7085dfae8db8ed435a46c5f33af2f86ae5b0e02a716db02f11e0c135b7"
+        },
+        {
+          "operation": "GET /queues/{queue_id}",
+          "specRevision": "v2",
+          "contract": "sha256:0997f6b8341c33128863523015ec69fc820c9b3b8759e6110589bb180a8893a8"
+        },
+        {
+          "operation": "GET /queues/{queue_id}/individuals/{individual_id}",
+          "specRevision": "v2",
+          "contract": "sha256:c8912e5b8f57fd81cfee7d6b926fd0ef2cfc83c03d23ff3a3017cc4e53891a6b"
+        },
+        {
+          "operation": "GET /queues/{queue_id}/managers/queue",
+          "specRevision": "v2",
+          "contract": "sha256:7fbd312ebed81b6d5cc015415a749f6740a6ffcef1fbc2448afe1813e4176e7f"
+        },
+        {
+          "operation": "GET /queues_individuals",
+          "specRevision": "v2",
+          "contract": "sha256:4d045a15775aa129f99a9f677733a2cf13cbfe868373895ed42e4154a4e16140"
+        },
+        {
+          "operation": "GET /queues_individuals/{queueIndividualId}",
+          "specRevision": "v2",
+          "contract": "sha256:4e51d0650c40efa00a89825ec6ed2c3c794949f29fc14fd9179ecaacf9d73a06"
+        },
+        {
+          "operation": "GET /saved_searches/search/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:ec04a7dedf2378bb1594d24bfca376cc31f164154ad28f7f52821340af49c0a4"
+        },
+        {
+          "operation": "GET /saved_searches/search/{search_id}/individual/{individual_id}",
+          "specRevision": "v2",
+          "contract": "sha256:a06423fe806d115601ededeb85d4775415238680a47fae5576ea9df91bfe0444"
+        },
+        {
+          "operation": "GET /saved_searches/search/{search_id}/individuals",
+          "specRevision": "v2",
+          "contract": "sha256:a88a4ff0682de01f3ee88997e1efb456732b40c167e35b4b7ab9def563c22722"
+        },
+        {
+          "operation": "GET /saved_searches/{individual_id}",
+          "specRevision": "v2",
+          "contract": "sha256:5a2655f760d666a875e6294b8a63a3664ce483be686d2be9d201655df6d63b49"
+        },
+        {
+          "operation": "GET /saved_searches/{individual_id}/list",
+          "specRevision": "v2",
+          "contract": "sha256:43a2eca4f8c3ec50ac138ef18cc8edcfd026ec7fd54a5455ff4397bec7d5744e"
+        },
+        {
+          "operation": "GET /scheduling/assignment_swaps/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:5adaab9e723dbac126d091f1ba7574a61abc036a43b2c9184b5ee4532334801e"
+        },
+        {
+          "operation": "GET /scheduling/assignments/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:58aa2a19987216c1dd5592526b78b2ff6099c2bb9b6cc0ab65c3ca0487f2c8e3"
+        },
+        {
+          "operation": "GET /scheduling/assignments/{id}/associated_times",
+          "specRevision": "v2",
+          "contract": "sha256:1ceecdd5797870996f6eb3e9f363847020c75a2db6e148955752886483288282"
+        },
+        {
+          "operation": "GET /scheduling/assignments/{id}/available_swaps",
+          "specRevision": "v2",
+          "contract": "sha256:e5f62cfe68f6c40992e25d7c6607ca354636d24600050fb6c7ad45a3752e308e"
+        },
+        {
+          "operation": "GET /scheduling/auto_schedule/needed_volunteers",
+          "specRevision": "v2",
+          "contract": "sha256:05bca779c9ded12930951bda7e98b006195bc0eb927a051a2a12ac32d2f692c4"
+        },
+        {
+          "operation": "GET /scheduling/categories",
+          "specRevision": "v2",
+          "contract": "sha256:d41cd244e9cfb47f2377b47c6a1fbd38259d66999474ff2235244b4304468817"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:5753767fcc717d0b5436ecb0a2d18d562ad0a6732afefa901a5ea4bfd319831c"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/available_schedule_dates",
+          "specRevision": "v2",
+          "contract": "sha256:732ee34a498eefa4013abe0f9663078acf14ba05ffa1bce478849ea72c9ef641"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/events",
+          "specRevision": "v2",
+          "contract": "sha256:34e6a0c77ede66106af38d6edf5ab7211a3a3b0c4966bd1568905fc3ceb01da5"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/individuals",
+          "specRevision": "v2",
+          "contract": "sha256:7441cc5c32d585dcdd2da877fe8c9e00993ba8a42cd3e2f3809208e1182d2e0b"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/notifications/metrics",
+          "specRevision": "v2",
+          "contract": "sha256:ee3f711ca8fec5fd72d629d49155282e2b7c6e513840cbaade1cb9fb5ef28b38"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/organizers",
+          "specRevision": "v2",
+          "contract": "sha256:f65f9f868025f7e9fc705c8bd0b19583017a2b452ed4be1fd4860c27d703eba0"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/plan_organizers",
+          "specRevision": "v2",
+          "contract": "sha256:3029fd13bb68699d29a76ed0b2c8c4665ab8daacd714969d68ced5e044945ca0"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/schedules",
+          "specRevision": "v2",
+          "contract": "sha256:5de2b4550be1dd7aa958989116f999f9c45d3f6ee6b57101db1ab1273222b0ff"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/service_plans",
+          "specRevision": "v2",
+          "contract": "sha256:4069485a782c7f5e1642c5b29350df28ab33ae56e685327d3c41387dc977ae36"
+        },
+        {
+          "operation": "GET /scheduling/categories/{id}/serving_rotations",
+          "specRevision": "v2",
+          "contract": "sha256:86efb947508243cc8ba35f9674d4df831009b0516ca4a92314cf53fe9d490466"
+        },
+        {
+          "operation": "GET /scheduling/event_positions/{id}/candidates",
+          "specRevision": "v2",
+          "contract": "sha256:e2f9eb6733c63878909b5b31f718e711240b42a7dd4146fb7ffbb4b6a6df709a"
+        },
+        {
+          "operation": "GET /scheduling/events/{event_id}/serving_rotations/{serving_rotation_id}/conflicts",
+          "specRevision": "v2",
+          "contract": "sha256:4f57b41648db71ae39251621ef963148afac17c72ec88853d9675b8044cf14a2"
+        },
+        {
+          "operation": "GET /scheduling/events/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:9f56d9ed0e64ffb5df79cad90f546391512eb32e371ac54bf399c8ad4726fe5c"
+        },
+        {
+          "operation": "GET /scheduling/families/{id}/assignments",
+          "specRevision": "v2",
+          "contract": "sha256:76285f451c63b41ac3eb0ec79925ecaf2303f6bf0601cb8d7a42d8c20cf916a7"
+        },
+        {
+          "operation": "GET /scheduling/families/{id}/blockout_dates",
+          "specRevision": "v2",
+          "contract": "sha256:ca82d6ea054fe2344d98b8c87c06990998908a6a647f74b2e0d9e8b96fe6b947"
+        },
+        {
+          "operation": "GET /scheduling/families/{id}/open_event_positions",
+          "specRevision": "v2",
+          "contract": "sha256:2e537eed6538895a88144386d31f70f9ac3cc00243adff21acb46d5140f0072b"
+        },
+        {
+          "operation": "GET /scheduling/individuals/{id}/blockout_dates",
+          "specRevision": "v2",
+          "contract": "sha256:ca82d6ea054fe2344d98b8c87c06990998908a6a647f74b2e0d9e8b96fe6b947"
+        },
+        {
+          "operation": "GET /scheduling/individuals/{id}/open_event_positions",
+          "specRevision": "v2",
+          "contract": "sha256:a65ed917ed57755246f6b75773c666a53b456dd9d627087928c8ffea2a3505b3"
+        },
+        {
+          "operation": "GET /scheduling/individuals/{id}/open_event_positions/{event_position_id}",
+          "specRevision": "v2",
+          "contract": "sha256:f5288a17f879ad71d097a882617297069732a36647e67989a859959548c9b50e"
+        },
+        {
+          "operation": "GET /scheduling/individuals/{id}/positions",
+          "specRevision": "v2",
+          "contract": "sha256:49135e68fb39410f3bc77422923083bddb7f2a25dc67fbe3aefb6284aa34deda"
+        },
+        {
+          "operation": "GET /scheduling/individuals/{id}/preferences",
+          "specRevision": "v2",
+          "contract": "sha256:6767cc77747437105e436b4aeeecd120e3f45a2ce91db9b15aed43d1f896c746"
+        },
+        {
+          "operation": "GET /scheduling/individuals/{individual_id}/preference_times",
+          "specRevision": "v2",
+          "contract": "sha256:f8413f28224446c7cb1f8e2f3cbed70357a9cbc6bee1f253b0c5bdaefa464b1e"
+        },
+        {
+          "operation": "GET /scheduling/positions",
+          "specRevision": "v2",
+          "contract": "sha256:d7ea15d45a178aa485536c36cbbefff52b3c634373f7fbdefbf740ae58c0e41f"
+        },
+        {
+          "operation": "GET /scheduling/schedules/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:f53f0e1fb424b8767f1fab81ff1230e602624a091d637c6eac7a8c7f692bb57f"
+        },
+        {
+          "operation": "GET /scheduling/schedules/{id}/assignment_metrics",
+          "specRevision": "v2",
+          "contract": "sha256:711f4a69b3e25757390227d24b71f41965e1306c3fc50887a821220d57f2a90b"
+        },
+        {
+          "operation": "GET /scheduling/schedules/{id}/open_schedule_notifications/recipients",
+          "specRevision": "v2",
+          "contract": "sha256:cd2c18bda0f7522469b3ccac29c941c19df09fc9d546b461b32276738a830c16"
+        },
+        {
+          "operation": "GET /scheduling/schedules/{id}/organizers",
+          "specRevision": "v2",
+          "contract": "sha256:3029fd13bb68699d29a76ed0b2c8c4665ab8daacd714969d68ced5e044945ca0"
+        },
+        {
+          "operation": "GET /scheduling/schedules/{id}/serving_reminder_times",
+          "specRevision": "v2",
+          "contract": "sha256:c07a1e22169f1c96fad7071c4e4f16133e6a13188bea206e7fb2059ad0a8dfee"
+        },
+        {
+          "operation": "GET /scheduling/serving_rotation_positions/{id}/candidates",
+          "specRevision": "v2",
+          "contract": "sha256:f8f8c38ebd19b4f92bd394bd1d38e4ca811dd614e8201724dc422798b7c2b91e"
+        },
+        {
+          "operation": "GET /scheduling/song_versions/{version_id}/links",
+          "specRevision": "v2",
+          "contract": "sha256:2f38b9e4140c161b3e59ca3110574b6487eb2ecda1a732e7a0128a3d07e62b2c"
+        },
+        {
+          "operation": "GET /scheduling/songs/{song_id}",
+          "specRevision": "v2",
+          "contract": "sha256:e18a93002fdeb8c41ca64da14cb0447121918b67c65321bd93cbc6561d374758"
+        },
+        {
+          "operation": "GET /scheduling/teams",
+          "specRevision": "v2",
+          "contract": "sha256:a340e2dc28a39ee259f050366f50623a6a5acbc995c9badc010ad32727a710a8"
+        },
+        {
+          "operation": "GET /scheduling/teams/{id}/organizers",
+          "specRevision": "v2",
+          "contract": "sha256:3029fd13bb68699d29a76ed0b2c8c4665ab8daacd714969d68ced5e044945ca0"
+        },
+        {
+          "operation": "GET /settings/financial",
+          "specRevision": "v2",
+          "contract": "sha256:9c0b6e31c53ce8359af736a734ba360acc4bac92dc3d00dd2d905714091aef9d"
+        },
+        {
+          "operation": "GET /templates",
+          "specRevision": "v2",
+          "contract": "sha256:9db434dbf21692e772b85a67ad45c203abc12f080c4f6442f8246f2a3d109875"
+        },
+        {
+          "operation": "GET /templates/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:df672e7b9519fb08ba385526a3cc248bac514cd2939fb00da5f9ac13abc0d30d"
+        },
+        {
+          "operation": "POST /church/privacy_defaults",
+          "specRevision": "v2",
+          "contract": "sha256:38eec2de798a97c2f0696ff295946e97446b0d1fe110510e1d9037483a65d00a"
+        },
+        {
+          "operation": "POST /data_import/individuals",
+          "specRevision": "v2",
+          "contract": "sha256:be3094e4dc14a5f48d4c02f3bd1d210646d044246bd13354438b04dd405eea08"
+        },
+        {
+          "operation": "POST /data_import/sacraments",
+          "specRevision": "v2",
+          "contract": "sha256:be3094e4dc14a5f48d4c02f3bd1d210646d044246bd13354438b04dd405eea08"
+        },
+        {
+          "operation": "POST /events",
+          "specRevision": "v2",
+          "contract": "sha256:5e1532f66b2387469e69d7a34c74266ebb22ab85f83c2654a862536db1c326eb"
+        },
+        {
+          "operation": "POST /events/{id}/attendance/{occurrence}",
+          "specRevision": "v2",
+          "contract": "sha256:9ca37f3419a896ff023194fb6758564ec6b5ee101553f98caa20f82fbb19aac9"
+        },
+        {
+          "operation": "POST /events/{id}/attendance/{occurrence}/attendees",
+          "specRevision": "v2",
+          "contract": "sha256:244f22c87edf960f71fd011b78f2d3719f49aa3e523cc40c3137ef35ad0d3a2e"
+        },
+        {
+          "operation": "POST /events/{id}/photo",
+          "specRevision": "v2",
+          "contract": "sha256:c2bd3cf9ee70b914020abdf19cc9b976cf77645d99934cfff2f4c291dfe6204c"
+        },
+        {
+          "operation": "POST /events/{id}/shared_campuses",
+          "specRevision": "v2",
+          "contract": "sha256:824c031f7fa0d18e43786b4be103c097fc2a65ed1ab9e204c3d096bf53a5a7f3"
+        },
+        {
+          "operation": "POST /families",
+          "specRevision": "v2",
+          "contract": "sha256:f25d677ea301a7db7eacc24e84a860cdef35b7a9f953fdd17f0893437a72d4eb"
+        },
+        {
+          "operation": "POST /families/{id}/photo",
+          "specRevision": "v2",
+          "contract": "sha256:c3dd7576cfca829db71f6563a3fb24c702f692320b3b2d8d840286b191d1443f"
+        },
+        {
+          "operation": "POST /files",
+          "specRevision": "v2",
+          "contract": "sha256:5d12f5ce764b7a3c3ea78a1d28367da8d847f2587ce3457a58051cab0f6cbd97"
+        },
+        {
+          "operation": "POST /forms/{id}/automations",
+          "specRevision": "v2",
+          "contract": "sha256:f8c41423f8a7e6c297d32e471cab66ec9976cf241ff80b681b86a033d2a01aac"
+        },
+        {
+          "operation": "POST /forms/{id}/managers",
+          "specRevision": "v2",
+          "contract": "sha256:c0ea478e14ea7e9d4d45fe649e9ecb5abd7b9e9f03ef8e749b2148f5353a1f2f"
+        },
+        {
+          "operation": "POST /forms/{id}/responses",
+          "specRevision": "v2",
+          "contract": "sha256:ea4aae82e74083bc8513b6fdddc3088e25b0bdc93ed89bb58aeade55559ca81d"
+        },
+        {
+          "operation": "POST /groups/{group_id}/participant_candidates/search",
+          "specRevision": "v2",
+          "contract": "sha256:005aa5b2e7c4efea07c6dc03e9b7573469d834d8240101833536565018bba30d"
+        },
+        {
+          "operation": "POST /groups/{id}/attendance_groupings/sync",
+          "specRevision": "v2",
+          "contract": "sha256:43627f616ab5b33475833d82f0287d082642d58a7ea6aa619b43d084be6f253f"
+        },
+        {
+          "operation": "POST /groups/{id}/members",
+          "specRevision": "v2",
+          "contract": "sha256:ef8c6bcc63b8ed428c148f9fb5716cd21cd2d84b8fdd411e6ae6aafbeba18f37"
+        },
+        {
+          "operation": "POST /groups/{id}/photo",
+          "specRevision": "v2",
+          "contract": "sha256:45f92dd08ab7230d874ec1e4f7b231d3237054ce6176669056debfa55c080ab7"
+        },
+        {
+          "operation": "POST /individual_messages/{id}/replies",
+          "specRevision": "v2",
+          "contract": "sha256:35f8ac62f567f6fa3704586fe25038048e625d2a9f37c9a5aa8134479ebf7d22"
+        },
+        {
+          "operation": "POST /individuals",
+          "specRevision": "v2",
+          "contract": "sha256:4dd37ce3ca1ca65716b56e614d86a5cdd1ecae6dddd5f266473f31ac51d18dc4"
+        },
+        {
+          "operation": "POST /individuals/events/{event_id}",
+          "specRevision": "v2",
+          "contract": "sha256:05fab8f1a9e9738db618180d9f3c41b8d14005e0f78f2e44b445c96b99bc8ff0"
+        },
+        {
+          "operation": "POST /individuals/{id}/background_checks",
+          "specRevision": "v2",
+          "contract": "sha256:336146becbf945d31027ffd9588a764601544361841c90e4c8474f019930666f"
+        },
+        {
+          "operation": "POST /individuals/{id}/events/{event_id}",
+          "specRevision": "v2",
+          "contract": "sha256:4fbc07fb56cdabdbe3715fcaea77dd140da61cd063e848d79c2a0790505a89e1"
+        },
+        {
+          "operation": "POST /individuals/{id}/files",
+          "specRevision": "v2",
+          "contract": "sha256:5fd09093f0ddb88e8a5c40b21fdc9c115b99a3681b34d6ea53d06c67c06b49ff"
+        },
+        {
+          "operation": "POST /individuals/{id}/files/{file_id}",
+          "specRevision": "v2",
+          "contract": "sha256:05869601459f5b7cc947ad2e282f1eae07372295be5b3eb5d1cbd4409ac3b382"
+        },
+        {
+          "operation": "POST /individuals/{id}/groups/{group_id}",
+          "specRevision": "v2",
+          "contract": "sha256:95b94c542ca842fe7a3e7b5b77fc3c2a53c95eee247a9b11b852081b6f75e358"
+        },
+        {
+          "operation": "POST /individuals/{id}/messages",
+          "specRevision": "v2",
+          "contract": "sha256:6430047b459f5a778bd66670d0182dcde3a4fc07f5e1e3e6d4f8ea079007dd5f"
+        },
+        {
+          "operation": "POST /individuals/{id}/notes",
+          "specRevision": "v2",
+          "contract": "sha256:7345ee72f9e301270dc13cc6ad9d4ad98328efb2fb99cc23772ed46a636dfcfc"
+        },
+        {
+          "operation": "POST /individuals/{id}/photo",
+          "specRevision": "v2",
+          "contract": "sha256:ca4cc2d7e8f0011a4bcf22d7731941498d2aa2133844c4363e86b9a86825398d"
+        },
+        {
+          "operation": "POST /individuals/{id}/sacraments",
+          "specRevision": "v2",
+          "contract": "sha256:bc0948295a929a1fedcdc376463bcaf7fbce123207a11dac91c1694313bd74ea"
+        },
+        {
+          "operation": "POST /individuals/{id}/social_networks",
+          "specRevision": "v2",
+          "contract": "sha256:10dc3a98d02d22239f80ab101cf35c562d386af2c046a0d57f51a52bd4745b10"
+        },
+        {
+          "operation": "POST /individuals/{individual_id}/favorite_campuses/{campus_id}",
+          "specRevision": "v2",
+          "contract": "sha256:eb30efad74d3f669cc78221ba6ba4e3cc82802bf9b9e9584950895bb745ece3e"
+        },
+        {
+          "operation": "POST /individuals/{winner_id}/merge",
+          "specRevision": "v2",
+          "contract": "sha256:2347ae05fc8ece44c8748cb444de27305204f4355e16663909c19eeeb765aaf1"
+        },
+        {
+          "operation": "POST /messages/{id}/comments",
+          "specRevision": "v2",
+          "contract": "sha256:c94422bf85d717c5eaa3e9bf23b4bcba34949f7fcc0348a85324d78c4c64bc9f"
+        },
+        {
+          "operation": "POST /needs",
+          "specRevision": "v2",
+          "contract": "sha256:38b20abad529d012e03fbbc8867f763a482b66f6b7654820803ee2f968421372"
+        },
+        {
+          "operation": "POST /needs/{id}/inform",
+          "specRevision": "v2",
+          "contract": "sha256:c73f11207aab891f554d8331602eb818f7cc41974a895e72cc8b30bacf435caf"
+        },
+        {
+          "operation": "POST /needs/{id}/items",
+          "specRevision": "v2",
+          "contract": "sha256:cfd6217456a17ee224e6211c33575df316a9c70ddf1725276dfa465c9e0913c3"
+        },
+        {
+          "operation": "POST /oauth/token",
+          "specRevision": "v2",
+          "contract": "sha256:3317797fa9abd2fe6dbaa04d723feb3909281d99ed468f4c76efa1fd5171748f"
+        },
+        {
+          "operation": "POST /processes",
+          "specRevision": "v2",
+          "contract": "sha256:29ab4cda8419dd26413b54bbf18599688e0bb1c97aedd27f4c96dabb656b693b"
+        },
+        {
+          "operation": "POST /processes/{process_id}/duplicate",
+          "specRevision": "v2",
+          "contract": "sha256:c7f7e5993e58d843e2ae9b4c6ba4def59483fc924ec1cfc64b15388112684458"
+        },
+        {
+          "operation": "POST /processes/{process_id}/manager",
+          "specRevision": "v2",
+          "contract": "sha256:33b71a218531a3ca98e20ebcee535ab32e71489e5d497d686b33b61fb8fca50b"
+        },
+        {
+          "operation": "POST /queues/{queue_id}/individuals",
+          "specRevision": "v2",
+          "contract": "sha256:6cbe0278d5df7a726c2a1fcd802621165c3a05f9aea20c2e9ce14673303d589c"
+        },
+        {
+          "operation": "POST /queues/{queue_id}/manager",
+          "specRevision": "v2",
+          "contract": "sha256:11c54b568323e8f7f83f5433181c1b97ad81f986cfaafbcda1923edae783298e"
+        },
+        {
+          "operation": "POST /reset_password",
+          "specRevision": "v2",
+          "contract": "sha256:ab735c3ea2ac6948e0555d4e5e64b22232305e0210dc889d7d15a35119e15577"
+        },
+        {
+          "operation": "POST /saved_searches/duplicate/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:11aeac4bd7056d82cb395e89379bcdadfbe55f479345cac58c06994a679e47e0"
+        },
+        {
+          "operation": "POST /scheduling/assignments/{id}/assignment_swaps",
+          "specRevision": "v2",
+          "contract": "sha256:51884c8b37904807309cb374f455f201715db0f87e4a2908b809bf58e84b07e7"
+        },
+        {
+          "operation": "POST /scheduling/auto_schedule",
+          "specRevision": "v2",
+          "contract": "sha256:b3734da15af4d68b61dd8ec30f01903a13b839c2db06b973d88381c332c175b8"
+        },
+        {
+          "operation": "POST /scheduling/categories",
+          "specRevision": "v2",
+          "contract": "sha256:9b4a3f09a9381e9615e491ef294620dd9b6defe5d18682e804a4c991f9dba743"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/files",
+          "specRevision": "v2",
+          "contract": "sha256:76bff6a1f41bfc82f2d28c20a13eb57fd19e05b4fd7ef45cc8b94c65d33492c9"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/messages",
+          "specRevision": "v2",
+          "contract": "sha256:fd5fbf12e42e58867cab0d006002e8cc056b050fba9cbf6ffd42e9d51c5ec007"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/notifications",
+          "specRevision": "v2",
+          "contract": "sha256:cd2fb94ff9a08d63ca175abf6c51ad8b14dc546253094c99f4b690510e453ea8"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/organizers",
+          "specRevision": "v2",
+          "contract": "sha256:e0e0b48c7f43c99877228c31a3b3383baaf416e3ed28e8aedf69fb02ba1553f7"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/plan_organizers",
+          "specRevision": "v2",
+          "contract": "sha256:c105474d95ee61d8b2657589adaa0780fc7cb3cda01606a5bf5779737810c2ad"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/schedules",
+          "specRevision": "v2",
+          "contract": "sha256:4a54d01cdbb9c4366f65dcdf9d7ca122213b0b8b2ad8c57e51a05a654e4da703"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/service_plans",
+          "specRevision": "v2",
+          "contract": "sha256:e038c1b57b10493be7f42712a411ce729b2178fbfac05896ffc07ee6be55a142"
+        },
+        {
+          "operation": "POST /scheduling/categories/{id}/serving_rotations",
+          "specRevision": "v2",
+          "contract": "sha256:30861bad3da2bb27eba28ed57525165fc84ef22452a55152ede6711abc00db19"
+        },
+        {
+          "operation": "POST /scheduling/event_positions/{id}/assignments",
+          "specRevision": "v2",
+          "contract": "sha256:85abd59223c579e77933059f8858b7657bcfafa5704738192ba76bb1827d15ca"
+        },
+        {
+          "operation": "POST /scheduling/event_positions/{source_id}/copy_to/{target_id}",
+          "specRevision": "v2",
+          "contract": "sha256:94944a71a043722901c9bb4009081351cdf8cfd63a72e0fdd2aadab459f5d537"
+        },
+        {
+          "operation": "POST /scheduling/events/{id}/files",
+          "specRevision": "v2",
+          "contract": "sha256:888b0c9571e88c9dfa98f786ab6e9acb09583e0457639f72eefd00705514e576"
+        },
+        {
+          "operation": "POST /scheduling/families/{id}/blockout_dates",
+          "specRevision": "v2",
+          "contract": "sha256:3a0a6a38e826fcf72bdd005b47962b8798f0449faa781dbc28e653ccee1c8b48"
+        },
+        {
+          "operation": "POST /scheduling/individual/{id}/positions",
+          "specRevision": "v2",
+          "contract": "sha256:8a10cd90a84d7d37cfa4e7b7839b53c7638845dd71ea7b2c61cd1d6009b61e8a"
+        },
+        {
+          "operation": "POST /scheduling/individuals/{id}/blockout_dates",
+          "specRevision": "v2",
+          "contract": "sha256:3446b6ccad8f7e75142f8b6b46d062aee47c4fc2f6f0dab15ce3569cfc39fe54"
+        },
+        {
+          "operation": "POST /scheduling/individuals/{individual_id}/preference_times",
+          "specRevision": "v2",
+          "contract": "sha256:850772e22e70f1f790d324ae045a03929ecc935adf765ea0e9ae57b7c5fea028"
+        },
+        {
+          "operation": "POST /scheduling/positions/{id}/volunteer-migrations",
+          "specRevision": "v2",
+          "contract": "sha256:9b4356c875bd5c56c6f7e4f2d74ca949082ca384eb960e35161fb45c29a071a9"
+        },
+        {
+          "operation": "POST /scheduling/positions/{id}/volunteers",
+          "specRevision": "v2",
+          "contract": "sha256:47be3e136ed3be5446c1a7f41535b820cf2fa300165d160f0cf0a3904f886b67"
+        },
+        {
+          "operation": "POST /scheduling/schedules/{id}/message_schedulers",
+          "specRevision": "v2",
+          "contract": "sha256:742d48820e0ecc8ead5eef4bef28b75dd860ea858d67292307537136fb5eee02"
+        },
+        {
+          "operation": "POST /scheduling/schedules/{id}/open_schedule_notifications",
+          "specRevision": "v2",
+          "contract": "sha256:cf4195d18cd96eaa6bdbb93c54b23edb39050796681ed340dbdd0ada164d63b1"
+        },
+        {
+          "operation": "POST /scheduling/schedules/{id}/organizers",
+          "specRevision": "v2",
+          "contract": "sha256:34e1ac572aec37051b338799b62cea9dcb938c972dbf8c8540c245f8f3823cd6"
+        },
+        {
+          "operation": "POST /scheduling/schedules/{id}/serving_reminder_times",
+          "specRevision": "v2",
+          "contract": "sha256:b74c5fff676d0e84114c51c8c29a4c96a07eab441b9d9cd5df54c61a766d4ff7"
+        },
+        {
+          "operation": "POST /scheduling/service_plans/{id}/items",
+          "specRevision": "v2",
+          "contract": "sha256:b5257da9dd56376e15073d4c1a8deaab099078664fb6bcfd0ad049199752a947"
+        },
+        {
+          "operation": "POST /scheduling/serving_rotation_positions/{id}/assignments",
+          "specRevision": "v2",
+          "contract": "sha256:e1d7afdaa7e5660b74c9b0cb43fee3c627b986f64901e23a4d98cc89c7509d34"
+        },
+        {
+          "operation": "POST /scheduling/teams/{id}/organizers",
+          "specRevision": "v2",
+          "contract": "sha256:c105474d95ee61d8b2657589adaa0780fc7cb3cda01606a5bf5779737810c2ad"
+        },
+        {
+          "operation": "POST /search/assignments/results",
+          "specRevision": "v2",
+          "contract": "sha256:c0b164a3c26f9e91bfa4ed7a8de5cc4a487eb6a02166e45232810e4f68be2c8c"
+        },
+        {
+          "operation": "POST /search/categories/results",
+          "specRevision": "v2",
+          "contract": "sha256:95cabee65dcbb7d2eeedc7cb88e6b5ad51b42169a99995d508d503b596455b97"
+        },
+        {
+          "operation": "POST /search/department_detail/results",
+          "specRevision": "v2",
+          "contract": "sha256:59663501a83c8ff7a8b2db39eb52477be566114927d909c5444ed9afadc60810"
+        },
+        {
+          "operation": "POST /search/groups/results",
+          "specRevision": "v2",
+          "contract": "sha256:808ae6dfa539250b833caf350011174050faf4734dfd016cbe63914519e87813"
+        },
+        {
+          "operation": "POST /search/individual_event_attendance/results",
+          "specRevision": "v2",
+          "contract": "sha256:a4ad3f8aea15ca7c266b170ba564aa84ba900d4b5f2cc0f952ae99680e37d4e8"
+        },
+        {
+          "operation": "POST /search/individual_groups/results",
+          "specRevision": "v2",
+          "contract": "sha256:f71ea633de5ad74fc3d78230d3771669871830287b04a3569b581c548d8fa267"
+        },
+        {
+          "operation": "POST /search/individuals/actions/mass_edit_sacraments",
+          "specRevision": "v2",
+          "contract": "sha256:8e151e498ceba5b4c359bb1cdf01c36bd8716dd346f83614f179035eb04786a6"
+        },
+        {
+          "operation": "POST /search/individuals/results",
+          "specRevision": "v2",
+          "contract": "sha256:e6405913d461b0626ad3038fa0079e657c7422b47fd1a13ac30a9ccfdb9080b2"
+        },
+        {
+          "operation": "POST /search/organizers/results",
+          "specRevision": "v2",
+          "contract": "sha256:b43fc590e758316b36e5d793f5d4678e1e5b0bdead9e2f7edfa03f1388a68510"
+        },
+        {
+          "operation": "POST /search/positions/results",
+          "specRevision": "v2",
+          "contract": "sha256:c9ae5926b740758cf1c6f0ec6acf9c30b507ae81515d5a732bdce034b022d8ac"
+        },
+        {
+          "operation": "POST /search/save",
+          "specRevision": "v2",
+          "contract": "sha256:df7a412317630699302b3eb03c3ac657995d33b6c018cdf0b88ab6e9ca9e41fa"
+        },
+        {
+          "operation": "POST /search/schedules/results",
+          "specRevision": "v2",
+          "contract": "sha256:b187e122cff1f31a24a8c5ac84e0d1fe507e0ac6ee43cb9799fa640090a7d431"
+        },
+        {
+          "operation": "POST /search/schedules_totals/results",
+          "specRevision": "v2",
+          "contract": "sha256:abd46c9d986745e7edf32ec7aac6296c8ae9db951f5b9696b3b184daf32ce13e"
+        },
+        {
+          "operation": "POST /search/scheduling_files/results",
+          "specRevision": "v2",
+          "contract": "sha256:2f7c4884938015e8ffefa414377d75d611960b92110b821485a146eb1f46d5df"
+        },
+        {
+          "operation": "POST /search/scheduling_individuals/results",
+          "specRevision": "v2",
+          "contract": "sha256:2afd770dd57bbaeabcf09583d81ab44c90530db9a01d1a6d456f07755eafcfce"
+        },
+        {
+          "operation": "POST /search/songs/results",
+          "specRevision": "v2",
+          "contract": "sha256:d28792b8b68b9bcbf1ff41e2446f7d6b8b7c8bb724c34fdadb7c591faa2afd8c"
+        },
+        {
+          "operation": "POST /search/volunteers/results",
+          "specRevision": "v2",
+          "contract": "sha256:fad66e467eec8615b374e6085cefe902140c29be05de7bf6c7457380923998b5"
+        },
+        {
+          "operation": "POST /templates",
+          "specRevision": "v2",
+          "contract": "sha256:ea045c59f4e1ab06db2e70fb330b587da76648907c67d5567d5ae90803eac58d"
+        },
+        {
+          "operation": "POST /templates/{id}/entities",
+          "specRevision": "v2",
+          "contract": "sha256:e93db8c0de866845d710c92d55f542ce53c963b2c59e8a88679b9f3bd7625ef6"
+        },
+        {
+          "operation": "PUT /campuses",
+          "specRevision": "v2",
+          "contract": "sha256:c98798461b156c0c675a41483029d50e1e799c578ddb2e788a17fae5191465dd"
+        },
+        {
+          "operation": "PUT /events/{event_id}/attendance_grouping",
+          "specRevision": "v2",
+          "contract": "sha256:a1edbaed8f11cfb102b8bb47a4c06135d096083935ff5743344caf0417cfec1d"
+        },
+        {
+          "operation": "PUT /events/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:ea0c5ca132f7964b21f694fb6127cb0a1afd6eb19d9e7791fad06bfa459a4b3c"
+        },
+        {
+          "operation": "PUT /events/{id}/invitation_settings",
+          "specRevision": "v2",
+          "contract": "sha256:fea2c202c7b7b7903ccbb5b647d6b1a4997a9cba0922edaa124a814d2f14ffee"
+        },
+        {
+          "operation": "PUT /events/{id}/shared_campuses/{campus_id}",
+          "specRevision": "v2",
+          "contract": "sha256:c0b4c3b2ffb054e276513f74d43cb7aee5627d6f2d367c5c728037ae756da821"
+        },
+        {
+          "operation": "PUT /families/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:a6059f0ad342b4c0aeafcb8200c7a47f993472d74836f2140d27a97958264edd"
+        },
+        {
+          "operation": "PUT /form_automations/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:df5928b746c37c238a56491466cb5b312570424c89ffeca7361b3eb37dc380d6"
+        },
+        {
+          "operation": "PUT /groups/{group_id}/members/roles",
+          "specRevision": "v2",
+          "contract": "sha256:b9365b1b9bd12d0d7edf7066db14c294da9209a8c198f2f1b1c4c40c624baf73"
+        },
+        {
+          "operation": "PUT /groups/{group_id}/settings",
+          "specRevision": "v2",
+          "contract": "sha256:863744cea2aecab6325d25796bd62c9a08b8a281751d1b93dbe86a225311e437"
+        },
+        {
+          "operation": "PUT /groups/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:8a12f90201c5e39a2d11d8a43652844090f988a19171c07eac3ac14d26a34f49"
+        },
+        {
+          "operation": "PUT /groups/{id}/members",
+          "specRevision": "v2",
+          "contract": "sha256:2b400ceef9f5bf2d1892fe3b40888cd3b0d74d17b930f0a226951ab8d575e4ed"
+        },
+        {
+          "operation": "PUT /individual_message_replies/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:35f8ac62f567f6fa3704586fe25038048e625d2a9f37c9a5aa8134479ebf7d22"
+        },
+        {
+          "operation": "PUT /individual_messages/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:6430047b459f5a778bd66670d0182dcde3a4fc07f5e1e3e6d4f8ea079007dd5f"
+        },
+        {
+          "operation": "PUT /individuals/background_checks/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:336146becbf945d31027ffd9588a764601544361841c90e4c8474f019930666f"
+        },
+        {
+          "operation": "PUT /individuals/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:755266a1bc64ca775fc59ce3db979cb2b4096d24144fd3577a9f3967dab2dff3"
+        },
+        {
+          "operation": "PUT /individuals/{id}/assignments",
+          "specRevision": "v2",
+          "contract": "sha256:b1427b6eda35c8ad2eb2ae7f9b3b44b10fc230993d4f449758f90054a77775f1"
+        },
+        {
+          "operation": "PUT /individuals/{id}/contact_info",
+          "specRevision": "v2",
+          "contract": "sha256:006f405fe12fd44463073c337561f5dd5af55680b05cc1112ead2ba27a149a72"
+        },
+        {
+          "operation": "PUT /individuals/{id}/groups/bulk",
+          "specRevision": "v2",
+          "contract": "sha256:e85693fdfa1bed82c54a51d8fa5952c16f1eef986152b6dc69dd034a1cf6ec32"
+        },
+        {
+          "operation": "PUT /individuals/{id}/groups/{group_id}",
+          "specRevision": "v2",
+          "contract": "sha256:2c76d7b3d4bf7fdf473a1194e774245571b46eeb7fb32ddc5a3774f67a7090cb"
+        },
+        {
+          "operation": "PUT /individuals/{id}/privacy_settings",
+          "specRevision": "v2",
+          "contract": "sha256:3f80e956f19b860ca7a45b470bcf3cc2b25543ca42bf4f1addff5fe6532886b3"
+        },
+        {
+          "operation": "PUT /individuals/{id}/scheduled_gifts/{gift_id}",
+          "specRevision": "v2",
+          "contract": "sha256:de763c737e5298dd4ab092105f0885e22662d01fef876e50a206a36498c134d4"
+        },
+        {
+          "operation": "PUT /individuals/{individual_id}/sacraments/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:a7328f0d6d6861ce282daff26a45adcb27f7f2f2b250b7a721f397278089450c"
+        },
+        {
+          "operation": "PUT /messages/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:cd6582aa90c5b5d59a9d94876cb2901bbb600843144a144cf506a4d482da227c"
+        },
+        {
+          "operation": "PUT /messages/{id}/comments/{comment_id}",
+          "specRevision": "v2",
+          "contract": "sha256:e4b652a72e1cbc47e10a4e523e21bafaa8e4ba862156321c954416f64d745725"
+        },
+        {
+          "operation": "PUT /need_items/{id}/assigned_to",
+          "specRevision": "v2",
+          "contract": "sha256:5e9df6977fdb4ea8c6b356a21f5a9fa5bd010afa4aa812221aca21935c7608e3"
+        },
+        {
+          "operation": "PUT /needs/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:9c97020ee8da168cdec6fb82d9008619fad06ee221af7f3a02442ec5eaffe856"
+        },
+        {
+          "operation": "PUT /needs/{id}/coordinator",
+          "specRevision": "v2",
+          "contract": "sha256:0f8fadc06873657cd7a81b83a44d414d7b2a7f8a240625a14700b85ba37eea35"
+        },
+        {
+          "operation": "PUT /needs/{id}/items/{item_id}",
+          "specRevision": "v2",
+          "contract": "sha256:cc5902658ce3c50364cba3e5c461da4bb32073982fa8a49127c83680cdd573bb"
+        },
+        {
+          "operation": "PUT /notes/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:f9cc908a3b2009eaca2575a10cbb47d57d037d842bf6c57b1d5dcd5d6e19c9c6"
+        },
+        {
+          "operation": "PUT /processes/{process_id}",
+          "specRevision": "v2",
+          "contract": "sha256:c7f7e5993e58d843e2ae9b4c6ba4def59483fc924ec1cfc64b15388112684458"
+        },
+        {
+          "operation": "PUT /queues_individuals/{queueIndividualId}",
+          "specRevision": "v2",
+          "contract": "sha256:83566112d352b1420309a42c05d6e26b1bf7717d031d12c259164af2fbb53501"
+        },
+        {
+          "operation": "PUT /queues_individuals/{queueIndividualId}/queue",
+          "specRevision": "v2",
+          "contract": "sha256:4a3089ae68e8073497731821847a6a7d923b6b44cdd48683041f8cb631cc80c0"
+        },
+        {
+          "operation": "PUT /saved_searches/search/{search_id}/individual/{individual_id}",
+          "specRevision": "v2",
+          "contract": "sha256:483fb79d776c57224e1b1a64693d06bbc3546a84c814adf27c3813dd1c83a9f8"
+        },
+        {
+          "operation": "PUT /saved_searches/search/{search_id}/individual/{individual_id}/star",
+          "specRevision": "v2",
+          "contract": "sha256:0f570b6d0541736ca4aee579ed99023af69cb81fef0e43113fb8587a6c4fe1d4"
+        },
+        {
+          "operation": "PUT /scheduling/assignment_swaps/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:e5cf649a71446dcdb7b987a3cac942e9dda9e40973b7b5b27efa2f6a070728db"
+        },
+        {
+          "operation": "PUT /scheduling/assignments/{assignment_id}/associated_times/{associated_time_id}",
+          "specRevision": "v2",
+          "contract": "sha256:a9187ae5672cbe4e2c7a293b88e572f63551a07eea2c93dbb5edc1e75d74f6f1"
+        },
+        {
+          "operation": "PUT /scheduling/assignments/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:33d88e375f9fab096f8f56883b8df270314c362fe8ba655a0ab10e1208ef9ce3"
+        },
+        {
+          "operation": "PUT /scheduling/blockout_dates/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:3446b6ccad8f7e75142f8b6b46d062aee47c4fc2f6f0dab15ce3569cfc39fe54"
+        },
+        {
+          "operation": "PUT /scheduling/categories/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:6cdc74b0c02f1c84d1c47c7e541295ae43166beff8a2e23b80520301ac0f6ff5"
+        },
+        {
+          "operation": "PUT /scheduling/categories/{id}/serving_rotations",
+          "specRevision": "v2",
+          "contract": "sha256:30861bad3da2bb27eba28ed57525165fc84ef22452a55152ede6711abc00db19"
+        },
+        {
+          "operation": "PUT /scheduling/event_positions/{event_position_id}/associated_times/{associated_time_id}",
+          "specRevision": "v2",
+          "contract": "sha256:679d8cfbf1037ce32efe08cf5314be16d7c27ef3bad934741d09cf9c15e551a6"
+        },
+        {
+          "operation": "PUT /scheduling/event_positions/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:8bc0c74b4b20b991917738e3756959743320690e22334cb35838850fcb9ef1c1"
+        },
+        {
+          "operation": "PUT /scheduling/event_teams/{event_team_id}/associated_times/{associated_time_id}",
+          "specRevision": "v2",
+          "contract": "sha256:acb10141b447a21c4d3fe7c40c722515fd7c2eff086ba8fa7068ff6e59017a27"
+        },
+        {
+          "operation": "PUT /scheduling/events/{event_id}/event_position_associated_times",
+          "specRevision": "v2",
+          "contract": "sha256:5c2c37894fb0cfd7df7739a6784f17e1d08853a58653fc40e6527379a309c33c"
+        },
+        {
+          "operation": "PUT /scheduling/events/{event_id}/serving_rotations/{serving_rotation_id}",
+          "specRevision": "v2",
+          "contract": "sha256:db435794db1718845a82c0ccaca7a1b556ec26e47e23ac27242f8bb66d91cfe9"
+        },
+        {
+          "operation": "PUT /scheduling/events/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:63f30e6142330151e1be35f6bbcf128ca7732d196755f354220674cb3029a5fb"
+        },
+        {
+          "operation": "PUT /scheduling/events/{id}/copy_assignments",
+          "specRevision": "v2",
+          "contract": "sha256:57c511c720802917cd27efcd73391de1987d38b85c14da1fa08875f8fa47b93c"
+        },
+        {
+          "operation": "PUT /scheduling/events/{id}/copy_assignments/{copyFromEventId}",
+          "specRevision": "v2",
+          "contract": "sha256:4885aa9e2bbc22c04bd05561c960e41d4c3fd1ce93919aa49508fe3be8d091ae"
+        },
+        {
+          "operation": "PUT /scheduling/events/{id}/set_checkin_labels",
+          "specRevision": "v2",
+          "contract": "sha256:0edca07aeaef62657d80301c5cb35a39e63283d28146825a056086636d076214"
+        },
+        {
+          "operation": "PUT /scheduling/families/{id}/assignments",
+          "specRevision": "v2",
+          "contract": "sha256:7ad4f97d99c67e587c8fd67a35c57bd992eca5c987a733fdf373a734a49b8178"
+        },
+        {
+          "operation": "PUT /scheduling/individuals/{id}/preferences",
+          "specRevision": "v2",
+          "contract": "sha256:953dfb37259e71d5833b4d29553734623f106e5463d844456107c55cb0152ee5"
+        },
+        {
+          "operation": "PUT /scheduling/individuals/{id}/unified_preferences",
+          "specRevision": "v2",
+          "contract": "sha256:2a393a9d68b5e782aea885ea7008ae7b2cffa8ecc96981e9f494cfdff6d7ca58"
+        },
+        {
+          "operation": "PUT /scheduling/position/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:58f911dad9c38927ed7601301f0ae2debe3a82076011a3e86a1d6f15c37abe7d"
+        },
+        {
+          "operation": "PUT /scheduling/preference_times/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:9eb3ebd7734c828f9cae115bfb17da92744b0b5082ec482f723b08ba46e1f9ab"
+        },
+        {
+          "operation": "PUT /scheduling/schedules/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:1e2a2a3fba381abd26540aec2678925cafc016ee975eabf1e46738c1739a38df"
+        },
+        {
+          "operation": "PUT /scheduling/schedules/{id}/open_event_positions",
+          "specRevision": "v2",
+          "contract": "sha256:28ab38ca2d60ee4ee552f9a47950704566251910cd8c27710e0635f90f2dfc2d"
+        },
+        {
+          "operation": "PUT /scheduling/service_plan_items/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:819b78ef8e2b20fff0ca5fbf52362b893cb1e439eee5be50f45bf0296feb2c53"
+        },
+        {
+          "operation": "PUT /scheduling/service_plans/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:1d56c2898b6d708652ca5e41ca4ca6134550a049bd1ca92eac2e2458bc93f279"
+        },
+        {
+          "operation": "PUT /scheduling/service_plans/{id}/items",
+          "specRevision": "v2",
+          "contract": "sha256:198c59c204fbd584dceea153c7f8cba26d7357726fe24b74f6545d1f3431fcbc"
+        },
+        {
+          "operation": "PUT /scheduling/serving_reminder_times/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:8253970d50f2ae80a4a6213eab2c2cda409d333ca78e90be075cac2537953158"
+        },
+        {
+          "operation": "PUT /scheduling/serving_rotation_positions/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:3ad445fbc52017f5aadfb9a178cebe20847b3826d1aba578b789b6a3df88ef5b"
+        },
+        {
+          "operation": "PUT /scheduling/volunteers/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:1cb67687866a52a26efda8199279b668ed1f08e7fb8860b539ec6e7cea632a56"
+        },
+        {
+          "operation": "PUT /search/save/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:9acde7f1f0b24699f92674a5ea7b7e8e4c45b8b05b6b141d8daebf36e054a01b"
+        },
+        {
+          "operation": "PUT /settings/financial",
+          "specRevision": "v2",
+          "contract": "sha256:fd07a7473ba3df1a4893d0ea607ba3c81c1904eb01a68a15d5aa171505af9bcf"
+        },
+        {
+          "operation": "PUT /templates/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:dc441355dff3d3b8a80237df204aa8e88017f797dc42d3d08987c1d89ad4232c"
         }
       ]
     }

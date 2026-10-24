@@ -86,8 +86,7 @@
     "list_individuals": {
       "query": "hop",
       "includeInactive": true,
-      "page": 2,
-      "perPage": 50
+      "limit": 50
     },
     "get_individual": {
       "individualId": 42
@@ -131,35 +130,6 @@
       "eventId": 12,
       "occurrence": "20260927"
     },
-    "list_forms": {
-      "status": "ACTIVE"
-    },
-    "list_form_responses": {
-      "formId": 31
-    },
-    "list_processes": {
-      "status": "ACTIVE",
-      "managedByMe": true
-    },
-    "list_queues": {
-      "processId": 8
-    },
-    "list_queue_individuals": {
-      "status": "IN_PROCESS",
-      "assignment": "ASSIGNED_TO_ME"
-    },
-    "list_scheduling_categories": {
-      "search": "Worship"
-    },
-    "list_schedules": {
-      "categoryId": 3,
-      "after": "2026-09-01"
-    },
-    "list_individual_assignments": {
-      "individualId": 42,
-      "startDate": "2026-10-01",
-      "endDate": "2026-10-31"
-    },
     "list_individual_notes": {
       "individualId": 42,
       "context": "GENERAL"
@@ -169,35 +139,34 @@
       "start": "2026-01-01",
       "end": "2026-09-30"
     },
-    "list_individual_pledges": {
-      "individualId": 42
-    },
-    "ccb_api_get": {
-      "path": "/church/membership_types",
-      "query": {
-        "per_page": 50
-      }
-    },
     "ccb_api_search": {
+      "query": "campus"
+    },
+    "ccb_api_read": {
+      "path": "/church/membership_types"
+    },
+    "search_records": {
       "domain": "individuals",
       "body": {
         "configuration": {
-          "columns": [
-            "name"
+          "filter_profile_type": [
+            "active"
           ]
         },
-        "filters": {
-          "name": "Ada"
-        }
+        "filters": {}
       },
-      "perPage": 100
+      "limit": 100
     },
-    "ccb_api_mutate": {
+    "ccb_api_write": {
       "method": "POST",
       "path": "/individuals/42/notes",
       "body": {
         "note": "Visited"
       }
+    },
+    "ccb_api_details": {
+      "method": "GET",
+      "path": "/individuals/{id}"
     }
   },
   "cloudflare": {

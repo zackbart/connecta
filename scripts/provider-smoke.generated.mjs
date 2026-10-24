@@ -22,7 +22,7 @@ var fixture2 = {
   create(id = "fixture", overrides = {}) {
     return ccb(id, { ...options2, ...overrides });
   },
-  conventions: { "verbs": ["list", "get", "ccb"], "nestedDescriptionExceptions": [], "auth": "oauth" }
+  conventions: { "verbs": ["list", "get", "ccb", "search"], "nestedDescriptionExceptions": [], "auth": "oauth" }
 };
 
 // src/providers/cloudflare/fixtures.ts

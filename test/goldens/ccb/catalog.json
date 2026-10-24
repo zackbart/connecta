@@ -5,7 +5,7 @@
   "description": "Church Community Builder (Pushpay ChMS) — Production church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding",
   "guide": {
     "summary": "Production CCB, church-wide: id resolution, sensitive data, paging, rate limits, hatches.",
-    "content": "# Church Community Builder (Pushpay ChMS)\n\nProduction church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding\n\n## Resolve ids before acting\n\n- Every record is addressed by an integer id. Read it from a list tool and\n  pass it back; never guess one. `list_individuals` finds people by partial\n  name, phone, or email; `familyId`, `groupId`, `eventId`, form, process,\n  queue, and category ids come from their own list tools.\n- Events are series with dated occurrences. `list_events` returns\n  `eventId` plus `occurrence`; the attendance tools need both.\n- Campus and membership-type ids resolve through `ccb_api_get` on\n  `/campuses` and `/church/membership_types`.\n\n## Sensitive data stays out of results\n\nAllergies, giving numbers and dates, attendance prayer requests and leader\nnotes, and form payment details are sensitive fields. Projections always\ndrop them; Raw access below says whether `raw: true` and the hatches do\ntoo. Notes, pledges, giving metrics, background checks, and\nfinancial settings are pastoral or financial: read them inside\n`execute_code` and return only the reduced answer the task needs.\n\nGiving in v2 is counts per period (`get_giving_metrics`), pledges, scheduled\ngifts, and financial settings. Transactions, batches, and amounts per gift\nlive only in CCB's legacy v1 XML API, which this connector does not reach.\n\n## Paging\n\nLists take `page` (1-based) and `perPage` (25, 50, 75, or 100 only) and\nreturn `page.hasMore`, `page.nextPage`, and `page.total`. Field names are\nCCB's snake_case turned camelCase.\n\n## Rate limits\n\nCCB allows each endpoint about one call a second after a burst of 60, per API\nclient. This connector keeps a per-runtime 60-per-minute window per endpoint\n— an approximation, not an enforcement. `get_individual` (1/s),\n`list_schedules` (1 per 2 s), and individuals advanced search (1 per 5 s)\nallow no burst: page a list instead of looping a get, and space those calls.\nA `rate_limited` failure carries CCB's wait.\n\n## Raw access\n\n`ccb_api_get` reaches any GET path; `ccb_api_search` runs advanced searches,\nwhich CCB serves as POST but are reads. `ccb_api_mutate` reaches every POST, PUT, PATCH, and DELETE and always needs approval. Paths are below the API origin, such as `/church/membership_types`. Every result, `raw: true` and the hatches included, leaves the sensitive fields out.\nGranted scopes: read:advanced_searches read:campuses read:church read:event_attendance read:events read:forms read:group_members read:groups read:individual_groups read:individual_notes read:individual_pledges read:individuals read:individuals_metrics read:process_queues read:queue_individuals read:scheduling write:event_attendance write:events write:form_responses write:group_members write:groups write:individual_groups write:individual_notes write:individuals write:notes write:queue_individuals write:scheduling. A call outside them fails with 403.\n"
+    "content": "# Church Community Builder usage\n\nProduction church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding\n\nThe OAuth client is configured for this environment; use the connection's existing grant. Resolve a person's identity with get_me when needed.\n\nSensitive fields: drop. Named projections stay narrow; credentials and private file destinations are always withheld.\n\nConfigured scopes: read:advanced_searches read:campuses read:church read:event_attendance read:events read:forms read:group_members read:groups read:individual_groups read:individual_notes read:individual_pledges read:individuals read:individuals_metrics read:process_queues read:queue_individuals read:scheduling write:event_attendance write:events write:form_responses write:group_members write:groups write:individual_groups write:individual_notes write:individuals write:notes write:queue_individuals write:scheduling.\n\n## People, households and groups\n\nCCB v2 addresses records by integer ids. Resolve a person from the individual\nlist and a household from families; never guess ids. Family membership and\nchurch group membership join by individual id. A membership role belongs to\nthat group, rather than being a property of the person everywhere.\n\nIdentity Auth acts with the signed-in person's permissions. A permission\nrefusal can mean that person lacks access even when the connection is healthy.\n\n## Events and attendance\n\nAn event is a series; its dated occurrence is a separate identity. Attendance\njoins need both the event id and occurrence. Preserve the vendor's date and\ntime-zone meaning instead of treating every occurrence as UTC midnight.\n\n## Pastoral and financial records\n\nNotes, background checks, pledges and giving metrics can be sensitive. Read\nonly what the task needs and reduce those records inside execute_code before\nreturning an answer. Gift metrics are counts by period, with a range of at\nmost twelve months. Per-gift transactions and amounts belong to the legacy\nv1 XML API, which this v2 connector does not reach.\n\n## Vendor call rates and recovery\n\nCCB meters endpoints separately per API client. Individual profile reads have\nno burst; individual advanced searches allow one call per five seconds, and\ncategory schedule lists allow one per two seconds. Prefer list pages over a\nloop of individual gets. Other deployments sharing the client spend from the\nsame vendor allowance.\n\nFor a profile edit, resolve the individual first and preserve fields outside\nthe requested change. After an ambiguous update, read that profile to determine\nwhat actually changed before deciding whether another write is needed.\n\n## Conventions\n\n- **Paging:** a paged `list_*` or `search_*` read takes `limit` (default 25, at most 100) and `cursor`. While `page.hasMore` is true, pass `page.nextCursor` back unchanged as `cursor`; the last page has no `nextCursor`.\n- **Paging:** on a paged hatch read, keep the original method, path, filters, limit and fields. Pass `page.nextCursor` unchanged as the top-level `cursor`; omit raw anchors on continuations. The last page has `page.hasMore: false` and no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation could not be confined.\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `ccb_api_search` finds this API's operations and reads no account data, `ccb_api_details` shows one operation's contract, and `ccb_api_read` calls a reviewed read. `ccb_api_write` calls a reviewed write, and every call to it needs approval. An operation without a reviewed verdict is refused; these are refused by design: `POST /church/privacy_defaults`, `POST /data_import/individuals`, `POST /data_import/sacraments`, `POST /events/{id}/photo`, `POST /families/{id}/photo`, `POST /files`, `POST /forms/{id}/responses`, `POST /groups/{id}/photo`, `POST /individuals/{id}/files/{file_id}`, `POST /individuals/{id}/files`, `POST /individuals/{id}/photo`, `POST /messages/{id}/comments`, `POST /oauth/token`, `POST /reset_password`, `POST /scheduling/categories/{id}/files`, `POST /scheduling/categories/{id}/messages`, `POST /scheduling/categories/{id}/notifications`, `POST /scheduling/events/{id}/files`, `PUT /individuals/{id}/assignments`, `PUT /individuals/{id}/groups/{group_id}`, `PUT /individuals/{id}/privacy_settings`, `PUT /messages/{id}/comments/{comment_id}`, `PUT /messages/{id}`, `PUT /scheduling/families/{id}/assignments`.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. `not_found` means the record does not exist; this API tells absence from a permission gap. It documents no conflict.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
     {
@@ -13,7 +13,18 @@
       "description": "Get the CCB individual the access token belongs to. Under Identity Auth that is the signed-in person whose permissions every call carries.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
         "required": [],
         "additionalProperties": false
       },
@@ -79,24 +90,33 @@
             ],
             "description": "Campuses to search relative to the connection's own."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -105,7 +125,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "individuals": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -169,23 +189,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "individuals",
+          "items",
           "page"
         ]
       },
@@ -204,9 +218,15 @@
             "minimum": 1,
             "description": "Individual id from list_individuals."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -364,24 +384,33 @@
             "maxLength": 50,
             "description": "Partial mobile phone."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -390,7 +419,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "families": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -488,23 +517,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "families",
+          "items",
           "page"
         ]
       },
@@ -531,9 +554,15 @@
             "type": "boolean",
             "description": "Include deceased members."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -651,24 +680,33 @@
             "minimum": 1,
             "description": "Only groups at this campus."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -677,7 +715,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "groups": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -726,23 +764,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "groups",
+          "items",
           "page"
         ]
       },
@@ -761,9 +793,15 @@
             "minimum": 1,
             "description": "Group id from list_groups."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -885,24 +923,33 @@
             "maxLength": 200,
             "description": "Partial participant name."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"groupId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -913,7 +960,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "members": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -968,23 +1015,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "members",
+          "items",
           "page"
         ]
       },
@@ -1007,24 +1048,33 @@
             "type": "boolean",
             "description": "List inactive groups instead of active ones."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"groupId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1035,7 +1085,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "groups": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1090,23 +1140,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "groups",
+          "items",
           "page"
         ]
       },
@@ -1136,24 +1180,33 @@
             ],
             "description": "Time range relative to now."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"eventId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -1162,7 +1215,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "occurrences": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1203,23 +1256,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "occurrences",
+          "items",
           "page"
         ]
       },
@@ -1247,9 +1294,15 @@
             "type": "boolean",
             "description": "Add attendance totals for the occurrence."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1343,7 +1396,7 @@
     },
     {
       "name": "get_event_attendance",
-      "description": "Get one CCB event occurrence's attendance summary: met or not, totals, visitors, topic. Drops leader notes and prayer requests unless raw.",
+      "description": "Get one CCB event occurrence's attendance summary: met or not, totals, visitors, topic. Drops leader notes and prayer requests from the named projection.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1357,9 +1410,15 @@
             "pattern": "^\\d{4}-?\\d{2}-?\\d{2}$",
             "description": "Occurrence date, YYYYMMDD or YYYY-MM-DD, from list_events."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"eventId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1411,24 +1470,33 @@
             "pattern": "^\\d{4}-?\\d{2}-?\\d{2}$",
             "description": "Occurrence date, YYYYMMDD or YYYY-MM-DD, from list_events."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"individualId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1440,7 +1508,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "attendees": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1466,928 +1534,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "attendees",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_forms",
-      "description": "List or search CCB forms by partial title, status, or campus. Returns form ids for list_form_responses.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Partial form title."
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "ACTIVE",
-              "SCHEDULED",
-              "UNPUBLISHED",
-              "EXPIRED",
-              "ARCHIVED"
-            ],
-            "description": "Form status."
-          },
-          "campusId": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Only forms at this campus."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "forms": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "title": {
-                  "type": "string"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "campusId": {
-                  "type": "integer"
-                },
-                "start": {
-                  "type": "string"
-                },
-                "end": {
-                  "type": "string"
-                },
-                "public": {
-                  "type": "boolean"
-                },
-                "url": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "forms",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_form_responses",
-      "description": "List one CCB form's responses with answers by question id and payment status. Drops payment details unless raw.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "formId": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Form id from list_forms."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [
-          "formId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "responses": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "formId": {
-                  "type": "integer"
-                },
-                "individualId": {
-                  "type": "integer"
-                },
-                "created": {
-                  "type": "string"
-                },
-                "paymentStatus": {
-                  "type": "string"
-                },
-                "answers": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "questionId": {
-                        "type": "integer"
-                      },
-                      "answer": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "responses",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_processes",
-      "description": "List CCB processes (assimilation and follow-up pipelines) by name or status. Returns process ids for list_queues.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Process name search."
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "HIDDEN",
-              "ACTIVE",
-              "ARCHIVED"
-            ],
-            "description": "Process status."
-          },
-          "managedByMe": {
-            "type": "boolean",
-            "description": "Only processes the connection's individual manages."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "processes": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "campusId": {
-                  "type": "integer"
-                },
-                "ownerId": {
-                  "type": "integer"
-                },
-                "hidden": {
-                  "type": "boolean"
-                },
-                "archived": {
-                  "type": "boolean"
-                },
-                "managers": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "integer"
-                      },
-                      "name": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "processes",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_queues",
-      "description": "List CCB process queues, optionally for one process, with assigned and unassigned counts.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "processId": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Only queues in this process."
-          },
-          "search": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Queue name search."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "queues": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "processId": {
-                  "type": "integer"
-                },
-                "processName": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "assignedCount": {
-                  "type": "integer"
-                },
-                "unassignedCount": {
-                  "type": "integer"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "queues",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_queue_individuals",
-      "description": "List people in CCB process queues the connection can see, by status or assignment. CCB offers no per-queue filter here; filter on queueId.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "NOT_STARTED",
-              "WAITING",
-              "IN_PROCESS",
-              "DONE"
-            ],
-            "description": "Queue status."
-          },
-          "assignment": {
-            "type": "string",
-            "enum": [
-              "ASSIGNED_TO_ME",
-              "UNASSIGNED"
-            ],
-            "description": "Omit for both."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "queueIndividuals": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "queueIndividualId": {
-                  "type": "integer"
-                },
-                "queueId": {
-                  "type": "integer"
-                },
-                "queueName": {
-                  "type": "string"
-                },
-                "processId": {
-                  "type": "integer"
-                },
-                "processName": {
-                  "type": "string"
-                },
-                "individualId": {
-                  "type": "integer"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "due": {
-                  "type": "string"
-                },
-                "created": {
-                  "type": "string"
-                },
-                "completed": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "queueIndividuals",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_scheduling_categories",
-      "description": "List CCB scheduling categories (serving ministries) with teams and organizer. Category ids feed list_schedules.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "search": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Category name search."
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "ACTIVE",
-              "ARCHIVED",
-              "ACTIVE_AND_ARCHIVED"
-            ],
-            "description": "Defaults to CCB's own (active)."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "categories": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "campus": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "integer"
-                    },
-                    "name": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "organizer": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "integer"
-                    },
-                    "name": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "archived": {
-                  "type": "boolean"
-                },
-                "teams": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "integer"
-                      },
-                      "name": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "required": [
-          "categories"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_schedules",
-      "description": "List one CCB scheduling category's schedules with events and assignment metrics. CCB allows one call per two seconds here.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "categoryId": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Category id from list_scheduling_categories."
-          },
-          "after": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "Only schedules ending after this date, YYYY-MM-DD."
-          },
-          "before": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "Only schedules ending before this date, YYYY-MM-DD."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [
-          "categoryId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "schedules": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "categoryId": {
-                  "type": "integer"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "start": {
-                  "type": "string"
-                },
-                "end": {
-                  "type": "string"
-                },
-                "needed": {
-                  "type": "integer"
-                },
-                "events": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "integer"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "start": {
-                        "type": "string"
-                      },
-                      "end": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                },
-                "metrics": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "schedules",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_individual_assignments",
-      "description": "List one CCB individual's serving assignments with status, schedule, and event ids.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "individualId": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Individual id."
-          },
-          "startDate": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "Earliest assignment date, YYYY-MM-DD."
-          },
-          "endDate": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "Latest assignment date, YYYY-MM-DD."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [
-          "individualId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "assignments": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "categoryId": {
-                  "type": "integer"
-                },
-                "scheduleId": {
-                  "type": "integer"
-                },
-                "eventId": {
-                  "type": "integer"
-                },
-                "eventPositionId": {
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "statusReason": {
-                  "type": "string"
-                },
-                "dateNotified": {
-                  "type": "string"
-                },
-                "individualId": {
-                  "type": "integer"
-                },
-                "name": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "assignments",
+          "items",
           "page"
         ]
       },
@@ -2416,24 +1573,33 @@
             ],
             "description": "Only notes in this context."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -2444,7 +1610,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "notes": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -2490,23 +1656,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "notes",
+          "items",
           "page"
         ]
       },
@@ -2540,9 +1700,15 @@
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "description": "End date, YYYY-MM-DD."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"periods\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -2586,206 +1752,47 @@
       }
     },
     {
-      "name": "list_individual_pledges",
-      "description": "List one CCB individual's pledges: fund, pledged, paid, and expected amounts, and recurrence.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "individualId": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Individual id."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
-            "enum": [
-              25,
-              50,
-              75,
-              100
-            ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
-          }
-        },
-        "required": [
-          "individualId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "pledges": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "integer"
-                },
-                "campusId": {
-                  "type": "integer"
-                },
-                "fund": {
-                  "type": "string"
-                },
-                "pledged": {
-                  "type": "number"
-                },
-                "paid": {
-                  "type": "number"
-                },
-                "expected": {
-                  "type": "number"
-                },
-                "total": {
-                  "type": "number"
-                },
-                "frequency": {
-                  "type": "string"
-                },
-                "start": {
-                  "type": "string"
-                },
-                "end": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "pledges",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "ccb_api_get",
-      "description": "Call any CCB v2 GET endpoint and return its body, less the sensitive fields this connection drops. Use named reads first; they project and page.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 512,
-            "pattern": "^/[^?#]*$",
-            "description": "Path below the API origin beginning with '/', such as /campuses. No query string; no /oauth paths."
-          },
-          "query": {
-            "type": "object",
-            "description": "Query parameters by name, one value each, such as { per_page: 50 }.",
-            "additionalProperties": {
-              "type": [
-                "string",
-                "number",
-                "boolean"
-              ]
-            }
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "description": "CCB's response body, less the sensitive fields this connection drops, or null when empty."
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "required": [
-          "result"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "ccb_api_search",
-      "description": "Run a CCB advanced search (POST /search/{domain}/results) and return its rows, less dropped sensitive fields. Read-only; individuals allows one call per five seconds.",
+      "name": "search_records",
+      "description": "Search CCB church records with a reviewed read-only POST. Returns common identifiers, name, status and contact summaries; use the indexed read hatch for domain-specific response fields.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "domain": {
             "type": "string",
-            "pattern": "^[a-z_]{1,40}$",
-            "description": "Search domain: assignments, categories, department_detail, groups, individual_event_attendance, individual_groups, individuals, organizers, positions, schedules, schedules_totals, scheduling_files, scheduling_individuals, songs, volunteers."
+            "pattern": "^(assignments|categories|department_detail|groups|individual_event_attendance|individual_groups|individuals|organizers|positions|schedules|schedules_totals|scheduling_files|scheduling_individuals|songs|volunteers)$",
+            "description": "Reviewed advanced-search domain; the pattern lists every allowed value."
           },
           "body": {
             "type": "object",
-            "description": "Search body as CCB documents it for the domain, e.g. { configuration, filters }."
+            "description": "Vendor search configuration and filters; get the operation details before choosing them."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "1-based page number; pass page.nextPage from the previous result."
-          },
-          "perPage": {
-            "type": "integer",
+            "maximum": 100,
             "enum": [
               25,
               50,
               75,
               100
             ],
-            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+            "description": "Allowed page sizes are 25, 50, 75, and 100. The vendor default is 25.",
+            "default": 25
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -2797,8 +1804,66 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "result": {
-            "description": "CCB's response body, less the sensitive fields this connection drops, or null when empty."
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "individualId": {
+                  "type": "integer"
+                },
+                "groupId": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "familyId": {
+                  "type": "integer"
+                },
+                "membershipTypeId": {
+                  "type": "integer"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "counts": {
+                  "type": "object",
+                  "properties": {
+                    "stillNeeded": {
+                      "type": "integer"
+                    },
+                    "needed": {
+                      "type": "integer"
+                    },
+                    "accepted": {
+                      "type": "integer"
+                    },
+                    "checkedIn": {
+                      "type": "integer"
+                    },
+                    "declined": {
+                      "type": "integer"
+                    },
+                    "pending": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
           },
           "page": {
             "type": "object",
@@ -2806,23 +1871,18 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "result"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -2830,49 +1890,162 @@
       }
     },
     {
-      "name": "ccb_api_mutate",
-      "description": "Call any CCB v2 JSON POST, PUT, PATCH, or DELETE endpoint. The approval-gated hatch for every write; no file uploads.",
+      "name": "ccb_api_search",
+      "description": "Find CCB API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE"
+            ],
+            "description": "Only operations with this method."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "DELETE"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; ccb_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "ccb_api_details",
+      "description": "Read one CCB API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "method": {
             "type": "string",
             "enum": [
+              "GET",
               "POST",
               "PUT",
-              "PATCH",
               "DELETE"
             ],
-            "description": "HTTP method the endpoint documents."
+            "description": "The operation's HTTP method."
           },
           "path": {
             "type": "string",
             "minLength": 2,
-            "maxLength": 512,
-            "pattern": "^/[^?#]*$",
-            "description": "Path below the API origin beginning with '/', such as /campuses. No query string; no /oauth paths."
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
           },
-          "query": {
-            "type": "object",
-            "description": "Query parameters by name, one value each, such as { per_page: 50 }.",
-            "additionalProperties": {
-              "type": [
-                "string",
-                "number",
-                "boolean"
-              ]
-            }
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
           },
-          "body": {
-            "type": [
-              "object",
-              "array",
-              "string",
-              "number",
-              "boolean",
-              "null"
-            ],
-            "description": "JSON body exactly as CCB documents it. Omit when the endpoint takes none."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
           }
         },
         "required": [
@@ -2884,8 +2057,78 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "result": {
-            "description": "CCB's response body, less the sensitive fields this connection drops, or null when empty."
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
           },
           "page": {
             "type": "object",
@@ -2893,23 +2136,190 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextPage": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "ccb_api_read",
+      "description": "Call a reviewed CCB API read, including reviewed read-only POST. The operation index checks arguments before anything is sent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /individuals/42. No query string."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "description": "GET by default; another method only for an operation search routes here."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body for a reviewed read-only POST."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Opaque page.nextCursor from this same read; omit raw query anchors when continuing."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
               },
-              "total": {
-                "type": [
-                  "integer",
-                  "null"
+              "nextCursor": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "description": "Vendor parameter restored from cursor; pass nextCursor as the top-level cursor."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
                 ]
               }
+            },
+            "required": [
+              "hasMore",
+              "param",
+              "in"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "ccb_api_write",
+      "description": "Call a reviewed CCB API write; method and path are stated for approval, and the operation index checks arguments first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PUT",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /individuals/42. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
             }
           }
         },
         "required": [
-          "result"
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
         ]
       },
       "annotations": {

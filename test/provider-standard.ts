@@ -29,7 +29,6 @@ export const PENDING = {
   step1: new Set<string>(),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */
   step2: new Set([
-    "ccb",
     "cloudflare",
     "docs",
     "drive",

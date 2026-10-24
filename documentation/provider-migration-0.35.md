@@ -186,3 +186,57 @@ requested limit and narrowing the date range. 400/422/429/5xx diagnostics use
 the provider's standalone detail sentence or HTTP-status fallback through
 the kit; reviewed key/absence meanings and write-once behavior
 remain. Operator setup is in [Maintained provider setup](./providers.md#breeze-chms).
+
+## Church Community Builder
+
+The factory and v2 OAuth configuration remain `ccb()` from
+`@zackbart/connecta/providers/ccb`. The legacy v1 XML API is outside this provider.
+Update saved programs, pool grants, classification entries and instructions:
+
+| Before                                                       | After                                                                                                                                                |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ccb_api_get`                                                | `ccb_api_read` with the same canonical absolute API path, query object and optional response `fields`                                                |
+| `ccb_api_mutate`                                             | Approval-gated `ccb_api_write` with explicit method, canonical path and JSON body                                                                    |
+| `ccb_api_search({ domain, body, page, perPage })`            | `search_records({ domain, body, limit, cursor, fields })` for advanced data searches                                                                 |
+| —                                                            | `ccb_api_search({ query, method?, limit?, cursor? })` searches the offline operation index; `ccb_api_details({ method, path, ... })` reads contracts |
+| `page` and `perPage` on named lists and advanced searches    | `limit` is exactly 25, 50, 75 or 100 (default 25, or configured `defaultPerPage`); continue with signed `cursor`                                     |
+| `raw` on named reads/lists                                   | Removed; named results remain projected. Use `fields` for projected records or the read hatch for vendor records                                     |
+| Named list `{ data, page: { number, perPage, total, ... } }` | `{ items, page: { hasMore, nextCursor? } }`; no total is returned in this change                                                                     |
+| HTTP 409 classified as `conflict`                            | `connector_call_failed`; the public pin does not establish a conflict meaning                                                                        |
+
+These nine named reads are removed. Use `ccb_api_read` with the following
+indexed paths and vendor query names, after inspecting operation details:
+
+| Removed tool                  | Replacement path and filter changes                                                                                                                                                            |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_forms`                  | `/forms`; `status` stays `query.status`                                                                                                                                                        |
+| `list_form_responses`         | `/forms/{id}/responses`; `formId` becomes the concrete path id                                                                                                                                 |
+| `list_processes`              | `/processes`; `status` becomes `query.statuses`, `managedByMe` becomes `query.managed_by_me`                                                                                                   |
+| `list_queues`                 | `/queues`; `processId` becomes `query.process_ids: [id]`                                                                                                                                       |
+| `list_queue_individuals`      | `/queues_individuals`; `status` becomes `query.statuses: [value]`, `assignment` stays a query filter                                                                                           |
+| `list_scheduling_categories`  | `/scheduling/categories`; the pin declares `search` as a wildcard GET body, so that filter is unsupported. Use advanced category search for filtering                                          |
+| `list_schedules`              | `/scheduling/categories/{id}/schedules`; `categoryId` becomes the path id and `after` stays a query filter                                                                                     |
+| `list_individual_assignments` | `/individuals/{id}/assignments`; `individualId` becomes the path id. The pin declares `startDate`/`endDate` as wildcard GET-body fields, which are unsupported; use advanced assignment search |
+| `list_individual_pledges`     | `/individuals/{id}/pledges`; `individualId` becomes the path id                                                                                                                                |
+
+Hatch rows preserve vendor names and shapes rather than the removed projections.
+For paged indexed operations, retain `query.per_page`, omit `query.page` on
+continuation, and pass the returned signed token as top-level `cursor`. Keep the
+path, filters, fields, body and page size unchanged. Old numeric or unsigned
+continuations cannot be reused. Metadata search/details also page with signed
+cursors. Standard envelopes add `truncated`; a full inline result has `false`.
+
+Paths must be canonical API paths with concrete ids. Absolute URLs, OAuth paths,
+query strings embedded in a path, percent encodings, semicolons and traversal
+segments are refused. For example delete group members with
+`DELETE /groups/5/members` and JSON `{ ids: [42] }`, rather than an invented
+`/groups/5/members/42` path. JSON-only transport refuses multipart, form and
+wildcard request bodies. Optional wildcard GET bodies may be omitted.
+
+Writes retain approval requirements and are sent once. Configured read-only
+OAuth scopes omit the write hatch and refuse writes before dispatch; configure
+authorized write scopes in deployment code when required. The `readOnly` option
+continues to enforce read-only endpoints. `sensitiveFields: "return"` permits
+only the configured sensitive set. Private file destinations, payment links,
+calendar feeds and OAuth credentials remain withheld on reads and write replies.
+See [CCB setup and limits](./providers.md#church-community-builder).

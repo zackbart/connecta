@@ -35,7 +35,7 @@ const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 // dispatch. They are still enumerated and checked, rather than silently skipped.
 const LOCAL = new Set([
   "github.list_scopes",
-  ...["breeze", "cloudflare", "stripe", "tithely", "vercel"].flatMap((name) => [
+  ...["breeze", "ccb", "cloudflare", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),
