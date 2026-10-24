@@ -46,6 +46,22 @@ interface CallArgs {
 }
 type OperationKey = `${RestMethod} ${string}`;
 
+const indexedOperations = new WeakMap<OperationIndex, ReadonlyMap<string, Operation>>();
+function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
+  let operations = indexedOperations.get(index);
+  if (!operations) {
+    const first = new Map<string, Operation>();
+    for (const op of index.ops) {
+      const key = `${op.method} ${op.path}`;
+      // Keep the first match, as the previous per-key Array.find did.
+      if (!first.has(key)) first.set(key, op);
+    }
+    operations = first;
+    indexedOperations.set(index, operations);
+  }
+  return operations;
+}
+
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
@@ -208,7 +224,8 @@ export function hatch(
     ? { ...options.idempotency, methods: [...options.idempotency.methods] }
     : undefined;
   if (!name.trim()) throw new Error("A hatch needs a nonempty tool prefix.");
-  const known = (key: string) => index.ops.some((op) => `${op.method} ${op.path}` === key);
+  const operations = operationsOf(index);
+  const known = (key: string) => operations.has(key);
   // Snapshot reviews: a retained declaration cannot widen a served hatch.
   const verdicts = new Map(Object.entries(options.verdicts));
   for (const [key, verdict] of verdicts) {
@@ -241,7 +258,7 @@ export function hatch(
         const location = `${adapter.in}:${adapter.param}`;
         if (seen.has(location)) throw new Error(`Hatch paging for ${key} repeats a cursor parameter.`);
         seen.add(location);
-        const op = index.ops.find((op) => `${op.method} ${op.path}` === key)!;
+        const op = operations.get(key)!;
         const contract = index.contract(op);
         const body = contract.body?.schema as { properties?: Record<string, unknown> } | undefined;
         if (
