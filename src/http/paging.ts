@@ -26,7 +26,9 @@ export const PageInfo = Schema.Struct({
 
 /**
  * The standard `page` (decision 0011 S2): `nextCursor` is present exactly
- * when `hasMore` is true. Step-1 lists keep `PageInfo` until their step 2.
+ * when `hasMore` is true and continuation is safe. A hatch adapter can report
+ * more data without a cursor when its continuation cannot be confined.
+ * Step-1 lists keep `PageInfo` until their step 2.
  */
 export const StandardPage = Schema.Struct({
   hasMore: Schema.Boolean,

@@ -82,6 +82,8 @@ interface Reply {
   readonly status: number;
   readonly headers: Headers;
   readonly text: string | undefined;
+  /** Fixed phase fact only; the read exception itself never reaches a mapper. */
+  readonly readFailed?: true;
   /** Present only for a reviewed binary read, still under the same byte ceiling. */
   readonly bytes?: Uint8Array;
   readonly prefix?: PrefixResult;
@@ -546,17 +548,18 @@ function readReply(
   response: HttpClientResponse.HttpClientResponse,
   format?: "bytes",
 ): Effect.Effect<Reply, ResponseTooLarge> {
-  const reply = (text: string | undefined, bytes?: Uint8Array): Reply => ({
+  const reply = (text: string | undefined, bytes?: Uint8Array, readFailed?: true): Reply => ({
     status: response.status,
     headers: new Headers(Object.entries(response.headers)),
     text,
     ...(bytes === undefined ? {} : { bytes }),
+    ...(readFailed ? { readFailed } : {}),
   });
   if (BODILESS_STATUSES.has(response.status) || response.request.method === "HEAD")
     return Effect.succeed(format === "bytes" ? reply(undefined, new Uint8Array()) : reply(""));
   const buffered = response.arrayBuffer.pipe(
     Effect.matchEffect({
-      onFailure: () => Effect.succeed(reply(undefined)),
+      onFailure: () => Effect.succeed(reply(undefined, undefined, true)),
       onSuccess: (buffer) =>
         buffer.byteLength > limit
           ? Effect.fail(tooLarge(provider, limit, `${buffer.byteLength} bytes`))
@@ -589,7 +592,7 @@ function readReply(
         ? Effect.fail(error)
         : error.reason._tag === "EmptyBodyError"
           ? buffered
-          : Effect.succeed(reply(undefined)),
+          : Effect.succeed(reply(undefined, undefined, true)),
     ),
   );
 }

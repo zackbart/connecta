@@ -6,9 +6,12 @@ export interface HatchPageAdapter {
   readonly param: string;
   readonly in: "query" | "body";
   readonly headers?: readonly string[];
+  /** A raw vendor record-id anchor is allowed only on the first request without cursor. */
+  readonly initialAnchor?: boolean;
   /** Validate and restore a decoded cursor's vendor type before index.check. */
   readonly decode: (cursor: string | number) => string | number;
-  /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor. */
+  /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor;
+   * { hasMore: true }: keep the data, but no continuation can be confined. */
   readonly next: (
     data: unknown,
     call: {
@@ -16,7 +19,7 @@ export interface HatchPageAdapter {
       readonly query: Readonly<Record<string, unknown>>;
       readonly headers: Readonly<Record<string, string>>;
     },
-  ) => string | number | null | undefined;
+  ) => string | number | null | undefined | { readonly hasMore: true };
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -41,6 +44,7 @@ function integer(cursor: string | number): number {
 export const stripePage: HatchPageAdapter = {
   param: "starting_after",
   in: "query",
+  initialAnchor: true,
   decode: (cursor) => {
     if (typeof cursor !== "string" || !cursor) {
       throw new ConnectorCallError("invalid_args", "This paging cursor contains no valid item id.");
@@ -54,6 +58,84 @@ export const stripePage: HatchPageAdapter = {
     if (body["has_more"] !== true || !Array.isArray(body["data"])) return bad();
     const id = record(body["data"].at(-1))["id"];
     return typeof id === "string" && id ? id : bad();
+  },
+};
+
+/** Stripe reverse lists use the first safe row as the ending_before anchor. */
+export const stripeBackwardPage: HatchPageAdapter = {
+  ...stripePage,
+  param: "ending_before",
+  next(data, call) {
+    const body = record(data);
+    return stripePage.next(Array.isArray(body["data"]) ? { ...body, data: [...body["data"]].reverse() } : data, call);
+  },
+};
+
+/** Search cursors are vendor tokens, distinct from v1 list record-id anchors. */
+export const stripeSearchPage: HatchPageAdapter = {
+  param: "page",
+  in: "query",
+  decode: stripePage.decode,
+  next(data) {
+    const body = record(data);
+    if (body["has_more"] === undefined) return undefined;
+    if (body["has_more"] === false) return null;
+    const next = body["next_page"];
+    return body["has_more"] === true && typeof next === "string" && next ? next : bad();
+  },
+};
+
+/** Extract only a v2 page token; every subsequent request retains its original path and filters. */
+export const stripeV2Page: HatchPageAdapter = {
+  param: "page",
+  in: "query",
+  decode: stripePage.decode,
+  next(data, call) {
+    const body = record(data);
+    if (!Object.hasOwn(body, "next_page_url")) return undefined;
+    if (body["next_page_url"] === null) return null;
+    if (typeof body["next_page_url"] !== "string" || !body["next_page_url"]) return bad();
+    let next: URL;
+    try {
+      next = new URL(body["next_page_url"], "https://api.stripe.com");
+    } catch {
+      return bad();
+    }
+    if (
+      next.origin !== "https://api.stripe.com" ||
+      next.pathname !== call.path ||
+      next.username ||
+      next.password ||
+      next.hash
+    )
+      return bad();
+    const pages = next.searchParams.getAll("page");
+    if (pages.length !== 1 || !pages[0]) return bad();
+    // URLs can omit filters: preserve them from the original call. Reject any
+    // filter the URL does state unless it has exactly the original wire values.
+    const expected = new URLSearchParams();
+    for (const [name, value] of Object.entries(call.query)) {
+      if (name === "page" || value === undefined) continue;
+      for (const item of Array.isArray(value) ? value : [value]) {
+        if (!["string", "number", "boolean"].includes(typeof item)) return bad();
+        expected.append(name, String(item));
+      }
+    }
+    let extra = false;
+    for (const name of new Set(next.searchParams.keys())) {
+      if (name !== "page" && !expected.has(name)) {
+        extra = true;
+        continue;
+      }
+      if (
+        name !== "page" &&
+        JSON.stringify(next.searchParams.getAll(name).sort()) !== JSON.stringify(expected.getAll(name).sort())
+      )
+        return bad();
+    }
+    // A URL may echo vendor defaults absent from the original call. Keep the
+    // fetched data, without minting a cursor that would silently drop them.
+    return extra ? { hasMore: true } : pages[0];
   },
 };
 

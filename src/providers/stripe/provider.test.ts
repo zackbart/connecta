@@ -5,7 +5,7 @@ import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext } from "../../types.js";
 
 import { manifest } from "../../http/vendor.js";
-import { StripeApi, stripeIndex } from "./api.js";
+import { MAX_RESPONSE_BYTES, STRIPE_VERDICTS, StripeApi, stripeIndex } from "./api.js";
 import { STRIPE_API_BASE_URL, stripe } from "./index.js";
 
 const SANDBOX = { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" } as const;
@@ -77,6 +77,19 @@ describe("stripe() over an API key", () => {
       .sort();
     expect(operations).toEqual(stripeIndex.ops.map((op) => `${op.method} ${op.path}`).sort());
     expect(stripe.definition.kit?.operations).toEqual(operations);
+    expect(Object.keys(STRIPE_VERDICTS).sort()).toEqual(operations);
+    expect(stripe.definition.kit).toMatchObject({
+      idempotencyKey: true,
+      refusesWithheld: true,
+      errors: {
+        unknownId: "not_found",
+        provesAbsence: true,
+        conflicts: expect.arrayContaining([
+          expect.stringContaining("HTTP 409"),
+          expect.stringContaining("lock_timeout"),
+        ]),
+      },
+    });
   });
 
   it("INV-5: refuses a key whose prefix contradicts the declared mode before any request leaves", async () => {
@@ -164,7 +177,7 @@ describe("stripe() over an API key", () => {
       return JSON.stringify(await connector.callTool("stripe_api_read", { path, ...args }, keyed()));
     };
     const placements: Array<[string, unknown, Record<string, unknown>]> = [
-      ["/v1/checkout/sessions/cs_1", account, { select: ["url"] }],
+      ["/v1/checkout/sessions/cs_1", account, { fields: ["url"] }],
       ["/v1/checkout/sessions", { object: "list", has_more: false, data: [account] }, {}],
       [
         "/v1/payment_intents/pi_1",
@@ -225,9 +238,78 @@ describe("stripe() over an API key", () => {
     );
     expect(stream.message).toContain("Send single events with POST /v2/billing/meter_events");
     expect(sent).toHaveLength(1);
+    // Fields are checked before even the alternate-origin PDF dispatch.
+    const beforeFields = sent.length;
+    expect(
+      (
+        await refusal(
+          connector.callTool("stripe_api_read", { path: "/v1/quotes/qt_1/pdf", fields: ["content"] }, keyed()),
+        )
+      ).code,
+    ).toBe("invalid_args");
+    expect(sent).toHaveLength(beforeFields);
+    // H3: a lost 424 body never proves a write was refused. Exercise both
+    // declared and streamed ceilings without reading beyond either bound.
+    for (const streamed of [false, true]) {
+      respond = () =>
+        streamed
+          ? new Response(
+              new ReadableStream({
+                start(c) {
+                  c.enqueue(new Uint8Array(MAX_RESPONSE_BYTES + 1));
+                  c.close();
+                },
+              }),
+              { status: 424 },
+            )
+          : new Response("", { status: 424, headers: { "content-length": String(MAX_RESPONSE_BYTES + 1) } });
+      const before = sent.length;
+      const error = await refusal(
+        connector.callTool("stripe_api_write", { method: "DELETE", path: "/v1/customers/cus_1" }, keyed()),
+      );
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(error.message).toContain("response ceiling");
+      expect(sent).toHaveLength(before + 1);
+      const readError = await refusal(connector.callTool("stripe_api_read", { path: "/v1/customers/cus_1" }, keyed()));
+      expect(readError).toMatchObject({ code: "unavailable", retryable: true });
+      const keyedError = await refusal(
+        connector.callTool(
+          "stripe_api_write",
+          {
+            method: "POST",
+            path: "/v1/customers",
+            body: { email: "alice@example.com" },
+            idempotencyKey: "h3-recovery",
+          },
+          keyed(),
+        ),
+      );
+      expect(keyedError.code).toBe("unavailable");
+      expect(sent.at(-1)!.headers.get("idempotency-key")).toBe("h3-recovery");
+    }
+    respond = () => Response.json({ error: { message: "Concurrent request" } }, { status: 409 });
+    expect(
+      await refusal(connector.callTool("stripe_api_read", { path: "/v1/customers/cus_1" }, keyed())),
+    ).toMatchObject({ code: "conflict" });
+    // H5: keep a failed body read distinct from malformed JSON, without its cause.
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(new Error("private body failure"));
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    const broken = await refusal(connector.callTool("stripe_api_read", { path: "/v1/customers/cus_1" }, keyed()));
+    expect(broken.message).toBe("Stripe's response body could not be read completely.");
+    respond = () => new Response("{broken", { headers: { "content-type": "application/json" } });
+    expect(
+      (await refusal(connector.callTool("stripe_api_read", { path: "/v1/customers/cus_1" }, keyed()))).message,
+    ).toBe("Stripe returned malformed JSON.");
   });
 
-  it("form-encodes v1 bodies and query lists, pins Stripe-Version, and acts as the connected account", async () => {
+  it("INV-1 INV-3 INV-5 INV-9: form-encodes v1 bodies and query lists, pins Stripe-Version, and acts as the connected account", async () => {
     const connector = stripe("platform", { ...LIVE, connectedAccount: "acct_123" });
     respond = () => Response.json({ id: "cus_1", object: "customer" });
     const result = (await connector.callTool(
@@ -277,6 +359,107 @@ describe("stripe() over an API key", () => {
       "?customer=cus_1&expand[0]=data.customer&expand[1]=data.invoice&created[gte]=10&limit=3",
     );
     expect(sent[1]!.headers.get("idempotency-key")).toBeNull();
+    const ctx = keyed("rk_live_51abc");
+    const args = { path: "/v1/charges", query: { customer: "cus_1", limit: 2 }, fields: ["data.amount"] };
+    respond = () =>
+      Response.json({
+        object: "list",
+        data: [
+          { id: "ch_first", amount: 200 },
+          { id: "ch_last", amount: 300 },
+        ],
+        has_more: true,
+      });
+    // First-request anchors retain their raw vendor meaning. Continuations
+    // omit the anchor and restore a signed vendor position before dispatch.
+    for (const param of ["starting_after", "ending_before"] as const) {
+      respond = () =>
+        Response.json({
+          object: "list",
+          data: [
+            { id: "ch_first", amount: 200 },
+            { id: "ch_last", amount: 300 },
+          ],
+          has_more: true,
+        });
+      const first = (await connector.callTool(
+        "stripe_api_read",
+        { ...args, query: { ...args.query, [param]: "ch_anchor" } },
+        ctx,
+      )) as any;
+      expect(first.page).toEqual({ hasMore: true, nextCursor: expect.any(String), param, in: "query" });
+      expect(first.data).toEqual({ data: [{ amount: 200 }, { amount: 300 }] });
+      expect(sent.at(-1)!.url.searchParams.get(param)).toBe("ch_anchor");
+      const before = sent.length;
+      for (const invalid of [
+        { ...args, cursor: first.page.nextCursor, query: { ...args.query, [param]: "ch_anchor" } },
+        { ...args, query: { ...args.query, starting_after: "ch_a", ending_before: "ch_b" } },
+        { ...args, cursor: "ch_plain" },
+        { ...args, cursor: first.page.nextCursor, query: { ...args.query, customer: "cus_other" } },
+        { ...args, query: { ...args.query, [param]: "ch_[redacted]" } },
+      ])
+        expect((await refusal(connector.callTool("stripe_api_read", invalid, ctx))).code).toBe("invalid_args");
+      expect(sent).toHaveLength(before);
+      for (const direction of ["starting_after", "ending_before"]) {
+        expect(
+          (
+            await refusal(
+              connector.callTool(
+                "stripe_api_read",
+                { ...args, query: { ...args.query, [direction]: first.page.nextCursor } },
+                ctx,
+              ),
+            )
+          ).message,
+        ).toContain("top-level cursor");
+      }
+      expect(
+        (
+          await refusal(
+            connector.callTool("stripe_api_read", { path: "/v1/account", cursor: first.page.nextCursor }, ctx),
+          )
+        ).message,
+      ).toContain("does not page");
+      expect(sent).toHaveLength(before);
+      respond = () => Response.json({ object: "list", data: [], has_more: false });
+      const last = (await connector.callTool(
+        "stripe_api_read",
+        { ...args, cursor: first.page.nextCursor },
+        ctx,
+      )) as any;
+      expect(sent.at(-1)!.url.searchParams.get(param)).toBe(param === "starting_after" ? "ch_last" : "ch_first");
+      expect(last.page).toEqual({ hasMore: false, param, in: "query" });
+    }
+    respond = () => Response.json({ object: "list", data: [], has_more: false });
+    expect(await connector.callTool("stripe_api_read", args, ctx)).toMatchObject({
+      data: { data: [] },
+      page: { hasMore: false, param: "starting_after", in: "query" },
+    });
+    // Invalid field roots and withheld scalar writes fail before dispatch.
+    const before = sent.length;
+    for (const bad of [
+      { method: "POST", path: "/v1/customers", body: { email: "alice@example.com" }, fields: ["typo"] },
+      { method: "POST", path: "/v1/customers", body: { metadata: { tier: "[redacted]" } } },
+      { method: "POST", path: "/v1/customers", body: { name: "%5Bredacted%5D" } },
+    ])
+      expect((await refusal(connector.callTool("stripe_api_write", bad, ctx))).code).toBe("invalid_args");
+    expect(sent).toHaveLength(before);
+    respond = () => Response.json({ id: "cus_1", object: "customer" });
+    await connector.callTool(
+      "stripe_api_write",
+      { method: "POST", path: "/v1/customers", body: { description: "The log says [redacted]" } },
+      ctx,
+    );
+    expect(sent).toHaveLength(before + 1);
+    // Named reads accept fields and reject bad roots before authentication.
+    expect(
+      (await refusal(connector.callTool("get_balance_summary", { fields: ["typo"] }, connectorContext()))).code,
+    ).toBe("invalid_args");
+    respond = () =>
+      Response.json({ object: "balance", livemode: true, available: [{ amount: 200, currency: "usd" }], pending: [] });
+    expect(await connector.callTool("get_balance_summary", { fields: ["available.amount"] }, ctx)).toEqual({
+      available: [{ amount: 200 }],
+    });
   });
 
   it("sends v2 bodies as JSON, repeats v2 query lists, and names the connected account with Stripe-Context", async () => {
@@ -307,5 +490,47 @@ describe("stripe() over an API key", () => {
       keyed(),
     );
     expect(sent[1]!.url.search).toBe("?applied_configurations=customer&applied_configurations=merchant&limit=2");
+    const ctx = keyed();
+    const args = { path: "/v2/core/accounts", query: { applied_configurations: ["customer", "merchant"], limit: 2 } };
+    respond = () => Response.json({ data: [{ id: "acct_next" }], next_page_url: "/v2/core/accounts?page=page_next" });
+    const first = (await connector.callTool("stripe_api_read", args, ctx)) as any;
+    expect(first.page).toMatchObject({ hasMore: true, param: "page", in: "query" });
+    respond = () => Response.json({ data: [], next_page_url: null });
+    const last = (await connector.callTool("stripe_api_read", { ...args, cursor: first.page.nextCursor }, ctx)) as any;
+    expect(sent.at(-1)!.url.searchParams.get("page")).toBe("page_next");
+    expect(sent.at(-1)!.url.searchParams.getAll("applied_configurations")).toEqual(["customer", "merchant"]);
+    expect(last.page).toEqual({ hasMore: false, param: "page", in: "query" });
+    for (const url of [
+      "https://other.example/v2/core/accounts?page=x",
+      "/v2/core/events?page=x",
+      "/v2/core/accounts?page=x&page=y",
+      "/v2/core/accounts?page=x&limit=99",
+    ]) {
+      respond = () => Response.json({ data: [], next_page_url: url });
+      expect((await refusal(connector.callTool("stripe_api_read", args, ctx))).code).toBe("connector_call_failed");
+    }
+    const search = { path: "/v1/customers/search", query: { query: "email:'alice@example.com'", limit: 1 } };
+    respond = () => Response.json({ data: [{ id: "acct_kept" }], next_page_url: "/v2/core/accounts?page=x&limit=20" });
+    const incomplete = (await connector.callTool("stripe_api_read", { path: "/v2/core/accounts" }, ctx)) as any;
+    expect(incomplete.data.data).toEqual([{ id: "acct_kept" }]);
+    expect(incomplete.page).toEqual({ hasMore: true, param: "page", in: "query" });
+    expect(sent.at(-1)!.url.search).toBe("");
+    respond = () =>
+      Response.json({ object: "search_result", data: [{ id: "cus_1" }], has_more: true, next_page: "next_search" });
+    const searched = (await connector.callTool("stripe_api_read", search, ctx)) as any;
+    respond = () => Response.json({ object: "search_result", data: [], has_more: false });
+    expect(
+      await connector.callTool("stripe_api_read", { ...search, cursor: searched.page.nextCursor }, ctx),
+    ).toMatchObject({ page: { hasMore: false, param: "page", in: "query" } });
+    expect(sent.at(-1)!.url.searchParams.get("page")).toBe("next_search");
+    const beforeRaw = sent.length;
+    expect(
+      (
+        await refusal(
+          connector.callTool("stripe_api_read", { ...search, query: { ...search.query, page: "next_search" } }, ctx),
+        )
+      ).code,
+    ).toBe("invalid_args");
+    expect(sent).toHaveLength(beforeRaw);
   });
 });

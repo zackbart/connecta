@@ -15,30 +15,31 @@
         "operations": [
           {
             "method": "POST",
-            "path": "/v1/refunds",
-            "operationId": "PostRefunds",
+            "path": "/v1/charges/{charge}/refund",
+            "operationId": "PostChargesChargeRefund",
             "summary": "Create a refund",
-            "tag": "refunds",
             "tool": "stripe_api_write"
           },
           {
             "method": "POST",
-            "path": "/v1/refunds/{refund}",
-            "operationId": "PostRefundsRefund",
-            "summary": "Update a refund",
-            "tag": "refunds",
+            "path": "/v1/payment_records/{id}/report_refund",
+            "operationId": "PostPaymentRecordsIdReportRefund",
+            "summary": "Report a refund",
             "tool": "stripe_api_write"
           },
           {
             "method": "POST",
-            "path": "/v1/terminal/refunds",
-            "operationId": "PostTerminalRefunds",
-            "summary": "Create a refund using a Terminal-supported device.",
-            "tag": "terminal",
+            "path": "/v1/application_fees/{id}/refund",
+            "operationId": "PostApplicationFeesIdRefund",
+            "summary": "",
             "tool": "stripe_api_write"
           }
         ],
-        "revision": "v2555"
+        "revision": "v2555",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiOWUzMDE2NzYwMTczYjQ4ZjE5OGFmZTA4Y2E1ZmJiZjMiLCJjIjoiMyIsIm0iOiJBVGFMd3B1LXMzNG5sTVpPTEVWQnVpY0FDZ0RaU2g5bDBiMDdUZzZJSmNJIn0"
+        }
       }
     }
   },
@@ -72,6 +73,7 @@
             }
           }
         ],
+        "verdict": "read",
         "tool": "stripe_api_read",
         "revision": "v2555"
       }
@@ -92,7 +94,7 @@
         },
         "limit": 2
       },
-      "select": [
+      "fields": [
         "data.id",
         "data.amount"
       ]
@@ -129,8 +131,9 @@
         },
         "page": {
           "hasMore": true,
-          "next": "ch_2",
-          "param": "starting_after"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYjkzNzU5MTBhM2IxN2E4ZjE4YzUxNGRlNzM3MzJjOWUiLCJjIjoie1wicGFyYW1cIjpcInN0YXJ0aW5nX2FmdGVyXCIsXCJpblwiOlwicXVlcnlcIixcInZhbHVlXCI6XCJjaF8yXCJ9IiwibSI6Ijl2MDRkU0pmMlBBWG81M3R4UEhkV3dVT2xJTGZHUHI4Q2hScUN6dHVvVEEifQ",
+          "param": "starting_after",
+          "in": "query"
         }
       }
     }

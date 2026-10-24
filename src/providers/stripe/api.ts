@@ -5,14 +5,15 @@ import { Refusal } from "../../http/errors.js";
 import { restSafety, resultSafety } from "../../http/safety.js";
 import { guardedClient } from "../../http/client.js";
 import { Credentials } from "../../http/services.js";
-import { connect, get, type Connection, type ConnectOptions } from "../../http/vendor.js";
+import { connect, get, type Connection, type ConnectOptions, type SendOptions } from "../../http/vendor.js";
+import type { HatchBinding, HatchDeclaration } from "../../http/hatch.js";
+import { stripePage, stripeBackwardPage, stripeSearchPage, stripeV2Page } from "../../http/hatch-paging.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
-import type { RestCall, RestPage, RestReadPost } from "../_shared/rest/tools.js";
+import type { RestCall, RestReadPost } from "../_shared/rest/tools.js";
 import { valueSafety, refuseWithheldLinks } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { STRIPE_VALUE_SAFETY } from "./safety.js";
-import { skill } from "./skill.generated.js";
 import { STRIPE_API_BASE_URL, type StripeMode } from "./lib/config.js";
 import type { StripeApiKeyOptions } from "./index.js";
 import type { VendorErrors } from "../../http/errors.js";
@@ -40,6 +41,14 @@ interface StripeFacts {
 const LOCK_TIMEOUT = "lock_timeout";
 
 export const stripeErrors: VendorErrors<StripeFacts> = {
+  meanings: {
+    unknownId: "not_found",
+    provesAbsence: true,
+    conflicts: [
+      "HTTP 409 when the request conflicts with another request, including a concurrent use of the same idempotency key",
+      "HTTP 429 with code lock_timeout when another request holds the object's lock",
+    ],
+  },
   numericFacts: {
     retryAfterMs: {
       header: "retry-after",
@@ -111,15 +120,17 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
         `${detail} A restricted key lacks this permission; an operator must grant it on the key or use another key.`,
     }),
     404: () => ({ code: "not_found", words: (detail) => `${detail} Resolve the id with a list or search read.` }),
-    400: () => ({ code: "invalid_args" }),
-    409: () => ({ code: "invalid_args" }),
-    422: () => ({ code: "invalid_args" }),
+    409: () => ({ code: "conflict" }),
     402: () => ({ code: "connector_call_failed", retryable: false }),
     424: () => ({ code: "unavailable" }),
-    // Stripe's 5xx carries no wait; Retry-After is not passed on.
-    serverError: () => ({ code: "unavailable" }),
   },
   unreadable: "Stripe returned malformed JSON.",
+  bodyFailures: {
+    review:
+      "Stripe HTTP 424 is an external dependency failure, including when its body exceeds the byte ceiling (https://docs.stripe.com/api/errors). A failed body read does not establish malformed JSON; preserve the bounded read phase only.",
+    statusOnly: [424],
+    readFailed: "Stripe's response body could not be read completely.",
+  },
 };
 
 const FILES_ORIGIN = "https://files.stripe.com";
@@ -244,40 +255,58 @@ export function refuse(call: RestCall): string | undefined {
   return undefined;
 }
 
-/** Cursors: v1 lists, search results, and v2 lists each spell the next page differently. */
-export function page(data: unknown, call: RestCall): RestPage | undefined {
-  const body = record(data);
-  if (body["object"] === "list" && Array.isArray(body["data"])) {
-    const backward = call.query["ending_before"] !== undefined;
-    const items = body["data"];
-    const edge = record(backward ? items[0] : items[items.length - 1])["id"];
-    const hasMore = body["has_more"] === true;
-    return {
-      hasMore,
-      ...(hasMore && typeof edge === "string"
-        ? { next: edge, param: backward ? "ending_before" : "starting_after" }
-        : {}),
-    };
-  }
-  if (body["object"] === "search_result") {
-    const next = text(body["next_page"]);
-    return { hasMore: body["has_more"] === true, ...(next ? { next, param: "page" } : {}) };
-  }
-  if (Array.isArray(body["data"]) && "next_page_url" in body) {
-    const url = text(body["next_page_url"]);
-    let next: string | null = null;
-    try {
-      next = url ? new URL(url, STRIPE_API_BASE_URL).searchParams.get("page") : null;
-    } catch {
-      next = null;
-    }
-    return { hasMore: url !== undefined, ...(next ? { next, param: "page" } : {}) };
-  }
-  return undefined;
-}
-
 export const stripeIndex = new OperationIndex(openapi, { vendor: "stripe", title: "Stripe" });
 export const stripeSafety = valueSafety(STRIPE_VALUE_SAFETY, () => stripeIndex);
+function operationRefusal(op: (typeof stripeIndex.ops)[number]): string | undefined {
+  return (
+    checkServer(op.server) ??
+    stripeSafety.refusal(op.method, op.path) ??
+    (/^multipart\/|octet-stream/.test(stripeIndex.bodyType(op) ?? "")
+      ? `${op.method} ${op.path} takes an upload. Upload files in the Stripe Dashboard; this connector sends no multipart bodies.`
+      : undefined)
+  );
+}
+export const STRIPE_VERDICTS: HatchDeclaration["verdicts"] = Object.fromEntries(
+  stripeIndex.ops.map((op) => [
+    `${op.method} ${op.path}`,
+    operationRefusal(op)
+      ? "refuse"
+      : op.method === "GET" || READ_POSTS.some(([method, path]) => method === op.method && path === op.path)
+        ? "read"
+        : "destructive",
+  ]),
+);
+export const STRIPE_PAGES: NonNullable<HatchDeclaration["pages"]> = Object.fromEntries(
+  stripeIndex.ops.flatMap((op) => {
+    if (op.method !== "GET" || STRIPE_VERDICTS[`GET ${op.path}`] !== "read") return [];
+    const parameters = stripeIndex
+      .contract(op)
+      .parameters.filter((p) => p.in === "query")
+      .map((p) => p.name);
+    return parameters.includes("starting_after")
+      ? [[`GET ${op.path}`, parameters.includes("ending_before") ? [stripePage, stripeBackwardPage] : stripePage]]
+      : parameters.includes("page")
+        ? [[`GET ${op.path}`, op.path.startsWith("/v2/") ? stripeV2Page : stripeSearchPage]]
+        : [];
+  }),
+);
+
+export function stripeBinding({
+  connection,
+  options,
+}: {
+  connection: Connection;
+  options: Readonly<StripeApiKeyOptions>;
+}): HatchBinding {
+  const files = stripeConnection(options, "files");
+  return {
+    review:
+      "Stripe v1 nested form and v2 JSON framing, connected-account headers, confined quote PDF origin, and existing argument-dependent safety refusals; every dispatch uses Connection.sendPath.",
+    allowOtherServers: true,
+    refuse: (call) => operationRefusal(call.op) ?? refuse(call),
+    send: (call, sendOptions) => sendStripe(connection, options, call, files, sendOptions),
+  };
+}
 export const safety = () => ({
   reviewed: restSafety(stripeSafety, stripeIndex),
   sensitiveFields: { names: [], choice: "drop" as const },
@@ -387,7 +416,8 @@ export function sendStripe(
   options: Readonly<StripeApiKeyOptions>,
   call: RestCall,
   files: Connection,
-) {
+  sendOptions?: SendOptions,
+): ReturnType<Connection["sendPath"]> {
   return checked(() => {
     const server = checkServer(call.op.server);
     if (server) invalid(server);
@@ -428,11 +458,7 @@ export function sendStripe(
       emptyForm: true as const,
     };
   }).pipe(
-    Effect.flatMap((request) => (call.op.server === FILES_ORIGIN ? files : connection).sendPath(request)),
-    Effect.map((answer) => {
-      const next = page(answer.data, call);
-      return { status: answer.status, data: answer.data ?? null, ...(next ? { page: next } : {}) };
-    }),
+    Effect.flatMap((request) => (call.op.server === FILES_ORIGIN ? files : connection).sendPath(request, sendOptions)),
   );
 }
 export const probe = {
@@ -456,11 +482,6 @@ export const probe = {
       : undefined,
 };
 
-function instructionsSection(instructions: string | undefined): string {
-  const text = instructions?.trim();
-  return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
 export const MODE_COPY: Readonly<Record<StripeMode, { title: string; blurb: string; warning: string; rate: string }>> =
   {
     production: {
@@ -478,32 +499,3 @@ export const MODE_COPY: Readonly<Record<StripeMode, { title: string; blurb: stri
       rate: "25 requests per second",
     },
   };
-
-function keyUsageGuide(
-  mode: StripeMode,
-  purpose: string,
-  connectedAccount: string | undefined,
-  instructions: string | undefined,
-): string {
-  const copy = MODE_COPY[mode];
-  const { key, shared, key_limits, key_tail } = skill.fragments;
-  const connect = connectedAccount
-    ? `\n\nConnected account: \`${connectedAccount}\`. Every call acts as this Connect account; the platform account's own objects are out of reach here.`
-    : "";
-  return `# Stripe usage
-
-Mode: ${mode}. Connector purpose: ${purpose}
-
-${copy.warning}${connect}${key}${shared}${key_limits}${copy.rate}${key_tail}
-${instructionsSection(instructions)}`;
-}
-
-export function usageGuide(options: Readonly<StripeApiKeyOptions>) {
-  return {
-    content: keyUsageGuide(options.mode, options.purpose, connectedAccount(options), options.instructions),
-    summary:
-      options.mode === "production"
-        ? "PRODUCTION: real money. One live-mode key over REST; search operations, read details, then read or write."
-        : "Sandbox: test data only. One test-mode key over REST; search operations, read details, then read or write.",
-  };
-}

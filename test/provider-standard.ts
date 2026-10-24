@@ -39,7 +39,6 @@ export const PENDING = {
     "planning-center",
     "sheets",
     "slides",
-    "stripe",
     "vercel",
   ]),
 } as const;

@@ -120,6 +120,15 @@ export function renderConventions({ name, kind, kit }) {
           "the last page has no `nextCursor`.",
       );
     }
+    const paging = kit?.hatch?.paging;
+    if (paging !== undefined) {
+      if (paging !== "argument") fail(name, "kit.hatch.paging is argument");
+      api.push(
+        "- **Paging:** on a paged hatch read, keep the original method, path, filters, limit and fields. " +
+          "Pass `page.nextCursor` unchanged as the top-level `cursor`; omit raw anchors on continuations. " +
+          "The last page has `page.hasMore: false` and no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation could not be confined.",
+      );
+    }
     api.push(
       "- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a " +
         "result cut for size; the ids that fetch what was cut stay in the result.",

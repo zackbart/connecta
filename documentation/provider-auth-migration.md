@@ -18,6 +18,9 @@ uses one implementation: configure two ids for both.
 
 ## Stripe
 
+For current API-key setup, use [Maintained provider setup](./providers.md#stripe).
+For the 0.35 argument and paging changes, use [Stripe surface migration](./provider-migration-0.35.md#stripe).
+
 ## Choose OAuth or an API key
 
 Import `stripe` from `@zackbart/connecta/providers/stripe`. Choose one of two setup paths:

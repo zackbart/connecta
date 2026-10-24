@@ -7,6 +7,7 @@ import { P5_TASKS } from "./p5.js";
 import { OVERFLOW_TASKS } from "./overflow.js";
 import { BREEZE_TASKS } from "./breeze.js";
 import { TITHELY_TASKS } from "./tithely.js";
+import { STRIPE_TASKS } from "./stripe.js";
 
 /** Retained tasks from the historical 19-task #765 paired experiment. */
 export const COMPARISON_TASKS: ActiveTask[] = [
@@ -19,5 +20,6 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...TITHELY_TASKS,
   ...BREEZE_TASKS,
   ...OVERFLOW_TASKS,
+  ...STRIPE_TASKS,
 ];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;

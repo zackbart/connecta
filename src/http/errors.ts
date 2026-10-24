@@ -86,7 +86,11 @@ export class StatusFailure extends Data.TaggedError("StatusFailure")<{
 }> {}
 
 /** A successful status whose body is not JSON. Its text never surfaces. */
-export class UnreadableBody extends Data.TaggedError("UnreadableBody")<{}> {}
+export class UnreadableBody extends Data.TaggedError("UnreadableBody")<{ readonly readFailed?: true }> {
+  constructor(options: { readonly readFailed?: true } = {}) {
+    super(options);
+  }
+}
 
 /** The vendor's own typed verdict: an in-band refusal, a missing credential. */
 export class Refusal extends Data.TaggedError("Refusal")<{ readonly error: ConnectorCallError }> {}
@@ -241,6 +245,12 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly statuses: StatusTable<F>;
   /** Message for a successful status whose body is not JSON. */
   readonly unreadable: string;
+  /** Reviewed opt-in handling when a bounded body cannot be read; no additional I/O or raw causes. */
+  readonly bodyFailures?: {
+    readonly review: string;
+    readonly statusOnly: readonly number[];
+    readonly readFailed: string;
+  };
   /**
    * Where the vendor documents that it authenticates a request before acting
    * on it (Q8). With it, a write answered 401 is that 401's served refusal,
@@ -306,6 +316,7 @@ const errorReviews = new WeakMap<
     display: Readonly<Record<string, number>>;
     numbers: Readonly<Record<string, NumericReview>>;
     vocabulary: Readonly<Record<string, ReadonlySet<Fact>>>;
+    bodyFailures?: NonNullable<VendorErrors["bodyFailures"]>;
   }
 >();
 /** Metadata snapshots contain no request data, promises or services. */
@@ -362,6 +373,25 @@ function captureErrorReviews(vendor: VendorErrors<any>) {
     });
   }
   const captured = {
+    ...(vendor.bodyFailures
+      ? {
+          bodyFailures: (() => {
+            const review = vendor.bodyFailures;
+            if (
+              !review.review?.trim() ||
+              !review.readFailed?.trim() ||
+              !Array.isArray(review.statusOnly) ||
+              review.statusOnly.some(
+                (status) => !Number.isInteger(status) || status < 400 || status > 599 || status === 401,
+              )
+            )
+              throw new Error(
+                "Body-failure handling needs a review, fixed wording and reviewed error statuses other than 401.",
+              );
+            return Object.freeze({ ...review, statusOnly: Object.freeze([...review.statusOnly]) });
+          })(),
+        }
+      : {}),
     presence: Object.freeze(presence),
     display: Object.freeze(display),
     numbers: Object.freeze(numbers),
@@ -685,11 +715,32 @@ function verdict(
         `${vendor.provider} answered HTTP ${failure.status} with a redirect; this connector talks to exactly one origin and never forwards its credential to another.`,
         { retryable: false },
       );
-    case "ResponseTooLarge":
+    case "ResponseTooLarge": {
+      if (
+        dispatch?.status !== undefined &&
+        captureErrorReviews(vendor).bodyFailures?.statusOnly.includes(dispatch.status)
+      ) {
+        // The ceiling discarded the body, not the answered status. Only opted-in
+        // statuses use the vendor's status-only rules; 401/Q8 stays unchanged.
+        const mapped = statusVerdict(
+          new StatusFailure({
+            status: dispatch.status,
+            headers: new Headers(),
+            body: undefined,
+            unreadable: true,
+            operation: dispatch.operation ?? { method: "", template: "" },
+          }),
+          vendor,
+          options.withholds?.(dispatch.operation ?? { method: "", template: "" }) === true,
+          !dispatch.write,
+        );
+        return providerFailureMessage(mapped, failure.detail);
+      }
       return attachFailureFacts(
         new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false }),
         dispatch?.status === undefined ? {} : { httpStatus: dispatch.status },
       );
+    }
     case "ResendRefused":
       return new ConnectorCallError(
         "connector_call_failed",
@@ -697,7 +748,13 @@ function verdict(
         { retryable: false },
       );
     case "UnreadableBody":
-      return new ConnectorCallError("connector_call_failed", vendor.unreadable, { retryable: false });
+      return new ConnectorCallError(
+        "connector_call_failed",
+        failure.readFailed
+          ? (captureErrorReviews(vendor).bodyFailures?.readFailed ?? vendor.unreadable)
+          : vendor.unreadable,
+        { retryable: false },
+      );
     case "StatusFailure":
       return statusVerdict(
         failure,
