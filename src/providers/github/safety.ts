@@ -181,12 +181,18 @@ export const SAFETY: ValueSafetyTable = {
   embeddedUrls: {
     operations: Object.fromEntries(
       githubIndex.ops
-        .filter((op) => READ_PERMISSIONS[`${op.method} ${op.path}`] || RELEASE_PERMISSIONS[`${op.method} ${op.path}`])
+        .filter((op) => {
+          const key = `${op.method} ${op.path}`;
+          return READ_PERMISSIONS[key] || RELEASE_PERMISSIONS[key] || INTERNAL_READS.has(key) || key === MERGE;
+        })
         .map((op) => [
           `${op.method} ${op.path}`,
           githubIndex
             .fields(op)
-            .filter((f) => f.in === "response" && /(?:^|\.)(?:body|patch|download_url)$/.test(f.path))
+            // The index declares exhaustive roots, not every nested record.
+            // Scan each root's complete value so nested commit messages and
+            // search/repository descriptions receive the same URL protection.
+            .filter((f) => f.in === "response" && /^(?:\[\]\.)?[^.[\]]+$/.test(f.path))
             .map((f) => f.path),
         ]),
     ),

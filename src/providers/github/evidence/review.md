@@ -62,7 +62,8 @@ paths redact temporary clone tokens and upload destinations. Public commit
 verification signatures and security-feature settings are explicitly metadata,
 not authentication exemptions. Token, key, private_key, secret and download_url
 keys are permanently withheld in every nesting/array shape. Embedded signed URLs
-are withheld; free-text body/patch paths are reviewed. Candidate generation plus
+are withheld; free-text body/patch, title, description and message paths are
+reviewed, including bodies in named scoped search. Candidate generation plus
 the full-index review harness checks operations, credentials and embedded URLs.
 No sensitiveFields option is introduced for an empty optional-sensitive set.
 

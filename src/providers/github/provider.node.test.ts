@@ -124,6 +124,11 @@ describe("GitHub App provider", () => {
       "/repos/{owner}/{repo}",
     );
     expect(JSON.stringify(scrubbed)).not.toContain(SENTINEL);
+    for (const [path, data] of [
+      ["/search/issues", { items: [{ body: `See https://example.com/?token=${SENTINEL}` }] }],
+      ["/repos/{owner}/{repo}/commits/{ref}", { commit: { message: `See https://example.com/?token=${SENTINEL}` } }],
+    ] as const)
+      expect(JSON.stringify(githubSafety.redact(data, "GET", path))).not.toContain(SENTINEL);
     const connector = connection(),
       ctx = context();
     expect(connector.staticTools?.map((t) => t.name)).toEqual([

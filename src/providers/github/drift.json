@@ -1210,7 +1210,7 @@
     ],
     "evidence": {
       "openapi.json": "sha256:e7e54e7b71d97d8933afdf9561d40563d3b2c0d16de4cc627ad01e6f0b5a23fa",
-      "value-safety.json": "sha256:2a082376391170a8de7702d47afd83437c49000be20e3a588f0f938746b62073"
+      "value-safety.json": "sha256:4d51c26efdd337f0ab28d66fdc48e7ee1f7008ddfbfd3937eb9a92f50b8c5346"
     }
   },
   "checks": [
