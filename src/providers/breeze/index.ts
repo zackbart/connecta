@@ -10,13 +10,16 @@ import {
   BreezeApi,
   breezeSafety,
   BREEZE_MAX_RESPONSE_BYTES,
+  BREEZE_INDEX,
+  BREEZE_VERDICTS,
+  BREEZE_NAMED,
+  breezePeoplePage,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   errors,
   result,
 } from "./api.js";
 import { breezeTools } from "./tools.js";
-import { usageGuide } from "./lib/guide.js";
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";
 const SUBDOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 export interface BreezeOptions {
@@ -47,7 +50,7 @@ export interface BreezeOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
-  /** Default `list_people` page size. Defaults to 100; connecta's cap is 1,000. */
+  /** Default page size for paged lists. Defaults to 100; connecta's cap is 1,000. */
   defaultPageSize?: number;
 }
 
@@ -82,6 +85,7 @@ export const breeze = defineApiProvider<BreezeOptions>({
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
   authenticate,
   errors,
+  idempotencyKey: false,
   safety: () => breezeSafety,
   result,
   credential: (options) => {
@@ -111,10 +115,33 @@ export const breeze = defineApiProvider<BreezeOptions>({
     },
   },
   guide: (options) => ({
-    content: usageGuide(normalizeSubdomain(options.subdomain), options.purpose, options.instructions, skill),
+    heading: "Breeze ChMS usage",
+    context: [
+      `Church database: ${normalizeSubdomain(options.subdomain)}${BREEZE_HOST_SUFFIX}.`,
+      `Church purpose: ${options.purpose}`,
+      "Calendar feed addresses and embed keys are always removed; profile details follow the requested vendor detail level.",
+      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+      ...(options.defaultPageSize !== undefined
+        ? [`Paged lists return ${options.defaultPageSize} items by default on this connection.`]
+        : []),
+    ],
     summary:
-      "Sensitive church data, fieldId decoding, two id kinds, undocumented giving reads, and endpoint-split hatches.",
+      "Church records: profile-field decoding, occurrence/person joins, decimal giving, and archival API caveats.",
     required: true,
   }),
+  hatch: {
+    name: "breeze",
+    title: "Breeze ChMS",
+    index: BREEZE_INDEX,
+    verdicts: BREEZE_VERDICTS,
+    named: BREEZE_NAMED,
+    pathExample: "/people/12345",
+    pages: { "GET /people": breezePeoplePage },
+    notes: () => ({
+      read: "Breeze uses GET for writes too; only reviewed read endpoints are admitted. Calendar feeds and embed keys are removed.",
+      write:
+        "Breeze writes use GET query parameters. JSON parameters such as fields_json take serialized JSON strings.",
+    }),
+  },
   tools: breezeTools,
 });

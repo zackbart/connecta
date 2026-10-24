@@ -49,3 +49,52 @@ non-HTML bodies after whole sent-secret redaction; status alone selects the
 error code. Only legacy hatches select JSON-or-text on success. Named tools
 still require JSON, regardless of Content-Type. Malformed JSON cannot pass
 as a successful named read.
+
+## Step 2: reviewed runtime index
+
+The standard hatch derives its runtime index from `BreezeApi` through
+`vendorIndex`. The original HTML pin, conversion and endpoint digests stay
+unchanged as drift evidence. The 49 operation identities remain the same;
+23 reviewed observational operations are reads and the other 26 are explicit
+write/destructive reviews, although all use GET. Unindexed paths and
+unreviewed query names are refused. The person template additionally requires
+a numeric id before authentication; literal write endpoints never inherit its
+read verdict. Calendar feed addresses and embed keys are always removed,
+including when `fields` requests them.
+
+The public reference and the archived
+[2023-06-07 reference](https://web.archive.org/web/20230607234759/https://app.breezechms.com/api)
+were re-read on 2026-10-24. Required identities follow their endpoint argument
+tables and PHP examples: person/tag/form/instance/role/payment/campaign ids,
+family member arrays, update `fields_json`, person first/last, event name/start,
+and account-log action. Optional selectors, JSON detail values, event end,
+role quantity and folder placement remain optional. Query values ending in
+`_json` are serialized strings; the named person tools retain typed encoding.
+The reference's optional/default columns are inconsistent (some identity
+parameters appear only in PHP), so this is a reviewed declaration rather than
+an automatically inferred rule from a dash in that column.
+
+Giving add/edit parameters were recovered: `date`, `person_id`, `person_json`,
+`uid`, `processor`, `method`, `funds_json`, `amount`, `group`, `batch_number`,
+`batch_name`, `note`; edit also has `payment_id` and its PHP example's `name`.
+Edit requires the payment id. The archive does not state add's requiredness
+or conditional donor requirements precisely; those fields remain optional and
+its details summary records that limitation. This retains indexed coverage
+without inventing a conditional schema. Editing can assign a new payment id.
+
+Success declarations contain optional, lenient properties observed in the
+reference and existing fixtures, including bare/array person write responses.
+They supply discoverable response roots for pre-dispatch `fields` validation;
+they do not decode vendor success bodies or claim completeness. Operations
+without reviewed response properties refuse `fields`. The hatch requires JSON
+successes, while bounded error text remains readable through the existing
+sent-secret boundary. The configurable sensitive set remains empty; no nominal
+`sensitiveFields` option is added.
+
+Error meanings remain explicit: 401/403 require key recovery; HTTP 404 and an
+empty named-person lookup prove absence with this account-wide key; other
+in-band failures remain generic. No documented conflict, idempotency key or
+authentication-before-execution guarantee is asserted. Retry-After numeric
+facts retain the F6-b declaration. Shared kit fallback wording replaces only
+the redundant status branches. H5's unreadable wording is deferred until the
+Stripe step-2 opt-in plumbing merges; this PR retains Breeze's existing words.

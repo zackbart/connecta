@@ -1,15 +1,132 @@
 [
   {
-    "label": "breeze_api_get",
-    "tool": "breeze_api_get",
+    "label": "breeze_api_search",
+    "tool": "breeze_api_search",
+    "args": {
+      "query": "people"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "GET",
+            "path": "/people",
+            "operationId": "people",
+            "summary": "people",
+            "tool": "breeze_api_read",
+            "named": "list_people"
+          },
+          {
+            "method": "GET",
+            "path": "/people/{PERSON_ID}",
+            "operationId": "people_PERSON_ID",
+            "summary": "people PERSON ID",
+            "tool": "breeze_api_read",
+            "named": "get_person"
+          },
+          {
+            "method": "GET",
+            "path": "/people/add",
+            "operationId": "people_add",
+            "summary": "people add",
+            "tool": "breeze_api_write",
+            "named": "add_person"
+          },
+          {
+            "method": "GET",
+            "path": "/people/update",
+            "operationId": "people_update",
+            "summary": "people update",
+            "tool": "breeze_api_write",
+            "named": "update_person"
+          },
+          {
+            "method": "GET",
+            "path": "/people/delete",
+            "operationId": "people_delete",
+            "summary": "people delete",
+            "tool": "breeze_api_write"
+          }
+        ],
+        "revision": "2026-10-23",
+        "page": {
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "breeze_api_details",
+    "tool": "breeze_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/people"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/people",
+        "operationId": "people",
+        "summary": "people",
+        "parameters": [
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "description": "details",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter_json",
+            "in": "query",
+            "required": false,
+            "description": "JSON-encoded string; objects and arrays must be serialized before calling.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "limit",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "offset",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "verdict": "read",
+        "tool": "breeze_api_read",
+        "named": "list_people",
+        "revision": "2026-10-23"
+      }
+    }
+  },
+  {
+    "label": "breeze_api_read",
+    "tool": "breeze_api_read",
     "args": {
       "path": "/people/157857",
-      "query": [
-        {
-          "name": "details",
-          "value": 1
-        }
-      ]
+      "query": {
+        "details": 1
+      }
     },
     "steps": [
       [
@@ -28,7 +145,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "id": "157857",
           "first_name": "Thomas",
           "last_name": "Anderson"
@@ -37,57 +155,34 @@
     }
   },
   {
-    "label": "breeze_api_get filter_json",
-    "tool": "breeze_api_get",
+    "label": "breeze_api_read filter_json",
+    "tool": "breeze_api_read",
     "args": {
       "path": "/people/",
-      "query": [
-        {
-          "name": "filter_json",
-          "value": {
-            "tag_contains": "y_9"
-          }
-        }
-      ]
+      "query": {
+        "filter_json": "{\"tag_contains\":\"y_9\"}"
+      }
     },
-    "steps": [
-      [
-        {
-          "after": 0,
-          "method": "GET",
-          "url": "https://gracechurch.breezechms.com/api/people?filter_json=%7B%22tag_contains%22%3A%22y_9%22%7D",
-          "headers": {
-            "accept": "application/json",
-            "api-key": "<secret:credential>"
-          }
-        }
-      ]
-    ],
+    "steps": [],
     "result": {
-      "ok": true,
-      "format": "json",
-      "value": {
-        "result": [
-          {
-            "id": "1",
-            "first_name": "Thomas",
-            "last_name": "Anderson"
-          }
-        ]
+      "ok": false,
+      "dispatched": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "A Breeze ChMS path has no empty segments or trailing slash.",
+        "retryable": false
       }
     }
   },
   {
-    "label": "breeze_api_mutate",
-    "tool": "breeze_api_mutate",
+    "label": "breeze_api_write",
+    "tool": "breeze_api_write",
     "args": {
       "path": "/giving/delete",
-      "query": [
-        {
-          "name": "payment_id",
-          "value": "56789123"
-        }
-      ]
+      "query": {
+        "payment_id": "56789123"
+      },
+      "method": "GET"
     },
     "steps": [
       [
@@ -106,7 +201,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "success": true,
           "errors": null,
           "payment_id": 56789123
@@ -152,15 +248,14 @@
       "filter": {
         "2000138015": "226-227"
       },
-      "limit": 2,
-      "cursor": "40"
+      "limit": 2
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://gracechurch.breezechms.com/api/people?details=0&filter_json=%7B%222000138015%22%3A%22226-227%22%2C%22tag_contains%22%3A%22y_16681%22%7D&limit=2&offset=40",
+          "url": "https://gracechurch.breezechms.com/api/people?details=0&filter_json=%7B%222000138015%22%3A%22226-227%22%2C%22tag_contains%22%3A%22y_16681%22%7D&limit=2&offset=0",
           "headers": {
             "accept": "application/json",
             "api-key": "<secret:credential>"
@@ -172,7 +267,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "people": [
+        "items": [
           {
             "id": "1",
             "firstName": "Thomas",
@@ -188,17 +283,19 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "42"
+          "nextCursor": "eyJ2IjoyLCJkIjoiZjViMWUxZjQzMGExZTZjNDdkNmY1ODkwY2Y1YTZlOTUiLCJjIjoiMiIsIm0iOiJTUzdRSW4yZzRHQnkxS3JDRVR2TmVINEUyTUdyLTZUODI0UVhtVV9DYVFjIn0"
         }
       }
     }
   },
   {
-    "label": "list_people raw",
+    "label": "list_people fields",
     "tool": "list_people",
     "args": {
       "includeDetails": true,
-      "raw": true
+      "fields": [
+        "id"
+      ]
     },
     "steps": [
       [
@@ -217,17 +314,13 @@
       "ok": true,
       "format": "json",
       "value": {
-        "people": [
+        "items": [
           {
-            "id": "1",
-            "first_name": "Thomas",
-            "last_name": "Anderson",
-            "path": "img/x.jpg"
+            "id": "1"
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -300,7 +393,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "fields": [
+        "items": [
           {
             "fieldId": "2000138015",
             "name": "Status",
@@ -319,7 +412,10 @@
             "type": "birthdate",
             "section": "Main"
           }
-        ]
+        ],
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -346,13 +442,16 @@
       "ok": true,
       "format": "json",
       "value": {
-        "tags": [
+        "items": [
           {
             "id": "16681",
             "name": "Choir",
             "folderId": "77"
           }
-        ]
+        ],
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -382,7 +481,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "events": [
+        "items": [
           {
             "id": "40984",
             "eventId": "736",
@@ -392,14 +491,21 @@
             "endsAt": null
           }
         ],
-        "truncated": true
+        "page": {
+          "hasMore": false
+        },
+        "truncated": [
+          "items[]"
+        ]
       }
     }
   },
   {
-    "label": "list_calendars",
-    "tool": "list_calendars",
-    "args": {},
+    "label": "list_calendars via hatch",
+    "tool": "breeze_api_read",
+    "args": {
+      "path": "/events/calendars/list"
+    },
     "steps": [
       [
         {
@@ -417,9 +523,10 @@
       "ok": true,
       "format": "json",
       "value": {
-        "calendars": [
+        "status": 200,
+        "data": [
           {
-            "id": "0",
+            "id": 0,
             "name": "Main",
             "color": "b2cd92"
           }
@@ -451,7 +558,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "attendance": [
+        "items": [
           {
             "personId": "824512",
             "firstName": "Carol",
@@ -459,20 +566,25 @@
             "checkedInAt": "2025-12-09 11:01:33",
             "checkedOutAt": null
           }
-        ]
+        ],
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
   {
-    "label": "list_forms",
-    "tool": "list_forms",
-    "args": {},
+    "label": "list_forms via hatch",
+    "tool": "breeze_api_read",
+    "args": {
+      "path": "/forms/list_forms"
+    },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://gracechurch.breezechms.com/api/forms/list_forms?is_archived=0",
+          "url": "https://gracechurch.breezechms.com/api/forms/list_forms",
           "headers": {
             "accept": "application/json",
             "api-key": "<secret:credential>"
@@ -484,23 +596,27 @@
       "ok": true,
       "format": "json",
       "value": {
-        "forms": [
+        "status": 200,
+        "data": [
           {
             "id": "15326",
             "name": "Visitor Card",
-            "slug": "visitor-card",
-            "archived": false,
-            "createdAt": "2025-02-01"
+            "url_slug": "visitor-card",
+            "is_archived": "0",
+            "created_on": "2025-02-01"
           }
         ]
       }
     }
   },
   {
-    "label": "list_form_fields",
-    "tool": "list_form_fields",
+    "label": "list_form_fields via hatch",
+    "tool": "breeze_api_read",
     "args": {
-      "formId": "15326"
+      "path": "/forms/list_form_fields",
+      "query": {
+        "form_id": "15326"
+      }
     },
     "steps": [
       [
@@ -519,19 +635,21 @@
       "ok": true,
       "format": "json",
       "value": {
-        "fields": [
+        "status": 200,
+        "data": [
           {
-            "fieldId": "46",
+            "field_id": "46",
+            "field_type": "email",
             "name": "Email",
-            "type": "email"
+            "options": []
           },
           {
-            "fieldId": "47",
+            "field_id": "47",
+            "field_type": "multiple_choice",
             "name": "How did you hear about us?",
-            "type": "multiple_choice",
             "options": [
               {
-                "optionId": "3",
+                "option_id": "3",
                 "name": "Friend"
               }
             ]
@@ -541,11 +659,14 @@
     }
   },
   {
-    "label": "list_form_entries",
-    "tool": "list_form_entries",
+    "label": "list_form_entries via hatch",
+    "tool": "breeze_api_read",
     "args": {
-      "formId": "15326",
-      "includeResponses": true
+      "path": "/forms/list_form_entries",
+      "query": {
+        "form_id": "15326",
+        "details": 1
+      }
     },
     "steps": [
       [
@@ -564,12 +685,14 @@
       "ok": true,
       "format": "json",
       "value": {
-        "entries": [
+        "status": 200,
+        "data": [
           {
             "id": "11",
-            "personId": "5",
-            "createdAt": "2025-03-09",
-            "responses": {
+            "form_id": "15326",
+            "created_on": "2025-03-09",
+            "person_id": "5",
+            "response": {
               "46": "z@example.com"
             }
           }
@@ -578,10 +701,13 @@
     }
   },
   {
-    "label": "list_volunteers",
-    "tool": "list_volunteers",
+    "label": "list_volunteers via hatch",
+    "tool": "breeze_api_read",
     "args": {
-      "instanceId": "123456"
+      "path": "/volunteers/list",
+      "query": {
+        "instance_id": "123456"
+      }
     },
     "steps": [
       [
@@ -600,31 +726,37 @@
       "ok": true,
       "format": "json",
       "value": {
-        "volunteers": [
+        "status": 200,
+        "data": [
           {
-            "personId": "3008467",
-            "roleIds": [],
+            "person_id": "3008467",
             "response": "0",
-            "rsvpedAt": null
+            "comment": "",
+            "rsvped_on": "0000-00-00 00:00:00",
+            "role_ids": null
           },
           {
-            "personId": "3349681",
-            "roleIds": [
-              "9627"
-            ],
+            "person_id": "3349681",
             "response": "1",
             "comment": "Glad to",
-            "rsvpedAt": "2025-03-02 09:00:00"
+            "rsvped_on": "2025-03-02 09:00:00",
+            "role_ids": [
+              "9627"
+            ]
           }
         ]
       }
     }
   },
   {
-    "label": "list_volunteer_roles",
-    "tool": "list_volunteer_roles",
+    "label": "list_volunteer_roles via hatch",
+    "tool": "breeze_api_read",
     "args": {
-      "instanceId": "123456"
+      "path": "/volunteers/list_roles",
+      "query": {
+        "instance_id": "123456",
+        "show_quantity": 1
+      }
     },
     "steps": [
       [
@@ -643,24 +775,28 @@
       "ok": true,
       "format": "json",
       "value": {
-        "roles": [
+        "status": 200,
+        "data": [
           {
             "id": "9627",
             "name": "Teacher",
-            "quantity": 2
+            "quantity": "2"
           }
         ]
       }
     }
   },
   {
-    "label": "list_account_log",
-    "tool": "list_account_log",
+    "label": "list_account_log via hatch",
+    "tool": "breeze_api_read",
     "args": {
-      "action": "person_updated",
-      "start": "2025-08-01",
-      "includeDetails": true,
-      "limit": 1
+      "path": "/account/list_log",
+      "query": {
+        "action": "person_updated",
+        "start": "2025-08-01",
+        "details": 1,
+        "limit": 1
+      }
     },
     "steps": [
       [
@@ -679,17 +815,17 @@
       "ok": true,
       "format": "json",
       "value": {
-        "entries": [
+        "status": 200,
+        "data": [
           {
             "id": "112",
+            "user_id": "261",
             "action": "person_updated",
-            "userId": "261",
-            "object": "5023943",
-            "createdAt": "2025-08-15 04:41:10",
+            "object_json": "\"5023943\"",
+            "created_on": "2025-08-15 04:41:10",
             "details": "Updated Status"
           }
-        ],
-        "truncated": true
+        ]
       }
     }
   },
@@ -724,7 +860,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "contributions": [
+        "items": [
           {
             "id": "378477",
             "paidOn": "2022-03-05",
@@ -752,8 +888,9 @@
             "funds": []
           }
         ],
-        "count": 2,
-        "totalAmount": "0.30"
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -778,14 +915,17 @@
       "ok": true,
       "format": "json",
       "value": {
-        "funds": [
+        "items": [
           {
             "id": "12346",
             "name": "General Fund",
             "taxDeductible": true,
             "isDefault": true
           }
-        ]
+        ],
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -866,11 +1006,15 @@
     }
   },
   {
-    "label": "assign_tag",
-    "tool": "assign_tag",
+    "label": "assign_tag via hatch",
+    "tool": "breeze_api_write",
     "args": {
-      "personId": "157857",
-      "tagId": "16681"
+      "method": "GET",
+      "path": "/tags/assign",
+      "query": {
+        "person_id": "157857",
+        "tag_id": "16681"
+      }
     },
     "steps": [
       [
@@ -889,16 +1033,21 @@
       "ok": true,
       "format": "json",
       "value": {
-        "assigned": true
+        "status": 200,
+        "data": true
       }
     }
   },
   {
-    "label": "unassign_tag",
-    "tool": "unassign_tag",
+    "label": "unassign_tag via hatch",
+    "tool": "breeze_api_write",
     "args": {
-      "personId": "157857",
-      "tagId": "16681"
+      "method": "GET",
+      "path": "/tags/unassign",
+      "query": {
+        "person_id": "157857",
+        "tag_id": "16681"
+      }
     },
     "steps": [
       [
@@ -917,16 +1066,22 @@
       "ok": true,
       "format": "json",
       "value": {
-        "unassigned": true
+        "status": 200,
+        "data": true
       }
     }
   },
   {
-    "label": "record_check_in",
-    "tool": "record_check_in",
+    "label": "record_check_in via hatch",
+    "tool": "breeze_api_write",
     "args": {
-      "personId": "157857",
-      "instanceId": "40984"
+      "method": "GET",
+      "path": "/events/attendance/add",
+      "query": {
+        "person_id": "157857",
+        "instance_id": "40984",
+        "direction": "in"
+      }
     },
     "steps": [
       [
@@ -945,13 +1100,14 @@
       "ok": true,
       "format": "json",
       "value": {
-        "checkedIn": true
+        "status": 200,
+        "data": true
       }
     }
   },
   {
-    "label": "breeze_api_get echoes sent secrets",
-    "tool": "breeze_api_get",
+    "label": "breeze_api_read echoes sent secrets",
+    "tool": "breeze_api_read",
     "args": {
       "path": "/people/157857"
     },
@@ -972,7 +1128,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "id": "157857",
           "first_name": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
         }

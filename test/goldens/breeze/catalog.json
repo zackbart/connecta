@@ -9,145 +9,27 @@
     "placeholder": "Paste Breeze API key"
   },
   "guide": {
-    "summary": "Sensitive church data, fieldId decoding, two id kinds, undocumented giving reads, and endpoint-split hatches.",
-    "content": "# Breeze ChMS usage\n\nChurch database for gracechurch.breezechms.com (Breeze ChMS, now Tithely Church Management): people, tags, events, attendance, forms, volunteers, and giving.\n\nChurch purpose: Pastoral care and giving reports\n\n## Sensitive data: reduce in code\n\nPeople records carry home addresses, phones, birthdates, and family ties, and\ngiving records reveal who gives and how much — religious affiliation by proxy.\nRead them inside `execute_code` and return only the counts, totals, or the\nfew fields the task needs. Never echo whole profiles or donor lists.\n\n## Ids and profile fields\n\n- Ids are numeric strings. Read them from a list tool; never guess one.\n- Events have two ids: an instance id (`list_events` `id`) for one\n  occurrence, and a series `eventId`. Attendance, volunteers, and\n  check-in take the instance id.\n- Person `details` are keyed by profile `fieldId`, not by name. Call\n  `list_profile_fields` once and map ids to names in code. Multiple-choice\n  values and `list_people` filters use option ids from the same call;\n  join several with `-`.\n- `list_people` has no name search. List without details and match names\n  in code, then `get_person` the hits.\n- Projections rename Breeze's snake_case fields to camelCase and drop photo\n  paths and internal columns; `raw: true` returns Breeze's rows.\n\n## Pagination\n\n`list_people` pages by `cursor`: continue while `page.hasMore`. Breeze\nreports no total, so a full page sets `hasMore` and the next may be empty.\n`list_events` and `list_account_log` do not page: `truncated: true`\nmeans narrow the date range. Other lists return everything.\n\n## Giving\n\n`list_contributions` and `list_funds` call endpoints Breeze removed from\nits public reference in 2023 but still serves. They may change or vanish\nwithout notice; a failure there is not your argument's fault. Amounts are\ndecimal strings; `totalAmount` is an exact sum. Online gifts processed by\nTithe.ly arrive through its sync, batched per deposit, so the latest days\nmay be missing. Read the currency from `get_account_summary`.\n\n## Writes and the hatches\n\n- Every write, `add_person`, `assign_tag`, and `record_check_in`\n  included, follows the routing in the `usage` skill. Fetch it with\n  `skills({ name: \"usage\" })` for guest API and write rules.\n  Those three only add, and `add_person` never deduplicates.\n- `update_person` field values: text, date (M/D/YYYY), or option id in\n  `response`; email, phone, address, and family_role values in `details`.\n- Every Breeze call is a GET, writes included, so the hatches split by\n  endpoint. `breeze_api_get` admits only reviewed read endpoints and their\n  documented parameters, such as `/tags/list_folders`,\n  `/events/list_event`, `/events/attendance/eligible`, `/giving/view`,\n  and `/pledges/list_campaigns`; it refuses anything else. Everything else\n  — event, family, volunteer, and form writes, giving writes, check-out,\n  undocumented parameters — is `breeze_api_mutate`. Paths are below\n  `/api`; `*_json` values may be passed as objects.\n- `list_account_log` actions include person_created, person_updated,\n  person_deleted, tag_assign, tag_unassign, event_created,\n  attendance_deleted, form_entry_updated, contribution_added,\n  contribution_updated, contribution_deleted, and batch_updated.\n\n## Rate limits\n\nBreeze publishes no limit and sends no rate headers; a third party reports\nabout 20 requests per minute. Keep loops sequential and prefer one list call\nover many single reads.\n"
+    "summary": "Church records: profile-field decoding, occurrence/person joins, decimal giving, and archival API caveats.",
+    "content": "# Breeze ChMS usage\n\nChurch database: gracechurch.breezechms.com.\n\nChurch purpose: Pastoral care and giving reports\n\nCalendar feed addresses and embed keys are always removed; profile details follow the requested vendor detail level.\n\n## Church records\n\nBreeze ChMS (now Tithely Church Management) holds people, tags, events,\nattendance, forms, volunteers and giving. People carry contact information,\nbirthdates and family ties; giving reveals donors and amounts. Reduce records\nin code and return only the names, counts or totals the task needs.\n\n## Ids and joins\n\nIds are numeric strings. Resolve them from the relevant inventory before\nwriting. Events have an occurrence id and a series `eventId`; attendance,\nvolunteers and check-in use the occurrence id. Event and pledge lists can lag\nup to 15 minutes behind the site. An all-zero MySQL date means no time was\nrecorded, including no check-out.\n\nProfile `details` use field ids, not names. Resolve field and option ids from\n`list_profile_fields`; multiple-choice filters join option ids with `-`.\nA person-name lookup requires listing people and matching in code. Form entry\nresponses similarly join to that form's field ids.\n\n## Giving\n\nGiving, funds and pledges use archival endpoints removed from the public\nreference in 2023. They can change or vanish without notice. Amounts are\nexact decimal strings: reduce them with integer-cent arithmetic, and read the\ncurrency from `get_account_summary`. A split gift's fund amounts belong to\nits fund ids. Tithe.ly deposits sync in batches, so recent gifts can be absent.\nEditing a giving transaction may return a new payment id.\n\n## Required sequences\n\nCheck for an existing person before adding one: creation does not deduplicate.\nResolve profile fields before updating them. Text, dates (M/D/YYYY) and option\nids use `response`; email, phone, address and family-role values use `details`.\nFamily changes can remove previous associations. Attendance check-out records\na departure time; removing attendance deletes the record instead.\n\nBreeze sends writes as GET requests too. Query names ending in `_json` take\nJSON-encoded strings. The named person writes encode their typed profile values\nfor you. The account-log `object_json` is a serialized affected-object value;\nits free-text description has no stable schema. Events and account logs have\nvendor caps: narrow the date range when the result fills its limit.\n\n## Conventions\n\n- **Paging:** a paged `list_*` or `search_*` read takes `limit` (default 100, at most 1000) and `cursor`. While `page.hasMore` is true, pass `page.nextCursor` back unchanged as `cursor`; the last page has no `nextCursor`.\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `breeze_api_search` finds this API's operations and reads no account data, `breeze_api_details` shows one operation's contract, and `breeze_api_read` calls a reviewed read. `breeze_api_write` calls a reviewed write, and every call to it needs approval. An operation without a reviewed verdict is refused.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. `not_found` means the record does not exist; this API tells absence from a permission gap. It documents no conflict.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
-    {
-      "name": "breeze_api_get",
-      "description": "Call a reviewed Breeze read endpoint and return its response as sent, less calendar feed addresses. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 100,
-            "description": "Path below /api, e.g. /tags/list_folders. No query string."
-          },
-          "query": {
-            "type": "array",
-            "maxItems": 30,
-            "description": "Query parameters as name/value pairs.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64,
-                  "description": "Parameter name, e.g. fields_json."
-                },
-                "value": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean",
-                    "object",
-                    "array"
-                  ],
-                  "description": "Value; objects and arrays are JSON-encoded for *_json parameters."
-                }
-              },
-              "required": [
-                "name",
-                "value"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "description": "Breeze's response, less calendar feed addresses and embed keys."
-          }
-        },
-        "required": [
-          "result"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "breeze_api_mutate",
-      "description": "Call any Breeze API endpoint, including writes and undocumented routes, and return its response as sent, less calendar feed addresses. The approval-gated hatch; Breeze takes writes as GET query parameters.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 100,
-            "description": "Path below /api, e.g. /tags/list_folders. No query string."
-          },
-          "query": {
-            "type": "array",
-            "maxItems": 30,
-            "description": "Query parameters as name/value pairs.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64,
-                  "description": "Parameter name, e.g. fields_json."
-                },
-                "value": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean",
-                    "object",
-                    "array"
-                  ],
-                  "description": "Value; objects and arrays are JSON-encoded for *_json parameters."
-                }
-              },
-              "required": [
-                "name",
-                "value"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "description": "Breeze's response, less calendar feed addresses and embed keys."
-          }
-        },
-        "required": [
-          "result"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
     {
       "name": "get_account_summary",
       "description": "Get the Breeze account's church name, subdomain, timezone, country, and currency. Use it to read giving amounts in the right currency.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
         "required": [],
         "additionalProperties": false
       },
@@ -172,10 +54,7 @@
           "currency": {
             "type": "string"
           }
-        },
-        "required": [
-          "name"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -205,16 +84,23 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1000,
-            "description": "People per page, 1 to connecta's 1000. Defaults to 100."
+            "description": "Items per page; pass nextCursor back unchanged.",
+            "default": 100
           },
           "cursor": {
             "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Opaque nextCursor from the previous page."
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Breeze's untouched rows instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -223,7 +109,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "people": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -260,34 +146,26 @@
                     "type": "object"
                   }
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
               "hasMore": {
-                "type": "boolean",
-                "description": "True when the page came back full."
+                "type": "boolean"
               },
               "nextCursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextCursor"
+              "hasMore"
             ]
           }
         },
         "required": [
-          "people",
+          "items",
           "page"
         ]
       },
@@ -311,9 +189,15 @@
             "type": "boolean",
             "description": "Include profile details. Defaults to true."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Breeze's untouched rows instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -356,10 +240,7 @@
               "type": "object"
             }
           }
-        },
-        "required": [
-          "id"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -371,9 +252,27 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "raw": {
-            "type": "boolean",
-            "description": "Return Breeze's untouched rows instead of the lean projection."
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "Items per page; pass nextCursor back unchanged.",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"fieldId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -382,7 +281,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "fields": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -405,17 +304,27 @@
                     "type": "object"
                   }
                 }
-              },
-              "required": [
-                "fieldId",
-                "name",
-                "type"
-              ]
+              }
             }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "fields"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -424,7 +333,7 @@
     },
     {
       "name": "list_tags",
-      "description": "List Breeze tags with id, name, and folder. Tags model groups and lists; pass a tag id to list_people or assign_tag.",
+      "description": "List Breeze tags with id, name, and folder. Tags model groups and lists; pass a tag id to list_people or breeze_api_write /tags/assign.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -432,7 +341,29 @@
             "type": "string",
             "pattern": "^[0-9]+$",
             "maxLength": 20,
-            "description": "Only tags in this folder. Folders come from breeze_api_get /tags/list_folders."
+            "description": "Only tags in this folder. Folders come from breeze_api_read /tags/list_folders."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "Items per page; pass nextCursor back unchanged.",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -441,7 +372,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "tags": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -455,16 +386,27 @@
                 "folderId": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "name"
-              ]
+              }
             }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "tags"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -491,17 +433,24 @@
             "type": "string",
             "pattern": "^[0-9]+$",
             "maxLength": 20,
-            "description": "Only events on this calendar from list_calendars."
+            "description": "Only events on this calendar from breeze_api_read /events/calendars/list."
           },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 1000,
-            "description": "Instances returned, 1 to Breeze's 1000. Defaults to 100."
+            "description": "Instances returned, 1 to Breeze's 1000. Defaults to 100.",
+            "default": 100
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Breeze's untouched rows instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each event item.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -510,7 +459,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "events": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -541,63 +490,33 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id",
-                "name"
-              ]
+              }
             }
           },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          },
           "truncated": {
-            "type": "boolean",
-            "description": "True when the result filled limit; narrow the range."
-          }
-        },
-        "required": [
-          "events",
-          "truncated"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_calendars",
-      "description": "List Breeze event calendars with id, name, and color. Omits each calendar's private iCal feed address, which works without a key.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "calendars": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "color": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name"
-              ]
+              "type": "string"
             }
           }
         },
         "required": [
-          "calendars"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -606,7 +525,7 @@
     },
     {
       "name": "list_attendance",
-      "description": "List people checked in to one event instance, with check-in and check-out times. Not anonymous head counts; those come from breeze_api_get.",
+      "description": "List people checked in to one event instance, with check-in and check-out times. Not anonymous head counts; those come from breeze_api_read.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -618,11 +537,29 @@
           },
           "includeNames": {
             "type": "boolean",
-            "description": "Add each attendee's name. Contact details need raw."
+            "description": "Add each attendee's name. Other vendor fields come from breeze_api_read."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Breeze's untouched rows instead of the lean projection."
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "Items per page; pass nextCursor back unchanged.",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"personId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -633,7 +570,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "attendance": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -659,388 +596,27 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "personId"
-              ]
-            }
-          }
-        },
-        "required": [
-          "attendance"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_forms",
-      "description": "List Breeze forms with id, name, and URL slug. Active forms by default; archived ones on request.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "archived": {
-            "type": "boolean",
-            "description": "List archived forms instead of active ones."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "forms": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "slug": {
-                  "type": "string"
-                },
-                "archived": {
-                  "type": "boolean"
-                },
-                "createdAt": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name"
-              ]
-            }
-          }
-        },
-        "required": [
-          "forms"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_form_fields",
-      "description": "List one form's fields with fieldId, name, type, and options. Decodes the responses list_form_entries returns.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "formId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Form id from list_forms."
-          }
-        },
-        "required": [
-          "formId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "fields": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "fieldId": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "type": {
-                  "type": "string"
-                },
-                "options": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              },
-              "required": [
-                "fieldId",
-                "name"
-              ]
-            }
-          }
-        },
-        "required": [
-          "fields"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_form_entries",
-      "description": "List one form's entries with entry id, person id, and submission time; responses keyed by form fieldId on request. Not paginated.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "formId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Form id from list_forms."
-          },
-          "includeResponses": {
-            "type": "boolean",
-            "description": "Include each entry's answers keyed by fieldId."
-          }
-        },
-        "required": [
-          "formId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "entries": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "personId": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "createdAt": {
-                  "type": "string"
-                },
-                "responses": {
-                  "type": "object"
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          }
-        },
-        "required": [
-          "entries"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_volunteers",
-      "description": "List people scheduled to volunteer at one event instance, with their role ids and RSVP state.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "instanceId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Event instance id (list_events id, not eventId)."
-          }
-        },
-        "required": [
-          "instanceId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "volunteers": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "personId": {
-                  "type": "string"
-                },
-                "roleIds": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "response": {
-                  "type": "string"
-                },
-                "comment": {
-                  "type": "string"
-                },
-                "rsvpedAt": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "personId",
-                "roleIds"
-              ]
-            }
-          }
-        },
-        "required": [
-          "volunteers"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_volunteer_roles",
-      "description": "List the volunteer roles defined on one event instance with id, name, and quantity needed.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "instanceId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Event instance id (list_events id, not eventId)."
-          }
-        },
-        "required": [
-          "instanceId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "roles": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "quantity": {
-                  "type": "number"
-                }
-              },
-              "required": [
-                "id",
-                "name"
-              ]
-            }
-          }
-        },
-        "required": [
-          "roles"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_account_log",
-      "description": "List logged account actions of one type, such as person_updated or contribution_added, with object ids and times. The way to find what changed since a date.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string",
-            "pattern": "^[a-z_]+$",
-            "maxLength": 40,
-            "description": "Logged action, e.g. person_updated, tag_assign, contribution_added; the guide lists all."
-          },
-          "start": {
-            "type": "string",
-            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-            "description": "Only actions on or after this day, YYYY-MM-DD."
-          },
-          "end": {
-            "type": "string",
-            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-            "description": "Only actions on or before this day, YYYY-MM-DD."
-          },
-          "userId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Only actions by this Breeze user id."
-          },
-          "includeDetails": {
-            "type": "boolean",
-            "description": "Include Breeze's unstandardized description."
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 3000,
-            "description": "Rows returned, 1 to Breeze's 3000. Defaults to 100."
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "entries": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "action": {
-                  "type": "string"
-                },
-                "userId": {
-                  "type": "string"
-                },
-                "object": {
-                  "description": "Parsed object_json, usually the affected id."
-                },
-                "createdAt": {
-                  "type": "string"
-                },
-                "details": {}
-              },
-              "required": [
-                "id",
-                "action"
-              ]
+              }
             }
           },
-          "truncated": {
-            "type": "boolean",
-            "description": "True when the result filled limit; narrow the range."
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "entries",
-          "truncated"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -1049,7 +625,7 @@
     },
     {
       "name": "list_contributions",
-      "description": "List giving transactions between two dates with donor, amount, method, batch, and fund split, plus a count and exact total. Undocumented by Breeze since 2023.",
+      "description": "List giving transactions between two dates with donor, amount, method, batch, and fund split, for exact client-side totals. Undocumented by Breeze since 2023.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1087,43 +663,61 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 50,
+            "description": "Only gifts to these funds from list_funds.",
             "items": {
               "type": "string",
               "pattern": "^[0-9]+$",
               "description": "Numeric id."
-            },
-            "description": "Only gifts to these funds from list_funds."
+            }
           },
           "methodIds": {
             "type": "array",
             "minItems": 1,
             "maxItems": 50,
+            "description": "Only these payment method ids.",
             "items": {
               "type": "string",
               "pattern": "^[0-9]+$",
               "description": "Numeric id."
-            },
-            "description": "Only these payment method ids."
+            }
           },
           "batchNumbers": {
             "type": "array",
             "minItems": 1,
             "maxItems": 50,
+            "description": "Only these batch numbers.",
             "items": {
               "type": "string",
               "pattern": "^[0-9]+$",
               "description": "Numeric id."
-            },
-            "description": "Only these batch numbers."
+            }
           },
           "envelopeNumber": {
             "type": "string",
             "maxLength": 20,
             "description": "Only this envelope number."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Breeze's untouched rows instead of the lean projection."
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "Items per page; pass nextCursor back unchanged.",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1135,7 +729,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "contributions": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1170,28 +764,27 @@
                     "type": "object"
                   }
                 }
-              },
-              "required": [
-                "id",
-                "amount"
-              ]
+              }
             }
           },
-          "count": {
-            "type": "integer"
-          },
-          "totalAmount": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Exact decimal sum."
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "contributions",
-          "count",
-          "totalAmount"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -1203,14 +796,37 @@
       "description": "List giving funds with id, name, tax-deductible flag, and default flag. Supplies fundIds for list_contributions. Undocumented by Breeze since 2023.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "Items per page; pass nextCursor back unchanged.",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
         "required": [],
         "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
         "properties": {
-          "funds": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1227,16 +843,27 @@
                 "isDefault": {
                   "type": "boolean"
                 }
-              },
-              "required": [
-                "id",
-                "name"
-              ]
+              }
             }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "funds"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -1317,43 +944,61 @@
         "additionalProperties": false
       },
       "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "firstName": {
-            "type": "string"
-          },
-          "forceFirstName": {
-            "type": "string",
-            "description": "Breeze's display first name."
-          },
-          "lastName": {
-            "type": "string"
-          },
-          "nickName": {
-            "type": "string"
-          },
-          "middleName": {
-            "type": "string"
-          },
-          "maidenName": {
-            "type": "string"
-          },
-          "details": {
+        "anyOf": [
+          {
             "type": "object",
-            "description": "Values keyed by profile fieldId."
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "firstName": {
+                "type": "string"
+              },
+              "forceFirstName": {
+                "type": "string",
+                "description": "Breeze's display first name."
+              },
+              "lastName": {
+                "type": "string"
+              },
+              "nickName": {
+                "type": "string"
+              },
+              "middleName": {
+                "type": "string"
+              },
+              "maidenName": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "description": "Values keyed by profile fieldId."
+              },
+              "family": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "id"
+            ]
           },
-          "family": {
-            "type": "array",
-            "items": {
-              "type": "object"
-            }
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "ok"
+            ]
           }
-        },
-        "required": [
-          "id"
         ]
       },
       "annotations": {
@@ -1428,169 +1073,472 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "firstName": {
+                "type": "string"
+              },
+              "forceFirstName": {
+                "type": "string",
+                "description": "Breeze's display first name."
+              },
+              "lastName": {
+                "type": "string"
+              },
+              "nickName": {
+                "type": "string"
+              },
+              "middleName": {
+                "type": "string"
+              },
+              "maidenName": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "description": "Values keyed by profile fieldId."
+              },
+              "family": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "breeze_api_search",
+      "description": "Find Breeze ChMS API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "firstName": {
-            "type": "string"
-          },
-          "forceFirstName": {
+          "query": {
             "type": "string",
-            "description": "Breeze's display first name."
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
           },
-          "lastName": {
-            "type": "string"
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET"
+            ],
+            "description": "Only operations with this method."
           },
-          "nickName": {
-            "type": "string"
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
           },
-          "middleName": {
-            "type": "string"
-          },
-          "maidenName": {
-            "type": "string"
-          },
-          "details": {
-            "type": "object",
-            "description": "Values keyed by profile fieldId."
-          },
-          "family": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
             "type": "array",
             "items": {
-              "type": "object"
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; breeze_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "breeze_api_details",
+      "description": "Read one Breeze ChMS API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "breeze_api_read",
+      "description": "Call a reviewed Breeze ChMS API read. The operation index checks arguments before anything is sent. Breeze uses GET for writes too; only reviewed read endpoints are admitted. Calendar feeds and embed keys are removed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /people/12345. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
             }
           }
         },
         "required": [
-          "id"
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "description": "Put nextCursor in this vendor parameter, unchanged."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "param",
+              "in"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "breeze_api_write",
+      "description": "Call a reviewed Breeze ChMS API write; method and path are stated for approval, and the operation index checks arguments first. Breeze writes use GET query parameters. JSON parameters such as fields_json take serialized JSON strings.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /people/12345. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
         ]
       },
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true
-      }
-    },
-    {
-      "name": "assign_tag",
-      "description": "Add one tag to one person. Tag ids come from list_tags; adding a tag the person already has changes nothing.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "personId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Breeze person id from list_people."
-          },
-          "tagId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Tag id from list_tags."
-          }
-        },
-        "required": [
-          "personId",
-          "tagId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "assigned": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "assigned"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false
-      }
-    },
-    {
-      "name": "unassign_tag",
-      "description": "Remove one tag from one person. The tag itself and its other people are untouched.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "personId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Breeze person id from list_people."
-          },
-          "tagId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Tag id from list_tags."
-          }
-        },
-        "required": [
-          "personId",
-          "tagId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "unassigned": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "unassigned"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
-    {
-      "name": "record_check_in",
-      "description": "Record one person's attendance at one event instance. Check-out and removing a record go through breeze_api_mutate.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "personId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Breeze person id from list_people."
-          },
-          "instanceId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "maxLength": 20,
-            "description": "Event instance id (list_events id, not eventId)."
-          }
-        },
-        "required": [
-          "personId",
-          "instanceId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "checkedIn": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "checkedIn"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false
       }
     }
   ]

@@ -1,0 +1,6 @@
+---
+type: changed
+breaking: true
+---
+
+Standardize Breeze's agent surface for 0.35.0. `breeze_api_get` becomes `breeze_api_read`; `breeze_api_mutate` becomes `breeze_api_write` with `method: "GET"`. Query name/value arrays become objects, `*_json` values must be JSON strings, and `{ result }` becomes `{ status, data, page? }`. Indexed search/details are added; unindexed paths, unreviewed parameters, reads through the write hatch and non-JSON successful hatch replies retire. Remove `raw` and use `fields` or the read hatch. `list_calendars`, `list_forms`, `list_form_fields`, `list_form_entries`, `list_volunteers`, `list_volunteer_roles`, and `list_account_log` move to their indexed read operations; `assign_tag`, `unassign_tag`, and `record_check_in` move to their indexed GET write operations. Named list keys (`people`, `fields`, `tags`, `events`, `attendance`, `contributions`, `funds`) become `items` with `page`; contribution `count`/`totalAmount` retire in favor of client reductions. Local list windows gain `limit`/`cursor`; people cursors become opaque and final pages omit `nextCursor`. Event `truncated: true` becomes `truncated: ["items[]"]`. Calendar secrets remain removed. See the Breeze section of the 0.35 provider migration for exact replacement paths and arguments.

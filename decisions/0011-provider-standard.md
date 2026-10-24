@@ -438,6 +438,12 @@ decides. A hatch read keeps the vendor's own query and returns
 | `_api_read`, `_api_write`, `_api_upload` | `{ status, data, page? }`, plus `idempotencyKey` when one was sent |
 | `_api_search`, `_api_details`            | `{ operations, revision }` and the operation's contract, as today  |
 
+A vendor list with a cap but no continuation may declare `page.hasMore` as
+literal false, take no `cursor`, and report a full capped response through
+`truncated: ["items[]"]`; narrowing its filters is the recovery. A named
+write's domain payload may use `fields`; S5's dot-path argument applies to
+named reads and the read/write hatches.
+
 A tool reports what it cut for size in `truncated: string[]`: the dot paths
 it shortened or cut short (a list cut short is `labels[]`). Ids an agent needs
 to fetch the cut items stay in the result. The 13 other size reports

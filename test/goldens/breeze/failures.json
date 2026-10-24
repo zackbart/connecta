@@ -24,7 +24,7 @@
           "dispatched": true,
           "error": {
             "code": "invalid_args",
-            "message": "Breeze rejected the request (HTTP 400). Breeze said: Golden 400 failure",
+            "message": " Breeze said: Golden 400 failure",
             "retryable": false
           }
         }
@@ -142,7 +142,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Breeze request failed (HTTP 409). Breeze said: Golden 409 failure",
+            "message": " Breeze said: Golden 409 failure",
             "retryable": false
           }
         }
@@ -166,7 +166,7 @@
           "dispatched": true,
           "error": {
             "code": "invalid_args",
-            "message": "Breeze rejected the request (HTTP 422). Breeze said: Golden 422 failure",
+            "message": " Breeze said: Golden 422 failure",
             "retryable": false
           }
         }
@@ -190,7 +190,7 @@
           "dispatched": true,
           "error": {
             "code": "rate_limited",
-            "message": "Breeze is throttling requests (HTTP 429). Breeze said: Golden 429 failure Breeze publishes no limit; slow the fan-out before retrying.",
+            "message": " Breeze said: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -215,7 +215,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Breeze is failing upstream (HTTP 500).",
+            "message": " Breeze said: Golden 500 failure",
             "retryable": true
           }
         }
@@ -343,7 +343,7 @@
           "answered": true,
           "error": {
             "code": "invalid_args",
-            "message": "Breeze rejected the request (HTTP 400). Breeze said: Golden 400 failure",
+            "message": " Breeze said: Golden 400 failure",
             "retryable": false
           }
         }
@@ -467,7 +467,7 @@
           "answered": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Breeze request failed (HTTP 409). Breeze said: Golden 409 failure",
+            "message": " Breeze said: Golden 409 failure",
             "retryable": false
           }
         }
@@ -492,7 +492,7 @@
           "answered": true,
           "error": {
             "code": "invalid_args",
-            "message": "Breeze rejected the request (HTTP 422). Breeze said: Golden 422 failure",
+            "message": " Breeze said: Golden 422 failure",
             "retryable": false
           }
         }
@@ -517,7 +517,7 @@
           "answered": true,
           "error": {
             "code": "rate_limited",
-            "message": "Breeze is throttling requests (HTTP 429). Breeze said: Golden 429 failure Breeze publishes no limit; slow the fan-out before retrying.",
+            "message": " Breeze said: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -542,7 +542,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Breeze is failing upstream (HTTP 500). Whether the write took effect at Breeze is unknown; check the target before repeating it.",
+            "message": " Breeze said: Golden 500 failure Whether the write took effect at Breeze is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }

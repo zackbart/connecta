@@ -199,8 +199,8 @@ describe("redact before normalization or extraction", () => {
         credential: keyed().credential!,
       },
     );
-    expect(result.totalAmount).toBeNull();
-    expect(result.contributions[0].amount).toBe(MARKER);
+    expect(result).not.toHaveProperty("totalAmount");
+    expect(result.items[0].amount).toBe(MARKER);
     expect(JSON.stringify(result)).not.toContain("12345.67");
     // The kit keeps keys for value safety (#703); the 300-unit cut would leave five units of this one.
     const key = "Q8!wZ2?vR7#k";
@@ -326,7 +326,7 @@ describe("redact before normalization or extraction", () => {
         { start: "2026-01-01", end: "2026-01-31" },
         keyed(secret),
       );
-      expect(result.contributions[0].paidOn).toBe(MARKER);
+      expect(result.items[0].paidOn).toBe(MARKER);
       expect(JSON.stringify(result)).not.toContain("2026-01-02");
       expect(leaks(JSON.stringify(result), secret)).toBe(false);
     },

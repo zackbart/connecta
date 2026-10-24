@@ -48,27 +48,27 @@ export default defineGoldenSpec({
   // Breeze's failures are short plain text (or an HTML page), labelled text/html.
   failureReply: (status, message) => ({ status, text: message, headers: HTML }),
   calls: [
+    { tool: "breeze_api_search", args: { query: "people" } },
+    { tool: "breeze_api_details", args: { method: "GET", path: "/people" } },
     {
-      tool: "breeze_api_get",
-      args: { path: "/people/157857", query: [{ name: "details", value: 1 }] },
+      tool: "breeze_api_read",
+      args: { "path": "/people/157857", "query": { "details": 1 } },
       replies: reply({ id: "157857", first_name: "Thomas", last_name: "Anderson" }),
     },
     {
-      label: "breeze_api_get filter_json",
-      tool: "breeze_api_get",
-      args: { path: "/people/", query: [{ name: "filter_json", value: { tag_contains: "y_9" } }] },
+      label: "breeze_api_read filter_json",
+      tool: "breeze_api_read",
+      args: { "path": "/people/", "query": { "filter_json": '{"tag_contains":"y_9"}' } },
       replies: reply([{ id: "1", first_name: "Thomas", last_name: "Anderson" }]),
     },
     {
-      tool: "breeze_api_mutate",
-      args: {
-        path: "/giving/delete",
-        query: [{ name: "payment_id", value: "56789123" }],
-      },
+      tool: "breeze_api_write",
+      args: { "path": "/giving/delete", "query": { "payment_id": "56789123" }, "method": "GET" },
       replies: reply({ success: true, errors: null, payment_id: 56789123 }),
     },
     {
       tool: "get_account_summary",
+      args: {},
       replies: reply({
         id: "1234",
         name: "Grace Church",
@@ -83,7 +83,7 @@ export default defineGoldenSpec({
     },
     {
       tool: "list_people",
-      args: { tagId: "16681", filter: { "2000138015": "226-227" }, limit: 2, cursor: "40" },
+      args: { "tagId": "16681", "filter": { "2000138015": "226-227" }, "limit": 2 },
       replies: reply([
         {
           id: "1",
@@ -96,14 +96,15 @@ export default defineGoldenSpec({
       ]),
     },
     {
-      label: "list_people raw",
+      label: "list_people fields",
       tool: "list_people",
-      args: { includeDetails: true, raw: true },
+      args: { "includeDetails": true, "fields": ["id"] },
       replies: reply([{ id: "1", first_name: "Thomas", last_name: "Anderson", path: "img/x.jpg" }]),
     },
-    { tool: "get_person", args: { personId: "157857" }, replies: reply(PERSON) },
+    { tool: "get_person", args: { "personId": "157857" }, replies: reply(PERSON) },
     {
       tool: "list_profile_fields",
+      args: {},
       replies: reply([
         {
           id: "10098",
@@ -124,12 +125,12 @@ export default defineGoldenSpec({
     },
     {
       tool: "list_tags",
-      args: { folderId: "77" },
+      args: { "folderId": "77" },
       replies: reply([{ id: "16681", name: "Choir", created_on: "2025-01-01 10:00:00", folder_id: "77" }]),
     },
     {
       tool: "list_events",
-      args: { start: "2025-03-01", end: "2025-03-31", calendarId: "1553", limit: 1 },
+      args: { "start": "2025-03-01", "end": "2025-03-31", "calendarId": "1553", "limit": 1 },
       replies: reply([
         {
           id: "40984",
@@ -143,7 +144,9 @@ export default defineGoldenSpec({
       ]),
     },
     {
-      tool: "list_calendars",
+      label: "list_calendars via hatch",
+      tool: "breeze_api_read",
+      args: { "path": "/events/calendars/list" },
       replies: reply([
         {
           id: 0,
@@ -156,7 +159,7 @@ export default defineGoldenSpec({
     },
     {
       tool: "list_attendance",
-      args: { instanceId: "3778451", includeNames: true },
+      args: { "instanceId": "3778451", "includeNames": true },
       replies: reply([
         {
           instance_id: "3778451",
@@ -168,14 +171,17 @@ export default defineGoldenSpec({
       ]),
     },
     {
-      tool: "list_forms",
+      label: "list_forms via hatch",
+      tool: "breeze_api_read",
+      args: { "path": "/forms/list_forms" },
       replies: reply([
         { id: "15326", name: "Visitor Card", url_slug: "visitor-card", is_archived: "0", created_on: "2025-02-01" },
       ]),
     },
     {
-      tool: "list_form_fields",
-      args: { formId: "15326" },
+      label: "list_form_fields via hatch",
+      tool: "breeze_api_read",
+      args: { "path": "/forms/list_form_fields", "query": { "form_id": "15326" } },
       replies: reply([
         {
           field_id: "46",
@@ -192,15 +198,17 @@ export default defineGoldenSpec({
       ]),
     },
     {
-      tool: "list_form_entries",
-      args: { formId: "15326", includeResponses: true },
+      label: "list_form_entries via hatch",
+      tool: "breeze_api_read",
+      args: { "path": "/forms/list_form_entries", "query": { "form_id": "15326", "details": 1 } },
       replies: reply([
         { id: "11", form_id: "15326", created_on: "2025-03-09", person_id: "5", response: { "46": "z@example.com" } },
       ]),
     },
     {
-      tool: "list_volunteers",
-      args: { instanceId: "123456" },
+      label: "list_volunteers via hatch",
+      tool: "breeze_api_read",
+      args: { "path": "/volunteers/list", "query": { "instance_id": "123456" } },
       replies: reply([
         { person_id: "3008467", response: "0", comment: "", rsvped_on: "0000-00-00 00:00:00", role_ids: null },
         {
@@ -213,13 +221,18 @@ export default defineGoldenSpec({
       ]),
     },
     {
-      tool: "list_volunteer_roles",
-      args: { instanceId: "123456" },
+      label: "list_volunteer_roles via hatch",
+      tool: "breeze_api_read",
+      args: { "path": "/volunteers/list_roles", "query": { "instance_id": "123456", "show_quantity": 1 } },
       replies: reply([{ id: "9627", name: "Teacher", quantity: "2" }]),
     },
     {
-      tool: "list_account_log",
-      args: { action: "person_updated", start: "2025-08-01", includeDetails: true, limit: 1 },
+      label: "list_account_log via hatch",
+      tool: "breeze_api_read",
+      args: {
+        "path": "/account/list_log",
+        "query": { "action": "person_updated", "start": "2025-08-01", "details": 1, "limit": 1 },
+      },
       replies: reply([
         {
           id: "112",
@@ -233,19 +246,20 @@ export default defineGoldenSpec({
     },
     {
       tool: "list_contributions",
-      args: { start: "2022-01-01", end: "2022-06-30", fundIds: ["28", "29"], batchNumbers: ["144"] },
+      args: { "start": "2022-01-01", "end": "2022-06-30", "fundIds": ["28", "29"], "batchNumbers": ["144"] },
       replies: reply([CONTRIBUTION, { id: "376786", paid_on: "2022-05-06 00:00:00", amount: "0.20", funds: [] }]),
     },
     {
       tool: "list_funds",
+      args: {},
       replies: reply([{ id: "12346", name: "General Fund", tax_deductible: "1", is_default: "1", created_on: "x" }]),
     },
     {
       tool: "add_person",
       args: {
-        firstName: "Jiminy",
-        lastName: "Cricket",
-        fields: [{ fieldId: "1508481877", type: "email", details: { address: "jiminy@example.com" } }],
+        "firstName": "Jiminy",
+        "lastName": "Cricket",
+        "fields": [{ "fieldId": "1508481877", "type": "email", "details": { "address": "jiminy@example.com" } }],
       },
       replies: reply([
         { id: "12345678", first_name: "Jiminy", force_first_name: "Jiminy", last_name: "Cricket", path: "x" },
@@ -253,15 +267,34 @@ export default defineGoldenSpec({
     },
     {
       tool: "update_person",
-      args: { personId: "12345678", fields: [{ fieldId: "2000138811", type: "radio", response: "459" }] },
+      args: { "personId": "12345678", "fields": [{ "fieldId": "2000138811", "type": "radio", "response": "459" }] },
       replies: reply({ id: "12345678", first_name: "Jiminy", last_name: "Cricket" }),
     },
-    { tool: "assign_tag", args: { personId: "157857", tagId: "16681" }, replies: reply(true) },
-    { tool: "unassign_tag", args: { personId: "157857", tagId: "16681" }, replies: reply(true) },
-    { tool: "record_check_in", args: { personId: "157857", instanceId: "40984" }, replies: reply(true) },
+    {
+      label: "assign_tag via hatch",
+      tool: "breeze_api_write",
+      args: { "method": "GET", "path": "/tags/assign", "query": { "person_id": "157857", "tag_id": "16681" } },
+      replies: reply(true),
+    },
+    {
+      label: "unassign_tag via hatch",
+      tool: "breeze_api_write",
+      args: { "method": "GET", "path": "/tags/unassign", "query": { "person_id": "157857", "tag_id": "16681" } },
+      replies: reply(true),
+    },
+    {
+      label: "record_check_in via hatch",
+      tool: "breeze_api_write",
+      args: {
+        "method": "GET",
+        "path": "/events/attendance/add",
+        "query": { "person_id": "157857", "instance_id": "40984", "direction": "in" },
+      },
+      replies: reply(true),
+    },
   ],
   echo: {
-    tool: "breeze_api_get",
+    tool: "breeze_api_read",
     args: { path: "/people/157857" },
     replies: (text) => reply({ id: "157857", first_name: text }),
   },

@@ -3,13 +3,14 @@ import { type Context, Effect, Schema } from "effect";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { Refusal, type HttpFailure, type VendorErrors, type OperationRef } from "../../http/errors.js";
 import { Credentials, RequestSecrets } from "../../http/services.js";
-import { get, vendor, type Vendor } from "../../http/vendor.js";
+import { get, Summary, vendor, type Vendor } from "../../http/vendor.js";
 import type { SafetyOptions } from "../../http/safety.js";
+import { vendorIndex } from "../../http/vendor-index.js";
+import type { HatchPageAdapter } from "../../http/hatch-paging.js";
 import { openapi } from "./openapi.generated.js";
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 1000;
 export const BREEZE_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-export const LEGACY_HATCH = { legacyHatch: true } as const;
 export type JsonRecord = Record<string, any>;
 
 export function asRecord(value: unknown): JsonRecord {
@@ -22,13 +23,7 @@ export function asArray(value: unknown): unknown[] {
 
 // --- The read hatch's allowlist ----------------------------------------------
 
-/**
- * Every read endpoint `breeze_api_get` may reach, with the query parameter
- * names each one documents. Paths are relative to `/api`, lowercase, exact;
- * `/people/{id}` is the one templated row and accepts digits only, so it can
- * never spell `/people/add` or `/people/delete`. Rows are added here only
- * after a reviewer has read the endpoint as observational.
- */
+/** Reviewed observational endpoints and their documented query names. GET alone establishes nothing. */
 export const READ_ENDPOINTS: ReadonlyMap<string, readonly string[]> = new Map([
   ["/people", ["details", "filter_json", "limit", "offset"]],
   ["/people/{id}", ["details"]],
@@ -78,7 +73,7 @@ const PATH_PATTERN = /^(\/[a-z0-9_]+)+\/?$/;
 /**
  * `/events/calendars/list` answers each calendar's private iCal feed address,
  * which reads the calendar without a key, and its embed key. Neither hatch
- * returns them, any more than `list_calendars` does.
+ * returns them.
  */
 export function withoutCalendarFeeds(path: string, body: unknown): unknown {
   if (path !== "/events/calendars/list" || !Array.isArray(body)) return body;
@@ -100,62 +95,257 @@ export function normalizedPath(raw: unknown): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-export function readEndpointFor(path: string): readonly string[] {
-  const template = /^\/people\/\d+$/.test(path) ? "/people/{id}" : path;
-  const parameters = READ_ENDPOINTS.get(template);
-  if (!parameters) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      `breeze_api_get reaches only reviewed read endpoints, and ${path} is not one. Breeze sends writes as GET too, so the read hatch is an allowlist: ${[...READ_ENDPOINTS.keys()].join(", ")}. Use breeze_api_mutate for anything else.`,
-    );
-  }
-  return parameters;
-}
-
-type QueryValue = string | number | boolean;
-
-export function queryPairs(value: unknown): Record<string, QueryValue> {
-  // Null-prototype, so a parameter named __proto__ or constructor is a key
-  // like any other rather than a reach into Object.prototype.
-  const query: Record<string, QueryValue> = Object.create(null);
-  for (const row of asArray(value)) {
-    const pair = asRecord(row);
-    const name = pair["name"];
-    if (typeof name !== "string") continue;
-    if (name in query) {
-      throw new ConnectorCallError(
-        "invalid_args",
-        `Query parameter ${name} appears more than once; Breeze reads one value per name.`,
-      );
-    }
-    const item = pair["value"];
-    query[name] = item !== null && typeof item === "object" ? JSON.stringify(item) : item;
-  }
-  return query;
-}
-
 // --- Projections -------------------------------------------------------------
 
-// This reviewed HTML conversion records every documented operation plus the
-// archival giving routes. It is evidence, not permission to call a path as a read.
+// The HTML pin/conversion remains drift evidence. These reviewed declarations
+// are the hatch's one runtime operation list; success properties are lenient
+// discovery/selection metadata, never response decoders.
+const loose = (names: string, extra: Schema.Struct.Fields = {}) =>
+  Schema.Struct({
+    ...Object.fromEntries(
+      names
+        .split(" ")
+        .filter(Boolean)
+        .map((name) => [name, Schema.optionalKey(Schema.Unknown)]),
+    ),
+    ...extra,
+  });
+const Person = loose(
+  "id oid first_name force_first_name last_name nick_name middle_name maiden_name path thumb_path details family",
+);
+const ProfileField = loose("id oid field_id field_type name position profile_id created_on options");
+const Event = loose(
+  "id oid event_id name category_id start_datetime end_datetime description check_in_settings eligible",
+);
+const Payment = loose(
+  "id oid paid_on created_on num method method_id amount note person_id first_name last_name envelope_number meta batch_num batch_id person",
+  {
+    funds: Schema.optionalKey(
+      Schema.Array(loose("id oid payment_id fund_id amount created_on fund_name tax_deductible")),
+    ),
+  },
+);
+const GivingAnswer = loose("success errors payment_id", { payment: Schema.optionalKey(Payment) });
+const responseByPath: Readonly<Record<string, Schema.Top>> = {
+  "/people": Schema.Array(Person),
+  "/people/{PERSON_ID}": Person,
+  "/people/add": Schema.Union([Person, Schema.Array(Person)]),
+  "/people/update": Schema.Union([Person, Schema.Array(Person), Schema.Boolean]),
+  "/profile": Schema.Array(
+    loose("id oid section_id name column_id position profile_id created_on", {
+      fields: Schema.optionalKey(Schema.Array(ProfileField)),
+    }),
+  ),
+  "/tags/list_tags": Schema.Array(loose("id name created_on folder_id")),
+  "/tags/list_folders": Schema.Array(loose("id name parent_id")),
+  "/events": Schema.Array(Event),
+  "/events/list_event": Schema.Union([Event, Schema.Array(Event)]),
+  "/events/calendars/list": Schema.Array(loose("id name color address embed_key")),
+  "/events/locations": Schema.Array(loose("id name")),
+  "/events/attendance/list": Schema.Array(loose("id instance_id person_id created_on check_out details")),
+  "/events/attendance/eligible": Schema.Array(Person),
+  "/forms/list_forms": Schema.Array(loose("id name url_slug is_archived created_on")),
+  "/forms/list_form_fields": Schema.Array(ProfileField),
+  "/forms/list_form_entries": Schema.Array(loose("id form_id created_on person_id response")),
+  "/volunteers/list": Schema.Array(
+    loose("id oid instance_id person_id response comment rsvped_on created_on role_ids"),
+  ),
+  "/volunteers/list_roles": Schema.Array(loose("id name quantity")),
+  "/volunteers/add_role": loose("id name quantity"),
+  "/account/summary": loose("id name subdomain status created_on", {
+    details: Schema.optionalKey(
+      loose("timezone", { country: Schema.optionalKey(loose("id name currency currency_symbol")) }),
+    ),
+  }),
+  "/account/list_log": Schema.Array(loose("id user_id action object_json created_on details")),
+  "/giving/list": Schema.Array(Payment),
+  "/giving/view": GivingAnswer,
+  "/giving/add": GivingAnswer,
+  "/giving/edit": GivingAnswer,
+  "/giving/delete": GivingAnswer,
+  "/funds/list": Schema.Array(loose("id name tax_deductible is_default created_on total")),
+  "/pledges/list_campaigns": Schema.Array(loose("id oid name created_on number_of_pledges total_pledged")),
+  "/pledges/list_pledges": Schema.Array(
+    loose(
+      "id oid person_id fundraiser_id amount started_on ends_type ends_date ends_number frequency fund_ids_json note include_family created_on first_name last_name fundraiser_name total_pledged family_id total_paid paid_percent",
+    ),
+  ),
+};
+// Required identities and values follow the public and archived reference's
+// endpoint tables/examples. Optional names (including query JSON strings) stay optional.
+const requiredByPath: Readonly<Record<string, readonly string[]>> = {
+  "/people/add": ["first", "last"],
+  "/people/update": ["person_id", "fields_json"],
+  "/people/delete": ["person_id"],
+  "/tags/add_tag": ["name"],
+  "/tags/add_tag_folder": ["name"],
+  "/tags/delete_tag": ["tag_id"],
+  "/tags/delete_tag_folder": ["folder_id"],
+  "/tags/assign": ["person_id", "tag_id"],
+  "/tags/unassign": ["person_id", "tag_id"],
+  "/events/add": ["name", "starts_on"],
+  "/events/delete": ["instance_id"],
+  "/events/list_event": ["instance_id"],
+  "/events/attendance/add": ["instance_id", "person_id"],
+  "/events/attendance/delete": ["instance_id", "person_id"],
+  "/events/attendance/list": ["instance_id"],
+  "/events/attendance/eligible": ["instance_id"],
+  "/forms/list_form_fields": ["form_id"],
+  "/forms/list_form_entries": ["form_id"],
+  "/forms/remove_form_entry": ["entry_id"],
+  "/volunteers/list": ["instance_id"],
+  "/volunteers/add": ["instance_id", "person_id"],
+  "/volunteers/remove": ["instance_id", "person_id"],
+  "/volunteers/update": ["instance_id", "person_id"],
+  "/volunteers/list_roles": ["instance_id"],
+  "/volunteers/add_role": ["instance_id", "name"],
+  "/volunteers/remove_role": ["instance_id", "role_id"],
+  "/families/create": ["people_ids_json"],
+  "/families/destroy": ["people_ids_json"],
+  "/families/remove": ["people_ids_json"],
+  "/families/add": ["people_ids_json", "target_person_id"],
+  "/account/list_log": ["action"],
+  "/giving/view": ["payment_id"],
+  "/giving/edit": ["payment_id"],
+  "/giving/delete": ["payment_id"],
+  "/pledges/list_pledges": ["campaign_id"],
+};
+const GIVING_QUERY = [
+  "date",
+  "person_id",
+  "person_json",
+  "uid",
+  "processor",
+  "method",
+  "funds_json",
+  "amount",
+  "group",
+  "batch_number",
+  "batch_name",
+  "note",
+];
+// Explicitly reviewed write endpoints; the absence of a read review never grants one.
+const WRITES = new Set([
+  "/events/add",
+  "/events/attendance/add",
+  "/events/attendance/delete",
+  "/events/delete",
+  "/families/add",
+  "/families/create",
+  "/families/destroy",
+  "/families/remove",
+  "/forms/remove_form_entry",
+  "/giving/add",
+  "/giving/edit",
+  "/giving/delete",
+  "/people/add",
+  "/people/delete",
+  "/people/update",
+  "/tags/add_tag",
+  "/tags/add_tag_folder",
+  "/tags/assign",
+  "/tags/delete_tag",
+  "/tags/delete_tag_folder",
+  "/tags/unassign",
+  "/volunteers/add",
+  "/volunteers/add_role",
+  "/volunteers/remove",
+  "/volunteers/remove_role",
+  "/volunteers/update",
+]);
 const details = JSON.parse(openapi.details) as { o: Array<0 | [Array<[string, string, number]>, unknown]> };
 const declared = openapi.ops.map(([, path, name], row) => {
-  const params = Object.fromEntries([...path.matchAll(/\{([^}]+)\}/g)].map((match) => [match[1]!, Schema.String]));
-  const fields = details.o[row];
+  const params = Object.fromEntries([...path.matchAll(/\{([^}]+)\}/g)].map((m) => [m[1]!, Schema.String]));
+  const entry = details.o[row];
+  const names =
+    path === "/giving/add"
+      ? GIVING_QUERY
+      : path === "/giving/edit"
+        ? ["payment_id", "name", ...GIVING_QUERY]
+        : entry === 0 || !entry
+          ? []
+          : entry[0].filter(([, at]) => at === "query").map(([name]) => name);
   const query = Object.fromEntries(
-    (fields === 0 || !fields ? [] : fields[0])
-      .filter(([, at]) => at === "query")
-      .map(([name]) => [name, Schema.optionalKey(Schema.String)]),
+    names.map((key) => [
+      key,
+      (requiredByPath[path]?.includes(key) ? Schema.String : Schema.optionalKey(Schema.String)).pipe(
+        Schema.annotateKey({
+          description: key.endsWith("_json")
+            ? "JSON-encoded string; objects and arrays must be serialized before calling."
+            : key.replaceAll("_", " "),
+        }),
+      ),
+    ]),
   );
-  return get(name, path.replace(/\{([^}]+)\}/g, ":$1") as `/${string}`, { params, query, success: Schema.Unknown });
+  const summary =
+    name.replaceAll("_", " ") +
+    (path.startsWith("/giving/") || path.startsWith("/pledges/") || path === "/funds/list"
+      ? " (archival API; verify support)"
+      : "") +
+    (path === "/giving/add" ? "; requiredness is not specified in the archived contract" : "");
+  return get(name, path.replace(/\{([^}]+)\}/g, ":$1") as `/${string}`, {
+    params,
+    query,
+    success: responseByPath[path] ?? Schema.Unknown,
+  }).annotate(Summary, summary);
 });
 export const BreezeApi: Vendor = {
   ...vendor("Breeze", declared[0]!, ...declared.slice(1)),
   textBodies: {
-    review:
-      "Breeze error responses are short text or HTML, not a JSON contract. Only legacy hatches admit non-JSON successes; named tools still require JSON.",
-    forResponse: (status, operation) =>
-      status < 200 || status > 299 ? "text" : operation.flags?.["legacyHatch"] === true ? "json-or-text" : undefined,
+    review: "Breeze error responses are bounded text or HTML; successes require JSON.",
+    forResponse: (status) => (status < 200 || status > 299 ? "text" : undefined),
+  },
+};
+export const BREEZE_INDEX = vendorIndex(BreezeApi, {
+  prefix: "breeze",
+  title: "Breeze ChMS",
+  revision: openapi.revision,
+});
+export const BREEZE_VERDICTS = Object.fromEntries(
+  BREEZE_INDEX.ops.map((op) => {
+    const read = READ_ENDPOINTS.has(op.path === "/people/{PERSON_ID}" ? "/people/{id}" : op.path);
+    if (!read && !WRITES.has(op.path)) throw new Error(`Breeze operation ${op.path} needs a review.`);
+    return [`${op.method} ${op.path}`, read ? "read" : "destructive"];
+  }),
+) as Readonly<Record<`GET ${string}`, "read" | "destructive">>;
+export const BREEZE_NAMED = {
+  "GET /account/summary": "get_account_summary",
+  "GET /people": "list_people",
+  "GET /people/{PERSON_ID}": "get_person",
+  "GET /profile": "list_profile_fields",
+  "GET /tags/list_tags": "list_tags",
+  "GET /events": "list_events",
+  "GET /events/attendance/list": "list_attendance",
+  "GET /giving/list": "list_contributions",
+  "GET /funds/list": "list_funds",
+  "GET /people/add": "add_person",
+  "GET /people/update": "update_person",
+} as const;
+/** Breeze returns all people when limit is absent/zero, so only a positive explicit limit pages. */
+export const breezePeoplePage: HatchPageAdapter = {
+  param: "offset",
+  in: "query",
+  decode: (cursor) => {
+    const value = Number(cursor);
+    if (!/^\d+$/.test(String(cursor)) || !Number.isSafeInteger(value) || value < 0)
+      throw new ConnectorCallError("invalid_args", "Breeze needs a nonnegative whole offset.");
+    return value;
+  },
+  next(data, call) {
+    const limit = Number(call.query["limit"] ?? 0),
+      offset = Number(call.query["offset"] ?? 0);
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit < 0 ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Array.isArray(data) ||
+      !Number.isSafeInteger(offset + data.length)
+    )
+      throw new ConnectorCallError("connector_call_failed", "Breeze returned invalid people paging data.", {
+        retryable: false,
+      });
+    return limit === 0 ? undefined : data.length >= limit ? offset + data.length : null;
   },
 };
 export const accountSummary = declared.find((operation) => operation.identifier === "account_summary")!;
@@ -193,16 +383,9 @@ export const errors: VendorErrors = {
   provider: "Breeze",
   facts: () => ({}),
   detail: ({ body }) => bodyDetail(typeof body === "string" ? body : ""),
+  meanings: { unknownId: "not_found", provesAbsence: true, conflicts: [] },
   unreadable: "Breeze returned a non-JSON successful response.",
   statuses: {
-    400: ({ status }) => ({
-      code: "invalid_args",
-      words: (detail) => `Breeze rejected the request (HTTP ${status}).${detail}`,
-    }),
-    422: ({ status }) => ({
-      code: "invalid_args",
-      words: (detail) => `Breeze rejected the request (HTTP ${status}).${detail}`,
-    }),
     401: ({ status }) => ({
       code: "auth_required",
       words: (detail) =>
@@ -218,30 +401,9 @@ export const errors: VendorErrors = {
       words: () =>
         "Breeze has no such endpoint or record (HTTP 404). Check the path against the API reference, or re-read the id from its list tool.",
     }),
-    429: ({ retryAfterMs }) => ({
-      code: "rate_limited",
-      retryAfterMs,
-      words: (detail) => `Breeze is throttling requests (HTTP 429).${detail} Breeze publishes no limit.`,
-      advice: "; slow the fan-out before retrying",
-    }),
-    serverError: ({ status, retryAfterMs }) => ({
-      code: "unavailable",
-      retryAfterMs,
-      words: () => `Breeze is failing upstream (HTTP ${status}).`,
-    }),
-    otherwise: ({ status }) => ({
-      code: "connector_call_failed",
-      retryable: false,
-      words: (detail) => `Breeze request failed (HTTP ${status}).${detail}`,
-    }),
   },
 };
-export const result = (
-  body: unknown,
-  answer: { readonly bodyFormat: "json" | "text" | "empty" },
-): Effect.Effect<unknown, HttpFailure, RequestSecrets> => {
-  // Legacy hatches returned null for a blank response, but kept a JSON string even when blank.
-  if (answer.bodyFormat === "text" && typeof body === "string" && !body.trim()) return Effect.succeed(null);
+export const result = (body: unknown): Effect.Effect<unknown, HttpFailure, RequestSecrets> => {
   return RequestSecrets.use((secrets) => {
     const failure = reportedFailure(body, secrets);
     return failure ? Effect.fail(new Refusal({ error: failure })) : Effect.succeed(body ?? null);
@@ -249,15 +411,19 @@ export const result = (
 };
 
 // The only documented capability-bearing response values are calendar feeds.
-// Raw results and both hatches pass through this same drop. Unindexed paths
-// remain available exclusively through the explicitly destructive legacy hatch.
+// Every result passes through the same drop before any projection or fields selection.
 export const breezeSafety: SafetyOptions = {
   review:
-    "Breeze's legacy destructive hatch admits unindexed confined paths. The reviewed reference exposes no stored credential values outside calendar feed addresses and embed keys, which are dropped on every result path. Unknown paths never become reads.",
+    "Breeze's indexed hatch admits only reviewed operations. The reviewed reference exposes no stored credential values outside calendar feed addresses and embed keys, which are dropped on every result path. Unknown paths are refused.",
   reviewed: {
     resolve: (method, path): OperationRef => ({
       method,
-      template: /^\/people\/\d+$/.test(path) ? "/people/:PERSON_ID" : path,
+      template: (() => {
+        const op = BREEZE_INDEX.resolve(method, normalizedPath(path)).op;
+        if (op.path === "/people/{PERSON_ID}" && !/^\/people\/\d+\/?$/.test(path))
+          throw new ConnectorCallError("invalid_args", "A Breeze person path requires a numeric person id.");
+        return op.path;
+      })(),
     }),
     redact: (body, op) => withoutCalendarFeeds(op.template, body),
     withholdsErrors: () => false,

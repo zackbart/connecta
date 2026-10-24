@@ -5,76 +5,45 @@
 }
 ---
 
-<!-- fragment: guide_0 -->
-.breezechms.com (Breeze ChMS, now Tithely Church Management): people, tags, events, attendance, forms, volunteers, and giving.
+## Church records
 
-Church purpose: <!-- endfragment -->
+Breeze ChMS (now Tithely Church Management) holds people, tags, events,
+attendance, forms, volunteers and giving. People carry contact information,
+birthdates and family ties; giving reveals donors and amounts. Reduce records
+in code and return only the names, counts or totals the task needs.
 
-<!-- fragment: guide_1 -->
+## Ids and joins
 
+Ids are numeric strings. Resolve them from the relevant inventory before
+writing. Events have an occurrence id and a series `eventId`; attendance,
+volunteers and check-in use the occurrence id. Event and pledge lists can lag
+up to 15 minutes behind the site. An all-zero MySQL date means no time was
+recorded, including no check-out.
 
-## Sensitive data: reduce in code
-
-People records carry home addresses, phones, birthdates, and family ties, and
-giving records reveal who gives and how much — religious affiliation by proxy.
-Read them inside `execute_code` and return only the counts, totals, or the
-few fields the task needs. Never echo whole profiles or donor lists.
-
-## Ids and profile fields
-
-- Ids are numeric strings. Read them from a list tool; never guess one.
-- Events have two ids: an instance id (`list_events` `id`) for one
-  occurrence, and a series `eventId`. Attendance, volunteers, and
-  check-in take the instance id.
-- Person `details` are keyed by profile `fieldId`, not by name. Call
-  `list_profile_fields` once and map ids to names in code. Multiple-choice
-  values and `list_people` filters use option ids from the same call;
-  join several with `-`.
-- `list_people` has no name search. List without details and match names
-  in code, then `get_person` the hits.
-- Projections rename Breeze's snake_case fields to camelCase and drop photo
-  paths and internal columns; `raw: true` returns Breeze's rows.
-
-## Pagination
-
-`list_people` pages by `cursor`: continue while `page.hasMore`. Breeze
-reports no total, so a full page sets `hasMore` and the next may be empty.
-`list_events` and `list_account_log` do not page: `truncated: true`
-means narrow the date range. Other lists return everything.
+Profile `details` use field ids, not names. Resolve field and option ids from
+`list_profile_fields`; multiple-choice filters join option ids with `-`.
+A person-name lookup requires listing people and matching in code. Form entry
+responses similarly join to that form's field ids.
 
 ## Giving
 
-`list_contributions` and `list_funds` call endpoints Breeze removed from
-its public reference in 2023 but still serves. They may change or vanish
-without notice; a failure there is not your argument's fault. Amounts are
-decimal strings; `totalAmount` is an exact sum. Online gifts processed by
-Tithe.ly arrive through its sync, batched per deposit, so the latest days
-may be missing. Read the currency from `get_account_summary`.
+Giving, funds and pledges use archival endpoints removed from the public
+reference in 2023. They can change or vanish without notice. Amounts are
+exact decimal strings: reduce them with integer-cent arithmetic, and read the
+currency from `get_account_summary`. A split gift's fund amounts belong to
+its fund ids. Tithe.ly deposits sync in batches, so recent gifts can be absent.
+Editing a giving transaction may return a new payment id.
 
-## Writes and the hatches
+## Required sequences
 
-- Every write, `add_person`, `assign_tag`, and `record_check_in`
-  included, follows the routing in the `usage` skill. Fetch it with
-  `skills({ name: "usage" })` for guest API and write rules.
-  Those three only add, and `add_person` never deduplicates.
-- `update_person` field values: text, date (M/D/YYYY), or option id in
-  `response`; email, phone, address, and family_role values in `details`.
-- Every Breeze call is a GET, writes included, so the hatches split by
-  endpoint. `breeze_api_get` admits only reviewed read endpoints and their
-  documented parameters, such as `/tags/list_folders`,
-  `/events/list_event`, `/events/attendance/eligible`, `/giving/view`,
-  and `/pledges/list_campaigns`; it refuses anything else. Everything else
-  — event, family, volunteer, and form writes, giving writes, check-out,
-  undocumented parameters — is `breeze_api_mutate`. Paths are below
-  `/api`; `*_json` values may be passed as objects.
-- `list_account_log` actions include person_created, person_updated,
-  person_deleted, tag_assign, tag_unassign, event_created,
-  attendance_deleted, form_entry_updated, contribution_added,
-  contribution_updated, contribution_deleted, and batch_updated.
+Check for an existing person before adding one: creation does not deduplicate.
+Resolve profile fields before updating them. Text, dates (M/D/YYYY) and option
+ids use `response`; email, phone, address and family-role values use `details`.
+Family changes can remove previous associations. Attendance check-out records
+a departure time; removing attendance deletes the record instead.
 
-## Rate limits
-
-Breeze publishes no limit and sends no rate headers; a third party reports
-about 20 requests per minute. Keep loops sequential and prefer one list call
-over many single reads.
-<!-- endfragment -->
+Breeze sends writes as GET requests too. Query names ending in `_json` take
+JSON-encoded strings. The named person writes encode their typed profile values
+for you. The account-log `object_json` is a serialized affected-object value;
+its free-text description has no stable schema. Events and account logs have
+vendor caps: narrow the date range when the result fills its limit.

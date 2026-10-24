@@ -1,33 +1,19 @@
-// Breeze's step-1 tools: preserve catalog, projections, raw modes, and hatch names.
+// Breeze's curated surface: projections and profile encoders earn named tools; the standard hatch supplies coverage.
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, type HttpFailure } from "../../http/errors.js";
 import { Integer, isMinChars, isMaxChars } from "../../http/json-schema.js";
 import { RequestSecrets, Classification, type CallServices } from "../../http/services.js";
-import { read, write as writeTool } from "../../http/tools.js";
+import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { read, list, write as writeTool } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
-import {
-  asArray,
-  asRecord,
-  type JsonRecord,
-  READ_ENDPOINTS,
-  LEGACY_HATCH,
-  withoutCalendarFeeds,
-  normalizedPath,
-  readEndpointFor,
-  queryPairs,
-} from "./api.js";
-
+import { asArray, asRecord, type JsonRecord, READ_ENDPOINTS } from "./api.js";
 const DEFAULT_EVENT_LIMIT = 100;
-const DEFAULT_LOG_LIMIT = 100;
 const ObjectValue = Schema.Record(Schema.String, Schema.Unknown);
-const EmptyInput = Schema.Record(Schema.String, Schema.Never);
 function compact<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
-
-/** Breeze writes "no time" as MySQL's zero date; a projection says null. */
 function timestamp(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || value === "" || value.startsWith("0000-00-00")) {
@@ -35,16 +21,13 @@ function timestamp(value: unknown): string | null | undefined {
   }
   return value;
 }
-
 function flag(value: unknown): boolean | undefined {
   if (value === undefined || value === null) return undefined;
   return value === true || value === 1 || value === "1";
 }
-
 function idString(value: unknown): string | undefined {
   return value === undefined || value === null || value === "" ? undefined : String(value);
 }
-
 function projectPersonSummary(value: unknown): JsonRecord {
   const person = asRecord(value);
   return compact({
@@ -54,7 +37,6 @@ function projectPersonSummary(value: unknown): JsonRecord {
     lastName: person["last_name"],
   });
 }
-
 function projectFamilyMember(value: unknown): JsonRecord {
   const member = asRecord(value);
   const details = asRecord(member["details"]);
@@ -66,8 +48,6 @@ function projectFamilyMember(value: unknown): JsonRecord {
     lastName: details["last_name"],
   });
 }
-
-/** Drops photo paths; keeps the profile-field `details` map Breeze returned. */
 function projectPerson(value: unknown): JsonRecord {
   const person = asRecord(value);
   const family = asArray(person["family"]);
@@ -81,7 +61,6 @@ function projectPerson(value: unknown): JsonRecord {
     family: family.length ? family.map(projectFamilyMember) : undefined,
   });
 }
-
 function projectProfileFields(value: unknown): JsonRecord[] {
   const fields: JsonRecord[] = [];
   for (const sectionValue of asArray(value)) {
@@ -108,7 +87,6 @@ function projectProfileFields(value: unknown): JsonRecord[] {
   }
   return fields;
 }
-
 function projectEvent(value: unknown): JsonRecord {
   const event = asRecord(value);
   return compact({
@@ -120,7 +98,6 @@ function projectEvent(value: unknown): JsonRecord {
     endsAt: timestamp(event["end_datetime"]),
   });
 }
-
 function projectContribution(redact: <T>(value: T) => T, value: unknown): JsonRecord {
   const payment = asRecord(value);
   const paidOn = payment["paid_on"];
@@ -154,35 +131,7 @@ function projectContribution(redact: <T>(value: T) => T, value: unknown): JsonRe
     }),
   });
 }
-
-/**
- * Sum decimal strings in integer cents, so a giving total never inherits
- * floating-point error. Null when any amount is not a plain decimal.
- */
-function totalAmount(amounts: unknown[]): string | null {
-  let cents = 0;
-  for (const amount of amounts) {
-    const match = /^(-)?(\d+)(?:\.(\d{1,2}))?$/.exec(String(amount ?? "").trim());
-    if (!match) return null;
-    const value = Number(match[2]) * 100 + Number((match[3] ?? "").padEnd(2, "0"));
-    cents += match[1] ? -value : value;
-  }
-  const sign = cents < 0 ? "-" : "";
-  const absolute = Math.abs(cents);
-  return `${sign}${Math.trunc(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
-}
-
-function parsedObject(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
 const DETAIL_FIELD_TYPES = new Set(["email", "phone", "address", "family_role"]);
-
 function fieldsJson(value: unknown): string {
   const fields = asArray(value).map((row) => {
     const field = asRecord(row);
@@ -209,7 +158,6 @@ function fieldsJson(value: unknown): string {
   });
   return JSON.stringify(fields);
 }
-
 function requireTrue(payload: unknown, action: string): void {
   if (payload === false) {
     throw new ConnectorCallError(
@@ -219,19 +167,8 @@ function requireTrue(payload: unknown, action: string): void {
     );
   }
 }
-
 const matches = (pattern: string) =>
   Schema.makeFilter((value: string) => new RegExp(pattern).test(value), { toJsonSchema: () => ({ pattern }) });
-const Result_breeze_api_get = Schema.Struct({
-  "result": Schema.Unknown.pipe(
-    Schema.annotateKey({ description: "Breeze's response, less calendar feed addresses and embed keys." }),
-  ),
-});
-const Result_breeze_api_mutate = Schema.Struct({
-  "result": Schema.Unknown.pipe(
-    Schema.annotateKey({ description: "Breeze's response, less calendar feed addresses and embed keys." }),
-  ),
-});
 const Result_get_account_summary = Schema.Struct({
   "id": Schema.optionalKey(Schema.String),
   "name": Schema.String,
@@ -259,6 +196,7 @@ const Result_list_people = Schema.Struct({
     "nextCursor": Schema.Union([Schema.String, Schema.Null]),
   }),
 });
+const Row_list_people = Result_list_people.fields.people.value;
 const Result_get_person = Schema.Struct({
   "id": Schema.String,
   "firstName": Schema.optionalKey(Schema.String),
@@ -281,11 +219,13 @@ const Result_list_profile_fields = Schema.Struct({
     }),
   ),
 });
+const Row_list_profile_fields = Result_list_profile_fields.fields.fields.value;
 const Result_list_tags = Schema.Struct({
   "tags": Schema.Array(
     Schema.Struct({ "id": Schema.String, "name": Schema.String, "folderId": Schema.optionalKey(Schema.String) }),
   ),
 });
+const Row_list_tags = Result_list_tags.fields.tags.value;
 const Result_list_events = Schema.Struct({
   "events": Schema.Array(
     Schema.Struct({
@@ -299,11 +239,12 @@ const Result_list_events = Schema.Struct({
   ),
   "truncated": Schema.Boolean.annotate({ description: "True when the result filled limit; narrow the range." }),
 });
-const Result_list_calendars = Schema.Struct({
-  "calendars": Schema.Array(
-    Schema.Struct({ "id": Schema.String, "name": Schema.String, "color": Schema.optionalKey(Schema.String) }),
+const Row_list_events = Result_list_events.fields.events.value;
+const SelectedEvent = Schema.Struct(
+  Object.fromEntries(
+    Object.entries(Row_list_events.fields).map(([name, schema]) => [name, Schema.optionalKey(schema)]),
   ),
-});
+);
 const Result_list_attendance = Schema.Struct({
   "attendance": Schema.Array(
     Schema.Struct({
@@ -315,68 +256,7 @@ const Result_list_attendance = Schema.Struct({
     }),
   ),
 });
-const Result_list_forms = Schema.Struct({
-  "forms": Schema.Array(
-    Schema.Struct({
-      "id": Schema.String,
-      "name": Schema.String,
-      "slug": Schema.optionalKey(Schema.String),
-      "archived": Schema.optionalKey(Schema.Boolean),
-      "createdAt": Schema.optionalKey(Schema.String),
-    }),
-  ),
-});
-const Result_list_form_fields = Schema.Struct({
-  "fields": Schema.Array(
-    Schema.Struct({
-      "fieldId": Schema.String,
-      "name": Schema.String,
-      "type": Schema.optionalKey(Schema.String),
-      "options": Schema.optionalKey(Schema.Array(ObjectValue)),
-    }),
-  ),
-});
-const Result_list_form_entries = Schema.Struct({
-  "entries": Schema.Array(
-    Schema.Struct({
-      "id": Schema.String,
-      "personId": Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-      "createdAt": Schema.optionalKey(Schema.String),
-      "responses": Schema.optionalKey(ObjectValue),
-    }),
-  ),
-});
-const Result_list_volunteers = Schema.Struct({
-  "volunteers": Schema.Array(
-    Schema.Struct({
-      "personId": Schema.String,
-      "roleIds": Schema.Array(Schema.String),
-      "response": Schema.optionalKey(Schema.String),
-      "comment": Schema.optionalKey(Schema.String),
-      "rsvpedAt": Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-    }),
-  ),
-});
-const Result_list_volunteer_roles = Schema.Struct({
-  "roles": Schema.Array(
-    Schema.Struct({ "id": Schema.String, "name": Schema.String, "quantity": Schema.optionalKey(Schema.Finite) }),
-  ),
-});
-const Result_list_account_log = Schema.Struct({
-  "entries": Schema.Array(
-    Schema.Struct({
-      "id": Schema.String,
-      "action": Schema.String,
-      "userId": Schema.optionalKey(Schema.String),
-      "object": Schema.optionalKey(
-        Schema.Unknown.pipe(Schema.annotateKey({ description: "Parsed object_json, usually the affected id." })),
-      ),
-      "createdAt": Schema.optionalKey(Schema.String),
-      "details": Schema.optionalKey(Schema.Unknown),
-    }),
-  ),
-  "truncated": Schema.Boolean.annotate({ description: "True when the result filled limit; narrow the range." }),
-});
+const Row_list_attendance = Result_list_attendance.fields.attendance.value;
 const Result_list_contributions = Schema.Struct({
   "contributions": Schema.Array(
     Schema.Struct({
@@ -391,9 +271,8 @@ const Result_list_contributions = Schema.Struct({
       "funds": Schema.optionalKey(Schema.Array(ObjectValue)),
     }),
   ),
-  "count": Integer,
-  "totalAmount": Schema.Union([Schema.String, Schema.Null]).annotate({ description: "Exact decimal sum." }),
 });
+const Row_list_contributions = Result_list_contributions.fields.contributions.value;
 const Result_list_funds = Schema.Struct({
   "funds": Schema.Array(
     Schema.Struct({
@@ -404,39 +283,53 @@ const Result_list_funds = Schema.Struct({
     }),
   ),
 });
-const Result_add_person = Schema.Struct({
-  "id": Schema.String,
-  "firstName": Schema.optionalKey(Schema.String),
-  "forceFirstName": Schema.optionalKey(Schema.String.annotate({ description: "Breeze's display first name." })),
-  "lastName": Schema.optionalKey(Schema.String),
-  "nickName": Schema.optionalKey(Schema.String),
-  "middleName": Schema.optionalKey(Schema.String),
-  "maidenName": Schema.optionalKey(Schema.String),
-  "details": Schema.optionalKey(ObjectValue.annotate({ description: "Values keyed by profile fieldId." })),
-  "family": Schema.optionalKey(Schema.Array(ObjectValue)),
-});
-const Result_update_person = Schema.Struct({
-  "id": Schema.String,
-  "firstName": Schema.optionalKey(Schema.String),
-  "forceFirstName": Schema.optionalKey(Schema.String.annotate({ description: "Breeze's display first name." })),
-  "lastName": Schema.optionalKey(Schema.String),
-  "nickName": Schema.optionalKey(Schema.String),
-  "middleName": Schema.optionalKey(Schema.String),
-  "maidenName": Schema.optionalKey(Schema.String),
-  "details": Schema.optionalKey(ObjectValue.annotate({ description: "Values keyed by profile fieldId." })),
-  "family": Schema.optionalKey(Schema.Array(ObjectValue)),
-});
-const Result_assign_tag = Schema.Struct({ "assigned": Schema.Boolean });
-const Result_unassign_tag = Schema.Struct({ "unassigned": Schema.Boolean });
-const Result_record_check_in = Schema.Struct({ "checkedIn": Schema.Boolean });
+const Row_list_funds = Result_list_funds.fields.funds.value;
+const Result_add_person = Schema.Union([
+  Schema.Struct({
+    "id": Schema.String,
+    "firstName": Schema.optionalKey(Schema.String),
+    "forceFirstName": Schema.optionalKey(Schema.String.annotate({ description: "Breeze's display first name." })),
+    "lastName": Schema.optionalKey(Schema.String),
+    "nickName": Schema.optionalKey(Schema.String),
+    "middleName": Schema.optionalKey(Schema.String),
+    "maidenName": Schema.optionalKey(Schema.String),
+    "details": Schema.optionalKey(ObjectValue.annotate({ description: "Values keyed by profile fieldId." })),
+    "family": Schema.optionalKey(Schema.Array(ObjectValue)),
+  }),
+  Schema.Struct({ ok: Schema.Literal(true) }),
+]);
+const Result_update_person = Schema.Union([
+  Schema.Struct({
+    "id": Schema.String,
+    "firstName": Schema.optionalKey(Schema.String),
+    "forceFirstName": Schema.optionalKey(Schema.String.annotate({ description: "Breeze's display first name." })),
+    "lastName": Schema.optionalKey(Schema.String),
+    "nickName": Schema.optionalKey(Schema.String),
+    "middleName": Schema.optionalKey(Schema.String),
+    "maidenName": Schema.optionalKey(Schema.String),
+    "details": Schema.optionalKey(ObjectValue.annotate({ description: "Values keyed by profile fieldId." })),
+    "family": Schema.optionalKey(Schema.Array(ObjectValue)),
+  }),
+  Schema.Struct({ ok: Schema.Literal(true) }),
+]);
 
-/** One explicitly classified GET. No method-derived read verdict and no caller-provided capacity. */
+function projected<O extends Schema.Top>(
+  output: O,
+  run: () => Effect.Effect<unknown, HttpFailure, CallServices>,
+): Effect.Effect<O["Type"], HttpFailure, CallServices> {
+  void output;
+  return Effect.suspend(run).pipe(
+    Effect.map((value) => value as O["Type"]),
+    Effect.catchDefect((error) =>
+      error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+    ),
+  );
+}
 function request(
   connection: Connection,
   path: string,
   query: Record<string, string | number | boolean | undefined>,
   verdict: "read" | "write",
-  raw = false,
 ) {
   return Effect.gen(function* () {
     if (verdict !== "read" && verdict !== "write")
@@ -451,61 +344,28 @@ function request(
       if (!allowed || Object.keys(query).some((name) => !allowed.includes(name)))
         return yield* Effect.die(new Error("A Breeze read has no reviewed endpoint/parameter verdict."));
     }
-    const answer = yield* connection.sendPath(
-      {
-        method: "GET",
-        path,
-        template: path,
-        query: Object.entries(query).flatMap(([name, value]) =>
-          value === undefined ? [] : [[name, String(value)] as const],
-        ),
-      },
-      raw ? { flags: LEGACY_HATCH } : undefined,
-    );
+    const answer = yield* connection.sendPath({
+      method: "GET",
+      path,
+      template: path,
+      query: Object.entries(query).flatMap(([name, value]) =>
+        value === undefined ? [] : [[name, String(value)] as const],
+      ),
+    });
     return answer.data;
   });
 }
 
-/** Step 1 retains raw's historical output schemas and vendor-shaped malformed-answer behaviour. */
-function legacyResult<O extends Schema.Top>(
-  output: O,
-  run: () => Effect.Effect<unknown, HttpFailure, CallServices>,
-): Effect.Effect<O["Type"], HttpFailure, CallServices> {
-  void output;
-  return Effect.suspend(run).pipe(
-    Effect.map((value) => value as O["Type"]),
-    Effect.catchDefect((error) =>
-      error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
-    ),
-  );
+function windowRows<T>(rows: readonly T[], cursor: string | undefined, limit: number) {
+  const start = cursor === undefined ? 0 : Number(cursor);
+  if (!Number.isSafeInteger(start) || start < 0 || start > rows.length)
+    throw new ConnectorCallError("invalid_args", "This cursor no longer matches this list.");
+  const end = start + limit;
+  return {
+    rows: rows.slice(start, end),
+    page: { hasMore: end < rows.length, nextCursor: end < rows.length ? String(end) : null },
+  };
 }
-
-/** Equivalent legacy catalog spellings until step 2; the Schema still owns every constraint. */
-function legacyCatalog(tool: ApiTool): ApiTool {
-  const schema = tool.inputSchema as Record<string, any>;
-  if (schema.type === "object" && !schema.properties) {
-    // Record<string, never> is exactly a closed empty object; Struct({}) also admits scalars.
-    const original = { type: "object", properties: {}, required: [], additionalProperties: false };
-    Object.keys(schema).forEach((key) => delete schema[key]);
-    Object.assign(schema, original);
-  }
-  const properties = schema.properties;
-  if (tool.name === "breeze_api_get" || tool.name === "breeze_api_mutate") {
-    const value = properties.query.items.properties.value;
-    // All five union branches are disjoint and have no branch-specific constraints.
-    properties.query.items.properties.value = {
-      type: value.type ?? value.anyOf.map((branch: { type: string }) => branch.type),
-      description: value.description,
-    };
-  }
-  if (tool.name === "list_contributions")
-    for (const name of ["fundIds", "methodIds", "batchNumbers"]) {
-      const { description, ...array } = properties[name];
-      properties[name] = { ...array, description };
-    }
-  return tool;
-}
-
 export function breezeTools({
   connection,
   pageSize: defaultPageSize,
@@ -513,114 +373,161 @@ export function breezeTools({
   connection: Connection;
   pageSize: number;
 }): ApiTool[] {
-  const get = (
-    path: string,
-    query: Record<string, string | number | boolean | undefined>,
-    options?: { raw?: boolean },
-  ) => request(connection, path, query, "read", options?.raw);
-  const write = (
-    path: string,
-    query: Record<string, string | number | boolean | undefined>,
-    options?: { raw?: boolean },
-  ) => request(connection, path, query, "write", options?.raw);
+  const get = (path: string, query: Record<string, string | number | boolean | undefined>) =>
+    request(connection, path, query, "read");
+  const write = (path: string, query: Record<string, string | number | boolean | undefined>) =>
+    request(connection, path, query, "write");
+  const limit = { default: defaultPageSize, max: 1000, description: "Items per page; pass nextCursor back unchanged." };
+  const load_list_people = (args: JsonRecord) =>
+    projected(Result_list_people, () =>
+      Effect.gen(function* () {
+        const filter = { ...asRecord(args["filter"]) };
+        if (args["tagId"] !== undefined) {
+          if (filter["tag_contains"] !== undefined) {
+            throw new ConnectorCallError("invalid_args", "Pass tagId or filter.tag_contains, not both.");
+          }
+          filter["tag_contains"] = `y_${args["tagId"]}`;
+        }
+        const limit: number = args["limit"] ?? defaultPageSize;
+        const offset = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
+        const rows = asArray(
+          yield* get("/people", {
+            details: args["includeDetails"] === true ? 1 : 0,
+            filter_json: Object.keys(filter).length ? JSON.stringify(filter) : undefined,
+            limit,
+            offset,
+          }),
+        );
+        // Breeze returns no total, so a full page is the only "maybe more"
+        // signal it gives; the page after an exact multiple comes back empty.
+        const hasMore = rows.length >= limit;
+        return {
+          people: rows.map(projectPerson),
+          page: { hasMore, nextCursor: hasMore ? String(offset + rows.length) : null },
+        };
+      }),
+    );
+  const load_list_profile_fields = (args: JsonRecord) =>
+    projected(Result_list_profile_fields, () =>
+      Effect.gen(function* () {
+        const payload = yield* get("/profile", {});
+        return { fields: projectProfileFields(payload) };
+      }),
+    );
+  const load_list_tags = (args: JsonRecord) =>
+    projected(Result_list_tags, () =>
+      Effect.gen(function* () {
+        return {
+          tags: asArray(yield* get("/tags/list_tags", { folder_id: args["folderId"] })).map((value) => {
+            const tag = asRecord(value);
+            return compact({ id: idString(tag["id"]), name: tag["name"], folderId: idString(tag["folder_id"]) });
+          }),
+        };
+      }),
+    );
+  const load_list_events = (args: JsonRecord) =>
+    projected(Result_list_events, () =>
+      Effect.gen(function* () {
+        const limit: number = args["limit"] ?? DEFAULT_EVENT_LIMIT;
+        const rows = asArray(
+          yield* get("/events", {
+            start: args["start"],
+            end: args["end"],
+            category_id: args["calendarId"],
+            limit,
+          }),
+        );
+        return {
+          events: rows.map(projectEvent),
+          truncated: rows.length >= limit,
+        };
+      }),
+    );
+  const load_list_attendance = (args: JsonRecord) =>
+    projected(Result_list_attendance, () =>
+      Effect.gen(function* () {
+        const wantDetails = args["includeNames"] === true;
+        const rows = asArray(
+          yield* get("/events/attendance/list", {
+            instance_id: args["instanceId"],
+            type: "person",
+            details: wantDetails ? "true" : "false",
+          }),
+        );
+
+        return {
+          attendance: rows.map((value) => {
+            const record = asRecord(value);
+            const person = asRecord(record["details"]);
+            return compact({
+              personId: idString(record["person_id"]),
+              firstName: person["first_name"],
+              lastName: person["last_name"],
+              checkedInAt: timestamp(record["created_on"]),
+              checkedOutAt: timestamp(record["check_out"]),
+            });
+          }),
+        };
+      }),
+    );
+  const load_list_contributions = (args: JsonRecord) =>
+    projected(Result_list_contributions, () =>
+      Effect.gen(function* () {
+        const secrets = yield* RequestSecrets;
+        const redact = <T>(value: T): T => secrets.redact(value);
+
+        if (args["includeFamily"] === true && args["personId"] === undefined) {
+          throw new ConnectorCallError("invalid_args", "includeFamily needs a personId.");
+        }
+        const joined = (value: unknown) => (Array.isArray(value) ? value.join("-") : undefined);
+        // Breeze's 2023 table says DD-MM-YYYY while its own example request
+        // sends 2022-1-15; the server parses both, so the unambiguous ISO day
+        // is what the schema accepts and what goes on the wire.
+        const rows = asArray(
+          yield* get("/giving/list", {
+            start: args["start"],
+            end: args["end"],
+            person_id: args["personId"],
+            include_family: args["includeFamily"] === true ? 1 : undefined,
+            amount_min: args["amountMin"],
+            amount_max: args["amountMax"],
+            fund_ids: joined(args["fundIds"]),
+            method_ids: joined(args["methodIds"]),
+            batches: joined(args["batchNumbers"]),
+            envelope_number: args["envelopeNumber"],
+          }),
+        );
+        return {
+          contributions: redact(rows.map((row) => projectContribution(redact, row))),
+        };
+      }),
+    );
+  const load_list_funds = (_args: JsonRecord) =>
+    projected(Result_list_funds, () =>
+      Effect.gen(function* () {
+        return {
+          funds: asArray(yield* get("/funds/list", {})).map((value) => {
+            const fund = asRecord(value);
+            return compact({
+              id: idString(fund["id"]),
+              name: fund["name"],
+              taxDeductible: flag(fund["tax_deductible"]),
+              isDefault: flag(fund["is_default"]),
+            });
+          }),
+        };
+      }),
+    );
   return [
     read(connection, {
-      name: "breeze_api_get",
-      description:
-        "Call a reviewed Breeze read endpoint and return its response as sent, less calendar feed addresses. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
-      input: Schema.Struct({
-        "path": Schema.String.check(isMinChars(2), isMaxChars(100)).annotate({
-          description: "Path below /api, e.g. /tags/list_folders. No query string.",
-        }),
-        "query": Schema.optionalKey(
-          Schema.Array(
-            Schema.Struct({
-              "name": Schema.String.check(isMinChars(1), isMaxChars(64)).annotate({
-                description: "Parameter name, e.g. fields_json.",
-              }),
-              "value": Schema.Union([
-                Schema.String,
-                Schema.Finite,
-                Schema.Boolean,
-                ObjectValue,
-                Schema.Array(Schema.Unknown),
-              ])
-
-                .annotate({ description: "Value; objects and arrays are JSON-encoded for *_json parameters." }),
-            }),
-          )
-            .check(Schema.isMaxLength(30))
-            .annotate({ description: "Query parameters as name/value pairs." }),
-        ),
-      }),
-      output: Result_breeze_api_get,
-
-      run: (args) =>
-        legacyResult(Result_breeze_api_get, () =>
-          Effect.gen(function* () {
-            const path = normalizedPath(args["path"]);
-            const allowed = readEndpointFor(path);
-            const query = queryPairs(args["query"]);
-            const stray = Object.keys(query).filter((name) => !allowed.includes(name));
-            if (stray.length) {
-              throw new ConnectorCallError(
-                "invalid_args",
-                `breeze_api_get refuses ${stray.join(", ")} on ${path}; its reviewed parameters are ${allowed.join(", ") || "none"}. Use breeze_api_mutate for anything else.`,
-              );
-            }
-            return { result: withoutCalendarFeeds(path, yield* get(path, query, { raw: true })) };
-          }),
-        ),
-    }),
-    writeTool(connection, {
-      name: "breeze_api_mutate",
-      description:
-        "Call any Breeze API endpoint, including writes and undocumented routes, and return its response as sent, less calendar feed addresses. The approval-gated hatch; Breeze takes writes as GET query parameters.",
-      input: Schema.Struct({
-        "path": Schema.String.check(isMinChars(2), isMaxChars(100)).annotate({
-          description: "Path below /api, e.g. /tags/list_folders. No query string.",
-        }),
-        "query": Schema.optionalKey(
-          Schema.Array(
-            Schema.Struct({
-              "name": Schema.String.check(isMinChars(1), isMaxChars(64)).annotate({
-                description: "Parameter name, e.g. fields_json.",
-              }),
-              "value": Schema.Union([
-                Schema.String,
-                Schema.Finite,
-                Schema.Boolean,
-                ObjectValue,
-                Schema.Array(Schema.Unknown),
-              ])
-
-                .annotate({ description: "Value; objects and arrays are JSON-encoded for *_json parameters." }),
-            }),
-          )
-            .check(Schema.isMaxLength(30))
-            .annotate({ description: "Query parameters as name/value pairs." }),
-        ),
-      }),
-      output: Result_breeze_api_mutate,
-      destructive: true,
-      writeSteps: { write: "once" },
-      run: (args) =>
-        legacyResult(Result_breeze_api_mutate, () =>
-          Effect.gen(function* () {
-            const path = normalizedPath(args["path"]);
-            return { result: withoutCalendarFeeds(path, yield* write(path, queryPairs(args["query"]), { raw: true })) };
-          }),
-        ),
-    }),
-    read(connection, {
       name: "get_account_summary",
+      output: Result_get_account_summary,
       description:
         "Get the Breeze account's church name, subdomain, timezone, country, and currency. Use it to read giving amounts in the right currency.",
-      input: EmptyInput,
-      output: Result_get_account_summary,
-
+      input: Schema.Struct({}),
+      fields: true,
       run: (_args) =>
-        legacyResult(Result_get_account_summary, () =>
+        projected(Result_get_account_summary, () =>
           Effect.gen(function* () {
             const account = asRecord(yield* get("/account/summary", {}));
             const details = asRecord(account["details"]);
@@ -636,11 +543,11 @@ export function breezeTools({
           }),
         ),
     }),
-    read(connection, {
+    list(connection, {
       name: "list_people",
       description:
         "List people in Breeze, optionally filtered by tag or profile-field values, with id and names or full profile details. No name search; filter names in code.",
-      input: Schema.Struct({
+      filters: {
         "tagId": Schema.optionalKey(
           Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
             description: "Only people carrying this tag id from list_tags.",
@@ -655,54 +562,18 @@ export function breezeTools({
         "includeDetails": Schema.optionalKey(
           Schema.Boolean.annotate({ description: "Include every profile field (slower, larger). Defaults to false." }),
         ),
-        "limit": Schema.optionalKey(
-          Integer.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1000)).annotate({
-            description: `People per page, 1 to connecta's 1000. Defaults to ${defaultPageSize}.`,
-          }),
-        ),
-        "cursor": Schema.optionalKey(
-          Schema.String.check(matches("^[0-9]+$")).annotate({
-            description: "Opaque nextCursor from the previous page.",
-          }),
-        ),
-        "raw": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Return Breeze's untouched rows instead of the lean projection." }),
-        ),
-      }),
-      output: Result_list_people,
-
-      run: (args) =>
-        legacyResult(Result_list_people, () =>
-          Effect.gen(function* () {
-            const filter = { ...asRecord(args["filter"]) };
-            if (args["tagId"] !== undefined) {
-              if (filter["tag_contains"] !== undefined) {
-                throw new ConnectorCallError("invalid_args", "Pass tagId or filter.tag_contains, not both.");
-              }
-              filter["tag_contains"] = `y_${args["tagId"]}`;
-            }
-            const limit: number = args["limit"] ?? defaultPageSize;
-            const offset = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
-            const rows = asArray(
-              yield* get("/people", {
-                details: args["includeDetails"] === true ? 1 : 0,
-                filter_json: Object.keys(filter).length ? JSON.stringify(filter) : undefined,
-                limit,
-                offset,
-              }),
-            );
-            // Breeze returns no total, so a full page is the only "maybe more"
-            // signal it gives; the page after an exact multiple comes back empty.
-            const hasMore = rows.length >= limit;
-            return {
-              people: args["raw"] === true ? rows : rows.map(projectPerson),
-              page: { hasMore, nextCursor: hasMore ? String(offset + rows.length) : null },
-            };
-          }),
+      },
+      row: Row_list_people,
+      limit,
+      cursor: "bound",
+      page: (args, cursor) =>
+        load_list_people({ ...args, cursor }).pipe(
+          Effect.map((result) => ({ rows: result.people, page: result.page })),
         ),
     }),
     read(connection, {
       name: "get_person",
+      output: Result_get_person,
       description:
         "Get one person by Breeze id with profile details keyed by fieldId and family members. Decode fieldIds with list_profile_fields.",
       input: Schema.Struct({
@@ -712,14 +583,10 @@ export function breezeTools({
         "includeDetails": Schema.optionalKey(
           Schema.Boolean.annotate({ description: "Include profile details. Defaults to true." }),
         ),
-        "raw": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Return Breeze's untouched rows instead of the lean projection." }),
-        ),
       }),
-      output: Result_get_person,
-
+      fields: true,
       run: (args) =>
-        legacyResult(Result_get_person, () =>
+        projected(Result_get_person, () =>
           Effect.gen(function* () {
             const payload = yield* get(`/people/${args["personId"]}`, {
               details: args["includeDetails"] === false ? 0 : 1,
@@ -732,390 +599,110 @@ export function breezeTools({
                 `Breeze has no person ${args["personId"]}. Re-read the id from list_people.`,
               );
             }
-            return args["raw"] === true ? payload : projectPerson(payload);
+            return projectPerson(payload);
           }),
         ),
     }),
-    read(connection, {
+    list(connection, {
       name: "list_profile_fields",
       description:
         "List profile fields with fieldId, type, section, and option ids. Decodes person details and builds list_people filters and update_person values.",
-      input: Schema.Struct({
-        "raw": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Return Breeze's untouched rows instead of the lean projection." }),
-        ),
-      }),
-      output: Result_list_profile_fields,
-
-      run: (args) =>
-        legacyResult(Result_list_profile_fields, () =>
-          Effect.gen(function* () {
-            const payload = yield* get("/profile", {});
-            return { fields: args["raw"] === true ? asArray(payload) : projectProfileFields(payload) };
-          }),
-        ),
+      filters: {},
+      row: Row_list_profile_fields,
+      limit,
+      cursor: "bound",
+      page: (args, cursor) =>
+        load_list_profile_fields(args).pipe(Effect.map((result) => windowRows(result.fields, cursor, args.limit))),
     }),
-    read(connection, {
+    list(connection, {
       name: "list_tags",
       description:
-        "List Breeze tags with id, name, and folder. Tags model groups and lists; pass a tag id to list_people or assign_tag.",
-      input: Schema.Struct({
+        "List Breeze tags with id, name, and folder. Tags model groups and lists; pass a tag id to list_people or breeze_api_write /tags/assign.",
+      filters: {
         "folderId": Schema.optionalKey(
           Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-            description: "Only tags in this folder. Folders come from breeze_api_get /tags/list_folders.",
+            description: "Only tags in this folder. Folders come from breeze_api_read /tags/list_folders.",
           }),
         ),
-      }),
-      output: Result_list_tags,
-
-      run: (args) =>
-        legacyResult(Result_list_tags, () =>
-          Effect.gen(function* () {
-            return {
-              tags: asArray(yield* get("/tags/list_tags", { folder_id: args["folderId"] })).map((value) => {
-                const tag = asRecord(value);
-                return compact({ id: idString(tag["id"]), name: tag["name"], folderId: idString(tag["folder_id"]) });
-              }),
-            };
-          }),
-        ),
+      },
+      row: Row_list_tags,
+      limit,
+      cursor: "bound",
+      page: (args, cursor) =>
+        load_list_tags(args).pipe(Effect.map((result) => windowRows(result.tags, cursor, args.limit))),
     }),
     read(connection, {
       name: "list_events",
       description:
         "List event instances between two dates with instance id, series id, calendar, and times. Breeze caches this list for up to 15 minutes.",
       input: Schema.Struct({
-        "start": Schema.optionalKey(
-          Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
-            description: "First day, YYYY-MM-DD. Defaults to the first of this month.",
-          }),
-        ),
-        "end": Schema.optionalKey(
-          Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
-            description: "Last day, YYYY-MM-DD. Defaults to the end of this month.",
-          }),
-        ),
-        "calendarId": Schema.optionalKey(
-          Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-            description: "Only events on this calendar from list_calendars.",
-          }),
-        ),
-        "limit": Schema.optionalKey(
-          Integer.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1000)).annotate({
-            description: "Instances returned, 1 to Breeze's 1000. Defaults to 100.",
-          }),
-        ),
-        "raw": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Return Breeze's untouched rows instead of the lean projection." }),
-        ),
+        ...{
+          "start": Schema.optionalKey(
+            Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
+              description: "First day, YYYY-MM-DD. Defaults to the first of this month.",
+            }),
+          ),
+          "end": Schema.optionalKey(
+            Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
+              description: "Last day, YYYY-MM-DD. Defaults to the end of this month.",
+            }),
+          ),
+          "calendarId": Schema.optionalKey(
+            Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
+              description: "Only events on this calendar from breeze_api_read /events/calendars/list.",
+            }),
+          ),
+          "limit": Schema.optionalKey(
+            Integer.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1000)).annotate({
+              description: "Instances returned, 1 to Breeze's 1000. Defaults to 100.",
+              default: 100,
+            }),
+          ),
+        },
+        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in each event item.")),
       }),
-      output: Result_list_events,
-
+      output: Schema.Struct({
+        items: Schema.Array(SelectedEvent),
+        page: Schema.Struct({ hasMore: Schema.Literal(false) }),
+        truncated: Schema.optionalKey(Schema.Array(Schema.String)),
+      }),
       run: (args) =>
-        legacyResult(Result_list_events, () =>
-          Effect.gen(function* () {
-            const limit: number = args["limit"] ?? DEFAULT_EVENT_LIMIT;
-            const rows = asArray(
-              yield* get("/events", {
-                start: args["start"],
-                end: args["end"],
-                category_id: args["calendarId"],
-                limit,
-              }),
-            );
-            return {
-              events: args["raw"] === true ? rows : rows.map(projectEvent),
-              truncated: rows.length >= limit,
-            };
-          }),
-        ),
+        Effect.gen(function* () {
+          const error = fieldsProblem(args.fields, new Set(Object.keys(Row_list_events.fields)), "an event item");
+          if (error) return yield* Effect.fail(new Refusal({ error }));
+          const result = yield* load_list_events(args);
+          return {
+            items: selectFields(result.events, args.fields) as (typeof SelectedEvent.Type)[],
+            page: { hasMore: false as const },
+            ...(result.truncated ? { truncated: ["items[]"] } : {}),
+          };
+        }),
     }),
-    read(connection, {
-      name: "list_calendars",
-      description:
-        "List Breeze event calendars with id, name, and color. Omits each calendar's private iCal feed address, which works without a key.",
-      input: EmptyInput,
-      output: Result_list_calendars,
-
-      run: (_args) =>
-        legacyResult(Result_list_calendars, () =>
-          Effect.gen(function* () {
-            return {
-              calendars: asArray(yield* get("/events/calendars/list", {})).map((value) => {
-                const calendar = asRecord(value);
-                return compact({
-                  id: idString(calendar["id"]) ?? "0",
-                  name: calendar["name"],
-                  color: calendar["color"],
-                });
-              }),
-            };
-          }),
-        ),
-    }),
-    read(connection, {
+    list(connection, {
       name: "list_attendance",
       description:
-        "List people checked in to one event instance, with check-in and check-out times. Not anonymous head counts; those come from breeze_api_get.",
-      input: Schema.Struct({
+        "List people checked in to one event instance, with check-in and check-out times. Not anonymous head counts; those come from breeze_api_read.",
+      filters: {
         "instanceId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
           description: "Event instance id (list_events id, not eventId).",
         }),
         "includeNames": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Add each attendee's name. Contact details need raw." }),
-        ),
-        "raw": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Return Breeze's untouched rows instead of the lean projection." }),
-        ),
-      }),
-      output: Result_list_attendance,
-
-      run: (args) =>
-        legacyResult(Result_list_attendance, () =>
-          Effect.gen(function* () {
-            const wantDetails = args["includeNames"] === true || args["raw"] === true;
-            const rows = asArray(
-              yield* get("/events/attendance/list", {
-                instance_id: args["instanceId"],
-                type: "person",
-                details: wantDetails ? "true" : "false",
-              }),
-            );
-            if (args["raw"] === true) return { attendance: rows };
-            return {
-              attendance: rows.map((value) => {
-                const record = asRecord(value);
-                const person = asRecord(record["details"]);
-                return compact({
-                  personId: idString(record["person_id"]),
-                  firstName: person["first_name"],
-                  lastName: person["last_name"],
-                  checkedInAt: timestamp(record["created_on"]),
-                  checkedOutAt: timestamp(record["check_out"]),
-                });
-              }),
-            };
+          Schema.Boolean.annotate({
+            description: "Add each attendee's name. Other vendor fields come from breeze_api_read.",
           }),
         ),
+      },
+      row: Row_list_attendance,
+      limit,
+      cursor: "bound",
+      page: (args, cursor) =>
+        load_list_attendance(args).pipe(Effect.map((result) => windowRows(result.attendance, cursor, args.limit))),
     }),
-    read(connection, {
-      name: "list_forms",
-      description: "List Breeze forms with id, name, and URL slug. Active forms by default; archived ones on request.",
-      input: Schema.Struct({
-        "archived": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "List archived forms instead of active ones." }),
-        ),
-      }),
-      output: Result_list_forms,
-
-      run: (args) =>
-        legacyResult(Result_list_forms, () =>
-          Effect.gen(function* () {
-            return {
-              forms: asArray(yield* get("/forms/list_forms", { is_archived: args["archived"] === true ? 1 : 0 })).map(
-                (value) => {
-                  const form = asRecord(value);
-                  return compact({
-                    id: idString(form["id"]),
-                    name: form["name"],
-                    slug: form["url_slug"],
-                    archived: flag(form["is_archived"]),
-                    createdAt: form["created_on"],
-                  });
-                },
-              ),
-            };
-          }),
-        ),
-    }),
-    read(connection, {
-      name: "list_form_fields",
-      description:
-        "List one form's fields with fieldId, name, type, and options. Decodes the responses list_form_entries returns.",
-      input: Schema.Struct({
-        "formId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Form id from list_forms.",
-        }),
-      }),
-      output: Result_list_form_fields,
-
-      run: (args) =>
-        legacyResult(Result_list_form_fields, () =>
-          Effect.gen(function* () {
-            return {
-              // Form fields share the profile-field row shape, minus a section.
-              fields: projectProfileFields([
-                { fields: yield* get("/forms/list_form_fields", { form_id: args["formId"] }) },
-              ]),
-            };
-          }),
-        ),
-    }),
-    read(connection, {
-      name: "list_form_entries",
-      description:
-        "List one form's entries with entry id, person id, and submission time; responses keyed by form fieldId on request. Not paginated.",
-      input: Schema.Struct({
-        "formId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Form id from list_forms.",
-        }),
-        "includeResponses": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Include each entry's answers keyed by fieldId." }),
-        ),
-      }),
-      output: Result_list_form_entries,
-
-      run: (args) =>
-        legacyResult(Result_list_form_entries, () =>
-          Effect.gen(function* () {
-            return {
-              entries: asArray(
-                yield* get("/forms/list_form_entries", {
-                  form_id: args["formId"],
-                  details: args["includeResponses"] === true ? 1 : 0,
-                }),
-              ).map((value) => {
-                const entry = asRecord(value);
-                return compact({
-                  id: idString(entry["id"]),
-                  personId: idString(entry["person_id"]) ?? null,
-                  createdAt: entry["created_on"],
-                  responses: args["includeResponses"] === true ? entry["response"] : undefined,
-                });
-              }),
-            };
-          }),
-        ),
-    }),
-    read(connection, {
-      name: "list_volunteers",
-      description: "List people scheduled to volunteer at one event instance, with their role ids and RSVP state.",
-      input: Schema.Struct({
-        "instanceId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Event instance id (list_events id, not eventId).",
-        }),
-      }),
-      output: Result_list_volunteers,
-
-      run: (args) =>
-        legacyResult(Result_list_volunteers, () =>
-          Effect.gen(function* () {
-            return {
-              volunteers: asArray(yield* get("/volunteers/list", { instance_id: args["instanceId"] })).map((value) => {
-                const volunteer = asRecord(value);
-                return compact({
-                  personId: idString(volunteer["person_id"]),
-                  roleIds: asArray(volunteer["role_ids"]).map(String),
-                  response: idString(volunteer["response"]),
-                  comment: volunteer["comment"] || undefined,
-                  rsvpedAt: timestamp(volunteer["rsvped_on"]),
-                });
-              }),
-            };
-          }),
-        ),
-    }),
-    read(connection, {
-      name: "list_volunteer_roles",
-      description: "List the volunteer roles defined on one event instance with id, name, and quantity needed.",
-      input: Schema.Struct({
-        "instanceId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Event instance id (list_events id, not eventId).",
-        }),
-      }),
-      output: Result_list_volunteer_roles,
-
-      run: (args) =>
-        legacyResult(Result_list_volunteer_roles, () =>
-          Effect.gen(function* () {
-            const secrets = yield* RequestSecrets;
-            const redact = <T>(value: T): T => secrets.redact(value);
-            return {
-              roles: asArray(
-                yield* get("/volunteers/list_roles", { instance_id: args["instanceId"], show_quantity: 1 }),
-              ).map((value) => {
-                const role = asRecord(value);
-                const quantity = Number(redact(role["quantity"]));
-                return compact({
-                  id: idString(role["id"]),
-                  name: role["name"],
-                  quantity: Number.isFinite(quantity) ? quantity : undefined,
-                });
-              }),
-            };
-          }),
-        ),
-    }),
-    read(connection, {
-      name: "list_account_log",
-      description:
-        "List logged account actions of one type, such as person_updated or contribution_added, with object ids and times. The way to find what changed since a date.",
-      input: Schema.Struct({
-        "action": Schema.String.check(matches("^[a-z_]+$"), isMaxChars(40)).annotate({
-          description: "Logged action, e.g. person_updated, tag_assign, contribution_added; the guide lists all.",
-        }),
-        "start": Schema.optionalKey(
-          Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
-            description: "Only actions on or after this day, YYYY-MM-DD.",
-          }),
-        ),
-        "end": Schema.optionalKey(
-          Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
-            description: "Only actions on or before this day, YYYY-MM-DD.",
-          }),
-        ),
-        "userId": Schema.optionalKey(
-          Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-            description: "Only actions by this Breeze user id.",
-          }),
-        ),
-        "includeDetails": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Include Breeze's unstandardized description." }),
-        ),
-        "limit": Schema.optionalKey(
-          Integer.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(3000)).annotate({
-            description: "Rows returned, 1 to Breeze's 3000. Defaults to 100.",
-          }),
-        ),
-      }),
-      output: Result_list_account_log,
-
-      run: (args) =>
-        legacyResult(Result_list_account_log, () =>
-          Effect.gen(function* () {
-            const limit: number = args["limit"] ?? DEFAULT_LOG_LIMIT;
-            const rows = asArray(
-              yield* get("/account/list_log", {
-                action: args["action"],
-                start: args["start"],
-                end: args["end"],
-                user_id: args["userId"],
-                details: args["includeDetails"] === true ? 1 : 0,
-                limit,
-              }),
-            );
-            return {
-              entries: rows.map((value) => {
-                const entry = asRecord(value);
-                return compact({
-                  id: idString(entry["id"]),
-                  action: entry["action"],
-                  userId: idString(entry["user_id"]),
-                  object: parsedObject(entry["object_json"]),
-                  createdAt: entry["created_on"],
-                  details: args["includeDetails"] === true ? entry["details"] : undefined,
-                });
-              }),
-              truncated: rows.length >= limit,
-            };
-          }),
-        ),
-    }),
-    read(connection, {
+    list(connection, {
       name: "list_contributions",
       description:
-        "List giving transactions between two dates with donor, amount, method, batch, and fund split, plus a count and exact total. Undocumented by Breeze since 2023.",
-      input: Schema.Struct({
+        "List giving transactions between two dates with donor, amount, method, batch, and fund split, for exact client-side totals. Undocumented by Breeze since 2023.",
+      filters: {
         "start": Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
           description: "First gift date, YYYY-MM-DD.",
         }),
@@ -1154,73 +741,31 @@ export function breezeTools({
         "envelopeNumber": Schema.optionalKey(
           Schema.String.check(isMaxChars(20)).annotate({ description: "Only this envelope number." }),
         ),
-        "raw": Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "Return Breeze's untouched rows instead of the lean projection." }),
-        ),
-      }),
-      output: Result_list_contributions,
-
-      run: (args) =>
-        legacyResult(Result_list_contributions, () =>
-          Effect.gen(function* () {
-            const secrets = yield* RequestSecrets;
-            const redact = <T>(value: T): T => secrets.redact(value);
-
-            if (args["includeFamily"] === true && args["personId"] === undefined) {
-              throw new ConnectorCallError("invalid_args", "includeFamily needs a personId.");
-            }
-            const joined = (value: unknown) => (Array.isArray(value) ? value.join("-") : undefined);
-            // Breeze's 2023 table says DD-MM-YYYY while its own example request
-            // sends 2022-1-15; the server parses both, so the unambiguous ISO day
-            // is what the schema accepts and what goes on the wire.
-            const rows = asArray(
-              yield* get("/giving/list", {
-                start: args["start"],
-                end: args["end"],
-                person_id: args["personId"],
-                include_family: args["includeFamily"] === true ? 1 : undefined,
-                amount_min: args["amountMin"],
-                amount_max: args["amountMax"],
-                fund_ids: joined(args["fundIds"]),
-                method_ids: joined(args["methodIds"]),
-                batches: joined(args["batchNumbers"]),
-                envelope_number: args["envelopeNumber"],
-              }),
-            );
-            return {
-              contributions: redact(args["raw"] === true ? rows : rows.map((row) => projectContribution(redact, row))),
-              count: rows.length,
-              totalAmount: totalAmount(rows.map((row) => redact(asRecord(row)["amount"]))),
-            };
-          }),
+      },
+      row: Row_list_contributions,
+      limit,
+      cursor: "bound",
+      page: (args, cursor) =>
+        load_list_contributions(args).pipe(
+          Effect.map((result) => windowRows(result.contributions, cursor, args.limit)),
         ),
     }),
-    read(connection, {
+    list(connection, {
       name: "list_funds",
       description:
         "List giving funds with id, name, tax-deductible flag, and default flag. Supplies fundIds for list_contributions. Undocumented by Breeze since 2023.",
-      input: EmptyInput,
-      output: Result_list_funds,
-
-      run: (_args) =>
-        legacyResult(Result_list_funds, () =>
-          Effect.gen(function* () {
-            return {
-              funds: asArray(yield* get("/funds/list", {})).map((value) => {
-                const fund = asRecord(value);
-                return compact({
-                  id: idString(fund["id"]),
-                  name: fund["name"],
-                  taxDeductible: flag(fund["tax_deductible"]),
-                  isDefault: flag(fund["is_default"]),
-                });
-              }),
-            };
-          }),
-        ),
+      filters: {},
+      row: Row_list_funds,
+      limit,
+      cursor: "bound",
+      page: (args, cursor) =>
+        load_list_funds(args).pipe(Effect.map((result) => windowRows(result.funds, cursor, args.limit))),
     }),
     writeTool(connection, {
       name: "add_person",
+      output: Result_add_person,
+      destructive: false,
+      writeSteps: { write: "once" },
       description:
         "Create a new person profile with a first and last name and optional profile values. Does not check for duplicates; search list_people first.",
       input: Schema.Struct({
@@ -1259,11 +804,8 @@ export function breezeTools({
             .annotate({ description: "Profile values to set. fieldId and option ids come from list_profile_fields." }),
         ),
       }),
-      output: Result_add_person,
-      destructive: false,
-      writeSteps: { write: "once" },
       run: (args) =>
-        legacyResult(Result_add_person, () =>
+        projected(Result_add_person, () =>
           Effect.gen(function* () {
             const payload = yield* write("/people/add", {
               first: args["firstName"],
@@ -1271,19 +813,17 @@ export function breezeTools({
               fields_json: args["fields"] === undefined ? undefined : fieldsJson(args["fields"]),
             });
             const person = Array.isArray(payload) ? payload[0] : payload;
-            if (!asRecord(person)["id"]) {
-              throw new ConnectorCallError(
-                "connector_call_failed",
-                "Breeze accepted the new person without returning it; check list_people before retrying so it is not added twice.",
-                { retryable: false },
-              );
-            }
+            requireTrue(payload, "the person creation");
+            if (!asRecord(person)["id"]) return { ok: true };
             return projectPerson(person);
           }),
         ),
     }),
     writeTool(connection, {
       name: "update_person",
+      output: Result_update_person,
+      destructive: true,
+      writeSteps: { write: "once" },
       description:
         "Set profile values on one person: contact details, multiple choice, dates, text, or family role. Replaces each named field's value.",
       input: Schema.Struct({
@@ -1321,100 +861,16 @@ export function breezeTools({
           .check(Schema.isMinLength(1), Schema.isMaxLength(50))
           .annotate({ description: "Profile values to set. fieldId and option ids come from list_profile_fields." }),
       }),
-      output: Result_update_person,
-      destructive: true,
-      writeSteps: { write: "once" },
       run: (args) =>
-        legacyResult(Result_update_person, () =>
+        projected(Result_update_person, () =>
           Effect.gen(function* () {
             const fields = fieldsJson(args["fields"]);
             const payload = yield* write("/people/update", { person_id: args["personId"], fields_json: fields });
             requireTrue(payload, "the person update");
             const person = Array.isArray(payload) ? payload[0] : payload;
-            return asRecord(person)["id"] ? projectPerson(person) : { id: String(args["personId"]) };
+            return asRecord(person)["id"] ? projectPerson(person) : { ok: true };
           }),
         ),
     }),
-    writeTool(connection, {
-      name: "assign_tag",
-      description:
-        "Add one tag to one person. Tag ids come from list_tags; adding a tag the person already has changes nothing.",
-      input: Schema.Struct({
-        "personId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Breeze person id from list_people.",
-        }),
-        "tagId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Tag id from list_tags.",
-        }),
-      }),
-      output: Result_assign_tag,
-      destructive: false,
-      writeSteps: { write: "once" },
-      run: (args) =>
-        legacyResult(Result_assign_tag, () =>
-          Effect.gen(function* () {
-            requireTrue(
-              yield* write("/tags/assign", { person_id: args["personId"], tag_id: args["tagId"] }),
-              "the tag assignment",
-            );
-            return { assigned: true };
-          }),
-        ),
-    }),
-    writeTool(connection, {
-      name: "unassign_tag",
-      description: "Remove one tag from one person. The tag itself and its other people are untouched.",
-      input: Schema.Struct({
-        "personId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Breeze person id from list_people.",
-        }),
-        "tagId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Tag id from list_tags.",
-        }),
-      }),
-      output: Result_unassign_tag,
-      destructive: true,
-      writeSteps: { write: "once" },
-      run: (args) =>
-        legacyResult(Result_unassign_tag, () =>
-          Effect.gen(function* () {
-            requireTrue(
-              yield* write("/tags/unassign", { person_id: args["personId"], tag_id: args["tagId"] }),
-              "the tag removal",
-            );
-            return { unassigned: true };
-          }),
-        ),
-    }),
-    writeTool(connection, {
-      name: "record_check_in",
-      description:
-        "Record one person's attendance at one event instance. Check-out and removing a record go through breeze_api_mutate.",
-      input: Schema.Struct({
-        "personId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Breeze person id from list_people.",
-        }),
-        "instanceId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-          description: "Event instance id (list_events id, not eventId).",
-        }),
-      }),
-      output: Result_record_check_in,
-      destructive: false,
-      writeSteps: { write: "once" },
-      run: (args) =>
-        legacyResult(Result_record_check_in, () =>
-          Effect.gen(function* () {
-            requireTrue(
-              yield* write("/events/attendance/add", {
-                person_id: args["personId"],
-                instance_id: args["instanceId"],
-                direction: "in",
-              }),
-              "the check-in",
-            );
-            return { checkedIn: true };
-          }),
-        ),
-    }),
-  ].map(legacyCatalog);
+  ];
 }

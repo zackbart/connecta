@@ -209,7 +209,11 @@ describe("write 401 settlement requires positive read evidence", () => {
             ...CREATE,
             handler: async (_args, ctx) => {
               await child
-                .callTool("breeze_api_mutate", { path: "/people/add", query: [{ name: "first", value: "Alice" }] }, ctx)
+                .callTool(
+                  "breeze_api_write",
+                  { method: "GET", path: "/people/add", query: { first: "Alice", last: "New" } },
+                  ctx,
+                )
                 .catch(() => undefined);
               return { id: "claimed-success" };
             },
