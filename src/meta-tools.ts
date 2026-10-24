@@ -1,4 +1,4 @@
-import { authorizationHandoff, bindAuthorizationHandoffs } from "./authorization-handoff.js";
+import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
@@ -1250,7 +1250,7 @@ function metaToolsForRequest(
 
     async authorizeConnector(args: AuthorizeArgs): Promise<ToolResult> {
       try {
-        return jsonResult(await authorizationHandoff(registry, baseUrl, requestScope, opts, args));
+        return jsonResult(await authorizeConnector(registry, baseUrl, requestScope, opts, args));
       } catch (err) {
         return errorResult(msg(err));
       }
@@ -1259,7 +1259,7 @@ function metaToolsForRequest(
 }
 
 const SEARCH_DESC = (readOnly: boolean) =>
-  `${readOnly ? "Use top-level search for catalog inspection; this read-only endpoint omits write tools." : "Use top-level search for catalog inspection or approval-required work before call_destructive_tool."} Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+  `${readOnly ? "Use top-level search for catalog inspection; this read-only endpoint omits write tools." : "Use top-level search for catalog inspection or write work before call_destructive_tool."} Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement. The host owns confirmation; these filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
 const CALL_DESC = (readOnly: boolean) =>
   `Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. ${readOnly ? "This endpoint is read-only and refuses every write." : "Unannotated or write-capable tools fail closed to call_destructive_tool."} A truncated result carries a connecta.result action.`;
 const CALL_DESTRUCTIVE_DESC =
@@ -1268,7 +1268,7 @@ const CALL_DESTRUCTIVE_DESC =
 const CALL_DESTRUCTIVE_READ_ONLY_DESC =
   "This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer call_tool or execute_code for them.";
 const AUTHORIZE_DESC =
-  "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
+  "Use after auth_required. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed with an authentication or operator-configuration error, give the retained handoff to the operator; otherwise proceed with the call. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =
   "List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.";
 

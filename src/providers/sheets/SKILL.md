@@ -65,7 +65,7 @@ say which; check the id or ask the owner to share it.
   cover; `clear_values` empties values but keeps formatting.
 - `batch_update_spreadsheet` takes Google's own Request objects for
   everything else (formatting, sorting, deleting rows or sheets); it is
-  atomic, always needs approval, and can destroy data. Replies too large
+  atomic and can destroy data; the host may ask the user to confirm this write. Replies too large
   to return come back cut to their kind, ids, and counts with a `note`;
   the requests still applied, so never send them again to see the rest.
 - Sheets has no revision check on writes: edits are last-writer-wins, so a

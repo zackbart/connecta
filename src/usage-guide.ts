@@ -19,6 +19,8 @@ Discover and call together when schemas suffice. search_tools covers catalog
 inspection. On a read-only endpoint, as execute_code's description says, search
 omits writes (guides may name them) and each fails read_only_endpoint; tell the
 user. Unannotated tools fail closed to writes.
+For a requested write, make the call through the write route; the host may ask
+the user to confirm it. Connecta classifies and routes writes; the host owns approval.
 
 ## The global and the envelopes
 

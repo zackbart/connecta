@@ -2456,6 +2456,15 @@ type routes a body around ResultSafety as one string or as bytes; a body that
 is not JSON is then unreadable. Value safety's own decisions on values fail
 closed the same way (see "Value safety for REST vendors").
 
+For an unreadable successful body, the shared mapper appends an unknown-outcome
+and check-before-repeating sentence for the call's own write request, including
+writes transported with GET. An auxiliary read lookup inside a write call
+keeps its read message; a failed lookup does not establish that the write left.
+`VendorErrors.unreadableWrite` can override the complete write message.
+Reads keep their existing wording. Overflow's
+unreviewed text responses use its write override; its reviewed health text and
+refund acknowledgement remain accepted.
+
 A vendor may declare `encodedFields`: exact dotted JSON paths with whole
 array segments (`payload.parts[*].body.data`), `encoding: "base64url"`, an
 optional `sizePath` addressing the same array elements, and a one-line review.
