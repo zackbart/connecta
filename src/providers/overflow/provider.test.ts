@@ -6,8 +6,8 @@ import type { Connection } from "../../http/vendor.js";
 import { validateToolInput } from "../../validate.js";
 import { errors, safety, OVERFLOW_INDEX, OVERFLOW_VERDICTS } from "./api.js";
 import { overflowTools } from "./tools.js";
-// The goldens cover tools, projections and errors. Keep only Overflow's
-// reset-header fallback and candidate credential probe beyond that evidence.
+// Goldens own catalog and fixture bytes. Fold wire-edge regressions into the
+// existing reset-header and candidate-credential cases without adding rows.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { overflow } from "./index.js";
@@ -102,7 +102,7 @@ async function failure(promise: Promise<unknown>): Promise<ConnectorCallError> {
   return error as ConnectorCallError;
 }
 
-describe("overflow() rate limits", () => {
+describe("overflow() standard surface", () => {
   it("INV-1 INV-5 INV-9 INV-11: admits the standard contracts, binds exact-count pages, strips secrets and preserves single-send recovery", async () => {
     const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
     for (const tool of overflowTools({ connection: kitConnection, pageSize: 25 })) {

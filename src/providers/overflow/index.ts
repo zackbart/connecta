@@ -115,8 +115,8 @@ export const overflow = defineApiProvider<OverflowOptions>({
   skill,
   options: OVERFLOW_OPTIONS,
   bundle: {
-    baselineGzip: 327197,
-    note: "./providers/overflow measures 327,197 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 352543,
+    note: "./providers/overflow measures 352,543 B gzip standalone at 88c918ed (0011 step 2), versus 341,849 B on main 8e92eed9 (+10,694 B), Node 26.12.0 with zlib-ng 1.3.1. This includes the shared Effect kit, paid once per deployment; provider entries are reported, not capped, and their sizes are not additive (#899).",
   },
   displayTitle: (options) => `Overflow (${environmentOf(options)})`,
   description: (options) => `Overflow nonprofit giving, ${environmentOf(options)}: ${options.purpose}`,

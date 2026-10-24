@@ -1,0 +1,1813 @@
+{
+  "scope": "Overflow decision 0011 step 2 (#703)",
+  "beforeMain": "8e92eed9aa6eec38524cb883d42a89726d9d7e80",
+  "evalCommit": "2b95f0ee2d9d",
+  "afterCommit": "88c918ed61cd",
+  "fullResults": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/overflow",
+  "arms": {
+    "before-luna": {
+      "file": "before-luna.json",
+      "sha256": "ba8eb32b27a3a73888c33075e15e565bc200614b300cd2c3ec95a3b26edac892",
+      "meta": {
+        "createdAt": "2026-10-24T04:29:07.882Z",
+        "git": {
+          "commit": "2b95f0ee2d9d",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "f1122bdcb2cc",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "pairId": "overflow-step2-20261024",
+        "taskDefinitionsHash": "ef62895f44394e46622d6d6d7fdc8d9276d783b1922f513082f9d23e4efb4551",
+        "harnessHash": "28d026441ff686407d2f7b9dbf001ff9700c7a4c28e18857db5d5b7e55a69fb0"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "outcome",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "overflow-filtered-gifts",
+          "overflow-recurring-join",
+          "overflow-donor-paging",
+          "overflow-deposit-reconciliation",
+          "overflow-tap-hatch",
+          "overflow-refund-once",
+          "overflow-donor-update-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "runnerVersion": "codex-cli 0.163.0",
+      "passed": 12,
+      "trials": [
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 1,
+          "status": "fail",
+          "failed": [
+            "answer-evidence"
+          ],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 42245,
+          "wallMs": 15094,
+          "tokens": {
+            "input": 23998,
+            "output": 632,
+            "cacheRead": 86528,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_campaigns": 1,
+            "overflow.list_locations": 1,
+            "overflow.list_contributions": 1
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 1,
+          "status": "fail",
+          "failed": [
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 61015,
+          "wallMs": 11766,
+          "tokens": {
+            "input": 30291,
+            "output": 287,
+            "cacheRead": 43776,
+            "cacheCreation": 0
+          },
+          "reads": 0,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {}
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 18292,
+          "wallMs": 12846,
+          "tokens": {
+            "input": 18061,
+            "output": 401,
+            "cacheRead": 40832,
+            "cacheCreation": 0
+          },
+          "reads": 4,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_donors": 4
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 22118,
+          "wallMs": 14518,
+          "tokens": {
+            "input": 20961,
+            "output": 440,
+            "cacheRead": 48512,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_deposits": 1,
+            "overflow.get_deposit_summary": 1,
+            "overflow.get_deposit": 1
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 8374,
+          "wallMs": 12799,
+          "tokens": {
+            "input": 10776,
+            "output": 395,
+            "cacheRead": 36224,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.overflow_api_get": 3
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 21631,
+          "wallMs": 21127,
+          "tokens": {
+            "input": 21789,
+            "output": 715,
+            "cacheRead": 99328,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_contributions": 2,
+            "overflow.overflow_api_mutate": 1,
+            "overflow.list_refunds": 1
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 16083,
+          "wallMs": 16558,
+          "tokens": {
+            "input": 15521,
+            "output": 471,
+            "cacheRead": 89984,
+            "cacheCreation": 0
+          },
+          "reads": 2,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_mutate": 1,
+            "overflow.list_donors": 1,
+            "overflow.get_donor": 1
+          }
+        },
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 7,
+          "discoveryBytes": 54116,
+          "wallMs": 19787,
+          "tokens": {
+            "input": 42615,
+            "output": 757,
+            "cacheRead": 108672,
+            "cacheCreation": 0
+          },
+          "reads": 5,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 2,
+          "addresses": {
+            "overflow.list_campaigns": 2,
+            "overflow.list_locations": 2,
+            "overflow.list_contributions": 1
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 76832,
+          "wallMs": 22907,
+          "tokens": {
+            "input": 14058,
+            "output": 821,
+            "cacheRead": 60160,
+            "cacheCreation": 0
+          },
+          "reads": 8,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_donors": 4,
+            "overflow.list_subscriptions": 2,
+            "overflow.list_contributions": 2
+          }
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 2,
+          "discoveryBytes": 22943,
+          "wallMs": 12579,
+          "tokens": {
+            "input": 13256,
+            "output": 374,
+            "cacheRead": 33664,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 12694,
+          "wallMs": 13586,
+          "tokens": {
+            "input": 21558,
+            "output": 466,
+            "cacheRead": 32256,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_deposits": 1,
+            "overflow.get_deposit_summary": 1,
+            "overflow.get_deposit": 1
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 54522,
+          "wallMs": 20187,
+          "tokens": {
+            "input": 22042,
+            "output": 567,
+            "cacheRead": 94976,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_get": 3
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 8,
+          "discoveryBytes": 27629,
+          "wallMs": 22870,
+          "tokens": {
+            "input": 20770,
+            "output": 865,
+            "cacheRead": 143360,
+            "cacheCreation": 0
+          },
+          "reads": 7,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_contributions": 1,
+            "overflow.get_contribution": 4,
+            "overflow.list_refunds": 2,
+            "overflow.overflow_api_mutate": 1
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 20205,
+          "wallMs": 13422,
+          "tokens": {
+            "input": 20442,
+            "output": 488,
+            "cacheRead": 62336,
+            "cacheCreation": 0
+          },
+          "reads": 2,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_donors": 1,
+            "overflow.overflow_api_mutate": 1,
+            "overflow.get_donor": 1
+          }
+        }
+      ],
+      "toolAddressCounts": {
+        "overflow.get_contribution": 4,
+        "overflow.get_deposit": 2,
+        "overflow.get_deposit_summary": 2,
+        "overflow.get_donor": 2,
+        "overflow.list_campaigns": 3,
+        "overflow.list_contributions": 7,
+        "overflow.list_deposits": 2,
+        "overflow.list_donors": 13,
+        "overflow.list_locations": 3,
+        "overflow.list_refunds": 3,
+        "overflow.list_subscriptions": 2,
+        "overflow.overflow_api_get": 6,
+        "overflow.overflow_api_mutate": 4
+      },
+      "hatchDataMaxBytes": {},
+      "means": {
+        "calls": 4.43,
+        "discoveryBytes": 32764.21,
+        "wallMs": 16431.86
+      },
+      "maxDiscoveryBytes": 76832
+    },
+    "after-luna": {
+      "file": "after-luna.json",
+      "sha256": "1637f2b8af6003e36d940774e3426663f9f4f3682c833c9fc15221d7d7d17131",
+      "meta": {
+        "createdAt": "2026-10-24T04:43:30.737Z",
+        "git": {
+          "commit": "88c918ed61cd",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "4b3d87055332",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "pairId": "overflow-step2-20261024",
+        "taskDefinitionsHash": "4928e00bdf57581feb8e2e19bf6853ec408f2087b02df87f65e28eba372d4e2c",
+        "harnessHash": "c876ff0b37f28d8a0dd0627feafd7081920a8b3f629c25daed1e0f52a0b84b2e"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "outcome",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "overflow-filtered-gifts",
+          "overflow-recurring-join",
+          "overflow-donor-paging",
+          "overflow-deposit-reconciliation",
+          "overflow-tap-hatch",
+          "overflow-refund-once",
+          "overflow-donor-update-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "runnerVersion": "codex-cli 0.163.0",
+      "passed": 10,
+      "trials": [
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 49698,
+          "wallMs": 15981,
+          "tokens": {
+            "input": 28271,
+            "output": 591,
+            "cacheRead": 133632,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_campaigns": 1,
+            "overflow.list_locations": 1,
+            "overflow.list_contributions": 1
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 1,
+          "status": "fail",
+          "failed": [
+            "answer-evidence"
+          ],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 99173,
+          "wallMs": 18472,
+          "tokens": {
+            "input": 15626,
+            "output": 1043,
+            "cacheRead": 64512,
+            "cacheCreation": 0
+          },
+          "reads": 5,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_subscriptions": 1,
+            "overflow.list_contributions": 1,
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 46088,
+          "wallMs": 14518,
+          "tokens": {
+            "input": 16394,
+            "output": 416,
+            "cacheRead": 45184,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 13041,
+          "wallMs": 16765,
+          "tokens": {
+            "input": 15993,
+            "output": 822,
+            "cacheRead": 96384,
+            "cacheCreation": 0
+          },
+          "reads": 8,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_deposits": 2,
+            "overflow.get_deposit_summary": 3,
+            "overflow.get_deposit": 3
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 23426,
+          "wallMs": 15932,
+          "tokens": {
+            "input": 16948,
+            "output": 520,
+            "cacheRead": 86144,
+            "cacheCreation": 0
+          },
+          "reads": 4,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.overflow_api_search": 4,
+            "overflow.overflow_api_read": 4
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 1,
+          "status": "fail",
+          "failed": [
+            "state",
+            "only-requested-writes",
+            "reconciled",
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 45029,
+          "wallMs": 18438,
+          "tokens": {
+            "input": 32885,
+            "output": 623,
+            "cacheRead": 74368,
+            "cacheCreation": 0
+          },
+          "reads": 2,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_contributions": 1,
+            "overflow.list_refunds": 1
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 10,
+          "discoveryBytes": 28310,
+          "wallMs": 26861,
+          "tokens": {
+            "input": 23147,
+            "output": 1024,
+            "cacheRead": 191232,
+            "cacheCreation": 0
+          },
+          "reads": 4,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_write": 1,
+            "overflow.get_donor": 1,
+            "overflow.list_donors": 3,
+            "overflow.overflow_api_search": 1,
+            "overflow.overflow_api_details": 1
+          }
+        },
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 2,
+          "status": "fail",
+          "failed": [
+            "answer-evidence"
+          ],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 72515,
+          "wallMs": 17963,
+          "tokens": {
+            "input": 20334,
+            "output": 628,
+            "cacheRead": 76416,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_campaigns": 1,
+            "overflow.list_locations": 1,
+            "overflow.list_contributions": 1
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 2,
+          "status": "fail",
+          "failed": [
+            "answer-evidence"
+          ],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 29405,
+          "wallMs": 18084,
+          "tokens": {
+            "input": 27762,
+            "output": 803,
+            "cacheRead": 72704,
+            "cacheCreation": 0
+          },
+          "reads": 8,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_donors": 2,
+            "overflow.list_subscriptions": 3,
+            "overflow.list_contributions": 3
+          }
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 14116,
+          "wallMs": 17338,
+          "tokens": {
+            "input": 25557,
+            "output": 512,
+            "cacheRead": 57216,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 37546,
+          "wallMs": 15163,
+          "tokens": {
+            "input": 11748,
+            "output": 552,
+            "cacheRead": 60032,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_deposits": 1,
+            "overflow.get_deposit_summary": 1,
+            "overflow.get_deposit": 1
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 11,
+          "discoveryBytes": 18443,
+          "wallMs": 29696,
+          "tokens": {
+            "input": 18050,
+            "output": 1004,
+            "cacheRead": 186112,
+            "cacheCreation": 0
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 4,
+          "addresses": {
+            "overflow.overflow_api_search": 3,
+            "overflow.overflow_api_read": 4
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 7,
+          "discoveryBytes": 24590,
+          "wallMs": 27029,
+          "tokens": {
+            "input": 19796,
+            "output": 787,
+            "cacheRead": 110592,
+            "cacheCreation": 0
+          },
+          "reads": 4,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_contributions": 1,
+            "overflow.overflow_api_search": 1,
+            "overflow.list_refunds": 2,
+            "overflow.overflow_api_details": 1,
+            "overflow.overflow_api_write": 1,
+            "overflow.get_contribution": 1
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 8,
+          "discoveryBytes": 41167,
+          "wallMs": 23743,
+          "tokens": {
+            "input": 23317,
+            "output": 756,
+            "cacheRead": 136704,
+            "cacheCreation": 0
+          },
+          "reads": 2,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 2,
+          "addresses": {
+            "overflow.list_donors": 1,
+            "overflow.overflow_api_search": 1,
+            "overflow.overflow_api_details": 2,
+            "overflow.overflow_api_write": 1,
+            "overflow.get_donor": 1
+          }
+        }
+      ],
+      "toolAddressCounts": {
+        "overflow.get_contribution": 1,
+        "overflow.get_deposit": 4,
+        "overflow.get_deposit_summary": 4,
+        "overflow.get_donor": 2,
+        "overflow.list_campaigns": 2,
+        "overflow.list_contributions": 8,
+        "overflow.list_deposits": 3,
+        "overflow.list_donors": 15,
+        "overflow.list_locations": 2,
+        "overflow.list_refunds": 3,
+        "overflow.list_subscriptions": 4,
+        "overflow.overflow_api_details": 4,
+        "overflow.overflow_api_read": 8,
+        "overflow.overflow_api_search": 10,
+        "overflow.overflow_api_write": 3
+      },
+      "hatchDataMaxBytes": {
+        "overflow.overflow_api_details": 721,
+        "overflow.overflow_api_search": 1303
+      },
+      "means": {
+        "calls": 6.14,
+        "discoveryBytes": 38753.36,
+        "wallMs": 19713.07
+      },
+      "maxDiscoveryBytes": 99173
+    },
+    "before-sonnet": {
+      "file": "before-sonnet.json",
+      "sha256": "05fbf1f1e774ca03ddd160913c108a0d99524f1f3880a06c2a042e95d106e9f1",
+      "meta": {
+        "createdAt": "2026-10-24T04:29:09.048Z",
+        "git": {
+          "commit": "2b95f0ee2d9d",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "f1122bdcb2cc",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "pairId": "overflow-step2-20261024",
+        "taskDefinitionsHash": "ef62895f44394e46622d6d6d7fdc8d9276d783b1922f513082f9d23e4efb4551",
+        "harnessHash": "28d026441ff686407d2f7b9dbf001ff9700c7a4c28e18857db5d5b7e55a69fb0"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "outcome",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "overflow-filtered-gifts",
+          "overflow-recurring-join",
+          "overflow-donor-paging",
+          "overflow-deposit-reconciliation",
+          "overflow-tap-hatch",
+          "overflow-refund-once",
+          "overflow-donor-update-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "runnerVersion": "2.1.309 (Claude Code)",
+      "passed": 14,
+      "trials": [
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 14892,
+          "wallMs": 14656,
+          "tokens": {
+            "input": 10,
+            "output": 845,
+            "cacheRead": 30881,
+            "cacheCreation": 11774
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.overflow_api_get": 2,
+            "overflow.list_contributions": 1
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 26814,
+          "wallMs": 18116,
+          "tokens": {
+            "input": 10,
+            "output": 1301,
+            "cacheRead": 44547,
+            "cacheCreation": 14741
+          },
+          "reads": 7,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_subscriptions": 2,
+            "overflow.list_contributions": 2,
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 12630,
+          "wallMs": 10792,
+          "tokens": {
+            "input": 6,
+            "output": 469,
+            "cacheRead": 16165,
+            "cacheCreation": 7052
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 11231,
+          "wallMs": 15450,
+          "tokens": {
+            "input": 10,
+            "output": 1016,
+            "cacheRead": 30329,
+            "cacheCreation": 7120
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_deposits": 1,
+            "overflow.get_deposit_summary": 1,
+            "overflow.get_deposit": 1
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 2,
+          "discoveryBytes": 5289,
+          "wallMs": 11859,
+          "tokens": {
+            "input": 6,
+            "output": 461,
+            "cacheRead": 12122,
+            "cacheCreation": 3301
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.overflow_api_get": 3
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 17955,
+          "wallMs": 21996,
+          "tokens": {
+            "input": 14,
+            "output": 1516,
+            "cacheRead": 58471,
+            "cacheCreation": 13708
+          },
+          "reads": 4,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.overflow_api_mutate": 1,
+            "overflow.list_contributions": 1,
+            "overflow.list_refunds": 2,
+            "overflow.get_contribution": 1
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 13675,
+          "wallMs": 14867,
+          "tokens": {
+            "input": 10,
+            "output": 841,
+            "cacheRead": 37908,
+            "cacheCreation": 8150
+          },
+          "reads": 4,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_mutate": 1,
+            "overflow.get_donor": 1,
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 15308,
+          "wallMs": 15709,
+          "tokens": {
+            "input": 10,
+            "output": 1151,
+            "cacheRead": 34163,
+            "cacheCreation": 9512
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_campaigns": 1,
+            "overflow.list_locations": 1,
+            "overflow.list_contributions": 1
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 26814,
+          "wallMs": 20379,
+          "tokens": {
+            "input": 8,
+            "output": 1358,
+            "cacheRead": 39255,
+            "cacheCreation": 14106
+          },
+          "reads": 7,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_subscriptions": 2,
+            "overflow.list_contributions": 2,
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 12630,
+          "wallMs": 11138,
+          "tokens": {
+            "input": 6,
+            "output": 491,
+            "cacheRead": 16470,
+            "cacheCreation": 6744
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 11231,
+          "wallMs": 13763,
+          "tokens": {
+            "input": 10,
+            "output": 900,
+            "cacheRead": 26442,
+            "cacheCreation": 4675
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_deposits": 1,
+            "overflow.get_deposit_summary": 1,
+            "overflow.get_deposit": 1
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 2,
+          "discoveryBytes": 5289,
+          "wallMs": 11138,
+          "tokens": {
+            "input": 6,
+            "output": 470,
+            "cacheRead": 12438,
+            "cacheCreation": 2989
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.overflow_api_get": 3
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 7,
+          "discoveryBytes": 18460,
+          "wallMs": 22043,
+          "tokens": {
+            "input": 16,
+            "output": 1524,
+            "cacheRead": 74378,
+            "cacheCreation": 10914
+          },
+          "reads": 5,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.overflow_api_mutate": 1,
+            "overflow.list_contributions": 2,
+            "overflow.list_refunds": 2,
+            "overflow.get_contribution": 1
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 13675,
+          "wallMs": 13728,
+          "tokens": {
+            "input": 10,
+            "output": 779,
+            "cacheRead": 38172,
+            "cacheCreation": 7807
+          },
+          "reads": 4,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_mutate": 1,
+            "overflow.get_donor": 1,
+            "overflow.list_donors": 3
+          }
+        }
+      ],
+      "toolAddressCounts": {
+        "overflow.get_contribution": 2,
+        "overflow.get_deposit": 2,
+        "overflow.get_deposit_summary": 2,
+        "overflow.get_donor": 2,
+        "overflow.list_campaigns": 1,
+        "overflow.list_contributions": 9,
+        "overflow.list_deposits": 2,
+        "overflow.list_donors": 18,
+        "overflow.list_locations": 1,
+        "overflow.list_refunds": 4,
+        "overflow.list_subscriptions": 4,
+        "overflow.overflow_api_get": 8,
+        "overflow.overflow_api_mutate": 4
+      },
+      "hatchDataMaxBytes": {},
+      "means": {
+        "calls": 4.07,
+        "discoveryBytes": 14706.64,
+        "wallMs": 15402.43
+      },
+      "maxDiscoveryBytes": 26814
+    },
+    "after-sonnet": {
+      "file": "after-sonnet.json",
+      "sha256": "a00065a24bd7c7003f0eb5714a64cee0df5b4f93d1d535837fac58cedfddbe7f",
+      "meta": {
+        "createdAt": "2026-10-24T04:43:31.114Z",
+        "git": {
+          "commit": "88c918ed61cd",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "4b3d87055332",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "pairId": "overflow-step2-20261024",
+        "taskDefinitionsHash": "4928e00bdf57581feb8e2e19bf6853ec408f2087b02df87f65e28eba372d4e2c",
+        "harnessHash": "c876ff0b37f28d8a0dd0627feafd7081920a8b3f629c25daed1e0f52a0b84b2e"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "outcome",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "overflow-filtered-gifts",
+          "overflow-recurring-join",
+          "overflow-donor-paging",
+          "overflow-deposit-reconciliation",
+          "overflow-tap-hatch",
+          "overflow-refund-once",
+          "overflow-donor-update-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "runnerVersion": "2.1.309 (Claude Code)",
+      "passed": 14,
+      "trials": [
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 27521,
+          "wallMs": 17260,
+          "tokens": {
+            "input": 12,
+            "output": 1225,
+            "cacheRead": 41751,
+            "cacheCreation": 8565
+          },
+          "reads": 4,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_campaigns": 1,
+            "overflow.list_locations": 1,
+            "overflow.list_contributions": 2
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 18785,
+          "wallMs": 19443,
+          "tokens": {
+            "input": 12,
+            "output": 1394,
+            "cacheRead": 59761,
+            "cacheCreation": 12044
+          },
+          "reads": 6,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_donors": 5,
+            "overflow.list_subscriptions": 1,
+            "overflow.list_contributions": 1
+          }
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 13751,
+          "wallMs": 12460,
+          "tokens": {
+            "input": 8,
+            "output": 696,
+            "cacheRead": 27018,
+            "cacheCreation": 7452
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_donors": 4
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 12380,
+          "wallMs": 14367,
+          "tokens": {
+            "input": 10,
+            "output": 1056,
+            "cacheRead": 31396,
+            "cacheCreation": 7453
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_deposits": 2,
+            "overflow.get_deposit_summary": 1,
+            "overflow.get_deposit": 1
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 29109,
+          "wallMs": 18474,
+          "tokens": {
+            "input": 12,
+            "output": 923,
+            "cacheRead": 33264,
+            "cacheCreation": 4843
+          },
+          "reads": 2,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_search": 1,
+            "overflow.overflow_api_read": 3
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 9,
+          "discoveryBytes": 19980,
+          "wallMs": 29617,
+          "tokens": {
+            "input": 18,
+            "output": 2021,
+            "cacheRead": 89474,
+            "cacheCreation": 11361
+          },
+          "reads": 6,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_write": 1,
+            "overflow.get_contribution": 2,
+            "overflow.list_contributions": 2,
+            "overflow.overflow_api_search": 1,
+            "overflow.overflow_api_details": 1,
+            "overflow.list_refunds": 2
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 14839,
+          "wallMs": 15006,
+          "tokens": {
+            "input": 12,
+            "output": 886,
+            "cacheRead": 44620,
+            "cacheCreation": 7996
+          },
+          "reads": 4,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_write": 1,
+            "overflow.get_donor": 1,
+            "overflow.list_donors": 3
+          }
+        },
+        {
+          "task": "overflow-filtered-gifts",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 17170,
+          "wallMs": 19948,
+          "tokens": {
+            "input": 12,
+            "output": 1271,
+            "cacheRead": 48997,
+            "cacheCreation": 11416
+          },
+          "reads": 4,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 0,
+          "addresses": {
+            "overflow.list_contributions": 2,
+            "overflow.list_campaigns": 1,
+            "overflow.list_locations": 1
+          }
+        },
+        {
+          "task": "overflow-recurring-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 18785,
+          "wallMs": 21276,
+          "tokens": {
+            "input": 12,
+            "output": 1984,
+            "cacheRead": 58539,
+            "cacheCreation": 11964
+          },
+          "reads": 9,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_subscriptions": 3,
+            "overflow.list_contributions": 3,
+            "overflow.list_donors": 4
+          }
+        },
+        {
+          "task": "overflow-donor-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 13751,
+          "wallMs": 15853,
+          "tokens": {
+            "input": 8,
+            "output": 680,
+            "cacheRead": 27008,
+            "cacheCreation": 7422
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_donors": 4
+          }
+        },
+        {
+          "task": "overflow-deposit-reconciliation",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 12380,
+          "wallMs": 16086,
+          "tokens": {
+            "input": 10,
+            "output": 1132,
+            "cacheRead": 31387,
+            "cacheCreation": 7435
+          },
+          "reads": 3,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.list_deposits": 2,
+            "overflow.get_deposit_summary": 1,
+            "overflow.get_deposit": 1
+          }
+        },
+        {
+          "task": "overflow-tap-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 45631,
+          "wallMs": 20734,
+          "tokens": {
+            "input": 12,
+            "output": 895,
+            "cacheRead": 33297,
+            "cacheCreation": 4759
+          },
+          "reads": 2,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_search": 1,
+            "overflow.overflow_api_read": 3
+          }
+        },
+        {
+          "task": "overflow-refund-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 11,
+          "discoveryBytes": 16250,
+          "wallMs": 39571,
+          "tokens": {
+            "input": 22,
+            "output": 2064,
+            "cacheRead": 101383,
+            "cacheCreation": 9984
+          },
+          "reads": 5,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 1,
+          "addresses": {
+            "overflow.overflow_api_details": 2,
+            "overflow.overflow_api_write": 1,
+            "overflow.list_refunds": 2,
+            "overflow.list_contributions": 3,
+            "overflow.overflow_api_search": 1
+          }
+        },
+        {
+          "task": "overflow-donor-update-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 8,
+          "discoveryBytes": 19750,
+          "wallMs": 21495,
+          "tokens": {
+            "input": 16,
+            "output": 1311,
+            "cacheRead": 71489,
+            "cacheCreation": 10612
+          },
+          "reads": 4,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "toolErrors": 2,
+          "addresses": {
+            "overflow.overflow_api_write": 1,
+            "overflow.get_donor": 1,
+            "overflow.list_donors": 4,
+            "overflow.overflow_api_search": 1
+          }
+        }
+      ],
+      "toolAddressCounts": {
+        "overflow.get_contribution": 2,
+        "overflow.get_deposit": 2,
+        "overflow.get_deposit_summary": 2,
+        "overflow.get_donor": 2,
+        "overflow.list_campaigns": 2,
+        "overflow.list_contributions": 13,
+        "overflow.list_deposits": 4,
+        "overflow.list_donors": 24,
+        "overflow.list_locations": 2,
+        "overflow.list_refunds": 4,
+        "overflow.list_subscriptions": 4,
+        "overflow.overflow_api_details": 3,
+        "overflow.overflow_api_read": 6,
+        "overflow.overflow_api_search": 5,
+        "overflow.overflow_api_write": 4
+      },
+      "hatchDataMaxBytes": {
+        "overflow.overflow_api_details": 1231,
+        "overflow.overflow_api_search": 1502
+      },
+      "means": {
+        "calls": 5.93,
+        "discoveryBytes": 20005.86,
+        "wallMs": 20113.57
+      },
+      "maxDiscoveryBytes": 45631
+    }
+  },
+  "notes": "No measured agent trials were discarded or regraded. A destination-check self-test correction happened before BEFORE. Before AFTER, the scripted standard donor-paging reference narrowed fields to id/email to avoid the shared output cut; prompts, fake data and grading semantics stayed fixed. Two lint-only edits remove unsafe optional chaining and an unused export. Offline replay proves identical grader checks for all 28 BEFORE observations. Protocol hashes are reported as observed. Later changes record evidence and bundle metadata only.",
+  "contractAudit": {
+    "operations": 38,
+    "responsePaths": 666,
+    "mismatches": [],
+    "exceptions": [
+      "Array query names use established bracketed framing.",
+      "GET donor-scoped subscriptions path donorId is a scalar string, correcting the public empty-entity reference."
+    ]
+  },
+  "h9": [
+    {
+      "node": "v26.12.0",
+      "importMs": 2782.776042,
+      "factoryMs": 89.05991199999971,
+      "callToSendMs": 72.86088199999995,
+      "totalMs": 2984.634771
+    },
+    {
+      "node": "v26.12.0",
+      "importMs": 2969.35924,
+      "factoryMs": 121.41041899999982,
+      "callToSendMs": 78.01360099999965,
+      "totalMs": 3208.0222160000003
+    },
+    {
+      "node": "v26.12.0",
+      "importMs": 2702.379141,
+      "factoryMs": 67.42538599999989,
+      "callToSendMs": 67.03226499999982,
+      "totalMs": 2868.961621
+    }
+  ],
+  "bundle": {
+    "before": {
+      "raw": 1140650,
+      "gzip": 341849,
+      "compression": "1.3.1.zlib-ng"
+    },
+    "afterFrozen": {
+      "raw": 1179895,
+      "gzip": 352543,
+      "zlib": "1.3.1.zlib-ng",
+      "node": "v26.12.0"
+    },
+    "final": {
+      "raw": 1179856,
+      "gzip": 352521,
+      "zlib": "1.3.1.zlib-ng",
+      "node": "v26.12.0"
+    }
+  },
+  "testCounts": {
+    "before": {
+      "total": 586,
+      "byFile": {
+        "provider-failure-sweep.test.ts": 501,
+        "http-kit.test.ts": 83,
+        "provider.test.ts": 2
+      }
+    },
+    "after": {
+      "total": 584,
+      "byFile": {
+        "provider-failure-sweep.test.ts": 499,
+        "http-kit.test.ts": 83,
+        "provider.test.ts": 2
+      }
+    },
+    "delta": -2
+  },
+  "taskPromptsIdentical": true,
+  "graderEquivalence": {
+    "trials": 28,
+    "graderChecksIdentical": true
+  },
+  "validation": {
+    "nodeTargeted": {
+      "suites": 11,
+      "passed": 722
+    },
+    "nodeGoldens": {
+      "passed": 16,
+      "determinism": "forward/reverse, identical repeat, jitter 1/2"
+    },
+    "nodeSourceProbes": {
+      "passed": 69,
+      "completeJitterMatrix": true
+    },
+    "workerdCombined": {
+      "passed": 78,
+      "failed": 1,
+      "skipped": 98,
+      "failure": "Existing shared hatch admission case timed out at 5000ms; no production assertion failed."
+    },
+    "workerdHatchRecheck": {
+      "passed": 1,
+      "skipped": 2,
+      "testMs": 2957
+    },
+    "workerdGoldens": {
+      "passed": 16
+    },
+    "workerdSourceProbes": {
+      "passed": 48
+    },
+    "static": "passed",
+    "build": "passed",
+    "browser": {
+      "passed": 20
+    },
+    "eveNode24": {
+      "passed": 5,
+      "typecheck": "passed",
+      "build": "passed",
+      "packageSmoke": "passed"
+    },
+    "fullCheck": "not run, per binding brief"
+  }
+}
