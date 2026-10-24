@@ -45,6 +45,8 @@ import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.j
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
 import { fixture as breezeFixture } from "../src/providers/breeze/fixtures.js";
 
+const NATIVE = { ...WORKERS, timeout: 30_000 };
+
 const DATA: OpenApiData = {
   source: "https://api.example/openapi.json",
   revision: "r1",
@@ -915,919 +917,272 @@ it(
   },
 );
 
-it(
-  "INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendPath once",
-  { ...WORKERS, timeout: 30_000 },
-  async () => {
-    const withheld = "https://files.example/file?signature=%5Bredacted%5D";
-    const cases: Array<{
-      kind: string;
-      args: Record<string, unknown>;
-      message?: string;
-      body?: string;
-      url?: string;
-      data?: unknown;
-      verdicts?: Parameters<typeof hatch>[0]["verdicts"];
-      method?: string;
-    }> = [
-      // A sole reviewed read method other than GET is the default, POST and HEAD alike.
-      {
-        kind: "read",
-        verdicts: { "POST /query": "read" },
-        args: { path: "/query", body: { filter: "open" } },
-        method: "POST",
-        body: '{"filter":"open"}',
-      },
-      {
-        kind: "read",
-        verdicts: { "HEAD /items/{item}": "read" },
-        args: { path: "/items/i1" },
-        method: "HEAD",
-        data: null,
-      },
-      {
-        kind: "read",
-        args: { path: "/items", query: { tag: ["b", "a"], limit: 2 } },
-        url: "/items?tag=b&tag=a&limit=2",
-      },
-      { kind: "read", args: { method: "POST", path: "/query", body: { filter: "open" } }, body: '{"filter":"open"}' },
-      { kind: "write", args: { method: "GET", path: "/touch" } },
-      { kind: "write", args: { method: "DELETE", path: "/items/i1" } },
-      { kind: "write", args: { method: "POST", path: "/items", body: { name: "alice" } }, body: '{"name":"alice"}' },
-      {
-        kind: "write",
-        args: { method: "POST", path: "/form", body: { name: "alice", tag: ["a", "b"] } },
-        body: "name=alice&tag=a&tag=b",
-      },
-      {
-        kind: "write",
-        args: { method: "POST", path: "/items", body: { name: "unredacted" } },
-        body: '{"name":"unredacted"}',
-      },
-      {
-        kind: "write",
-        args: { method: "POST", path: "/items", body: { name: "the log says: Authorization: Bearer [redacted]" } },
-        body: JSON.stringify({ name: "the log says: Authorization: Bearer [redacted]" }),
-      },
-      ...[
-        ["[redacted]", true],
-        ["pre[redacted]", false],
-        ["sk_live_[redacted]", false],
-        ["[redacted][redacted]", false],
-        ["%5Bredacted%5D", true],
-        ["%5bredacted%5d", true],
-        ["%255Bredacted%255D", true],
-        ["%25255Bredacted%25255D", true],
-        ["&#91;redacted&#93;", true],
-        ["&#x5b;redacted&#x5d;", true],
-        ["&lbrack;redacted&rbrack;", true],
-        ["&amp;#91;redacted&amp;#93;", true],
-        ["\\[redacted\\]", true],
-        ["\\u005bredacted\\u005d", true],
-        ["https://x.test/a?token=[redacted]", true],
-        ["https://hooks.test/[redacted]", true],
-        ["Bearer [redacted]", false],
-      ].flatMap(([text, whole]) => {
-        const marker = String(text);
-        const body = { name: marker };
-        const keyed = { name: "alice", payload: { [marker]: "x" } };
-        return [
-          {
-            kind: "write",
-            args: { method: "POST", path: "/items", body },
-            ...(whole ? { message: "withheld" } : { body: JSON.stringify(body) }),
-          },
-          {
-            kind: "write",
-            args: { method: "POST", path: "/items", body: keyed },
-            ...(whole ? { message: "withheld" } : { body: JSON.stringify(keyed) }),
-          },
-          {
-            kind: "write",
-            args: { method: "DELETE", path: `/items/${encodeURIComponent(marker)}` },
-            message: "withheld",
-          },
-          { kind: "write", args: { method: "DELETE", path: `/items/i_${marker}` }, message: "withheld" },
-          { kind: "read", args: { path: `/items/i_${marker}` }, message: "withheld" },
-          { kind: "read", args: { path: "/items", query: { tag: [marker] } }, message: "withheld" },
-          { kind: "read", args: { path: "/items", query: { [marker]: "x" } }, message: "withheld" },
-        ];
-      }),
-      { kind: "read", args: { path: "/touch" }, message: "items_api_write" },
-      { kind: "write", args: { method: "GET", path: "/items" }, message: "items_api_read" },
-      { kind: "read", args: { path: "/blocked" }, message: "refuses" },
-      { kind: "read", args: { path: "/items/i1" }, message: "refuses" },
-      { kind: "write", args: { method: "GET", path: "/blocked" }, message: "refuses" },
-      { kind: "write", args: { method: "GET", path: "/items/i1" }, message: "refuses" },
-      { kind: "read", args: { path: "/missing" }, message: "Nearest:" },
-      { kind: "read", args: { path: "/items/../touch" }, message: "dot segment" },
-      { kind: "read", args: { path: "/items?limit=1" }, message: "query" },
-      { kind: "read", args: { path: "/items", query: { limt: 2 } }, message: "limt" },
-      { kind: "read", args: { path: "/items", query: { link: { nested: true } } }, message: "link" },
-      { kind: "read", args: { path: "/items", body: {} }, message: "takes query" },
-      { kind: "write", args: { method: "POST", path: "/items", body: {} }, message: "name" },
-      // A write never leaves with a projection its declared response cannot satisfy.
-      {
-        kind: "write",
-        args: { method: "POST", path: "/items", body: { name: "alice" }, fields: ["nope"] },
-        message: "property of data: one of id",
-      },
-      { kind: "write", args: { method: "DELETE", path: "/items/i1", fields: ["id"] }, message: "declares no response" },
-      { kind: "write", args: { method: "POST", path: "/upload", body: {} }, message: "multipart" },
-      { kind: "read", args: { path: "/elsewhere" }, message: "different server" },
-      { kind: "read", args: { method: "HEAD", path: "/items/i1" }, data: null },
-      { kind: "read", args: { path: "/items", raw: true }, message: "raw" },
-      {
-        kind: "write",
-        args: { method: "POST", path: "/items", body: { name: "alice", link: withheld } },
-        message: "withheld",
-      },
-      {
-        kind: "write",
-        args: { method: "POST", path: "/items", body: { name: "alice", payload: { nested: { [withheld]: true } } } },
-        message: "withheld",
-      },
-    ];
-    for (const entry of cases) {
-      const { call, sendPath, authenticate } = setup(entry.verdicts ? { verdicts: entry.verdicts } : {});
-      sent = [];
-      if (entry.message) {
-        await expect(call(entry.kind, entry.args), JSON.stringify(entry.args)).rejects.toMatchObject({
-          code: "invalid_args",
-          message: expect.stringContaining(entry.message),
-        });
-        expect(sendPath).not.toHaveBeenCalled();
-        expect(authenticate).not.toHaveBeenCalled();
-        expect(sent).toEqual([]);
-      } else {
-        expect(await call(entry.kind, entry.args)).toEqual({
-          status: 200,
-          data: entry.data === undefined ? { id: "i1" } : entry.data,
-        });
-        expect(sendPath).toHaveBeenCalledTimes(1);
-        expect(sendPath.mock.calls[0]?.[0]).toMatchObject({ method: entry.method ?? entry.args["method"] ?? "GET" });
-        expect(sent).toHaveLength(1);
-        expect(sent[0]?.url).toBe(`https://api.example/v1${entry.url ?? entry.args["path"]}`);
-        expect(sent[0]?.body).toBe(entry.body);
-      }
-    }
-    // Typed path contracts are checked before authentication on both runtimes.
-    for (const schema of [
-      { t: "integer" },
-      { t: "integer", l: 0, u: 42 },
-      { t: "integer", l: 1, u: 42 },
-      { t: "integer", e: [1, 42] },
-    ]) {
-      const details = JSON.parse(DATA.details);
-      details.o[1] = [[["item", "path", 1, schema]], 0];
-      details.o[6] = [[["item", "path", 1, schema]], 0];
-      const data = { ...DATA, details: JSON.stringify(details) };
-      for (const segment of [
-        "0",
-        "1",
-        "42",
-        "-1",
-        "43",
-        "9007199254740991",
-        "-9007199254740991",
-        "01",
-        "-0",
-        "+1",
-        " 42",
-        "42 ",
-        "1.0",
-        "1e2",
-        "0x2a",
-        "４２",
-        "．．",
-        ":id",
-        "<id>",
-        "%34%32",
-        "%2b1",
-        "%20%34%32",
-        "9007199254740992",
-        "-9007199254740992",
-        "%2e%2e",
-        "..",
-        "a%2Fb",
-      ]) {
-        const canonical = /^(?:0|-?[1-9][0-9]*)$/.test(decodeURIComponent(segment));
-        const number = Number(decodeURIComponent(segment));
-        const valid =
-          canonical &&
-          Number.isSafeInteger(number) &&
-          (!("l" in schema) || number >= schema.l!) &&
-          (!("u" in schema) || number <= schema.u!) &&
-          (!("e" in schema) || schema.e!.includes(number));
-        for (const kind of ["read", "write"] as const) {
-          sent = [];
-          const { call, authenticate, sendPath } = setup({
-            data,
-            verdicts: { ...VERDICTS, "GET /items/{item}": "read" },
-          });
-          const args = { path: `/items/${segment}`, ...(kind === "write" ? { method: "DELETE" } : {}) };
-          if (valid) {
-            await call(kind, args);
-            expect(sent, JSON.stringify({ schema, segment, kind })).toHaveLength(1);
-          } else {
-            await expect(call(kind, args), JSON.stringify({ schema, segment, kind })).rejects.toMatchObject({
-              code: "invalid_args",
-            });
-            expect(authenticate).not.toHaveBeenCalled();
-            expect(sendPath).not.toHaveBeenCalled();
-            expect(sent).toEqual([]);
-          }
-        }
-      }
-    }
-    // Native fetch framing must never turn an HTML page into a JSON write acknowledgement.
-    for (const [fixture, credential, writes, readPath] of [
-      [
-        stripeFixture,
-        "sk_test_media_fixture",
-        [["stripe_api_write", { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_1" } }]],
-        "/v1/customers/cus_1",
-      ],
-      [
-        cloudflareFixture,
-        "cf-media-token",
-        [
-          [
-            "cloudflare_api_write",
-            { method: "PATCH", path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1", body: { ttl: 300 } },
-          ],
-        ],
-        "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
-      ],
-      [
-        vercelFixture,
-        "vercel-media-token",
-        [
-          ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web/env/env_1", body: { value: "replacement" } }],
-          ["update_project_env_var", { projectId: "web", envVarId: "env_1", value: "replacement" }],
-        ],
-        "/v2/user",
-      ],
-    ] as const) {
-      const connector = fixture.create("media");
-      const ctx = () => ({
-        ...connectorContext(),
-        credential: { get: async () => credential, getAll: async () => ({ value: credential }) },
-      });
-      for (const type of ["text/html", "text/plain", "application/octet-stream"]) {
-        response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
-        for (const [tool, args] of writes) {
-          sent = [];
-          const writeContext = ctx();
-          attachCallClassification(writeContext, "write");
-          await expect(
-            connector.callTool(tool, args, writeContext),
-            `${fixture.name}.${tool} ${type}`,
-          ).rejects.toMatchObject({
-            code: "connector_call_failed",
-            retryable: false,
-            writeOutcome: "unknown",
-            message: expect.stringContaining("check the target before repeating"),
-          });
-          expect(sent).toHaveLength(1);
-        }
-        sent = [];
-        await expect(connector.callTool(`${fixture.name}_api_read`, { path: readPath }, ctx())).rejects.toMatchObject({
-          code: "connector_call_failed",
-        });
-        expect(sent).toHaveLength(1);
-      }
-    }
-    for (const [fixture, credential, args, type, body] of [
-      [stripeFixture, "sk_test_media_fixture", { path: "/v1/quotes/qt_1/pdf" }, "application/pdf", "%PDF"],
-      [
-        cloudflareFixture,
-        "cf-media-token",
-        { path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/export" },
-        "text/plain",
-        "a. 1 IN A 192.0.2.1",
-      ],
-      [
-        cloudflareFixture,
-        "cf-media-token",
-        { path: "/accounts/0123456789abcdef0123456789abcdef/intel/indicator-feeds/1/data" },
-        "text/csv",
-        "id,name\n1,Alice",
-      ],
-      [
-        cloudflareFixture,
-        "cf-media-token",
-        { path: "/accounts/0123456789abcdef0123456789abcdef/cloudforce-one/v2/threat-signals/feeds/feed_1/raw" },
-        "application/xml",
-        "<feed/>",
-      ],
-      [
-        cloudflareFixture,
-        "cf-media-token",
+it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendPath once", NATIVE, async () => {
+  const withheld = "https://files.example/file?signature=%5Bredacted%5D";
+  const cases: Array<{
+    kind: string;
+    args: Record<string, unknown>;
+    message?: string;
+    body?: string;
+    url?: string;
+    data?: unknown;
+    verdicts?: Parameters<typeof hatch>[0]["verdicts"];
+    method?: string;
+  }> = [
+    // A sole reviewed read method other than GET is the default, POST and HEAD alike.
+    {
+      kind: "read",
+      verdicts: { "POST /query": "read" },
+      args: { path: "/query", body: { filter: "open" } },
+      method: "POST",
+      body: '{"filter":"open"}',
+    },
+    {
+      kind: "read",
+      verdicts: { "HEAD /items/{item}": "read" },
+      args: { path: "/items/i1" },
+      method: "HEAD",
+      data: null,
+    },
+    {
+      kind: "read",
+      args: { path: "/items", query: { tag: ["b", "a"], limit: 2 } },
+      url: "/items?tag=b&tag=a&limit=2",
+    },
+    { kind: "read", args: { method: "POST", path: "/query", body: { filter: "open" } }, body: '{"filter":"open"}' },
+    { kind: "write", args: { method: "GET", path: "/touch" } },
+    { kind: "write", args: { method: "DELETE", path: "/items/i1" } },
+    { kind: "write", args: { method: "POST", path: "/items", body: { name: "alice" } }, body: '{"name":"alice"}' },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/form", body: { name: "alice", tag: ["a", "b"] } },
+      body: "name=alice&tag=a&tag=b",
+    },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "unredacted" } },
+      body: '{"name":"unredacted"}',
+    },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "the log says: Authorization: Bearer [redacted]" } },
+      body: JSON.stringify({ name: "the log says: Authorization: Bearer [redacted]" }),
+    },
+    ...[
+      ["[redacted]", true],
+      ["pre[redacted]", false],
+      ["sk_live_[redacted]", false],
+      ["[redacted][redacted]", false],
+      ["%5Bredacted%5D", true],
+      ["%5bredacted%5d", true],
+      ["%255Bredacted%255D", true],
+      ["%25255Bredacted%25255D", true],
+      ["&#91;redacted&#93;", true],
+      ["&#x5b;redacted&#x5d;", true],
+      ["&lbrack;redacted&rbrack;", true],
+      ["&amp;#91;redacted&amp;#93;", true],
+      ["\\[redacted\\]", true],
+      ["\\u005bredacted\\u005d", true],
+      ["https://x.test/a?token=[redacted]", true],
+      ["https://hooks.test/[redacted]", true],
+      ["Bearer [redacted]", false],
+    ].flatMap(([text, whole]) => {
+      const marker = String(text);
+      const body = { name: marker };
+      const keyed = { name: "alice", payload: { [marker]: "x" } };
+      return [
         {
-          method: "POST",
-          path: "/accounts/0123456789abcdef0123456789abcdef/analytics_engine/sql",
-          body: "SELECT count() FROM events",
+          kind: "write",
+          args: { method: "POST", path: "/items", body },
+          ...(whole ? { message: "withheld" } : { body: JSON.stringify(body) }),
         },
-        "application/x-ndjson; charset=utf-8",
-        '{"count":3}\n',
-      ],
-      [
-        cloudflareFixture,
-        "cf-media-token",
-        { path: "/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces/ns_1/values/key_1" },
-        "application/octet-stream",
-        "bounded bytes",
-      ],
-      [
-        vercelFixture,
-        "vercel-media-token",
-        { path: "/v1/billing/charges", query: { from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z" } },
-        "application/jsonl",
-        '{"id":"charge_1"}\n',
-      ],
-    ] as const) {
-      sent = [];
-      response = () => new Response(body, { headers: { "content-type": type } });
-      const ctx = {
-        ...connectorContext(),
-        credential: { get: async () => credential, getAll: async () => ({ value: credential }) },
-      };
-      const answer = await fixture.create("media").callTool(`${fixture.name}_api_read`, args, ctx);
-      expect(answer).toMatchObject({ status: 200 });
-      expect(sent).toHaveLength(1);
-    }
-    // Fold the opt-in page adapters into the existing native request matrix.
-    const pageData = (param: string, at: "query" | "body" = "query"): OpenApiData => {
-      const details = JSON.parse(DATA.details);
-      if (at === "query")
-        details.o[0][0].push([param, "query", 0, { t: param === "page" || param === "until" ? "integer" : "string" }]);
-      else {
-        details.o[4][1][1].p[param] = { t: "string" };
-        details.o[4][1][1].p["extra"] = { t: "object", x: 1 };
-      }
-      // A reviewed POST with the identical request contract isolates method binding.
-      details.o[5] = structuredClone(details.o[0]);
-      return {
-        ...DATA,
-        details: JSON.stringify(details),
-        fields: DATA.ops.map(() =>
-          ["id", "data", "has_more", "result_info", "pagination"].map((path) => ({ in: "response", path })),
-        ),
-      };
-    };
-    // Google's opt-in wire mask preserves protocol metadata independently of
-    // Connecta fields, including on an empty intermediate page.
-    const batchReview = { kinds: ["insertText"], revision: true };
-    expect(
-      googleBatchGuard(
-        { requests: [{ insertText: { text: "ok" } }], writeControl: { requiredRevisionId: "r1" } },
-        batchReview,
-      ),
-    ).toBeUndefined();
-    for (const body of [
-      { requests: [{ insertText: {} }] },
-      { requests: [{ insertText: {}, deleteContentRange: {} }], writeControl: { requiredRevisionId: "r1" } },
-      { requests: [{ previewKind: {} }], writeControl: { requiredRevisionId: "r1" } },
-    ])
-      expect(googleBatchGuard(body, batchReview)).toBeDefined();
-    const googleData = pageData("pageToken");
-    const googleDetails = JSON.parse(googleData.details);
-    googleDetails.o[0][0].push(["fields", "query", 0, { t: "string" }]);
-    googleDetails.o[5] = JSON.parse(DATA.details).o[5];
-    const google = setup({
-      pathMatching: "uri-template",
-      data: { ...googleData, details: JSON.stringify(googleDetails) },
-      pages: { "GET /items": googlePageToken },
-      pageCursor: "argument",
-    });
-    const wrappedRequests: string[] = [];
-    let repeatWrappedSend = false;
-    const googleTools = hatch({
-      name: "google",
-      index: google.index,
-      verdicts: { "GET /items": "read", "POST /items": "write" },
-      pages: { "GET /items": googlePageToken },
-      pageCursor: "argument",
-      binding: googleHatchBinding(google.connection, {
-        index: google.index,
-        review: "Fixture: JSON below a fixed Google root, delegated grant and connection safety.",
-        wrapSend: (call, send) => {
-          wrappedRequests.push(call.path);
-          // Mutating the detached view cannot change the admitted wire request.
-          Object.assign(call, { path: "/blocked" });
-          return Effect.gen(function* () {
-            const answer = yield* send();
-            if (repeatWrappedSend) yield* send();
-            return { ...answer, warnings: ["The secondary save was not confirmed."] };
-          });
+        {
+          kind: "write",
+          args: { method: "POST", path: "/items", body: keyed },
+          ...(whole ? { message: "withheld" } : { body: JSON.stringify(keyed) }),
         },
-      }),
-      connection: google.connection,
-    });
-    const googleConnector = tracksEveryRequest(apiConnector("google", { tools: googleTools }));
-    const googleCall = (args: Record<string, unknown>) =>
-      googleConnector.callTool("google_api_read", args, connectorContext(storage));
-    // An indexed operation without an admission verdict never reaches a send wrapper.
-    const beforeUnadmitted = sent.length;
-    await expect(googleCall({ path: "/blocked" })).rejects.toMatchObject({ code: "invalid_args" });
-    expect(wrappedRequests).toEqual([]);
-    expect(sent).toHaveLength(beforeUnadmitted);
-    expect(google.authenticate).not.toHaveBeenCalled();
-    response = () => Response.json({ data: [], nextPageToken: "next-token" });
-    const firstGoogle = (await googleCall({ path: "/items", query: { fields: "data(id)" }, fields: ["data"] })) as any;
-    expect(firstGoogle).toMatchObject({ data: { data: [] }, page: { hasMore: true, param: "pageToken", in: "query" } });
-    expect(firstGoogle.warnings).toEqual(["The secondary save was not confirmed."]);
-    expect(new URL(sent.at(-1)!.url).pathname).toBe("/v1/items");
-    expect(new URL(sent.at(-1)!.url).searchParams.get("fields")).toBe("data(id),nextPageToken");
-    response = () => Response.json({ data: [] });
-    expect(
-      await googleCall({
-        path: "/items",
-        query: { fields: "data(id)" },
-        fields: ["data"],
-        cursor: firstGoogle.page.nextCursor,
-      }),
-    ).toMatchObject({ page: { hasMore: false } });
-    expect(new URL(sent.at(-1)!.url).searchParams.get("pageToken")).toBe("next-token");
-    expect(wrappedRequests).toEqual(["/items", "/items"]);
-    repeatWrappedSend = true;
-    const beforeRepeat = sent.length;
-    await expect(
-      googleConnector.callTool(
-        "google_api_write",
-        { method: "POST", path: "/items", body: { name: "alice" } },
-        connectorContext(storage),
-      ),
-    ).rejects.toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
-    expect(sent).toHaveLength(beforeRepeat + 1);
-    repeatWrappedSend = false;
-    for (const args of [
-      { path: "/items", query: { pageToken: "raw" } },
-      { path: "/items", query: { fields: "data(" } },
-      { path: "/items", query: { fields: "data(id)name" } },
-      { path: "/items", query: { userId: "bob" } },
-      { path: "/items", fields: ["missing"] },
-    ]) {
-      const before = sent.length;
-      google.authenticate.mockClear();
-      await expect(googleCall(args)).rejects.toMatchObject({ code: "invalid_args" });
-      expect(sent).toHaveLength(before);
-      expect(google.authenticate).not.toHaveBeenCalled();
-    }
-    for (const token of [3, null, {}, "https://other.example/next", "[redacted]"]) {
-      response = () => Response.json({ nextPageToken: token });
-      await expect(googleCall({ path: "/items" })).rejects.toMatchObject({ code: "connector_call_failed" });
-    }
-    for (const token of [undefined, ""]) {
-      response = () => Response.json({ nextPageToken: token });
-      expect(await googleCall({ path: "/items" })).toMatchObject({ page: { hasMore: false } });
-    }
-    const collisionIndex = new OperationIndex(
-      {
-        ...DATA,
-        ops: [...DATA.ops, ["GET", "/items/search", "LiteralSearch", "Search", 0]],
-        details: JSON.stringify({ d: [], o: Array(DATA.ops.length + 1).fill(0) }),
-      },
-      { vendor: "google", title: "Google", pathMatching: "uri-template" },
-    );
-    expect(() => googleNamedOperation(collisionIndex, "GET", "/items/search", "/items/{item}")).toThrow(
-      "different operation",
-    );
-    expect(() => googleNamedOperation(collisionIndex, "GET", "/items/%73earch", "/items/{item}")).toThrow(
-      "different operation",
-    );
-    googleNamedOperation(collisionIndex, "GET", "/items/ordinary", "/items/{item}");
-    const defaults = setup();
-    expect(() => googleClient(google.connection, "Google", { index: google.index })).not.toThrow();
-    expect(() => googleClient(google.connection, "Google", { standard: true })).toThrow("reviewed operation index");
-    expect(() =>
-      googleHatchBinding(google.connection, { review: "Missing index" } as Parameters<typeof googleHatchBinding>[1]),
-    ).toThrow("reviewed operation index");
-    expect(() => googleClient(defaults.connection, "Google", { index: defaults.index })).toThrow("uri-template");
-    expect(() => googleHatchBinding(defaults.connection, { index: defaults.index, review: "Refuse defaults" })).toThrow(
-      "uri-template",
-    );
-    const binding = googleHatchBinding(google.connection, { index: google.index, review: "Canonical paths only" });
-    expect(() =>
-      hatch({ name: "wrong", index: defaults.index, verdicts: {}, connection: defaults.connection, binding }),
-    ).toThrow("reviewed operation index");
-    for (const path of ["/files/%67enerateCseToken", "/forms/f%3AsetPublishSettings"])
-      expect(
-        binding.refuse!({ path, method: "GET", query: {}, params: {}, body: undefined, op: google.index.ops[0]! }),
-      ).toContain("literally");
-    expect(googlePageToken.prepareQuery!({ fields: "data(id),nextPageToken" })).toEqual({
-      fields: "data(id),nextPageToken",
-    });
-    expect(googlePageToken.prepareQuery!({ fields: "data/nextPageToken" })).toEqual({
-      fields: "data/nextPageToken,nextPageToken",
-    });
-    for (const fields of ["nextPageToken/x", "nextPageToken(x)", "data(id),nextPageToken/x"])
-      expect(googlePageToken.prepareQuery!({ fields })).toEqual({ fields: `${fields},nextPageToken` });
-    for (const row of [
-      {
-        adapter: stripePage,
-        first: { data: [{ id: "last-id" }], has_more: true },
-        last: { data: [], has_more: false },
-        raw: "last-id",
-      },
-      {
-        adapter: cloudflarePage,
-        first: { result_info: { page: 1, total_pages: 2 } },
-        last: { result_info: { page: 2, total_pages: 2 } },
-        raw: "2",
-      },
-      {
-        adapter: cloudflarePage,
-        first: { result_info: { page: 1, total_count: 3, per_page: 2, count: 2 } },
-        last: { result_info: { page: 2, total_count: 3, per_page: 2, count: 1 } },
-        raw: "2",
-      },
-      {
-        adapter: cloudflarePage,
-        first: { result_info: { page: 1, per_page: 2, count: 2 } },
-        last: { result_info: { page: 2, per_page: 2, count: 1 } },
-        raw: "2",
-      },
-      {
-        adapter: vercelPage,
-        first: { pagination: { next: 1720000000 } },
-        last: { pagination: { next: null } },
-        raw: "1720000000",
-      },
-      {
-        adapter: vercelPage,
-        first: { pagination: { next: "00123" } },
-        last: { pagination: { next: null } },
-        raw: "00123",
-      },
-      {
-        adapter: githubPage("https://api.example/v1"),
-        first: [{ id: "i1" }],
-        last: [],
-        raw: "2",
-        link: '<https://api.example/repositories/1300192/items?tag=a%20b&tag=active&limit=2&page=2>; rel="next", <https://api.example/v1/items?page=5>; rel="last"',
-      },
-      {
-        adapter: githubPage("https://api.example/v1"),
-        first: [{ id: "i1" }],
-        last: [],
-        raw: "2",
-        link: "<https://api.example/repositories/1300192/items?page=2&limit=2&tag=a+b&tag=active>; rel=next",
-      },
-    ]) {
-      const { adapter } = row;
-      const data = pageData(adapter.param);
-      const paged = setup({ data, pages: { "GET /items": adapter } });
-      sent = [];
-      response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
-      const args = { path: "/items", query: { limit: 2, tag: ["active", "a b"] }, fields: ["id"] };
-      const first = (await paged.call("read", args)) as any;
-      expect(first.page).toEqual({ hasMore: true, nextCursor: expect.any(String), param: adapter.param, in: "query" });
-      expect(JSON.parse(atob(first.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/")))).toMatchObject({
-        v: 2,
-        m: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
-      });
-      expect(first.page.nextCursor).not.toBe(row.raw);
-      expect(first.data).toEqual(Array.isArray(row.first) ? [{ id: "i1" }] : {});
-      // A continuation belongs to the path, method, filters, fields and revision.
-      for (const changed of [
-        { ...args, query: { ...args.query, tag: ["a b", "active"], [adapter.param]: first.page.nextCursor } },
-        { ...args, query: { tag: ["other"], [adapter.param]: first.page.nextCursor } },
-        { ...args, path: "/items/other", query: { tag: ["active"], [adapter.param]: first.page.nextCursor } },
-        { ...args, fields: ["data"], query: { tag: ["active"], [adapter.param]: first.page.nextCursor } },
-        { ...args, query: { tag: ["active"], [adapter.param]: "plain-vendor-cursor" } },
-        { ...args, query: { tag: ["active"], [adapter.param]: 2 } },
-      ])
-        await expect(paged.call("read", changed)).rejects.toMatchObject({ code: "invalid_args" });
-      await expect(
-        paged.call("write", {
-          ...args,
-          method: "GET",
-          query: { ...args.query, [adapter.param]: first.page.nextCursor },
-        }),
-      ).rejects.toMatchObject({
+        {
+          kind: "write",
+          args: { method: "DELETE", path: `/items/${encodeURIComponent(marker)}` },
+          message: "withheld",
+        },
+        { kind: "write", args: { method: "DELETE", path: `/items/i_${marker}` }, message: "withheld" },
+        { kind: "read", args: { path: `/items/i_${marker}` }, message: "withheld" },
+        { kind: "read", args: { path: "/items", query: { tag: [marker] } }, message: "withheld" },
+        { kind: "read", args: { path: "/items", query: { [marker]: "x" } }, message: "withheld" },
+      ];
+    }),
+    { kind: "read", args: { path: "/touch" }, message: "items_api_write" },
+    { kind: "write", args: { method: "GET", path: "/items" }, message: "items_api_read" },
+    { kind: "read", args: { path: "/blocked" }, message: "refuses" },
+    { kind: "read", args: { path: "/items/i1" }, message: "refuses" },
+    { kind: "write", args: { method: "GET", path: "/blocked" }, message: "refuses" },
+    { kind: "write", args: { method: "GET", path: "/items/i1" }, message: "refuses" },
+    { kind: "read", args: { path: "/missing" }, message: "Nearest:" },
+    { kind: "read", args: { path: "/items/../touch" }, message: "dot segment" },
+    { kind: "read", args: { path: "/items?limit=1" }, message: "query" },
+    { kind: "read", args: { path: "/items", query: { limt: 2 } }, message: "limt" },
+    { kind: "read", args: { path: "/items", query: { link: { nested: true } } }, message: "link" },
+    { kind: "read", args: { path: "/items", body: {} }, message: "takes query" },
+    { kind: "write", args: { method: "POST", path: "/items", body: {} }, message: "name" },
+    // A write never leaves with a projection its declared response cannot satisfy.
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "alice" }, fields: ["nope"] },
+      message: "property of data: one of id",
+    },
+    { kind: "write", args: { method: "DELETE", path: "/items/i1", fields: ["id"] }, message: "declares no response" },
+    { kind: "write", args: { method: "POST", path: "/upload", body: {} }, message: "multipart" },
+    { kind: "read", args: { path: "/elsewhere" }, message: "different server" },
+    { kind: "read", args: { method: "HEAD", path: "/items/i1" }, data: null },
+    { kind: "read", args: { path: "/items", raw: true }, message: "raw" },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "alice", link: withheld } },
+      message: "withheld",
+    },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "alice", payload: { nested: { [withheld]: true } } } },
+      message: "withheld",
+    },
+  ];
+  for (const entry of cases) {
+    const { call, sendPath, authenticate } = setup(entry.verdicts ? { verdicts: entry.verdicts } : {});
+    sent = [];
+    if (entry.message) {
+      await expect(call(entry.kind, entry.args), JSON.stringify(entry.args)).rejects.toMatchObject({
         code: "invalid_args",
-        message: expect.stringContaining("must be called with items_api_read"),
+        message: expect.stringContaining(entry.message),
       });
-      for (const replay of [
-        { data: { ...data, revision: "r2" }, method: "GET" },
-        {
-          data: {
-            ...data,
-            ops: data.ops.map((op, position) =>
-              position === 0 ? ([op[0], op[1], op[2], "Changed contract content", op[4]] as const) : op,
-            ),
-          },
-          method: "GET",
-        },
-        { data, method: "POST" },
-      ]) {
-        const other = setup({
-          data: replay.data,
-          context: paged.context,
-          verdicts: { ...VERDICTS, "POST /items": "read" },
-          pages: { "GET /items": adapter, "POST /items": adapter },
-        });
-        await expect(
-          other.call("read", {
-            ...args,
-            method: replay.method,
-            query: { ...args.query, [adapter.param]: first.page.nextCursor },
-          }),
-        ).rejects.toMatchObject({ code: "invalid_args" });
-        expect(other.sendPath).not.toHaveBeenCalled();
-        expect(other.authenticate).not.toHaveBeenCalled();
-      }
+      expect(sendPath).not.toHaveBeenCalled();
+      expect(authenticate).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+    } else {
+      expect(await call(entry.kind, entry.args)).toEqual({
+        status: 200,
+        data: entry.data === undefined ? { id: "i1" } : entry.data,
+      });
+      expect(sendPath).toHaveBeenCalledTimes(1);
+      expect(sendPath.mock.calls[0]?.[0]).toMatchObject({ method: entry.method ?? entry.args["method"] ?? "GET" });
       expect(sent).toHaveLength(1);
-      response = () => Response.json(row.last);
-      const last = (await paged.call("read", {
-        ...args,
-        query: { tag: ["active", "a b"], limit: 2, [adapter.param]: first.page.nextCursor },
-      })) as any;
-      expect(last.page).toEqual({ hasMore: false, param: adapter.param, in: "query" });
-      expect(new URL(sent[1]!.url).searchParams.get(adapter.param)).toBe(row.raw);
-      expect(new URL(sent[1]!.url).pathname).toBe("/v1/items");
-      // The same durable root key still cannot authorize another connection or
-      // personal credential owner; only the admitted context supplies that binding.
-      const continuation = { ...args, query: { ...args.query, [adapter.param]: first.page.nextCursor } };
-      // A generic caller-dependent connector gets the same binding as a named
-      // list. The same agent in another owner's pool is a different identity.
-      for (const perCaller of [false, true]) {
-        const base = apiConnector("items", { tools: paged.tools });
-        const shared = perCaller ? Object.create(tagCallerIdentity(base)) : base;
-        const registry = new Registry([shared], { storage, logger: paged.context.logger });
-        const caller: ConnectorCaller = {
-          authenticated: true,
-          identity: { actor: { kind: "test-users", id: "alice" }, interactive: true },
-          pool: "research",
-          poolOwner: "alice@example.com",
-        };
-        const scopedContext = (caller: ConnectorCaller) =>
-          registry.scoped({ connectorIds: "all", caller }).contextFor("items", "https://connecta.example");
-        response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
-        const issued = (await shared.callTool("items_api_read", args, scopedContext(caller))) as any;
-        const resumed = { ...args, query: { ...args.query, [adapter.param]: issued.page.nextCursor } };
-        response = () => Response.json(row.last);
-        for (const other of [
-          { ...caller, identity: { ...caller.identity, actor: { kind: "test-users", id: "bob" } } },
-          { ...caller, pool: "other" },
-          { ...caller, poolOwner: "bob@example.com" },
-        ]) {
-          const before = sent.length;
-          if (perCaller) {
-            await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).rejects.toMatchObject({
-              code: "invalid_args",
-            });
-            expect(sent).toHaveLength(before);
-          } else {
-            await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).resolves.toHaveProperty(
-              "page",
-            );
-          }
-        }
-        await expect(shared.callTool("items_api_read", resumed, scopedContext(caller))).resolves.toHaveProperty("page");
-        if (!perCaller) expect(issued.page.nextCursor).toBe(first.page.nextCursor);
-      }
-      const beforeAlias = sent.length;
-      await expect(
-        apiConnector("other_items", { tools: paged.tools }).callTool(
-          "items_api_read",
-          continuation,
-          connectorContext(storage),
-        ),
-      ).rejects.toMatchObject({ code: "invalid_args" });
-      expect(sent).toHaveLength(beforeAlias);
-      const personal = apiConnector("items", { tools: paged.tools, authScope: "personal" });
-      const registry = new Registry([personal], { storage, logger: paged.context.logger });
-      const personalContext = (owner: string) =>
-        registry.personalRegistry(owner).contextFor("items", "https://connecta.example", {});
-      response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
-      const alice = (await personal.callTool("items_api_read", args, personalContext("alice"))) as any;
-      const personalContinuation = { ...args, query: { ...args.query, [adapter.param]: alice.page.nextCursor } };
-      const beforeOwner = sent.length;
-      await expect(
-        personal.callTool("items_api_read", personalContinuation, personalContext("bob")),
-      ).rejects.toMatchObject({ code: "invalid_args" });
-      expect(sent).toHaveLength(beforeOwner);
-      response = () => Response.json(row.last);
-      expect(await personal.callTool("items_api_read", personalContinuation, personalContext("alice"))).toMatchObject({
-        page: { hasMore: false },
-      });
+      expect(sent[0]?.url).toBe(`https://api.example/v1${entry.url ?? entry.args["path"]}`);
+      expect(sent[0]?.body).toBe(entry.body);
     }
-    // A binding replaces neither guard unless it explicitly owns that check.
-    for (const allowOtherServers of [false, true]) {
-      for (const allowOtherBodyTypes of [false, true]) {
-        const send = vi.fn(() => Effect.succeed({ status: 200, data: { id: "bound" } }));
-        const bound = setup({
-          binding: {
-            review: "Fixture routing and multipart framing, independently opted in.",
-            send,
-            ...(allowOtherServers ? { allowOtherServers: true as const } : {}),
-            ...(allowOtherBodyTypes ? { allowOtherBodyTypes: true as const } : {}),
-          },
-        });
-        for (const [allowed, kind, args, message] of [
-          [allowOtherServers, "read", { path: "/elsewhere" }, "different server"],
-          [allowOtherBodyTypes, "write", { method: "POST", path: "/upload", body: { file: "bytes" } }, "multipart"],
-        ] as const) {
-          send.mockClear();
-          if (allowed) {
-            expect(await bound.call(kind, args)).toEqual({ status: 200, data: { id: "bound" } });
-            expect(send).toHaveBeenCalledTimes(1);
-          } else {
-            await expect(bound.call(kind, args)).rejects.toMatchObject({
-              code: "invalid_args",
-              message: expect.stringContaining(message),
-            });
-            expect(send).not.toHaveBeenCalled();
-          }
-          expect(bound.sendPath).not.toHaveBeenCalled();
-          expect(bound.authenticate).not.toHaveBeenCalled();
-        }
-      }
-    }
-    // Size-cut metadata and warnings are opt-in, for both result and catalog compatibility.
-    for (const enabled of [false, true]) {
-      const bound = setup({
-        binding: {
-          review: "Fixture supplies reviewed size-cut paths after safe content framing.",
-          ...(enabled ? { truncated: true as const, warnings: true as const } : {}),
-          send: () =>
-            Effect.succeed({
-              status: 200,
-              data: { id: "safe", label: "unused" },
-              truncated: ["data.id"],
-              warnings: ["A secondary save is unconfirmed."],
-            }),
-        },
-      });
-      for (const [kind, args] of [
-        ["read", { path: "/items" }],
-        ["write", { method: "POST", path: "/items", body: { name: "alice" } }],
-      ] as const) {
-        expect(await bound.call(kind, { ...args, fields: ["id"] })).toEqual({
-          status: 200,
-          data: { id: "safe" },
-          ...(enabled ? { truncated: ["data.id"], warnings: ["A secondary save is unconfirmed."] } : {}),
-        });
-      }
-    }
-    // A separate cursor preserves raw first-request record anchors and keeps
-    // every returned continuation signed, including reverse/search/v2 paging.
-    for (const row of [
-      {
-        adapter: stripePage,
-        param: "starting_after",
-        first: { data: [{ id: "first-id" }, { id: "last-id" }], has_more: true },
-        last: { data: [], has_more: false },
-        raw: "last-id",
-        anchor: "initial-id",
-      },
-      {
-        adapter: stripeBackwardPage,
-        param: "ending_before",
-        first: { data: [{ id: "first-id" }, { id: "last-id" }], has_more: true },
-        last: { data: [], has_more: false },
-        raw: "first-id",
-        anchor: "initial-id",
-      },
-      {
-        adapter: stripeSearchPage,
-        param: "page",
-        first: { data: [], has_more: true, next_page: "next-search" },
-        last: { has_more: false },
-        raw: "next-search",
-      },
-      {
-        adapter: stripeV2Page,
-        param: "page",
-        first: { data: [], next_page_url: "https://api.stripe.com/items?page=next-v2" },
-        last: { next_page_url: null },
-        raw: "next-v2",
-      },
+  }
+  // Typed path contracts are checked before authentication on both runtimes.
+  for (const schema of [
+    { t: "integer" },
+    { t: "integer", l: 0, u: 42 },
+    { t: "integer", l: 1, u: 42 },
+    { t: "integer", e: [1, 42] },
+  ]) {
+    const details = JSON.parse(DATA.details);
+    details.o[1] = [[["item", "path", 1, schema]], 0];
+    details.o[6] = [[["item", "path", 1, schema]], 0];
+    const data = { ...DATA, details: JSON.stringify(details) };
+    for (const segment of [
+      "0",
+      "1",
+      "42",
+      "-1",
+      "43",
+      "9007199254740991",
+      "-9007199254740991",
+      "01",
+      "-0",
+      "+1",
+      " 42",
+      "42 ",
+      "1.0",
+      "1e2",
+      "0x2a",
+      "４２",
+      "．．",
+      ":id",
+      "<id>",
+      "%34%32",
+      "%2b1",
+      "%20%34%32",
+      "9007199254740992",
+      "-9007199254740992",
+      "%2e%2e",
+      "..",
+      "a%2Fb",
     ]) {
-      const details = JSON.parse(DATA.details);
-      for (const param of ["starting_after", "ending_before", "page"])
-        details.o[0][0].push([param, "query", 0, { t: "string" }]);
-      const data = { ...DATA, details: JSON.stringify(details) };
-      const adapters = row.param === "page" ? row.adapter : [stripePage, stripeBackwardPage];
-      const paged = setup({ data, pageCursor: "argument", pages: { "GET /items": adapters } });
-      sent = [];
-      response = () => Response.json(row.first);
-      const query = { limit: 2, tag: ["active", "a b"] };
-      const first = (await paged.call("read", {
-        path: "/items",
-        query: { ...query, ...("anchor" in row ? { [row.param]: row.anchor } : {}) },
-        fields: ["id"],
-      })) as any;
-      expect(first.page).toMatchObject({
-        hasMore: true,
-        param: row.param,
-        in: "query",
-        nextCursor: expect.any(String),
-      });
-      if (row.param !== "page") {
-        for (const param of ["starting_after", "ending_before"]) {
-          await expect(
-            paged.call("read", { path: "/items", query: { ...query, [param]: first.page.nextCursor } }),
-          ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("top-level cursor") });
+      const canonical = /^(?:0|-?[1-9][0-9]*)$/.test(decodeURIComponent(segment));
+      const number = Number(decodeURIComponent(segment));
+      const valid =
+        canonical &&
+        Number.isSafeInteger(number) &&
+        (!("l" in schema) || number >= schema.l!) &&
+        (!("u" in schema) || number <= schema.u!) &&
+        (!("e" in schema) || schema.e!.includes(number));
+      for (const kind of ["read", "write"] as const) {
+        sent = [];
+        const { call, authenticate, sendPath } = setup({
+          data,
+          verdicts: { ...VERDICTS, "GET /items/{item}": "read" },
+        });
+        const args = { path: `/items/${segment}`, ...(kind === "write" ? { method: "DELETE" } : {}) };
+        if (valid) {
+          await call(kind, args);
+          expect(sent, JSON.stringify({ schema, segment, kind })).toHaveLength(1);
+        } else {
+          await expect(call(kind, args), JSON.stringify({ schema, segment, kind })).rejects.toMatchObject({
+            code: "invalid_args",
+          });
+          expect(authenticate).not.toHaveBeenCalled();
+          expect(sendPath).not.toHaveBeenCalled();
+          expect(sent).toEqual([]);
         }
       }
-      await expect(
-        paged.call("read", { path: "/items/nonpaged", method: "HEAD", cursor: first.page.nextCursor }),
-      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("does not page") });
-      for (const invalid of [
-        { path: "/items", query, fields: ["id"], cursor: row.raw },
-        { path: "/items", query: { ...query, [row.param]: row.raw }, fields: ["id"], cursor: first.page.nextCursor },
-        { path: "/items", query: { ...query, tag: ["other"] }, fields: ["id"], cursor: first.page.nextCursor },
-        ...(row.param !== "page"
-          ? [{ path: "/items", query: { ...query, starting_after: "a", ending_before: "b" } }]
-          : [{ path: "/items", query: { ...query, page: row.raw } }]),
-      ])
-        await expect(paged.call("read", invalid)).rejects.toMatchObject({ code: "invalid_args" });
-      expect(sent).toHaveLength(1);
-      response = () => Response.json(row.last);
-      const last = (await paged.call("read", {
-        path: "/items",
-        query,
-        fields: ["id"],
-        cursor: first.page.nextCursor,
-      })) as any;
-      expect(last.page).toEqual({ hasMore: false, param: row.param, in: "query" });
-      expect(new URL(sent.at(-1)!.url).searchParams.get(row.param)).toBe(row.raw);
-      expect(new URL(sent.at(-1)!.url).searchParams.getAll("tag")).toEqual(["active", "a b"]);
-      const count = sent.length;
-      await expect(
-        apiConnector("other", { tools: paged.tools }).callTool(
-          "items_api_read",
-          { path: "/items", query, fields: ["id"], cursor: first.page.nextCursor },
-          connectorContext(storage),
-        ),
-      ).rejects.toMatchObject({ code: "invalid_args" });
-      expect(sent).toHaveLength(count);
-      if (row.adapter === stripeV2Page) {
-        response = () => Response.json({ id: "kept", next_page_url: "/items?page=next-v2&limit=20" });
-        const incomplete = (await paged.call("read", { path: "/items" })) as any;
-        expect(incomplete).toMatchObject({
-          data: { id: "kept" },
-          page: { hasMore: true, param: "page", in: "query" },
-        });
-        expect(incomplete.page).not.toHaveProperty("nextCursor");
-        expect(new URL(sent.at(-1)!.url).search).toBe("");
-      }
     }
-    // Configured query routing participates in validation and cursor identity.
-    const routedTransport = setup();
-    let routingDefault = "scope-a";
-    const routed = setup({
-      data: pageData("until"),
-      pages: { "GET /items": { ...vercelPage, initialAnchor: true } },
-      binding: {
-        review: "Fixture routing default resolved before signed continuation binding.",
-        query: (call) => ({ ...call.query, tag: call.query["tag"] ?? [routingDefault] }),
-        send: (call, options) =>
-          routedTransport.connection.sendPath(
-            {
-              method: call.method,
-              path: call.path,
-              template: call.op.path,
-              query: Object.entries(call.query).flatMap(([k, v]) =>
-                (Array.isArray(v) ? v : [v]).map((x) => [k, String(x)] as const),
-              ),
-            },
-            options,
-          ),
-      },
+  }
+  // Native fetch framing must never turn an HTML page into a JSON write acknowledgement.
+  for (const [fixture, credential, writes, readPath] of [
+    [
+      stripeFixture,
+      "sk_test_media_fixture",
+      [["stripe_api_write", { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_1" } }]],
+      "/v1/customers/cus_1",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      [
+        [
+          "cloudflare_api_write",
+          { method: "PATCH", path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1", body: { ttl: 300 } },
+        ],
+      ],
+      "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
+    ],
+    [
+      vercelFixture,
+      "vercel-media-token",
+      [
+        ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web/env/env_1", body: { value: "replacement" } }],
+        ["update_project_env_var", { projectId: "web", envVarId: "env_1", value: "replacement" }],
+      ],
+      "/v2/user",
+    ],
+  ] as const) {
+    const connector = fixture.create("media");
+    const ctx = () => ({
+      ...connectorContext(),
+      credential: { get: async () => credential, getAll: async () => ({ value: credential }) },
     });
-    response = () => Response.json({ pagination: { next: 123 } });
-    const routedFirst = (await routed.call("read", { path: "/items", query: { until: 500 } })) as any;
-    expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("500");
-    expect(new URL(sent.at(-1)!.url).searchParams.get("tag")).toBe("scope-a");
-    routingDefault = "scope-b";
-    const routedSends = sent.length;
-    await expect(
-      routed.call("read", { path: "/items", query: { until: routedFirst.page.nextCursor } }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(sent).toHaveLength(routedSends);
-    response = () => Response.json({ pagination: { next: null } });
-    await routed.call("read", { path: "/items", query: { tag: ["scope-a"], until: routedFirst.page.nextCursor } });
-    expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("123");
-    // Vercel JSON-only writes must not accept HTML or binary acknowledgements (#1000).
-    const hosting = vercelFixture.create();
-    const hostingContext = {
-      ...connectorContext(storage),
-      credential: { get: async () => "k7Q9w2E4r6T8y1U3", getAll: async () => ({ value: "k7Q9w2E4r6T8y1U3" }) },
-    };
-    for (const [name, args] of [
-      ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web", body: { framework: "nextjs" } }],
-      ["update_project_env_var", { projectId: "web", envVarId: "env_1", comment: "rotation" }],
-      ["vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "hello" }],
-    ] as const)
-      for (const type of ["text/html", "application/octet-stream"]) {
+    for (const type of ["text/html", "text/plain", "application/octet-stream"]) {
+      response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
+      for (const [tool, args] of writes) {
         sent = [];
-        response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
-        await expect(hosting.callTool(name, args, hostingContext)).rejects.toMatchObject({
+        const writeContext = ctx();
+        attachCallClassification(writeContext, "write");
+        await expect(
+          connector.callTool(tool, args, writeContext),
+          `${fixture.name}.${tool} ${type}`,
+        ).rejects.toMatchObject({
           code: "connector_call_failed",
           retryable: false,
           writeOutcome: "unknown",
@@ -1835,175 +1190,815 @@ it(
         });
         expect(sent).toHaveLength(1);
       }
-    sent = [];
-    await expect(
-      hosting.callTool("vercel_api_read", { path: "/v7/deployments" }, hostingContext),
-    ).rejects.toMatchObject({
-      message: expect.not.stringContaining("Whether the write"),
-    });
-    expect(sent).toHaveLength(1);
-    // Every pinned framed billing/command success remains rows, including a dispatched command write.
-    for (const [method, path, media, body] of [
-      ["GET", "/v1/billing/charges", "application/jsonl", undefined],
-      ["GET", "/v1/billing/contract-commitments", "application/jsonl", undefined],
-      ["GET", "/v2/sandboxes/sessions/sbx_1/cmd/cmd_1/logs", "application/x-ndjson", undefined],
-      ["POST", "/v2/sandboxes/sessions/sbx_1/cmd", "application/x-ndjson", { command: "echo", args: ["hello"] }],
-    ] as const) {
       sent = [];
-      const rows = [
-        { id: "row_1", message: "hello" },
-        { id: "row_2", message: "done" },
-      ];
-      response = () =>
-        new Response(rows.map((row) => JSON.stringify(row)).join("\n") + "\n", { headers: { "content-type": media } });
-      const result = (await hosting.callTool(
-        method === "GET" ? "vercel_api_read" : "vercel_api_write",
-        {
-          method,
-          path,
-          ...(path === "/v1/billing/charges"
-            ? { query: { from: "2026-01-01T00:00:00Z", to: "2026-02-01T00:00:00Z" } }
-            : {}),
-          ...(body ? { body } : {}),
-        },
-        hostingContext,
-      )) as any;
-      expect(result.data, `${method} ${path}`).toEqual(rows);
+      await expect(connector.callTool(`${fixture.name}_api_read`, { path: readPath }, ctx())).rejects.toMatchObject({
+        code: "connector_call_failed",
+      });
       expect(sent).toHaveLength(1);
     }
-    // Body continuations use the same binding, without ever dispatching the opaque bytes.
-    const bodyAdapter: HatchPageAdapter = { ...stripePage, param: "after", in: "body" };
-    const bodyPaged = setup({ data: pageData("after", "body"), pages: { "POST /query": bodyAdapter } });
-    response = () => Response.json({ data: [{ id: "next-body" }], has_more: true });
-    const bodyFirst = (await bodyPaged.call("read", {
-      method: "POST",
-      path: "/query",
-      body: { filter: "open", extra: { a: { b: 1, c: 2 }, z: 0 } },
+  }
+  for (const [fixture, credential, args, type, body] of [
+    [stripeFixture, "sk_test_media_fixture", { path: "/v1/quotes/qt_1/pdf" }, "application/pdf", "%PDF"],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/export" },
+      "text/plain",
+      "a. 1 IN A 192.0.2.1",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/intel/indicator-feeds/1/data" },
+      "text/csv",
+      "id,name\n1,Alice",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/cloudforce-one/v2/threat-signals/feeds/feed_1/raw" },
+      "application/xml",
+      "<feed/>",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      {
+        method: "POST",
+        path: "/accounts/0123456789abcdef0123456789abcdef/analytics_engine/sql",
+        body: "SELECT count() FROM events",
+      },
+      "application/x-ndjson; charset=utf-8",
+      '{"count":3}\n',
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces/ns_1/values/key_1" },
+      "application/octet-stream",
+      "bounded bytes",
+    ],
+    [
+      vercelFixture,
+      "vercel-media-token",
+      { path: "/v1/billing/charges", query: { from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z" } },
+      "application/jsonl",
+      '{"id":"charge_1"}\n',
+    ],
+  ] as const) {
+    sent = [];
+    response = () => new Response(body, { headers: { "content-type": type } });
+    const ctx = {
+      ...connectorContext(),
+      credential: { get: async () => credential, getAll: async () => ({ value: credential }) },
+    };
+    const answer = await fixture.create("media").callTool(`${fixture.name}_api_read`, args, ctx);
+    expect(answer).toMatchObject({ status: 200 });
+    expect(sent).toHaveLength(1);
+  }
+  // Fold the opt-in page adapters into the existing native request matrix.
+  const pageData = (param: string, at: "query" | "body" = "query"): OpenApiData => {
+    const details = JSON.parse(DATA.details);
+    if (at === "query")
+      details.o[0][0].push([param, "query", 0, { t: param === "page" || param === "until" ? "integer" : "string" }]);
+    else {
+      details.o[4][1][1].p[param] = { t: "string" };
+      details.o[4][1][1].p["extra"] = { t: "object", x: 1 };
+    }
+    // A reviewed POST with the identical request contract isolates method binding.
+    details.o[5] = structuredClone(details.o[0]);
+    return {
+      ...DATA,
+      details: JSON.stringify(details),
+      fields: DATA.ops.map(() =>
+        ["id", "data", "has_more", "result_info", "pagination"].map((path) => ({ in: "response", path })),
+      ),
+    };
+  };
+  // Google's opt-in wire mask preserves protocol metadata independently of
+  // Connecta fields, including on an empty intermediate page.
+  const batchReview = { kinds: ["insertText"], revision: true };
+  expect(
+    googleBatchGuard(
+      { requests: [{ insertText: { text: "ok" } }], writeControl: { requiredRevisionId: "r1" } },
+      batchReview,
+    ),
+  ).toBeUndefined();
+  for (const body of [
+    { requests: [{ insertText: {} }] },
+    { requests: [{ insertText: {}, deleteContentRange: {} }], writeControl: { requiredRevisionId: "r1" } },
+    { requests: [{ previewKind: {} }], writeControl: { requiredRevisionId: "r1" } },
+  ])
+    expect(googleBatchGuard(body, batchReview)).toBeDefined();
+  const googleData = pageData("pageToken");
+  const googleDetails = JSON.parse(googleData.details);
+  googleDetails.o[0][0].push(["fields", "query", 0, { t: "string" }]);
+  googleDetails.o[5] = JSON.parse(DATA.details).o[5];
+  const google = setup({
+    pathMatching: "uri-template",
+    data: { ...googleData, details: JSON.stringify(googleDetails) },
+    pages: { "GET /items": googlePageToken },
+    pageCursor: "argument",
+  });
+  const wrappedRequests: string[] = [];
+  let repeatWrappedSend = false;
+  const googleTools = hatch({
+    name: "google",
+    index: google.index,
+    verdicts: { "GET /items": "read", "POST /items": "write" },
+    pages: { "GET /items": googlePageToken },
+    pageCursor: "argument",
+    binding: googleHatchBinding(google.connection, {
+      index: google.index,
+      review: "Fixture: JSON below a fixed Google root, delegated grant and connection safety.",
+      wrapSend: (call, send) => {
+        wrappedRequests.push(call.path);
+        // Mutating the detached view cannot change the admitted wire request.
+        Object.assign(call, { path: "/blocked" });
+        return Effect.gen(function* () {
+          const answer = yield* send();
+          if (repeatWrappedSend) yield* send();
+          return { ...answer, warnings: ["The secondary save was not confirmed."] };
+        });
+      },
+    }),
+    connection: google.connection,
+  });
+  const googleConnector = tracksEveryRequest(apiConnector("google", { tools: googleTools }));
+  const googleCall = (args: Record<string, unknown>) =>
+    googleConnector.callTool("google_api_read", args, connectorContext(storage));
+  // An indexed operation without an admission verdict never reaches a send wrapper.
+  const beforeUnadmitted = sent.length;
+  await expect(googleCall({ path: "/blocked" })).rejects.toMatchObject({ code: "invalid_args" });
+  expect(wrappedRequests).toEqual([]);
+  expect(sent).toHaveLength(beforeUnadmitted);
+  expect(google.authenticate).not.toHaveBeenCalled();
+  response = () => Response.json({ data: [], nextPageToken: "next-token" });
+  const firstGoogle = (await googleCall({ path: "/items", query: { fields: "data(id)" }, fields: ["data"] })) as any;
+  expect(firstGoogle).toMatchObject({ data: { data: [] }, page: { hasMore: true, param: "pageToken", in: "query" } });
+  expect(firstGoogle.warnings).toEqual(["The secondary save was not confirmed."]);
+  expect(new URL(sent.at(-1)!.url).pathname).toBe("/v1/items");
+  expect(new URL(sent.at(-1)!.url).searchParams.get("fields")).toBe("data(id),nextPageToken");
+  response = () => Response.json({ data: [] });
+  expect(
+    await googleCall({
+      path: "/items",
+      query: { fields: "data(id)" },
+      fields: ["data"],
+      cursor: firstGoogle.page.nextCursor,
+    }),
+  ).toMatchObject({ page: { hasMore: false } });
+  expect(new URL(sent.at(-1)!.url).searchParams.get("pageToken")).toBe("next-token");
+  expect(wrappedRequests).toEqual(["/items", "/items"]);
+  repeatWrappedSend = true;
+  const beforeRepeat = sent.length;
+  await expect(
+    googleConnector.callTool(
+      "google_api_write",
+      { method: "POST", path: "/items", body: { name: "alice" } },
+      connectorContext(storage),
+    ),
+  ).rejects.toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
+  expect(sent).toHaveLength(beforeRepeat + 1);
+  repeatWrappedSend = false;
+  for (const args of [
+    { path: "/items", query: { pageToken: "raw" } },
+    { path: "/items", query: { fields: "data(" } },
+    { path: "/items", query: { fields: "data(id)name" } },
+    { path: "/items", query: { userId: "bob" } },
+    { path: "/items", fields: ["missing"] },
+  ]) {
+    const before = sent.length;
+    google.authenticate.mockClear();
+    await expect(googleCall(args)).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(before);
+    expect(google.authenticate).not.toHaveBeenCalled();
+  }
+  for (const token of [3, null, {}, "https://other.example/next", "[redacted]"]) {
+    response = () => Response.json({ nextPageToken: token });
+    await expect(googleCall({ path: "/items" })).rejects.toMatchObject({ code: "connector_call_failed" });
+  }
+  for (const token of [undefined, ""]) {
+    response = () => Response.json({ nextPageToken: token });
+    expect(await googleCall({ path: "/items" })).toMatchObject({ page: { hasMore: false } });
+  }
+  const collisionIndex = new OperationIndex(
+    {
+      ...DATA,
+      ops: [...DATA.ops, ["GET", "/items/search", "LiteralSearch", "Search", 0]],
+      details: JSON.stringify({ d: [], o: Array(DATA.ops.length + 1).fill(0) }),
+    },
+    { vendor: "google", title: "Google", pathMatching: "uri-template" },
+  );
+  expect(() => googleNamedOperation(collisionIndex, "GET", "/items/search", "/items/{item}")).toThrow(
+    "different operation",
+  );
+  expect(() => googleNamedOperation(collisionIndex, "GET", "/items/%73earch", "/items/{item}")).toThrow(
+    "different operation",
+  );
+  googleNamedOperation(collisionIndex, "GET", "/items/ordinary", "/items/{item}");
+  const defaults = setup();
+  expect(() => googleClient(google.connection, "Google", { index: google.index })).not.toThrow();
+  expect(() => googleClient(google.connection, "Google", { standard: true })).toThrow("reviewed operation index");
+  expect(() =>
+    googleHatchBinding(google.connection, { review: "Missing index" } as Parameters<typeof googleHatchBinding>[1]),
+  ).toThrow("reviewed operation index");
+  expect(() => googleClient(defaults.connection, "Google", { index: defaults.index })).toThrow("uri-template");
+  expect(() => googleHatchBinding(defaults.connection, { index: defaults.index, review: "Refuse defaults" })).toThrow(
+    "uri-template",
+  );
+  const binding = googleHatchBinding(google.connection, { index: google.index, review: "Canonical paths only" });
+  expect(() =>
+    hatch({ name: "wrong", index: defaults.index, verdicts: {}, connection: defaults.connection, binding }),
+  ).toThrow("reviewed operation index");
+  for (const path of ["/files/%67enerateCseToken", "/forms/f%3AsetPublishSettings"])
+    expect(
+      binding.refuse!({ path, method: "GET", query: {}, params: {}, body: undefined, op: google.index.ops[0]! }),
+    ).toContain("literally");
+  expect(googlePageToken.prepareQuery!({ fields: "data(id),nextPageToken" })).toEqual({
+    fields: "data(id),nextPageToken",
+  });
+  expect(googlePageToken.prepareQuery!({ fields: "data/nextPageToken" })).toEqual({
+    fields: "data/nextPageToken,nextPageToken",
+  });
+  for (const fields of ["nextPageToken/x", "nextPageToken(x)", "data(id),nextPageToken/x"])
+    expect(googlePageToken.prepareQuery!({ fields })).toEqual({ fields: `${fields},nextPageToken` });
+  for (const row of [
+    {
+      adapter: stripePage,
+      first: { data: [{ id: "last-id" }], has_more: true },
+      last: { data: [], has_more: false },
+      raw: "last-id",
+    },
+    {
+      adapter: cloudflarePage,
+      first: { result_info: { page: 1, total_pages: 2 } },
+      last: { result_info: { page: 2, total_pages: 2 } },
+      raw: "2",
+    },
+    {
+      adapter: cloudflarePage,
+      first: { result_info: { page: 1, total_count: 3, per_page: 2, count: 2 } },
+      last: { result_info: { page: 2, total_count: 3, per_page: 2, count: 1 } },
+      raw: "2",
+    },
+    {
+      adapter: cloudflarePage,
+      first: { result_info: { page: 1, per_page: 2, count: 2 } },
+      last: { result_info: { page: 2, per_page: 2, count: 1 } },
+      raw: "2",
+    },
+    {
+      adapter: vercelPage,
+      first: { pagination: { next: 1720000000 } },
+      last: { pagination: { next: null } },
+      raw: "1720000000",
+    },
+    {
+      adapter: vercelPage,
+      first: { pagination: { next: "00123" } },
+      last: { pagination: { next: null } },
+      raw: "00123",
+    },
+    {
+      adapter: githubPage("https://api.example/v1"),
+      first: [{ id: "i1" }],
+      last: [],
+      raw: "2",
+      link: '<https://api.example/repositories/1300192/items?tag=a%20b&tag=active&limit=2&page=2>; rel="next", <https://api.example/v1/items?page=5>; rel="last"',
+    },
+    {
+      adapter: githubPage("https://api.example/v1"),
+      first: [{ id: "i1" }],
+      last: [],
+      raw: "2",
+      link: "<https://api.example/repositories/1300192/items?page=2&limit=2&tag=a+b&tag=active>; rel=next",
+    },
+  ]) {
+    const { adapter } = row;
+    const data = pageData(adapter.param);
+    const paged = setup({ data, pages: { "GET /items": adapter } });
+    sent = [];
+    response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
+    const args = { path: "/items", query: { limit: 2, tag: ["active", "a b"] }, fields: ["id"] };
+    const first = (await paged.call("read", args)) as any;
+    expect(first.page).toEqual({ hasMore: true, nextCursor: expect.any(String), param: adapter.param, in: "query" });
+    expect(JSON.parse(atob(first.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/")))).toMatchObject({
+      v: 2,
+      m: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    });
+    expect(first.page.nextCursor).not.toBe(row.raw);
+    expect(first.data).toEqual(Array.isArray(row.first) ? [{ id: "i1" }] : {});
+    // A continuation belongs to the path, method, filters, fields and revision.
+    for (const changed of [
+      { ...args, query: { ...args.query, tag: ["a b", "active"], [adapter.param]: first.page.nextCursor } },
+      { ...args, query: { tag: ["other"], [adapter.param]: first.page.nextCursor } },
+      { ...args, path: "/items/other", query: { tag: ["active"], [adapter.param]: first.page.nextCursor } },
+      { ...args, fields: ["data"], query: { tag: ["active"], [adapter.param]: first.page.nextCursor } },
+      { ...args, query: { tag: ["active"], [adapter.param]: "plain-vendor-cursor" } },
+      { ...args, query: { tag: ["active"], [adapter.param]: 2 } },
+    ])
+      await expect(paged.call("read", changed)).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      paged.call("write", {
+        ...args,
+        method: "GET",
+        query: { ...args.query, [adapter.param]: first.page.nextCursor },
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("must be called with items_api_read"),
+    });
+    for (const replay of [
+      { data: { ...data, revision: "r2" }, method: "GET" },
+      {
+        data: {
+          ...data,
+          ops: data.ops.map((op, position) =>
+            position === 0 ? ([op[0], op[1], op[2], "Changed contract content", op[4]] as const) : op,
+          ),
+        },
+        method: "GET",
+      },
+      { data, method: "POST" },
+    ]) {
+      const other = setup({
+        data: replay.data,
+        context: paged.context,
+        verdicts: { ...VERDICTS, "POST /items": "read" },
+        pages: { "GET /items": adapter, "POST /items": adapter },
+      });
+      await expect(
+        other.call("read", {
+          ...args,
+          method: replay.method,
+          query: { ...args.query, [adapter.param]: first.page.nextCursor },
+        }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(other.sendPath).not.toHaveBeenCalled();
+      expect(other.authenticate).not.toHaveBeenCalled();
+    }
+    expect(sent).toHaveLength(1);
+    response = () => Response.json(row.last);
+    const last = (await paged.call("read", {
+      ...args,
+      query: { tag: ["active", "a b"], limit: 2, [adapter.param]: first.page.nextCursor },
     })) as any;
-    response = () => Response.json({ has_more: false });
-    await bodyPaged.call("read", {
-      method: "POST",
-      path: "/query",
-      body: { extra: { z: 0, a: { c: 2, b: 1 } }, after: bodyFirst.page.nextCursor, filter: "open" },
+    expect(last.page).toEqual({ hasMore: false, param: adapter.param, in: "query" });
+    expect(new URL(sent[1]!.url).searchParams.get(adapter.param)).toBe(row.raw);
+    expect(new URL(sent[1]!.url).pathname).toBe("/v1/items");
+    // The same durable root key still cannot authorize another connection or
+    // personal credential owner; only the admitted context supplies that binding.
+    const continuation = { ...args, query: { ...args.query, [adapter.param]: first.page.nextCursor } };
+    // A generic caller-dependent connector gets the same binding as a named
+    // list. The same agent in another owner's pool is a different identity.
+    for (const perCaller of [false, true]) {
+      const base = apiConnector("items", { tools: paged.tools });
+      const shared = perCaller ? Object.create(tagCallerIdentity(base)) : base;
+      const registry = new Registry([shared], { storage, logger: paged.context.logger });
+      const caller: ConnectorCaller = {
+        authenticated: true,
+        identity: { actor: { kind: "test-users", id: "alice" }, interactive: true },
+        pool: "research",
+        poolOwner: "alice@example.com",
+      };
+      const scopedContext = (caller: ConnectorCaller) =>
+        registry.scoped({ connectorIds: "all", caller }).contextFor("items", "https://connecta.example");
+      response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
+      const issued = (await shared.callTool("items_api_read", args, scopedContext(caller))) as any;
+      const resumed = { ...args, query: { ...args.query, [adapter.param]: issued.page.nextCursor } };
+      response = () => Response.json(row.last);
+      for (const other of [
+        { ...caller, identity: { ...caller.identity, actor: { kind: "test-users", id: "bob" } } },
+        { ...caller, pool: "other" },
+        { ...caller, poolOwner: "bob@example.com" },
+      ]) {
+        const before = sent.length;
+        if (perCaller) {
+          await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).rejects.toMatchObject({
+            code: "invalid_args",
+          });
+          expect(sent).toHaveLength(before);
+        } else {
+          await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).resolves.toHaveProperty(
+            "page",
+          );
+        }
+      }
+      await expect(shared.callTool("items_api_read", resumed, scopedContext(caller))).resolves.toHaveProperty("page");
+      if (!perCaller) expect(issued.page.nextCursor).toBe(first.page.nextCursor);
+    }
+    const beforeAlias = sent.length;
+    await expect(
+      apiConnector("other_items", { tools: paged.tools }).callTool(
+        "items_api_read",
+        continuation,
+        connectorContext(storage),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(beforeAlias);
+    const personal = apiConnector("items", { tools: paged.tools, authScope: "personal" });
+    const registry = new Registry([personal], { storage, logger: paged.context.logger });
+    const personalContext = (owner: string) =>
+      registry.personalRegistry(owner).contextFor("items", "https://connecta.example", {});
+    response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
+    const alice = (await personal.callTool("items_api_read", args, personalContext("alice"))) as any;
+    const personalContinuation = { ...args, query: { ...args.query, [adapter.param]: alice.page.nextCursor } };
+    const beforeOwner = sent.length;
+    await expect(
+      personal.callTool("items_api_read", personalContinuation, personalContext("bob")),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(beforeOwner);
+    response = () => Response.json(row.last);
+    expect(await personal.callTool("items_api_read", personalContinuation, personalContext("alice"))).toMatchObject({
+      page: { hasMore: false },
     });
-    expect(JSON.parse(sent.at(-1)!.body as string)).toEqual({
-      filter: "open",
-      extra: { a: { b: 1, c: 2 }, z: 0 },
-      after: "next-body",
+  }
+  // A binding replaces neither guard unless it explicitly owns that check.
+  for (const allowOtherServers of [false, true]) {
+    for (const allowOtherBodyTypes of [false, true]) {
+      const send = vi.fn(() => Effect.succeed({ status: 200, data: { id: "bound" } }));
+      const bound = setup({
+        binding: {
+          review: "Fixture routing and multipart framing, independently opted in.",
+          send,
+          ...(allowOtherServers ? { allowOtherServers: true as const } : {}),
+          ...(allowOtherBodyTypes ? { allowOtherBodyTypes: true as const } : {}),
+        },
+      });
+      for (const [allowed, kind, args, message] of [
+        [allowOtherServers, "read", { path: "/elsewhere" }, "different server"],
+        [allowOtherBodyTypes, "write", { method: "POST", path: "/upload", body: { file: "bytes" } }, "multipart"],
+      ] as const) {
+        send.mockClear();
+        if (allowed) {
+          expect(await bound.call(kind, args)).toEqual({ status: 200, data: { id: "bound" } });
+          expect(send).toHaveBeenCalledTimes(1);
+        } else {
+          await expect(bound.call(kind, args)).rejects.toMatchObject({
+            code: "invalid_args",
+            message: expect.stringContaining(message),
+          });
+          expect(send).not.toHaveBeenCalled();
+        }
+        expect(bound.sendPath).not.toHaveBeenCalled();
+        expect(bound.authenticate).not.toHaveBeenCalled();
+      }
+    }
+  }
+  // Size-cut metadata and warnings are opt-in, for both result and catalog compatibility.
+  for (const enabled of [false, true]) {
+    const bound = setup({
+      binding: {
+        review: "Fixture supplies reviewed size-cut paths after safe content framing.",
+        ...(enabled ? { truncated: true as const, warnings: true as const } : {}),
+        send: () =>
+          Effect.succeed({
+            status: 200,
+            data: { id: "safe", label: "unused" },
+            truncated: ["data.id"],
+            warnings: ["A secondary save is unconfirmed."],
+          }),
+      },
     });
-    response = () => Response.json({ data: [{ id: "next-body" }], has_more: true });
-    const emptyBody = (await bodyPaged.call("read", { method: "POST", path: "/query" })) as any;
-    response = () => Response.json({ has_more: false });
-    await bodyPaged.call("read", { method: "POST", path: "/query", body: { after: emptyBody.page.nextCursor } });
-    expect(sent.at(-1)!.body).toBe('{"after":"next-body"}');
-    // Malformed metadata is a bounded failure; no invented cursor and no extra request.
-    for (const [adapter, data] of [
-      [stripePage, { has_more: true, data: [] }],
-      [cloudflarePage, { result_info: { page: 1, total_pages: "two" } }],
-      [vercelPage, { pagination: { next: {} } }],
+    for (const [kind, args] of [
+      ["read", { path: "/items" }],
+      ["write", { method: "POST", path: "/items", body: { name: "alice" } }],
     ] as const) {
-      const paged = setup({ data: pageData(adapter.param), pages: { "GET /items": adapter } });
+      expect(await bound.call(kind, { ...args, fields: ["id"] })).toEqual({
+        status: 200,
+        data: { id: "safe" },
+        ...(enabled ? { truncated: ["data.id"], warnings: ["A secondary save is unconfirmed."] } : {}),
+      });
+    }
+  }
+  // A separate cursor preserves raw first-request record anchors and keeps
+  // every returned continuation signed, including reverse/search/v2 paging.
+  for (const row of [
+    {
+      adapter: stripePage,
+      param: "starting_after",
+      first: { data: [{ id: "first-id" }, { id: "last-id" }], has_more: true },
+      last: { data: [], has_more: false },
+      raw: "last-id",
+      anchor: "initial-id",
+    },
+    {
+      adapter: stripeBackwardPage,
+      param: "ending_before",
+      first: { data: [{ id: "first-id" }, { id: "last-id" }], has_more: true },
+      last: { data: [], has_more: false },
+      raw: "first-id",
+      anchor: "initial-id",
+    },
+    {
+      adapter: stripeSearchPage,
+      param: "page",
+      first: { data: [], has_more: true, next_page: "next-search" },
+      last: { has_more: false },
+      raw: "next-search",
+    },
+    {
+      adapter: stripeV2Page,
+      param: "page",
+      first: { data: [], next_page_url: "https://api.stripe.com/items?page=next-v2" },
+      last: { next_page_url: null },
+      raw: "next-v2",
+    },
+  ]) {
+    const details = JSON.parse(DATA.details);
+    for (const param of ["starting_after", "ending_before", "page"])
+      details.o[0][0].push([param, "query", 0, { t: "string" }]);
+    const data = { ...DATA, details: JSON.stringify(details) };
+    const adapters = row.param === "page" ? row.adapter : [stripePage, stripeBackwardPage];
+    const paged = setup({ data, pageCursor: "argument", pages: { "GET /items": adapters } });
+    sent = [];
+    response = () => Response.json(row.first);
+    const query = { limit: 2, tag: ["active", "a b"] };
+    const first = (await paged.call("read", {
+      path: "/items",
+      query: { ...query, ...("anchor" in row ? { [row.param]: row.anchor } : {}) },
+      fields: ["id"],
+    })) as any;
+    expect(first.page).toMatchObject({
+      hasMore: true,
+      param: row.param,
+      in: "query",
+      nextCursor: expect.any(String),
+    });
+    if (row.param !== "page") {
+      for (const param of ["starting_after", "ending_before"]) {
+        await expect(
+          paged.call("read", { path: "/items", query: { ...query, [param]: first.page.nextCursor } }),
+        ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("top-level cursor") });
+      }
+    }
+    await expect(
+      paged.call("read", { path: "/items/nonpaged", method: "HEAD", cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("does not page") });
+    for (const invalid of [
+      { path: "/items", query, fields: ["id"], cursor: row.raw },
+      { path: "/items", query: { ...query, [row.param]: row.raw }, fields: ["id"], cursor: first.page.nextCursor },
+      { path: "/items", query: { ...query, tag: ["other"] }, fields: ["id"], cursor: first.page.nextCursor },
+      ...(row.param !== "page"
+        ? [{ path: "/items", query: { ...query, starting_after: "a", ending_before: "b" } }]
+        : [{ path: "/items", query: { ...query, page: row.raw } }]),
+    ])
+      await expect(paged.call("read", invalid)).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(1);
+    response = () => Response.json(row.last);
+    const last = (await paged.call("read", {
+      path: "/items",
+      query,
+      fields: ["id"],
+      cursor: first.page.nextCursor,
+    })) as any;
+    expect(last.page).toEqual({ hasMore: false, param: row.param, in: "query" });
+    expect(new URL(sent.at(-1)!.url).searchParams.get(row.param)).toBe(row.raw);
+    expect(new URL(sent.at(-1)!.url).searchParams.getAll("tag")).toEqual(["active", "a b"]);
+    const count = sent.length;
+    await expect(
+      apiConnector("other", { tools: paged.tools }).callTool(
+        "items_api_read",
+        { path: "/items", query, fields: ["id"], cursor: first.page.nextCursor },
+        connectorContext(storage),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(count);
+    if (row.adapter === stripeV2Page) {
+      response = () => Response.json({ id: "kept", next_page_url: "/items?page=next-v2&limit=20" });
+      const incomplete = (await paged.call("read", { path: "/items" })) as any;
+      expect(incomplete).toMatchObject({
+        data: { id: "kept" },
+        page: { hasMore: true, param: "page", in: "query" },
+      });
+      expect(incomplete.page).not.toHaveProperty("nextCursor");
+      expect(new URL(sent.at(-1)!.url).search).toBe("");
+    }
+  }
+  // Configured query routing participates in validation and cursor identity.
+  const routedTransport = setup();
+  let routingDefault = "scope-a";
+  const routed = setup({
+    data: pageData("until"),
+    pages: { "GET /items": { ...vercelPage, initialAnchor: true } },
+    binding: {
+      review: "Fixture routing default resolved before signed continuation binding.",
+      query: (call) => ({ ...call.query, tag: call.query["tag"] ?? [routingDefault] }),
+      send: (call, options) =>
+        routedTransport.connection.sendPath(
+          {
+            method: call.method,
+            path: call.path,
+            template: call.op.path,
+            query: Object.entries(call.query).flatMap(([k, v]) =>
+              (Array.isArray(v) ? v : [v]).map((x) => [k, String(x)] as const),
+            ),
+          },
+          options,
+        ),
+    },
+  });
+  response = () => Response.json({ pagination: { next: 123 } });
+  const routedFirst = (await routed.call("read", { path: "/items", query: { until: 500 } })) as any;
+  expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("500");
+  expect(new URL(sent.at(-1)!.url).searchParams.get("tag")).toBe("scope-a");
+  routingDefault = "scope-b";
+  const routedSends = sent.length;
+  await expect(
+    routed.call("read", { path: "/items", query: { until: routedFirst.page.nextCursor } }),
+  ).rejects.toMatchObject({ code: "invalid_args" });
+  expect(sent).toHaveLength(routedSends);
+  response = () => Response.json({ pagination: { next: null } });
+  await routed.call("read", { path: "/items", query: { tag: ["scope-a"], until: routedFirst.page.nextCursor } });
+  expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("123");
+  // Vercel JSON-only writes must not accept HTML or binary acknowledgements (#1000).
+  const hosting = vercelFixture.create();
+  const hostingContext = {
+    ...connectorContext(storage),
+    credential: { get: async () => "k7Q9w2E4r6T8y1U3", getAll: async () => ({ value: "k7Q9w2E4r6T8y1U3" }) },
+  };
+  for (const [name, args] of [
+    ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web", body: { framework: "nextjs" } }],
+    ["update_project_env_var", { projectId: "web", envVarId: "env_1", comment: "rotation" }],
+    ["vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "hello" }],
+  ] as const)
+    for (const type of ["text/html", "application/octet-stream"]) {
       sent = [];
-      response = () => Response.json(data);
-      await expect(paged.call("read", { path: "/items" })).rejects.toMatchObject({
+      response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
+      await expect(hosting.callTool(name, args, hostingContext)).rejects.toMatchObject({
         code: "connector_call_failed",
         retryable: false,
+        writeOutcome: "unknown",
+        message: expect.stringContaining("check the target before repeating"),
       });
       expect(sent).toHaveLength(1);
     }
-    const links = setup({ data: pageData("page"), pages: { "GET /items": githubPage("https://api.example/v1") } });
-    for (const link of [
-      '<https://other.example/v1/items?page=2>; rel="next"',
-      '<https://api.example/v1/items?page=2&secret=stolen>; rel="next"',
-      '<https://api.example/v1/items?page=2&tag=extra>; rel="next"',
-      '<https://api.example/v1/items?page=2&page=3>; rel="next"',
-      '<https://api.example/v1/items?page=2#fragment>; rel="next"',
-      "<https://api.example/v1/items?page=2>; rel=next, <https://api.example/v1/items?page=3>; rel=next",
-    ]) {
-      response = () => Response.json([], { headers: { link } });
-      await expect(links.call("read", { path: "/items" })).rejects.toMatchObject({ code: "connector_call_failed" });
-    }
+  sent = [];
+  await expect(hosting.callTool("vercel_api_read", { path: "/v7/deployments" }, hostingContext)).rejects.toMatchObject({
+    message: expect.not.stringContaining("Whether the write"),
+  });
+  expect(sent).toHaveLength(1);
+  // Every pinned framed billing/command success remains rows, including a dispatched command write.
+  for (const [method, path, media, body] of [
+    ["GET", "/v1/billing/charges", "application/jsonl", undefined],
+    ["GET", "/v1/billing/contract-commitments", "application/jsonl", undefined],
+    ["GET", "/v2/sandboxes/sessions/sbx_1/cmd/cmd_1/logs", "application/x-ndjson", undefined],
+    ["POST", "/v2/sandboxes/sessions/sbx_1/cmd", "application/x-ndjson", { command: "echo", args: ["hello"] }],
+  ] as const) {
+    sent = [];
+    const rows = [
+      { id: "row_1", message: "hello" },
+      { id: "row_2", message: "done" },
+    ];
     response = () =>
-      Response.json([], {
-        headers: { link: "<https://api.example/repositories/1300192/items?page=2&tag=duplicate>; rel=next" },
-      });
-    await expect(
-      links.call("read", { path: "/items", query: { tag: ["duplicate", "duplicate"] } }),
-    ).rejects.toMatchObject({ code: "connector_call_failed" });
-    response = () => Response.json({ result_info: { cursor: "opaque" } });
-    const cursorStyle = setup({
-      data: pageData("page"),
-      pages: {
-        "GET /items": {
-          ...cloudflarePage,
-          cursorInputMessage: "Omit page on the first call; pass page.nextCursor as cursor in query.page.",
-        },
+      new Response(rows.map((row) => JSON.stringify(row)).join("\n") + "\n", { headers: { "content-type": media } });
+    const result = (await hosting.callTool(
+      method === "GET" ? "vercel_api_read" : "vercel_api_write",
+      {
+        method,
+        path,
+        ...(path === "/v1/billing/charges"
+          ? { query: { from: "2026-01-01T00:00:00Z", to: "2026-02-01T00:00:00Z" } }
+          : {}),
+        ...(body ? { body } : {}),
       },
-      pageCursor: "parameter",
+      hostingContext,
+    )) as any;
+    expect(result.data, `${method} ${path}`).toEqual(rows);
+    expect(sent).toHaveLength(1);
+  }
+  // Body continuations use the same binding, without ever dispatching the opaque bytes.
+  const bodyAdapter: HatchPageAdapter = { ...stripePage, param: "after", in: "body" };
+  const bodyPaged = setup({ data: pageData("after", "body"), pages: { "POST /query": bodyAdapter } });
+  response = () => Response.json({ data: [{ id: "next-body" }], has_more: true });
+  const bodyFirst = (await bodyPaged.call("read", {
+    method: "POST",
+    path: "/query",
+    body: { filter: "open", extra: { a: { b: 1, c: 2 }, z: 0 } },
+  })) as any;
+  response = () => Response.json({ has_more: false });
+  await bodyPaged.call("read", {
+    method: "POST",
+    path: "/query",
+    body: { extra: { z: 0, a: { c: 2, b: 1 } }, after: bodyFirst.page.nextCursor, filter: "open" },
+  });
+  expect(JSON.parse(sent.at(-1)!.body as string)).toEqual({
+    filter: "open",
+    extra: { a: { b: 1, c: 2 }, z: 0 },
+    after: "next-body",
+  });
+  response = () => Response.json({ data: [{ id: "next-body" }], has_more: true });
+  const emptyBody = (await bodyPaged.call("read", { method: "POST", path: "/query" })) as any;
+  response = () => Response.json({ has_more: false });
+  await bodyPaged.call("read", { method: "POST", path: "/query", body: { after: emptyBody.page.nextCursor } });
+  expect(sent.at(-1)!.body).toBe('{"after":"next-body"}');
+  // Malformed metadata is a bounded failure; no invented cursor and no extra request.
+  for (const [adapter, data] of [
+    [stripePage, { has_more: true, data: [] }],
+    [cloudflarePage, { result_info: { page: 1, total_pages: "two" } }],
+    [vercelPage, { pagination: { next: {} } }],
+  ] as const) {
+    const paged = setup({ data: pageData(adapter.param), pages: { "GET /items": adapter } });
+    sent = [];
+    response = () => Response.json(data);
+    await expect(paged.call("read", { path: "/items" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
     });
-    for (const page of [1, "1", "vendor-next"]) {
-      await expect(cursorStyle.call("read", { path: "/items", query: { page } })).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("Omit page on the first call"),
-      });
-    }
-    expect(cursorStyle.sendPath).not.toHaveBeenCalled();
-    expect(cursorStyle.authenticate).not.toHaveBeenCalled();
-    expect(await cursorStyle.call("read", { path: "/items" })).not.toHaveProperty("page");
-    expect(() =>
-      githubPage("https://api.example").next([], {
-        path: "/items",
-        query: { nested: { key: "value" } },
-        headers: { link: "<https://api.example/items?page=2&nested=%5Bobject+Object%5D>; rel=next" },
-      }),
-    ).toThrow();
-    // Optional vendor framing keeps resolution, fields and closed-header checks before dispatch.
-    const framedCalls: unknown[] = [];
-    const framedDetails = JSON.parse(DATA.details);
-    framedDetails.o[4] = [[], ["text/plain", { t: "string" }]];
-    const framed = setup({
-      data: {
-        ...DATA,
-        details: JSON.stringify(framedDetails),
-        fields: DATA.ops.map(() => [{ in: "response" as const, path: "result[].id" }]),
-      },
-      fieldsRoot: "result",
-      textBodies: true,
-      headers: { "x-region": { description: "Reviewed region.", values: ["eu", "us"] } },
-      binding: {
-        review: "Test deployment defaults and text framing.",
-        allowOtherBodyTypes: true,
-        path: (path) => path.replace("{item}", "i1"),
-        prepareBody: (body) => (Array.isArray(body) ? body.map((row) => JSON.stringify(row)).join("\n") : body),
-        send: (call) => {
-          framedCalls.push(call);
-          return Effect.succeed({ status: 200, data: { result: [{ id: "i1", email: "safe" }] } });
-        },
-      },
+    expect(sent).toHaveLength(1);
+  }
+  const links = setup({ data: pageData("page"), pages: { "GET /items": githubPage("https://api.example/v1") } });
+  for (const link of [
+    '<https://other.example/v1/items?page=2>; rel="next"',
+    '<https://api.example/v1/items?page=2&secret=stolen>; rel="next"',
+    '<https://api.example/v1/items?page=2&tag=extra>; rel="next"',
+    '<https://api.example/v1/items?page=2&page=3>; rel="next"',
+    '<https://api.example/v1/items?page=2#fragment>; rel="next"',
+    "<https://api.example/v1/items?page=2>; rel=next, <https://api.example/v1/items?page=3>; rel=next",
+  ]) {
+    response = () => Response.json([], { headers: { link } });
+    await expect(links.call("read", { path: "/items" })).rejects.toMatchObject({ code: "connector_call_failed" });
+  }
+  response = () =>
+    Response.json([], {
+      headers: { link: "<https://api.example/repositories/1300192/items?page=2&tag=duplicate>; rel=next" },
     });
-    await expect(framed.call("write", { method: "DELETE", path: "/items/{item}", fields: ["id"] })).rejects.toThrow(
-      "result[].id",
-    );
-    await expect(framed.call("read", { path: "/items", headers: { "x-region": "elsewhere" } })).rejects.toThrow();
-    expect(framedCalls).toHaveLength(0);
-    expect(
-      await framed.call("write", {
-        method: "DELETE",
-        path: "/items/{item}",
-        headers: { "x-region": "eu" },
-        fields: ["result[].id"],
-      }),
-    ).toEqual({ status: 200, data: { result: [{ id: "i1" }] } });
-    expect(framedCalls).toMatchObject([{ path: "/items/i1", headers: { "x-region": "eu" } }]);
-    for (const body of ["SELECT 1", [{ id: "i1" }]])
-      await framed.call("read", { method: "POST", path: "/query", body });
-    expect(framedCalls.slice(1)).toMatchObject([{ body: "SELECT 1" }, { body: '{"id":"i1"}' }]);
-    await expect(framed.call("read", { method: "POST", path: "/query", body: [{ id: "[redacted]" }] })).rejects.toThrow(
-      "withheld",
-    );
-    expect(framedCalls).toHaveLength(3);
-  },
-);
+  await expect(
+    links.call("read", { path: "/items", query: { tag: ["duplicate", "duplicate"] } }),
+  ).rejects.toMatchObject({ code: "connector_call_failed" });
+  response = () => Response.json({ result_info: { cursor: "opaque" } });
+  const cursorStyle = setup({
+    data: pageData("page"),
+    pages: {
+      "GET /items": {
+        ...cloudflarePage,
+        cursorInputMessage: "Omit page on the first call; pass page.nextCursor as cursor in query.page.",
+      },
+    },
+    pageCursor: "parameter",
+  });
+  for (const page of [1, "1", "vendor-next"]) {
+    await expect(cursorStyle.call("read", { path: "/items", query: { page } })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("Omit page on the first call"),
+    });
+  }
+  expect(cursorStyle.sendPath).not.toHaveBeenCalled();
+  expect(cursorStyle.authenticate).not.toHaveBeenCalled();
+  expect(await cursorStyle.call("read", { path: "/items" })).not.toHaveProperty("page");
+  expect(() =>
+    githubPage("https://api.example").next([], {
+      path: "/items",
+      query: { nested: { key: "value" } },
+      headers: { link: "<https://api.example/items?page=2&nested=%5Bobject+Object%5D>; rel=next" },
+    }),
+  ).toThrow();
+  // Optional vendor framing keeps resolution, fields and closed-header checks before dispatch.
+  const framedCalls: unknown[] = [];
+  const framedDetails = JSON.parse(DATA.details);
+  framedDetails.o[4] = [[], ["text/plain", { t: "string" }]];
+  const framed = setup({
+    data: {
+      ...DATA,
+      details: JSON.stringify(framedDetails),
+      fields: DATA.ops.map(() => [{ in: "response" as const, path: "result[].id" }]),
+    },
+    fieldsRoot: "result",
+    textBodies: true,
+    headers: { "x-region": { description: "Reviewed region.", values: ["eu", "us"] } },
+    binding: {
+      review: "Test deployment defaults and text framing.",
+      allowOtherBodyTypes: true,
+      path: (path) => path.replace("{item}", "i1"),
+      prepareBody: (body) => (Array.isArray(body) ? body.map((row) => JSON.stringify(row)).join("\n") : body),
+      send: (call) => {
+        framedCalls.push(call);
+        return Effect.succeed({ status: 200, data: { result: [{ id: "i1", email: "safe" }] } });
+      },
+    },
+  });
+  await expect(framed.call("write", { method: "DELETE", path: "/items/{item}", fields: ["id"] })).rejects.toThrow(
+    "result[].id",
+  );
+  await expect(framed.call("read", { path: "/items", headers: { "x-region": "elsewhere" } })).rejects.toThrow();
+  expect(framedCalls).toHaveLength(0);
+  expect(
+    await framed.call("write", {
+      method: "DELETE",
+      path: "/items/{item}",
+      headers: { "x-region": "eu" },
+      fields: ["result[].id"],
+    }),
+  ).toEqual({ status: 200, data: { result: [{ id: "i1" }] } });
+  expect(framedCalls).toMatchObject([{ path: "/items/i1", headers: { "x-region": "eu" } }]);
+  for (const body of ["SELECT 1", [{ id: "i1" }]]) await framed.call("read", { method: "POST", path: "/query", body });
+  expect(framedCalls.slice(1)).toMatchObject([{ body: "SELECT 1" }, { body: '{"id":"i1"}' }]);
+  await expect(framed.call("read", { method: "POST", path: "/query", body: [{ id: "[redacted]" }] })).rejects.toThrow(
+    "withheld",
+  );
+  expect(framedCalls).toHaveLength(3);
+});
 
 it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and one write attempt", NODE, async () => {
   for (const entry of [
