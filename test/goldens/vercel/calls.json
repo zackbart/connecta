@@ -17,20 +17,23 @@
             "method": "PATCH",
             "path": "/v9/projects/{idOrName}/env/{id}",
             "operationId": "editProjectEnv",
-            "summary": "Edit an environment variable",
-            "tag": "projects",
-            "tool": "vercel_api_write"
+            "summary": "Update a project environment variable (env var) by id.",
+            "tool": "vercel_api_write",
+            "named": "update_project_env_var"
           },
           {
             "method": "PATCH",
             "path": "/v1/env/{id}/unlink/{projectId}",
             "operationId": "unlinkSharedEnvVariable",
             "summary": "Disconnects a shared environment variable for a given project",
-            "tag": "environment",
             "tool": "vercel_api_write"
           }
         ],
-        "revision": "sha256:553c2cccefb1"
+        "revision": "sha256:4a06e85c2848",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiYjI3YjliMjJkZjAzNThlZmQ1OTJiMmY5NjE5OWFlNGMiLCJjIjoiMiIsIm0iOiJNbGFzc0dwa1FZMDZHR2dXdDNzR2N2NHduU0tCaHZKMXdYNVpWczRHRy1JIn0"
+        }
       }
     }
   },
@@ -56,13 +59,15 @@
             "name": "until",
             "in": "query",
             "required": false,
+            "description": "Get Deployments created before this JavaScript timestamp.",
             "schema": {
               "type": "number"
             }
           }
         ],
+        "verdict": "read",
         "tool": "vercel_api_read",
-        "revision": "sha256:553c2cccefb1"
+        "revision": "sha256:4a06e85c2848"
       }
     }
   },
@@ -75,7 +80,7 @@
         "projectId": "web",
         "limit": 2
       },
-      "select": [
+      "fields": [
         "deployments.uid",
         "deployments.state"
       ]
@@ -112,8 +117,9 @@
         },
         "page": {
           "hasMore": true,
-          "next": "1700000000000",
-          "param": "until"
+          "nextCursor": "eyJ2IjoyLCJkIjoiNTBkNmUyNDM1NjNiZDhjZmNhOGYwNmM2N2M0NzJjMzMiLCJjIjoiMTcwMDAwMDAwMDAwMCIsIm0iOiJiajd0MFpBZHJTUlZRU0JjZVhZQmZYTVgxNC1VUFB5UjZhNWw5aERVRTNFIn0",
+          "param": "until",
+          "in": "query"
         }
       }
     }
@@ -184,7 +190,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "teams": [
+        "items": [
           {
             "id": "team_1",
             "slug": "acme",
@@ -192,11 +198,9 @@
             "role": "OWNER"
           }
         ],
-        "defaultTeamId": "team_default",
         "page": {
           "hasMore": true,
-          "next": "1699000000000",
-          "param": "until"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYTJjYmUxN2ZlN2M0MjBhNjg4MGIzOGVmNjUyYjc5MzgiLCJjIjoiMTY5OTAwMDAwMDAwMCIsIm0iOiJ0ZE10LTlMdWNRQlg4UTNpbDdMM3FDdncwX3AtY2FmVk1hS0cwQ2cxNW9RIn0"
         }
       }
     }
@@ -225,7 +229,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "variables": [
+        "items": [
           {
             "id": "env_1",
             "key": "API_KEY",
@@ -235,7 +239,10 @@
             ],
             "createdAt": 1
           }
-        ]
+        ],
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -342,11 +349,11 @@
     }
   },
   {
-    "label": "delete_project_env_var",
-    "tool": "delete_project_env_var",
+    "label": "delete environment variable through hatch",
+    "tool": "vercel_api_write",
     "args": {
-      "projectId": "web",
-      "envVarId": "env_2"
+      "method": "DELETE",
+      "path": "/v9/projects/web/env/env_2"
     },
     "steps": [
       [
@@ -365,8 +372,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "deleted": true,
-        "envVarId": "env_2"
+        "status": 204,
+        "data": null
       }
     }
   },
@@ -411,7 +418,7 @@
             "text": "Error: Cannot find module 'x'"
           }
         ],
-        "truncated": false
+        "truncated": []
       }
     }
   },
@@ -453,7 +460,8 @@
             "responseStatusCode": 500
           }
         ],
-        "stopped": "end"
+        "stopped": "end",
+        "truncated": []
       }
     }
   },

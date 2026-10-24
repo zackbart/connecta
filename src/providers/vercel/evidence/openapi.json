@@ -5,10 +5,11 @@
   "latest": "https://openapi.vercel.sh/",
   "options": {
     "depth": 2,
-    "descriptions": 0,
+    "descriptions": 160,
     "maxEnum": 50,
     "valueSafety": {
       "operationWords": "global-config"
-    }
+    },
+    "numericBounds": true
   }
 }

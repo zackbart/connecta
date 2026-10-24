@@ -1,33 +1,46 @@
 ---
 {
   "name": "vercel",
-  "instructionsHeading": "Account instructions",
-  "content": "shared"
+  "instructionsHeading": "Account instructions"
 }
 ---
 
+## Projects, deployments and domains
 
-<!-- fragment: key -->
+Resolve a team by slug, a project by name, and deployments by the observed
+project id. Team ids start with `team_`, project ids with `prj_`, and deployment
+ids with `dpl_`. A deployment hostname and a deployment id identify the same
+deployment; an alias can later point to a different deployment.
 
+The configured team is a routing default, not a restriction. Explicit teamId
+or slug selects another team the token can reach; teamId: null selects personal
+scope. Vercel token permissions determine access. Prefer an explicit team when
+joining resources across several calls.
 
-- This is Connecta's REST connector to `api.vercel.com`, holding one operator-managed access token. A default team routes calls; it does not narrow what the token can reach.
-- `vercel_api_search` finds API operations, not records: it searches the pinned API index and names the tool that calls each operation. `vercel_api_details` returns one operation's parameters with types, enums, and required names. Neither sends a request.
-- `vercel_api_read` calls GET operations, plus reviewed POSTs that only read: `POST /v2/observability/query`, registrar availability, price, and search, and `POST /v8/artifacts`. `vercel_api_write` calls every other POST, PUT, PATCH, and DELETE, with `method` and `path` stated; a read-only endpoint refuses it.
-- Paths are concrete and carry the version search returned: `/v13/deployments/dpl_123`, not `/deployments/dpl_123`. Pass `query` and `body` as JSON objects named as `vercel_api_details` lists them. Every call is checked against the pinned index before it is sent: an unknown path returns the nearest operations, and an unknown or missing parameter returns `validation.issues` with the accepted names. Nothing reached Vercel, so fix the call from that answer.
-- Results arrive as `{ status, data, page? }`. On a list, `page.next` is the cursor and `page.param` the query parameter to pass it as: `until` (a millisecond timestamp from `pagination.next`) on most lists, `cursor` on newer ones. Lists belong inside `execute_code`; pass `select` (dot paths such as `deployments.uid` and `deployments.state`) to keep only the fields the question needs.
-- `list_teams` returns team ids and slugs and the connection's default team. `get_deployment_build_logs` reads a deployment's build events without following live output. `get_runtime_logs` collects the runtime log stream for at most `waitMs` or `maxRows`, then stops and says why. Generic reads refuse `follow` and the runtime-log stream, which never end on their own.
-- `vercel_api_upload` sends explicit text or base64 bytes to an octet-stream operation, such as `POST /v2/files` before a deployment (Connecta computes `x-vercel-digest`). `vercel_api_write` sends JSON only.
-- Environment values never come back. `list_project_env_vars` never decrypts. `upsert_project_env_var` (`upsert: false` for create-only), `update_project_env_var`, and `delete_project_env_var` return metadata without values; values are write input only. Generic reads refuse `GET /v1/projects/{idOrName}/env/{id}`, `GET /v10/projects/{idOrName}/env`, `GET /v1/env/{id}`, and any `decrypt`, and Connecta replaces the value of every environment variable in any result with `"[redacted]"`, including project reads, shared variables, and audit events.
-- Other secrets read as `[redacted]` in every result: credential-named fields and their whole contents (`token`, `secret`, `password`, `jwt`, `credentials`, `Authorization`, …), protection-bypass secrets (each bypass's metadata stays under a numbered placeholder), deploy hook URLs, daemon liveness-probe header values and internal endpoint ciphertext, drain and webhook headers and signing secrets (including the one a new webhook or drain returns), drain and webhook destination URLs and external route, rewrite, and redirect destinations beyond their scheme and host, the args and values of every header, cookie, and query rule (route transforms and conditions, firewall conditions), conditional firewall bypass compiled `condition` expressions and their credential match values, team invite codes, synced Global Config items, and credentials inside other URLs. Failures of every reviewed operation, and of any operation whose request takes a credential-named field, say only the status and a reviewed code. Read or rotate withheld secrets in the Vercel dashboard. A `[redacted]` field is never the real value; do not send it back.
-- Refused by design: endpoints that mint credentials (access tokens, AI Gateway API keys, project OIDC and trace tokens, Connect and SSO tokens, Edge Config tokens, KMS-signed tokens, Flags SDK keys, protection-bypass secrets, installation credential rotation), Connect authorization requests, project transfer requests (the code lets another team claim the project), KMS signing, a domain move-out (its answer is a transfer token), Global Config items, backups, and tokens, and domain transfer auth codes. Each refusal names its reason.
-- The hosted OAuth connection's documentation search, runtime error clusters, toolbar threads, agent runs, web analytics summaries, purchase quotes, `deploy_to_vercel`, and access grants for protected URLs do not exist with a token. Configure an OAuth connector for those.
-- A `429` carries Vercel's reset time; Vercel meters endpoints separately, so wait before retrying the same operation. An `auth_required` failure means the token is missing, expired, or outside this team: an operator must replace it in this connection in the operator UI, and `authorize_connector` returns that handoff. A rejected argument comes back in Vercel's own words; read it rather than replacing the token.
-- Embedded URL safety uses reviewed paths plus global signing parameters. Generic credential-named query parameters (`code`, `key`, `token`, `sig`, etc.) and credential-looking fragments withhold the destination's entire query/fragment only in deployment `errorMessage`, build-event `payload.text`/`text`, and runtime-log `message` on the reviewed deployment/log operations and vendor error text. Ordinary `code`/`key` links can therefore be false positives in these diagnostics. Deployment metadata and other application content keep those ordinary URL parameters byte for byte. Literal AWS SigV4/Google V4 `X-Amz-*`/`X-Goog-*` Signature, Credential and Security-Token values are withheld in every decoded string before projection. A withheld value is not the original: do not write it back. Deployment creation also inspects decoded `files[].data` when `encoding` is `base64` (one decode bounded by the field's encoded length and the host's request limit; malformed base64 is refused). All writes, including named writes and supported raw/base64/multipart uploads, reject URL destinations whose own query/fragment contains the exact `[redacted]` placeholder, plain or encoded, with `invalid_args` before dispatch. Admission iteratively checks every JSON key and value within the host's accepted request size, without separate depth or node-count ceilings; cyclic direct arguments are refused. A marker outside the destination remains ordinary text. Split strings, encoded host/signing names, bare hosts without `//`, and opaque bearer paths remain outside this scan.
-<!-- endfragment -->
+Read deployment state before its build events. Runtime logs diagnose requests
+after a deployment built; build logs explain a failed build. Narrow time windows
+before raising collection limits. Generic reads refuse live follow streams;
+use the bounded build/runtime readers. Deployment timestamps are milliseconds.
 
-<!-- fragment: shared -->
-- Resolve team, project, and deployment ids with list reads; never guess one. Team ids begin `team_`, project ids `prj_`, and deployment ids `dpl_`.
-- Diagnose a deployment by reading its state first (`readyState`, `errorCode`, `errorMessage`), then its build logs, then runtime logs for a deployment that built. Narrow time windows before raising limits.
-- Environment variable changes apply only to future deployments; a new deployment is a separate write. Promoting an existing deployment to production does not rebuild it.
-- Treat every create, update, delete, promotion, cancellation, and purchase as a write. For guest calls, classification, and routing, fetch `skills({ name: "usage" })`.
-<!-- endfragment -->
+Project domains and deployment aliases are different joins: a project domain
+belongs to the project, while an alias identifies its assigned deployment.
+Read a pending domain's verification instructions before changing DNS.
+
+## Environment changes
+
+Resolve environment-variable ids using metadata, including target, branch and
+custom environment. A key can have distinct production and preview values.
+Existing values cannot be retrieved. Supply new values only when the task asks
+for a change; confirm the returned id and metadata.
+
+Environment changes apply to future deployments. A new deployment is a separate
+write. Promoting an existing deployment does not rebuild it or update embedded
+environment values. After an uncertain update, reconcile observable metadata
+such as id, targets and comment; reading metadata cannot verify a secret value.
+
+## Explicit files and credentials
+
+Deployment files can reference previously uploaded digests. File uploads accept
+explicit bytes and never read a path on the agent's machine. Decrypted-value,
+credential-minting, protection-bypass-link, signing and domain move-out operations
+are refused; use Vercel's dashboard for those workflows.

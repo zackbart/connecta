@@ -6,9 +6,7 @@
   },
   "candidates": {
     "GET /ai-gateway/budgets/list": {
-      "fields": [
-        "defaultCoveredCounts.api-key"
-      ],
+      "fields": ["defaultCoveredCounts.api-key"],
       "named": false
     },
     "GET /ai-gateway/virtual-model-configs": {
@@ -21,38 +19,23 @@
       "named": false
     },
     "POST /ai-gateway/virtual-model-configs": {
-      "fields": [
-        "inferenceRegion",
-        "providerTimeouts"
-      ],
+      "fields": ["inferenceRegion", "providerTimeouts"],
       "named": false
     },
     "PATCH /ai-gateway/virtual-model-configs": {
-      "fields": [
-        "inferenceRegion",
-        "providerTimeouts"
-      ],
+      "fields": ["inferenceRegion", "providerTimeouts"],
       "named": false
     },
     "GET /ai-gateway/virtual-model-configs/list": {
-      "fields": [
-        "virtualModelConfigs[].inferenceRegion",
-        "virtualModelConfigs[].providerTimeouts"
-      ],
+      "fields": ["virtualModelConfigs[].inferenceRegion", "virtualModelConfigs[].providerTimeouts"],
       "named": false
     },
     "GET /ai-gateway/virtual-model-configs/{vmcSlug}": {
-      "fields": [
-        "inferenceRegion",
-        "providerTimeouts"
-      ],
+      "fields": ["inferenceRegion", "providerTimeouts"],
       "named": false
     },
     "PATCH /ai-gateway/virtual-model-configs/{vmcSlug}": {
-      "fields": [
-        "inferenceRegion",
-        "providerTimeouts"
-      ],
+      "fields": ["inferenceRegion", "providerTimeouts"],
       "named": false
     },
     "PATCH /aliases/{id}/protection-bypass": {
@@ -106,24 +89,15 @@
       "named": false
     },
     "GET /storage/stores/{id}": {
-      "fields": [
-        "store.projectsMetadata[].environmentVariables",
-        "store.projectsMetadata[].secretsOutdated"
-      ],
+      "fields": ["store.projectsMetadata[].environmentVariables", "store.projectsMetadata[].secretsOutdated"],
       "named": false
     },
     "GET /v1/ai-gateway/routers": {
-      "fields": [
-        "routers[].inferenceRegion",
-        "routers[].providerTimeouts"
-      ],
+      "fields": ["routers[].inferenceRegion", "routers[].providerTimeouts"],
       "named": false
     },
     "POST /v1/connect/authorize/{connector}": {
-      "fields": [
-        "deviceCode",
-        "verifier"
-      ],
+      "fields": ["deviceCode", "verifier"],
       "named": true
     },
     "POST /v1/connect/connectors": {
@@ -203,10 +177,7 @@
       "named": false
     },
     "POST /v1/connect/token/{connector}": {
-      "fields": [
-        "claims",
-        "token"
-      ],
+      "fields": ["claims", "token"],
       "named": true
     },
     "GET /v1/drains": {
@@ -219,12 +190,7 @@
       "named": true
     },
     "POST /v1/drains": {
-      "fields": [
-        "delivery.endpoint",
-        "delivery.headers",
-        "delivery.secret",
-        "sampling[].env"
-      ],
+      "fields": ["delivery.endpoint", "delivery.headers", "delivery.secret", "sampling[].env"],
       "named": true
     },
     "POST /v1/drains/test": {
@@ -232,21 +198,11 @@
       "named": true
     },
     "GET /v1/drains/{id}": {
-      "fields": [
-        "delivery.endpoint",
-        "delivery.headers",
-        "delivery.secret",
-        "sampling[].env"
-      ],
+      "fields": ["delivery.endpoint", "delivery.headers", "delivery.secret", "sampling[].env"],
       "named": true
     },
     "PATCH /v1/drains/{id}": {
-      "fields": [
-        "delivery.endpoint",
-        "delivery.headers",
-        "delivery.secret",
-        "sampling[].env"
-      ],
+      "fields": ["delivery.endpoint", "delivery.headers", "delivery.secret", "sampling[].env"],
       "named": true
     },
     "DELETE /v1/drains/{id}": {
@@ -254,39 +210,23 @@
       "named": true
     },
     "GET /v1/env": {
-      "fields": [
-        "data[].type",
-        "data[].value"
-      ],
+      "fields": ["data[].type", "data[].value"],
       "named": true
     },
     "POST /v1/env": {
-      "fields": [
-        "created[].type",
-        "created[].value",
-        "failed[].error.value"
-      ],
+      "fields": ["created[].type", "created[].value", "failed[].error.value"],
       "named": true
     },
     "PATCH /v1/env": {
-      "fields": [
-        "failed[].error.value",
-        "updated[].type",
-        "updated[].value"
-      ],
+      "fields": ["failed[].error.value", "updated[].type", "updated[].value"],
       "named": true
     },
     "DELETE /v1/env": {
-      "fields": [
-        "failed[].error.value"
-      ],
+      "fields": ["failed[].error.value"],
       "named": true
     },
     "GET /v1/env/{id}": {
-      "fields": [
-        "type",
-        "value"
-      ],
+      "fields": ["type", "value"],
       "named": true
     },
     "PATCH /v1/env/{id}/unlink/{projectId}": {
@@ -326,15 +266,11 @@
       "named": true
     },
     "GET /v1/global-config/{edgeConfigId}/item/{edgeConfigItemKey}": {
-      "fields": [
-        "value"
-      ],
+      "fields": ["value"],
       "named": true
     },
     "GET /v1/global-config/{edgeConfigId}/items": {
-      "fields": [
-        "[].value"
-      ],
+      "fields": ["[].value"],
       "named": true
     },
     "PATCH /v1/global-config/{edgeConfigId}/items": {
@@ -354,25 +290,15 @@
       "named": true
     },
     "POST /v1/global-config/{edgeConfigId}/token": {
-      "fields": [
-        "token"
-      ],
+      "fields": ["token"],
       "named": true
     },
     "GET /v1/global-config/{edgeConfigId}/token/{token}": {
-      "fields": [
-        "id",
-        "partialToken",
-        "token"
-      ],
+      "fields": ["id", "partialToken", "token"],
       "named": true
     },
     "GET /v1/global-config/{edgeConfigId}/tokens": {
-      "fields": [
-        "[].id",
-        "[].partialToken",
-        "[].token"
-      ],
+      "fields": ["[].id", "[].partialToken", "[].token"],
       "named": true
     },
     "DELETE /v1/global-config/{edgeConfigId}/tokens": {
@@ -384,15 +310,11 @@
       "named": true
     },
     "POST /v1/installations/{integrationConfigurationId}/credentials/rotate": {
-      "fields": [
-        "access_token"
-      ],
+      "fields": ["access_token"],
       "named": true
     },
     "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}": {
-      "fields": [
-        "customClaims"
-      ],
+      "fields": ["customClaims"],
       "named": false
     },
     "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": {
@@ -424,39 +346,23 @@
       "named": true
     },
     "POST /v1/integrations/sso/token": {
-      "fields": [
-        "access_token",
-        "id_token",
-        "refresh_token"
-      ],
+      "fields": ["access_token", "id_token", "refresh_token"],
       "named": true
     },
     "GET /v1/kms/issuers": {
-      "fields": [
-        "issuers[].policies[].environments",
-        "issuers[].signingKeys"
-      ],
+      "fields": ["issuers[].policies[].environments", "issuers[].signingKeys"],
       "named": false
     },
     "POST /v1/kms/issuers": {
-      "fields": [
-        "policies[].environments",
-        "signingKeys"
-      ],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": false
     },
     "GET /v1/kms/issuers/{issuerId}": {
-      "fields": [
-        "policies[].environments",
-        "signingKeys"
-      ],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": false
     },
     "PATCH /v1/kms/issuers/{issuerId}": {
-      "fields": [
-        "policies[].environments",
-        "signingKeys"
-      ],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": false
     },
     "POST /v1/kms/issuers/{issuerId}/keys": {
@@ -468,38 +374,23 @@
       "named": true
     },
     "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/revoke": {
-      "fields": [
-        "policies[].environments",
-        "signingKeys"
-      ],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": true
     },
     "POST /v1/kms/issuers/{issuerId}/policies": {
-      "fields": [
-        "environments"
-      ],
+      "fields": ["environments"],
       "named": false
     },
     "PATCH /v1/kms/issuers/{issuerId}/policies/{kind}/{policyKey}": {
-      "fields": [
-        "environments"
-      ],
+      "fields": ["environments"],
       "named": false
     },
     "POST /v1/kms/issuers/{issuerId}/sign/message": {
-      "fields": [
-        "algorithm",
-        "fingerprint",
-        "signature"
-      ],
+      "fields": ["algorithm", "fingerprint", "signature"],
       "named": true
     },
     "POST /v1/kms/issuers/{issuerId}/sign/token": {
-      "fields": [
-        "algorithm",
-        "fingerprint",
-        "token"
-      ],
+      "fields": ["algorithm", "fingerprint", "token"],
       "named": true
     },
     "GET /v1/log-drains": {
@@ -575,9 +466,7 @@
       "named": false
     },
     "POST /v1/projects/traces/session": {
-      "fields": [
-        "token"
-      ],
+      "fields": ["token"],
       "named": true
     },
     "POST /v1/projects/{idOrName}/avatar": {
@@ -683,9 +572,7 @@
       "named": false
     },
     "GET /v1/projects/{idOrName}/daemons": {
-      "fields": [
-        "daemons[].config.livenessProbe.httpGet.httpHeaders"
-      ],
+      "fields": ["daemons[].config.livenessProbe.httpGet.httpHeaders"],
       "named": false
     },
     "DELETE /v1/projects/{idOrName}/env": {
@@ -693,37 +580,23 @@
       "named": true
     },
     "GET /v1/projects/{idOrName}/env/{id}": {
-      "fields": [
-        "legacyValue",
-        "value",
-        "visibility"
-      ],
+      "fields": ["legacyValue", "value", "visibility"],
       "named": true
     },
     "PATCH /v1/projects/{idOrName}/protection-bypass": {
-      "fields": [
-        "protectionBypass"
-      ],
+      "fields": ["protectionBypass"],
       "named": true
     },
     "POST /v1/projects/{idOrName}/token": {
-      "fields": [
-        "token"
-      ],
+      "fields": ["token"],
       "named": true
     },
     "GET /v1/projects/{projectIdOrName}/feature-flags/sdk-keys": {
-      "fields": [
-        "data[].partialKeyValue"
-      ],
+      "fields": ["data[].partialKeyValue"],
       "named": true
     },
     "PUT /v1/projects/{projectIdOrName}/feature-flags/sdk-keys": {
-      "fields": [
-        "keyValue",
-        "partialKeyValue",
-        "tokenValue"
-      ],
+      "fields": ["keyValue", "partialKeyValue", "tokenValue"],
       "named": true
     },
     "DELETE /v1/projects/{projectIdOrName}/feature-flags/sdk-keys/{hashKey}": {
@@ -804,11 +677,7 @@
       "named": false
     },
     "POST /v1/projects/{projectId}/routes/generate": {
-      "fields": [
-        "route.actions[].headers",
-        "route.actions[].headers[].value",
-        "route.conditions[].value"
-      ],
+      "fields": ["route.actions[].headers", "route.actions[].headers[].value", "route.conditions[].value"],
       "named": false
     },
     "PATCH /v1/projects/{projectId}/routes/{routeId}": {
@@ -823,9 +692,7 @@
       "named": false
     },
     "GET /v1/registrar/domains/{domain}/auth-code": {
-      "fields": [
-        "authCode"
-      ],
+      "fields": ["authCode"],
       "named": true
     },
     "GET /v1/registrar/domains/{domain}/transfer": {
@@ -849,16 +716,11 @@
       "named": true
     },
     "GET /v1/security/firewall/bypass/rules": {
-      "fields": [
-        "conditionGroup[].conditions[].value",
-        "rules[].conditionGroup[].conditions[].value"
-      ],
+      "fields": ["conditionGroup[].conditions[].value", "rules[].conditionGroup[].conditions[].value"],
       "named": true
     },
     "POST /v1/security/firewall/bypass/rules": {
-      "fields": [
-        "conditionGroup[].conditions[].value"
-      ],
+      "fields": ["conditionGroup[].conditions[].value"],
       "named": true
     },
     "DELETE /v1/security/firewall/bypass/rules": {
@@ -916,10 +778,7 @@
       "named": false
     },
     "POST /v1/security/firewall/config/generate-rule": {
-      "fields": [
-        "rule.action.mitigate.rateLimit.keys",
-        "rule.conditionGroup[].conditions[].value"
-      ],
+      "fields": ["rule.action.mitigate.rateLimit.keys", "rule.conditionGroup[].conditions[].value"],
       "named": false
     },
     "GET /v1/security/firewall/config/{configVersion}": {
@@ -967,9 +826,7 @@
       "named": true
     },
     "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}": {
-      "fields": [
-        "image.layers[].env"
-      ],
+      "fields": ["image.layers[].env"],
       "named": false
     },
     "GET /v1/webhooks": {
@@ -977,9 +834,7 @@
       "named": true
     },
     "POST /v1/webhooks": {
-      "fields": [
-        "secret"
-      ],
+      "fields": ["secret"],
       "named": true
     },
     "GET /v1/webhooks/{id}": {
@@ -1066,13 +921,7 @@
       "named": false
     },
     "GET /v10/projects/{idOrName}/env": {
-      "fields": [
-        "envs",
-        "envs[].value",
-        "envs[].visibility",
-        "value",
-        "visibility"
-      ],
+      "fields": ["envs", "envs[].value", "envs[].visibility", "value", "visibility"],
       "named": true
     },
     "POST /v10/projects/{idOrName}/env": {
@@ -1290,9 +1139,7 @@
       "named": false
     },
     "GET /v2/deployments/{id}/aliases": {
-      "fields": [
-        "aliases[].protectionBypass"
-      ],
+      "fields": ["aliases[].protectionBypass"],
       "named": false
     },
     "POST /v2/deployments/{id}/aliases": {
@@ -1300,15 +1147,11 @@
       "named": true
     },
     "GET /v2/integrations/log-drains": {
-      "fields": [
-        "[].headers"
-      ],
+      "fields": ["[].headers"],
       "named": true
     },
     "POST /v2/integrations/log-drains": {
-      "fields": [
-        "headers"
-      ],
+      "fields": ["headers"],
       "named": true
     },
     "GET /v2/teams": {
@@ -1347,16 +1190,11 @@
       "named": true
     },
     "GET /v2/user": {
-      "fields": [
-        "user.limited",
-        "user.resourceConfig.security.ipBypass"
-      ],
+      "fields": ["user.limited", "user.resourceConfig.security.ipBypass"],
       "named": false
     },
     "PATCH /v3/domains/{domain}": {
-      "fields": [
-        "token"
-      ],
+      "fields": ["token"],
       "named": false
     },
     "GET /v3/events": {
@@ -1389,9 +1227,7 @@
       "named": false
     },
     "GET /v3/teams/{teamId}/members": {
-      "fields": [
-        "emailInviteCodes"
-      ],
+      "fields": ["emailInviteCodes"],
       "named": false
     },
     "POST /v3/user/tokens": {
@@ -1414,15 +1250,11 @@
       "named": true
     },
     "GET /v4/aliases": {
-      "fields": [
-        "aliases[].protectionBypass"
-      ],
+      "fields": ["aliases[].protectionBypass"],
       "named": false
     },
     "GET /v4/aliases/{idOrAlias}": {
-      "fields": [
-        "protectionBypass"
-      ],
+      "fields": ["protectionBypass"],
       "named": false
     },
     "GET /v5/user/tokens/{tokenId}": {
@@ -1458,9 +1290,7 @@
       "named": true
     },
     "GET /v8/artifacts/status": {
-      "fields": [
-        "readOnly"
-      ],
+      "fields": ["readOnly"],
       "named": false
     },
     "POST /v9/domains/{domain}/claim": {
@@ -1570,71 +1400,32 @@
       "named": false
     },
     "PATCH /v9/projects/{idOrName}/env/{id}": {
-      "fields": [
-        "legacyValue",
-        "value",
-        "visibility"
-      ],
+      "fields": ["legacyValue", "value", "visibility"],
       "named": true
     },
     "DELETE /v9/projects/{idOrName}/env/{id}": {
-      "fields": [
-        "[].legacyValue",
-        "[].value",
-        "[].visibility",
-        "legacyValue",
-        "value",
-        "visibility"
-      ],
+      "fields": ["[].legacyValue", "[].value", "[].visibility", "legacyValue", "value", "visibility"],
       "named": true
     }
   },
   "reviewed": {
     "operations": {
-      "PATCH /api-keys/{apiKeyID}/quota": [
-        "apiKey",
-        "quota"
-      ],
-      "GET /ai-gateway/budgets/list": [
-        "defaultCoveredCounts.api-key"
-      ],
-      "GET /v8/artifacts/status": [
-        "readOnly"
-      ],
+      "PATCH /api-keys/{apiKeyID}/quota": ["apiKey", "quota"],
+      "GET /ai-gateway/budgets/list": ["defaultCoveredCounts.api-key"],
+      "GET /v8/artifacts/status": ["readOnly"],
       "GET /v1/security/firewall/bypass/rules": [
         "condition",
         "conditionGroup[].conditions[?header].value",
         "rules[].condition",
         "rules[].conditionGroup[].conditions[?header].value"
       ],
-      "POST /v1/security/firewall/bypass/rules": [
-        "condition",
-        "conditionGroup[].conditions[?header].value"
-      ],
-      "POST /v1/connect/connectors": [
-        "appTokens",
-        "userTokens"
-      ],
-      "GET /v1/connect/connectors/{connector}": [
-        "appTokens",
-        "userTokens"
-      ],
-      "POST /v1/connect/connectors/{connector}/managed/eject": [
-        "appTokens",
-        "userTokens"
-      ],
-      "PATCH /v1/connect/connectors/{connector}/trigger-destinations": [
-        "appTokens",
-        "userTokens"
-      ],
-      "GET /v2/connect/connectors": [
-        "connectors[].appTokens",
-        "connectors[].userTokens"
-      ],
-      "PATCH /v2/connect/connectors/{connector}": [
-        "connector.appTokens",
-        "connector.userTokens"
-      ],
+      "POST /v1/security/firewall/bypass/rules": ["condition", "conditionGroup[].conditions[?header].value"],
+      "POST /v1/connect/connectors": ["appTokens", "userTokens"],
+      "GET /v1/connect/connectors/{connector}": ["appTokens", "userTokens"],
+      "POST /v1/connect/connectors/{connector}/managed/eject": ["appTokens", "userTokens"],
+      "PATCH /v1/connect/connectors/{connector}/trigger-destinations": ["appTokens", "userTokens"],
+      "GET /v2/connect/connectors": ["connectors[].appTokens", "connectors[].userTokens"],
+      "PATCH /v2/connect/connectors/{connector}": ["connector.appTokens", "connector.userTokens"],
       "GET /v1/drains": [
         "drains[].delivery.headers{}",
         "drains[].delivery.secret",
@@ -1668,38 +1459,15 @@
       ],
       "POST /v1/log-drains": [],
       "GET /v1/log-drains/{id}": [],
-      "GET /v2/integrations/log-drains": [
-        "[].headers{}",
-        "origin:[].url"
-      ],
-      "POST /v2/integrations/log-drains": [
-        "headers{}",
-        "origin:url"
-      ],
-      "GET /v1/webhooks": [
-        "origin:[].url"
-      ],
-      "POST /v1/webhooks": [
-        "origin:url",
-        "secret"
-      ],
-      "GET /v1/webhooks/{id}": [
-        "origin:url"
-      ],
-      "GET /v1/env": [
-        "data[].value"
-      ],
-      "POST /v1/env": [
-        "created[].value",
-        "failed[].error.value"
-      ],
-      "PATCH /v1/env": [
-        "failed[].error.value",
-        "updated[].value"
-      ],
-      "DELETE /v1/env": [
-        "failed[].error.value"
-      ],
+      "GET /v2/integrations/log-drains": ["[].headers{}", "origin:[].url"],
+      "POST /v2/integrations/log-drains": ["headers{}", "origin:url"],
+      "GET /v1/webhooks": ["origin:[].url"],
+      "POST /v1/webhooks": ["origin:url", "secret"],
+      "GET /v1/webhooks/{id}": ["origin:url"],
+      "GET /v1/env": ["data[].value"],
+      "POST /v1/env": ["created[].value", "failed[].error.value"],
+      "PATCH /v1/env": ["failed[].error.value", "updated[].value"],
+      "DELETE /v1/env": ["failed[].error.value"],
       "PATCH /v1/env/{id}/unlink/{projectId}": [],
       "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": [
         "items"
@@ -1717,9 +1485,7 @@
         "projects[].security.firewallBypassIps",
         "projects[].usageStatus.bypassThrottleUntil"
       ],
-      "GET /v1/projects/{idOrName}/daemons": [
-        "daemons.config.livenessProbe.httpGet.httpHeaders.value"
-      ],
+      "GET /v1/projects/{idOrName}/daemons": ["daemons.config.livenessProbe.httpGet.httpHeaders.value"],
       "POST /v1/projects/{idOrName}/avatar": [
         "dismissedToasts[].value",
         "env[].legacyValue",
@@ -1801,9 +1567,7 @@
         "active.rules[].conditionGroup[].conditions[?header].value",
         "active.rulesets[].conditionGroup[].conditions[?header].value"
       ],
-      "POST /v1/security/firewall/config/generate-rule": [
-        "rule.conditionGroup[].conditions[?header].value"
-      ],
+      "POST /v1/security/firewall/config/generate-rule": ["rule.conditionGroup[].conditions[?header].value"],
       "GET /v1/security/firewall/config/{configVersion}": [
         "conditions[].conditionGroup[].conditions[?header].value",
         "rules[].conditionGroup[].conditions[?header].value",
@@ -1819,9 +1583,7 @@
         "store.secretRotationRequestedReason",
         "store.secrets"
       ],
-      "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}": [
-        "image.layers[].env"
-      ],
+      "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}": ["image.layers[].env"],
       "GET /v10/projects": [
         "[].env[].legacyValue",
         "[].env[].value",
@@ -1930,16 +1692,9 @@
         "services[].routes[].missing[?header].value",
         "services[].routes[].transforms[].args"
       ],
-      "GET /v2/deployments/{id}/aliases": [
-        "aliases[].protectionBypass",
-        "aliases[].protectionBypass@keys"
-      ],
-      "GET /v2/user": [
-        "user.resourceConfig.security.ipBypass"
-      ],
-      "PATCH /v3/domains/{domain}": [
-        "token"
-      ],
+      "GET /v2/deployments/{id}/aliases": ["aliases[].protectionBypass", "aliases[].protectionBypass@keys"],
+      "GET /v2/user": ["user.resourceConfig.security.ipBypass"],
+      "PATCH /v3/domains/{domain}": ["token"],
       "GET /v3/events": [
         "events[?env].payload.value",
         "events[].payload.apiKey",
@@ -1949,20 +1704,10 @@
         "events[].payload.newEnvVar.value",
         "events[].payload.oldEnvVar.value"
       ],
-      "GET /v4/aliases": [
-        "aliases[].protectionBypass",
-        "aliases[].protectionBypass@keys"
-      ],
-      "GET /v4/aliases/{idOrAlias}": [
-        "protectionBypass",
-        "protectionBypass@keys"
-      ],
-      "GET /v5/user/tokens/{tokenId}": [
-        "token"
-      ],
-      "GET /v6/user/tokens": [
-        "tokens"
-      ],
+      "GET /v4/aliases": ["aliases[].protectionBypass", "aliases[].protectionBypass@keys"],
+      "GET /v4/aliases/{idOrAlias}": ["protectionBypass", "protectionBypass@keys"],
+      "GET /v5/user/tokens/{tokenId}": ["token"],
+      "GET /v6/user/tokens": ["tokens"],
       "GET /v9/projects/{idOrName}": [
         "dismissedToasts[].value",
         "env[].legacyValue",
@@ -1989,34 +1734,18 @@
         "security.firewallBypassIps",
         "usageStatus.bypassThrottleUntil"
       ],
-      "PATCH /v9/projects/{idOrName}/env/{id}": [
-        "legacyValue",
-        "value"
-      ],
-      "DELETE /v9/projects/{idOrName}/env/{id}": [
-        "[].legacyValue",
-        "[].value",
-        "legacyValue",
-        "value"
-      ],
+      "PATCH /v9/projects/{idOrName}/env/{id}": ["legacyValue", "value"],
+      "DELETE /v9/projects/{idOrName}/env/{id}": ["[].legacyValue", "[].value", "legacyValue", "value"],
       "GET /v1/integrations/configuration/{id}/products": [
         "origin:products[].protocols.logDrain.endpoint",
         "origin:products[].protocols.traceDrain.endpoint",
         "products[].protocols.logDrain.headers{}",
         "products[].protocols.traceDrain.headers{}"
       ],
-      "GET /v2/teams": [
-        "teams[].inviteCode"
-      ],
-      "GET /v2/teams/{teamId}": [
-        "inviteCode"
-      ],
-      "PATCH /v2/teams/{teamId}": [
-        "inviteCode"
-      ],
-      "GET /v3/teams/{teamId}/members": [
-        "emailInviteCodes"
-      ]
+      "GET /v2/teams": ["teams[].inviteCode"],
+      "GET /v2/teams/{teamId}": ["inviteCode"],
+      "PATCH /v2/teams/{teamId}": ["inviteCode"],
+      "GET /v3/teams/{teamId}/members": ["emailInviteCodes"]
     },
     "resources": {},
     "bindings": {}

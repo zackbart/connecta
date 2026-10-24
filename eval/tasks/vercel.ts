@@ -147,14 +147,17 @@ async function reference(suffix: string, ctx: ReferenceContext) {
   } else if (suffix === "deployment-paging") {
     let next: unknown;
     do {
-      const r = await read(ctx, "vercel_api_read", {
-        path: "/v7/deployments",
-        query: { projectId: "prj_web", target: "production", limit: 100, ...(next ? { until: next } : {}) },
+      // Keep continuation visible on both surfaces: reduce the full page in
+      // the guest before the execution output budget can cut its trailing page.
+      const query = { projectId: "prj_web", target: "production", limit: 100, ...(next ? { until: next } : {}) };
+      const r = await ctx.call("execute_code", {
+        code: `async () => { const r=await connecta.call("vercel_rest.vercel_api_read", ${JSON.stringify({ path: "/v7/deployments", query })}); return {page:r.data.page}; }`,
       });
       if (r.isError) throw Error(r.text);
-      const parsed = JSON.parse(r.text);
-      const page = (parsed.data ?? parsed).page;
-      next = page?.nextCursor ?? page?.next;
+      next =
+        /"nextCursor"\s*:\s*"([^"]+)"/.exec(r.text)?.[1] ??
+        /"next"\s*:\s*"([^"]+)"/.exec(r.text)?.[1] ??
+        /"next"\s*:\s*(\d+)/.exec(r.text)?.[1];
     } while (next);
   } else if (suffix === "domain-hatch") {
     await read(ctx, "vercel_api_search", { query: "get project domain", method: "GET" });

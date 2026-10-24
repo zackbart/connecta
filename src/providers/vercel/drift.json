@@ -471,8 +471,8 @@
       "PUT /v8/certs"
     ],
     "evidence": {
-      "openapi.json": "sha256:6d106e78d9da0bb11b0223e961a67d414864d1e9dcafa16c4bd26abdbf22d63a",
-      "value-safety.json": "sha256:ac90e286c6e7fb468db105694fa712bea1b5b4c152141e5423bdcd5ea621aaac"
+      "openapi.json": "sha256:8eb845c92d7077200abbae6f10dc6c8e2b458587c22a073f453cb00d734935d6",
+      "value-safety.json": "sha256:6f8dc84ccf19bf7e28f82b3bf595ec6bf5ad6cfcc765b2d5f9109098fe0bda96"
     }
   },
   "checks": [

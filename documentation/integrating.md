@@ -110,7 +110,8 @@ A request must not choose its own account. Gmail never sends mail, and Drive nev
 deletes files.
 
 Stripe, Vercel, and Cloudflare vendor only their APIs.
-Keep their existing API auth choices.
+Keep their existing API auth choices. For token setup, team routing, bounded logs
+and upload limits, see [Vercel setup](./providers.md#vercel).
 GitHub retains its six App-authenticated REST tools. Hosted servers use distinct
 `remoteMcp()` entries, separate from maintained API providers.
 

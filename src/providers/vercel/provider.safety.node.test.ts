@@ -22,6 +22,7 @@ describeValueSafety("Vercel", {
   echo: {
     tool: "vercel_api_read",
     args: { path: "/v1/drains/d1" },
+    stream: { tool: "vercel_api_read", args: { path: "/v3/deployments/dpl_fixture/events" } },
     respond: (marker) =>
       Response.json({ error: { code: "bad_request", message: `drain secret ${marker} rejected` } }, { status: 400 }),
   },

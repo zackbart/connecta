@@ -344,3 +344,40 @@ HTTP 409 remains generic and is not `conflict`. Other classification and write
 settlement rules remain, while messages become complete standalone sentences.
 Writes take no idempotency key and are sent once; reconcile an unknown outcome
 with a read. Setup is in [Maintained provider setup](./providers.md#overflow).
+
+## Vercel
+
+The four `vercel_api_search`, `vercel_api_details`, `vercel_api_read` and
+`vercel_api_write` names and `vercel_api_upload` remain. Update programs as follows:
+
+| Previous surface                                           | 0.35 replacement                                                                                                                                                                                     |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `delete_project_env_var({projectId,envVarId,teamId})`      | `vercel_api_write({method:"DELETE",path:"/v9/projects/<projectId>/env/<envVarId>",query:{teamId}})`; encode each path id as one URI segment. Both calls are destructive; use the host's write route. |
+| Hatch `select`                                             | `fields`, checked before dispatch and applied after safety. Dot paths are rooted in vendor `data`, for example `deployments.uid`. Undeclared response shapes refuse fields.                          |
+| `list_teams({until})`                                      | `list_teams({cursor:page.nextCursor})`; `limit` remains, default 20/max 100.                                                                                                                         |
+| Named result `teams` or `variables`                        | `items`; both list tools return a `page`. Environment metadata is a complete terminal list.                                                                                                          |
+| `list_teams.defaultTeamId`                                 | Connection guide context; it was a routing default, not a resource filter.                                                                                                                           |
+| Hatch `page.next`                                          | Signed `page.nextCursor`; return it unchanged in `query[page.param]`, with `page.in:"query"`. Preserve path, selectors, filters and fields.                                                          |
+| `get_runtime_logs.maxRows`                                 | `limit`, default 200/max 1,000. `waitMs` and level filtering remain.                                                                                                                                 |
+| Build-log boolean `truncated`, log-row `textTruncated`     | `truncated: string[]` at the result root, such as `events[]`, `events[].text` or `logs[].text`. Runtime `stopped` still explains collection termination.                                             |
+| Undocumented upload text `data.contentType` / `data.bytes` | Removed. JSON-only acknowledgements must be JSON; explicit-byte input and upload `digest` remain.                                                                                                    |
+| HTTP 409 → `invalid_args`                                  | Generic `connector_call_failed`; no undocumented conflict meaning.                                                                                                                                   |
+
+All named reads now take `fields`; for named lists it selects item properties.
+Search defaults to six hits/max eight and 16 KiB per complete answer; continue
+with its cursor. Details continue losslessly within 32 KiB. No supported versioned
+path syntax changes. Unexpected HTML/text/binary replies to JSON-only operations
+fail rather than report successful writes; an already-dispatched write is not
+resent, and its unknown outcome requires reconciliation. Environment values,
+deployment tokens and integration secrets remain withheld in every reply shape.
+
+The reviewed public OpenAPI pin adds four nondeprecated operations and changes
+eight request contracts; six new deprecated operations, including an integration
+secrets PUT, remain uncallable. Configured teamId remains default routing with
+intentional teamId/slug/null overrides, consistently across hatches, named tools
+and uploads. This does not restrict a token's team access. See [Vercel setup](./providers.md#vercel).
+
+Numeric hatch `query.until` remains a first-page time-window anchor; continuation
+uses the signed token. Raw opaque vendor tokens cannot replace signed tokens.
+Vendor record-count limits are validated as positive integers before dispatch,
+with a maximum only where the reviewed contract declares one.

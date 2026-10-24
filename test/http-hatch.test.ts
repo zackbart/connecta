@@ -36,6 +36,7 @@ import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
 import { fixture as pcoFixture } from "../src/providers/planning-center/fixtures.js";
 import { fixture as tithelyFixture } from "../src/providers/tithely/fixtures.js";
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
+import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
 import { fixture as breezeFixture } from "../src/providers/breeze/fixtures.js";
 
 const DATA: OpenApiData = {
@@ -239,7 +240,7 @@ it(
     const first = (await call("search", { query: "items", limit: 3 })) as { operations: Array<{ path: string }> };
     expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
     const fixtures = new Map(
-      [stripeFixture, pcoFixture, tithelyFixture, overflowFixture, breezeFixture].map((fixture) => [
+      [stripeFixture, pcoFixture, tithelyFixture, overflowFixture, breezeFixture, vercelFixture].map((fixture) => [
         fixture.name,
         fixture.create(),
       ]),
@@ -256,6 +257,16 @@ it(
       const rank = found.operations.findIndex((op) => op.method === method && op.path === path) + 1;
       expect(rank, `${provider}: ${query}`).toBeGreaterThan(0);
       expect(rank, `${provider}: ${query}`).toBeLessThanOrEqual(maxRank);
+      if (provider === "vercel") {
+        const filtered = (await connector.callTool(
+          `${prefix}_api_search`,
+          { ...args, method },
+          searchContext,
+        )) as typeof found;
+        const filteredRank = filtered.operations.findIndex((op) => op.method === method && op.path === path) + 1;
+        expect(filteredRank, `Vercel method-filtered: ${query}`).toBeGreaterThan(0);
+        expect(filteredRank, `Vercel method-filtered: ${query}`).toBeLessThanOrEqual(maxRank);
+      }
       expect(found.operations.length).toBeLessThanOrEqual(8);
       expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
       expect(await connector.callTool(`${prefix}_api_search`, args, searchContext)).toEqual(found);
@@ -1320,7 +1331,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   let routingDefault = "scope-a";
   const routed = setup({
     data: pageData("until"),
-    pages: { "GET /items": vercelPage },
+    pages: { "GET /items": { ...vercelPage, initialAnchor: true } },
     binding: {
       review: "Fixture routing default resolved before signed continuation binding.",
       query: (call) => ({ ...call.query, tag: call.query["tag"] ?? [routingDefault] }),
@@ -1339,7 +1350,8 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     },
   });
   response = () => Response.json({ pagination: { next: 123 } });
-  const routedFirst = (await routed.call("read", { path: "/items" })) as any;
+  const routedFirst = (await routed.call("read", { path: "/items", query: { until: 500 } })) as any;
+  expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("500");
   expect(new URL(sent.at(-1)!.url).searchParams.get("tag")).toBe("scope-a");
   routingDefault = "scope-b";
   const routedSends = sent.length;
@@ -1350,6 +1362,33 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   response = () => Response.json({ pagination: { next: null } });
   await routed.call("read", { path: "/items", query: { tag: ["scope-a"], until: routedFirst.page.nextCursor } });
   expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("123");
+  // Vercel JSON-only writes must not accept HTML or binary acknowledgements (#1000).
+  const hosting = vercelFixture.create();
+  const hostingContext = {
+    ...connectorContext(storage),
+    credential: { get: async () => "k7Q9w2E4r6T8y1U3", getAll: async () => ({ value: "k7Q9w2E4r6T8y1U3" }) },
+  };
+  for (const [name, args] of [
+    ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web", body: { framework: "nextjs" } }],
+    ["update_project_env_var", { projectId: "web", envVarId: "env_1", comment: "rotation" }],
+    ["vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "hello" }],
+  ] as const)
+    for (const type of ["text/html", "application/octet-stream"]) {
+      sent = [];
+      response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
+      await expect(hosting.callTool(name, args, hostingContext)).rejects.toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+        writeOutcome: "unknown",
+        message: expect.stringContaining("check the target before repeating"),
+      });
+      expect(sent).toHaveLength(1);
+    }
+  sent = [];
+  await expect(hosting.callTool("vercel_api_read", { path: "/v7/deployments" }, hostingContext)).rejects.toMatchObject({
+    message: expect.not.stringContaining("Whether the write"),
+  });
+  expect(sent).toHaveLength(1);
   // Body continuations use the same binding, without ever dispatching the opaque bytes.
   const bodyAdapter: HatchPageAdapter = { ...stripePage, param: "after", in: "body" };
   const bodyPaged = setup({ data: pageData("after", "body"), pages: { "POST /query": bodyAdapter } });

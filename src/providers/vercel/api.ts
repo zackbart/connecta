@@ -1,13 +1,13 @@
 // Vercel's pinned contract, authentication, failures and value-safety boundary.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
-import { Refusal, type VendorErrors } from "../../http/errors.js";
+import { Refusal, StatusFailure, type VendorErrors } from "../../http/errors.js";
 import { restSafety } from "../../http/safety.js";
 import { Credentials } from "../../http/services.js";
-import { get, post, patch, del, type Connection, type ConnectOptions } from "../../http/vendor.js";
+import { get, post, patch, type Connection, type ConnectOptions, type SendOptions } from "../../http/vendor.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
-import type { RestCall, RestPage, RestReadPost } from "../_shared/rest/tools.js";
+import type { RestCall, RestReadPost } from "../_shared/rest/tools.js";
 import {
   valueSafety,
   withholdEmbeddedUrlsIn,
@@ -15,8 +15,10 @@ import {
   refuseWithheldBase64,
 } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
+import { discoveryIndex } from "./lib/index.js";
 import { VERCEL_VALUE_SAFETY } from "./safety.js";
-import { skill } from "./skill.generated.js";
+import type { HatchBinding, HatchDeclaration } from "../../http/hatch.js";
+import { vercelPage as timestampPage, type HatchPageAdapter } from "../../http/hatch-paging.js";
 import { completeRows } from "./lib/logs.js";
 import type { VercelTokenOptions } from "./index.js";
 export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -83,6 +85,8 @@ export function reviewedCode(value: unknown): string | undefined {
 }
 
 export const vercelErrors: VendorErrors = {
+  meanings: { unknownId: "not_found", provesAbsence: true, conflicts: [] },
+  factVocabulary: { code: [...REVIEWED_CODES] },
   numericFacts: {
     retryAfterMs: {
       header: "retry-after",
@@ -96,7 +100,15 @@ export const vercelErrors: VendorErrors = {
     },
   },
   provider: "Vercel",
-  facts: (body) => ({ code: reviewedCode(record(record(body)["error"])["code"]) }),
+  facts: (body) => ({
+    code:
+      reviewedCode(record(record(body)["error"])["code"]) ??
+      reviewedCode(
+        record(
+          record((Array.isArray(record(body)["failed"]) ? (record(body)["failed"] as unknown[]) : [])[0])["error"],
+        )["code"],
+      ),
+  }),
   detail: ({ body, status, withheld, facts }) => {
     const root = record(withholdEmbeddedUrlsIn(body));
     const error = record(root["error"]);
@@ -130,18 +142,10 @@ export const vercelErrors: VendorErrors = {
       words: (detail) =>
         `${detail} Confirm the team, project, deployment, domain, or environment-variable id with a list read.`,
     }),
-    400: () => ({ code: "invalid_args" }),
-    409: () => ({ code: "invalid_args" }),
-    422: () => ({ code: "invalid_args" }),
-    serverError: ({ numbers, retryAfterMs }) => ({
-      code: "unavailable",
-      retryAfterMs: retryAfterMs ?? numbers["resetAfterMs"],
-      words: (detail) => `${detail} Vercel is failing upstream.`,
-    }),
   },
   unreadable: "Vercel returned malformed JSON.",
 };
-export const vercelIndex = new OperationIndex(openapi, { vendor: "vercel", title: "Vercel" });
+export const vercelIndex = new OperationIndex(discoveryIndex(openapi), { vendor: "vercel", title: "Vercel" });
 export const vercelSafety = valueSafety(VERCEL_VALUE_SAFETY, () => vercelIndex);
 const Query = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Array(Schema.String)]));
 const params = (...names: string[]) => Schema.Struct(Object.fromEntries(names.map((name) => [name, Schema.String])));
@@ -164,11 +168,6 @@ export const updateEnv = patch("updateEnv", "/v9/projects/:idOrName/env/:id", {
   payload: Schema.Unknown,
   success: Schema.Unknown,
 });
-export const deleteEnv = del("deleteEnv", "/v9/projects/:idOrName/env/:id", {
-  params: params("idOrName", "id"),
-  query: Query,
-  success: Schema.Unknown,
-});
 export const buildLogs = get("buildLogs", "/v3/deployments/:idOrUrl/events", {
   params: params("idOrUrl"),
   query: Query,
@@ -179,59 +178,70 @@ export const runtimeLogs = get("runtimeLogs", "/v1/projects/:projectId/deploymen
   query: Query,
   success: Schema.Unknown,
 });
-export const named = [currentUser, teams, projectEnv, upsertEnv, updateEnv, deleteEnv, buildLogs, runtimeLogs];
-const binaryType = (type: string) =>
-  type !== "" &&
-  !/\bjson\b|\+json\b|\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type) &&
-  !/^text\/|\bxml\b|\bcsv\b/.test(type);
+export const named = [currentUser, teams, projectEnv, upsertEnv, updateEnv, buildLogs, runtimeLogs];
+const canonicalTemplate = (path: string) => path.replace(/:([^/]+)/g, "{$1}");
+
+/** Only documented stream media and bounded named logs opt out of JSON. */
+const isStream = (type: string) =>
+  /^(?:application\/(?:stream\+json|x-ndjson|jsonl))$/.test(type.split(";", 1)[0]!.trim().toLowerCase());
 export const VercelApi = {
   ...indexedVendor("vercel", vercelIndex, named),
   textBodies: {
-    review: "Legacy Vercel replies retain text, XML, CSV, NDJSON and bounded log prefixes. Errors are JSON-only.",
-    forResponse: (status: number, operation: { flags?: Readonly<Record<string, true>> }, type = "") =>
-      status >= 200 && status <= 299
-        ? operation.flags?.["log"]
-          ? ("text" as const)
-          : operation.flags?.["upload"]
-            ? ("json-or-text" as const)
-            : !/\bjson\b|\+json\b/.test(type) || /\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type)
-              ? ("text" as const)
-              : undefined
+    review:
+      "Pinned 4a06e85c documents stream+json for build events/runtime logs only. Bounded named log readers also accept JSON arrays/NDJSON equivalents. JSON-only writes never accept HTML/text (#1000).",
+    forResponse: (
+      status: number,
+      operation: { template: string; flags?: Readonly<Record<string, true>> },
+      type = "",
+    ) =>
+      status >= 200 &&
+      status <= 299 &&
+      ["/v3/deployments/{idOrUrl}/events", "/v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs"].includes(
+        canonicalTemplate(operation.template),
+      ) &&
+      (isStream(type) || (operation.flags?.["log"] && /^application\/(?:json|[^/]+\+json)(?:;|$)/i.test(type)))
+        ? ("text" as const)
         : undefined,
   },
   binaryBodies: {
-    review: "Legacy Vercel hatches retain bounded binary replies with sent-secret checks before base64.",
-    forResponse: (_status: number, operation: { flags?: Readonly<Record<string, true>> }, type: string) =>
-      !operation.flags?.["upload"] && binaryType(type),
+    review:
+      "Pinned sandbox fs/read alone declares application/octet-stream success. No other operation may acknowledge a JSON write as binary.",
+    forResponse: (status: number, operation: { template: string }, type: string) =>
+      status >= 200 &&
+      status <= 299 &&
+      canonicalTemplate(operation.template) === "/v2/sandboxes/sessions/{sessionId}/fs/read" &&
+      type.split(";", 1)[0]!.trim().toLowerCase() === "application/octet-stream",
   },
 };
-export const result: NonNullable<ConnectOptions["result"]> = (body, answer) =>
-  Effect.sync(() => {
-    if (answer.operation.method === "HEAD")
-      return Object.fromEntries([...answer.headers].filter(([name]) => name !== "set-cookie"));
-    if (answer.operation.flags?.["log"]) return typeof body === "string" ? completeRows(body) : [];
-    if (answer.operation.flags?.["upload"] && answer.bodyFormat === "text")
-      return body === ""
-        ? null
-        : {
-            contentType: answer.headers.get("content-type") ?? "",
-            bytes: new TextEncoder().encode(String(body)).length,
-          };
-    if (answer.bodyFormat !== "text" || typeof body !== "string") return body;
-    const type = (answer.headers.get("content-type") ?? "").toLowerCase();
-    if (/\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type))
-      return body
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-        .map((line) => {
-          try {
-            return JSON.parse(line) as unknown;
-          } catch {
-            return { line };
-          }
-        });
-    return body === "" ? null : body;
-  });
+export const result: NonNullable<ConnectOptions["result"]> = (body, answer) => {
+  if (answer.operation.method === "HEAD")
+    return Effect.succeed(Object.fromEntries([...answer.headers].filter(([name]) => name !== "set-cookie")));
+  if (
+    canonicalTemplate(answer.operation.template) === "/v10/projects/{idOrName}/env" &&
+    answer.operation.method === "POST"
+  ) {
+    const payload = record(body);
+    if (Array.isArray(payload["failed"]) && payload["failed"].length)
+      return Effect.fail(
+        new StatusFailure({ status: 400, headers: answer.headers, body, operation: answer.operation }),
+      );
+    const created = Array.isArray(payload["created"]) ? payload["created"][0] : payload["created"];
+    const variable = record(created ?? payload);
+    if (!variable["id"] || !variable["key"] || !variable["type"])
+      return Effect.fail(
+        new Refusal({
+          error: new ConnectorCallError(
+            "connector_call_failed",
+            "Vercel accepted the environment-variable write without returning the created variable.",
+            { retryable: false },
+          ),
+        }),
+      );
+  }
+  if (answer.operation.flags?.["log"]) return Effect.succeed(typeof body === "string" ? completeRows(body) : []);
+  if (answer.bodyFormat === "text" && typeof body === "string") return Effect.succeed(completeRows(body));
+  return Effect.succeed(body);
+};
 export const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
   const token = typeof values?.value === "string" ? values.value.trim() : undefined;
@@ -269,44 +279,6 @@ function queryNamesOf(operations: OperationIndex, op: Operation): ReadonlySet<st
   return names;
 }
 
-const URL_SHAPE = /^[a-z][a-z0-9+.-]*:\/\//i;
-
-/**
- * Cursors: lists answer `pagination.next` (a millisecond timestamp or an
- * opaque string) or a top-level `nextCursor`/`cursor`. The parameter to pass
- * it back as is the one the operation declares in the index: `until` (or
- * `from`) for timestamps, `cursor` or `next` for opaque strings. A cursor that
- * is a URL is never echoed: it can carry credentials.
- */
-export function vercelPage(operations: OperationIndex, data: unknown, call: RestCall): RestPage | undefined {
-  const body = record(data);
-  const accepts = queryNamesOf(operations, call.op);
-  const paramFor = (next: string | number): string | undefined =>
-    typeof next === "number"
-      ? ["until", "next", "from", "since"].find((name) => accepts.has(name))
-      : ["cursor", "next", ...(/^\d+$/.test(next) ? ["until", "from"] : [])].find((name) => accepts.has(name));
-  const found = (next: unknown): RestPage | undefined => {
-    if (typeof next === "number" && Number.isFinite(next)) {
-      const param = paramFor(next);
-      return { hasMore: true, next: String(next), ...(param ? { param } : {}) };
-    }
-    if (typeof next === "string" && next !== "") {
-      if (URL_SHAPE.test(next)) return { hasMore: true };
-      const param = paramFor(next);
-      return { hasMore: true, next, ...(param ? { param } : {}) };
-    }
-    return undefined;
-  };
-  if (isRecord(body["pagination"])) {
-    const pagination = body["pagination"];
-    return found(pagination["next"] ?? pagination["nextCursor"]) ?? { hasMore: false };
-  }
-  for (const name of ["nextCursor", "cursor", "next"]) {
-    if (name in body) return found(body[name]) ?? { hasMore: false };
-  }
-  return undefined;
-}
-
 export const refuse = (call: RestCall): string | undefined => {
   if (
     call.method === "PATCH" &&
@@ -319,7 +291,7 @@ export const refuse = (call: RestCall): string | undefined => {
     return "Connecta never asks Vercel to decrypt environment values. Use list_project_env_vars for metadata.";
   }
   if (call.op.path === "/v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs") {
-    return "Runtime logs are a live stream that never ends on its own. Read them with get_runtime_logs, which stops after waitMs or maxRows.";
+    return "Runtime logs are a live stream that never ends on its own. Read them with get_runtime_logs, which stops after waitMs or limit.";
   }
   if (truthy(call.query["follow"])) {
     return "follow streams live events until the connection drops. Omit it (or pass 0); read build events with get_deployment_build_logs.";
@@ -397,7 +369,11 @@ export function queryPairs(call: RestCall): [string, string][] {
     (Array.isArray(value) ? value : [value]).map((value) => [key, value] as [string, string]),
   );
 }
-export function sendVercel(connection: Connection, call: RestCall) {
+export function sendVercel(
+  connection: Connection,
+  call: RestCall,
+  sendOptions?: SendOptions,
+): ReturnType<Connection["sendPath"]> {
   return checked(() => {
     const server = checkServer(call.op.server);
     if (server) invalid(server);
@@ -406,22 +382,21 @@ export function sendVercel(connection: Connection, call: RestCall) {
     Effect.flatMap((query) =>
       admit(call).pipe(
         Effect.flatMap(() =>
-          connection.sendPath({
-            method: call.method,
-            path: call.path,
-            template: call.op.path,
-            query: Object.entries(query).flatMap(([key, value]) =>
-              (Array.isArray(value) ? value : [value]).map((value) => [key, value] as const),
-            ),
-            ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
-          }),
+          connection.sendPath(
+            {
+              method: call.method,
+              path: call.path,
+              template: call.op.path,
+              query: Object.entries(query).flatMap(([key, value]) =>
+                (Array.isArray(value) ? value : [value]).map((value) => [key, value] as const),
+              ),
+              ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
+            },
+            sendOptions,
+          ),
         ),
       ),
     ),
-    Effect.map((answer) => {
-      const page = vercelPage(vercelIndex, answer.data, call);
-      return { status: answer.status, data: answer.data ?? null, ...(page ? { page } : {}) };
-    }),
   );
 }
 export const probe = {
@@ -445,27 +420,106 @@ export const probe = {
             : "Vercel did not accept the token.",
   }),
 };
-function instructionsSection(instructions: string | undefined): string {
-  const text = instructions?.trim();
-  return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
-function tokenUsageGuide(purpose: string, teamId: string | undefined, instructions: string | undefined): string {
-  const { key, shared } = skill.fragments;
-  const scope = teamId
-    ? `This connection defaults to team \`${teamId}\`: operations that accept a team get it unless a call passes \`teamId\` (or \`slug\`), and \`teamId: null\` targets the token owner's personal account.`
-    : "This connection defaults to the token owner's personal account. Call `list_teams`, then pass `teamId` for team-owned resources.";
-  return `# Vercel usage
-
-Connecta's REST connector to the Vercel API with one access token. Account purpose: ${purpose}
-
-${scope}${key}${shared}${instructionsSection(instructions)}`;
-}
-
 export function usageGuide(options: Readonly<VercelTokenOptions>) {
+  const team = defaultTeam(options);
   return {
-    content: tokenUsageGuide(options.purpose, defaultTeam(options), options.instructions),
-    summary: "One access token over REST: search operations, read details, then read or write. Value-safe env vars.",
+    context: [
+      `Vercel REST access token is already configured. Account purpose: ${options.purpose}`,
+      team
+        ? `Routing defaults to team ${team}. This is not a restriction or tenant pin: an explicit teamId or slug overrides it, and teamId: null selects personal scope. The token's Vercel permissions enforce access.`
+        : "Routing defaults to the token owner's personal account. Explicit teamId or slug selects a team within the token's permissions.",
+      ...(options.readOnly ? ["This connection is read-only."] : []),
+    ],
     required: true,
+  };
+}
+
+function operationRefusal(op: Operation): string | undefined {
+  return (
+    vercelSafety.refusal(op.method, op.path) ??
+    checkServer(op.server) ??
+    (/octet-stream|^multipart\//.test(vercelIndex.bodyType(op) ?? "")
+      ? "This operation takes explicit bytes; use vercel_api_upload."
+      : undefined)
+  );
+}
+export const VERCEL_VERDICTS: HatchDeclaration["verdicts"] = Object.fromEntries(
+  vercelIndex.ops.map((op) => [
+    `${op.method} ${op.path}`,
+    operationRefusal(op)
+      ? "refuse"
+      : op.method === "GET" ||
+          op.method === "HEAD" ||
+          READ_POSTS.some(([method, path]) => method === op.method && path === op.path)
+        ? "read"
+        : "destructive",
+  ]),
+);
+/** Only indexed parameters and documented response continuation names opt in. */
+const paginationPage = (param: string, timestamp = false): HatchPageAdapter => ({
+  ...timestampPage,
+  param,
+  ...(timestamp ? { initialAnchor: true } : {}),
+  next(data, call) {
+    const pagination = record(record(data)["pagination"]);
+    if (!Object.keys(pagination).length) return undefined;
+    if (pagination["hasNext"] === false || pagination["hasMore"] === false) return null;
+    const next = pagination["next"] ?? pagination["nextCursor"];
+    if (next === undefined) {
+      if (pagination["hasNext"] === true || pagination["hasMore"] === true)
+        throw new ConnectorCallError("connector_call_failed", "Vercel returned invalid paging metadata.", {
+          retryable: false,
+        });
+      return null;
+    }
+    return timestampPage.next({ pagination: { next } }, call);
+  },
+});
+export const VERCEL_PAGES: NonNullable<HatchDeclaration["pages"]> = Object.fromEntries(
+  vercelIndex.ops.flatMap((op) => {
+    if (VERCEL_VERDICTS[`${op.method} ${op.path}`] !== "read") return [];
+    const names = queryNamesOf(vercelIndex, op),
+      fields = vercelIndex
+        .fields(op)
+        .filter((f) => f.in === "response")
+        .map((f) => f.path);
+    if (fields.includes("pagination")) {
+      if (names.has("until")) return [[`${op.method} ${op.path}`, paginationPage("until", true)]];
+      if (names.has("next")) return [[`${op.method} ${op.path}`, paginationPage("next")]];
+      if (names.has("cursor")) return [[`${op.method} ${op.path}`, paginationPage("cursor")]];
+    }
+    for (const key of ["nextCursor", "cursor", "next"])
+      if (fields.includes(key) && (names.has(key) || (key === "nextCursor" && names.has("cursor"))))
+        return [
+          [
+            `${op.method} ${op.path}`,
+            {
+              ...timestampPage,
+              param: names.has(key) ? key : "cursor",
+              next: (data: unknown) => {
+                const value = record(data)[key];
+                return value === null || value === undefined
+                  ? null
+                  : timestampPage.next({ pagination: { next: value } }, { path: "", query: {}, headers: {} });
+              },
+            } satisfies HatchPageAdapter,
+          ],
+        ];
+    return [];
+  }),
+);
+export function vercelBinding({
+  connection,
+  options,
+}: {
+  connection: Connection;
+  options: Readonly<VercelTokenOptions>;
+}): HatchBinding {
+  return {
+    review:
+      "The same teamId/slug/null routing used by named tools and uploads, resolved before request validation and signed cursor binding. Token permissions remain the boundary. JSON framing through the existing connection.",
+    query: (call) => scope(call, defaultTeam(options)).query,
+    refuse: (call) => operationRefusal(call.op) ?? refuse(call),
+    send: (call, sendOptions) => sendVercel(connection, call, sendOptions),
   };
 }

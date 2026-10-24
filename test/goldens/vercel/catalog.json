@@ -9,360 +9,13 @@
     "placeholder": "Paste Vercel access token"
   },
   "guide": {
-    "summary": "One access token over REST: search operations, read details, then read or write. Value-safe env vars.",
-    "content": "# Vercel usage\n\nConnecta's REST connector to the Vercel API with one access token. Account purpose: Production web applications\n\nThis connection defaults to team `team_default`: operations that accept a team get it unless a call passes `teamId` (or `slug`), and `teamId: null` targets the token owner's personal account.\n\n- This is Connecta's REST connector to `api.vercel.com`, holding one operator-managed access token. A default team routes calls; it does not narrow what the token can reach.\n- `vercel_api_search` finds API operations, not records: it searches the pinned API index and names the tool that calls each operation. `vercel_api_details` returns one operation's parameters with types, enums, and required names. Neither sends a request.\n- `vercel_api_read` calls GET operations, plus reviewed POSTs that only read: `POST /v2/observability/query`, registrar availability, price, and search, and `POST /v8/artifacts`. `vercel_api_write` calls every other POST, PUT, PATCH, and DELETE, with `method` and `path` stated; a read-only endpoint refuses it.\n- Paths are concrete and carry the version search returned: `/v13/deployments/dpl_123`, not `/deployments/dpl_123`. Pass `query` and `body` as JSON objects named as `vercel_api_details` lists them. Every call is checked against the pinned index before it is sent: an unknown path returns the nearest operations, and an unknown or missing parameter returns `validation.issues` with the accepted names. Nothing reached Vercel, so fix the call from that answer.\n- Results arrive as `{ status, data, page? }`. On a list, `page.next` is the cursor and `page.param` the query parameter to pass it as: `until` (a millisecond timestamp from `pagination.next`) on most lists, `cursor` on newer ones. Lists belong inside `execute_code`; pass `select` (dot paths such as `deployments.uid` and `deployments.state`) to keep only the fields the question needs.\n- `list_teams` returns team ids and slugs and the connection's default team. `get_deployment_build_logs` reads a deployment's build events without following live output. `get_runtime_logs` collects the runtime log stream for at most `waitMs` or `maxRows`, then stops and says why. Generic reads refuse `follow` and the runtime-log stream, which never end on their own.\n- `vercel_api_upload` sends explicit text or base64 bytes to an octet-stream operation, such as `POST /v2/files` before a deployment (Connecta computes `x-vercel-digest`). `vercel_api_write` sends JSON only.\n- Environment values never come back. `list_project_env_vars` never decrypts. `upsert_project_env_var` (`upsert: false` for create-only), `update_project_env_var`, and `delete_project_env_var` return metadata without values; values are write input only. Generic reads refuse `GET /v1/projects/{idOrName}/env/{id}`, `GET /v10/projects/{idOrName}/env`, `GET /v1/env/{id}`, and any `decrypt`, and Connecta replaces the value of every environment variable in any result with `\"[redacted]\"`, including project reads, shared variables, and audit events.\n- Other secrets read as `[redacted]` in every result: credential-named fields and their whole contents (`token`, `secret`, `password`, `jwt`, `credentials`, `Authorization`, …), protection-bypass secrets (each bypass's metadata stays under a numbered placeholder), deploy hook URLs, daemon liveness-probe header values and internal endpoint ciphertext, drain and webhook headers and signing secrets (including the one a new webhook or drain returns), drain and webhook destination URLs and external route, rewrite, and redirect destinations beyond their scheme and host, the args and values of every header, cookie, and query rule (route transforms and conditions, firewall conditions), conditional firewall bypass compiled `condition` expressions and their credential match values, team invite codes, synced Global Config items, and credentials inside other URLs. Failures of every reviewed operation, and of any operation whose request takes a credential-named field, say only the status and a reviewed code. Read or rotate withheld secrets in the Vercel dashboard. A `[redacted]` field is never the real value; do not send it back.\n- Refused by design: endpoints that mint credentials (access tokens, AI Gateway API keys, project OIDC and trace tokens, Connect and SSO tokens, Edge Config tokens, KMS-signed tokens, Flags SDK keys, protection-bypass secrets, installation credential rotation), Connect authorization requests, project transfer requests (the code lets another team claim the project), KMS signing, a domain move-out (its answer is a transfer token), Global Config items, backups, and tokens, and domain transfer auth codes. Each refusal names its reason.\n- The hosted OAuth connection's documentation search, runtime error clusters, toolbar threads, agent runs, web analytics summaries, purchase quotes, `deploy_to_vercel`, and access grants for protected URLs do not exist with a token. Configure an OAuth connector for those.\n- A `429` carries Vercel's reset time; Vercel meters endpoints separately, so wait before retrying the same operation. An `auth_required` failure means the token is missing, expired, or outside this team: an operator must replace it in this connection in the operator UI, and `authorize_connector` returns that handoff. A rejected argument comes back in Vercel's own words; read it rather than replacing the token.\n- Embedded URL safety uses reviewed paths plus global signing parameters. Generic credential-named query parameters (`code`, `key`, `token`, `sig`, etc.) and credential-looking fragments withhold the destination's entire query/fragment only in deployment `errorMessage`, build-event `payload.text`/`text`, and runtime-log `message` on the reviewed deployment/log operations and vendor error text. Ordinary `code`/`key` links can therefore be false positives in these diagnostics. Deployment metadata and other application content keep those ordinary URL parameters byte for byte. Literal AWS SigV4/Google V4 `X-Amz-*`/`X-Goog-*` Signature, Credential and Security-Token values are withheld in every decoded string before projection. A withheld value is not the original: do not write it back. Deployment creation also inspects decoded `files[].data` when `encoding` is `base64` (one decode bounded by the field's encoded length and the host's request limit; malformed base64 is refused). All writes, including named writes and supported raw/base64/multipart uploads, reject URL destinations whose own query/fragment contains the exact `[redacted]` placeholder, plain or encoded, with `invalid_args` before dispatch. Admission iteratively checks every JSON key and value within the host's accepted request size, without separate depth or node-count ceilings; cyclic direct arguments are refused. A marker outside the destination remains ordinary text. Split strings, encoded host/signing names, bare hosts without `//`, and opaque bearer paths remain outside this scan.\n- Resolve team, project, and deployment ids with list reads; never guess one. Team ids begin `team_`, project ids `prj_`, and deployment ids `dpl_`.\n- Diagnose a deployment by reading its state first (`readyState`, `errorCode`, `errorMessage`), then its build logs, then runtime logs for a deployment that built. Narrow time windows before raising limits.\n- Environment variable changes apply only to future deployments; a new deployment is a separate write. Promoting an existing deployment to production does not rebuild it.\n- Treat every create, update, delete, promotion, cancellation, and purchase as a write. For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`.\n"
+    "summary": "Vercel REST access token is already configured. Account purpose: Production web applications",
+    "content": "# Vercel usage\n\nVercel REST access token is already configured. Account purpose: Production web applications\n\nRouting defaults to team team_default. This is not a restriction or tenant pin: an explicit teamId or slug overrides it, and teamId: null selects personal scope. The token's Vercel permissions enforce access.\n\n## Projects, deployments and domains\n\nResolve a team by slug, a project by name, and deployments by the observed\nproject id. Team ids start with `team_`, project ids with `prj_`, and deployment\nids with `dpl_`. A deployment hostname and a deployment id identify the same\ndeployment; an alias can later point to a different deployment.\n\nThe configured team is a routing default, not a restriction. Explicit teamId\nor slug selects another team the token can reach; teamId: null selects personal\nscope. Vercel token permissions determine access. Prefer an explicit team when\njoining resources across several calls.\n\nRead deployment state before its build events. Runtime logs diagnose requests\nafter a deployment built; build logs explain a failed build. Narrow time windows\nbefore raising collection limits. Generic reads refuse live follow streams;\nuse the bounded build/runtime readers. Deployment timestamps are milliseconds.\n\nProject domains and deployment aliases are different joins: a project domain\nbelongs to the project, while an alias identifies its assigned deployment.\nRead a pending domain's verification instructions before changing DNS.\n\n## Environment changes\n\nResolve environment-variable ids using metadata, including target, branch and\ncustom environment. A key can have distinct production and preview values.\nExisting values cannot be retrieved. Supply new values only when the task asks\nfor a change; confirm the returned id and metadata.\n\nEnvironment changes apply to future deployments. A new deployment is a separate\nwrite. Promoting an existing deployment does not rebuild it or update embedded\nenvironment values. After an uncertain update, reconcile observable metadata\nsuch as id, targets and comment; reading metadata cannot verify a secret value.\n\n## Explicit files and credentials\n\nDeployment files can reference previously uploaded digests. File uploads accept\nexplicit bytes and never read a path on the agent's machine. Decrypted-value,\ncredential-minting, protection-bypass-link, signing and domain move-out operations\nare refused; use Vercel's dashboard for those workflows.\n\n## Conventions\n\n- **Paging:** a paged `list_*` or `search_*` read takes `limit` (default 20, at most 100) and `cursor`. While `page.hasMore` is true, pass `page.nextCursor` back unchanged as `cursor`; the last page has no `nextCursor`.\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `vercel_api_search` finds this API's operations and reads no account data, `vercel_api_details` shows one operation's contract, and `vercel_api_read` calls a reviewed read. `vercel_api_write` calls a reviewed write; the host may ask the user to confirm it. An operation without a reviewed verdict is refused; these are refused by design: `GET /v1/env/{id}`, `GET /v1/global-config/{edgeConfigId}/backups/{edgeConfigBackupVersionId}`, `GET /v1/global-config/{edgeConfigId}/item/{edgeConfigItemKey}`, `GET /v1/global-config/{edgeConfigId}/items`, `GET /v1/global-config/{edgeConfigId}/token/{token}`, `GET /v1/global-config/{edgeConfigId}/tokens`, `GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config`, `GET /v1/projects/{idOrName}/env/{id}`, `GET /v1/registrar/domains/{domain}/auth-code`, `GET /v10/projects/{idOrName}/env`, `PATCH /aliases/{id}/protection-bypass`, `PATCH /v1/projects/{idOrName}/protection-bypass`, `POST /api-keys`, `POST /projects/{idOrName}/transfer-request`, `POST /v1/connect/authorize/{connector}`, `POST /v1/connect/token/{connector}`, `POST /v1/global-config/{edgeConfigId}/token`, `POST /v1/installations/{integrationConfigurationId}/credentials/rotate`, `POST /v1/integrations/sso/token`, `POST /v1/kms/issuers/{issuerId}/sign/message`, `POST /v1/kms/issuers/{issuerId}/sign/token`, `POST /v1/projects/traces/session`, `POST /v1/projects/{idOrName}/avatar`, `POST /v1/projects/{idOrName}/token`, `POST /v2/files`, `POST /v3/user/tokens`, `PUT /v1/projects/{projectIdOrName}/feature-flags/sdk-keys`, `PUT /v8/artifacts/{hash}`.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. `not_found` means the record does not exist; this API tells absence from a permission gap. It documents no conflict.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
     {
-      "name": "vercel_api_search",
-      "description": "Find Vercel API operations by keyword or path in the pinned API index. Returns method, path, and summary; reads no account data.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Keywords or a path, e.g. refund charge."
-          },
-          "method": {
-            "type": "string",
-            "enum": [
-              "GET",
-              "HEAD",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "Only operations with this method."
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 50,
-            "description": "Most operations to return; default 10."
-          }
-        },
-        "required": [
-          "query"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "operations": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "method": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                },
-                "summary": {
-                  "type": "string"
-                },
-                "tool": {
-                  "type": "string",
-                  "description": "The tool that calls it."
-                }
-              },
-              "required": [
-                "method",
-                "path",
-                "tool"
-              ]
-            }
-          },
-          "revision": {
-            "type": "string",
-            "description": "Pinned index revision."
-          }
-        },
-        "required": [
-          "operations",
-          "revision"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "vercel_api_details",
-      "description": "Read one Vercel API operation's request contract: path, query, and body parameters with types, enums, and required names. Reads no account data.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string",
-            "enum": [
-              "GET",
-              "HEAD",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "The operation's HTTP method."
-          },
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 2048,
-            "description": "The path template from search, or a concrete path."
-          },
-          "param": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Return only this parameter."
-          }
-        },
-        "required": [
-          "method",
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "tool": {
-            "type": "string",
-            "description": "The tool that calls it."
-          },
-          "parameters": {
-            "type": "array",
-            "description": "Path and query parameters."
-          },
-          "body": {
-            "type": "object",
-            "description": "Body content type and schema; truncated: true marks unexpanded levels."
-          },
-          "revision": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "method",
-          "path",
-          "tool",
-          "parameters",
-          "revision"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "vercel_api_read",
-      "description": "Call a Vercel API GET or HEAD operation, or a reviewed read-only POST. Arguments are checked against the pinned index before anything is sent.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 2048,
-            "description": "Concrete path from search with ids filled in, e.g. /v1/customers/cus_123. No query string."
-          },
-          "method": {
-            "type": "string",
-            "enum": [
-              "GET",
-              "HEAD",
-              "POST"
-            ],
-            "description": "GET by default; another method only for an operation search routes here."
-          },
-          "body": {
-            "type": "object",
-            "description": "Body for a reviewed read-only POST."
-          },
-          "query": {
-            "type": "object",
-            "description": "Query parameters as JSON, named as details lists them."
-          },
-          "select": {
-            "type": "array",
-            "maxItems": 50,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            },
-            "description": "Dot paths to keep from data, e.g. data.id; a path through a list applies to each item."
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "integer",
-            "description": "HTTP status."
-          },
-          "data": {
-            "description": "Response body: JSON, text, NDJSON rows, { contentType, bytes, base64 }, or HEAD's headers."
-          },
-          "page": {
-            "type": "object",
-            "description": "Present on lists: pass next as the param query parameter (a body field when in is body) for the next page. hasMore without next: no cursor exists.",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "next": {
-                "type": "string"
-              },
-              "param": {
-                "type": "string"
-              },
-              "in": {
-                "type": "string",
-                "enum": [
-                  "query",
-                  "body"
-                ]
-              },
-              "path": {
-                "type": "string",
-                "description": "GET this path for the next page, when it differs from this call's."
-              }
-            },
-            "required": [
-              "hasMore"
-            ]
-          }
-        },
-        "required": [
-          "status",
-          "data"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "vercel_api_write",
-      "description": "Call a Vercel API write (POST, PUT, PATCH, DELETE); method and path are stated for approval. Checked against the pinned index first.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string",
-            "enum": [
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "The operation's HTTP method."
-          },
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 2048,
-            "description": "Concrete path from search with ids filled in, e.g. /v1/customers/cus_123. No query string."
-          },
-          "query": {
-            "type": "object",
-            "description": "Query parameters as JSON, named as details lists them."
-          },
-          "body": {
-            "type": [
-              "object",
-              "array"
-            ],
-            "description": "Request body as JSON."
-          },
-          "select": {
-            "type": "array",
-            "maxItems": 50,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            },
-            "description": "Dot paths to keep from data, e.g. data.id; a path through a list applies to each item."
-          }
-        },
-        "required": [
-          "method",
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "integer",
-            "description": "HTTP status."
-          },
-          "data": {
-            "description": "Response body: JSON, text, NDJSON rows, { contentType, bytes, base64 }, or HEAD's headers."
-          },
-          "page": {
-            "type": "object",
-            "description": "Present on lists: pass next as the param query parameter (a body field when in is body) for the next page. hasMore without next: no cursor exists.",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "next": {
-                "type": "string"
-              },
-              "param": {
-                "type": "string"
-              },
-              "in": {
-                "type": "string",
-                "enum": [
-                  "query",
-                  "body"
-                ]
-              },
-              "path": {
-                "type": "string",
-                "description": "GET this path for the next page, when it differs from this call's."
-              }
-            },
-            "required": [
-              "hasMore"
-            ]
-          }
-        },
-        "required": [
-          "status",
-          "data"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
-    {
       "name": "list_teams",
-      "description": "List the Vercel teams this token can reach, with ids and slugs to pass as teamId. Also names the connection's default team.",
+      "description": "List the teams this token can reach, with ids/slugs for project joins. A configured team is a routing default, not a restriction.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -370,11 +23,23 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Most teams per page; default 20."
+            "description": "Teams per page, default 20, maximum 100.",
+            "default": 20
           },
-          "until": {
-            "type": "number",
-            "description": "page.next from the previous page: a millisecond timestamp."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -383,7 +48,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "teams": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -403,19 +68,8 @@
                 "role": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "slug"
-              ]
+              }
             }
-          },
-          "defaultTeamId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The team operations use when teamId is omitted."
           },
           "page": {
             "type": "object",
@@ -423,10 +77,7 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "next": {
-                "type": "string"
-              },
-              "param": {
+              "nextCursor": {
                 "type": "string"
               }
             },
@@ -436,8 +87,8 @@
           }
         },
         "required": [
-          "teams",
-          "defaultTeamId"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -463,6 +114,11 @@
             "minLength": 1,
             "description": "Vercel team id. Omit for the connection's default; null for the token owner's personal account."
           },
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Team slug; overrides the routing default when teamId is omitted."
+          },
           "gitBranch": {
             "type": "string",
             "description": "Preview branch filter."
@@ -470,6 +126,16 @@
           "customEnvironmentId": {
             "type": "string",
             "description": "Custom environment filter."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each metadata item; values cannot be restored.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -480,7 +146,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "variables": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -524,17 +190,27 @@
                 "updatedAt": {
                   "type": "number"
                 }
-              },
-              "required": [
-                "id",
-                "key",
-                "type"
-              ]
+              }
             }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "variables"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -560,6 +236,11 @@
             "minLength": 1,
             "description": "Vercel team id. Omit for the connection's default; null for the token owner's personal account."
           },
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Team slug; overrides the routing default when teamId is omitted."
+          },
           "key": {
             "type": "string",
             "minLength": 1,
@@ -584,6 +265,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
+            "description": "Default Vercel environments that receive this value.",
             "items": {
               "type": "string",
               "enum": [
@@ -592,8 +274,7 @@
                 "development"
               ],
               "description": "A default Vercel environment."
-            },
-            "description": "Default Vercel environments that receive this value."
+            }
           },
           "gitBranch": {
             "type": "string",
@@ -602,12 +283,12 @@
           "customEnvironmentIds": {
             "type": "array",
             "uniqueItems": true,
+            "description": "Custom environment ids that receive this value.",
             "items": {
               "type": "string",
               "minLength": 1,
               "description": "A custom environment id."
-            },
-            "description": "Custom environment ids that receive this value."
+            }
           },
           "comment": {
             "type": "string",
@@ -701,6 +382,11 @@
             "minLength": 1,
             "description": "Vercel team id. Omit for the connection's default; null for the token owner's personal account."
           },
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Team slug; overrides the routing default when teamId is omitted."
+          },
           "envVarId": {
             "type": "string",
             "minLength": 1,
@@ -730,6 +416,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
+            "description": "Replacement default environments.",
             "items": {
               "type": "string",
               "enum": [
@@ -738,8 +425,7 @@
                 "development"
               ],
               "description": "A default Vercel environment."
-            },
-            "description": "Replacement default environments."
+            }
           },
           "gitBranch": {
             "type": [
@@ -751,12 +437,12 @@
           "customEnvironmentIds": {
             "type": "array",
             "uniqueItems": true,
+            "description": "Replacement custom environment ids.",
             "items": {
               "type": "string",
               "minLength": 1,
               "description": "A custom environment id."
-            },
-            "description": "Replacement custom environment ids."
+            }
           },
           "comment": {
             "type": "string",
@@ -825,57 +511,6 @@
       }
     },
     {
-      "name": "delete_project_env_var",
-      "description": "Delete one environment variable from a Vercel project by id. Existing deployments keep their embedded value; future deployments do not.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "projectId": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Project id or name."
-          },
-          "teamId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "minLength": 1,
-            "description": "Vercel team id. Omit for the connection's default; null for the token owner's personal account."
-          },
-          "envVarId": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Environment-variable id from list_project_env_vars."
-          }
-        },
-        "required": [
-          "projectId",
-          "envVarId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "deleted": {
-            "type": "boolean"
-          },
-          "envVarId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "deleted",
-          "envVarId"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
-    {
       "name": "get_deployment_build_logs",
       "description": "Read a deployment's build events and log lines, without following live output. Bounded by limit and 1 MB; filter by build, time, or direction.",
       "inputSchema": {
@@ -893,6 +528,11 @@
             ],
             "minLength": 1,
             "description": "Vercel team id. Omit for the connection's default; null for the token owner's personal account."
+          },
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Team slug; overrides the routing default when teamId is omitted."
           },
           "buildId": {
             "type": "string",
@@ -920,6 +560,16 @@
           "until": {
             "type": "number",
             "description": "Only events at or before this millisecond timestamp."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"events\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -945,25 +595,41 @@
                 "text": {
                   "type": "string"
                 },
-                "textTruncated": {
-                  "type": "boolean"
-                },
                 "info": {
                   "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "step": {
+                      "type": "string"
+                    },
+                    "entrypoint": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "readyState": {
+                      "type": "string"
+                    }
+                  },
                   "description": "Build step, entrypoint, and path when Vercel sends them."
                 }
               }
             }
           },
           "truncated": {
-            "type": "boolean",
-            "description": "True when the 1 MB or time cap stopped the read early."
+            "type": "array",
+            "description": "Dot paths cut for size or by the bounded prefix, including events[] and events[].text.",
+            "items": {
+              "type": "string"
+            }
           }
-        },
-        "required": [
-          "events",
-          "truncated"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -971,7 +637,7 @@
     },
     {
       "name": "get_runtime_logs",
-      "description": "Collect a deployment's runtime log stream for at most waitMs or maxRows, then stop. Returns level, message, request path, and status per row.",
+      "description": "Collect a deployment's runtime log stream for at most waitMs or limit, then stop. Returns level, message, request path, and status per row.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -993,13 +659,18 @@
             "minLength": 1,
             "description": "Vercel team id. Omit for the connection's default; null for the token owner's personal account."
           },
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Team slug; overrides the routing default when teamId is omitted."
+          },
           "waitMs": {
             "type": "integer",
             "minimum": 1000,
             "maximum": 20000,
             "description": "How long to collect the stream; default 5000."
           },
-          "maxRows": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 1000,
@@ -1008,6 +679,7 @@
           "levels": {
             "type": "array",
             "uniqueItems": true,
+            "description": "Keep only these levels.",
             "items": {
               "type": "string",
               "enum": [
@@ -1019,8 +691,17 @@
                 "trace"
               ],
               "description": "A log level to keep."
-            },
-            "description": "Keep only these levels."
+            }
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"logs\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1049,9 +730,6 @@
                 "text": {
                   "type": "string"
                 },
-                "textTruncated": {
-                  "type": "boolean"
-                },
                 "requestMethod": {
                   "type": "string"
                 },
@@ -1067,6 +745,13 @@
               }
             }
           },
+          "truncated": {
+            "type": "array",
+            "description": "Dot paths cut for size, including logs[] and logs[].text.",
+            "items": {
+              "type": "string"
+            }
+          },
           "stopped": {
             "type": "string",
             "enum": [
@@ -1077,11 +762,7 @@
             ],
             "description": "Why collection stopped."
           }
-        },
-        "required": [
-          "logs",
-          "stopped"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -1145,6 +826,448 @@
           "digest": {
             "type": "string",
             "description": "SHA-1 of the bytes, sent as x-vercel-digest for /v2/files."
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "vercel_api_search",
+      "description": "Find Vercel API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "HEAD",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "Only operations with this method."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; vercel_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "vercel_api_details",
+      "description": "Read one Vercel API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "HEAD",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "HEAD",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "vercel_api_read",
+      "description": "Call a reviewed Vercel API read, including reviewed read-only POST. The operation index checks arguments before anything is sent. Pass page.nextCursor unchanged in the query parameter page.param names. Team selectors override the routing default; token permissions enforce scope.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /v13/deployments/dpl_123. No query string."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "HEAD",
+              "POST"
+            ],
+            "description": "GET by default; another method only for an operation search routes here."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body for a reviewed read-only POST."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "description": "Put nextCursor in this vendor parameter, unchanged."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "param",
+              "in"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "vercel_api_write",
+      "description": "Call a reviewed Vercel API write; method and path are stated for approval, and the operation index checks arguments first. JSON writes only. Use vercel_api_upload for explicit bytes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /v13/deployments/dpl_123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
           }
         },
         "required": [

@@ -300,3 +300,49 @@ accounts with separate key pairs.
 **Limits.** Only API v1 is reachable; Tithe.ly's undocumented v2 is not. Card
 and bank tokens for one-time charges and new payment methods come only from
 Tithely.js in a donor's browser. A response is read up to 4 MiB.
+
+## Vercel
+
+```ts
+import { vercel } from "@zackbart/connecta/providers/vercel";
+
+vercel("hosting", {
+  purpose: "Projects and deployments for the assistant",
+  auth: { type: "token" },
+  teamId: "team_example",
+});
+```
+
+Add the access token from Vercel Account Settings → Tokens in the connection's
+operator UI. Choose the account/team and expiry the deployment needs. It is
+stored encrypted; it is sent only to api.vercel.com, or a configured baseUrl proxy.
+`authScope: "personal"` selects per-owner credentials; the default is shared.
+The legacy hosted selector is unsupported; connect hosted MCP with generic
+`remoteMcp()` as described in [Hosted MCP migration](./hosted-mcp-migration.md).
+
+`teamId` is a routing default, not a tenant restriction. On operations accepting
+team selectors, an explicit `teamId` or `slug` overrides it. `teamId: null` omits
+the default for personal-account calls. All named tools, hatch calls and uploads
+use the same routing. For example, a `hosting` call with
+`query: { slug: "studio" }` targets that team; it is not forced into team_example.
+Vercel token permissions enforce access. Set a suitably scoped token when access
+must be restricted. Signed paging binds the resolved selectors, so reuse the
+same team, path, filters and fields when passing `page.nextCursor` in
+`query[page.param]`. Team path ids remain vendor identifiers, not a deployment pin.
+
+`readOnly: true` refuses every write. `baseUrl` is only for an explicitly trusted
+proxy or test double. Set `callAdmission` for downstream endpoint limits and
+`maxResultBytes` for inline output sizing. Permanent credentials and environment
+values cannot be returned; there is no option to widen this boundary. The token
+must have the permissions and Vercel plan required by the selected endpoint.
+
+Team lists default to 20 and allow 100 rows. Build logs default to 200 and allow
+2,000 events; runtime logs default to 200 and allow 1,000 rows over 1–20 seconds.
+Log prefixes stop at 1 MiB; each projected text field stops at 4,000 characters.
+Uploads accept at most 8 MiB of explicit bytes. Regular response bodies stop at
+8 MiB and calls at 60 seconds. JSON-only operations reject unexpected HTML/text
+acknowledgements; check the target after an unknown write outcome before repeating.
+
+A numeric hatch `query.until` can set the initial upper time boundary on timestamp
+lists. Subsequent pages use signed `page.nextCursor` in that same parameter.
+Named `list_teams` uses only its top-level `cursor` for continuation.

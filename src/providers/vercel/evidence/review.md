@@ -65,3 +65,50 @@ Response fields are generated from these bytes, never inferred from a fixture.
 Open, oversized or undeclared response contracts continue to omit fields and
 therefore cannot promise field selection. Bare/wrapped/list outputs use their
 actual documented roots. Safety still runs before any selection.
+
+## Standard surface and response framing
+
+Step 2 retains the pin above. Generation now preserves request descriptions up
+to 160 characters and numeric bounds. Reviewed discovery supplements fill eight
+missing summaries, clarify build/runtime logs and project env-variable synonyms,
+and describe missing parameter prose. Record-count limits are positive integers;
+documented maxima remain, and no undocumented maximum is invented. Response
+metadata covers 372 of 466 operation contracts; absent/open/over-budget shapes
+refuse fields. Paging is selected independently from complete nested response
+paths: the reviewed pagination envelope and indexed continuation parameter
+establish timestamp, cursor or next continuation. A full response field contract
+is not inferred from a sample.
+
+The pinned success media inventory has three non-JSON operation families:
+GET build events accepts application/json and application/stream+json; GET
+runtime logs accepts application/stream+json; POST sandbox fs/read accepts
+application/octet-stream. The two bounded named log readers retain JSON arrays
+and equivalent NDJSON media. Every other success operation requires JSON (or
+an empty acknowledgement); JSON-only writes no longer accept HTML/text/binary.
+POST /v2/files declares JSON, so the legacy text acknowledgement's derived
+data.contentType/data.bytes retire (held item H6). The byte-input SHA-1 remains.
+No change is made to sandbox POST's conservative write classification.
+
+Vercel's environment upsert failed[] response is classified through the shared
+result hook for both hatch and named tool, using declared public code facts.
+Secret-family messages remain withheld. 401/403/404 and rate-limit reset meaning
+remain; generic 400/422/5xx use the kit table and 409 has no conflict default.
+Team selectors stay routing defaults and deliberate overrides, not a pin.
+
+### Paging and timing evidence
+
+The declared adapters cover 44 indexed reads. Vercel pagination.next maps to its
+indexed until/next/cursor input; pagination.nextCursor and top-level nextCursor
+map to cursor where documented. Explicit hasNext/hasMore false is terminal;
+missing optional continuation is terminal, while true without a token fails.
+Numeric until values remain valid first-page time-window anchors; following pages
+use the signed continuation. The shared opt-in admits no raw opaque string token.
+Time filters without documented continuation remain ordinary vendor query inputs.
+
+Held H9 was characterized only: three fresh Node 26 processes per arm, fake
+transport, concurrent verification load. BEFORE factory 43.7–52.5 ms and first
+call-to-send 46.9–59.5 ms; AFTER 65.6–81.2 ms and 57.5–93.6 ms. Warm call-to-send
+was 7.7–12.9 ms versus 19.0–27.5 ms. This small loaded sample is not a performance
+budget or a production latency estimate. Factory time is outside calls; the
+60-second HTTP AbortSignal timer starts at dispatch, while the caller's signal
+also bounds validation/preparation and body reads. No deadline is changed.

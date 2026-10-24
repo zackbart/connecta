@@ -983,7 +983,18 @@ export function hatch(
         : {};
       if (supplied[0]) adapter = supplied[0];
       const value = separateCursor ? args.cursor : adapter && at(adapter);
-      if (adapter && value !== undefined) {
+      // Timestamp pagination can also carry a first-page time-window anchor.
+      // Only an explicit adapter opt-in admits a plain numeric anchor; opaque
+      // string continuations still require a signed token.
+      const numericAnchor =
+        !separateCursor &&
+        adapter?.initialAnchor &&
+        (typeof value === "number" || (typeof value === "string" && /^\d+$/.test(value)));
+      if (adapter && numericAnchor) {
+        const restored = yield* checked(() => adapter!.decode(value as string | number));
+        if (adapter.in === "query") query = { ...query, [adapter.param]: restored };
+        else body = { ...(record(body) ? body : {}), [adapter.param]: restored };
+      } else if (adapter && value !== undefined) {
         if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
         const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
         const restored = yield* checked(() => {

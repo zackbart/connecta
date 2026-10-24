@@ -89,7 +89,7 @@ describe("vercel() over an access token", () => {
     expect(JSON.stringify(long)).not.toMatch(/PRIVATE_SIG|PRIVATE_CREDENTIAL/);
   });
 
-  it("INV-1 INV-5: redacts arbitrary daemon probe header values and internal endpoint ciphertext before select (#890)", async () => {
+  it("INV-1 INV-5: redacts arbitrary daemon probe header values and internal endpoint ciphertext before fields (#890)", async () => {
     const connector = vercel("hosting", TOKEN);
     const headerPath = "daemons.config.livenessProbe.httpGet.httpHeaders";
     const daemon = {
@@ -106,11 +106,11 @@ describe("vercel() over an access token", () => {
       },
       replicas: { items: [{ id: "instance", iroh: { publicKeyCiphertext: "internal-endpoint-marker" } }] },
     };
-    for (const select of [undefined, [headerPath]]) {
+    for (const fields of [undefined, [headerPath]]) {
       respond = () => Response.json({ daemons: [daemon], pagination: { count: 1 } });
       const result = await call(connector, "vercel_api_read", {
         path: "/v1/projects/web/daemons",
-        ...(select ? { select } : {}),
+        ...(fields ? { fields } : {}),
       });
       expect(result.data.daemons[0].config.livenessProbe.httpGet.httpHeaders).toEqual([
         { name: "X-Proof", value: "[redacted]" },
@@ -216,7 +216,7 @@ describe("vercel() over an access token", () => {
     ]);
   });
 
-  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before selection", async () => {
+  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before fieldsion", async () => {
     const connector = vercel("hosting", TOKEN);
     const rule = {
       id: "rule_1",
@@ -250,7 +250,7 @@ describe("vercel() over an access token", () => {
       path: "/v1/security/firewall/bypass/rules",
       query: { projectId: "prj_1" },
       body: { domain: "app.example.com", conditionGroup: [{ conditions: [rule.conditionGroup[0]!.conditions[0]!] }] },
-      select: ["condition", "conditionGroup"],
+      fields: ["condition", "conditionGroup"],
     });
     expect(JSON.stringify(created)).not.toMatch(/stored-access|stored-cookie|stored-query/);
     respond = () =>
@@ -285,8 +285,19 @@ describe("vercel() over an access token", () => {
         targets: ["preview"],
       }),
     );
-    expect(conflict.message).toContain("Vercel ENV_ALREADY_EXISTS: a variable with this key already targets");
+    expect(conflict.message).toContain("ENV_ALREADY_EXISTS");
     expect(conflict.message).not.toContain("s3cret");
+    sent = [];
+    const raw = await refusal(
+      call(connector, "vercel_api_write", {
+        method: "POST",
+        path: "/v10/projects/web/env",
+        body: { key: "TOKEN", value: "s3cret", type: "sensitive", target: ["preview"] },
+      }),
+    );
+    expect(raw).toMatchObject({ code: "invalid_args", retryable: false });
+    expect(raw.message).not.toContain("s3cret");
+    expect(sent).toHaveLength(1);
   });
 
   it("collects runtime logs until waitMs on a stream that never ends, then says why it stopped", async () => {
@@ -316,6 +327,7 @@ describe("vercel() over an access token", () => {
     expect(result).toEqual({
       logs: [{ timestampInMs: 2, level: "error", text: "TypeError: x is undefined", requestPath: "/api" }],
       stopped: "time",
+      truncated: [],
     });
     expect(sent[0]!.url.pathname).toBe("/v1/projects/web/deployments/dpl_1/runtime-logs");
     // The row limit stops a stream that stays open as soon as it is met, not at waitMs.
@@ -324,13 +336,14 @@ describe("vercel() over an access token", () => {
       await call(connector, "get_runtime_logs", {
         projectId: "web",
         deploymentId: "dpl_1",
-        maxRows: 1,
+        limit: 1,
         waitMs: 20_000,
         levels: ["error"],
       }),
     ).toEqual({
       logs: [{ timestampInMs: 2, level: "error", text: "TypeError: x is undefined", requestPath: "/api" }],
       stopped: "rows",
+      truncated: ["logs[]"],
     });
     expect(Date.now() - quick).toBeLessThan(5_000);
   });
@@ -349,7 +362,7 @@ describe("vercel() over an access token", () => {
     expect(failure.retryAfterMs).toBeGreaterThan(0);
   });
 
-  it("refuses a domain move-out, whose answer is a transfer token, before dispatch", async () => {
+  it("INV-3 INV-4 INV-5 INV-9: confines selectors, fields, continuations and secret-bearing writes before dispatch", async () => {
     const connector = vercel("hosting", TOKEN);
     const refused = await refusal(
       call(connector, "vercel_api_write", {
@@ -371,5 +384,103 @@ describe("vercel() over an access token", () => {
         })
       ).data,
     ).toEqual({ moved: true, token: "[redacted]" });
+
+    for (const [path, method, body] of [
+      ["/v1/installations/icfg/products/product/resources/resource/secrets", "PUT", { secrets: [] }],
+      ["/v1/deployments/dpl_1/checks", "POST", {}],
+    ] as const) {
+      const before = sent.length;
+      await expect(call(connector, "vercel_api_write", { path, method, body })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      expect(sent).toHaveLength(before);
+    }
+    // All dispatch routes apply the same intentional team routing overrides.
+    respond = () => Response.json({ projects: [], envs: [], pagination: { next: null } });
+    for (const selectors of [{}, { teamId: "team_other" }, { teamId: null }, { slug: "studio" }]) {
+      sent = [];
+      await call(connector, "vercel_api_read", { path: "/v10/projects", query: selectors });
+      await call(connector, "list_project_env_vars", { projectId: "web", ...selectors });
+      await call(connector, "vercel_api_upload", {
+        method: "POST",
+        path: "/v2/files",
+        textBody: "hello",
+        query: selectors,
+      });
+      const expected =
+        "teamId" in selectors && selectors.teamId === null
+          ? ""
+          : "slug" in selectors
+            ? "slug=studio"
+            : `teamId=${"teamId" in selectors ? selectors.teamId : "team_default"}`;
+      for (const request of sent)
+        expect(request.url.searchParams.toString().replace(/&?decrypt=false&?/, "")).toBe(expected);
+    }
+    // The signed cursor is bound to resolved default selectors, including config changes.
+    const ctx = keyed("k7Q9w2E4r6T8y1U3");
+    respond = () => Response.json({ deployments: [], pagination: { next: 123 } });
+    const first = (await connector.callTool(
+      "vercel_api_read",
+      { path: "/v7/deployments", query: { limit: 10 } },
+      ctx,
+    )) as any;
+    const changed = vercel("hosting", { ...TOKEN, teamId: "team_other" });
+    const count = sent.length;
+    await expect(
+      changed.callTool(
+        "vercel_api_read",
+        { path: "/v7/deployments", query: { limit: 10, until: first.page.nextCursor } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(count);
+    respond = () => Response.json({ deployments: [], pagination: { next: null } });
+    await changed.callTool(
+      "vercel_api_read",
+      { path: "/v7/deployments", query: { limit: 10, teamId: "team_default", until: first.page.nextCursor } },
+      ctx,
+    );
+    expect(sent.at(-1)!.url.searchParams.get("until")).toBe("123");
+    const initialTime = await call(connector, "vercel_api_read", {
+      path: "/v7/deployments",
+      query: { until: 1700000000000 },
+    });
+    expect(initialTime.page.hasMore).toBe(false);
+    expect(sent.at(-1)!.url.searchParams.get("until")).toBe("1700000000000");
+    for (const limit of [-1, 0, 1.5, "abc"]) {
+      const before = sent.length;
+      await expect(
+        call(connector, "vercel_api_read", { path: "/v7/deployments", query: { limit } }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(sent).toHaveLength(before);
+    }
+    for (const fields of [["does_not_exist"], ["value"]]) {
+      const before = sent.length;
+      await expect(call(connector, "list_project_env_vars", { projectId: "web", fields })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      await expect(
+        call(connector, "vercel_api_write", {
+          method: "PATCH",
+          path: "/v9/projects/web",
+          body: { framework: "nextjs" },
+          fields,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(sent).toHaveLength(before);
+    }
+    respond = () =>
+      Response.json({
+        apiKey: { id: "key_1", partialKey: "abc", metadata: { value: "stored-quota-secret" } },
+        quota: { limitAmount: 10 },
+      });
+    const quota = await call(connector, "vercel_api_write", {
+      method: "PATCH",
+      path: "/api-keys/key_1/quota",
+      body: { active: true },
+      fields: ["apiKey", "quota"],
+    });
+    expect(JSON.stringify(quota)).not.toContain("stored-quota-secret");
+    expect(quota.data.quota).toEqual({ limitAmount: 10 });
   });
 });
