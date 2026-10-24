@@ -1,7 +1,8 @@
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { attachCallClassification } from "../src/call-classification.js";
 import { api } from "../src/connectors/api.js";
@@ -18,6 +19,10 @@ import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp
 import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
 import { bindCallback, callbackAuth, consentKey, oauthVault, seedGrant, storedGrant } from "./fixtures/oauth.js";
 import { CLERK_OPTIONS, CREDENTIAL_KEY } from "./fixtures/ui.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 // remoteMcp()'s OAuth lifecycle — status, startAuth's Continue and Restart,
 // finishAuth, the callback route, an authorization server the downstream

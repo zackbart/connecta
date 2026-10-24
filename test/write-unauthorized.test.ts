@@ -382,10 +382,17 @@ describe("a write answered 401 is decided before every other exception", () => {
   });
 
   it("INV-9: a direct Stripe write answered 401 without Request-Id gets no key-reuse advice", async () => {
-    vi.stubGlobal("fetch", vi.fn(stripeRefusal({})));
+    const fetch = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => stripeRefusal({})());
+    vi.stubGlobal("fetch", fetch);
     const connector = stripe("billing", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
     const args = { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } };
     const error = await callDirect(connector, "stripe_api_write", args, { value: "sk_test_fixture" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.results[0]?.value).toMatchObject({ status: 401 });
+    const [input, init] = fetch.mock.calls[0]!;
+    expect(String(input)).toBe("https://api.stripe.com/v1/refunds");
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("idempotency-key")).toEqual(expect.any(String));
     expect(error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect(error.message).toContain(STRIPE_SENTENCE);
     expect(error.message).not.toContain("Reusing it");

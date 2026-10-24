@@ -54,12 +54,21 @@ backups, Docker provisioning, secrets, and optional modules. Run the deployment'
 
 Retain the Node template's `undici` dependency and serve with `listen` from
 `@zackbart/connecta/node`. That entry configures the owned transport for
-guarded provider writes and requests whose physical HTTP method is neither GET
-nor HEAD, including reviewed read-only POSTs. For example, an `assistant` using
+remote MCP writes and for API/provider requests that are writes or use a physical
+HTTP method other than GET or HEAD, including reviewed read-only POSTs. For example, an `assistant` using
 `vercel_api_read` to POST `/v1/registrar/domains/availability` needs that
 transport even on a read-only endpoint. A Node deployment using only the root
 entry refuses those requests before sending them. Workers use their native
 fetch transport.
+
+The owned Node transport connects directly to the downstream server. Remote MCP
+writes and kit writes ignore `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`,
+and any host proxy dispatcher; remote MCP reads keep native fetch and its proxy
+configuration. There is no supported explicit-proxy setting for the owned sender.
+If your network requires an outbound proxy, move writes to a deployment with
+approved direct egress, or an approved Workers deployment. Until then, configure
+those connectors as `readOnly`. A connection failure after dispatch is unknown
+and non-retryable.
 
 ## Start on Workers
 

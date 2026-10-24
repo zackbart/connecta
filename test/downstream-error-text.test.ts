@@ -1,6 +1,7 @@
 import type { FetchLike } from "@modelcontextprotocol/client";
 import { ProtocolError } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { attachCallClassification } from "../src/call-classification.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -13,6 +14,10 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext, Logger } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { makeRegistry } from "./helpers.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 // Text a downstream or authorization server wrote, planted where each path
 // would carry it: a registration body, an issuer, a runtime error. The issue
