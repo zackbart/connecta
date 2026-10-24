@@ -1105,6 +1105,8 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     pages: { "GET /items": googlePageToken },
     pageCursor: "argument",
   });
+  const wrappedRequests: string[] = [];
+  let repeatWrappedSend = false;
   const googleTools = hatch({
     name: "google",
     index: google.index,
@@ -1114,12 +1116,28 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     binding: googleHatchBinding(google.connection, {
       index: google.index,
       review: "Fixture: JSON below a fixed Google root, delegated grant and connection safety.",
+      wrapSend: (call, send) => {
+        wrappedRequests.push(call.path);
+        // Mutating the detached view cannot change the admitted wire request.
+        Object.assign(call, { path: "/blocked" });
+        return Effect.gen(function* () {
+          const answer = yield* send();
+          if (repeatWrappedSend) yield* send();
+          return answer;
+        });
+      },
     }),
     connection: google.connection,
   });
   const googleConnector = apiConnector("google", { tools: googleTools });
   const googleCall = (args: Record<string, unknown>) =>
     googleConnector.callTool("google_api_read", args, connectorContext(storage));
+  // An indexed operation without an admission verdict never reaches a send wrapper.
+  const beforeUnadmitted = sent.length;
+  await expect(googleCall({ path: "/blocked" })).rejects.toMatchObject({ code: "invalid_args" });
+  expect(wrappedRequests).toEqual([]);
+  expect(sent).toHaveLength(beforeUnadmitted);
+  expect(google.authenticate).not.toHaveBeenCalled();
   response = () => Response.json({ data: [], nextPageToken: "next-token" });
   const firstGoogle = (await googleCall({ path: "/items", query: { fields: "data(id)" }, fields: ["data"] })) as any;
   expect(firstGoogle).toMatchObject({ data: { data: [] }, page: { hasMore: true, param: "pageToken", in: "query" } });
@@ -1135,6 +1153,12 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     }),
   ).toMatchObject({ page: { hasMore: false } });
   expect(new URL(sent.at(-1)!.url).searchParams.get("pageToken")).toBe("next-token");
+  expect(wrappedRequests).toEqual(["/items", "/items"]);
+  repeatWrappedSend = true;
+  const beforeRepeat = sent.length;
+  await expect(googleCall({ path: "/items" })).rejects.toMatchObject({ code: "invalid_args" });
+  expect(sent).toHaveLength(beforeRepeat + 1);
+  repeatWrappedSend = false;
   for (const args of [
     { path: "/items", query: { pageToken: "raw" } },
     { path: "/items", query: { fields: "data(" } },

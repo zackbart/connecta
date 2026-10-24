@@ -2390,7 +2390,14 @@ their own reviewed regeneration; no committed provider index changes here.
 
 `src/providers/_shared/google/hatch.ts` supplies JSON framing over the existing
 confined `Connection.sendPath`. It retains the hatch's origin/media guards,
-delegated grant, safety and field-selection pipeline. The `googlePageToken`
+delegated grant, safety and field-selection pipeline. Its optional `wrapSend`
+receives a detached copy of the admitted request (including its body) and a
+zero-argument inner send. The binding retains its original `send` function;
+wrappers run only after hatch admission and can dispatch the captured request
+at most once. Mutating the inspection copy cannot change its path, body,
+query, revision flag or safety policy. Products use this seam for response
+semantics that depend on the request, such as independent comment saves.
+The `googlePageToken`
 adapter is separately opt-in by exact list key with `pageCursor: "argument"`.
 It treats missing/empty `nextPageToken` as terminal, rejects malformed tokens,
 and continues empty pages when a nonempty token exists. `query.fields` is a
