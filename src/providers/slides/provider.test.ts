@@ -482,7 +482,9 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
     for (const query of ["thumbnail", "get slide preview", "thumbnail link"]) {
       const result = await call(c, "slides_api_search", { query });
       const refused = result.operations.find((op: any) => op.path.endsWith("/thumbnail"));
-      expect(refused.summary, query).toMatch(/^Refused:.*temporary access/);
+      expect(refused.summary, query).toBe(
+        "Refused: Generic Slides thumbnail/preview links are refused; use get_slide_thumbnail for the reviewed short-lived link.",
+      );
       expect(refused.tool).toBeUndefined();
     }
   });

@@ -8,22 +8,34 @@ procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
 Standard API operation search accepts resource nouns, actions and conversational
-phrasing. A leading create/add/update/edit/delete/remove/cancel/stop with an
-object prefers reviewed writes and keeps later read words as nouns, as in
-`update list` or `update subscription status`. Otherwise, read words anywhere
-prefer reviewed reads, including after refund/charge/issue/process. Action
-queries then prefer the requested verb or a synonym in an operation's summary or id.
-A single resource noun ranks its root collection before nested routes.
+phrasing. A leading create/add/update/edit/make/set/apply/change/rename/send/delete/remove/cancel/stop
+with an object prefers reviewed writes and keeps later read words as nouns, as in
+`update list` or `update subscription status`. Make, set, apply, change, edit and
+rename use update synonyms. Otherwise, read words anywhere prefer reviewed reads,
+including after refund/charge/issue/process. The requested verb or a synonym in
+an operation's summary, id or path sorts next, followed by resource focus.
+A refused operation with a matching verb shares the intent tier when it covers
+more query nouns than any admitted operation matching that verb and intent.
+Its summary explains the refusal and omits the read/write hatch pointer; an
+available named alternative can still be shown.
+
 Partial lexical matches are included even when other operations match every
-term. For action/read queries, an operation must cover every content noun in
+term. Short function words and id-shaped tokens do not count toward noun
+coverage. For action/read queries, an operation must cover every content noun in
 its text, or match a noun in its path or operation id while covering at least
 half the nouns. Field-only matches need half-noun coverage across the text and
-declared field names. This allows modifiers before the resource without
-admitting verb-only matches for unrelated nouns. Verb-less noun phrases keep
-their broader rule: any noun in the path/id, or every noun in the text.
-Queries containing only conversational filler return no matches. Search order
-is deterministic; multi-word noun phrases retain lexical relevance, and
-authored tools break otherwise equal collection ties.
+declared field names. Verb-less noun phrases keep their broader rule: any noun
+in the path/id, or every noun in the text. Framing-only queries return no matches.
+
+A noun phrase first prefers fuller noun coverage and an exact summary phrase
+prefix, then path depth with a one-segment preference for authored tools, exact
+resource nouns and authored tools. A pointer to another hatch receives no
+authored-tool preference. A namespace before a version segment does
+not count as an exact resource noun in that tie. A single noun, or a leading
+`list` with only one exact resource noun plus modifiers, prefers the root
+collection before nested routes. Other `list` phrases prefer an authored tool
+whose summary/id covers every noun. Lexical relevance and stable index order
+resolve remaining ties; field-only matches follow all primary matches.
 For example, search a configured `crm` connection's API index for `person`,
 then follow `page.nextCursor` to reach operations beyond the leading profile
 results. Responses contain at most eight compact hits within 16 KiB; fetch

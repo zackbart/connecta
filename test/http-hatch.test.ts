@@ -43,8 +43,8 @@ import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
 import { fixture as pcoFixture } from "../src/providers/planning-center/fixtures.js";
 import { fixture as tithelyFixture } from "../src/providers/tithely/fixtures.js";
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
+import { providerFixtures } from "./providers.generated.js";
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
-import { fixture as breezeFixture } from "../src/providers/breeze/fixtures.js";
 
 const NATIVE = { ...WORKERS, timeout: 30_000 };
 
@@ -185,6 +185,7 @@ function setup(
       title: "Items",
       operations: {
         "GET /items": { verdict: "safe", reason: "Only item metadata is returned.", keep: ["nextPageToken"] },
+        "GET /blocked": { verdict: "refuse", reason: "Item access is managed by the operator." },
       },
     },
     () => index,
@@ -233,7 +234,7 @@ function setup(
 
 it(
   "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
-  { ...NODE, timeout: 30_000 },
+  { ...NODE, timeout: 120_000 },
   async () => {
     const closed = setup({ writeEnabled: false });
     expect(closed.tools.map((tool) => tool.name)).not.toContain("items_api_write");
@@ -279,24 +280,70 @@ it(
     // An exact path noun leads, root collection first.
     const first = (await call("search", { query: "items", limit: 3 })) as { operations: Array<{ path: string }> };
     expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
-    const fixtures = new Map(
-      [stripeFixture, pcoFixture, tithelyFixture, overflowFixture, breezeFixture, vercelFixture].map((fixture) => [
-        fixture.name,
-        fixture.create(),
-      ]),
-    );
+    const fixtures = new Map(providerFixtures.map((fixture) => [fixture.name, fixture.create()]));
+    // Reviewed reasons are metadata: search/details and rejected calls agree without authentication or sends.
+    for (const [provider, method, path] of [
+      ["cloudflare", "POST", "/user/tokens"],
+      ["vercel", "GET", "/v1/env/{id}"],
+      ["stripe", "POST", "/v1/customer_sessions"],
+      ["ccb", "POST", "/oauth/token"],
+      ["ccb", "POST", "/files"],
+      ["planning-center", "POST", "/publishing/v2/episodes/{episode_id}/generate_download_url"],
+      ["github", "GET", "/search/issues"],
+      ["github", "POST", "/repos/{owner}/{repo}/branches/{branch}/rename"],
+      ["drive", "DELETE", "/files/{fileId}"],
+      ["gmail", "GET", "/settings/vacation"],
+      ["forms", "POST", "/forms/{formId}:setPublishSettings"],
+      ["slides", "GET", "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail"],
+    ]) {
+      const connector = fixtures.get(provider!)!;
+      const prefix = provider === "planning-center" ? "pco" : provider;
+      const detailsReply = (await connector.callTool(
+        `${prefix}_api_details`,
+        { method, path },
+        connectorContext(),
+      )) as any;
+      const details = (detailsReply.structuredContent ?? detailsReply) as { summary: string; verdict: string };
+      expect(details.verdict).toBe("refuse");
+      expect(details.summary).toMatch(/^Refused: /);
+      const searchReply = (await connector.callTool(
+        `${prefix}_api_search`,
+        { query: path!.replace(/\{[^}]*\}/g, "fixture"), method, limit: 8 },
+        connectorContext(),
+      )) as any;
+      const search = (searchReply.structuredContent ?? searchReply) as {
+        operations: Array<{ method: string; path: string; summary: string; tool?: string }>;
+      };
+      const hit = search.operations.find((op) => op.method === method && op.path === path)!;
+      expect(hit, `${provider}: ${method} ${path}`).toBeDefined();
+      expect(hit.summary).toBe(details.summary);
+      expect(hit.tool).toBeUndefined();
+      const args = { path: path!.replace(/\{[^}]*\}/g, "fixture"), ...(method !== "GET" ? { method } : {}) };
+      await expect(
+        connector.callTool(`${prefix}_api_${method === "GET" ? "read" : "write"}`, args, connectorContext()),
+      ).rejects.toThrow(details.summary.slice("Refused: ".length));
+    }
+    expect(sent).toEqual([]);
     for (const [provider, query, method, path, maxRank] of HATCH_SEARCH_QUERIES) {
       const connector = fixtures.get(provider)!;
       const prefix = provider === "planning-center" ? "pco" : provider;
       const args = { query, limit: 8 };
       const searchContext = connectorContext();
       const found = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as {
-        operations: Array<{ method: string; path: string }>;
+        operations: Array<{ method: string; path: string; summary: string; tool?: string; named?: string }>;
         page: { hasMore: boolean; nextCursor?: string };
       };
       const rank = found.operations.findIndex((op) => op.method === method && op.path === path) + 1;
       expect(rank, `${provider}: ${query}`).toBeGreaterThan(0);
       expect(rank, `${provider}: ${query}`).toBeLessThanOrEqual(maxRank);
+      if (
+        (provider === "drive" && query === "delete file permanently") ||
+        (provider === "gmail" && query === "send an email")
+      ) {
+        expect(found.operations[rank - 1]).toMatchObject({ summary: expect.stringMatching(/^Refused:/) });
+        expect(found.operations[rank - 1]!.tool).toBeUndefined();
+        expect(found.operations[rank - 1]!.named).toBeUndefined();
+      }
       if (provider === "vercel") {
         const filtered = (await connector.callTool(
           `${prefix}_api_search`,
@@ -312,6 +359,8 @@ it(
       expect(await connector.callTool(`${prefix}_api_search`, args, searchContext)).toEqual(found);
     }
     for (const [provider, query] of [
+      ["planning-center", "rename to bob"],
+      ["github", "make"],
       ["planning-center", "Show All"],
       ["planning-center", "please show all"],
       ["planning-center", "delete dns record"],
@@ -330,8 +379,13 @@ it(
       ["stripe", "__proto__"],
     ] as const) {
       const prefix = provider === "planning-center" ? "pco" : provider;
-      const found = await fixtures.get(provider)!.callTool(`${prefix}_api_search`, { query }, connectorContext());
-      expect(found, `${provider}: ${query}`).toMatchObject({ operations: [], page: { hasMore: false } });
+      const found = (await fixtures.get(provider)!.callTool(`${prefix}_api_search`, { query }, connectorContext())) as {
+        structuredContent?: unknown;
+      };
+      expect(found.structuredContent ?? found, `${provider}: ${query}`).toMatchObject({
+        operations: [],
+        page: { hasMore: false },
+      });
     }
     // Verb-less noun phrases keep their broader eligibility rule.
     const broad = (await fixtures
@@ -498,6 +552,12 @@ it(
     ]) {
       const details = (await call("details", { method, path })) as Record<string, unknown>;
       expect(details).toMatchObject({ method, path, verdict, revision: "r1" });
+      if (path === "/blocked") {
+        expect(details["summary"]).toBe(
+          "Refused: Connecta refuses GET /blocked. Item access is managed by the operator.",
+        );
+        expect(rows.find((row) => row["path"] === path)?.["summary"]).toBe(details["summary"]);
+      }
       expect(details["tool"]).toBe(tool);
       expect(rows.find((row) => row["method"] === method && row["path"] === path)?.["tool"]).toBe(tool);
     }
@@ -863,7 +923,10 @@ it(
       ) as Promise<Record<string, any>>;
     const framedPages = await walk(framedCall, { method: "POST", path: "/framed" });
     expect(framedPages.pages.some((page) => page["chunk"]?.of === "body.schema")).toBe(true);
-    expect(framedPages.contract).toEqual(original(framed));
+    expect(framedPages.contract).toEqual({
+      ...original(framed),
+      summary: "Refused: Connecta refuses POST /framed: it has no admitted hatch verdict.",
+    });
     // Search trims whole entries to its exact byte budget, page and cursor included, and continues by cursor.
     const long = new OperationIndex(
       {
@@ -911,7 +974,10 @@ it(
       { method: "GET", path: "/things" },
     );
     expect(labels.pages[0]!["truncated"]).toEqual(["operationId"]);
-    expect(labels.contract).toEqual(original(label));
+    expect(labels.contract).toEqual({
+      ...original(label),
+      summary: "Refused: Connecta refuses GET /things: it has no admitted hatch verdict.",
+    });
     expect(sendPath).not.toHaveBeenCalled();
     expect(authenticate).not.toHaveBeenCalled();
     expect(sent).toEqual([]);

@@ -239,6 +239,26 @@ describe.each(providers)("$name meets the hand-written provider conventions", ({
   it("declares an output schema on every tool (H8)", () => {
     const undeclared = tools.filter((tool) => tool.outputSchema === undefined).map((tool) => tool.name);
     expect(undeclared).toEqual([]);
+    const paged = tools.filter((tool) => {
+      const page = (tool.outputSchema as any)?.properties?.page;
+      const more = page?.properties?.hasMore;
+      return page && more?.const !== false && !(more?.enum?.length === 1 && more.enum[0] === false);
+    });
+    const guide = connector.usageGuide;
+    if (paged.length && typeof guide === "object") {
+      const lines = guide.content.split("\n").filter((line) => line.startsWith("- **Paging:**"));
+      expect(lines).toHaveLength(1);
+      const line = lines[0];
+      expect(line).toBeDefined();
+      for (const tool of paged) expect(line, tool.name).toContain(`\`${tool.name}\``);
+      for (const tool of tools.filter((tool) => (tool.outputSchema as any)?.properties?.page && !paged.includes(tool)))
+        expect(line).not.toContain(`\`${tool.name}\``);
+      for (const tool of paged) {
+        if (!(tool.inputSchema as any)?.properties?.cursor)
+          expect(line).toContain(`For \`${tool.name}\`, put it in \`query[page.param]\` or \`body[page.param]\``);
+      }
+      expect(line).toContain("before the call that would exceed it and continue in the next program; don't restart");
+    }
   });
 
   it("declares an operator credential and a test for it (H12)", () => {

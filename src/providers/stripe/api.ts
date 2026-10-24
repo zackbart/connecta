@@ -304,6 +304,7 @@ export function stripeBinding({
     review:
       "Stripe v1 nested form and v2 JSON framing, connected-account headers, confined quote PDF origin, and existing argument-dependent safety refusals; every dispatch uses Connection.sendPath.",
     allowOtherServers: true,
+    refusal: operationRefusal,
     refuse: (call) => operationRefusal(call.op) ?? refuse(call),
     send: (call, sendOptions) => sendStripe(connection, options, call, files, sendOptions),
   };

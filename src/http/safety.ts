@@ -18,6 +18,8 @@ import type { ValueSafety } from "../providers/_shared/rest/value-safety.js";
 import { Refusal, type OperationRef } from "./errors.js";
 
 export interface ResultSafety {
+  /** The reviewed refusal for a canonical operation, shared with discovery. */
+  readonly refusal?: (operation: OperationRef) => string | undefined;
   /** Resolve the actual method and path before a path-addressed request can authenticate or send. */
   readonly resolve: (method: string, path: string) => Effect.Effect<OperationRef, Refusal>;
   /** One answer made safe to read: the vendor's reviewed redaction, then the sensitive-field choice. */
@@ -33,6 +35,7 @@ export interface SafetyOptions {
    * so in `review`.
    */
   readonly reviewed?: {
+    readonly refusal?: (operation: OperationRef) => string | undefined;
     /** The pinned index's canonical operation for an actual path; throws on an unknown path. */
     readonly resolve?: (method: string, path: string) => OperationRef;
     readonly redact: (data: unknown, operation: OperationRef) => unknown;
@@ -68,6 +71,7 @@ export function resultSafety(options: SafetyOptions): ResultSafety {
   };
   const reviewed = options.reviewed;
   return {
+    refusal: (operation) => reviewed?.refusal?.(operation),
     resolve: (method, path) =>
       Effect.try({
         try: () => {
@@ -95,6 +99,10 @@ export function restSafety(reviewed: ValueSafety, index: OperationIndex): NonNul
     index.operation(operation.method, operation.template) ??
     index.operation(operation.method, operation.template.replace(/\/:([^/]+)/g, "/{$1}"));
   return {
+    refusal: (operation) => {
+      const op = indexed(operation);
+      return op ? reviewed.refusal(op.method, op.path) : undefined;
+    },
     resolve: (method, path) => {
       const { op } = index.resolve(method, path);
       const refusal = reviewed.refusal(op.method, op.path);

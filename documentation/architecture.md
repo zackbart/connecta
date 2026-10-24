@@ -1251,6 +1251,16 @@ refuses a provider past step 1 that breaks the `drift.json` rules, or one past
 step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
 (operations from the kit's `ProviderKitFacts` and evidence digests), and a guide's `## Conventions`, rendered
 from the definition's declarations into `skill.generated.ts`.
+The generator requires `fixtures.ts` to export `createAuthored()` with a
+nonempty offline `staticTools` catalog. Its input/output schemas derive one
+paging convention, including `get_*`, hatch search and details, excluding
+tools whose `page.hasMore` is always false. The convention distinguishes
+top-level `cursor` from `query[page.param]` or `body[page.param]` continuation
+and tells agents to return `page.nextCursor` before the call that would exceed
+the per-program call limit, then continue in the next program. The Hatch line
+reports a nonzero explicit refusal count with singular/plural wording and
+points to the actual prefixed details tool with method/path lookup; it never
+embeds the refusal table. Unreviewed operations remain refused.
 `ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
 with the definition's `blocks`. `providers:check` reads both record versions,
 reports a manifest operation no endpoint row records at the provider's level,
@@ -2139,21 +2149,45 @@ matches. Action/read queries require all content nouns in the operation text,
 or any noun in the path/id with at least half the nouns in the text. Their
 field-only matches need half-noun coverage across text and declared field
 names. Verb-less noun phrases retain their broader rule: any noun in the
-path/id, or all nouns in the text. A leading create/add/update/edit/delete/remove/cancel/stop
-with an object sets write intent and retains later read words as nouns.
-Otherwise, a read word anywhere sets read intent, including after
-refund/charge/issue/process. Reviewed intent and a verb/synonym match in
-summary, id or path sort before resource focus. With one resource noun,
-root collections sort before nested routes, including person/people,
-s/es/ies plurals and hyphenated list roots. Authored operations break otherwise
-equal collection ties. Sort keys are computed once per operation per query;
-lexical relevance and index order resolve remaining ties. Operations found
-only through a request or response field follow those primary matches, and
-search names an authored tool whenever one serves an operation.
-This narrows [decision 0014](https://github.com/zackbart/connecta/blob/main/decisions/0014-api-tool-shape.md):
-collection preference applies to one resource noun and authored preference
-only breaks collection ties, rather than leading every multi-word noun phrase.
-Broader phrase ranking remains planned in [#1001](https://github.com/zackbart/connecta/issues/1001).
+path/id, or all nouns in the text. A leading create/add/update/edit/make/set/apply/change/rename/send/delete/remove/cancel/stop
+with an object sets write intent and retains later read words as nouns. Make,
+set, apply, change, edit and rename share update synonyms. `make a`,
+`make an`, `make new` and `set up` phrases instead select create synonyms,
+including after leading conversational framing such as `please` or `i want to`;
+`make text bold` retains update intent. Otherwise, a read
+word anywhere sets read intent, including after refund/charge/issue/process.
+Short function words and id-shaped tokens do not contribute to noun coverage.
+Sheets A1-style cell references also supply no resource noun. A write query
+whose supplied object contains no resource nouns includes its verb synonyms
+in candidate retrieval, so values do not restrict it to reads mentioning them.
+Verb-only queries and a rename destination without an object retain ordinary
+retrieval.
+Reviewed intent, the requested verb/synonym in summary/id/path, and resource
+focus sort first. A refused operation with a matching verb shares the intent
+tier only when its noun coverage exceeds every admitted operation matching that
+verb and intent. Search and details render the same reviewed reason used at
+call time in the refused operation's summary, without feeding that reason
+into ranking. Search caps long summaries and details pages their complete
+text. REST safety tables supply the reason through `restSafety`; reviewed
+bindings declare static operation refusals separately from argument validation.
+An unreviewed operation reports the missing hatch verdict. A refused hit has
+no read/write hatch pointer; a reviewed named alternative can still be shown.
+
+Verb-less noun phrases then sort by noun coverage, an exact summary phrase prefix,
+then path depth with a one-segment preference for authored tools, exact
+resource-noun coverage, and authored-tool preference. A pointer to another
+hatch receives no authored-tool preference. Exact resource nouns
+exclude a namespace before a version segment. For a single noun, and for
+leading `list` queries with one exact resource noun plus modifiers, collection
+ties sort by exact root, fewer nested resources, matching namespace, shallow
+depth and authored tool. Other leading `list` queries prefer authored tools
+whose summary/id covers every noun. This retains descriptive aliases while
+restoring [decision 0014](https://github.com/zackbart/connecta/blob/main/decisions/0014-api-tool-shape.md)'s
+noun-phrase preference. Person/people and mail/email aliases, s/es/ies plurals and hyphenated list
+roots share the collection keys. Sort keys are computed once per operation
+per query; lexical relevance and index order resolve remaining ties.
+Operations found only through a request or response field follow primary
+matches, and search names an authored tool whenever one serves an operation.
 `_api_read` omits
 `method` only when GET is its one reviewed read method.
 A standard list can declare `limit.values` for a vendor's discrete page sizes.
@@ -2211,11 +2245,13 @@ this declaration keep parameter-based continuation.
 An explicit initialAnchor adapter on parameter-based paging can retain a numeric
 timestamp as a first-page time-window anchor; opaque string continuations still
 require a signed token.
-Separate-cursor paging also adds the hatch Paging line to generated
-Conventions. `pageCursor: "parameter"` explicitly opts parameter-based providers
-into guidance for restoring `page.nextCursor` at `page.param`/`page.in`; omitting
-the declaration retains the existing guide bytes. An unsafe continuation keeps
-the safe page data with `hasMore: true` and no `nextCursor`.
+The generated Paging convention follows the read tool's input schema: tools
+that take `cursor` restore `page.nextCursor` as that top-level argument; tools
+without it restore the token in `query[page.param]` or `body[page.param]`, as
+`page.in` specifies. `kit.hatch.paging` still validates declared mode values as
+a sanity check; it does not select the generated continuation instruction.
+An unsafe continuation keeps the safe page data with `hasMore: true` and no
+`nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.

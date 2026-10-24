@@ -92,6 +92,7 @@ export function cloudflareBinding({
     path: runtime.fillDefaults,
     prepareBody: (body, op) =>
       runtime.scope({ method: op.method, path: op.path, op, params: {}, query: {}, body }).body,
+    refusal: (op) => SAFETY.refusal(op.method, op.path) ?? runtime.checkServer(op.server),
     refuse: (call) => {
       runtime.scope(call);
       for (const parameter of cloudflareIndex.contract(call.op).parameters) {

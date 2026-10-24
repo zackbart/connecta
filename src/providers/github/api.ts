@@ -108,6 +108,7 @@ export const errors: VendorErrors = {
 export function githubConnection() {
   const safety = resultSafety({
     reviewed: {
+      refusal: (op) => githubSafety.refusal(op.method, op.template),
       resolve: (method, path) => {
         const { op } = githubIndex.resolve(method, path);
         const key = `${op.method} ${op.path}`;

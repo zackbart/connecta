@@ -34,6 +34,7 @@ export function formsBinding(connection: Connection) {
     index: formsIndex,
     review:
       "Five reviewed Forms JSON methods, confined below /v1 with delegated subject, shared safety and revision-checked batches; publish settings and watches refused.",
+    refusal: (op) => FORMS_REFUSALS[`${op.method} ${op.path}`],
     refuse: (call) => {
       const refusal = FORMS_REFUSALS[`${call.method} ${call.op.path}`];
       if (refusal) return refusal;

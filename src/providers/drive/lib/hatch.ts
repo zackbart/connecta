@@ -157,6 +157,7 @@ export function driveBinding(connection: Connection) {
     index: driveIndex,
     review:
       "Thirteen reviewed JSON metadata methods on the confined delegated Drive connection; grants remain named-only, with no permanent deletion, ownership transfer, media, watches or credential minting.",
+    refusal: (op) => DRIVE_REFUSALS[`${op.method} ${op.path}`],
     refuse: guard,
   });
 }

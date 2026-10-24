@@ -15,7 +15,7 @@
             "method": "GET",
             "path": "/search/issues",
             "operationId": "search/issues-and-pull-requests",
-            "summary": "Search issues and pull requests",
+            "summary": "Refused: Use search_scoped for installation-confined literal-term data search.",
             "named": "search_scoped"
           },
           {

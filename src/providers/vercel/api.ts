@@ -600,6 +600,7 @@ export function vercelBinding({
     review:
       "The same teamId/slug/null routing used by named tools and uploads, resolved before request validation and signed cursor binding. Token permissions remain the boundary. JSON framing through the existing connection.",
     query: (call) => scope(call, defaultTeam(options)).query,
+    refusal: operationRefusal,
     refuse: (call) => operationRefusal(call.op) ?? refuse(call),
     send: (call, sendOptions) => sendVercel(connection, call, sendOptions),
   };

@@ -83,6 +83,10 @@ export interface HatchBinding {
   readonly path?: (path: string) => string;
   /** Reviewed body framing before index validation, such as NDJSON arrays. */
   readonly prepareBody?: (body: unknown, operation: Operation) => unknown;
+  /** Exclude vendor-specific supplied values from discovery noun coverage. */
+  readonly searchNoun?: (term: string) => boolean;
+  /** Static operation refusal, also shown by search and details without request validation. */
+  readonly refusal?: (operation: Operation) => string | undefined;
   readonly refuse?: (call: RestCall) => string | undefined;
   readonly send: (
     call: RestCall,
@@ -318,6 +322,15 @@ export function hatch(
     if (!known(key) || !tool.trim()) throw new Error(`Hatch named tool for ${key} needs an indexed operation.`);
   }
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
+  const refusalOf = (op: Operation) =>
+    connection.safety.refusal?.({ method: op.method, template: op.path }) ?? options.binding?.refusal?.(op);
+  const summaryOf = (op: Operation) => {
+    const reason =
+      verdictOf(op) === "refuse"
+        ? (refusalOf(op) ?? `Connecta refuses ${op.method} ${op.path}: it has no admitted hatch verdict.`)
+        : undefined;
+    return reason ? `Refused: ${reason}` : op.summary;
+  };
   const pages = new Map(
     Object.entries(options.pages ?? {}).map(([key, declared]) => {
       const adapters: readonly HatchPageAdapter[] = Array.isArray(declared) ? declared : [declared as HatchPageAdapter];
@@ -400,13 +413,19 @@ export function hatch(
       ...(authored ? { named: authored } : {}),
     };
   };
+  const updateWords = ["update", "edit", "modify", "change", "set", "apply", "make", "rename"];
   const verbs: Readonly<Record<string, readonly string[]>> = {
     delete: ["delete", "remove", "destroy", "cancel", "stop"],
     remove: ["delete", "remove", "destroy"],
     cancel: ["cancel", "stop", "delete"],
     stop: ["cancel", "stop", "delete"],
-    update: ["update", "edit", "modify"],
-    edit: ["update", "edit", "modify"],
+    update: updateWords,
+    edit: updateWords,
+    make: updateWords,
+    set: updateWords,
+    apply: updateWords,
+    change: updateWords,
+    rename: updateWords,
     create: ["create", "add", "new"],
     add: ["create", "add", "new"],
     get: ["get", "retrieve", "read"],
@@ -426,6 +445,7 @@ export function hatch(
     charge: ["charge"],
     issue: ["issue"],
     process: ["process"],
+    send: ["send"],
   };
   const readActions = new Set([
     "get",
@@ -447,6 +467,12 @@ export function hatch(
     "add",
     "update",
     "edit",
+    "make",
+    "set",
+    "apply",
+    "change",
+    "rename",
+    "send",
     "delete",
     "remove",
     "cancel",
@@ -460,9 +486,49 @@ export function hatch(
     lexicalSearchContent(query)
       .split(/[^a-z0-9]+/)
       .filter((word) => word.length >= 2);
-  const writeVerbs = new Set(["create", "add", "update", "edit", "delete", "remove", "cancel", "stop"]);
+  const writeVerbs = new Set([
+    "create",
+    "add",
+    "update",
+    "edit",
+    "make",
+    "set",
+    "apply",
+    "change",
+    "rename",
+    "send",
+    "delete",
+    "remove",
+    "cancel",
+    "stop",
+  ]);
+  const functionWords = new Set([
+    "by",
+    "its",
+    "my",
+    "your",
+    "their",
+    "his",
+    "her",
+    "no",
+    "yes",
+    "at",
+    "as",
+    "is",
+    "be",
+    "or",
+    "not",
+  ]);
+  let resourceTerms: Set<string> | undefined;
+  const isNoun = (term: string) => {
+    if (functionWords.has(term) || /^\d+$/.test(term)) return false;
+    if (options.binding?.searchNoun?.(term) === false) return false;
+    if (term.length < 5 || !/\d/.test(term)) return true;
+    resourceTerms ??= new Set(index.ops.flatMap((op) => queryWords(op.path.replace(/\{[^}]*\}/g, ""))));
+    return resourceTerms.has(term);
+  };
   const queryTerms = (query: string) => {
-    const terms = queryWords(query).filter((term) => term !== "by");
+    const terms = queryWords(query).filter((term) => !functionWords.has(term));
     const lookup = terms.find((term) => readActions.has(term));
     const first = terms[0];
     // issue/process remain nouns unless a leading verb has another noun to act on.
@@ -472,14 +538,33 @@ export function hatch(
       (!["issue", "process", "refund", "charge"].includes(first) ||
         (!lookup && terms.slice(1).some((term) => !readActions.has(term) && !/^\d+$/.test(term))));
     // An explicit leading write verb wins; a later read word (list, status) is its object.
-    if (first !== undefined && terms.length > 1 && writeVerbs.has(first))
-      return { terms, nouns: terms.slice(1), verbWords: verbs[first], intent: "write" as const };
+    if (first !== undefined && terms.length > 1 && writeVerbs.has(first)) {
+      // In renaming/setting, the destination after "to" is a supplied value.
+      const object = ["rename", "change", "set", "make"].includes(first)
+        ? queryWords(query.split(/\bto\b/i)[0]!).filter((term) => !functionWords.has(term))
+        : terms;
+      const nouns = object.slice(1).filter(isNoun);
+      return {
+        terms,
+        nouns,
+        suppliedValue: object.length > 1 && !nouns.length,
+        verbWords:
+          (first === "make" && /\bmake\s+(?:an?|new)\b/i.test(query)) ||
+          (first === "set" && /\bset\s+up\b/i.test(query))
+            ? verbs.create
+            : verbs[first],
+        intent: "write" as const,
+      };
+    }
     const verb = lookup ?? (leadingVerb ? first : undefined);
     return {
       terms,
+      suppliedValue: false,
       nouns: terms.filter(
         (term, position) =>
-          !readActions.has(term) && !(position === 0 && leadingVerb && !["refund", "charge"].includes(term)),
+          isNoun(term) &&
+          !readActions.has(term) &&
+          !(position === 0 && leadingVerb && !["refund", "charge"].includes(term)),
       ),
       verbWords: verb === undefined ? undefined : verbs[verb],
       intent: (lookup ? "read" : leadingVerb && writeActions.has(first!) ? "write" : undefined) as
@@ -497,13 +582,16 @@ export function hatch(
     word === plural(term) ||
     term === plural(word) ||
     (word === "people" && term === "person") ||
-    (word === "person" && term === "people");
+    (word === "person" && term === "people") ||
+    (word === "mail" && term === "email") ||
+    (word === "email" && term === "mail");
   const matches = (word: string, term: string) => sameNoun(word, term) || (term.length >= 3 && word.startsWith(term));
-  // Intent and the requested verb precede collection ties. Root preference
-  // applies to one resource noun; multi-word phrases retain index relevance.
+  // Intent and the requested verb precede resource and noun-phrase ties.
+  // Stable lexical order remains the final key; every match stays reachable.
   const rank = (found: readonly Operation[], query: ReturnType<typeof queryTerms>, pathQuery: boolean): Operation[] => {
     if (pathQuery) return [...found];
     const { nouns, intent, verbWords } = query;
+    const phrase = intent === undefined && nouns.length > 1;
     // Modifiers may precede the resource in action/read queries. Noun phrases
     // retain their broader resource match without the half-coverage threshold.
     const half = Math.ceil(nouns.length / 2);
@@ -513,7 +601,16 @@ export function hatch(
         const literal = parts.filter((part) => !part.startsWith("{")).flatMap(words);
         const parameter = parts.findIndex((part) => part.startsWith("{"));
         const root = parameter < 0 ? parts : parts.slice(0, parameter);
-        const verbal = words(`${op.summary} ${op.operationId} ${op.path}`);
+        const description = words(`${op.summary} ${op.operationId}`);
+        const verbal = [...description, ...words(op.path)];
+        const text = [...verbal, ...words(op.tag)];
+        const version = parts.findIndex((part) => /^v\d+$/.test(part));
+        const resources = parts
+          .slice(version + 1)
+          .filter((part) => !part.startsWith("{"))
+          .flatMap(words);
+        const authored = named.get(`${op.method} ${op.path}`);
+        const summary = phrase ? queryWords(op.summary) : [];
         return {
           op,
           position,
@@ -521,13 +618,17 @@ export function hatch(
           literal,
           root,
           parameter,
-          text: [...verbal, ...words(op.tag)],
+          text,
+          resources,
+          authored: Number(authored !== undefined && !authored.startsWith(`${name}_api_`)),
+          phrasePrefix: Number(nouns.every((term, position) => summary[position] === term)),
           identity: [...literal, ...words(op.operationId)],
           verbMatch: verbWords !== undefined && verbal.some((word) => verbWords.includes(word)),
+          descriptive: nouns.filter((term) => description.some((word) => matches(word, term))).length,
+          covered: nouns.filter((term) => text.some((word) => matches(word, term))).length,
         };
       })
-      .filter(({ identity, text }) => {
-        const covered = nouns.filter((term) => text.some((word) => matches(word, term))).length;
+      .filter(({ identity, covered }) => {
         return (
           nouns.length === 0 ||
           covered === nouns.length ||
@@ -536,30 +637,73 @@ export function hatch(
         );
       });
     const focus = nouns.find((term) => features.some(({ literal }) => literal.some((word) => sameNoun(word, term))));
-    const resourceOnly = nouns.length === 1 && !pathQuery;
-    const keyed = features.map(({ op, position, parts, literal, root, parameter, verbMatch }) => ({
-      op,
-      position,
-      intent: Number(
-        intent === undefined ||
-          (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))),
-      ),
-      verbMatch: Number(verbMatch),
-      focused: Number(
-        (intent !== undefined || resourceOnly) && focus !== undefined && literal.some((word) => sameNoun(word, focus)),
-      ),
-      exact: Number(focus !== undefined && sameNoun((root.at(-1) ?? "").replace(/-list(?:-all)?$/, ""), focus)),
-      nested: parameter < 0 ? 0 : parts.slice(parameter).filter((part) => !part.startsWith("{")).length,
-      namespace: Number(focus !== undefined && sameNoun((root[0] ?? "").replace(/-list(?:-all)?$/, ""), focus)),
-      depth: parts.length,
-      authored: Number(named.has(`${op.method} ${op.path}`)),
-    }));
+    const resourceNouns = nouns.filter((term) =>
+      features.some(({ literal }) => literal.some((word) => sameNoun(word, term))),
+    );
+    const resourceOnly = nouns.length === 1 || (query.terms[0] === "list" && resourceNouns.length === 1);
+    const admittedCoverage = Math.max(
+      0,
+      ...features
+        .filter(
+          ({ op, verbMatch }) =>
+            verbMatch &&
+            (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))),
+        )
+        .map(({ covered }) => covered),
+    );
+    const keyed = features.map(
+      ({
+        op,
+        position,
+        parts,
+        literal,
+        root,
+        parameter,
+        verbMatch,
+        covered,
+        descriptive,
+        resources,
+        authored,
+        phrasePrefix,
+      }) => ({
+        op,
+        position,
+        intent: Number(
+          intent === undefined ||
+            (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))) ||
+            (verdictOf(op) === "refuse" && verbMatch && covered > admittedCoverage),
+        ),
+        verbMatch: Number(verbMatch),
+        covered,
+        phrasePrefix,
+        completeAuthored: Number(authored && descriptive === nouns.length),
+        phraseCoverage: nouns.filter((term) => resources.some((word) => sameNoun(word, term))).length,
+        focused: Number(
+          (intent !== undefined || resourceOnly) &&
+            focus !== undefined &&
+            literal.some((word) => sameNoun(word, focus)),
+        ),
+        exact: Number(focus !== undefined && sameNoun((root.at(-1) ?? "").replace(/-list(?:-all)?$/, ""), focus)),
+        nested: parameter < 0 ? 0 : parts.slice(parameter).filter((part) => !part.startsWith("{")).length,
+        namespace: Number(focus !== undefined && sameNoun((root[0] ?? "").replace(/-list(?:-all)?$/, ""), focus)),
+        depth: parts.length,
+        authored,
+      }),
+    );
     return keyed
       .sort(
         (a, b) =>
           b.intent - a.intent ||
           b.verbMatch - a.verbMatch ||
           b.focused - a.focused ||
+          (phrase
+            ? b.covered - a.covered ||
+              b.phrasePrefix - a.phrasePrefix ||
+              a.depth - a.authored - (b.depth - b.authored) ||
+              b.phraseCoverage - a.phraseCoverage ||
+              b.authored - a.authored
+            : 0) ||
+          (query.terms[0] === "list" && !resourceOnly ? b.completeAuthored - a.completeAuthored : 0) ||
           (resourceOnly
             ? b.exact - a.exact ||
               a.nested - b.nested ||
@@ -719,11 +863,16 @@ export function hatch(
           const query = queryTerms(args.query);
           const primary = rank(
             yield* checked(() =>
-              index.search(pathQuery ? args.query : query.terms.join(" "), {
-                ...scope,
-                limit: index.ops.length,
-                partial: !pathQuery && query.terms.length > 0,
-              }),
+              index.search(
+                pathQuery
+                  ? args.query
+                  : [...query.terms, ...(query.suppliedValue ? (query.verbWords ?? []) : [])].join(" "),
+                {
+                  ...scope,
+                  limit: index.ops.length,
+                  partial: !pathQuery && query.terms.length > 0,
+                },
+              ),
             ),
             query,
             pathQuery,
@@ -765,7 +914,7 @@ export function hatch(
                 method: op.method,
                 path: op.path,
                 operationId: label("operationId", op.operationId),
-                summary: label("summary", op.summary),
+                summary: label("summary", summaryOf(op)),
                 ...routed,
                 // A named tool's projection may omit the matched field, so a field match points at the hatch only.
                 ...(field
@@ -850,7 +999,7 @@ export function hatch(
         Effect.gen(function* () {
           const { op, contract } = yield* checked(() => {
             const op = index.operation(args.method, args.path) ?? index.resolve(args.method, args.path).op;
-            return { op, contract: index.contract(op, args.param) };
+            return { op, contract: { ...index.contract(op, args.param), summary: summaryOf(op) } };
           });
           const tail = { verdict: verdictOf(op), ...route(op), revision: index.revision };
           const whole = { ...contract, ...tail };
@@ -1035,7 +1184,8 @@ export function hatch(
         const verdict = verdictOf(op);
         if (verdict === "refuse") {
           invalid(
-            options.binding?.refuse?.(call()) ??
+            refusalOf(op) ??
+              options.binding?.refuse?.(call()) ??
               `Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`,
           );
         }
