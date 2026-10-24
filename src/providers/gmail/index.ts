@@ -14,13 +14,13 @@ import { skill } from "./skill.generated.js";
  *
  * Why draft-only. `gmail.compose` is the narrowest scope that can write a
  * draft, and Google lets it send too; the tool surface is what keeps this
- * connection from sending. There is no send tool and no raw hatch (H14), so
+ * connection from sending. Every indexed send route is explicitly refused, so
  * nothing reaches `drafts.send` or `messages.send`. A deployment that wants an
  * agent to send mail is choosing something this provider deliberately does
  * not offer.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `src/providers/gmail/drift.json` records the nine methods the tools
+ * `src/providers/gmail/drift.json` records the frozen inventory and the methods the tools
  * call, and `pnpm run providers:check --provider gmail` reports a touched
  * contract that moved or a method that stopped accepting the scopes below.
  */
@@ -30,6 +30,8 @@ import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "..
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { errors, GMAIL, GmailApi, probe, result, safety } from "./api.js";
 import { GMAIL_API_BASE_URL, GMAIL_MAX_RESPONSE_BYTES } from "./lib/constants.js";
+import { googleHatchBinding } from "../_shared/google/hatch.js";
+import { index, verdicts, named, pages, refusalReasons } from "./lib/index.js";
 import { gmailTools } from "./tools.js";
 export { GMAIL_API_BASE_URL, GMAIL_SCOPES } from "./lib/constants.js";
 export type {
@@ -39,13 +41,6 @@ export type {
   GoogleWorkspaceSubject,
 } from "../_shared/google/workspace.js";
 export type GmailOptions = GoogleWorkspaceOptions;
-
-// --- Guide ------------------------------------------------------------------------
-
-function usageGuide(purpose: string, instructions: string | undefined): string {
-  const extra = instructions?.trim();
-  return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${extra ? `\n## ${skill.instructionsHeading}\n\n${extra}\n` : ""}`;
-}
 
 // --- Construction -----------------------------------------------------------------
 
@@ -104,11 +99,50 @@ export const gmail = defineApiProvider<GmailOptions>({
   grantRenewal: GOOGLE_GRANT_RENEWAL,
   authenticate: bearer,
   errors,
+  pageSize: { default: 10, max: 25 },
+  idempotencyKey: false,
+  hatch: {
+    name: "gmail",
+    title: "Gmail",
+    index,
+    verdicts,
+    named,
+    pages,
+    pageCursor: "argument",
+    pathExample: "/messages/message1",
+    binding: ({ connection }) =>
+      googleHatchBinding(connection, {
+        index,
+        review:
+          "Exactly eleven reviewed Gmail reads beneath users/me. Draft writes use named guarded MIME tools; sending/settings/media are never admitted.",
+        refuse: (call) => {
+          const refused = refusalReasons[`${call.method} ${call.op.path}`];
+          if (refused) return refused;
+          if (call.query["maxResults"] !== undefined) {
+            const count = Number(call.query["maxResults"]);
+            if (!Number.isInteger(count) || count < 1 || count > 500)
+              return "Gmail query.maxResults must be an integer from 1 to 500.";
+          }
+          return undefined;
+        },
+      }),
+    notes: () => ({
+      read: "Gmail is the three-hatch exception: there is no write hatch. Drafts use only create_draft/update_draft; sending is never available. Full MIME and raw-message fields retain decoded sent-secret safety. Use get_attachment for fresh immutable-part resolution and bounded decoded content.",
+    }),
+  },
   result,
   safety: () => safety,
   probe,
   guide: (options) => ({
-    content: usageGuide(options.purpose, options.instructions),
+    context: [
+      `Purpose: ${options.purpose}`,
+      "Workspace delegation is already configured. The deployment chooses the subject; no argument selects a mailbox.",
+      typeof options.subject === "string"
+        ? "Every caller uses the deployment's fixed mailbox."
+        : "Each call uses the mailbox mapped from its admitted caller or pool owner.",
+      "A missing subject fails auth_required; ask the operator to repair configuration after an auth failure.",
+      ...(options.readOnly ? ["This connection is read-only; draft writes are refused."] : []),
+    ],
     summary: "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
     required: true,
   }),

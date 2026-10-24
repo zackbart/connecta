@@ -1,15 +1,29 @@
-// Gmail's kit programs keep the legacy catalog, private cursors, MIME and projections.
-import { Effect } from "effect";
+// Curated Gmail workflows over real Effect declarations and the standard kit boundary.
+import { Effect, Option } from "effect";
 import { defined, type ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
-import { toConnectorCallError, type HttpFailure } from "../../http/errors.js";
+import { Refusal, toConnectorCallError, type HttpFailure } from "../../http/errors.js";
 import type { CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
-import type { ConnectorContext, JsonSchema } from "../../types.js";
-import { googleClient, googleTool, type GoogleClient, type GoogleToolDeclaration } from "../_shared/google/kit.js";
+import type { ConnectorContext } from "../../types.js";
+import { googleClient, type GoogleClient } from "../_shared/google/kit.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 import { errors, GMAIL, gmailBodyProvenance } from "./api.js";
+import { read, write } from "../../http/tools.js";
+import { boundCursor } from "../../http/paging.js";
+import { fieldsProblem, selectFields } from "../../http/fields.js";
+import { Operation } from "../../runtime/call.js";
+import { index } from "./lib/index.js";
+import { inputs, outputs, rows, type GmailToolName } from "./lib/schemas.js";
+
+interface GmailToolProgram {
+  readonly name: GmailToolName;
+  readonly description: string;
+  readonly annotations: NonNullable<ApiTool["annotations"]>;
+  readonly writeSteps?: Readonly<Record<string, "once">>;
+  readonly run: (args: JsonRecord, ctx: ConnectorContext) => Effect.Effect<unknown, HttpFailure, CallServices>;
+}
 
 /**
  * Each summary row costs one metadata read, so a page stays small. Gmail's
@@ -20,7 +34,6 @@ const DEFAULT_PAGE_SIZE = 10;
 /** Bodies are capped per message; a thread multiplies this. */
 const DEFAULT_THREAD_BODY_CHARS = 3000;
 const DEFAULT_MESSAGE_BODY_CHARS = 12000;
-const MAX_BODY_CHARS = 100000;
 /** Summary reads in flight at once for one page. */
 const SUMMARY_CONCURRENCY = 5;
 /** A full thread without attachment bodies; Gmail's message cap is 25 MB. */
@@ -30,7 +43,6 @@ const MAX_RECIPIENTS = 100;
 const MAX_ATTACHMENT_BYTES = 1024 * 1024;
 /** Same direct-call ceiling and minimum result budget as Drive content reads. */
 const MAX_ATTACHMENT_RESULT_BYTES = 4 * 1024 * 1024;
-const MIN_ATTACHMENT_RESULT_BYTES = 64 * 1024;
 type JsonRecord = Record<string, any>;
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -261,6 +273,7 @@ function readBody(
           {
             method: "GET",
             path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+            template: "/messages/{messageId}/attachments/{id}",
           },
           { step },
         ),
@@ -328,17 +341,20 @@ function attachmentsOf(
 } {
   const all = walk(payload).attachments;
   return {
-    listed: all.slice(0, MAX_LISTED_ATTACHMENTS).map((part) =>
-      compact({
-        filename: clipped(ctx, text(part["filename"]) ?? "", FIELD_BYTES),
-        mimeType: clipped(ctx, text(part["mimeType"]), FIELD_BYTES),
+    listed: all.slice(0, MAX_LISTED_ATTACHMENTS).map((part) => {
+      const truncated: string[] = [];
+      const clip = clipper(ctx, truncated);
+      return compact({
+        filename: clip(text(part["filename"]) ?? "", FIELD_BYTES, "filename"),
+        mimeType: clip(text(part["mimeType"]), FIELD_BYTES, "mimeType"),
+        truncated,
         size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
         ...ids({
           attachmentId: [asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES],
           partId: [part["partId"]],
         }),
-      }),
-    ),
+      });
+    }),
     omitted: Math.max(0, all.length - MAX_LISTED_ATTACHMENTS),
   };
 }
@@ -385,6 +401,7 @@ function attachmentBytes(
           {
             method: "GET",
             path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(freshId)}`,
+            template: "/messages/{messageId}/attachments/{id}",
           },
           { step: "attachment" },
         ),
@@ -437,6 +454,7 @@ function readAttachment(
         {
           method: "GET",
           path: `/messages/${encodeURIComponent(messageId)}`,
+          template: "/messages/{id}",
           query: { format: "full" },
         },
         { step: "message" },
@@ -464,11 +482,14 @@ function readAttachment(
     const size = parsedForward ? forwardedSize(part) : declaredSize(stored);
     const maxBytes = typeof args["maxBytes"] === "number" ? args["maxBytes"] : RESULT_BUDGET_BYTES;
     const maxChars = typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_MESSAGE_BODY_CHARS;
+    const truncated: string[] = [];
+    const clip = clipper(ctx, truncated);
     const base = compact({
+      truncated,
       messageId,
       ...ids({ partId: [part["partId"]] }),
-      filename: clipped(ctx, text(part["filename"]) ?? "", FIELD_BYTES),
-      mimeType: clipped(ctx, text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES),
+      filename: clip(text(part["filename"]) ?? "", FIELD_BYTES, "filename"),
+      mimeType: clip(text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES, "mimeType"),
       size,
     });
     const unavailable = (note: string) => ({ ...base, format: "unavailable", contentTruncated: false, note });
@@ -556,6 +577,14 @@ const HEADER_BYTES = 4 * 1024;
 function clipped<T extends string | undefined>(ctx: ConnectorContext, value: T, maxBytes: number): T {
   return (value === undefined ? value : clampText(ctx, value, maxBytes, () => "…")) as T;
 }
+/** Per-record clipping provenance; redaction is not a size truncation. */
+function clipper(ctx: ConnectorContext, cuts: string[]) {
+  return <T extends string | undefined>(value: T, max: number, path: string): T => {
+    const result = clipped(ctx, value, max);
+    if (value !== undefined && result !== redactBeforeCut(ctx, value)) cuts.push(path);
+    return result;
+  };
+}
 /** Cut a body at `max` characters and say so in the text itself, after replacing every
  * secret the request sent: a cut through an echo leaves a fragment nothing redacts. */
 function capped(
@@ -604,9 +633,12 @@ function projectMessage(
     const payload = asRecord(message["payload"]);
     const read = yield* readBody(client, ctx, idOf(message["id"]), payload, maxBodyChars, bodyStep);
     const attachments = attachmentsOf(ctx, payload);
-    const headerOf = (name: string) => clipped(ctx, header(payload, name), HEADER_BYTES);
+    const truncated: string[] = [];
+    const clip = clipper(ctx, truncated);
+    const headerOf = (name: string, field = name.toLowerCase()) => clip(header(payload, name), HEADER_BYTES, field);
     const { omittedIds, ...messageIds } = ids({ id: [message["id"]], threadId: [message["threadId"]] });
     const projected = compact({
+      truncated,
       ...messageIds,
       ...labelsOf(labelIdsOf(message)),
       date: isoFromMillis(message["internalDate"]),
@@ -614,12 +646,12 @@ function projectMessage(
       to: headerOf("To"),
       cc: headerOf("Cc"),
       bcc: headerOf("Bcc"),
-      replyTo: headerOf("Reply-To"),
+      replyTo: headerOf("Reply-To", "replyTo"),
       subject: headerOf("Subject"),
-      messageIdHeader: headerOf("Message-ID"),
-      inReplyTo: headerOf("In-Reply-To"),
+      messageIdHeader: headerOf("Message-ID", "messageIdHeader"),
+      inReplyTo: headerOf("In-Reply-To", "inReplyTo"),
       snippet: text(message["snippet"])
-        ? clipped(ctx, decodeEntities(ctx, message["snippet"]), HEADER_BYTES)
+        ? clip(decodeEntities(ctx, message["snippet"]), HEADER_BYTES, "snippet")
         : undefined,
       body: "",
       bodyTruncated: false,
@@ -746,7 +778,7 @@ async function cursorAfter(
   return encodeCursor(ctx, { v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
 }
 /** A page object whose cursor is as long as any this connection issues. */
-const RESERVED_PAGE = { hasMore: true, nextCursor: "x".repeat(MAX_CURSOR_LENGTH) };
+const RESERVED_PAGE = { hasMore: true, nextCursor: "x".repeat(4096) };
 function resultLimitMarker(dropped: number): string {
   return `\n[… ${dropped} more characters truncated at connecta's ${RESULT_BUDGET_BYTES / 1024} KiB per-result limit; read the rest in Gmail]`;
 }
@@ -767,6 +799,8 @@ function deliverable(tool: string, result: unknown, budget = RESULT_BUDGET_BYTES
   return result;
 }
 function projectThreadSummary(ctx: ConnectorContext, value: unknown, listedSnippet: unknown): JsonRecord {
+  const truncated: string[] = [];
+  const clip = clipper(ctx, truncated);
   const thread = asRecord(value);
   const messages = asArray(thread["messages"]).map(asRecord);
   const first = asRecord(messages[0]?.["payload"]);
@@ -780,27 +814,33 @@ function projectThreadSummary(ctx: ConnectorContext, value: unknown, listedSnipp
   }
   const snippet = text(listedSnippet) ?? text(messages[messages.length - 1]?.["snippet"]);
   return compact({
+    truncated,
     ...ids({ id: [thread["id"]] }),
-    subject: clipped(ctx, header(first, "Subject"), FIELD_BYTES),
-    from: clipped(ctx, header(first, "From"), FIELD_BYTES),
-    lastFrom: messages.length > 1 ? clipped(ctx, header(last, "From"), FIELD_BYTES) : undefined,
+    subject: clip(header(first, "Subject"), FIELD_BYTES, "subject"),
+    from: clip(header(first, "From"), FIELD_BYTES, "from"),
+    lastFrom: messages.length > 1 ? clip(header(last, "From"), FIELD_BYTES, "lastFrom") : undefined,
     messageCount: messages.length,
     lastMessageAt: isoFromMillis(latest),
     unread: labels.has("UNREAD"),
     ...labelsOf([...labels]),
-    snippet: snippet ? clipped(ctx, decodeEntities(ctx, snippet), FIELD_BYTES) : undefined,
+    snippet: snippet ? clip(decodeEntities(ctx, snippet), FIELD_BYTES, "snippet") : undefined,
   });
 }
 function projectDraftSummary(ctx: ConnectorContext, value: unknown): JsonRecord {
+  const truncated: string[] = [];
+  const clip = clipper(ctx, truncated);
   const draft = asRecord(value);
   const message = asRecord(draft["message"]);
   const payload = asRecord(message["payload"]);
   return compact({
+    truncated,
     ...ids({ draftId: [draft["id"]], messageId: [message["id"]], threadId: [message["threadId"]] }),
-    subject: clipped(ctx, header(payload, "Subject"), FIELD_BYTES),
-    to: clipped(ctx, header(payload, "To"), FIELD_BYTES),
+    subject: clip(header(payload, "Subject"), FIELD_BYTES, "subject"),
+    to: clip(header(payload, "To"), FIELD_BYTES, "to"),
     updatedAt: isoFromMillis(message["internalDate"]),
-    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(ctx, message["snippet"]), FIELD_BYTES) : undefined,
+    snippet: text(message["snippet"])
+      ? clip(decodeEntities(ctx, message["snippet"]), FIELD_BYTES, "snippet")
+      : undefined,
   });
 }
 /** Run `work` over `items`, at most `limit` at a time, keeping order. */
@@ -1027,9 +1067,23 @@ function buildRawMessage(message: Composition): string {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
-/** Message-ID tokens (`<…@…>`) in a header, in order, line breaks gone. */
+/** Copied threading must remain intact ASCII RFC tokens; never silently salvage a damaged header (H8). */
 function messageIds(value: string | undefined): string[] {
-  return value?.match(/<[^<>\s]+>/g) ?? [];
+  if (value === undefined) return [];
+  const unfolded = value.replace(/\r\n[ \t]+/g, " ");
+  const tokens = unfolded.trim().split(/[ \t]+/);
+  if (
+    value.length > 32768 ||
+    !/^[\x20-\x7e\t]*$/.test(unfolded) ||
+    value.includes("[redacted]") ||
+    tokens.some((token) => token.length > 998 || !/^<[^<>@\s]+@[^<>@\s]+>$/.test(token))
+  ) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      "The copied Message-ID, In-Reply-To or References header is malformed or withheld. No draft was changed; repair its threading in Gmail.",
+    );
+  }
+  return tokens;
 }
 /** At most this many ancestors ride in References; the newest are kept. */
 const MAX_REFERENCES = 20;
@@ -1057,6 +1111,7 @@ function replyThreading(client: GoogleClient, messageId: string): Effect.Effect<
         {
           method: "GET",
           path: `/messages/${encodeURIComponent(messageId)}`,
+          template: "/messages/{id}",
           query: {
             format: "metadata",
             metadataHeaders: ["Message-ID", "References", "Subject", "From", "Reply-To"],
@@ -1151,149 +1206,31 @@ function unrebuildable(payload: JsonRecord): string[] {
   visit(payload, 0);
   return found;
 }
-// --- Schemas ----------------------------------------------------------------------
-function input(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
-  return { type: "object", properties, required, additionalProperties: false };
-}
-const ID_PATTERN = "^[A-Za-z0-9_-]+$";
-function idProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: 256, pattern: ID_PATTERN, description };
-}
-const CURSOR_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: MAX_CURSOR_LENGTH,
-  pattern: "^[A-Za-z0-9_-]+$",
-  description:
-    "Opaque page.nextCursor from the previous page of this same call; another call's cursor is refused. Pass it back unchanged.",
-};
-const LIMIT_PROPERTY: JsonSchema = {
-  type: "integer",
-  minimum: 1,
-  maximum: MAX_PAGE_SIZE,
-  description: `Rows per page, 1 to ${MAX_PAGE_SIZE}; defaults to ${DEFAULT_PAGE_SIZE}. Connecta's cap, below Gmail's 500, because each row costs a metadata read.`,
-};
-const QUERY_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: 2048,
-  description:
-    "Gmail search syntax, as in the Gmail search box: from:, to:, subject:, label:, is:unread, has:attachment, newer_than:7d, in:inbox. Omit for everything.",
-};
-function bodyCharsProperty(fallback: number): JsonSchema {
-  return {
-    type: "integer",
-    minimum: 0,
-    maximum: MAX_BODY_CHARS,
-    description: `Characters of body text kept per message, 0 to ${MAX_BODY_CHARS}; defaults to ${fallback}. Longer bodies end with a truncation marker, as does any body past connecta's ${RESULT_BUDGET_BYTES / 1024} KiB result limit.`,
-  };
-}
-const ADDRESSES = (who: string): JsonSchema => ({
-  type: "array",
-  maxItems: MAX_RECIPIENTS,
-  items: {
-    type: "string",
-    minLength: 3,
-    maxLength: 320,
-    pattern: "^[^\\r\\n]*$",
-    description: '"name@example.com" or "Name <name@example.com>".',
-  },
-  description: `${who} recipients.`,
-});
-const SUBJECT_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: 900,
-  pattern: "^[^\\r\\n]*$",
-  description:
-    "Subject line; any language. A reply defaults to Re: and the original subject, which Gmail needs to keep it in the thread.",
-};
-const BODY_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: 200000,
-  description: "Plain-text body. Always required; it is what clients without HTML show.",
-};
-const HTML_BODY_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: 500000,
-  description: "Optional HTML alternative to body, sent beside it. Omit for a plain-text draft.",
-};
-const REPLY_PROPERTY: JsonSchema = idProperty(
-  "Message id (from get_thread or get_message) this draft replies to: sets its thread, In-Reply-To, and References, and defaults subject and to from it.",
-);
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    hasMore: { type: "boolean" },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["hasMore", "nextCursor"],
-};
-/** Fields Gmail sent an id for that was too long to return; see `ids()`. */
-const OMITTED_IDS_SCHEMA: JsonSchema = { type: "array", items: { type: "string" } };
-const ATTACHMENT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    filename: { type: "string" },
-    mimeType: { type: "string" },
-    size: { type: "integer" },
-    attachmentId: { type: "string" },
-    partId: { type: "string" },
-    omittedIds: OMITTED_IDS_SCHEMA,
-  },
-};
-const MESSAGE_PROPERTIES: Record<string, JsonSchema> = {
-  id: { type: "string" },
-  threadId: { type: "string" },
-  labelIds: { type: "array", items: { type: "string" } },
-  labelIdsOmitted: { type: "integer" },
-  omittedIds: OMITTED_IDS_SCHEMA,
-  date: { type: "string" },
-  from: { type: "string" },
-  to: { type: "string" },
-  cc: { type: "string" },
-  bcc: { type: "string" },
-  replyTo: { type: "string" },
-  subject: { type: "string" },
-  messageIdHeader: { type: "string" },
-  inReplyTo: { type: "string" },
-  snippet: { type: "string" },
-  body: { type: "string" },
-  bodyTruncated: { type: "boolean" },
-  bodyFormat: { type: "string", enum: ["text", "html", "none", "unavailable"] },
-  bodyNote: { type: "string", description: "Decoding notice, preserved when the body is truncated." },
-  attachments: { type: "array", items: ATTACHMENT_SCHEMA },
-  attachmentsOmitted: { type: "integer" },
-};
-const MESSAGE_SCHEMA: JsonSchema = { type: "object", properties: MESSAGE_PROPERTIES };
-/** A draft names its message `messageId`, beside its own `draftId`. */
-const { id: _messageId, ...DRAFT_MESSAGE_PROPERTIES } = MESSAGE_PROPERTIES;
-const SAVED_DRAFT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    draftId: { type: "string" },
-    messageId: { type: "string" },
-    threadId: { type: "string" },
-    saved: { type: "boolean", const: true },
-    sent: { type: "boolean", const: false },
-    omittedIds: OMITTED_IDS_SCHEMA,
-    note: { type: "string" },
-  },
-  required: ["saved", "sent"],
-};
 // --- Tools ------------------------------------------------------------------------
 /** Each request a read sends names a step, so a deployment serving it as a write sends each once. */
 const indexedSteps = (prefix: string, count: number) =>
   Object.fromEntries(Array.from({ length: count }, (_, index) => [`${prefix}${index}`, "once" as const]));
 /** Gmail splits a conversation into a new thread past 100 messages. */
 const MAX_THREAD_MESSAGES = 100;
-function declarations(client: GoogleClient): GoogleToolDeclaration[] {
+function declarations(client: GoogleClient): GmailToolProgram[] {
   const readOnly = { readOnlyHint: true } as const;
   const bodyChars = (args: JsonRecord, fallback: number): number =>
     typeof args["maxBodyChars"] === "number" ? args["maxBodyChars"] : fallback;
   // Gmail's own page token, carried inside a cursor bound to this call. It is redacted first:
   // an agent decodes the cursor, and no later pass reads through its encoding.
   const gmailPage = (ctx: ConnectorContext, listing: JsonRecord, tool: string, call: string) => {
-    const token = text(listing["nextPageToken"]);
-    if (token === undefined) return { hasMore: false, nextCursor: null };
+    const rawToken = listing["nextPageToken"];
+    if (rawToken === undefined || rawToken === "") return { hasMore: false, nextCursor: null };
+    if (
+      typeof rawToken !== "string" ||
+      rawToken.includes("[redacted]") ||
+      /^[a-z][a-z0-9+.-]*:/i.test(rawToken) ||
+      /[\x00-\x20\x7f]/.test(rawToken)
+    )
+      throw new ConnectorCallError("connector_call_failed", "Gmail returned invalid paging metadata.", {
+        retryable: false,
+      });
+    const token = rawToken;
     const cursor = encodeCursor(ctx, { v: 1, t: tool, c: call, p: redactSentSecrets(ctx, token) });
     if (cursor.length > MAX_CURSOR_LENGTH) {
       throw new ConnectorCallError(
@@ -1330,45 +1267,6 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       description:
         "Search the user's Gmail threads with Gmail query syntax, newest first, returning subject, senders, date, and snippet per thread. Bodies need get_thread.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          query: QUERY_PROPERTY,
-          includeSpamTrash: {
-            type: "boolean",
-            description: "Include Spam and Trash, which Gmail leaves out by default.",
-          },
-          limit: LIMIT_PROPERTY,
-          cursor: CURSOR_PROPERTY,
-        },
-        [],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          threads: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                subject: { type: "string" },
-                from: { type: "string" },
-                lastFrom: { type: "string" },
-                messageCount: { type: "integer" },
-                lastMessageAt: { type: "string" },
-                unread: { type: "boolean" },
-                labelIds: { type: "array", items: { type: "string" } },
-                labelIdsOmitted: { type: "integer" },
-                omittedIds: OMITTED_IDS_SCHEMA,
-                snippet: { type: "string" },
-              },
-            },
-          },
-          resultSizeEstimate: { type: "integer" },
-          page: PAGE_SCHEMA,
-        },
-        required: ["threads", "page"],
-      },
       run: (args, ctx) =>
         Effect.gen(function* () {
           const limit = args["limit"] ?? DEFAULT_PAGE_SIZE;
@@ -1385,6 +1283,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
               {
                 method: "GET",
                 path: "/threads",
+                template: "/threads",
                 query: {
                   q: args["query"],
                   includeSpamTrash: args["includeSpamTrash"],
@@ -1408,6 +1307,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
                       {
                         method: "GET",
                         path: `/threads/${encodeURIComponent(String(row["id"]))}`,
+                        template: "/threads/{id}",
                         query: { format: "metadata", metadataHeaders: ["Subject", "From", "Date"] },
                       },
                       { step: `row${index}` },
@@ -1419,8 +1319,6 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
           );
           return compact({
             threads: threads.filter((thread) => thread !== undefined),
-            resultSizeEstimate:
-              typeof listing["resultSizeEstimate"] === "number" ? listing["resultSizeEstimate"] : undefined,
             page: gmailPage(ctx, listing, "search_threads", call),
           });
         }),
@@ -1431,27 +1329,6 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       description:
         "Get a Gmail thread's messages, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment metadata. Read attachments with get_attachment using partId. A long thread pages by cursor.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          threadId: idProperty("Thread id from search_threads or a message's threadId."),
-          maxBodyChars: bodyCharsProperty(DEFAULT_THREAD_BODY_CHARS),
-          cursor: {
-            ...CURSOR_PROPERTY,
-            description: `Opaque page.nextCursor from this thread's previous page, same maxBodyChars. A page ends before ${RESULT_BUDGET_BYTES / 1024} KiB; a thread changed before that point answers conflict.`,
-          },
-        },
-        ["threadId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          messageCount: { type: "integer" },
-          messages: { type: "array", items: MESSAGE_SCHEMA },
-          page: PAGE_SCHEMA,
-        },
-        required: ["id", "messages", "page"],
-      },
       run: (args, ctx) =>
         Effect.gen(function* () {
           const thread = asRecord(
@@ -1459,6 +1336,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
               {
                 method: "GET",
                 path: `/threads/${encodeURIComponent(args["threadId"])}`,
+                template: "/threads/{id}",
                 query: { format: "full" },
               },
               { step: "thread" },
@@ -1470,7 +1348,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
           );
           const claims = openCursor(args["cursor"], "get_thread", call);
           const all = asArray(thread["messages"]);
-          const ids = all.map((message) => String(asRecord(message)["id"] ?? ""));
+          const ids = all.map((message) => JSON.stringify(message));
           const start = yield* Effect.promise(() => resumeAt(ids, claims, "thread"));
           // The whole result is budgeted: the wrapper (with the longest cursor
           // this connection issues) first, then messages and their separators
@@ -1507,42 +1385,18 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       description:
         "Get one Gmail message with headers, its plain-text body (HTML converted only when no text part exists), and attachment metadata. Read attachments with get_attachment using partId.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          messageId: idProperty("Message id from get_thread, or a draft's messageId."),
-          maxBodyChars: bodyCharsProperty(DEFAULT_MESSAGE_BODY_CHARS),
-          raw: {
-            type: "boolean",
-            description:
-              "Return Gmail's untouched message resource (every header, base64url part bodies) instead of the projection. Refused past connecta's 192 KiB result limit.",
-          },
-        },
-        ["messageId"],
-      ),
-      outputSchema: MESSAGE_SCHEMA,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const message = yield* client.json(
             {
               method: "GET",
               path: `/messages/${encodeURIComponent(args["messageId"])}`,
+              template: "/messages/{id}",
               query: { format: "full" },
             },
             { step: "message" },
           );
-          if (args["raw"] !== true) {
-            return yield* projectMessage(client, ctx, message, bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
-          }
-          // Untouched means uncuttable: a raw resource past the result budget
-          // could not reach a program, so it is refused rather than half-sent.
-          const size = jsonBytes(message);
-          if (size > RESULT_BUDGET_BYTES) {
-            throw new ConnectorCallError(
-              "invalid_args",
-              `This message's untouched resource is ${size} bytes, past connecta's ${RESULT_BUDGET_BYTES / 1024} KiB result limit. Read it without raw; the projection caps its body and lists its attachments.`,
-            );
-          }
-          return message;
+          return yield* projectMessage(client, ctx, message, bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
         }),
     },
     {
@@ -1551,57 +1405,6 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       description:
         "Read a Gmail attachment by immutable partId: text with its charset, or small binaries as standard base64 for Drive create_file. Refuses oversized downloads; text is capped by maxChars and the whole result by maxBytes.",
       annotations: readOnly,
-      inputSchema: {
-        ...input(
-          {
-            messageId: idProperty("Message id from get_message, get_thread, or get_draft."),
-            partId: {
-              type: "string",
-              maxLength: ID_BYTES,
-              description:
-                "Immutable partId from the attachment listing, including an empty root id. Preferred; authoritative when attachmentId is also supplied.",
-            },
-            attachmentId: {
-              type: "string",
-              minLength: 1,
-              maxLength: ATTACHMENT_ID_BYTES,
-              pattern: ID_PATTERN,
-              description:
-                "Alternative attachmentId from the listing. Gmail can rotate it between reads; prefer partId.",
-            },
-            maxChars: {
-              type: "integer",
-              minimum: 1,
-              maximum: MAX_BODY_CHARS,
-              description: `Text code points kept; defaults to ${DEFAULT_MESSAGE_BODY_CHARS}. Longer text ends with a truncation marker. Ignored for binaries.`,
-            },
-            maxBytes: {
-              type: "integer",
-              minimum: MIN_ATTACHMENT_RESULT_BYTES,
-              maximum: MAX_ATTACHMENT_RESULT_BYTES,
-              description: `Whole-result UTF-8 JSON byte budget; defaults to ${RESULT_BUDGET_BYTES}. Raise it only for a direct call_tool; execute_code cannot receive large results.`,
-            },
-          },
-          ["messageId"],
-        ),
-        anyOf: [{ required: ["partId"] }, { required: ["attachmentId"] }],
-      },
-      outputSchema: {
-        type: "object",
-        properties: {
-          messageId: { type: "string" },
-          partId: { type: "string" },
-          omittedIds: OMITTED_IDS_SCHEMA,
-          filename: { type: "string" },
-          mimeType: { type: "string" },
-          size: { type: "integer" },
-          format: { type: "string", enum: ["text", "base64", "unavailable"] },
-          content: { type: "string" },
-          contentTruncated: { type: "boolean" },
-          note: { type: "string" },
-        },
-        required: ["messageId", "filename", "mimeType", "format", "contentTruncated"],
-      },
       run: (args, ctx) =>
         Effect.gen(function* () {
           return yield* readAttachment(client, ctx, args);
@@ -1612,42 +1415,15 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       description:
         "List the user's Gmail labels, system and user-created, with the ids messages carry; no message counts. Search by name with label: in search_threads.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          cursor: {
-            ...CURSOR_PROPERTY,
-            description:
-              "Opaque page.nextCursor from the previous page. Gmail returns every label at once; connecta pages them so thousands still fit, and answers conflict if the list changed.",
-          },
-        },
-        [],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          labels: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                name: { type: "string" },
-                type: { type: "string", enum: ["system", "user"] },
-              },
-            },
-          },
-          labelsOmitted: { type: "integer" },
-          page: PAGE_SCHEMA,
-        },
-        required: ["labels", "page"],
-      },
       run: (args, ctx) =>
         Effect.gen(function* () {
-          const listing = asRecord(yield* client.json({ method: "GET", path: "/labels" }));
-          const call = yield* Effect.promise(() => callKey("list_labels", {}));
+          const listing = asRecord(yield* client.json({ method: "GET", path: "/labels", template: "/labels" }));
+          const call = yield* Effect.promise(() =>
+            callKey("list_labels", { limit: args["limit"] ?? DEFAULT_PAGE_SIZE }),
+          );
           const claims = openCursor(args["cursor"], "list_labels", call);
           const all = asArray(listing["labels"]);
-          const ids = all.map((label) => String(asRecord(label)["id"] ?? ""));
+          const ids = all.map((label) => JSON.stringify(label));
           const start = yield* Effect.promise(() => resumeAt(ids, claims, "label list"));
           // A mailbox may hold 10,000 labels; Gmail sends them in one answer
           // with no paging of its own, so connecta pages them, budgeting the
@@ -1658,7 +1434,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
           let omitted = 0;
           let bytes = jsonBytes({ labels: [], labelsOmitted: all.length, page: RESERVED_PAGE });
           let next = start;
-          while (next < all.length) {
+          while (next < all.length && labels.length < (args["limit"] ?? DEFAULT_PAGE_SIZE)) {
             const label = asRecord(all[next]);
             const id = idOf(label["id"], LABEL_ID_BYTES);
             if (id === undefined) {
@@ -1666,9 +1442,11 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
               next += 1;
               continue;
             }
+            const truncated: string[] = [];
             const row = compact({
+              truncated,
               id,
-              name: clipped(ctx, text(label["name"]), FIELD_BYTES),
+              name: clipper(ctx, truncated)(text(label["name"]), FIELD_BYTES, "name"),
               type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
             });
             const size = jsonBytes(row) + (labels.length > 0 ? 1 : 0);
@@ -1696,30 +1474,6 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       description:
         "List the user's Gmail drafts, newest first, with subject, recipients, and snippet. Use get_draft for a body.",
       annotations: readOnly,
-      inputSchema: input({ query: QUERY_PROPERTY, limit: LIMIT_PROPERTY, cursor: CURSOR_PROPERTY }, []),
-      outputSchema: {
-        type: "object",
-        properties: {
-          drafts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                draftId: { type: "string" },
-                messageId: { type: "string" },
-                threadId: { type: "string" },
-                subject: { type: "string" },
-                to: { type: "string" },
-                updatedAt: { type: "string" },
-                snippet: { type: "string" },
-                omittedIds: OMITTED_IDS_SCHEMA,
-              },
-            },
-          },
-          page: PAGE_SCHEMA,
-        },
-        required: ["drafts", "page"],
-      },
       run: (args, ctx) =>
         Effect.gen(function* () {
           const limit = args["limit"] ?? DEFAULT_PAGE_SIZE;
@@ -1730,6 +1484,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
               {
                 method: "GET",
                 path: "/drafts",
+                template: "/drafts",
                 query: {
                   q: args["query"],
                   maxResults: limit,
@@ -1749,6 +1504,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
                     {
                       method: "GET",
                       path: `/drafts/${encodeURIComponent(String(row["id"]))}`,
+                      template: "/drafts/{id}",
                       query: { format: "metadata" },
                     },
                     { step: `row${index}` },
@@ -1768,18 +1524,6 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       writeSteps: { draft: "once", body: "once" },
       description: "Get one Gmail draft's headers and plain-text body by draft id. Reading it never sends it.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          draftId: idProperty("Draft id from list_drafts or create_draft."),
-          maxBodyChars: bodyCharsProperty(DEFAULT_MESSAGE_BODY_CHARS),
-        },
-        ["draftId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { draftId: { type: "string" }, messageId: { type: "string" }, ...DRAFT_MESSAGE_PROPERTIES },
-        required: ["draftId"],
-      },
       run: (args, ctx) =>
         Effect.gen(function* () {
           const draft = asRecord(
@@ -1787,6 +1531,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
               {
                 method: "GET",
                 path: `/drafts/${encodeURIComponent(args["draftId"])}`,
+                template: "/drafts/{id}",
                 query: { format: "full" },
               },
               { step: "draft" },
@@ -1826,24 +1571,12 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       // program calls require a writable endpoint; other writes use
       // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          to: ADDRESSES("To"),
-          cc: ADDRESSES("Cc"),
-          bcc: ADDRESSES("Bcc"),
-          subject: SUBJECT_PROPERTY,
-          body: BODY_PROPERTY,
-          htmlBody: HTML_BODY_PROPERTY,
-          replyToMessageId: REPLY_PROPERTY,
-        },
-        ["body"],
-      ),
-      outputSchema: SAVED_DRAFT_SCHEMA,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const draft = yield* client.json({
             method: "POST",
             path: "/drafts",
+            template: "/drafts",
             body: yield* compose(args, ctx, { threadId: undefined, inReplyTo: undefined, references: undefined }),
           });
           return projectSavedDraft(draft);
@@ -1857,23 +1590,6 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       // Destructive: Gmail replaces the draft's whole message, so the body it
       // held — possibly typed by the user — is gone. Still a draft, never sent.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          draftId: idProperty("Draft id from list_drafts or create_draft."),
-          to: ADDRESSES("To; omit to keep the current"),
-          cc: ADDRESSES("Cc; omit to keep the current"),
-          bcc: ADDRESSES("Bcc; omit to keep the current"),
-          subject: { ...SUBJECT_PROPERTY, description: "Subject line; omit to keep the current one." },
-          body: { ...BODY_PROPERTY, description: "The new plain-text body, replacing the old one entirely." },
-          htmlBody: {
-            ...HTML_BODY_PROPERTY,
-            description: "Optional HTML alternative; omitting it drops any HTML the draft had.",
-          },
-          replyToMessageId: REPLY_PROPERTY,
-        },
-        ["draftId", "body"],
-      ),
-      outputSchema: SAVED_DRAFT_SCHEMA,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const draftPath = `/drafts/${encodeURIComponent(args["draftId"])}`;
@@ -1883,7 +1599,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
           // thread, In-Reply-To, and References. Any other header is not.
           const existing = asRecord(
             yield* client.json(
-              { method: "GET", path: draftPath, query: { format: "full" } },
+              { method: "GET", path: draftPath, template: "/drafts/{id}", query: { format: "full" } },
               { effect: "read", step: "existing" },
             ),
           );
@@ -1910,28 +1626,103 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
             replyTo: addressEntries("The draft's Reply-To", oneLine(header(payload, "Reply-To"))),
             ...defined({ to: keep("To", "to"), cc: keep("Cc", "cc"), bcc: keep("Bcc", "bcc") }),
           };
-          const draft = yield* client.json({ method: "PUT", path: draftPath, body: yield* compose(args, ctx, kept) });
+          const draft = yield* client.json({
+            method: "PUT",
+            path: draftPath,
+            template: "/drafts/{id}",
+            body: yield* compose(args, ctx, kept),
+          });
           return projectSavedDraft(draft);
         }),
     },
   ];
 }
 
-/** Gmail only reads mail and saves drafts; there is no send operation. */
+/** Internal size provenance becomes one top-level standard report, before fields narrow it. */
+function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
+  const cuts = new Set<string>();
+  const visit = (value: unknown, path: string): unknown => {
+    if (Array.isArray(value)) return value.map((item) => visit(item, `${path}[]`));
+    if (value === null || typeof value !== "object") return value;
+    const out: JsonRecord = {};
+    for (const [key, child] of Object.entries(value)) {
+      const target = (name: string) => (path ? `${path}.${name}` : name);
+      if (key === "truncated") {
+        for (const field of asArray(child)) cuts.add(target(String(field)));
+      } else if (key === "bodyTruncated" || key === "contentTruncated") {
+        if (child === true) cuts.add(target(key === "bodyTruncated" ? "body" : "content"));
+      } else if (key === "omittedIds") {
+        for (const name of asArray(child)) cuts.add(target(String(name)));
+      } else if (["labelIdsOmitted", "attachmentsOmitted", "labelsOmitted"].includes(key)) {
+        if (Number(child) > 0) cuts.add(target(key.replace("Omitted", "") + "[]"));
+      } else if (key === "nextCursor" && child === null) {
+        // A terminal page has no cursor.
+      } else out[key] = visit(child, target(key));
+    }
+    return out;
+  };
+  const raw = asRecord(value);
+  const key =
+    tool === "search_threads"
+      ? "threads"
+      : tool === "list_drafts"
+        ? "drafts"
+        : tool === "list_labels"
+          ? "labels"
+          : undefined;
+  const shaped = key ? { ...raw, items: raw[key] } : raw;
+  if (key) delete shaped[key];
+  const result = asRecord(visit(shaped, ""));
+  if (cuts.size) result["truncated"] = [...cuts];
+  return result;
+}
+
+/** Gmail only reads mail and saves drafts. Sending has no dispatch path. */
 export function gmailTools({ connection }: { connection: Connection }): ApiTool[] {
-  return declarations(googleClient(connection, GMAIL.provider)).map((declaration) =>
-    googleTool(connection, {
-      ...declaration,
-      run: (args, ctx) =>
-        Effect.map(declaration.run(args, ctx), (result) =>
-          deliverable(
-            declaration.name,
+  return declarations(googleClient(connection, GMAIL.provider, { standard: true, index })).map((declaration) => {
+    const name = declaration.name;
+    const isList = name === "search_threads" || name === "list_labels" || name === "list_drafts";
+    const spec = {
+      name,
+      description: declaration.description,
+      input: inputs[name],
+      output: outputs[name],
+      ...(declaration.writeSteps ? { writeSteps: declaration.writeSteps } : {}),
+      run: (supplied: JsonRecord) =>
+        Effect.gen(function* () {
+          const active = yield* Effect.serviceOption(Operation);
+          if (Option.isNone(active) || !active.value)
+            return yield* Effect.die(new Error("Gmail needs its call context."));
+          const ctx = active.value;
+          const { fields, ...args } = supplied;
+          if (isList) {
+            const problem = fieldsProblem(
+              fields,
+              new Set(Object.keys(rows[name as keyof typeof rows].fields)),
+              "an item",
+            );
+            if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
+          }
+          if (args["cursor"] !== undefined) args["cursor"] = yield* boundCursor.decode(name, args, args["cursor"]);
+          const result = standardResult(yield* declaration.run(args, ctx), name);
+          if (result["page"]?.nextCursor)
+            result["page"].nextCursor = yield* boundCursor.encode(name, args, result["page"].nextCursor, (json) =>
+              encodeForAgent(ctx, json, { url: true, claims: true }),
+            );
+          if (isList) result["items"] = selectFields(result["items"], fields);
+          return deliverable(
+            name,
             result,
-            declaration.name === "get_attachment" && typeof args["maxBytes"] === "number"
-              ? args["maxBytes"]
-              : RESULT_BUDGET_BYTES,
+            name === "get_attachment" && typeof args["maxBytes"] === "number" ? args["maxBytes"] : RESULT_BUDGET_BYTES,
+          ) as JsonRecord;
+        }).pipe(
+          Effect.catchDefect((defect) =>
+            defect instanceof ConnectorCallError ? Effect.fail(new Refusal({ error: defect })) : Effect.die(defect),
           ),
         ),
-    }),
-  );
+    };
+    return declaration.annotations.readOnlyHint === true
+      ? read(connection, { ...spec, ...(!isList ? { fields: true as const } : {}) })
+      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint === true });
+  });
 }

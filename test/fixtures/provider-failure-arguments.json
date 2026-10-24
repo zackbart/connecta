@@ -313,7 +313,7 @@
     "create_file": {
       "name": "notes.md",
       "parentId": "folder-1",
-      "content": "# Notes — café",
+      "content": "# Notes \u2014 caf\u00e9",
       "mimeType": "text/markdown"
     },
     "update_file_content": {
@@ -483,14 +483,24 @@
       "cc": [
         "Smith, Dana <dana@example.com>"
       ],
-      "subject": "Réunion des anciens",
-      "body": "Bonjour à tous,\nÀ mardi.",
-      "htmlBody": "<p>Bonjour à tous</p>"
+      "subject": "R\u00e9union des anciens",
+      "body": "Bonjour \u00e0 tous,\n\u00c0 mardi.",
+      "htmlBody": "<p>Bonjour \u00e0 tous</p>"
     },
     "update_draft": {
       "draftId": "d1",
       "body": "Revised text.",
       "cc": []
+    },
+    "gmail_api_search": {
+      "query": "message headers"
+    },
+    "gmail_api_details": {
+      "method": "GET",
+      "path": "/messages/{id}"
+    },
+    "gmail_api_read": {
+      "path": "/messages/m1"
     }
   },
   "overflow": {

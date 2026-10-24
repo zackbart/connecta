@@ -565,7 +565,14 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
       await read("list_labels");
       for (const threadId of ["t1", "t2"]) await read("get_thread", { threadId });
     }
-    if (task === 4) await read("get_message", { messageId: "m1", raw: true });
+    if (task === 4) {
+      const catalog = await ctx.call("execute_code", {
+        code: 'async () => await connecta.describe({address:"gmail.get_message"})',
+      });
+      if (JSON.stringify(catalog.structured ?? catalog.text).includes('"raw"'))
+        await read("get_message", { messageId: "m1", raw: true });
+      else await read("gmail_api_read", { path: "/messages/m1", query: { format: "full" } });
+    }
     if (task === 5) await write("create_draft", { replyToMessageId: "m1", body: "Approved for review." });
     if (task === 6) {
       await write("update_draft", { draftId: "draft1", body: "Updated review text." });

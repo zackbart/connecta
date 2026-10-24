@@ -2,6 +2,9 @@
 import { Effect, Schema } from "effect";
 import { encodedFieldProvenance, get, post, put, vendor, type EncodedFieldProvenance } from "../../http/vendor.js";
 import { googleErrors, googleSafety, type GoogleProduct } from "../_shared/google/kit.js";
+
+import { index, verdicts, refusalReasons } from "./lib/index.js";
+import { ConnectorCallError } from "../../errors.js";
 import { GMAIL_SCOPES } from "./lib/constants.js";
 
 export const GMAIL: GoogleProduct = {
@@ -35,6 +38,10 @@ const OPERATIONS = [
     success: Schema.Unknown,
   }),
   listLabels,
+  get("listMessages", "/messages", { query: Page, success: Schema.Unknown }),
+  get("getLabel", "/labels/:id", { params: Id, success: Schema.Unknown }),
+  get("getProfile", "/profile", { success: Schema.Unknown }),
+  get("listHistory", "/history", { query: Page, success: Schema.Unknown }),
   get("listDrafts", "/drafts", { query: Page, success: Schema.Unknown }),
   get("getDraft", "/drafts/:id", { params: Id, query: Format, success: Schema.Unknown }),
   post("createDraft", "/drafts", { payload: Schema.Unknown, success: Schema.Unknown }),
@@ -42,7 +49,17 @@ const OPERATIONS = [
 ] as const;
 
 // The manifest uses Discovery's path; transport stays fixed beneath users/me.
-const bodyPaths = ["payload", "message.payload", "messages[*].payload"].flatMap((prefix) =>
+const bodyPaths = [
+  "payload",
+  "message.payload",
+  "messages[*].payload",
+  "drafts[*].message.payload",
+  "history[*].messages[*].payload",
+  "history[*].messagesAdded[*].message.payload",
+  "history[*].messagesDeleted[*].message.payload",
+  "history[*].labelsAdded[*].message.payload",
+  "history[*].labelsRemoved[*].message.payload",
+].flatMap((prefix) =>
   // The normal MIME walk and a parsed forwarded-message walk each admit 20 levels.
   Array.from({ length: 41 }, (_, depth) => `${prefix}${".parts[*]".repeat(depth)}.body.data`),
 );
@@ -50,7 +67,19 @@ export const GmailApi = {
   ...vendor({ name: "Gmail", manifestBase: "/gmail/v1/users/{userId}" }, ...OPERATIONS),
   // Legacy body reads accept optional sizes. Attachment projection instead checks
   // originalLength against the fresh part's required size and the download's optional size.
-  encodedFields: [...bodyPaths, "data"].map((path) => ({
+  encodedFields: [
+    ...bodyPaths,
+    "data",
+    "raw",
+    "message.raw",
+    "messages[*].raw",
+    "drafts[*].message.raw",
+    "history[*].messages[*].raw",
+    "history[*].messagesAdded[*].message.raw",
+    "history[*].messagesDeleted[*].message.raw",
+    "history[*].labelsAdded[*].message.raw",
+    "history[*].labelsRemoved[*].message.raw",
+  ].map((path) => ({
     path,
     encoding: "base64url" as const,
     review: "Gmail's bounded MIME projection decodes this body or attachment data before rendering or byte encoding.",
@@ -66,6 +95,14 @@ export const result = (body: unknown) =>
       if (node === null || typeof node !== "object") return;
       const provenance = encodedFieldProvenance(body, [...path, "data"]);
       if (provenance) bodyProvenance.set(node, provenance);
+      // A generic MIME read cannot expose an encoded lane beyond the reviewed
+      // decoder paths. Named walks are bounded too, but hatch JSON keeps the whole graph.
+      if (!provenance && typeof (node as Record<string, unknown>)["data"] === "string" && path.at(-1) === "body")
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "Gmail returned MIME data beyond the reviewed nesting boundary.",
+          { retryable: false },
+        );
       for (const [key, child] of Object.entries(node))
         if (child !== null && typeof child === "object")
           visit(child, [...path, Array.isArray(node) ? Number(key) : key]);
@@ -73,8 +110,26 @@ export const result = (body: unknown) =>
     visit(body, []);
     return body;
   });
-export const errors = googleErrors(GMAIL);
-export const safety = googleSafety(GMAIL.provider, OPERATIONS);
+const standardErrors = googleErrors(GMAIL, { standard: true });
+export const errors = {
+  ...standardErrors,
+  meanings: { ...standardErrors.meanings!, conflicts: ["A thread or label list changed before its content cursor."] },
+};
+const declaredSafety = googleSafety(GMAIL.provider, OPERATIONS);
+export const safety = {
+  ...declaredSafety,
+  reviewed: {
+    ...declaredSafety.reviewed!,
+    resolve: (method: string, path: string) => {
+      const { op } = index.resolve(method, path);
+      const key = `${op.method} ${op.path}` as keyof typeof verdicts;
+      // Named guarded MIME writers have their own reviewed path. A hatch refuses these before calling send.
+      if (verdicts[key] !== "read" && key !== "POST /drafts" && key !== "PUT /drafts/{id}")
+        throw new ConnectorCallError("invalid_args", refusalReasons[key] ?? "This Gmail operation is refused.");
+      return declaredSafety.reviewed!.resolve!(method, path);
+    },
+  },
+};
 export const probe = {
   operation: listLabels,
   request: {},

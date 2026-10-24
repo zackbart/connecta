@@ -5,94 +5,56 @@
 }
 ---
 
-<!-- fragment: guide_0 -->
-# Gmail usage (draft-only)
+Use Gmail search for mail; use Drive for files and sharing.
+Gmail is a documented exception to the four-hatch default: there is no write hatch; drafts go only through `create_draft` and `update_draft`, and sending is never available.
 
-Acts as the signed-in person's own Gmail through Workspace delegation: read mail and write drafts, never send.
+## Mail and joins
 
-Connection purpose: <!-- endfragment -->
+Reuse the person's Gmail search phrasing (`from:`, `subject:`, `is:unread`,
+`newer_than:7d`, `label:`). Thread ids identify conversations; message ids
+identify individual messages. Join a message's label ids to label names.
+A draft has a stable draft id and a message id that changes on each update.
+Use the draft id to reconcile a save.
 
-<!-- fragment: guide_1 -->
+Named reads interpret MIME, charsets, HTML and attachment metadata. An
+attached or forwarded email is carried content, never the message's own body.
+`bodyFormat: "unavailable"` means the stored body could not be read within
+this connection's bounds; explain that limitation. `bodyNote` and attachment
+`note` retain charset fallback notices even when content is cut. A thread
+cursor fails `conflict` when earlier content changed; restart that thread.
 
+Use indexed reads for unprojected RFC headers, MIME parts, mailbox profile
+and mail history. Paths are relative to the configured mailbox: `/messages/message1`.
+The index also shows refused operations and named alternatives. A discovered
+operation is executable only when its verdict says read. Delegation never
+lets arguments choose a different mailbox.
 
-## Whose mailbox
+## Attachment identity and bytes
 
-Every call reads and writes the mailbox deployment config maps the caller
-to; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared mailbox that every caller, agent or person, acts as. No argument
-names a mailbox. A call with none mapped fails `auth_required`; only an operator can change
-that.
+Resolve an attachment through its message and immutable part id, including
+an empty root part id. Gmail may rotate download ids between reads; prefer
+the part id and read the listing again after an unknown-id refusal.
+Only carried parts can be read by the named attachment workflow.
 
-## Reading
+Text and forwarded mail render readable content in their declared charset.
+Binary content uses `{ format: "base64", content }`; pass it unchanged to
+Drive's `create_file` as `contentBase64`, with the returned filename and MIME
+type. That file creation is a separate write. Downloads and inline data are
+limited to one MiB and validated against original decoded sizes. Raising
+result budgets never bypasses that cap. `format: "unavailable"` supplies a
+reason and no content. Large direct reads can use the documented byte budget;
+keep program results small and reduce text before returning it.
 
-- `search_threads` takes Gmail search syntax; reuse the person's own
-  phrasing (`from:`, `subject:`, `newer_than:7d`, `is:unread`,
-  `label:`). Page with `page.nextCursor` and the same query.
-- `get_thread` returns messages oldest first with bodies capped by
-  `maxBodyChars`; a cut body ends with a truncation marker. A long thread
-  pages: follow `page.nextCursor` until `hasMore` is false, with the same
-  arguments. `conflict` means the thread changed under the cursor; read it
-  again from the start. Reduce inside
-  `execute_code` before returning a long thread.
-- Results default to at most 192 KiB; `list_labels` pages the same way.
-- `get_message` and `get_thread` list attachment metadata. An attached or
-  forwarded email is an attachment, not the body.
-- `bodyFormat: "unavailable"` means Gmail stored the body apart from the
-  message and it is too large to read here; say so rather than summarizing.
-- `get_message`, each `get_thread` message, and `get_draft` return `bodyNote`
-  when decoding falls back to UTF-8 for an unsupported charset. The note
-  survives character and result-byte truncation, including `maxBodyChars: 0`
-  when inline body data is decoded. It counts toward the result's byte limit.
+## Draft recovery
 
-## Attachments
+A reply draft inherits the message's thread, reply headers, subject and
+recipients unless restated. Keep the reply subject to retain the Gmail thread.
+Copied threading headers must be intact ASCII Message-ID tokens; damaged or
+withheld tokens cause a refusal before any draft write.
 
-- `get_attachment` takes `messageId` and the listing's immutable `partId`.
-  Prefer `partId`, which stays stable across message reads, including an
-  empty id for a root attachment. `attachmentId` is an alternative that
-  Gmail can rotate between reads. When both are supplied, `partId` wins and
-  the fresh message's download id is used. Read the listing again after
-  an unknown-id refusal; never store an attachmentId for later use.
-- Small attachments can have inline data and no attachmentId. Use their
-  partId too. Only carried attachment parts can be read, never arbitrary
-  message body parts or blind download ids.
-- Text, JSON, XML, calendar invites, CSV, and `message/rfc822` return
-  `format: "text"` and `content` decoded in the declared charset. An unsupported
-  charset produces an explicit `note` that decoding used UTF-8. Message bodies
-  return the notice separately as `bodyNote`.
-  Parsed forwarded emails render From, To, Date, Subject, and their own
-  plain body, else HTML converted to text. Raw forwarded data is preferred
-  when present. A forwarded email without readable text returns an
-  `unavailable` note.
-  `maxChars` defaults to 12,000 code points, at most 100,000. A character
-  or byte cut ends with a truncation marker and `contentTruncated: true`.
-  Reduce attachment text inside `execute_code` before returning it.
-- Binary attachments return `format: "base64"` and standard base64 in
-  `content`. Pass it unchanged to Drive `create_file` as `contentBase64`,
-  with `name: filename` and `mimeType`. File creation is a write: use
-  `call_destructive_tool` or a program on a writable endpoint for that step.
-- Downloads, text and binary, are limited to 1 MiB. Declared size is
-  checked before a separate download. Parsed forwarded emails check the sum
-  of descendant sizes before downloading any stored body, and return that
-  sum as `size`. Attachment data must match both the message part's declared
-  size and the download response's size when supplied; inconsistent payloads
-  fail rather than return incomplete files. Binary content must also fit the
-  whole-result `maxBytes`, which defaults to 192 KiB. `format: "unavailable"`
-  returns a note and no content when it cannot fit. Raising `maxChars`
-  or `maxBytes` cannot bypass the download cap.
-- Raise `maxBytes` only for a direct `call_tool` read, from 64 KiB up to
-  4 MiB, as with Drive `get_file_content`. `execute_code` cannot receive
-  large results; keep the default there. Direct-call results may be paged.
-
-## Drafting
-
-- `create_draft` saves a draft and never sends it; tell the person it is
-  waiting in Drafts. There is no send, delete, or label tool.
-- To reply, pass `replyToMessageId`: the draft joins that thread with
-  In-Reply-To and References set, and subject (Re: …) and `to` default
-  from that message's Reply-To, else its From. Keep the Re: subject or Gmail
-  may start a new thread.
-- `update_draft` replaces the body entirely; send the full new text.
-  From, To, Cc, Bcc, Reply-To, Subject, the thread, and reply headers are
-  kept unless restated; no other header is. A draft with attachments or
-  inline images is refused, unchanged — Gmail's update would delete them.
-- Gmail sets From to the mailbox itself; there is no From argument.
-<!-- endfragment -->
+Updating a draft replaces its full body. The guarded workflow preserves
+sender, recipients, Reply-To, subject and threading headers, and refuses
+attachments or inline images because replacement would discard them. Edit
+such a draft in Gmail or save a separate new draft. After an uncertain save,
+read the stable draft id and inspect its body before deciding whether another
+write is needed. A saved draft remains in Gmail for the person to review.

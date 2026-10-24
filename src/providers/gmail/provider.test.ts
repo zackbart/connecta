@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
+import { index, verdicts, refusalReasons } from "./lib/index.js";
+import { skill } from "./skill.generated.js";
+import { TABLE } from "./safety.js";
 import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -32,10 +35,12 @@ type Route = (call: ApiCall) => { status?: number; body?: unknown } | undefined;
 
 const calls: ApiCall[] = [];
 let route: Route = () => undefined;
+let storage = memoryStorage();
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   calls.length = 0;
+  storage = memoryStorage();
   route = () => undefined;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
     const url = String(input);
@@ -69,7 +74,7 @@ function connection(overrides: Record<string, unknown> = {}): Connector {
 }
 
 function context(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
+  return { storage, logger: silentLogger, baseUrl: "https://connecta.example" };
 }
 
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
@@ -210,6 +215,64 @@ describe("writing drafts", () => {
       code: "invalid_args",
     });
     expect(calls).toEqual([]);
+    for (const bad of [
+      "<bad\u0000@a>",
+      "<café@a>",
+      "<bad\u0001@a>",
+      "<bad@a>\r\nBcc: spy@a",
+      "<[redacted]@a>",
+      "damaged",
+    ]) {
+      for (const name of ["Message-ID", "References", "In-Reply-To"]) {
+        route = () => ({
+          body:
+            name === "In-Reply-To"
+              ? {
+                  id: "d1",
+                  message: {
+                    id: "m1",
+                    threadId: "t1",
+                    payload: { mimeType: "text/plain", headers: [{ name, value: bad }] },
+                  },
+                }
+              : {
+                  id: "m1",
+                  threadId: "t1",
+                  payload: {
+                    headers: [
+                      { name, value: bad },
+                      { name: "From", value: "alice@example.com" },
+                    ],
+                  },
+                },
+        });
+        await expect(
+          call(connection(), name === "In-Reply-To" ? "update_draft" : "create_draft", {
+            body: "x",
+            ...(name === "In-Reply-To" ? { draftId: "d1" } : { replyToMessageId: "m1" }),
+          }),
+        ).rejects.toMatchObject({ code: "invalid_args" });
+      }
+    }
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+    calls.length = 0;
+    route = () => ({
+      body: {
+        id: "m1",
+        threadId: "t1",
+        payload: {
+          headers: [
+            { name: "Message-ID", value: "<Valid.Token+1@example.com>" },
+            { name: "References", value: "<ancestor@example.com>" },
+            { name: "From", value: "alice@example.com" },
+          ],
+        },
+      },
+    });
+    await call(connection(), "create_draft", { body: "x", replyToMessageId: "m1" });
+    const mime = parseMime(calls.at(-1)!.body.message.raw);
+    expect(mime.headers["In-Reply-To"]).toBe("<Valid.Token+1@example.com>");
+    expect(mime.headers["References"]).toContain("<ancestor@example.com>");
   });
 
   /** An existing draft as Gmail's full format returns it. */
@@ -309,6 +372,7 @@ describe("writing drafts", () => {
       ...keptNames,
     ]) {
       calls.length = 0;
+      storage = memoryStorage();
       route = () => ({
         body: existingDraft(
           keptNames.includes(privateValue) ? keptHeaders : [],
@@ -388,6 +452,7 @@ describe("writing drafts", () => {
     expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
 
     calls.length = 0;
+    storage = memoryStorage();
     await call(connection(), "create_draft", { replyToMessageId: "m2", to: ["ann@church.example"], body: "Hi" });
     expect(parseMime(calls[1]!.body.message.raw).headers["To"]).toBe("ann@church.example");
   });
@@ -436,7 +501,7 @@ describe("a message's own body, apart from what it carries", () => {
     const result = await call(connection(), "get_message", { messageId: "m9" });
     expect(calls).toHaveLength(1);
     expect(result.bodyFormat).toBe("unavailable");
-    expect(result.bodyTruncated).toBe(true);
+    expect(result.truncated).toContain("body");
     expect(result.body).toContain("5000000 bytes");
   });
 });
@@ -524,12 +589,105 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     60_000,
   );
 
-  it("refuses a raw message past the limit, with the way forward, and returns a small one", async () => {
-    route = () => ({ body: hugeMessage("m3", 200_000) });
-    const failure = await call(connection(), "get_message", { messageId: "m3", raw: true }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "invalid_args", message: expect.stringContaining("Read it without raw") });
+  it("INV-5/INV-11: pins eleven read verdicts, three hatches, full MIME safety and zero-send refusals", async () => {
+    expect(index.pathMatching).toBe("uri-template");
+    expect(index.ops).toHaveLength(79);
+    expect(Object.values(verdicts).filter((v) => v === "read")).toHaveLength(11);
+    expect(Object.keys(verdicts).sort()).toEqual(index.ops.map((op) => `${op.method} ${op.path}`).sort());
+    expect(Object.keys(TABLE.operations).length).toBeGreaterThan(0);
+    for (const [key, verdict] of Object.entries(verdicts))
+      if (verdict === "refuse") expect(refusalReasons[key]).toBeTruthy();
+    const c = connection();
+    const tools = await c.listTools(context());
+    expect(tools).toHaveLength(12);
+    expect(
+      tools
+        .filter((t) => t.name.startsWith("gmail_api_"))
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual(["gmail_api_details", "gmail_api_read", "gmail_api_search"]);
+    expect(JSON.stringify(skill)).not.toContain("gmail_api_write");
+    await expect(call(c, "get_message", { messageId: "m1", raw: true })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    for (const path of [
+      "/settings/sendAs",
+      "/messages/%2e%2e/profile",
+      "https://gmail.googleapis.com/gmail/v1/users/bob/messages",
+      "/users/bob/messages",
+    ]) {
+      await expect(call(c, "gmail_api_read", { path })).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    for (const query of [
+      { userId: "bob" },
+      { access_token: "foreign" },
+      { pageToken: "raw" },
+      { alt: "media" },
+      { maxResults: 501 },
+    ])
+      await expect(call(c, "gmail_api_read", { path: "/messages", query })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+    await expect(call(c, "gmail_api_read", { path: "/messages/m1", fields: ["notAField"] })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    expect(calls).toEqual([]);
     route = () => ({ body: MESSAGE });
-    await expect(call(connection(), "get_message", { messageId: "m2", raw: true })).resolves.toEqual(MESSAGE);
+    await expect(call(c, "gmail_api_read", { path: "/messages/m2", query: { format: "full" } })).resolves.toMatchObject(
+      { status: 200, data: MESSAGE },
+    );
+    expect(calls.at(-1)!.url.pathname).toBe("/gmail/v1/users/me/messages/m2");
+    // Indexed draft discovery names the safe alternative; no generic writer exists.
+    const search = await call(c, "gmail_api_search", { query: "draft reply" });
+    expect(JSON.stringify(search)).toContain("create_draft");
+    for (const [query, operation] of [
+      ["find unread messages", "GET /messages"],
+      ["message headers", "GET /messages/{id}"],
+      ["read message attachments", "GET /messages/{messageId}/attachments/{id}"],
+      ["draft reply", "POST /drafts"],
+      ["edit draft", "PUT /drafts/{id}"],
+      ["mailbox profile", "GET /profile"],
+      ["mail history", "GET /history"],
+    ])
+      expect(index.search(query!, { limit: 2, partial: true }).map((op) => `${op.method} ${op.path}`)).toContain(
+        operation,
+      );
+    route = (request) => ({
+      body: request.url.searchParams.has("pageToken")
+        ? { messages: [{ id: "m2" }], nextPageToken: "" }
+        : { messages: [], nextPageToken: "next-mail" },
+    });
+    const first = await call(c, "gmail_api_read", {
+      path: "/messages",
+      query: { maxResults: 1, fields: "messages/id" },
+      fields: ["messages.id"],
+    });
+    expect(first).toMatchObject({ data: { messages: [] }, page: { hasMore: true } });
+    expect(calls.at(-1)!.url.searchParams.get("fields")).toContain("nextPageToken");
+    const last = await call(c, "gmail_api_read", {
+      path: "/messages",
+      query: { maxResults: 1, fields: "messages/id" },
+      fields: ["messages.id"],
+      cursor: first.page.nextCursor,
+    });
+    expect(last).toMatchObject({ data: { messages: [{ id: "m2" }] }, page: { hasMore: false } });
+    expect(last.page).not.toHaveProperty("nextCursor");
+    await expect(
+      call(c, "gmail_api_read", { path: "/messages", query: { maxResults: 1 }, cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    route = () => ({
+      body: {
+        labels: [
+          { id: "L1", name: "First", type: "user" },
+          { id: "L2", name: "Second", type: "user" },
+        ],
+      },
+    });
+    const labels = await call(c, "list_labels", { limit: 1, fields: ["id"] });
+    expect(labels.items).toEqual([{ id: "L1" }]);
+    const nextLabels = await call(c, "list_labels", { limit: 1, fields: ["name"], cursor: labels.page.nextCursor });
+    expect(nextLabels.items).toEqual([{ name: "Second" }]);
+    expect(nextLabels.page).toEqual({ hasMore: false });
 
     // A valid inline body may be much larger than its projected result. The
     // encoded-field validator must stay linear instead of exhausting V8's stack.
@@ -539,7 +697,7 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     });
     const projected = await call(connection(), "get_message", { messageId: "m4", maxBodyChars: 100 });
     expect(projected.body).toContain("x".repeat(100));
-    expect(projected.bodyTruncated).toBe(true);
+    expect(projected.truncated).toContain("body");
     expect(size(projected)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
   });
 });
@@ -570,7 +728,7 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
       await expect(call(connection(), "list_labels", { cursor })).rejects.toMatchObject({ code: "invalid_args" });
       await expect(page({ cursor: "bm90LWEtY3Vyc29y" })).rejects.toMatchObject({
         code: "invalid_args",
-        message: expect.stringContaining("not a cursor this connection issued"),
+        message: expect.stringContaining("cursor belongs to a different call"),
       });
     });
 
@@ -617,7 +775,7 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
     try {
       route = () => ({ body: { id: "D".repeat(5000), message: { id: "m1", threadId: "t1" } } });
       const tooLong = await call(connection(), "create_draft", { body: "x" });
-      expect(tooLong).toMatchObject({ saved: true, sent: false, messageId: "m1", omittedIds: ["draftId"] });
+      expect(tooLong).toMatchObject({ saved: true, sent: false, messageId: "m1", truncated: ["draftId"] });
       expect(tooLong.draftId).toBeUndefined();
       expect(tooLong.note).toContain("list_drafts");
       expect(tooLong.note).toContain("do not create it again");
@@ -625,7 +783,7 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
       route = () => ({ body: { message: { id: "m2" } } });
       const missing = await call(connection(), "create_draft", { body: "x" });
       expect(missing).toMatchObject({ saved: true, sent: false, messageId: "m2" });
-      expect(missing.omittedIds).toBeUndefined();
+      expect(missing.truncated).toBeUndefined();
       expect(missing.note).toContain("list_drafts");
       expect(restoreTransport.send).toHaveBeenCalledTimes(2);
       expect(calls.map(({ method }) => method)).toEqual(["POST", "POST"]);
@@ -728,18 +886,17 @@ describe("reading carried attachments", () => {
     );
     const result = await read({ partId: "1", maxChars: 100_000, maxBytes: 64 * 1024 });
     expect(result.format).toBe("text");
-    expect(result.contentTruncated).toBe(true);
+    expect(result.truncated).toContain("content");
     expect(result.content).toContain("truncated");
     expect(result.content.match(/more characters truncated/g)).toHaveLength(1);
     expect(size(result)).toBeLessThanOrEqual(64 * 1024);
   });
 
-  it("does not turn malformed base64url into silently empty text", async () => {
+  it("refuses malformed encoding and unknown forwarded sizes, and explains unreadable forwarded text", async () => {
     serve(attachmentFixtures.csv, "!");
     await expect(read({ partId: "1" })).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
-  });
+    calls.length = 0;
 
-  it("reports a forwarded subtree with no readable body explicitly", async () => {
     serve({
       ...attachmentFixtures.parsedForwarded,
       parts: [{ mimeType: "image/png", body: { size: 2, data: "__4" } }],
@@ -748,9 +905,8 @@ describe("reading carried attachments", () => {
       format: "unavailable",
       note: expect.stringContaining("no readable"),
     });
-  });
+    calls.length = 0;
 
-  it("refuses unknown descendant sizes before a forwarded-body download", async () => {
     serve({
       ...attachmentFixtures.parsedForwarded,
       parts: [

@@ -1,5 +1,147 @@
 [
   {
+    "label": "gmail_api_search",
+    "tool": "gmail_api_search",
+    "args": {
+      "query": "draft reply"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "POST",
+            "path": "/drafts",
+            "operationId": "gmail.users.drafts.create",
+            "summary": "Create save a draft reply; use create_draft.",
+            "named": "create_draft"
+          },
+          {
+            "method": "GET",
+            "path": "/drafts",
+            "operationId": "gmail.users.drafts.list",
+            "summary": "List find search users drafts",
+            "tool": "gmail_api_read",
+            "named": "list_drafts"
+          },
+          {
+            "method": "GET",
+            "path": "/drafts/{id}",
+            "operationId": "gmail.users.drafts.get",
+            "summary": "Get read retrieve users drafts",
+            "tool": "gmail_api_read",
+            "named": "get_draft"
+          },
+          {
+            "method": "PUT",
+            "path": "/drafts/{id}",
+            "operationId": "gmail.users.drafts.update",
+            "summary": "Update edit a draft; use update_draft.",
+            "named": "update_draft"
+          },
+          {
+            "method": "DELETE",
+            "path": "/drafts/{id}",
+            "operationId": "gmail.users.drafts.delete",
+            "summary": "Delete remove users drafts"
+          },
+          {
+            "method": "POST",
+            "path": "/drafts/send",
+            "operationId": "gmail.users.drafts.send",
+            "summary": "Send deliver users drafts"
+          }
+        ],
+        "revision": "20261019",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiYTBkYWMxMTYzZDNkZjg1ZGIzYmE5MWJlOWIyNzRmMjEiLCJjIjoiNiIsIm0iOiJtV2ZQZV9LN3IyS3I5bldvNk9Ea2RLYVo2TXhsUUdVVHNBLXVKbW9Mejh3In0"
+        }
+      }
+    }
+  },
+  {
+    "label": "gmail_api_details",
+    "tool": "gmail_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/messages/{id}"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/messages/{id}",
+        "operationId": "gmail.users.messages.get",
+        "summary": "Read message headers, full MIME parts and body metadata.",
+        "parameters": [
+          {
+            "name": "prettyPrint",
+            "in": "query",
+            "required": false,
+            "description": "Returns response with indentations and line breaks.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": false,
+            "description": "Selector specifying which fields to include in a partial response.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The ID of the message to retrieve.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metadataHeaders",
+            "in": "query",
+            "required": false,
+            "description": "When given and format is `METADATA`, only include headers specified.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "The format to return the message in.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "minimal",
+                "full",
+                "raw",
+                "metadata"
+              ]
+            }
+          }
+        ],
+        "verdict": "read",
+        "tool": "gmail_api_read",
+        "named": "get_message",
+        "revision": "20261019"
+      }
+    }
+  },
+  {
     "label": "search_threads",
     "tool": "search_threads",
     "args": {
@@ -75,7 +217,11 @@
       "ok": true,
       "format": "json",
       "value": {
-        "threads": [
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiN2Y1M2E0MzcxOWRkYzk1N2ZkMjFlNGE2NDM4YmU2MWEiLCJjIjoiZXlKMklqb3hMQ0owSWpvaWMyVmhjbU5vWDNSb2NtVmhaSE1pTENKaklqb2lOV0l3WWpjeE9HVmtOelV4TjJObVpHWmhNemcyWWpBelptTTJOVGhpWlRraUxDSndJam9pYm1WNGRDMHhJbjAiLCJtIjoiM3Z4bFE0czB2TXNKU0lxZzlRaWlmVXdJNFdxXzNPY0dtUW1YS3pJT3lkayJ9"
+        },
+        "items": [
           {
             "id": "t1",
             "subject": "Elders meeting",
@@ -90,12 +236,7 @@
             ],
             "snippet": "Latest & greatest"
           }
-        ],
-        "resultSizeEstimate": 42,
-        "page": {
-          "hasMore": true,
-          "nextCursor": "eyJ2IjoxLCJ0Ijoic2VhcmNoX3RocmVhZHMiLCJjIjoiNWIwYjcxOGVkNzUxN2NmZGZhMzg2YjAzZmM2NThiZTkiLCJwIjoibmV4dC0xIn0"
-        }
+        ]
       }
     }
   },
@@ -180,7 +321,6 @@
             "inReplyTo": "<m1@mail.example.com>",
             "snippet": "Can we move Tuesday's meeting?",
             "body": "Can we move Tuesday’s meeting to 7pm?",
-            "bodyTruncated": false,
             "bodyFormat": "text",
             "attachments": [
               {
@@ -193,8 +333,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -277,7 +416,6 @@
         "inReplyTo": "<m1@mail.example.com>",
         "snippet": "Can we move Tuesday's meeting?",
         "body": "Can we move\n[… 26 more characters truncated; raise maxBodyChars to read them]",
-        "bodyTruncated": true,
         "bodyFormat": "text",
         "attachments": [
           {
@@ -286,16 +424,21 @@
             "size": 12345,
             "attachmentId": "att-1"
           }
+        ],
+        "truncated": [
+          "body"
         ]
       }
     }
   },
   {
-    "label": "get_message raw",
-    "tool": "get_message",
+    "label": "gmail_api_read full MIME",
+    "tool": "gmail_api_read",
     "args": {
-      "messageId": "m2",
-      "raw": true
+      "path": "/messages/m2",
+      "query": {
+        "format": "full"
+      }
     },
     "steps": [
       [
@@ -323,7 +466,7 @@
                       "typ": "JWT"
                     },
                     "claims": {
-                      "iss": "gmail-get-message-raw@project.iam.gserviceaccount.com",
+                      "iss": "gmail-gmail-api-read-full-mime@project.iam.gserviceaccount.com",
                       "sub": "alice@example.com",
                       "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
                       "aud": "https://oauth2.googleapis.com/token",
@@ -354,87 +497,90 @@
       "ok": true,
       "format": "json",
       "value": {
-        "id": "m2",
-        "threadId": "t1",
-        "labelIds": [
-          "INBOX",
-          "UNREAD"
-        ],
-        "snippet": "Can we move Tuesday&#39;s meeting?",
-        "internalDate": "1790000000000",
-        "payload": {
-          "mimeType": "multipart/mixed",
-          "headers": [
-            {
-              "name": "From",
-              "value": "Bob Elder <bob@example.com>"
-            },
-            {
-              "name": "To",
-              "value": "alice@example.com"
-            },
-            {
-              "name": "Subject",
-              "value": "Elders meeting"
-            },
-            {
-              "name": "Message-ID",
-              "value": "<m2@mail.example.com>"
-            },
-            {
-              "name": "In-Reply-To",
-              "value": "<m1@mail.example.com>"
-            },
-            {
-              "name": "References",
-              "value": "<m0@mail.example.com> <m1@mail.example.com>"
-            },
-            {
-              "name": "X-Noise",
-              "value": "dropped"
-            }
+        "status": 200,
+        "data": {
+          "id": "m2",
+          "threadId": "t1",
+          "labelIds": [
+            "INBOX",
+            "UNREAD"
           ],
-          "parts": [
-            {
-              "mimeType": "multipart/alternative",
-              "parts": [
-                {
-                  "mimeType": "text/plain",
-                  "headers": [
-                    {
-                      "name": "Content-Type",
-                      "value": "text/plain; charset=\"UTF-8\""
-                    }
-                  ],
-                  "body": {
-                    "size": 40,
-                    "data": "Q2FuIHdlIG1vdmUgVHVlc2RheeKAmXMgbWVldGluZyB0byA3cG0_"
-                  }
-                },
-                {
-                  "mimeType": "text/html",
-                  "headers": [
-                    {
-                      "name": "Content-Type",
-                      "value": "text/html; charset=UTF-8"
-                    }
-                  ],
-                  "body": {
-                    "size": 60,
-                    "data": "PHA-Q2FuIHdlIDxiPm1vdmU8L2I-IGl0PzwvcD4"
-                  }
-                }
-              ]
-            },
-            {
-              "mimeType": "application/pdf",
-              "filename": "agenda.pdf",
-              "body": {
-                "size": 12345,
-                "attachmentId": "att-1"
+          "snippet": "Can we move Tuesday&#39;s meeting?",
+          "internalDate": "1790000000000",
+          "payload": {
+            "mimeType": "multipart/mixed",
+            "headers": [
+              {
+                "name": "From",
+                "value": "Bob Elder <bob@example.com>"
+              },
+              {
+                "name": "To",
+                "value": "alice@example.com"
+              },
+              {
+                "name": "Subject",
+                "value": "Elders meeting"
+              },
+              {
+                "name": "Message-ID",
+                "value": "<m2@mail.example.com>"
+              },
+              {
+                "name": "In-Reply-To",
+                "value": "<m1@mail.example.com>"
+              },
+              {
+                "name": "References",
+                "value": "<m0@mail.example.com> <m1@mail.example.com>"
+              },
+              {
+                "name": "X-Noise",
+                "value": "dropped"
               }
-            }
-          ]
+            ],
+            "parts": [
+              {
+                "mimeType": "multipart/alternative",
+                "parts": [
+                  {
+                    "mimeType": "text/plain",
+                    "headers": [
+                      {
+                        "name": "Content-Type",
+                        "value": "text/plain; charset=\"UTF-8\""
+                      }
+                    ],
+                    "body": {
+                      "size": 40,
+                      "data": "Q2FuIHdlIG1vdmUgVHVlc2RheeKAmXMgbWVldGluZyB0byA3cG0_"
+                    }
+                  },
+                  {
+                    "mimeType": "text/html",
+                    "headers": [
+                      {
+                        "name": "Content-Type",
+                        "value": "text/html; charset=UTF-8"
+                      }
+                    ],
+                    "body": {
+                      "size": 60,
+                      "data": "PHA-Q2FuIHdlIDxiPm1vdmU8L2I-IGl0PzwvcD4"
+                    }
+                  }
+                ]
+              },
+              {
+                "mimeType": "application/pdf",
+                "filename": "agenda.pdf",
+                "body": {
+                  "size": 12345,
+                  "attachmentId": "att-1"
+                }
+              }
+            ]
+          }
         }
       }
     }
@@ -520,8 +666,7 @@
         "mimeType": "text/csv",
         "size": 35,
         "format": "text",
-        "content": "name,email\nAlice,alice@example.com\n",
-        "contentTruncated": false
+        "content": "name,email\nAlice,alice@example.com\n"
       }
     }
   },
@@ -586,7 +731,10 @@
       "ok": true,
       "format": "json",
       "value": {
-        "labels": [
+        "page": {
+          "hasMore": false
+        },
+        "items": [
           {
             "id": "INBOX",
             "name": "INBOX",
@@ -597,11 +745,7 @@
             "name": "Elders",
             "type": "user"
           }
-        ],
-        "page": {
-          "hasMore": false,
-          "nextCursor": null
-        }
+        ]
       }
     }
   },
@@ -680,7 +824,10 @@
       "ok": true,
       "format": "json",
       "value": {
-        "drafts": [
+        "page": {
+          "hasMore": false
+        },
+        "items": [
           {
             "draftId": "d1",
             "messageId": "m9",
@@ -690,11 +837,7 @@
             "updatedAt": "2026-09-21T14:13:20.000Z",
             "snippet": "Can we move Tuesday's meeting?"
           }
-        ],
-        "page": {
-          "hasMore": false,
-          "nextCursor": null
-        }
+        ]
       }
     }
   },
@@ -775,7 +918,6 @@
         "inReplyTo": "<m1@mail.example.com>",
         "snippet": "Can we move Tuesday's meeting?",
         "body": "Can we move Tuesday’s meeting to 7pm?",
-        "bodyTruncated": false,
         "bodyFormat": "text",
         "attachments": [
           {
@@ -1138,7 +1280,6 @@
         "inReplyTo": "<m1@mail.example.com>",
         "snippet": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]",
         "body": "Can we move Tuesday’s meeting to 7pm?",
-        "bodyTruncated": false,
         "bodyFormat": "text",
         "attachments": [
           {
