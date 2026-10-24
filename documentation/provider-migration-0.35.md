@@ -612,17 +612,21 @@ The index displays all 79 pinned methods but admits only eleven reviewed
 reads; refused draft operations point to the guarded named tools.
 
 - Replace `get_message({ messageId, raw: true })` with
-  `gmail_api_read({ path: "/messages/message1", query: { format: "full" } })`.
+  `gmail_api_read({ path: "/messages/{id}", query: { format: "full" } })`.
+  Replace `{id}` with a message id from an earlier read.
   Read the vendor resource from the tool result's `data`; the hatch envelope
   also has `status` and optional `page`. `raw` is removed, including `raw: false`.
 - `search_threads.threads`, `list_drafts.drafts` and `list_labels.labels` become
   `items`. `get_thread` remains a record with `messages` and `page`.
   `search_threads.resultSizeEstimate` is removed; hatch JSON can retain the
   vendor estimate, which is never an exact total.
-- `list_labels` now accepts `limit` (default 10, at most 25). All named lists
-  use `limit`/`cursor` and return `{ items, page }`; terminal pages omit
-  `nextCursor` instead of returning null. Every named read accepts `fields`,
-  applied to the projected record or to each list item.
+- `search_threads` and `list_drafts` use `limit`/`cursor` and return
+  `{ items, page }`; terminal pages omit `nextCursor` instead of returning null.
+  `list_labels` returns all labels in one bounded, terminal page from one read;
+  `truncated` reports any labels omitted by the byte bound. It takes no paging
+  arguments. Every named read accepts `fields`,
+  applied to the projected record or to each list item. `get_thread` retains
+  `page` after selection; follow `page.nextCursor` while `page.hasMore` is true.
 - Replace `bodyTruncated`, `contentTruncated`, `omittedIds`,
   `labelIdsOmitted`, `attachmentsOmitted` and `labelsOmitted` with top-level
   `truncated` dot paths such as `body`, `content`, `messages[].body` and
@@ -635,8 +639,9 @@ reads; refused draft operations point to the guarded named tools.
   additionally bind earlier safe content. For paged hatches omit `query.pageToken` on the first
   call and pass `page.nextCursor` as top-level `cursor` thereafter, keeping
   path, query and fields fixed. A nonempty token can continue an empty page.
-- Copied Message-ID, In-Reply-To and References now require bounded ASCII
-  tokens. A damaged, withheld, NUL, non-ASCII or control-containing threading
+- Copied Message-ID, In-Reply-To and References require bounded ASCII
+  headers, including valid modern and legacy RFC forms. A damaged, withheld,
+  NUL, non-ASCII or control-containing threading
   header refuses the draft before POST/PUT. Valid threading bytes are kept.
 - Standard Google error facts and fallback codes replace the legacy message
   mapper. Read 5xx failures are `unavailable`; incomplete response bodies are

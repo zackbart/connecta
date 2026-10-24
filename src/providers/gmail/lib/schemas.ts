@@ -92,7 +92,7 @@ export const inputs = {
       }),
     ),
   }),
-  list_labels: Schema.Struct({ limit, cursor, fields: itemFields }),
+  list_labels: Schema.Struct({ fields: itemFields }),
   list_drafts: Schema.Struct({ query, limit, cursor, fields: itemFields }),
   get_draft: Schema.Struct({
     fields: resultFields,
@@ -171,7 +171,11 @@ const Saved = Schema.Struct({
 });
 export const outputs = {
   search_threads: listOutput(rows.search_threads),
-  list_labels: listOutput(rows.list_labels),
+  list_labels: Schema.Struct({
+    items: Schema.Array(rows.list_labels),
+    page: Schema.Struct({ hasMore: Schema.Literal(false) }),
+    truncated,
+  }),
   list_drafts: listOutput(rows.list_drafts),
   get_thread: loose({
     id: Schema.String,

@@ -9,7 +9,7 @@ import { gmail } from "./index.js";
 import type { ConnectorCaller } from "../../connector-caller.js";
 import { index, verdicts, refusalReasons } from "./lib/index.js";
 import { skill } from "./skill.generated.js";
-import { TABLE } from "./safety.js";
+import { safety } from "./api.js";
 import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -230,7 +230,10 @@ describe("writing drafts", () => {
       "<bad\u0001@a>",
       "<bad@a>\r\nBcc: spy@a",
       "<[redacted]@a>",
-      "damaged",
+      "<damaged>",
+      "<a@b><broken>",
+      "<a@b> (unclosed",
+      "<a@b>\n <c@d>",
     ]) {
       for (const name of ["Message-ID", "References", "In-Reply-To"]) {
         route = () => ({
@@ -282,6 +285,62 @@ describe("writing drafts", () => {
     const mime = parseMime(calls.at(-1)!.body.message.raw);
     expect(mime.headers["In-Reply-To"]).toBe("<Valid.Token+1@example.com>");
     expect(mime.headers["References"]).toContain("<ancestor@example.com>");
+    // Valid modern and obsolete forms retain their ids, without salvaging a damaged token.
+    for (const [id, references] of [
+      ["<root@example.com> (comment)", "<a@example.com><b@example.com>"],
+      ["(before (nested\\) comment)) <root@example.com>", "<a@example.com>, <b@example.com>"],
+      ['<"quoted local"@example.com>', "<a@example.com>\r\n \t<b@example.com>"],
+      ["<root@[127.0.0.1]>", "(ignore <not-an-id>) <a@example.com> (after)"],
+      ['<"quoted@local" (left) @ (right) example . com>', 'Earlier "message" <a@example.com>'],
+    ] as const) {
+      calls.length = 0;
+      route = (request) => ({
+        body:
+          request.method === "GET"
+            ? {
+                id: "m1",
+                threadId: "t1",
+                payload: {
+                  headers: [
+                    { name: "Message-ID", value: id },
+                    { name: "References", value: references },
+                    { name: "From", value: "alice@example.com" },
+                  ],
+                },
+              }
+            : { id: "d1", message: { id: "m2" } },
+      });
+      await call(connection(), "create_draft", { body: "x", replyToMessageId: "m1" });
+      const copied = parseMime(calls.at(-1)!.body.message.raw);
+      expect(copied.headers["In-Reply-To"]).toContain(id.match(/<.*>/)![0]);
+      expect(copied.headers["References"]).toContain("<a@example.com>");
+      expect(calls.filter((entry) => entry.method === "POST")).toHaveLength(1);
+    }
+    for (const legacy of [
+      'Your message of "Mon" <x@example.com>',
+      'Your message of "Mon"',
+      "<a@x><b@x>",
+      "<a@x>\r\n <b@x>",
+    ]) {
+      calls.length = 0;
+      route = (request) => ({
+        body:
+          request.method === "GET"
+            ? {
+                id: "d1",
+                message: {
+                  id: "m1",
+                  payload: { mimeType: "text/plain", headers: [{ name: "In-Reply-To", value: legacy }] },
+                },
+              }
+            : { id: "d1", message: { id: "m2" } },
+      });
+      await call(connection(), "update_draft", { draftId: "d1", body: "x" });
+      const kept = parseMime(calls.at(-1)!.body.message.raw);
+      expect(kept.headers["In-Reply-To"]).toBe(legacy.replace(/\r\n /g, " "));
+      expect(kept.source).toContain(`In-Reply-To: ${legacy}\r\n`);
+      expect(calls.filter((entry) => entry.method === "PUT")).toHaveLength(1);
+    }
   });
 
   /** An existing draft as Gmail's full format returns it. */
@@ -603,7 +662,14 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     expect(index.ops).toHaveLength(79);
     expect(Object.values(verdicts).filter((v) => v === "read")).toHaveLength(11);
     expect(Object.keys(verdicts).sort()).toEqual(index.ops.map((op) => `${op.method} ${op.path}`).sort());
-    expect(Object.keys(TABLE.operations).length).toBeGreaterThan(0);
+    // Exercise the resolver used at runtime, including named-only writer exceptions.
+    for (const op of index.ops) {
+      const key = `${op.method} ${op.path}` as keyof typeof verdicts;
+      const path = op.path.replace(/\{[^}]+\}/g, "item1");
+      if (verdicts[key] === "read" || key === "POST /drafts" || key === "PUT /drafts/{id}")
+        expect(safety.reviewed!.resolve!(op.method, path)).toBeTruthy();
+      else expect(() => safety.reviewed!.resolve!(op.method, path)).toThrow(refusalReasons[key]);
+    }
     for (const [key, verdict] of Object.entries(verdicts))
       if (verdict === "refuse") {
         expect(refusalReasons[key]).toBeTruthy();
@@ -647,8 +713,11 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     await expect(call(c, "gmail_api_read", { path: "/messages/m1", fields: ["notAField"] })).rejects.toMatchObject({
       code: "invalid_args",
     });
-    for (const path of ["/messages/send", "/drafts/send"])
-      await expect(call(c, "gmail_api_read", { method: "POST", path })).rejects.toMatchObject({ code: "invalid_args" });
+    for (const path of ["/messages/send", "/drafts/send"]) {
+      expect(() => safety.reviewed!.resolve!("POST", path)).toThrow("Sending is never available");
+      // A schema-valid read must also refuse these literal routes before auth/I/O.
+      await expect(call(c, "gmail_api_read", { path })).rejects.toMatchObject({ code: "invalid_args" });
+    }
     expect(calls).toEqual([]);
     expect(globalThis.fetch).not.toHaveBeenCalled();
     route = () => ({ body: MESSAGE });
@@ -676,6 +745,10 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
       ["edit draft", "PUT /drafts/{id}"],
       ["mailbox profile", "GET /profile"],
       ["mail history", "GET /history"],
+      ["read RFC header", "GET /messages/{id}"],
+      ["X-Review-Stage header", "GET /messages/{id}"],
+      ["search mail", "GET /messages"],
+      ["reply to email", "POST /drafts"],
     ])
       for (const method of [undefined, operation!.split(" ")[0] as "GET" | "POST" | "PUT"])
         expect(
@@ -683,6 +756,14 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
             .search(query!, { limit: 2, partial: true, ...(method ? { method } : {}) })
             .map((op) => `${op.method} ${op.path}`),
         ).toContain(operation);
+    for (const [query, operation] of [
+      ["read RFC header", "GET /messages/{id}"],
+      ["search mail", "GET /messages"],
+      ["reply to email", "POST /drafts"],
+    ]) {
+      const first = index.search(query!, { limit: 1, partial: true })[0]!;
+      expect(`${first.method} ${first.path}`).toBe(operation);
+    }
     route = (request) => ({
       body: request.url.searchParams.has("pageToken")
         ? { messages: [{ id: "m2" }], nextPageToken: "" }
@@ -714,11 +795,13 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
         ],
       },
     });
-    const labels = await call(c, "list_labels", { limit: 1, fields: ["id"] });
-    expect(labels.items).toEqual([{ id: "L1" }]);
-    const nextLabels = await call(c, "list_labels", { limit: 1, fields: ["name"], cursor: labels.page.nextCursor });
-    expect(nextLabels.items).toEqual([{ name: "Second" }]);
-    expect(nextLabels.page).toEqual({ hasMore: false });
+    const labels = await call(c, "list_labels", { fields: ["id"] });
+    expect(labels.items).toEqual([{ id: "L1" }, { id: "L2" }]);
+    expect(labels.page).toEqual({ hasMore: false });
+    route = () => ({ body: { labels: Array.from({ length: 40 }, (_, i) => ({ id: `L${i}`, name: `Label ${i}` })) } });
+    const beforeLabels = calls.length;
+    expect((await call(c, "list_labels")).items).toHaveLength(40);
+    expect(calls).toHaveLength(beforeLabels + 1);
     route = () => ({
       body: {
         labels: [
@@ -762,7 +845,10 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
       const narrowed = await call(c, tool, { ...args, fields: [selected] });
       expect(narrowed.truncated).toContain(cut);
       if (narrowed.items) expect(Object.keys(narrowed.items[0])).toEqual([selected]);
-      else expect(Object.keys(narrowed).sort()).toEqual([selected, "truncated"].sort());
+      else
+        expect(Object.keys(narrowed).sort()).toEqual(
+          [selected, "truncated", ...(tool === "get_thread" ? ["page"] : [])].sort(),
+        );
       const before = calls.length;
       await expect(call(c, tool, { ...args, fields: ["unknown"] })).rejects.toMatchObject({ code: "invalid_args" });
       expect(calls).toHaveLength(before);
@@ -833,7 +919,7 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
       call(connection(), "get_thread", { threadId: "t1", maxBodyChars: 100_000, ...args });
 
     it("refuses a cursor from another thread, body cap, or tool", async () => {
-      const first = await page({});
+      const first = await page({ fields: ["messages.id"] });
       const cursor = first.page.nextCursor;
       await expect(page({ threadId: "t2", cursor })).rejects.toMatchObject({ code: "invalid_args" });
       await expect(page({ maxBodyChars: 99_999, cursor })).rejects.toMatchObject({ code: "invalid_args" });
@@ -903,11 +989,17 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
       }
     });
 
-    it("answers conflict when a message is added or removed before where the page ended", async () => {
+    it("answers conflict when an earlier message is changed, added or removed", async () => {
       const first = await page({});
       const cursor = first.page.nextCursor;
       const returned = first.messages.map((entry: { id: string }) => entry.id);
       expect(returned[0]).toBe("m1");
+
+      messages[0] = { ...messages[0]!, payload: { ...messages[0]!.payload, body: { data: b64url("changed") } } };
+      await expect(page({ cursor })).rejects.toMatchObject({
+        code: "conflict",
+        message: expect.stringContaining("thread changed"),
+      });
 
       // Insert before the anchor: resuming by position would repeat a message.
       messages = [message("m0"), ...messages];
@@ -922,21 +1014,19 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
     });
   });
 
-  it("answers conflict when the label list changed before a page's end", async () => {
+  it("bounds an unpaged label list and reports omissions without a continuation", async () => {
     const labels = Array.from({ length: 3000 }, (_, index) => ({
       id: `Label_${index}`,
       name: "x".repeat(200),
       type: "user",
     }));
-    let current = labels;
-    route = () => ({ body: { labels: current } });
+    route = () => ({ body: { labels } });
     const first = await call(connection(), "list_labels");
-    expect(first.page.hasMore).toBe(true);
+    expect(first.page).toEqual({ hasMore: false });
+    expect(first.truncated).toContain("items[]");
+    expect(first.items.length).toBeLessThan(labels.length);
     expect(size(first)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-    current = [{ id: "Label_new", name: "new", type: "user" }, ...labels];
-    await expect(call(connection(), "list_labels", { cursor: first.page.nextCursor })).rejects.toMatchObject({
-      code: "conflict",
-    });
+    expect(calls).toHaveLength(1);
   });
 });
 

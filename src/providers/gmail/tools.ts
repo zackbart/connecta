@@ -16,6 +16,7 @@ import { fieldsProblem, selectFields } from "../../http/fields.js";
 import { Operation } from "../../runtime/call.js";
 import { index } from "./lib/index.js";
 import { inputs, outputs, rows, type GmailToolName } from "./lib/schemas.js";
+import { threadingIds } from "./lib/threading.js";
 
 interface GmailToolProgram {
   readonly name: GmailToolName;
@@ -763,7 +764,7 @@ async function resumeAt(ids: readonly string[], claims: CursorClaims | undefined
   ) {
     throw new ConnectorCallError(
       "conflict",
-      `The ${what} changed since the previous page: an item was added or removed before where that page ended. Read it again from the start, without a cursor.`,
+      `The ${what} changed before the previous page ended. Read it again from the start, without a cursor.`,
     );
   }
   return seen;
@@ -1067,24 +1068,6 @@ function buildRawMessage(message: Composition): string {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
-/** Copied threading must remain intact ASCII RFC tokens; never silently salvage a damaged header (H8). */
-function messageIds(value: string | undefined): string[] {
-  if (value === undefined) return [];
-  const unfolded = value.replace(/\r\n[ \t]+/g, " ");
-  const tokens = unfolded.trim().split(/[ \t]+/);
-  if (
-    value.length > 32768 ||
-    !/^[\x20-\x7e\t]*$/.test(unfolded) ||
-    value.includes("[redacted]") ||
-    tokens.some((token) => token.length > 998 || !/^<[^<>@\s]+@[^<>@\s]+>$/.test(token))
-  ) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "The copied Message-ID, In-Reply-To or References header is malformed or withheld. No draft was changed; repair its threading in Gmail.",
-    );
-  }
-  return tokens;
-}
 /** At most this many ancestors ride in References; the newest are kept. */
 const MAX_REFERENCES = 20;
 interface Threading {
@@ -1121,8 +1104,8 @@ function replyThreading(client: GoogleClient, messageId: string): Effect.Effect<
       ),
     );
     const payload = asRecord(message["payload"]);
-    const id = messageIds(header(payload, "Message-ID"))[0];
-    const chain = [...messageIds(header(payload, "References")), ...(id ? [id] : [])].slice(-MAX_REFERENCES);
+    const id = threadingIds(header(payload, "Message-ID"))[0];
+    const chain = [...threadingIds(header(payload, "References"), true), ...(id ? [id] : [])].slice(-MAX_REFERENCES);
     const subject = oneLine(header(payload, "Subject"));
     const replyTo = header(payload, "Reply-To");
     return {
@@ -1265,7 +1248,7 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
       name: "search_threads",
       writeSteps: { list: "once", ...indexedSteps("row", MAX_PAGE_SIZE) },
       description:
-        "Search the user's Gmail threads with Gmail query syntax, newest first, returning subject, senders, date, and snippet per thread. Bodies need get_thread.",
+        "Search Gmail threads with conversation ids, newest first, using Gmail query syntax. Read each thread with get_thread for message ids and bodies.",
       annotations: readOnly,
       run: (args, ctx) =>
         Effect.gen(function* () {
@@ -1327,7 +1310,7 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
       name: "get_thread",
       writeSteps: { thread: "once", ...indexedSteps("body", MAX_THREAD_MESSAGES) },
       description:
-        "Get a Gmail thread's messages, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment metadata. Read attachments with get_attachment using partId. A long thread pages by cursor.",
+        "Read a Gmail thread's messages and follow page.nextCursor until page.hasMore is false. Returns headers, capped plain-text bodies and attachment metadata; use get_attachment for attachment content.",
       annotations: readOnly,
       run: (args, ctx) =>
         Effect.gen(function* () {
@@ -1413,28 +1396,22 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
     {
       name: "list_labels",
       description:
-        "List the user's Gmail labels, system and user-created, with the ids messages carry; no message counts. Search by name with label: in search_threads.",
+        "List all Gmail labels in one bounded reply with the ids messages carry; truncated reports omitted labels. Uses one mailbox read and no continuation. Search by name with label: in search_threads.",
       annotations: readOnly,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const listing = asRecord(yield* client.json({ method: "GET", path: "/labels", template: "/labels" }));
-          const call = yield* Effect.promise(() =>
-            callKey("list_labels", { limit: args["limit"] ?? DEFAULT_PAGE_SIZE }),
-          );
-          const claims = openCursor(args["cursor"], "list_labels", call);
           const all = asArray(listing["labels"]);
-          const ids = all.map((label) => JSON.stringify(label));
-          const start = yield* Effect.promise(() => resumeAt(ids, claims, "label list"));
-          // A mailbox may hold 10,000 labels; Gmail sends them in one answer
-          // with no paging of its own, so connecta pages them, budgeting the
-          // whole result: wrapper and longest cursor first, then rows.
+          // Gmail's labels endpoint is unpaged. Return that list once rather
+          // than re-downloading it to serve artificial ten-row pages. The
+          // ordinary result bound still applies, with explicit omissions.
           const labels: JsonRecord[] = [];
           // A label whose id is too long to use is left out and counted, never
           // returned with a cut id that would name nothing.
           let omitted = 0;
-          let bytes = jsonBytes({ labels: [], labelsOmitted: all.length, page: RESERVED_PAGE });
-          let next = start;
-          while (next < all.length && labels.length < (args["limit"] ?? DEFAULT_PAGE_SIZE)) {
+          let bytes = jsonBytes({ labels: [], labelsOmitted: all.length, page: { hasMore: false } });
+          let next = 0;
+          while (next < all.length) {
             const label = asRecord(all[next]);
             const id = idOf(label["id"], LABEL_ID_BYTES);
             if (id === undefined) {
@@ -1450,21 +1427,18 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
               type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
             });
             const size = jsonBytes(row) + (labels.length > 0 ? 1 : 0);
-            if (labels.length > 0 && bytes + size > RESULT_BUDGET_BYTES) break;
+            if (bytes + size > RESULT_BUDGET_BYTES) {
+              omitted += all.length - next;
+              break;
+            }
             labels.push(row);
             bytes += size;
             next += 1;
           }
-          const hasMore = next < all.length;
           return compact({
             labels,
             labelsOmitted: omitted > 0 ? omitted : undefined,
-            page: {
-              hasMore,
-              nextCursor: hasMore
-                ? yield* Effect.promise(() => cursorAfter(ctx, ids, next, "list_labels", call))
-                : null,
-            },
+            page: { hasMore: false },
           });
         }),
     },
@@ -1616,10 +1590,12 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
             args[argument] === undefined
               ? addressEntries(`The draft's ${name} (pass ${argument} explicitly)`, oneLine(header(payload, name)))
               : undefined;
-          const references = messageIds(header(payload, "References"));
+          const references = threadingIds(header(payload, "References"), true);
+          const inReplyTo = header(payload, "In-Reply-To");
+          threadingIds(inReplyTo, true);
           const kept: Kept = {
             threadId: text(message["threadId"]),
-            inReplyTo: messageIds(header(payload, "In-Reply-To"))[0],
+            inReplyTo,
             references: references.length > 0 ? references.join("\r\n ") : undefined,
             subject: oneLine(header(payload, "Subject")),
             from: addressEntries("The draft's From", oneLine(header(payload, "From"))),
@@ -1712,8 +1688,9 @@ export function gmailTools({ connection }: { connection: Connection }): ApiTool[
             );
           if (isList) result["items"] = selectFields(result["items"], fields);
           else {
-            const truncated = result["truncated"];
+            const { truncated, page } = result;
             result = asRecord(selectFields(result, fields));
+            if (page !== undefined) result["page"] = page;
             // Size provenance describes the full projection even when fields omit the cut value.
             if (truncated !== undefined) result["truncated"] = truncated;
           }

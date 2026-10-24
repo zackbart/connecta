@@ -85,8 +85,8 @@ export const gmail = defineApiProvider<GmailOptions>({
   displayTitle: () => "Gmail (drafts only)",
   readme: "Gmail",
   bundle: {
-    baselineGzip: 378563,
-    note: "./providers/gmail measures 339,455 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). The combined Gmail/Docs merge snapshot over main f9bf5afb remeasures this standalone entry at 378,563 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9 (#703).",
+    baselineGzip: 379199,
+    note: "./providers/gmail measures 339,455 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). The combined Gmail/Docs merge snapshot over main f9bf5afb remeasures this standalone entry at 378,563 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9 (#703). The round-1 fix snapshot remeasures 379,199 B gzip before recording this additional fact, using the same toolchain; caps remain unchanged.",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
@@ -109,7 +109,7 @@ export const gmail = defineApiProvider<GmailOptions>({
     named,
     pages,
     pageCursor: "argument",
-    pathExample: "/messages/message1",
+    pathExample: "/messages/{id}",
     binding: ({ connection }) =>
       googleHatchBinding(connection, {
         index,

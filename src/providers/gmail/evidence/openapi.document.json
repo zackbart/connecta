@@ -2836,7 +2836,7 @@
             "description": "Success"
           }
         },
-        "summary": "List search find saved drafts with Gmail query filters.",
+        "summary": "Find saved drafts with Gmail query filters.",
         "tags": [
           "users.drafts"
         ],
@@ -2896,7 +2896,7 @@
             "description": "Success"
           }
         },
-        "summary": "Refused: create save a draft reply via the hatch; use create_draft or update_draft.",
+        "summary": "Refused: reply to email or save a draft via the hatch; use create_draft or update_draft.",
         "tags": [
           "users.drafts"
         ],
@@ -3090,7 +3090,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read get a saved draft message with headers, MIME parts and body metadata.",
+        "summary": "Read a saved draft with headers, MIME parts and body metadata.",
         "tags": [
           "users.drafts"
         ],
@@ -3160,7 +3160,7 @@
             "description": "Success"
           }
         },
-        "summary": "Refused: update edit a draft via the hatch; use update_draft or create_draft.",
+        "summary": "Refused: edit a draft via the hatch; use update_draft or create_draft.",
         "tags": [
           "users.drafts"
         ],
@@ -3276,7 +3276,7 @@
             "description": "Success"
           }
         },
-        "summary": "List read mail history changes after a history id.",
+        "summary": "Read mail history changes after a history id.",
         "tags": [
           "users.history"
         ],
@@ -3328,7 +3328,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find mailbox labels and their human names.",
+        "summary": "List mailbox labels and their human names.",
         "tags": [
           "users.labels"
         ],
@@ -3502,7 +3502,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read get a mailbox label name and message or thread counts.",
+        "summary": "Read a mailbox label name and message or thread counts.",
         "tags": [
           "users.labels"
         ],
@@ -3751,7 +3751,7 @@
             "description": "Success"
           }
         },
-        "summary": "List search find unread messages by sender, subject, date and Gmail query filters.",
+        "summary": "Search mail for unread messages by sender, subject, date and Gmail query filters.",
         "tags": [
           "users.messages"
         ],
@@ -4257,7 +4257,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read get message headers, labels, full MIME parts and body metadata.",
+        "summary": "Read RFC headers, including X-Review-Stage header, message labels, full MIME parts and body metadata.",
         "tags": [
           "users.messages"
         ],
@@ -4522,7 +4522,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read get download message attachments as base64url JSON data.",
+        "summary": "Download message attachments as base64url JSON data.",
         "tags": [
           "users.messages.attachments"
         ],
@@ -4575,7 +4575,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read get mailbox profile email address and message counts.",
+        "summary": "Read mailbox profile email address and message counts.",
         "tags": [
           "users"
         ],
@@ -7297,7 +7297,7 @@
             "description": "Success"
           }
         },
-        "summary": "Refused: stop ; use create_draft or update_draft only for drafts.",
+        "summary": "Refused: stop mailbox notifications; use create_draft or update_draft only for drafts.",
         "tags": [
           "users"
         ],
@@ -7407,7 +7407,7 @@
             "description": "Success"
           }
         },
-        "summary": "List search find unread threads by sender, subject, date and Gmail query filters.",
+        "summary": "Search mail for unread threads by sender, subject, date and Gmail query filters.",
         "tags": [
           "users.threads"
         ],
@@ -7550,7 +7550,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read get thread messages with headers, labels, MIME parts and body metadata.",
+        "summary": "Read thread messages with headers, labels, MIME parts and body metadata.",
         "tags": [
           "users.threads"
         ],
@@ -7805,7 +7805,7 @@
             "description": "Success"
           }
         },
-        "summary": "Refused: watch ; use create_draft or update_draft only for drafts.",
+        "summary": "Refused: watch mailbox notifications; use create_draft or update_draft only for drafts.",
         "tags": [
           "users"
         ],

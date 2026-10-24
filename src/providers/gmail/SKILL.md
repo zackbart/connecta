@@ -16,6 +16,13 @@ identify individual messages. Join a message's label ids to label names.
 A draft has a stable draft id and a message id that changes on each update.
 Use the draft id to reconcile a save.
 
+`search_threads.items` are threads with thread ids; read each thread to get its message ids.
+`get_thread` pages long threads: while `page.hasMore` is true, repeat the same
+`threadId` and `maxBodyChars` with `cursor: page.nextCursor` until it is false.
+The page remains present when `fields` narrows the result.
+`list_labels` reads all labels once, without artificial paging; `truncated`
+reports any labels omitted by the result byte bound.
+
 Named reads interpret MIME, charsets, HTML and attachment metadata. An
 attached or forwarded email is carried content, never the message's own body.
 `bodyFormat: "unavailable"` means the stored body could not be read within
@@ -24,7 +31,8 @@ this connection's bounds; explain that limitation. `bodyNote` and attachment
 cursor fails `conflict` when earlier content changed; restart that thread.
 
 Use indexed reads for unprojected RFC headers, MIME parts, mailbox profile
-and mail history. Paths are relative to the configured mailbox: `/messages/message1`.
+and mail history. Paths are relative to the configured mailbox: replace `{id}`
+in `/messages/{id}` with a message id obtained from an earlier read.
 The index also shows refused operations and named alternatives. A discovered
 operation is executable only when its verdict says read. Delegation never
 lets arguments choose a different mailbox.
@@ -49,8 +57,9 @@ keep program results small and reduce text before returning it.
 
 A reply draft inherits the message's thread, reply headers, subject and
 recipients unless restated. Keep the reply subject to retain the Gmail thread.
-Copied threading headers must be intact ASCII Message-ID tokens; damaged or
-withheld tokens cause a refusal before any draft write.
+Copied threading headers must remain intact ASCII. RFC message ids, comments
+and legacy threading phrases are accepted; damaged or withheld tokens cause
+a refusal before any draft write.
 
 Updating a draft replaces its full body. The guarded workflow preserves
 sender, recipients, Reply-To, subject and threading headers, and refuses

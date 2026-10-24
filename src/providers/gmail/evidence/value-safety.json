@@ -163,27 +163,5 @@
       "fields": ["messages[].payload.headers"],
       "named": false
     }
-  },
-  "reviewed": {
-    "operations": {
-      "GET /drafts": ["drafts[].message.payload.headers", "nextPageToken"],
-      "POST /drafts": ["message.payload.headers"],
-      "GET /drafts/{id}": ["message.payload.headers"],
-      "PUT /drafts/{id}": ["message.payload.headers"],
-      "GET /history": [
-        "history[].labelsAdded[].message.payload.headers",
-        "history[].labelsRemoved[].message.payload.headers",
-        "history[].messagesAdded[].message.payload.headers",
-        "history[].messagesDeleted[].message.payload.headers",
-        "history[].messages[].payload.headers",
-        "nextPageToken"
-      ],
-      "GET /messages": ["messages[].payload.headers", "nextPageToken"],
-      "GET /messages/{id}": ["payload.headers"],
-      "GET /threads": ["nextPageToken", "threads[].messages[].payload.headers"],
-      "GET /threads/{id}": ["messages[].payload.headers"]
-    },
-    "resources": {},
-    "bindings": {}
   }
 }

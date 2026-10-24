@@ -1,9 +1,9 @@
 // Gmail's declared operations are confined to the delegated user's own mailbox.
 import { Effect, Schema } from "effect";
 import { encodedFieldProvenance, get, post, put, vendor, type EncodedFieldProvenance } from "../../http/vendor.js";
-import { googleErrors, googleSafety, type GoogleProduct } from "../_shared/google/kit.js";
+import { googleErrors, type GoogleProduct } from "../_shared/google/kit.js";
 
-import { index, verdicts, refusalReasons } from "./lib/index.js";
+import { gmailSafety } from "./safety.js";
 import { ConnectorCallError } from "../../errors.js";
 import { GMAIL_SCOPES } from "./lib/constants.js";
 
@@ -113,23 +113,9 @@ export const result = (body: unknown) =>
 const standardErrors = googleErrors(GMAIL, { standard: true });
 export const errors: ReturnType<typeof googleErrors> = {
   ...standardErrors,
-  meanings: { ...standardErrors.meanings!, conflicts: ["A thread or label list changed before its content cursor."] },
+  meanings: { ...standardErrors.meanings!, conflicts: ["A thread changed before its content cursor"] },
 };
-const declaredSafety = googleSafety(GMAIL.provider, OPERATIONS);
-export const safety = {
-  ...declaredSafety,
-  reviewed: {
-    ...declaredSafety.reviewed!,
-    resolve: (method: string, path: string) => {
-      const { op } = index.resolve(method, path);
-      const key = `${op.method} ${op.path}` as keyof typeof verdicts;
-      // Named guarded MIME writers have their own reviewed path. A hatch refuses these before calling send.
-      if (verdicts[key] !== "read" && key !== "POST /drafts" && key !== "PUT /drafts/{id}")
-        throw new ConnectorCallError("invalid_args", refusalReasons[key] ?? "This Gmail operation is refused.");
-      return declaredSafety.reviewed!.resolve!(method, path);
-    },
-  },
-};
+export const safety = gmailSafety(OPERATIONS);
 export const probe = {
   operation: listLabels,
   request: {},

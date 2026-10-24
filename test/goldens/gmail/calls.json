@@ -15,14 +15,14 @@
             "method": "POST",
             "path": "/drafts",
             "operationId": "gmail.users.drafts.create",
-            "summary": "Refused: create save a draft reply via the hatch; use create_draft or update_draft.",
+            "summary": "Refused: reply to email or save a draft via the hatch; use create_draft or update_draft.",
             "named": "create_draft"
           },
           {
             "method": "GET",
             "path": "/drafts",
             "operationId": "gmail.users.drafts.list",
-            "summary": "List search find saved drafts with Gmail query filters.",
+            "summary": "Find saved drafts with Gmail query filters.",
             "tool": "gmail_api_read",
             "named": "list_drafts"
           },
@@ -30,7 +30,7 @@
             "method": "GET",
             "path": "/drafts/{id}",
             "operationId": "gmail.users.drafts.get",
-            "summary": "Read get a saved draft message with headers, MIME parts and body metadata.",
+            "summary": "Read a saved draft with headers, MIME parts and body metadata.",
             "tool": "gmail_api_read",
             "named": "get_draft"
           },
@@ -38,7 +38,7 @@
             "method": "PUT",
             "path": "/drafts/{id}",
             "operationId": "gmail.users.drafts.update",
-            "summary": "Refused: update edit a draft via the hatch; use update_draft or create_draft.",
+            "summary": "Refused: edit a draft via the hatch; use update_draft or create_draft.",
             "named": "update_draft"
           },
           {
@@ -57,7 +57,7 @@
         "revision": "20261019",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiN2JmNGJhMzUyNmMzZmUyMDQ4YTUzMjQzZmNlOWQ5MTciLCJjIjoiNiIsIm0iOiJ0V3p4UHZuX0VWTHByb1FVdGlmbGY5VEk2YXpuRjUwMkt4M3NxcjAxSnpRIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiN2E2NjZjZjc3YWExZWU4MmE0MmYzZWY2ZTZlYWIyNTMiLCJjIjoiNiIsIm0iOiJRUXVFekpGZ05xME9MTVA4NG1oZmZWSzFKQ1NxNWw4cldXX0hZVjRJcV80In0"
         }
       }
     }
@@ -77,7 +77,7 @@
         "method": "GET",
         "path": "/messages/{id}",
         "operationId": "gmail.users.messages.get",
-        "summary": "Read get message headers, labels, full MIME parts and body metadata.",
+        "summary": "Read RFC headers, including X-Review-Stage header, message labels, full MIME parts and body metadata.",
         "parameters": [
           {
             "name": "prettyPrint",
