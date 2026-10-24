@@ -15,7 +15,7 @@
             "method": "GET",
             "path": "/people",
             "operationId": "people",
-            "summary": "people",
+            "summary": "List people with optional profile details and tag or profile-field filters.",
             "tool": "breeze_api_read",
             "named": "list_people"
           },
@@ -23,7 +23,7 @@
             "method": "GET",
             "path": "/people/{PERSON_ID}",
             "operationId": "people_PERSON_ID",
-            "summary": "people PERSON ID",
+            "summary": "Read a person profile and optionally field-id details and family members.",
             "tool": "breeze_api_read",
             "named": "get_person"
           },
@@ -31,7 +31,7 @@
             "method": "GET",
             "path": "/people/add",
             "operationId": "people_add",
-            "summary": "people add",
+            "summary": "Create a person with first/last names and optional profile values.",
             "tool": "breeze_api_write",
             "named": "add_person"
           },
@@ -39,7 +39,7 @@
             "method": "GET",
             "path": "/people/update",
             "operationId": "people_update",
-            "summary": "people update",
+            "summary": "Update a person's profile values by field id.",
             "tool": "breeze_api_write",
             "named": "update_person"
           },
@@ -47,13 +47,21 @@
             "method": "GET",
             "path": "/people/delete",
             "operationId": "people_delete",
-            "summary": "people delete",
+            "summary": "Delete a person profile by person id.",
             "tool": "breeze_api_write"
+          },
+          {
+            "method": "GET",
+            "path": "/account/list_log",
+            "operationId": "account_list_log",
+            "summary": "Read the account audit log of actions on people and other records.",
+            "tool": "breeze_api_read"
           }
         ],
         "revision": "2026-10-23",
         "page": {
-          "hasMore": false
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiOWQwODBhOTFiM2RjNzNhOGE0NWU4MTZkMzNhYjBkYTIiLCJjIjoiNiIsIm0iOiJNN3puRnRVNWphLThhakN5cnNHb3JNblYzbVhTYUpyMHBJSkVHMngyX2JrIn0"
         }
       }
     }
@@ -73,13 +81,13 @@
         "method": "GET",
         "path": "/people",
         "operationId": "people",
-        "summary": "people",
+        "summary": "List people with optional profile details and tag or profile-field filters.",
         "parameters": [
           {
             "name": "details",
             "in": "query",
             "required": false,
-            "description": "details",
+            "description": "Set 1 to include the endpoint's expanded record details; 0 omits them.",
             "schema": {
               "type": "string"
             }
@@ -88,7 +96,7 @@
             "name": "filter_json",
             "in": "query",
             "required": false,
-            "description": "JSON-encoded string; objects and arrays must be serialized before calling.",
+            "description": "JSON-encoded profile-field and tag filters; resolve field, option and tag ids first.",
             "schema": {
               "type": "string"
             }
@@ -97,7 +105,7 @@
             "name": "limit",
             "in": "query",
             "required": false,
-            "description": "limit",
+            "description": "Whole decimal count from 1 to 1000; 0 or omission requests all people without paging.",
             "schema": {
               "type": "string"
             }
@@ -106,7 +114,7 @@
             "name": "offset",
             "in": "query",
             "required": false,
-            "description": "offset",
+            "description": "Opaque nextCursor from the preceding people page; omit on the first call.",
             "schema": {
               "type": "string"
             }
@@ -935,7 +943,7 @@
     "args": {
       "firstName": "Jiminy",
       "lastName": "Cricket",
-      "fields": [
+      "values": [
         {
           "fieldId": "1508481877",
           "type": "email",
@@ -974,7 +982,7 @@
     "tool": "update_person",
     "args": {
       "personId": "12345678",
-      "fields": [
+      "values": [
         {
           "fieldId": "2000138811",
           "type": "radio",

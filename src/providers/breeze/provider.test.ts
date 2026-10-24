@@ -118,6 +118,24 @@ it("INV-9: preserves factual in-band failures and JSON success contracts", async
     ["get_person", { personId: "999" }, [], "no person"],
     ["add_person", { firstName: "Alice", lastName: "New" }, false, "answered false"],
     [
+      "breeze_api_write",
+      { method: "GET", path: "/tags/assign", query: { person_id: "1", tag_id: "2" } },
+      false,
+      "answered false",
+    ],
+    [
+      "breeze_api_write",
+      { method: "GET", path: "/tags/unassign", query: { person_id: "1", tag_id: "2" } },
+      false,
+      "answered false",
+    ],
+    [
+      "breeze_api_write",
+      { method: "GET", path: "/events/attendance/add", query: { person_id: "1", instance_id: "2", direction: "in" } },
+      false,
+      "answered false",
+    ],
+    [
       "breeze_api_read",
       { path: "/giving/view", query: { payment_id: "1" } },
       { success: false, errors: "Payment not found" },
@@ -130,8 +148,38 @@ it("INV-9: preserves factual in-band failures and JSON success contracts", async
       "Bad person",
     ],
   ] as const) {
+    const count = calls.length;
     queue({ body });
-    expect((await failure(call(connection(), tool, args))).message).toContain(message);
+    const error = await failure(call(connection(), tool, args));
+    expect(error.message).toContain(message);
+    if (body === false)
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect(calls).toHaveLength(count + 1);
+  }
+  queue({ body: false });
+  expect(await call(connection(), "breeze_api_read", { path: "/events/locations" })).toEqual({
+    status: 200,
+    data: false,
+  });
+  for (const [status, text] of [
+    [500, ""],
+    [500, "<html>Unavailable</html>"],
+    [429, ""],
+    [429, "<p>Slow down</p>"],
+    [400, "x".repeat(300)],
+    [401, "Invalid key"],
+    [403, ""],
+  ] as const) {
+    for (const [tool, args] of [
+      ["list_tags", {}],
+      ["breeze_api_write", { method: "GET", path: "/tags/assign", query: { person_id: "1", tag_id: "2" } }],
+    ] as const) {
+      queue({ status, text });
+      const error = await failure(call(connection(), tool, args));
+      expect(error.message).toMatch(/^Breeze /);
+      expect(error.message).toContain(status === 401 ? "Breeze said: Invalid key." : `HTTP ${status}`);
+      expect(error.message).not.toMatch(/\s{2}/);
+    }
   }
   queue({ body: { success: true, errors: null, payment_id: 1 } });
   expect(
@@ -151,7 +199,7 @@ it("INV-9: preserves factual in-band failures and JSON success contracts", async
         tool,
         tool === "add_person"
           ? { firstName: "Alice", lastName: "New" }
-          : { personId: "1", fields: [{ fieldId: "2", type: "text", response: "ok" }] },
+          : { personId: "1", values: [{ fieldId: "2", type: "text", response: "ok" }] },
       ),
     ).toEqual({ ok: true });
   }
@@ -172,6 +220,7 @@ it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages befo
     "/people/../people/add",
     "/people/%61dd",
     "/people?x=1",
+    "/people/",
     "//evil.example.com/api",
     "https://evil.example.com/api/people",
   ])
@@ -182,6 +231,7 @@ it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages befo
     { filter_json: { tag_contains: "y_1" } },
     { details: "[redacted]" },
     { details: [0, 1] },
+    ...["abc", "-1", "1.5", " 2", "2e0", "1001", "9007199254740992"].map((limit) => ({ limit })),
   ])
     expect((await failure(call(connector, "breeze_api_read", { path: "/people", query }, ctx))).code).toBe(
       "invalid_args",
@@ -202,6 +252,16 @@ it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages befo
       .map((p: any) => p.name),
   ).toEqual(["first", "last"]);
   await call(connector, "breeze_api_search", { query: "people", limit: 1, cursor: found.page.nextCursor }, ctx);
+  for (const [query, path] of [
+    ["delete person", "/people/delete"],
+    ["family", "/families/create"],
+    ["tag person", "/tags/assign"],
+    ["check in", "/events/attendance/add"],
+    ["donation", "/giving/list"],
+  ])
+    expect((await call(connector, "breeze_api_search", { query }, ctx)).operations.map((op: any) => op.path)).toContain(
+      path,
+    );
   expect(calls).toHaveLength(0);
   queue(
     {
@@ -276,6 +336,28 @@ it("INV-5: calendar secrets stay removed and list fields narrow safe rows", asyn
     );
     expect(result).toEqual({ status: 200, data: [fields ? { id: 0 } : { id: 0, name: "Main", color: "blue" }] });
   }
+  const calendar = {
+    id: "1",
+    name: "Main",
+    address: "https://church.breezechms.com/events/feed/SECRET",
+    embed_key: "AbC",
+  };
+  for (const [body, safe] of [
+    [calendar, { id: "1", name: "Main" }],
+    [{ "1": calendar }, { "1": { id: "1", name: "Main" } }],
+    [{ calendars: [calendar] }, { calendars: [{ id: "1", name: "Main" }] }],
+  ]) {
+    queue({ body });
+    expect(await call(connector, "breeze_api_read", { path: "/events/calendars/list" }, ctx)).toEqual({
+      status: 200,
+      data: safe,
+    });
+  }
+  queue({ body: [{ id: "1", settings_id: "2", is_modified: "0", created_on: "2026-10-01", name: "Gathering" }] });
+  expect(await call(connector, "breeze_api_read", { path: "/events", fields: ["id", "created_on"] }, ctx)).toEqual({
+    status: 200,
+    data: [{ id: "1", created_on: "2026-10-01" }],
+  });
   queue(
     {
       body: [

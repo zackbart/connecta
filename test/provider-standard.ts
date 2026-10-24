@@ -562,7 +562,7 @@ export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
     const projects = isHatch && /_api_(?:read|write)$/.test(tool.name);
     if (((read && named) || projects) && !("fields" in input)) {
       found.push(`S5: ${tool.name} takes fields to narrow its result`);
-    } else if (((read && named) || projects) && "fields" in input && !stringArray(input["fields"])) {
+    } else if ("fields" in input && !stringArray(input["fields"])) {
       found.push(`S5: ${tool.name} fields is a string array of dot paths`);
     }
   }

@@ -33,6 +33,12 @@ with that correction. No trial was rerun or replaced, and prompts, fake
 behavior and all other outcome checks stayed frozen. Both the original and
 regraded inputs are retained; the primary results below use the regrade.
 
+Before the correction Sonnet BEFORE was **12/14**: both filtered-people
+repeats failed the vendor-side filtering check. Both original AFTER Sonnet
+filtered-people trials also fail that now-advisory check. The correction is
+load-bearing for Sonnet in both arms and was applied uniformly; the required
+answer and write-safety checks remain unchanged.
+
 ## Results
 
 | Task | BEFORE Luna | AFTER Luna | BEFORE Sonnet | AFTER Sonnet |

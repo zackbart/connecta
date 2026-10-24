@@ -78,7 +78,7 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
     capped.push({
       name: "update_person",
       annotations: DESTRUCTIVE,
-      inputSchema: object({ fields: { type: "array", items: object({ fieldId: { type: "string" } }) } }),
+      inputSchema: object({ values: { type: "array", items: object({ fieldId: { type: "string" } }) } }),
     });
     expect(surfaceViolations(capped)).toEqual([]);
     const mutable = structuredClone(capped) as any[];

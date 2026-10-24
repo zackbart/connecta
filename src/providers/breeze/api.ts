@@ -76,12 +76,17 @@ const PATH_PATTERN = /^(\/[a-z0-9_]+)+\/?$/;
  * returns them.
  */
 export function withoutCalendarFeeds(path: string, body: unknown): unknown {
-  if (path !== "/events/calendars/list" || !Array.isArray(body)) return body;
-  return body.map((row) => {
-    if (!row || typeof row !== "object" || Array.isArray(row)) return row;
-    const { address: _address, embed_key: _embedKey, ...calendar } = row as JsonRecord;
-    return calendar;
-  });
+  if (path !== "/events/calendars/list") return body;
+  const strip = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(strip);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "address" && key !== "embed_key")
+        .map(([key, child]) => [key, strip(child)]),
+    );
+  };
+  return strip(body);
 }
 
 export function normalizedPath(raw: unknown): string {
@@ -111,12 +116,15 @@ const loose = (names: string, extra: Schema.Struct.Fields = {}) =>
     ...extra,
   });
 const Person = loose(
-  "id oid first_name force_first_name last_name nick_name middle_name maiden_name path thumb_path details family",
+  "id oid first_name force_first_name last_name nick_name middle_name maiden_name path thumb_path details family street_address city state zip",
 );
-const ProfileField = loose("id oid field_id field_type name position profile_id created_on options");
+const ProfileField = loose("id oid field_id field_type name position profile_id profile_section_id created_on options");
 const Event = loose(
-  "id oid event_id name category_id start_datetime end_datetime description check_in_settings eligible",
+  "id oid event_id name category_id settings_id is_modified created_on start_datetime end_datetime description check_in_settings eligible",
 );
+const Tag = loose("id name created_on folder_id");
+const TagFolder = loose("id name parent_id created_on");
+const FamilyAnswer = loose("success");
 const Payment = loose(
   "id oid paid_on created_on num method method_id amount note person_id first_name last_name envelope_number meta batch_num batch_id person",
   {
@@ -136,11 +144,14 @@ const responseByPath: Readonly<Record<string, Schema.Top>> = {
       fields: Schema.optionalKey(Schema.Array(ProfileField)),
     }),
   ),
-  "/tags/list_tags": Schema.Array(loose("id name created_on folder_id")),
-  "/tags/list_folders": Schema.Array(loose("id name parent_id")),
+  "/tags/list_tags": Schema.Array(Tag),
+  "/tags/list_folders": Schema.Array(TagFolder),
+  "/tags/add_tag": Schema.Array(Tag),
+  "/tags/add_tag_folder": Schema.Array(TagFolder),
   "/events": Schema.Array(Event),
   "/events/list_event": Schema.Union([Event, Schema.Array(Event)]),
-  "/events/calendars/list": Schema.Array(loose("id name color address embed_key")),
+  "/events/add": Schema.Array(Event),
+  "/events/calendars/list": Schema.Array(loose("id oid name color created_on address embed_key")),
   "/events/locations": Schema.Array(loose("id name")),
   "/events/attendance/list": Schema.Array(loose("id instance_id person_id created_on check_out details")),
   "/events/attendance/eligible": Schema.Array(Person),
@@ -157,7 +168,11 @@ const responseByPath: Readonly<Record<string, Schema.Top>> = {
       loose("timezone", { country: Schema.optionalKey(loose("id name currency currency_symbol")) }),
     ),
   }),
-  "/account/list_log": Schema.Array(loose("id user_id action object_json created_on details")),
+  "/account/list_log": Schema.Array(loose("id oid user_id action object_json created_on details")),
+  "/families/create": FamilyAnswer,
+  "/families/destroy": FamilyAnswer,
+  "/families/add": FamilyAnswer,
+  "/families/remove": FamilyAnswer,
   "/giving/list": Schema.Array(Payment),
   "/giving/view": GivingAnswer,
   "/giving/add": GivingAnswer,
@@ -253,9 +268,131 @@ const WRITES = new Set([
   "/volunteers/remove_role",
   "/volunteers/update",
 ]);
+// Reviewed against the endpoint descriptions/examples in the public and archived reference.
+const summaries: Readonly<Record<string, string>> = {
+  "/account/list_log": "Read the account audit log of actions on people and other records.",
+  "/account/summary": "Read account identity, timezone, country and giving currency.",
+  "/events": "List event occurrences in a date range, with series ids and times.",
+  "/events/add": "Create an event occurrence, optionally in an existing series.",
+  "/events/delete": "Delete an event occurrence by instance id.",
+  "/events/list_event": "Read one event occurrence and optionally its series schedule.",
+  "/events/calendars/list": "List event calendars; private feed addresses and embed keys are removed.",
+  "/events/locations": "List event locations and their ids.",
+  "/events/attendance/add": "Record attendance: check in or check out a person at an event occurrence.",
+  "/events/attendance/delete": "Delete a person's attendance record for an event occurrence.",
+  "/events/attendance/eligible": "List people eligible to attend an event occurrence.",
+  "/events/attendance/list": "List attendance for an event occurrence, including check-out times.",
+  "/families/add": "Add people to the family of a target person, replacing previous family associations.",
+  "/families/create": "Create a family from the specified people.",
+  "/families/destroy": "Destroy family associations for the specified people.",
+  "/families/remove": "Remove specified people from their family associations.",
+  "/forms/list_forms": "List forms, optionally selecting archived forms.",
+  "/forms/list_form_fields": "Read a form's field definitions for decoding entry responses.",
+  "/forms/list_form_entries": "List entries submitted to a form, optionally including response details.",
+  "/forms/remove_form_entry": "Delete a submitted form entry by entry id.",
+  "/funds/list": "List giving funds, optionally including contribution totals.",
+  "/giving/add": "Record a giving contribution or donation with donor and fund allocations.",
+  "/giving/delete": "Delete a giving contribution or donation by payment id.",
+  "/giving/edit": "Edit a giving contribution or donation; the payment id may change.",
+  "/giving/list": "List giving contributions or donations by date, donor, amount and fund filters.",
+  "/giving/view": "Read one giving contribution or donation by payment id.",
+  "/people": "List people with optional profile details and tag or profile-field filters.",
+  "/people/add": "Create a person with first/last names and optional profile values.",
+  "/people/delete": "Delete a person profile by person id.",
+  "/people/update": "Update a person's profile values by field id.",
+  "/people/{PERSON_ID}": "Read a person profile and optionally field-id details and family members.",
+  "/pledges/list_campaigns": "List pledge campaigns before reading their individual pledges.",
+  "/pledges/list_pledges": "List a campaign's pledge rows, amounts, donors and payment progress.",
+  "/profile": "List profile sections, field definitions and multiple-choice option ids.",
+  "/tags/add_tag": "Create a tag, optionally within a tag folder.",
+  "/tags/add_tag_folder": "Create a tag folder, optionally within a parent folder.",
+  "/tags/assign": "Assign a tag to a person.",
+  "/tags/delete_tag": "Delete a tag by tag id.",
+  "/tags/delete_tag_folder": "Delete a tag folder by folder id.",
+  "/tags/list_folders": "List tag folders and their parent ids.",
+  "/tags/list_tags": "List tags, optionally within a folder.",
+  "/tags/unassign": "Unassign a tag from a person.",
+  "/volunteers/add": "Assign a person to volunteer at an event occurrence.",
+  "/volunteers/add_role": "Create a volunteer role for an event occurrence.",
+  "/volunteers/list": "List volunteers assigned to an event occurrence and their responses.",
+  "/volunteers/list_roles": "List volunteer roles for an event occurrence.",
+  "/volunteers/remove": "Remove a person's volunteer assignment from an event occurrence.",
+  "/volunteers/remove_role": "Delete a volunteer role from an event occurrence.",
+  "/volunteers/update": "Update a person's volunteer roles at an event occurrence.",
+};
+const parameterDescriptions: Readonly<Record<string, string>> = {
+  action: "Account-log action to match, for example person_updated.",
+  start: "First date in the requested range; use YYYY-MM-DD.",
+  end: "Last date in the requested range; use YYYY-MM-DD.",
+  user_id: "Account user id whose actions to list.",
+  details: "Set 1 to include the endpoint's expanded record details; 0 omits them.",
+  limit: "Maximum rows requested from the vendor; a full result can require paging or a narrower range.",
+  offset: "Opaque nextCursor from the preceding people page; omit on the first call.",
+  category_id: "Event category id to select or assign.",
+  calendar_id: "Calendar id from /events/calendars/list.",
+  eligible: "Set 1 to include check-in eligibility settings and associated tags.",
+  name: "Name of the record being created or edited.",
+  starts_on: "Event start as a Unix timestamp in seconds.",
+  ends_on: "Event end as a Unix timestamp in seconds; defaults to one hour after starts_on.",
+  all_day: "Set 1 for an all-day event, 0 otherwise.",
+  description: "Event description text.",
+  event_id: "Existing event series id when adding an occurrence to that series.",
+  direction: "Attendance direction: in records check-in, out records check-out; default in.",
+  person_id: "Person id from /people; resolve the target before writing.",
+  instance_id: "Event occurrence id, not the recurring series event_id.",
+  type: "Attendance selector: person for people, anonymous for anonymous counts.",
+  schedule: "Set 1 to include the event series schedule.",
+  schedule_direction: "Schedule direction relative to this occurrence: before or after; default before.",
+  schedule_limit: "Maximum scheduled occurrences to include.",
+  people_ids_json: "JSON-encoded array of person ids for the family operation.",
+  target_person_id: "Person whose family receives the specified people.",
+  form_id: "Form id from /forms/list_forms.",
+  is_archived: "Set 1 for archived forms, 0 for active forms.",
+  entry_id: "Submitted form entry id from /forms/list_form_entries.",
+  include_totals: "Set 1 to include each fund's contribution total.",
+  date: "Giving transaction date; the archived parameter table specifies DD-MM-YYYY.",
+  person_json: "JSON-encoded donor details when supplying an unassociated donor.",
+  uid: "External donor id from the giving platform, used with processor when the Breeze person id is unknown.",
+  processor: "Payment processor name associated with the transaction.",
+  method: "Giving payment method name, for example Cash or Check.",
+  funds_json: "JSON-encoded array of fund allocations with name, amount and optional id; amounts must sum to amount.",
+  amount: "Giving transaction amount as an exact decimal string.",
+  group: "Unique group for a giving batch; repeated groups reuse the remembered batch.",
+  batch_number: "Giving batch number to assign.",
+  batch_name: "Giving batch name to assign.",
+  note: "Giving transaction note.",
+  payment_id: "Giving transaction id from /giving/list; editing can return a new id.",
+  include_family: "Set 1 to include giving from the person's family.",
+  amount_min: "Minimum giving amount as an exact decimal string.",
+  amount_max: "Maximum giving amount as an exact decimal string.",
+  method_ids: "Giving method ids to include, separated by dashes.",
+  fund_ids: "Giving fund ids to include, separated by dashes.",
+  envelope_number: "Donor envelope number to match.",
+  batches: "Giving batch numbers to include, separated by dashes.",
+  forms: "Giving form ids to include, separated by dashes.",
+  pledge_ids: "Pledge campaign ids to include in the giving filter, separated by dashes.",
+  filter_json: "JSON-encoded profile-field and tag filters; resolve field, option and tag ids first.",
+  first: "Person's first name.",
+  last: "Person's last name.",
+  fields_json: "JSON-encoded profile values keyed by field_id, with field_type and response or details.",
+  campaign_id: "Pledge campaign id from /pledges/list_campaigns.",
+  folder_id: "Tag folder id from /tags/list_folders.",
+  parent_id: "Parent tag-folder id; omit to use the root.",
+  tag_id: "Tag id from /tags/list_tags.",
+  quantity: "Number of volunteer positions for the role.",
+  show_quantity: "Set 1 to include the number of positions for each volunteer role.",
+  role_id: "Volunteer role id from /volunteers/list_roles.",
+  role_ids_json: "JSON-encoded array of volunteer role ids to assign.",
+};
+const PEOPLE_LIMIT_PATTERN = "^(?:0|[1-9][0-9]{0,2}|1000)$";
 const details = JSON.parse(openapi.details) as { o: Array<0 | [Array<[string, string, number]>, unknown]> };
 const declared = openapi.ops.map(([, path, name], row) => {
-  const params = Object.fromEntries([...path.matchAll(/\{([^}]+)\}/g)].map((m) => [m[1]!, Schema.String]));
+  const params = Object.fromEntries(
+    [...path.matchAll(/\{([^}]+)\}/g)].map((m) => [
+      m[1]!,
+      Schema.String.annotate({ description: "Numeric person id from /people." }),
+    ]),
+  );
   const entry = details.o[row];
   const names =
     path === "/giving/add"
@@ -266,19 +403,35 @@ const declared = openapi.ops.map(([, path, name], row) => {
           ? []
           : entry[0].filter(([, at]) => at === "query").map(([name]) => name);
   const query = Object.fromEntries(
-    names.map((key) => [
-      key,
-      (requiredByPath[path]?.includes(key) ? Schema.String : Schema.optionalKey(Schema.String)).pipe(
-        Schema.annotateKey({
-          description: key.endsWith("_json")
-            ? "JSON-encoded string; objects and arrays must be serialized before calling."
-            : key.replaceAll("_", " "),
-        }),
-      ),
-    ]),
+    names.map((key) => {
+      const value =
+        path === "/people" && key === "limit"
+          ? Schema.String.check(
+              Schema.makeFilter((raw: string) => new RegExp(PEOPLE_LIMIT_PATTERN).test(raw), {
+                toJsonSchema: () => ({ pattern: PEOPLE_LIMIT_PATTERN }),
+              }),
+            )
+          : Schema.String;
+      const description =
+        path === "/people" && key === "limit"
+          ? "Whole decimal count from 1 to 1000; 0 or omission requests all people without paging."
+          : path === "/giving/edit" && key === "name"
+            ? "Donor name, as shown in the archived edit example."
+            : parameterDescriptions[key];
+      if (!description) throw new Error(`Breeze parameter ${path} ${key} needs a reviewed description.`);
+      return [
+        key,
+        (requiredByPath[path]?.includes(key) ? value : Schema.optionalKey(value)).pipe(
+          Schema.annotateKey({
+            description,
+          }),
+        ),
+      ];
+    }),
   );
+  if (!summaries[path]) throw new Error(`Breeze operation ${path} needs a reviewed summary.`);
   const summary =
-    name.replaceAll("_", " ") +
+    summaries[path] +
     (path.startsWith("/giving/") || path.startsWith("/pledges/") || path === "/funds/list"
       ? " (archival API; verify support)"
       : "") +
@@ -352,6 +505,17 @@ export const accountSummary = declared.find((operation) => operation.identifier 
 
 /** Breeze accepts one value per query name; REST-style repeated scalars are not a batch. */
 export const admit = (url: URL): Effect.Effect<void, Refusal> => {
+  // The compact vendor index does not preserve string-pattern constraints.
+  const limit = url.searchParams.get("limit");
+  if (url.pathname === "/api/people" && limit !== null && !new RegExp(PEOPLE_LIMIT_PATTERN).test(limit))
+    return Effect.fail(
+      new Refusal({
+        error: new ConnectorCallError(
+          "invalid_args",
+          "Breeze people limit must be a whole decimal count from 0 to 1000; 0 requests all people without paging.",
+        ),
+      }),
+    );
   const seen = new Set<string>();
   for (const name of url.searchParams.keys()) {
     if (seen.has(name))
@@ -382,10 +546,10 @@ export const authenticate = Effect.gen(function* () {
     );
   return { "Api-Key": key };
 });
-function bodyDetail(text: string): string {
+function bodyDetail(text: string, status: number): string {
   const trimmed = text.trim();
-  if (!trimmed || trimmed.startsWith("<") || trimmed.length > 200) return "";
-  return ` Breeze said: ${trimmed}`;
+  if (!trimmed || trimmed.startsWith("<") || trimmed.length > 200) return `Breeze returned HTTP ${status}.`;
+  return `Breeze said: ${trimmed}${/[.!?]$/.test(trimmed) ? "" : "."}`;
 }
 
 // These account-wide keys have no scopes: 401 and 403 both mean key recovery;
@@ -400,19 +564,19 @@ export const errors: VendorErrors = {
   },
   provider: "Breeze",
   facts: () => ({}),
-  detail: ({ body }) => bodyDetail(typeof body === "string" ? body : ""),
+  detail: ({ body, status }) => bodyDetail(typeof body === "string" ? body : "", status),
   meanings: { unknownId: "not_found", provesAbsence: true, conflicts: [] },
   unreadable: "Breeze returned a non-JSON successful response.",
   statuses: {
     401: ({ status }) => ({
       code: "auth_required",
       words: (detail) =>
-        `Breeze rejected the configured API key (HTTP ${status}).${detail} An operator must replace it with the key from this church's Extensions → API page.`,
+        `Breeze rejected the configured API key (HTTP ${status}). ${detail} An operator must replace it with the key from this church's Extensions → API page.`,
     }),
     403: ({ status }) => ({
       code: "auth_required",
       words: (detail) =>
-        `Breeze rejected the configured API key (HTTP ${status}).${detail} An operator must replace it with the key from this church's Extensions → API page.`,
+        `Breeze rejected the configured API key (HTTP ${status}). ${detail} An operator must replace it with the key from this church's Extensions → API page.`,
     }),
     404: () => ({
       code: "not_found",
@@ -421,8 +585,25 @@ export const errors: VendorErrors = {
     }),
   },
 };
-export const result = (body: unknown): Effect.Effect<unknown, HttpFailure, RequestSecrets> => {
+export const result = (
+  body: unknown,
+  answer: { readonly operation: OperationRef },
+): Effect.Effect<unknown, HttpFailure, RequestSecrets> => {
   return RequestSecrets.use((secrets) => {
+    if (
+      body === false &&
+      answer.operation.method === "GET" &&
+      BREEZE_VERDICTS[`GET ${answer.operation.template}`] === "destructive"
+    )
+      return Effect.fail(
+        new Refusal({
+          error: new ConnectorCallError(
+            "connector_call_failed",
+            `Breeze answered false to ${answer.operation.template}. Breeze gives no reason; check the target and confirm the ids with their list tools before any fresh call.`,
+            { retryable: false },
+          ),
+        }),
+      );
     const failure = reportedFailure(body, secrets);
     return failure ? Effect.fail(new Refusal({ error: failure })) : Effect.succeed(body ?? null);
   });

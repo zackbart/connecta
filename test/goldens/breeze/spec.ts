@@ -259,7 +259,7 @@ export default defineGoldenSpec({
       args: {
         "firstName": "Jiminy",
         "lastName": "Cricket",
-        "fields": [{ "fieldId": "1508481877", "type": "email", "details": { "address": "jiminy@example.com" } }],
+        "values": [{ "fieldId": "1508481877", "type": "email", "details": { "address": "jiminy@example.com" } }],
       },
       replies: reply([
         { id: "12345678", first_name: "Jiminy", force_first_name: "Jiminy", last_name: "Cricket", path: "x" },
@@ -267,7 +267,7 @@ export default defineGoldenSpec({
     },
     {
       tool: "update_person",
-      args: { "personId": "12345678", "fields": [{ "fieldId": "2000138811", "type": "radio", "response": "459" }] },
+      args: { "personId": "12345678", "values": [{ "fieldId": "2000138811", "type": "radio", "response": "459" }] },
       replies: reply({ id: "12345678", first_name: "Jiminy", last_name: "Cricket" }),
     },
     {

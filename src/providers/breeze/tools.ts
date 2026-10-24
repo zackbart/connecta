@@ -769,7 +769,7 @@ export function breezeTools({
       input: Schema.Struct({
         "firstName": Schema.String.check(isMinChars(1), isMaxChars(100)).annotate({ description: "First name." }),
         "lastName": Schema.String.check(isMinChars(1), isMaxChars(100)).annotate({ description: "Last name." }),
-        "fields": Schema.optionalKey(
+        "values": Schema.optionalKey(
           Schema.Array(
             Schema.Struct({
               "fieldId": Schema.String.check(matches("^[0-9]+$")).annotate({ description: "Profile fieldId." }),
@@ -808,7 +808,7 @@ export function breezeTools({
             const payload = yield* write("/people/add", {
               first: args["firstName"],
               last: args["lastName"],
-              fields_json: args["fields"] === undefined ? undefined : fieldsJson(args["fields"]),
+              fields_json: args["values"] === undefined ? undefined : fieldsJson(args["values"]),
             });
             const person = Array.isArray(payload) ? payload[0] : payload;
             requireTrue(payload, "the person creation");
@@ -828,7 +828,7 @@ export function breezeTools({
         "personId": Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
           description: "Breeze person id from list_people.",
         }),
-        "fields": Schema.Array(
+        "values": Schema.Array(
           Schema.Struct({
             "fieldId": Schema.String.check(matches("^[0-9]+$")).annotate({ description: "Profile fieldId." }),
             "type": Schema.Literals([
@@ -862,7 +862,7 @@ export function breezeTools({
       run: (args) =>
         projected(Result_update_person, () =>
           Effect.gen(function* () {
-            const fields = fieldsJson(args["fields"]);
+            const fields = fieldsJson(args["values"]);
             const payload = yield* write("/people/update", { person_id: args["personId"], fields_json: fields });
             requireTrue(payload, "the person update");
             const person = Array.isArray(payload) ? payload[0] : payload;

@@ -156,7 +156,7 @@ async function reference(id: string, ctx: ReferenceContext) {
       {
         firstName: "Alice",
         lastName: "New",
-        fields: [{ fieldId: EMAIL_FIELD, type: "email", details: { address: NEW_EMAIL } }],
+        [standard() ? "values" : "fields"]: [{ fieldId: EMAIL_FIELD, type: "email", details: { address: NEW_EMAIL } }],
       },
       true,
     );
@@ -167,7 +167,10 @@ async function reference(id: string, ctx: ReferenceContext) {
     const r = await call(
       ctx,
       "update_person",
-      { personId: TARGET, fields: [{ fieldId: STATUS_FIELD, type: "radio", response: "902" }] },
+      {
+        personId: TARGET,
+        [standard() ? "values" : "fields"]: [{ fieldId: STATUS_FIELD, type: "radio", response: "902" }],
+      },
       true,
     );
     if (!r.isError) throw new Error("Injected Breeze failure lost");

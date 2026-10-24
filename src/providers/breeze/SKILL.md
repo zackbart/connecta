@@ -33,12 +33,15 @@ exact decimal strings: reduce them with integer-cent arithmetic, and read the
 currency from `get_account_summary`. A split gift's fund amounts belong to
 its fund ids. Tithe.ly deposits sync in batches, so recent gifts can be absent.
 Editing a giving transaction may return a new payment id.
+Use `limit: 1000` when reducing broad giving ranges: each local page refetches
+the bounded vendor list, so larger windows avoid repeated full-list fetches.
 
 ## Required sequences
 
 Check for an existing person before adding one: creation does not deduplicate.
 Resolve profile fields before updating them. Text, dates (M/D/YYYY) and option
 ids use `response`; email, phone, address and family-role values use `details`.
+Named person writes take these entries in `values`.
 Family changes can remove previous associations. Attendance check-out records
 a departure time; removing attendance deletes the record instead.
 

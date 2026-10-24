@@ -440,9 +440,7 @@ decides. A hatch read keeps the vendor's own query and returns
 
 A vendor list with a cap but no continuation may declare `page.hasMore` as
 literal false, take no `cursor`, and report a full capped response through
-`truncated: ["items[]"]`; narrowing its filters is the recovery. A named
-write's domain payload may use `fields`; S5's dot-path argument applies to
-named reads and the read/write hatches.
+`truncated: ["items[]"]`; narrowing its filters is the recovery.
 
 A tool reports what it cut for size in `truncated: string[]`: the dot paths
 it shortened or cut short (a list cut short is `labels[]`). Ids an agent needs

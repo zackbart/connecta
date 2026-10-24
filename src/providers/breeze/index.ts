@@ -73,8 +73,8 @@ export const breeze = defineApiProvider<BreezeOptions>({
   skill,
   options: BREEZE_OPTIONS,
   bundle: {
-    baselineGzip: 345800,
-    note: "./providers/breeze baseline: 345,800 B gzip standalone measured at f2f48656 in decision 0011 step 2, versus 341,226 B on main e4401cd7 (+4,574 B), Node 26.12.0 with system zlib. The standard indexed hatch, fields, bound paging and smaller curated surface replace the legacy hatches. This includes the shared Effect kit, paid once per deployment; standalone sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 348695,
+    note: "Breeze step-2 round-1 fix snapshot: standalone gzip measured locally with Node 26.12.0 and system zlib. This includes the shared Effect kit, paid once per deployment; provider entries are reported, not capped, and their sizes are not additive (#899).",
   },
   displayTitle: (options) => `Breeze ChMS (${normalizeSubdomain(options.subdomain)})`,
   description: (options) =>
