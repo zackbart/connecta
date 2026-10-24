@@ -40,6 +40,13 @@ interface StripeFacts {
 const LOCK_TIMEOUT = "lock_timeout";
 
 export const stripeErrors: VendorErrors<StripeFacts> = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+  },
   authBeforeExecution: {
     evidence:
       "https://docs.stripe.com/error-low-level#content-errors: invalid API keys are refused before execution on API v1; API replies carry Request-Id.",

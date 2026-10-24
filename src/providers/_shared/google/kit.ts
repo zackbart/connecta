@@ -100,6 +100,13 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
     provider,
     facts: (tokens) => ({ reasons: reasonsOf(tokens) }),
     factVocabulary: { reasons: Object.values(REASONS).flat() },
+    numericFacts: {
+      retryAfterMs: {
+        header: "retry-after",
+        format: "retry-after",
+        review: "HTTP Retry-After delay for failure recovery.",
+      },
+    },
     detail: ({ status, body }) => {
       const message = asRecord(asRecord(body)["error"])["message"];
       // The body arrives redacted whole, before anything here cuts it.

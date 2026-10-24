@@ -494,6 +494,13 @@ function detailFor(payload: unknown, status: number): string {
  * and a 5xx on a read unavailable.
  */
 export const errors: VendorErrors = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+  },
   provider: "Tithe.ly",
   facts: () => ({}),
   detail: ({ body, status }) => detailFor(body, status),

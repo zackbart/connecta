@@ -456,7 +456,7 @@ export function connect<R>(
                 reply.text,
                 (value, format) => {
                   if (reply.status < 200 || reply.status > 299 || options.inBandRefusals)
-                    classifierFacts = captureClassifierFacts(value, options.errors);
+                    classifierFacts = captureClassifierFacts(value, options.errors, reply.headers);
                   const provenance =
                     format === "json" && encodedFields.length > 0
                       ? normalizeEncodedFields(value, encodedFields, secrets)
@@ -471,6 +471,10 @@ export function connect<R>(
                 },
                 textBodies?.forResponse(reply.status, operation, formatType(headers.get("content-type") ?? "")),
               );
+
+        // Empty and malformed bodies still carry declared numeric response headers.
+        if ((reply.status < 200 || reply.status > 299 || options.inBandRefusals) && !classifierFacts)
+          classifierFacts = captureClassifierFacts(undefined, options.errors, reply.headers);
 
         if (reply.status < 200 || reply.status > 299) {
           return yield* Effect.fail(

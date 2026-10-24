@@ -1,10 +1,9 @@
 // GitHub's finite REST complement. App JWT discovery and minting remain private
 // auxiliary requests; rejected installation tokens renew on the next call only.
 import { Effect, Schema } from "effect";
-import { retryAfterMs } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
 import { guardedClient } from "../../http/client.js";
-import type { Classified, VendorErrors } from "../../http/errors.js";
+import { captureClassifierFacts, type Classified, type VendorErrors } from "../../http/errors.js";
 import { resultSafety } from "../../http/safety.js";
 import { connect, del, get, patch, post, put, vendor, operations } from "../../http/vendor.js";
 
@@ -42,22 +41,19 @@ export const GitHubApi = vendor(
 );
 export const kit = { operations: operations(GitHubApi) };
 
-function rateLimited(status: number, retry: number | undefined, remaining: string | undefined): boolean {
-  return status === 429 || (status === 403 && (retry !== undefined || remaining === "0"));
+function rateLimited(status: number, retry: number | undefined, remaining: number | undefined): boolean {
+  return status === 429 || (status === 403 && (retry !== undefined || remaining === 0));
 }
 export function rejectedToken(status: number, headers: Headers): boolean {
-  return (
-    status === 401 ||
-    (status === 403 && !rateLimited(status, retryAfterMs(headers), headers.get("x-ratelimit-remaining") ?? undefined))
-  );
+  if (status !== 403) return status === 401;
+  const numbers = captureClassifierFacts(undefined, errors, headers)?.numbers;
+  return !rateLimited(status, numbers?.["retryAfterMs"], numbers?.["remaining"]);
 }
 const AUTH = "Verify the GitHub App key, installation, repository selection and required permissions.";
 const FAILED = "The GitHub API request failed; downstream error text is withheld.";
 function status(input: Classified) {
-  const rate = rateLimited(input.status, input.retryAfterMs, input.headers["x-ratelimit-remaining"]);
-  const reset = Number(input.headers["x-ratelimit-reset"]);
-  const wait =
-    input.retryAfterMs ?? (Number.isFinite(reset) && reset > 0 ? Math.max(0, reset * 1000 - Date.now()) : undefined);
+  const rate = rateLimited(input.status, input.retryAfterMs, input.numbers["remaining"]);
+  const wait = input.retryAfterMs ?? input.numbers["resetAfterMs"];
   return {
     code: rate
       ? ("rate_limited" as const)
@@ -70,6 +66,7 @@ function status(input: Classified) {
             : ("connector_call_failed" as const),
     retryable: rate || input.status >= 500,
     ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}),
+    ...(rate ? { words: () => "GitHub rate limit reached." } : {}),
     ...(rate
       ? { advice: " Honor the retry timing before trying again." }
       : input.status === 409
@@ -78,20 +75,33 @@ function status(input: Classified) {
   };
 }
 export const errors: VendorErrors = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+    remaining: {
+      header: "x-ratelimit-remaining",
+      review: "GitHub classifies a 403 with no remaining requests as rate limited.",
+    },
+    resetAfterMs: {
+      header: "x-ratelimit-reset",
+      format: "epoch-seconds",
+      review: "GitHub rate-limit reset time in epoch seconds.",
+    },
+  },
   provider: "GitHub",
   facts: () => ({}),
-  headers: ["retry-after", "x-ratelimit-reset", "x-ratelimit-remaining"],
   classify: [status],
-  detail: ({ status: code, headers }) =>
-    rateLimited(code, retryAfterMs(new Headers(headers)), headers["x-ratelimit-remaining"])
-      ? "GitHub rate limit reached."
-      : code === 401 || code === 403
-        ? AUTH
-        : code === 409
-          ? "GitHub rejected a stale version. Read the current state."
-          : code === 404
-            ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
-            : FAILED,
+  detail: ({ status: code }) =>
+    code === 401 || code === 403
+      ? AUTH
+      : code === 409
+        ? "GitHub rejected a stale version. Read the current state."
+        : code === 404
+          ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
+          : FAILED,
   statuses: { 401: status, 403: status, 404: status },
   unreadable: "GitHub returned malformed JSON; response text is withheld.",
 };

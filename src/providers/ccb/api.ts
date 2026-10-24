@@ -411,12 +411,25 @@ function errorDetail(payload: unknown, status: number): string {
 }
 
 export const errors: VendorErrors = {
-  provider: "CCB",
-  facts: (body) => {
-    const value = Number(asRecord(body)["retry_after"]);
-    return { retryAfter: Number.isFinite(value) && value >= 0 ? Math.trunc(value * 1000) : undefined };
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+    resetAfterMs: {
+      header: "x-ratelimit-reset",
+      format: "epoch-seconds",
+      review: "CCB endpoint rate-limit reset time in epoch seconds.",
+    },
+    bodyRetryAfterMs: {
+      path: ["retry_after"],
+      format: "seconds",
+      review: "CCB rate-limit response body delay in seconds.",
+    },
   },
-  headers: ["x-ratelimit-reset"],
+  provider: "CCB",
+  facts: () => ({}),
   detail: ({ body, status }) => errorDetail(body, status),
   unreadable: "CCB returned a successful response that is not JSON.",
   statuses: {
@@ -439,15 +452,8 @@ export const errors: VendorErrors = {
     }),
     409: () => ({ code: "conflict" }),
     412: () => ({ code: "invalid_args" }),
-    429: ({ retryAfterMs, headers, facts }) => {
-      const reset = Number(headers["x-ratelimit-reset"]);
-      const wait =
-        retryAfterMs ??
-        (headers["x-ratelimit-reset"] && Number.isFinite(reset)
-          ? Math.max(0, Math.trunc(reset * 1000 - Date.now()))
-          : typeof facts["retryAfter"] === "number"
-            ? facts["retryAfter"]
-            : undefined);
+    429: ({ retryAfterMs, numbers }) => {
+      const wait = retryAfterMs ?? numbers["resetAfterMs"] ?? numbers["bodyRetryAfterMs"];
       return {
         code: "rate_limited",
         retryAfterMs: wait,

@@ -384,27 +384,30 @@ export const authenticate = Effect.gen(function* () {
     );
   return { "x-client-id": clientId, "x-api-key": apiKey };
 });
-/** The documented reset is seconds remaining in this window, never an epoch. */
-function reset(headers: Readonly<Record<string, string>>, retryAfterMs: number | undefined): number | undefined {
-  if (retryAfterMs !== undefined) return retryAfterMs;
-  const raw = headers["x-ratelimit-reset"];
-  if (!raw) return undefined;
-  const seconds = Number(raw.trim());
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.trunc(seconds * 1000) : undefined;
-}
 const authWords = (status: number, method: string) => (detail: string) =>
   `Overflow rejected the request (HTTP ${status}): ${detail} The client id and API key may be wrong, revoked, or issued for the other environment (staging and production credentials are not interchangeable); an operator must check them and ask the account administrator to grant resource access if they are valid.${method !== "GET" && status === 403 ? " Overflow also answers 403 when a donor profile owned by a donor account cannot be edited through the API; if reads succeed with this credential, that refusal is the cause and no credential change will fix it." : ""}`;
 /** NestJS errors have no reviewed machine-readable facts; meaning comes from status alone. */
 export const errors: VendorErrors = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+    resetAfterMs: {
+      header: "x-ratelimit-reset",
+      format: "seconds",
+      review: "Overflow reset is seconds remaining in the window, never an epoch.",
+    },
+  },
   provider: "Overflow",
   facts: () => ({}),
-  headers: ["x-ratelimit-reset"],
   detail: ({ body, status }) => detailFor(body, status),
   unreadable: "Overflow returned a non-JSON body for a successful read.",
   statuses: {
-    429: ({ headers, retryAfterMs }) => ({
+    429: ({ numbers, retryAfterMs }) => ({
       code: "rate_limited",
-      retryAfterMs: reset(headers, retryAfterMs) ?? RATE_LIMIT_WINDOW_MS,
+      retryAfterMs: retryAfterMs ?? numbers["resetAfterMs"] ?? RATE_LIMIT_WINDOW_MS,
       words: (detail) =>
         `Overflow rate limit reached (HTTP 429): ${detail} Overflow allows 120 requests per minute per API client in a fixed 60-second window, shared by every integration using this client id.`,
     }),
@@ -428,9 +431,9 @@ export const errors: VendorErrors = {
       words: (detail) =>
         `Overflow refused the operation (HTTP 422): ${detail} Repeating the same call will not change the outcome.`,
     }),
-    serverError: ({ status, headers, retryAfterMs }) => ({
+    serverError: ({ status, numbers, retryAfterMs }) => ({
       code: "unavailable",
-      retryAfterMs: reset(headers, retryAfterMs),
+      retryAfterMs: retryAfterMs ?? numbers["resetAfterMs"],
       words: (detail) => `Overflow is failing upstream (HTTP ${status}): ${detail}`,
     }),
     otherwise: ({ status }) => ({

@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { memoryStorage } from "../src/storage/memory.js";
+import type { VendorErrors } from "../src/http/errors.js";
 import type { ConnectorContext } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 import baseline from "./provider-pending-baseline.json";
@@ -54,6 +55,11 @@ const folders = await Promise.all(
   names.map(async (name) => {
     const directory = join(root, name);
     const module = (await import(pathToFileURL(join(directory, "index.ts")).href)) as Record<string, unknown>;
+    const api = (await import(pathToFileURL(join(directory, "api.ts")).href)) as Record<string, unknown>;
+    const vendors = Object.values(api).filter(
+      (value): value is VendorErrors =>
+        typeof value === "object" && value !== null && "facts" in value && "statuses" in value && "provider" in value,
+    );
     const factory = Object.values(module).find(
       (
         value,
@@ -73,7 +79,7 @@ const folders = await Promise.all(
     // Hosted tools are the vendor's (P1); the S rules read surfaces connecta authors.
     const createAuthored = authoredFixtures[name];
     const tools = await authoredTools(facts.kind, { name, ...(createAuthored ? { createAuthored } : {}) }, CONTEXT);
-    return { facts, tools };
+    return { facts, tools, vendors };
   }),
 );
 
@@ -95,9 +101,17 @@ describe("the provider standard (decision 0011)", () => {
     for (const name of PENDING.step2) expect(names, `${name} is listed but has no folder`).toContain(name);
   });
 
-  it("holds every provider past step 1 to the layout, evidence, and drift rules (L, E, D)", () => {
+  it("holds every provider past step 1 to layout, evidence, drift and declared Retry-After facts", () => {
     const found = folders.filter((folder) => !PENDING.step1.has(folder.facts.name)).flatMap(stepOne);
     expect(found).toEqual([]);
+    for (const { facts, vendors } of folders) {
+      expect(vendors.length, `${facts.name} exports its kit vendor error table`).toBeGreaterThan(0);
+      for (const vendor of vendors)
+        expect(vendor.numericFacts?.["retryAfterMs"], `${facts.name}: ${vendor.provider} Retry-After`).toMatchObject({
+          header: "retry-after",
+          format: "retry-after",
+        });
+    }
   });
 
   it("holds every provider past step 2 to the guide and surface rules (G, S)", () => {

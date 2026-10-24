@@ -94,6 +94,13 @@ import { SentSecrets } from "../src/sent-secrets.js";
 import { googleErrors } from "../src/providers/_shared/google/kit.js";
 import { stripeErrors } from "../src/providers/stripe/api.js";
 import { cloudflareErrors } from "../src/providers/cloudflare/api.js";
+import { errors as githubErrors } from "../src/providers/github/api.js";
+import { errors as ccbErrors } from "../src/providers/ccb/api.js";
+import { errors as overflowErrors } from "../src/providers/overflow/api.js";
+import { vercelErrors } from "../src/providers/vercel/api.js";
+import { errors as breezeErrors } from "../src/providers/breeze/api.js";
+import { errors as planningCenterErrors } from "../src/providers/planning-center/api.js";
+import { errors as tithelyErrors } from "../src/providers/tithely/api.js";
 import {
   closeProviderCall,
   dispatchProviderRequest,
@@ -181,6 +188,9 @@ const OPERATION: OperationRef = { method: "POST", template: "/items" };
 
 const VENDOR: VendorErrors = {
   provider: "Acme",
+  numericFacts: {
+    retryAfterMs: { header: "retry-after", format: "retry-after", review: "Fixture HTTP retry delay." },
+  },
   facts: () => ({}),
   detail: ({ status }) => `Acme returned HTTP ${status}.`,
   unreadable: "Acme returned a successful response that is not JSON.",
@@ -453,8 +463,17 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       for (const [value, expected] of [
         [0, 0],
         [5, 5],
-        ["+5", 5],
+        ["+5", undefined],
         [" 5 ", 5],
+        [1.5, undefined],
+        ["1.5", undefined],
+        ["1e2", undefined],
+        ["0x10", undefined],
+        [true, undefined],
+        [[5], undefined],
+        [1e100, Number.MAX_SAFE_INTEGER],
+        ["9".repeat(128), Number.MAX_SAFE_INTEGER],
+        ["9".repeat(129), undefined],
         ["", undefined],
         [" ", undefined],
         [null, undefined],
@@ -482,6 +501,17 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
         });
         expect(numeric).toEqual({ wait: expected });
       }
+      for (const [name, review] of [
+        ["wait", { path: [], review: "Empty path." }],
+        ["wait", { path: ["retry_after"], header: "retry-after", review: "Ambiguous source." }],
+        ["wait", { header: "Retry-After", review: "Not lowercase." }],
+        ["wait", { header: "retry-after", format: "unknown", review: "Unknown format." }],
+        ["wait", { header: "retry-after", review: "" }],
+        ["retryAfterMs", { header: "retry-after", review: "Missing delay format." }],
+      ] as const)
+        expect(() => validateVendorErrors({ ...VENDOR, numericFacts: { [name]: review } } as VendorErrors)).toThrow(
+          /Numeric error facts/,
+        );
 
       // Presence is a closed structural declaration: neither callback sees the text it classifies.
       for (const [field, content, value, present, nonBlank] of [
@@ -1372,7 +1402,7 @@ const keys = get("listKeys", "/keys");
 const ACME_API = vendor("Acme", keys);
 
 it(
-  "INV-5 INV-6: reviewed media bodies keep bounded text and bytes; redacted display preserves reviewed failure classification",
+  "INV-5 INV-6: reviewed media bodies keep bounded text and bytes; declared token and numeric facts preserve classification with redacted display",
   WORKERS,
   async () => {
     for (const row of [
@@ -1601,6 +1631,235 @@ it(
           expect(JSON.stringify(result.failure.body)).not.toContain(row.privateValue);
           expect(Object.keys(result.failure)).not.toContain("facts");
         }
+      }
+    }
+    const numericRows: Array<{
+      errors: VendorErrors<any>;
+      status: number;
+      headers?: Record<string, string>;
+      body?: unknown;
+      malformed?: true;
+      privateValue: string;
+      wait?: number | undefined;
+    }> = [
+      { errors: githubErrors, status: 403, headers: { "x-ratelimit-remaining": "0" }, privateValue: "0" },
+      { errors: githubErrors, status: 403, headers: { "retry-after": "60" }, privateValue: "60", wait: 60_000 },
+      {
+        errors: githubErrors,
+        status: 403,
+        headers: { "retry-after": "60" },
+        malformed: true,
+        privateValue: "60",
+        wait: 60_000,
+      },
+      { errors: ccbErrors, status: 429, body: { retry_after: 60 }, privateValue: "60", wait: 60_000 },
+      { errors: ccbErrors, status: 429, headers: { "x-ratelimit-reset": "0" }, privateValue: "0", wait: 0 },
+      { errors: githubErrors, status: 429, headers: { "x-ratelimit-reset": "60" }, privateValue: "60", wait: 0 },
+      { errors: vercelErrors, status: 429, headers: { "x-ratelimit-reset": "60" }, privateValue: "60", wait: 0 },
+      { errors: overflowErrors, status: 429, headers: { "x-ratelimit-reset": "37" }, privateValue: "37", wait: 37_000 },
+      { errors: ccbErrors, status: 429, body: { retry_after: "60" }, privateValue: "60", wait: 60_000 },
+      { errors: ccbErrors, status: 429, body: { retry_after: 999999 }, privateValue: "999999", wait: 86_400_000 },
+      {
+        errors: ccbErrors,
+        status: 429,
+        headers: { "x-ratelimit-reset": "9999999999" },
+        privateValue: "9999999999",
+        wait: 86_400_000,
+      },
+      {
+        errors: githubErrors,
+        status: 429,
+        headers: { "x-ratelimit-reset": "9999999999" },
+        privateValue: "9999999999",
+        wait: 86_400_000,
+      },
+      {
+        errors: vercelErrors,
+        status: 429,
+        headers: { "x-ratelimit-reset": "9999999999" },
+        privateValue: "9999999999",
+        wait: 86_400_000,
+      },
+      {
+        errors: overflowErrors,
+        status: 429,
+        headers: { "x-ratelimit-reset": "999999" },
+        privateValue: "999999",
+        wait: 86_400_000,
+      },
+      {
+        errors: githubErrors,
+        status: 403,
+        headers: { "retry-after": "999999" },
+        privateValue: "999999",
+        wait: 86_400_000,
+      },
+      { errors: ccbErrors, status: 429, body: { retry_after: 0 }, privateValue: "0", wait: 0 },
+      { errors: ccbErrors, status: 429, body: { retry_after: -1 }, privateValue: "-1" },
+      {
+        errors: ccbErrors,
+        status: 429,
+        headers: { "retry-after": "3", "x-ratelimit-reset": "9999999999" },
+        body: { retry_after: 5 },
+        privateValue: "3",
+        wait: 3000,
+      },
+      {
+        errors: ccbErrors,
+        status: 429,
+        headers: { "x-ratelimit-reset": "invalid" },
+        body: { retry_after: 60 },
+        privateValue: "60",
+        wait: 60_000,
+      },
+      ...["0", " ", "-1", "1.5", "1e2", "0x10", "9".repeat(129)].map((privateValue) => ({
+        errors: planningCenterErrors,
+        status: 429,
+        headers: { "retry-after": privateValue },
+        privateValue,
+        wait: privateValue === "0" ? 0 : undefined,
+      })),
+      ...["Sun, 06 Nov 1994 08:49:37 GMT", "Sun, 06 Nov 2095 08:49:37 GMT"].map((privateValue, i) => ({
+        errors: planningCenterErrors,
+        status: 429,
+        headers: { "retry-after": privateValue },
+        privateValue,
+        wait: i === 0 ? 0 : 86_400_000,
+      })),
+      ...[
+        google,
+        stripeErrors,
+        cloudflareErrors,
+        githubErrors,
+        ccbErrors,
+        overflowErrors,
+        vercelErrors,
+        breezeErrors,
+        planningCenterErrors,
+        tithelyErrors,
+      ].map((errors) => ({ errors, status: 429, headers: { "retry-after": "60" }, privateValue: "60", wait: 60_000 })),
+    ];
+    for (const row of numericRows) {
+      for (const collision of [false, true]) {
+        const secrets = new SentSecrets();
+        if (collision)
+          secrets.arguments(
+            { private: row.privateValue },
+            { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+          );
+        answers.push(
+          () =>
+            new Response(
+              row.malformed ? "{broken" : JSON.stringify({ echo: row.privateValue, ...(row.body as object) }),
+              {
+                status: row.status,
+                headers: row.headers ?? {},
+              },
+            ),
+        );
+        const connection = connect(ACME_API, guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }), {
+          errors: row.errors,
+          safety: plainSafety!,
+        });
+        const result = await runEdge(
+          Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services("read", secrets))),
+        );
+        expect(result._tag).toBe("Failure");
+        if (result._tag !== "Failure") continue;
+        const mapped = toConnectorCallError(result.failure, row.errors, { classification: "read", dispatches: [] });
+        const label = `${row.errors.provider}: ${JSON.stringify(row)} (collision ${collision})`;
+        expect.soft(mapped, label).toMatchObject({ code: "rate_limited", retryable: true });
+        expect.soft(mapped.retryAfterMs, label).toBe(row.wait);
+        if (row.errors === githubErrors) expect.soft(mapped.message, label).toBe("GitHub rate limit reached.");
+        expect(JSON.stringify(failureRecord({}, mapped))).not.toMatch(/headers|numbers|body|retryAfter/);
+        if (collision && result.failure._tag === "StatusFailure") {
+          expect(result.failure.body && (result.failure.body as Record<string, unknown>).echo).toBe(
+            row.malformed ? undefined : "[redacted]",
+          );
+          for (const [name, value] of Object.entries(row.headers ?? {}))
+            if (value === row.privateValue && value.trim()) expect(result.failure.headers.get(name)).toBe("[redacted]");
+          expect(Object.keys(result.failure)).not.toContain("numbers");
+        }
+      }
+    }
+    // A vendor can inspect only its declared numeric sources; diagnostic numbers and headers stay redacted.
+    for (const inBand of [false, true]) {
+      for (const withheld of [false, true]) {
+        let classified: Classified | undefined;
+        let displayed: unknown;
+        const numericFacts = {
+          bodyCount: { path: ["metadata", "count"], review: "Fixture count at this exact path." },
+          headerCount: { header: "x-declared-count", review: "Fixture count in this exact header." },
+        };
+        const reviewed: VendorErrors = {
+          ...VENDOR,
+          numericFacts,
+          headers: ["x-diagnostic"],
+          classify: [
+            (input) => {
+              classified = input;
+              return undefined;
+            },
+          ],
+          detail: (input) => {
+            displayed = input.numbers;
+            return String(input.body ? (input.body as Record<string, unknown>).message : "Withheld.");
+          },
+        };
+        const secrets = new SentSecrets();
+        secrets.arguments(
+          { private: "60" },
+          { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+        );
+        answers.push(() =>
+          Response.json(
+            { metadata: { count: 60 }, undeclared: { count: 7 }, unreviewed: 60, message: "60" },
+            {
+              status: inBand ? 200 : 429,
+              headers: {
+                "x-declared-count": "60",
+                "x-undeclared-count": "7",
+                "x-diagnostic": "60",
+                "retry-after": "60",
+              },
+            },
+          ),
+        );
+        const connection = connect(ACME_API, guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }), {
+          errors: reviewed,
+          safety: resultSafety({
+            review: "Fixture metadata.",
+            reviewed: { redact: (body) => body, withholdsErrors: () => withheld },
+            sensitiveFields: { names: [], choice: "drop" },
+          }),
+          ...(inBand
+            ? {
+                inBandRefusals: true,
+                result: (body: unknown, answer: { headers: Headers }) =>
+                  Effect.fail(status(429, Object.fromEntries(answer.headers), body)),
+              }
+            : {}),
+        });
+        // Construction snapshots the declaration, including its body path and header.
+        numericFacts.bodyCount.path[0] = "undeclared";
+        numericFacts.headerCount.header = "x-undeclared-count";
+        const result = await runEdge(
+          Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services("read", secrets))),
+        );
+        expect(result._tag).toBe("Failure");
+        if (result._tag !== "Failure") continue;
+        const mapped = toConnectorCallError(result.failure, reviewed, {
+          classification: "read",
+          dispatches: [],
+          withholds: () => withheld,
+        });
+        expect(classified?.numbers).toEqual({ bodyCount: 60, headerCount: 60 });
+        expect(classified?.headers).toEqual({ "x-diagnostic": "[redacted]" });
+        expect(classified?.retryAfterMs).toBeUndefined();
+        expect(displayed).toEqual({ bodyCount: undefined, headerCount: undefined });
+        expect(mapped.retryAfterMs).toBeUndefined();
+        expect(mapped.message).toBe(withheld ? "Withheld." : "[redacted]");
+        expect(JSON.stringify(failureRecord({}, mapped))).not.toContain("60");
       }
     }
     for (const inBandRefusals of [false, true]) {

@@ -9,7 +9,7 @@
 //
 // Classification and wording are two steps. A vendor's `facts` reads a copy
 // of the error body that keeps only tokens, finite numbers, and booleans.
-// Declared public fact values are captured before sent-secret redaction;
+// Declared public fact values and parsed numeric sources are captured before sent-secret redaction;
 // wording reads a separate extraction from the redacted body. The vendor's
 // rules read those facts and the reviewed `headers` allowlist, nothing
 // else, and return a `Verdict`: a code and retry advice. Only after that does
@@ -32,7 +32,6 @@
 // only a reviewed authentication-before-execution declaration proves refusal.
 
 import { Data } from "effect";
-import { retryAfterMs } from "../http-policy.js";
 import { ConnectorCallError, resendAdvice, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
 import { attachFailureFacts } from "../operator-record.js";
 import { vendorRefusal } from "../provider-call.js";
@@ -121,6 +120,15 @@ type Presence = Readonly<Record<string, { readonly present: boolean; readonly no
 type PresenceReview = Readonly<
   Record<string, { readonly path: readonly string[]; readonly content: "string" | "text" }>
 >;
+type NumericFormat = "integer" | "seconds" | "epoch-seconds" | "retry-after";
+type NumericReview = {
+  readonly review: string;
+  /** Delay formats yield milliseconds, capped at 24 hours; integer is the default. */
+  readonly format?: NumericFormat;
+} & (
+  | { readonly path: readonly string[]; readonly header?: never }
+  | { readonly header: string; readonly path?: never }
+);
 
 /**
  * Everything classification reads. There is no detail line and no body: a
@@ -131,6 +139,7 @@ export interface Classified<F extends Facts = Facts> {
   /** Bounded redacted facts, with declared public values preserved before redaction; lists stay complete. */
   readonly facts: F;
   readonly presence: Presence;
+  /** Declared integers and bounded delays captured before redaction; never supplies wording. */
   readonly numbers: Readonly<Record<string, number | undefined>>;
   /** Only the vendor's reviewed `headers`, by lowercase name. */
   readonly headers: Readonly<Record<string, string>>;
@@ -207,8 +216,14 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly factVocabulary?: Readonly<Record<string, readonly Fact[]>>;
   /** Structural text facts only: never exposes the string, including on withheld operations. */
   readonly presence?: PresenceReview;
-  /** Reviewed finite, nonnegative numeric metadata; blank strings are absent and raw text never reaches rules. */
-  readonly numericFacts?: Readonly<Record<string, { readonly path: readonly string[]; readonly review: string }>>;
+  /**
+   * Exact numeric body paths or lowercase headers read before redaction.
+   * Only nonnegative integers (or retry-after HTTP-dates) survive parsing.
+   * Name the standard Retry-After delay `retryAfterMs` to supply the kit's hint.
+   * That name requires an explicit delay format, never the default integer format.
+   * Wording reads these sources separately from the redacted response.
+   */
+  readonly numericFacts?: Readonly<Record<string, NumericReview>>;
   /** Reviewed recovery ids may need more than the default eight display tokens; never changes classification. */
   readonly displayFacts?: Readonly<Record<string, { readonly maxItems: number; readonly review: string }>>;
   /** Response headers rules and wording may read, by lowercase name. Every other header is invisible. */
@@ -276,12 +291,13 @@ const TOKEN = /^[A-Za-z0-9_.:[\]-]{1,128}$/;
 const DISPLAYED = 8;
 const MAX_HEADER = 128;
 const MAX_DEPTH = 32;
+const MAX_WAIT_MS = 86_400_000;
 const errorReviews = new WeakMap<
   object,
   {
     presence: PresenceReview;
     display: Readonly<Record<string, number>>;
-    numbers: Readonly<Record<string, readonly string[]>>;
+    numbers: Readonly<Record<string, NumericReview>>;
     vocabulary: Readonly<Record<string, ReadonlySet<Fact>>>;
   }
 >();
@@ -308,18 +324,35 @@ function captureErrorReviews(vendor: VendorErrors<any>) {
       throw new Error("Displayed error facts need a positive whole maxItems and a nonempty review.");
     display[name] = review.maxItems;
   }
-  const numbers: Record<string, readonly string[]> = {};
+  const numbers: Record<string, NumericReview> = {};
   for (const [name, review] of Object.entries(vendor.numericFacts ?? {})) {
+    const path = review.path;
+    const header = review.header;
     if (
       !TOKEN.test(name) ||
-      !Array.isArray(review.path) ||
-      review.path.length === 0 ||
-      review.path.length > MAX_DEPTH ||
-      review.path.some((part) => typeof part !== "string" || !part) ||
+      (header === undefined
+        ? !Array.isArray(path) ||
+          path.length === 0 ||
+          path.length > MAX_DEPTH ||
+          path.some((part) => typeof part !== "string" || !part)
+        : path !== undefined ||
+          typeof header !== "string" ||
+          !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(header) ||
+          header.length > MAX_HEADER) ||
+      (review.format !== undefined &&
+        !["integer", "seconds", "epoch-seconds", "retry-after"].includes(review.format)) ||
+      (name === "retryAfterMs" && (review.format === undefined || review.format === "integer")) ||
+      typeof review.review !== "string" ||
       !review.review.trim()
     )
-      throw new Error("Numeric error facts need a name, a bounded property path and a nonempty review.");
-    numbers[name] = Object.freeze([...review.path]);
+      throw new Error(
+        "Numeric error facts need a name, an exact path or lowercase header, a numeric format and a nonempty review.",
+      );
+    numbers[name] = Object.freeze({
+      ...(header === undefined ? { path: Object.freeze([...path!]) } : { header }),
+      format: review.format ?? "integer",
+      review: review.review,
+    });
   }
   const captured = {
     presence: Object.freeze(presence),
@@ -380,6 +413,7 @@ function bounded<F extends Facts>(facts: F): F {
 interface CapturedClassifierFacts {
   readonly vendor: VendorErrors<any>;
   readonly facts: Facts;
+  readonly numbers: Readonly<Record<string, number | undefined>>;
 }
 
 const classifierFacts = new WeakMap<StatusFailure, CapturedClassifierFacts>();
@@ -401,10 +435,54 @@ function vocabularyFacts(facts: Facts, vendor: VendorErrors<any>): Facts {
 }
 
 /** Read only declared public facts before redaction; never retain the original body or an unreviewed value. */
-export function captureClassifierFacts(body: unknown, vendor: VendorErrors<any>): CapturedClassifierFacts | undefined {
-  if (!Object.keys(captureErrorReviews(vendor).vocabulary).length) return undefined;
-  const facts = bounded(vendor.facts(tokensOf(body)));
-  return { vendor, facts: vocabularyFacts(facts, vendor) };
+export function captureClassifierFacts(
+  body: unknown,
+  vendor: VendorErrors<any>,
+  headers = new Headers(),
+): CapturedClassifierFacts | undefined {
+  const review = captureErrorReviews(vendor);
+  const vocabulary = Object.keys(review.vocabulary).length > 0;
+  if (!vocabulary && !Object.keys(review.numbers).length) return undefined;
+  return {
+    vendor,
+    facts: vocabulary ? vocabularyFacts(bounded(vendor.facts(tokensOf(body))), vendor) : {},
+    numbers: numericFacts(body, headers, review.numbers),
+  };
+}
+
+/** Reject coercions and unbounded text; only parsed integers or bounded wait windows leave this function. */
+function numericValue(value: unknown, format: NumericFormat): number | undefined {
+  if (typeof value === "string") {
+    if (value.length > MAX_HEADER) return undefined;
+    const raw = value.trim();
+    if (format === "retry-after" && /^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(raw)) {
+      const date = Date.parse(raw);
+      return Number.isFinite(date) ? Math.min(MAX_WAIT_MS, Math.max(0, date - Date.now())) : undefined;
+    }
+    if (!/^\d+$/.test(raw)) return undefined;
+    value = Number(raw);
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) return undefined;
+  const integer = Math.min(Number.MAX_SAFE_INTEGER, value);
+  if (format === "integer") return integer;
+  const milliseconds = integer * 1000 - (format === "epoch-seconds" ? Date.now() : 0);
+  return Math.min(MAX_WAIT_MS, Math.max(0, milliseconds));
+}
+
+function numericFacts(body: unknown, headers: Headers, reviews: Readonly<Record<string, NumericReview>>) {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(reviews).map(([name, review]) => {
+        let value = review.header === undefined ? body : headers.get(review.header);
+        for (const part of review.path ?? [])
+          value =
+            value !== null && typeof value === "object" && Object.hasOwn(value, part)
+              ? (value as Record<string, unknown>)[part]
+              : undefined;
+        return [name, numericValue(value, review.format ?? "integer")];
+      }),
+    ),
+  );
 }
 
 /** Keep classification facts off the failure's enumerable data and its redacted detail body. */
@@ -630,7 +708,7 @@ function statusVerdict(
   read: boolean,
 ): ConnectorCallError {
   const input = classificationInput(failure, vendor, withheld);
-  const { headers, presence, numbers } = input;
+  const { headers, presence } = input;
   // Classification first, over facts and headers only.
   const decided = classified(input, vendor);
   // The transport already applied the core's positive-read method/header rule.
@@ -649,7 +727,7 @@ function statusVerdict(
     status: failure.status,
     facts: displayed(bounded(vendor.facts(tokensOf(failure.body))), vendor),
     presence,
-    numbers,
+    numbers: numericFacts(failure.body, failure.headers, captureErrorReviews(vendor).numbers),
     headers,
     withheld,
     ...(withheld ? {} : { body: failure.body }),
@@ -691,25 +769,17 @@ function structuralPresence(body: unknown, reviews: PresenceReview | undefined):
 function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): Classified {
   const redacted = bounded(vendor.facts(tokensOf(failure.body)));
   const captured = classifierFacts.get(failure);
+  const numbers =
+    captured?.vendor === vendor
+      ? captured.numbers
+      : numericFacts(failure.body, failure.headers, captureErrorReviews(vendor).numbers);
   return {
     status: failure.status,
     facts: { ...redacted, ...(captured?.vendor === vendor ? captured.facts : vocabularyFacts(redacted, vendor)) },
     presence: structuralPresence(failure.body, captureErrorReviews(vendor).presence),
-    numbers: Object.fromEntries(
-      Object.entries(captureErrorReviews(vendor).numbers).map(([name, path]) => {
-        let value = failure.body;
-        for (const part of path)
-          value =
-            value !== null && typeof value === "object" && Object.hasOwn(value, part)
-              ? (value as Record<string, unknown>)[part]
-              : undefined;
-        const number =
-          typeof value === "number" || (typeof value === "string" && value.trim() !== "") ? Number(value) : NaN;
-        return [name, Number.isFinite(number) && number >= 0 ? number : undefined];
-      }),
-    ),
+    numbers,
     headers: visibleHeaders(failure.headers, vendor.headers),
-    retryAfterMs: retryAfterMs(failure.headers),
+    retryAfterMs: numbers["retryAfterMs"],
     operation: failure.operation,
     withheld,
   };

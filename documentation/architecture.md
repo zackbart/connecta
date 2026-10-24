@@ -1932,8 +1932,23 @@ the kit extracts those facts from a token-only copy and retains only declared
 values; unknown reasons or codes contribute no classification fact and fall
 back to status rules. The captured facts stay in request-local identity metadata,
 outside the failure's enumerable data. Classification reads them with complete
-bounded facts and reviewed headers. Only after the verdict is fixed does wording
-receive facts extracted separately from the redacted body (eight list entries)
+bounded facts and reviewed headers. Vendors also declare each numeric source in
+`numericFacts`: an exact body `path` or lowercase `header`, a review reason, and
+an optional `format` (`integer` by default, `seconds`, `epoch-seconds`, or
+`retry-after`). The kit reads only these sources from the response before value
+redaction. It accepts nonnegative whole numbers and strings of at most
+128 characters that contain only ASCII digits after trimming surrounding
+whitespace; `retry-after` also accepts HTTP-dates. Integers are capped at
+`Number.MAX_SAFE_INTEGER`; delay formats yield milliseconds clamped to
+0–86,400,000. The `retryAfterMs` numeric fact supplies the kit's standard hint
+and requires an explicit delay format (`seconds`, `epoch-seconds`, or `retry-after`).
+For example, a vendor declares `{ retryAfterMs: { header: "retry-after",
+format: "retry-after", review: "HTTP Retry-After delay for failure recovery." } }`.
+Classification receives only parsed numbers, never their original text or
+undeclared fields. These facts may select a code, retryability and bounded delay;
+they never supply wording or records. Only after the verdict is fixed does wording
+receive numbers read separately from the redacted response, facts extracted
+separately from the redacted body (eight list entries)
 and, where the operation's value-safety review permits it, that redacted body.
 Pre-redaction facts never supply message text, logs, or operator records.
 Non-2xx responses always take this capture path. A connection opts in with
