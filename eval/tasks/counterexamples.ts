@@ -60,6 +60,33 @@ export function counterexamples(
       name: "Google wrong delegated subject",
       world: changedCalls(world.ledger.calls.map((c) => ({ ...c, args: { ...c.args, subject: "bob@example.com" } }))),
     });
+    if (task.id !== "google-drive-5")
+      cases.push({
+        name: "Google successful reads without returned facts",
+        world: changedCalls(
+          world.ledger.calls.map((c) => (c.kind === "read" ? { ...c, args: { ...c.args, returned: {} } } : c)),
+        ),
+      });
+    if (task.id === "google-drive-2") {
+      const stripDrive = (value: any): any =>
+        Array.isArray(value)
+          ? value.map(stripDrive)
+          : value && typeof value === "object"
+            ? Object.fromEntries(
+                Object.entries(value)
+                  .filter(([key]) => !["driveId", "inheritedFrom"].includes(key))
+                  .map(([key, child]) => [key, stripDrive(child)]),
+              )
+            : value;
+      cases.push({
+        name: "Google shared drive never established",
+        world: changedCalls(
+          world.ledger.calls
+            .filter((c) => !String(c.args.path).startsWith("/drives"))
+            .map((c) => ({ ...c, args: { ...c.args, returned: stripDrive(c.args.returned) } })),
+        ),
+      });
+    }
     const writes = world.ledger.calls.filter((c) => c.kind === "write");
     if (writes.length)
       cases.push({
@@ -515,55 +542,94 @@ export function positiveVariants(
   const cases: { name: string; trace: AgentTrace; world?: World; advisoryMiss?: string; advisoryPass?: string }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
-  if (
-    [
-      "google-gmail-1",
-      "google-drive-2",
-      "google-slides-4",
-      "google-slides-7",
-      "google-sheets-6",
-      "google-forms-2",
-    ].includes(task.id)
-  ) {
+  if (task.id.startsWith("google-")) {
+    const equivalent = (calls: World["ledger"]["calls"], name: string) =>
+      cases.push({
+        name,
+        trace,
+        world: Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+          ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
+        }),
+      });
+    const account = world.google.state.accounts["alice@example.com"];
     let calls = structuredClone(world.ledger.calls);
     if (task.id === "google-gmail-1") {
       const base = calls.find((call) => call.service === "gmail")!;
-      const messages = world.google.state.accounts["alice@example.com"].messages.filter((message) =>
-        message.labelIds.includes("UNREAD"),
+      const messages = account.messages.filter((message) => message.labelIds.includes("UNREAD"));
+      calls = messages.map((message, i) => ({
+        ...base,
+        seq: base.seq + i,
+        args: { ...base.args, path: `/messages/${message.id}`, returned: message },
+      }));
+    }
+    if (task.id === "google-slides-2") {
+      calls = calls.flatMap((call) =>
+        call.args.path === "/presentations/slides1"
+          ? [account.presentation.slides[0], account.presentation.layouts[0]].map((page) => ({
+              ...call,
+              args: { ...call.args, path: `/presentations/slides1/pages/${page.objectId}`, returned: page },
+            }))
+          : [call],
       );
-      calls = [
-        {
-          ...base,
-          args: {
-            ...base.args,
-            path: "/messages",
-            returned: { messages: messages.map(({ id, threadId }) => ({ id, threadId })) },
-          },
-        },
-        ...messages.map((message, i) => ({
-          ...base,
-          seq: base.seq + i + 1,
-          args: { ...base.args, path: `/messages/${message.id}`, returned: message },
-        })),
-      ];
     }
     for (const call of calls) {
       if (task.id === "google-drive-2" && call.args.path === "/drives") {
         call.args.path = "/drives/shared1";
         call.args.returned = { id: "shared1", name: "Review shared drive" };
       }
-      if (task.id.startsWith("google-slides-") && call.args.path === "/presentations/slides1/pages/slide1") {
-        call.args.path = "/presentations/slides1";
-        call.args.returned = structuredClone(world.google.state.accounts["alice@example.com"].presentation);
+      if (["google-drive-2", "google-drive-7"].includes(task.id) && call.args.path === "/files/pdf1/permissions") {
+        call.args.path = "/files/pdf1";
+        call.args.query = { fields: "id,permissions" };
+        call.args.returned = { id: "pdf1", permissions: (call.args.returned as any).permissions };
       }
       if (
-        task.id === "google-sheets-6" &&
-        call.kind === "read" &&
-        call.args.path === "/spreadsheets/sheets1/values:batchGet"
+        ["google-slides-4", "google-slides-7"].includes(task.id) &&
+        call.args.path === "/presentations/slides1/pages/slide1"
       ) {
-        call.args.path = "/spreadsheets/sheets1/values/'Alice''s costs'!A:D";
-        const returned = call.args.returned as { valueRanges?: unknown[] };
-        call.args.returned = returned.valueRanges?.[0] ?? returned;
+        call.args.path = "/presentations/slides1";
+        call.args.returned = structuredClone(account.presentation);
+      }
+      if (
+        ["google-sheets-1", "google-sheets-2", "google-sheets-3", "google-sheets-5", "google-sheets-6"].includes(
+          task.id,
+        ) &&
+        call.kind === "read" &&
+        String(call.args.path).includes("/values")
+      ) {
+        call.args.path = "/spreadsheets/sheets1";
+        call.args.query = { includeGridData: "true" };
+        const cells = (rows: any[][]) => ({
+          data: [
+            {
+              rowData: rows.map((row) => ({
+                values: row.map((value) => ({
+                  effectiveValue: typeof value === "number" ? { numberValue: value } : { stringValue: value },
+                })),
+              })),
+            },
+          ],
+        });
+        call.args.returned = {
+          spreadsheetId: "sheets1",
+          sheets: [
+            cells(account.values),
+            cells([
+              ["record1", "Alice"],
+              ["record2", "Bob"],
+            ]),
+          ],
+        };
+      }
+      if (
+        ["google-docs-2", "google-sheets-2", "google-slides-2"].includes(task.id) &&
+        call.service === "drive" &&
+        call.kind === "read"
+      ) {
+        const file = (call.args.returned as any)?.files?.[0];
+        if (file) {
+          call.args.path = `/files/${file.id}`;
+          call.args.returned = file;
+        }
       }
       if (task.id === "google-forms-2" && String(call.args.path).includes("/responses/response")) {
         const response = call.args.returned;
@@ -571,10 +637,29 @@ export function positiveVariants(
         call.args.returned = { responses: [response] };
       }
     }
-    const equivalent = Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
-      ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
-    });
-    cases.push({ name: "Google equivalent resource reads preserve outcomes", trace, world: equivalent });
+    if (
+      [
+        "google-gmail-1",
+        "google-drive-2",
+        "google-drive-7",
+        "google-docs-2",
+        "google-slides-2",
+        "google-slides-4",
+        "google-slides-7",
+        "google-sheets-1",
+        "google-sheets-2",
+        "google-sheets-3",
+        "google-sheets-5",
+        "google-sheets-6",
+        "google-forms-2",
+      ].includes(task.id)
+    )
+      equivalent(calls, "Google equivalent resource reads preserve outcomes");
+    if (task.id === "google-drive-2")
+      equivalent(
+        calls.filter((call) => !String(call.args.path).startsWith("/drives")),
+        "Google shared drive established by file metadata",
+      );
   }
   if (task.id === "801-cloudflare-read-only-analytics")
     for (const answer of [

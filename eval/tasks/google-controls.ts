@@ -145,6 +145,30 @@ export async function googleBoundaryControls(): Promise<void> {
   const world = new World({ google: { product: "forms", task: 1 } });
   await world.start();
   const account = world.google.state.accounts[ALICE];
+  const fakeRead = async (url: URL | string, scope: string) =>
+    (
+      await world.google.handle(new Request(url), ALICE, [`https://www.googleapis.com/auth/${scope}`])
+    ).json() as Promise<Record<string, any>>;
+  for (const [fields, grid] of [
+    ["developerMetadata", false],
+    ["sheets/dataValidation", false],
+    ["sheets(properties,data(rowData))", true],
+    ["sheets/data/rowData", true],
+  ] as const) {
+    const url = new URL("https://sheets.googleapis.com/v4/spreadsheets/sheets1");
+    url.searchParams.set("fields", fields);
+    const result = await fakeRead(url, "spreadsheets");
+    if (!!result.sheets[0].data !== grid) throw new Error(`Google fake misread field mask ${fields}`);
+  }
+  const file = await fakeRead("https://www.googleapis.com/drive/v3/files/pdf1?fields=id,permissions", "drive");
+  if (file.id !== "pdf1" || file.permissions?.length !== 2)
+    throw new Error("Google fake omitted selected file permissions");
+  const layout = await fakeRead(
+    "https://slides.googleapis.com/v1/presentations/slides1/pages/layout1",
+    "presentations",
+  );
+  if (layout.objectId !== "layout1" || layout.pageElements?.[0]?.objectId !== "placeholder1")
+    throw new Error("Google fake omitted the layout page join");
   const item = structuredClone(account.form.items[0]);
   account.form.items = Array.from({ length: 800 }, (_, i) => {
     const copy = structuredClone(item);

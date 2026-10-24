@@ -416,6 +416,12 @@ graders for each of Gmail, Drive, Docs, Sheets, Slides and Forms. The
 verified delegated JWTs, subject/scope-bound fake tokens and a physical request
 ledger. Its Drive ids join to editor resources; Gmail attachment bytes cross
 the named Drive multipart upload. Token mints are separate from business writes.
+Google outcome graders check successful reads' returned facts within the target
+resource and delegated subject, rather than requiring particular read methods.
+Equivalent list, get, page, batch and grid-data reads may establish those facts.
+Shared-drive identity must be established by a read; permission details may
+come from a file's selected permissions. Recovery requires successful evidence
+after the uncertain write, alongside the final-state and single-write checks.
 Long threads, native empty pages, local byte cuts, UTF-16 index pages, revision
 conflicts and post-commit failures are deterministic. The identity controls
 also cover Alice/Bob, fixed subjects, an ownerless pool, read-only refusal and

@@ -826,7 +826,12 @@ export class FakeGoogle {
         if (path.endsWith("/permissions")) return page(a.permissions, "permissions");
         if (/\/permissions\/perm/.test(path)) return a.permissions.find((p) => p.id === path.split("/").at(-1));
         if (path.endsWith("/revisions")) return page(a.revisions, "revisions");
-        if (/^\/files\/[^/]+$/.test(path)) return a.files.find((f) => f.id === path.split("/")[2]) ?? {};
+        if (/^\/files\/[^/]+$/.test(path)) {
+          const file = a.files.find((f) => f.id === path.split("/")[2]) ?? {};
+          return /(?:^|[/,(])permissions(?:[/(),]|$)/.test(query.fields ?? "")
+            ? { ...file, permissions: a.permissions }
+            : file;
+        }
       }
       if (method === "POST" && path === "/files") {
         mutate();
@@ -933,7 +938,7 @@ export class FakeGoogle {
               ),
             };
       if (method === "GET" && path === "/spreadsheets/sheets1")
-        return spreadsheet(query.includeGridData === "true" || /data/.test(query.fields ?? ""));
+        return spreadsheet(query.includeGridData === "true" || /(?:^|[/,(])data(?:[/(),]|$)/.test(query.fields ?? ""));
       if ((method === "GET" && path.includes("/values")) || path.endsWith(":batchGetByDataFilter")) {
         const ranges =
           body.dataFilters?.map((d: Row) => d.a1Range) ??
@@ -1026,8 +1031,8 @@ export class FakeGoogle {
     if (product === "slides") {
       if (method === "GET" && path === "/presentations/slides1") return a.presentation;
       if (method === "GET" && path.includes("/pages/"))
-        return a.presentation.slides
-          .flatMap((s: Row) => [s, s.slideProperties.notesPage])
+        return [...a.presentation.slides, ...a.presentation.layouts]
+          .flatMap((s: Row) => [s, s.slideProperties?.notesPage])
           .filter(Boolean)
           .find((s: Row) => s.objectId === path.split("/").at(-1));
       if (method === "POST" && path.endsWith(":batchUpdate")) {

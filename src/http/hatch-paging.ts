@@ -96,7 +96,12 @@ export const googlePageToken: HatchPageAdapter = {
         name = true;
         child = false;
       } else {
-        if (depth === 0 && (position === 0 || tokens[position - 1] === ",") && token === "nextPageToken")
+        if (
+          depth === 0 &&
+          (position === 0 || tokens[position - 1] === ",") &&
+          token === "nextPageToken" &&
+          (position === tokens.length - 1 || tokens[position + 1] === ",")
+        )
           hasToken = true;
         if (!name) valid = false;
         name = false;
