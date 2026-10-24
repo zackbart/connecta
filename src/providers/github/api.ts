@@ -1,10 +1,9 @@
 // GitHub's finite REST complement. App JWT discovery and minting remain private
 // auxiliary requests; rejected installation tokens renew on the next call only.
 import { Effect, Schema } from "effect";
-import { retryAfterMs } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
 import { guardedClient } from "../../http/client.js";
-import type { Classified, VendorErrors } from "../../http/errors.js";
+import { captureClassifierFacts, type Classified, type VendorErrors } from "../../http/errors.js";
 import { resultSafety } from "../../http/safety.js";
 import { connect, del, get, patch, post, put, vendor, operations } from "../../http/vendor.js";
 
@@ -42,14 +41,13 @@ export const GitHubApi = vendor(
 );
 export const kit = { operations: operations(GitHubApi) };
 
-function rateLimited(status: number, retry: number | undefined, remaining: string | number | undefined): boolean {
-  return status === 429 || (status === 403 && (retry !== undefined || remaining === "0" || remaining === 0));
+function rateLimited(status: number, retry: number | undefined, remaining: number | undefined): boolean {
+  return status === 429 || (status === 403 && (retry !== undefined || remaining === 0));
 }
 export function rejectedToken(status: number, headers: Headers): boolean {
-  return (
-    status === 401 ||
-    (status === 403 && !rateLimited(status, retryAfterMs(headers), headers.get("x-ratelimit-remaining") ?? undefined))
-  );
+  if (status !== 403) return status === 401;
+  const numbers = captureClassifierFacts(undefined, errors, headers)?.numbers;
+  return !rateLimited(status, numbers?.["retryAfterMs"], numbers?.["remaining"]);
 }
 const AUTH = "Verify the GitHub App key, installation, repository selection and required permissions.";
 const FAILED = "The GitHub API request failed; downstream error text is withheld.";

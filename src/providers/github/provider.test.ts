@@ -201,26 +201,38 @@ describe("GitHub App provider", () => {
     },
   );
 
-  it("INV-6: permission 403 with unused rate budget is auth failure and evicts its token", async () => {
+  it("INV-6: 403 classification and token eviction agree on strict rate-limit facts", async () => {
     installOwnedTransport();
-    const fixture = apiFixture();
-    fixture.respond((request) =>
-      request.url.pathname === "/repos/acme/one/releases"
-        ? new Response(SENTINEL, {
-            status: 403,
-            headers: {
-              "x-ratelimit-remaining": "4999",
-              "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 3600),
-            },
-          })
-        : undefined,
-    );
-    const connector = connection();
-    for (let i = 0; i < 2; i++)
-      await expect(
-        connector.callTool("create_release", { owner: "acme", repo: "one", tag_name: "v1" }, context()),
-      ).rejects.toMatchObject({ code: "auth_required", retryable: false, retryAfterMs: undefined });
-    expect(fixture.tokens).toHaveLength(2);
+    for (const [headers, rate, wait] of [
+      [
+        { "x-ratelimit-remaining": "4999", "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 3600) },
+        false,
+        undefined,
+      ],
+      ...["1.5", "+5", "1e2", "0x10", "-1"].map((value) => [{ "retry-after": value }, false, undefined] as const),
+      [{ "retry-after": "60" }, true, 60_000],
+      [{ "retry-after": "Sun, 06 Nov 1994 08:49:37 GMT" }, true, 0],
+      [{ "x-ratelimit-remaining": "00" }, true, undefined],
+      [{ "x-ratelimit-remaining": "0.0" }, false, undefined],
+    ] as const) {
+      const fixture = apiFixture();
+      fixture.respond((request) =>
+        request.url.pathname === "/repos/acme/one/releases"
+          ? new Response(SENTINEL, { status: 403, headers })
+          : undefined,
+      );
+      const connector = connection();
+      for (let i = 0; i < 2; i++)
+        await expect(
+          connector.callTool("create_release", { owner: "acme", repo: "one", tag_name: "v1" }, context()),
+          JSON.stringify(headers),
+        ).rejects.toMatchObject({
+          code: rate ? "rate_limited" : "auth_required",
+          retryable: rate,
+          retryAfterMs: wait,
+        });
+      expect(fixture.tokens, JSON.stringify(headers)).toHaveLength(rate ? 1 : 2);
+    }
   });
 
   it("INV-6: REST malformed/sentinel error responses produce typed facts without body or content-type", async () => {

@@ -220,6 +220,7 @@ export interface VendorErrors<F extends Facts = Facts> {
    * Exact numeric body paths or lowercase headers read before redaction.
    * Only nonnegative integers (or retry-after HTTP-dates) survive parsing.
    * Name the standard Retry-After delay `retryAfterMs` to supply the kit's hint.
+   * That name requires an explicit delay format, never the default integer format.
    * Wording reads these sources separately from the redacted response.
    */
   readonly numericFacts?: Readonly<Record<string, NumericReview>>;
@@ -340,6 +341,7 @@ function captureErrorReviews(vendor: VendorErrors<any>) {
           header.length > MAX_HEADER) ||
       (review.format !== undefined &&
         !["integer", "seconds", "epoch-seconds", "retry-after"].includes(review.format)) ||
+      (name === "retryAfterMs" && (review.format === undefined || review.format === "integer")) ||
       typeof review.review !== "string" ||
       !review.review.trim()
     )

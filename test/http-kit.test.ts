@@ -501,14 +501,15 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
         });
         expect(numeric).toEqual({ wait: expected });
       }
-      for (const review of [
-        { path: [], review: "Empty path." },
-        { path: ["retry_after"], header: "retry-after", review: "Ambiguous source." },
-        { header: "Retry-After", review: "Not lowercase." },
-        { header: "retry-after", format: "unknown", review: "Unknown format." },
-        { header: "retry-after", review: "" },
-      ])
-        expect(() => validateVendorErrors({ ...VENDOR, numericFacts: { wait: review } } as VendorErrors)).toThrow(
+      for (const [name, review] of [
+        ["wait", { path: [], review: "Empty path." }],
+        ["wait", { path: ["retry_after"], header: "retry-after", review: "Ambiguous source." }],
+        ["wait", { header: "Retry-After", review: "Not lowercase." }],
+        ["wait", { header: "retry-after", format: "unknown", review: "Unknown format." }],
+        ["wait", { header: "retry-after", review: "" }],
+        ["retryAfterMs", { header: "retry-after", review: "Missing delay format." }],
+      ] as const)
+        expect(() => validateVendorErrors({ ...VENDOR, numericFacts: { [name]: review } } as VendorErrors)).toThrow(
           /Numeric error facts/,
         );
 
@@ -1401,7 +1402,7 @@ const keys = get("listKeys", "/keys");
 const ACME_API = vendor("Acme", keys);
 
 it(
-  "INV-5 INV-6: reviewed media bodies keep bounded text and bytes; redacted display preserves reviewed failure classification",
+  "INV-5 INV-6: reviewed media bodies keep bounded text and bytes; declared token and numeric facts preserve classification with redacted display",
   WORKERS,
   async () => {
     for (const row of [
