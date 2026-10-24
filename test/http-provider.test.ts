@@ -5,6 +5,7 @@ import { attachCallClassification } from "../src/call-classification.js";
 import { attachCaller } from "../src/connector-caller.js";
 import { keys, optionsOf } from "../src/config-schema.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { defineProvider } from "../src/provider.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { Refusal, RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { bearer } from "../src/http/oauth.js";
@@ -16,7 +17,8 @@ import { PROVIDER_COMMON, type ProviderOptions } from "../src/provider.js";
 import { boundaryFor, originalCallIdentity, tracksRequests } from "../src/provider-call-facts.js";
 import { OperationIndex } from "../src/providers/_shared/rest/operation-index.js";
 import { runEdge } from "../src/runtime/run.js";
-import { setViewService } from "../src/runtime/call.js";
+import { ContinuationStorage, serviceFor, setViewService } from "../src/runtime/call.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
@@ -137,6 +139,13 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
     },
   ];
   for (const change of definitions) expect(() => defineApiProvider({ ...definition, ...change })).toThrow();
+  for (const unknownId of ["invented", "cancelled", "__proto__", "toString", "", null, 1]) {
+    const meanings = { unknownId, provesAbsence: false, conflicts: [] } as never;
+    expect(() => defineApiProvider({ ...definition, errors: { ...errors, meanings } })).toThrow(/error meanings/);
+    expect(() =>
+      defineProvider({ ...defineApiProvider(definition).definition, kit: { operations: [], errors: meanings } }),
+    ).toThrow(/ConnectorCallErrorCode/);
+  }
   const factory = defineApiProvider(definition);
   const options: unknown[] = [
     { purpose: "" },
@@ -225,6 +234,7 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
     operations: ["GET /tickets/{id}", "GET /who"],
     pageSize: { default: 10, max: 50 },
     hatch: { name: "tickets", verdicts: { "GET /who": "read" } },
+    refusesWithheld: true,
     errors: {
       unknownId: "not_found",
       provesAbsence: true,
@@ -306,6 +316,50 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
       expect(getCredentials).not.toHaveBeenCalled();
     } else expect(await connector.callTool(row.tool, {}, ctx)).toEqual({ visible: "yes" });
     expect(fetch).toHaveBeenCalledTimes(row.refused ? 0 : 1);
+  }
+  // Named kit writes refuse the same scalar/key markers before the program, credentials, or transport.
+  const fetch = vi.fn(async () => Response.json({ ok: true }));
+  vi.stubGlobal("fetch", fetch);
+  const run = vi.fn((payload: unknown) => Effect.succeed(payload));
+  const named = defineApiProvider({
+    ...definition,
+    tools: ({ connection }) => [
+      write(connection, {
+        name: "save_payload",
+        description: "Save a payload.",
+        destructive: false,
+        input: Schema.Struct({ payload: Schema.Unknown }),
+        output: Schema.Unknown,
+        run: ({ payload }) => run(payload),
+      }),
+    ],
+  })("tickets", { purpose: "Support" });
+  const ctx = connectorContext();
+  const credentials = vi.fn(async () => ({ value: "stored" }));
+  ctx.credential = { get: async () => "stored", getAll: credentials };
+  for (const payload of [
+    "[redacted]",
+    { value: ["prefix[redacted]tail"] },
+    { "[redacted]": "value" },
+    "%5Bredacted%5D",
+  ]) {
+    await expect(named.callTool("save_payload", { payload }, ctx)).rejects.toMatchObject({
+      code: "invalid_args",
+      retryable: false,
+      message: expect.stringContaining("withheld"),
+    });
+  }
+  expect(run).not.toHaveBeenCalled();
+  expect(credentials).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(await named.callTool("save_payload", { payload: "unredacted" }, ctx)).toBe("unredacted");
+  const root = memoryStorage();
+  const registry = makeRegistry([named], { storage: root });
+  // Signing uses the root store even though connector storage is namespaced per context.
+  for (const request of [{}, {}]) {
+    const view = registry.contextFor("tickets", "https://connecta.example", request);
+    expect(view.storage).not.toBe(root);
+    expect(serviceFor(view, ContinuationStorage)).toBe(root);
   }
 });
 

@@ -929,14 +929,17 @@ function decodeLinkText(text: string, percent = true): string {
  * a person's text. Every destination uses the same policy regardless of host.
  */
 export function carriesWithheldLink(value: unknown): boolean {
-  const pending: Array<{ value: unknown; leave?: boolean }> = [{ value }];
-  const ancestors = new WeakSet<object>();
-  const inspect = (text: string): boolean => {
+  return carriesString(value, (text) => {
     for (const { cut, end } of linkSpans(text)) {
       if (cut >= 0 && decodeLinkText(text.slice(cut, end)).includes(REDACTED)) return true;
     }
     return false;
-  };
+  });
+}
+
+function carriesString(value: unknown, inspect: (text: string) => boolean): boolean {
+  const pending: Array<{ value: unknown; leave?: boolean }> = [{ value }];
+  const ancestors = new WeakSet<object>();
   // JSON structure is bounded by the admitted request's bytes. Visit every key
   // and value iteratively, without imposing a smaller node/depth limit. Reject
   // cycles from direct callers; repeated non-cyclic references remain valid.
@@ -965,6 +968,15 @@ export function carriesWithheldLink(value: unknown): boolean {
     }
   }
   return false;
+}
+
+/** Kit admission: scalar markers, embedded markers, and their URL-encoded forms are never inputs. */
+export function refuseWithheldValues(value: unknown, title: string): void {
+  if (!carriesString(value, (text) => redactionAltered(text) || redactionAltered(decodeLinkText(text)))) return;
+  throw new ConnectorCallError(
+    "invalid_args",
+    `Not sent: ${title} arguments carry a value Connecta withheld ([redacted]). Obtain the original value or omit the field; do not write withheld placeholders back.`,
+  );
 }
 
 /** Refuse a withheld destination copied into customer data, before any dispatch. */

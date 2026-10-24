@@ -5,7 +5,7 @@ import { dispatchProviderRequest, providerRequest } from "../provider-call.js";
 import type { ConnectorContext } from "../types.js";
 import { callClassification } from "../call-classification.js";
 import { fromSignal } from "../runtime/run.js";
-import { callFromContext, openCall as openCoreCall, Signal } from "../runtime/call.js";
+import { callFromContext, ContinuationStorage, openCall as openCoreCall, serviceFor, Signal } from "../runtime/call.js";
 import { RequestRefused, ResendRefused, type HttpFailure, type OperationRef } from "./errors.js";
 import type { WriteRequest } from "./write-request.js";
 export { writeRequestKey, type WriteRequest } from "./write-request.js";
@@ -138,6 +138,7 @@ export function fromConnectorContext(
   return {
     ...lease,
     services: lease.services.pipe(
+      Context.add(ContinuationStorage, serviceFor(ctx, ContinuationStorage) ?? ctx.storage),
       Context.add(Dispatches, []),
       Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
     ),

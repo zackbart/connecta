@@ -71,6 +71,8 @@ import {
   type Dispatch,
 } from "../src/http/services.js";
 import { typedParams, indexedVendor, restKitTools } from "../src/providers/_shared/rest/kit.js";
+import { ContinuationStorage } from "../src/runtime/call.js";
+import { continuationKeys } from "../src/storage/keys.js";
 import { callMemo } from "../src/runtime/call.js";
 import { kitInput, read, write, list, get as getTool, action } from "../src/http/tools.js";
 import {
@@ -633,6 +635,11 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
         },
       };
       validateVendorErrors(reviewed);
+      for (const unknownId of ["invented", "cancelled", "__proto__", "toString", 42, null]) {
+        expect(() =>
+          validateVendorErrors({ ...reviewed, meanings: { unknownId, provesAbsence: false, conflicts: [] } as never }),
+        ).toThrow(/error meanings/);
+      }
       (reviewed.displayFacts!.ids as { maxItems: number }).maxItems = 20;
       toConnectorCallError(status(503), reviewed, { classification: "read", dispatches: [], withholds: () => true });
       expect(display).toEqual(recoveryIds.slice(0, 12));
@@ -1172,14 +1179,55 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
 });
 
 describe("paging (decision 0010, B.4)", () => {
-  it("binds a cursor to its tool and arguments and refuses one from another call", WORKERS, async () => {
+  it("authenticates cursor payloads across storage clients and binds the tool and arguments", WORKERS, async () => {
+    const storage = memoryStorage();
     const args = { organizationId: "org_1", order: "asc", limit: 5 };
-    const token = await runEdge(boundCursor.encode("list_charges", args, "ch_2"));
-    expect(await runEdge(boundCursor.decode("list_charges", { ...args, limit: 9, cursor: token }, token))).toBe("ch_2");
-    const stray = await runEdge(Effect.result(boundCursor.decode("list_charges", { organizationId: "org_2" }, token)));
-    expect(stray._tag === "Failure" && stray.failure.error.code).toBe("invalid_args");
-    const junk = await runEdge(Effect.result(boundCursor.decode("list_charges", args, "not-a-cursor")));
-    expect(junk._tag).toBe("Failure");
+    const run = <A, E>(work: Effect.Effect<A, E>, client = storage) =>
+      runEdge(work.pipe(Effect.provideService(ContinuationStorage, client)));
+    // Distinct clients model separate processes/isolates racing on first use.
+    const clients = Array.from({ length: 4 }, () => ({ ...storage }));
+    const tokens = await Promise.all(
+      clients.map((client) => run(boundCursor.encode("list_charges", args, "ch_2"), client)),
+    );
+    expect(new Set(tokens).size).toBe(1);
+    expect(await storage.list("")).toEqual([continuationKeys.signingKey]);
+    const token = tokens[0]!;
+    const cold = { ...storage };
+    expect(await run(boundCursor.decode("list_charges", { ...args, limit: 9, cursor: token }, token), cold)).toBe(
+      "ch_2",
+    );
+    expect(await run(boundCursor.encode("list_charges", args, "ch_2"), cold)).toBe(token);
+    const claims = JSON.parse(atob(token.replace(/-/g, "+").replace(/_/g, "/")));
+    for (const altered of [
+      { ...claims, c: "ch_0" },
+      { ...claims, c: "ch_999" },
+      { ...claims, v: 1 },
+      { ...claims, m: "a".repeat(43) },
+      { ...claims, m: undefined },
+    ]) {
+      const forged = btoa(JSON.stringify(altered));
+      const result = await run(Effect.result(boundCursor.decode("list_charges", args, forged)));
+      expect(result._tag === "Failure" && result.failure.error.code).toBe("invalid_args");
+    }
+    for (const [tool, fields, supplied, client] of [
+      ["list_charges", { organizationId: "org_2" }, token, storage],
+      ["other_tool", args, token, storage],
+      ["list_charges", args, "not-a-cursor", storage],
+      ["list_charges", args, token, memoryStorage()],
+    ] as const) {
+      const result = await run(Effect.result(boundCursor.decode(tool, fields, supplied)), client);
+      expect(result._tag === "Failure" && result.failure.error.code).toBe("invalid_args");
+    }
+    // Warm calls cache only the imported key, and a failed load can be retried.
+    const get = vi.spyOn(cold, "get");
+    await run(boundCursor.encode("list_charges", args, "ch_3"), cold);
+    expect(get).not.toHaveBeenCalled();
+    const broken = {
+      ...storage,
+      get: vi.fn().mockRejectedValueOnce(new Error("offline")).mockImplementation(storage.get),
+    };
+    await expect(run(boundCursor.encode("list_charges", args, "ch_2"), broken)).rejects.toThrow();
+    expect(await run(boundCursor.encode("list_charges", args, "ch_2"), broken)).toBe(token);
   });
 
   it("streams every row across pages with one cursor rule", NODE, async () => {
@@ -1368,6 +1416,7 @@ describe("kit construction (decision 0010, B.4)", () => {
       }
       for (const mode of ["plain", "bound"] as const) {
         const cursors: Array<string | undefined> = [];
+        const pagingContext = context();
         const tool = list(connection, {
           name: "list_items",
           description: "Items",
@@ -1381,14 +1430,14 @@ describe("kit construction (decision 0010, B.4)", () => {
           },
         });
         const connector = apiConnector("acme", { tools: [tool] });
-        const first = (await connector.callTool("list_items", { owner: "alice" }, context())) as {
+        const first = (await connector.callTool("list_items", { owner: "alice" }, pagingContext)) as {
           page: { nextCursor: string };
         };
-        await connector.callTool("list_items", { owner: "alice", cursor: first.page.nextCursor }, context());
+        await connector.callTool("list_items", { owner: "alice", cursor: first.page.nextCursor }, pagingContext);
         expect(cursors).toEqual([undefined, "next"]);
         if (mode === "bound")
           await expect(
-            connector.callTool("list_items", { owner: "bob", cursor: first.page.nextCursor }, context()),
+            connector.callTool("list_items", { owner: "bob", cursor: first.page.nextCursor }, pagingContext),
           ).rejects.toMatchObject({ code: "invalid_args" });
         else expect(first.page.nextCursor).toBe("next");
       }

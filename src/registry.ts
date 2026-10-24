@@ -28,7 +28,7 @@ import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } from "./operator-record.js";
 import { ObservedOutputSchemas } from "./result-shapes.js";
-import { operationView, settleOnClose } from "./runtime/call.js";
+import { ContinuationStorage, operationView, setViewService, settleOnClose } from "./runtime/call.js";
 import { runEdge } from "./runtime/run.js";
 import { type Storage } from "./runtime/services.js";
 import { SharedRead } from "./runtime/shared-read.js";
@@ -729,6 +729,7 @@ export class Registry implements RegistryView {
       },
       scope?.caller,
     );
+    setViewService(context, ContinuationStorage, this.opts.catalogStorage ?? this.opts.storage);
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),

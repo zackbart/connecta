@@ -12,6 +12,7 @@ import {
   type Field,
 } from "./config-schema.js";
 import { aliasCallIdentity } from "./provider-call-facts.js";
+import { isConnectorCallErrorCode, type ConnectorCallErrorCode } from "./errors.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -157,7 +158,7 @@ export interface ProviderKitFacts {
    * conflict source.
    */
   readonly errors?: {
-    readonly unknownId: string;
+    readonly unknownId: ConnectorCallErrorCode;
     readonly provesAbsence: boolean;
     readonly conflicts: readonly string[];
   };
@@ -165,9 +166,8 @@ export interface ProviderKitFacts {
   readonly idempotencyKey?: boolean;
   /**
    * Set only when the hatch refuses a write carrying a withheld placeholder
-   * value; the Withheld values convention promises exactly that. Unset until
-   * placeholder refusal for withheld scalar values exists, which a provider
-   * with a value-safety table needs before its step 2.
+   * value; the Withheld values convention promises exactly that. The kit sets
+   * it for its standard hatch; kit write builders refuse the same markers.
    */
   readonly refusesWithheld?: true;
 }
@@ -288,6 +288,9 @@ function guideBlocks(content: string, selected?: ReadonlySet<string>): { text: s
 
 /** A frozen copy: kit facts are review evidence `providers:generate` reads. */
 function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
+  if (kit.errors && !isConnectorCallErrorCode(kit.errors.unknownId)) {
+    throw new Error("Provider kit errors.unknownId must be a ConnectorCallErrorCode.");
+  }
   return Object.freeze({
     operations: Object.freeze([...kit.operations]),
     ...(kit.pageSize ? { pageSize: Object.freeze({ ...kit.pageSize }) } : {}),

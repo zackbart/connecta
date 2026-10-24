@@ -13,6 +13,9 @@ import { Effect, Option, Schema, Stream } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import { Refusal, type HttpFailure } from "./errors.js";
 import { confinementBase } from "../http-policy.js";
+import { ContinuationStorage } from "../runtime/call.js";
+import { continuationKeys } from "../storage/keys.js";
+import type { KVStorage } from "../types.js";
 
 /** The `page` object every list tool returns. */
 export const PageInfo = Schema.Struct({
@@ -194,27 +197,82 @@ export function allRows<Row, E, R>(
 const STRAY_CURSOR =
   "This cursor belongs to a different call. Pass back the nextCursor from the previous page of this same call, with the same arguments.";
 
+/** Resolved, nonextractable keys only: no request promise is retained between calls. */
+const signingKeys = new WeakMap<KVStorage, CryptoKey>();
+
+async function signingKey(storage: KVStorage): Promise<CryptoKey> {
+  const cached = signingKeys.get(storage);
+  if (cached) return cached;
+  let raw = await storage.get(continuationKeys.signingKey);
+  if (raw === null) {
+    const candidate = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    raw = (await storage.compareAndSet(continuationKeys.signingKey, null, candidate))
+      ? candidate
+      : await storage.get(continuationKeys.signingKey);
+  }
+  if (raw === null || !/^[a-f0-9]{64}$/.test(raw)) throw new Error("The continuation signing key is unavailable.");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    Uint8Array.from(raw.match(/../g)!, (byte) => Number.parseInt(byte, 16)),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+  signingKeys.set(storage, key);
+  return key;
+}
+
+const keyForCall = ContinuationStorage.use((storage) =>
+  storage
+    ? Effect.promise(() => signingKey(storage))
+    : Effect.die(new Error("Bound continuation cursors require storage.")),
+);
+
 /**
- * The bound codec: base64url JSON `{v, d, c}` where `d` is 128 bits of
- * SHA-256 over the tool name and its arguments (cursor and limit excluded).
+ * Authenticated base64url JSON `{v, d, c, m}`: the MAC covers the version,
+ * tool/argument digest and continuation payload. The deployment store owns
+ * the key across isolates/restarts; limit and cursor are excluded from args.
  */
 export const boundCursor = {
   encode(tool: string, args: Readonly<Record<string, unknown>>, cursor: string): Effect.Effect<string> {
-    return Effect.map(digest(tool, args), (d) => base64url(JSON.stringify({ v: 1, d, c: cursor })));
+    return Effect.gen(function* () {
+      const d = yield* digest(tool, args);
+      const key = yield* keyForCall;
+      const claims = new TextEncoder().encode(JSON.stringify([2, d, cursor]));
+      const mac = yield* Effect.promise(() => crypto.subtle.sign("HMAC", key, claims));
+      const m = base64urlBytes(new Uint8Array(mac));
+      return base64url(JSON.stringify({ v: 2, d, c: cursor, m }));
+    });
   },
   decode(tool: string, args: Readonly<Record<string, unknown>>, token: string): Effect.Effect<string, Refusal> {
-    return Effect.flatMap(digest(tool, args), (expected) => {
+    return Effect.gen(function* () {
+      const expected = yield* digest(tool, args);
       let parsed: unknown;
       try {
         parsed = JSON.parse(new TextDecoder().decode(fromBase64url(token)));
       } catch {
         parsed = undefined;
       }
-      const record = parsed as { v?: unknown; d?: unknown; c?: unknown } | undefined;
-      if (record?.v !== 1 || record.d !== expected || typeof record.c !== "string") {
-        return Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", STRAY_CURSOR) }));
+      const record = parsed as { v?: unknown; d?: unknown; c?: unknown; m?: unknown } | undefined;
+      if (
+        record?.v !== 2 ||
+        record.d !== expected ||
+        typeof record.c !== "string" ||
+        typeof record.m !== "string" ||
+        !/^[A-Za-z0-9_-]{43}$/.test(record.m)
+      ) {
+        return yield* Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", STRAY_CURSOR) }));
       }
-      return Effect.succeed(record.c);
+      const key = yield* keyForCall;
+      const mac = fromBase64url(record.m);
+      const claims = new TextEncoder().encode(JSON.stringify([record.v, record.d, record.c]));
+      const valid = yield* Effect.promise(() => crypto.subtle.verify("HMAC", key, mac, claims));
+      if (!valid || base64urlBytes(mac) !== record.m) {
+        return yield* Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", STRAY_CURSOR) }));
+      }
+      return record.c;
     });
   },
 };
@@ -233,8 +291,12 @@ function digest(tool: string, args: Readonly<Record<string, unknown>>): Effect.E
 }
 
 function base64url(text: string): string {
+  return base64urlBytes(new TextEncoder().encode(text));
+}
+
+function base64urlBytes(bytes: Uint8Array): string {
   let binary = "";
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 

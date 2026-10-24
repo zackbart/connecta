@@ -390,9 +390,18 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    references in maintained guidance. Tithe.ly's results do not validate
    Planning Center joins, CCB search routing or Google batch edits.
 6. Remove the provider from `PENDING.step2` and its committed baseline entry.
-7. A provider with a reviewed value-safety table (`safety.ts`) waits for the
-   hatch to refuse writes carrying withheld scalar placeholders, and for
-   `kit.refusesWithheld`, before its step 2.
+7. Use the standard hatch's withheld-scalar admission and derived
+   `kit.refusesWithheld` fact. Hatch request paths, query keys/values and
+   bodies reject `[redacted]`, embedded markers and URL-encoded forms with
+   `invalid_args` before dispatch. Kit write builders apply the same check
+   to every argument of named writes. Do not add a provider opt-out or
+   claim this admission for legacy non-kit tools or arbitrary encoded bytes.
+   Bound discovery cursors authenticate their payload with the root store's
+   lazy compare-and-set signing key, bind the index revision, and validate
+   offsets and piece boundaries. Use the same store for successive calls;
+   never supply a process-local key or log signing material. Error meanings
+   and declared kit codes must pass runtime ConnectorCallErrorCode membership
+   at construction. Fold regression cases into existing kit/hatch/standard rows.
 8. A hatch over a compiled REST pin declares response fields in its index
    (`OpenApiData.fields`) before `fields` can narrow it; operations without a
    declared response refuse `fields`.

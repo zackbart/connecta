@@ -940,6 +940,19 @@ carries no `errorCode`.
 
 ## Argument recovery
 
+Standard API hatches refuse request paths, query keys/values and bodies that
+carry `[redacted]`, including embedded or URL-encoded forms, with
+`invalid_args` before sending. Named tools built with the provider kit also
+refuse these markers in write arguments. Obtain the original value or omit
+the field. For example, do not copy `{ "token": "[redacted]" }` from a read
+into a write. Legacy tools and generic remote MCP connections keep their
+own input rules.
+
+Pass hatch search/details cursors back unchanged. They authenticate the
+continuation and bind its arguments and index revision; an altered cursor
+or changed revision is `invalid_args`. Start discovery again after that
+refusal. Cursors survive restarts when the deployment uses persistent storage.
+
 A remote MCP tool's advertised `inputSchema` is checked in the shared invocation
 path before admission and provider dispatch, so a mismatch is the non-retryable
 `invalid_args` identically on `call_tool`, `call_destructive_tool`,

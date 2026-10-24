@@ -8,6 +8,10 @@ import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { DETAILS_BUDGET_BYTES, hatch, SEARCH_BUDGET } from "../src/http/hatch.js";
+import { boundCursor } from "../src/http/paging.js";
+import { ContinuationStorage } from "../src/runtime/call.js";
+import { runEdge } from "../src/runtime/run.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import { Integer } from "../src/http/json-schema.js";
 import { restSafety, resultSafety } from "../src/http/safety.js";
 import { connect, form, get, post, Summary, vendor } from "../src/http/vendor.js";
@@ -115,8 +119,10 @@ const ERRORS: VendorErrors = {
 
 let sent: Array<{ url: string; method: string; body: unknown }>;
 let response: () => Response;
+let storage: ReturnType<typeof memoryStorage>;
 beforeEach(() => {
   sent = [];
+  storage = memoryStorage();
   response = () => Response.json({ id: "i1" });
   installOwnedTransport();
   vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
@@ -126,8 +132,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function setup(options: { deny?: boolean; verdicts?: Parameters<typeof hatch>[0]["verdicts"] } = {}) {
-  const index = new OperationIndex(DATA, { vendor: "items", title: "Items" });
+function setup(
+  options: { revision?: string; deny?: boolean; verdicts?: Parameters<typeof hatch>[0]["verdicts"] } = {},
+) {
+  const index = new OperationIndex(
+    { ...DATA, revision: options.revision ?? DATA.revision },
+    { vendor: "items", title: "Items" },
+  );
   const reviewed = valueSafety(
     { title: "Items", operations: { "GET /items": { verdict: "safe", reason: "Only item metadata is returned." } } },
     () => index,
@@ -157,7 +168,7 @@ function setup(options: { deny?: boolean; verdicts?: Parameters<typeof hatch>[0]
   const tools = hatch({ name: "items", index, verdicts: options.verdicts ?? VERDICTS, connection });
   const connector = tracksEveryRequest(apiConnector("items", { tools }));
   const call = (kind: string, args: Record<string, unknown>) =>
-    connector.callTool(`items_api_${kind}`, args, connectorContext());
+    connector.callTool(`items_api_${kind}`, args, connectorContext(storage));
   return { index, tools, connection, call, sendPath, authenticate, admit };
 }
 
@@ -194,6 +205,18 @@ it(
     expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
     await expect(call("search", { query: "item", limit: 9 })).rejects.toMatchObject({ code: "invalid_args" });
     await expect(call("search", { query: "item", cursor: "e30" })).rejects.toMatchObject({ code: "invalid_args" });
+    const searchPage = (await call("search", { query: "item", limit: 1 })) as { page: { nextCursor: string } };
+    await expect(
+      setup({ revision: "r2" }).call("search", { query: "item", cursor: searchPage.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    for (const offset of ["", "0", "-1", "1.5", "01", "11", "999999999999999999999"]) {
+      const cursor = await runEdge(
+        boundCursor
+          .encode("items_api_search", { revision: "r1", query: "item" }, offset)
+          .pipe(Effect.provideService(ContinuationStorage, storage)),
+      );
+      await expect(call("search", { query: "item", cursor })).rejects.toMatchObject({ code: "invalid_args" });
+    }
     for (const [method, path, verdict, tool] of [
       ["GET", "/items", "read", "items_api_read"],
       ["GET", "/touch", "write", "items_api_write"],
@@ -278,7 +301,7 @@ it(
       }),
     );
     const formsCall = (kind: string, args: Record<string, unknown>) =>
-      forms.callTool(`forms_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>;
+      forms.callTool(`forms_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>;
     expect((await formsCall("search", { query: "thing" })).operations).toEqual([
       {
         method: "POST",
@@ -316,6 +339,34 @@ it(
         cursor = page["page"]?.hasMore ? page["page"].nextCursor : undefined;
       } while (cursor && pages.length < 400);
       expect(cursor).toBeUndefined();
+      const firstCursor = pages[0]?.["page"]?.nextCursor;
+      if (firstCursor) {
+        const claims = JSON.parse(atob(firstCursor.replace(/-/g, "+").replace(/_/g, "/")));
+        const tampered = btoa(JSON.stringify({ ...claims, c: '{"i":0,"o":1}' }));
+        await expect(call("details", { ...args, cursor: tampered })).rejects.toMatchObject({ code: "invalid_args" });
+        const scope = { revision: derived.revision, ...args };
+        if (call === formsCall) {
+          Object.defineProperty(derived, "revision", { value: "v2", configurable: true });
+          await expect(call("details", { ...args, cursor: firstCursor })).rejects.toMatchObject({
+            code: "invalid_args",
+          });
+          Object.defineProperty(derived, "revision", { value: scope.revision, configurable: true });
+          for (const at of [
+            { i: 0, o: 0 },
+            { i: -1, o: 0 },
+            { i: 0, o: 0.5 },
+            { i: 0, o: 999999999 },
+            { i: 9999, o: 0 },
+          ]) {
+            const cursor = await runEdge(
+              boundCursor
+                .encode("forms_api_details", scope, JSON.stringify(at))
+                .pipe(Effect.provideService(ContinuationStorage, storage)),
+            );
+            await expect(call("details", { ...args, cursor })).rejects.toMatchObject({ code: "invalid_args" });
+          }
+        }
+      }
       const labels: Record<string, string> = {};
       const parameters: unknown[] = [];
       const schema: Record<string, any> = {};
@@ -395,7 +446,7 @@ it(
       return {
         index,
         call: (kind: string, args: Record<string, unknown>) =>
-          connector.callTool(`heavy_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>,
+          connector.callTool(`heavy_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>,
       };
     };
     // An irreducibly large required contract pages every required property.
@@ -409,7 +460,25 @@ it(
     );
     expect((await walk(many.call, { method: "POST", path: "/heavy" })).contract).toEqual(original(many.index));
     // A property larger than an answer arrives as chunks and keeps its requiredness, through param too.
-    const big = heavy({ must: Schema.String.annotate({ description: "x".repeat(40000) }), other: Schema.String });
+    const big = heavy({
+      must: Schema.String.annotate({ description: `${"x".repeat(40000)}😀` }),
+      other: Schema.String,
+    });
+    const property = (original(big.index).body!.schema as { properties: { must: unknown } }).properties.must;
+    const splitPair = JSON.stringify(property).indexOf("😀") + 1;
+    expect(splitPair).toBeGreaterThan(0);
+    const splitCursor = await runEdge(
+      boundCursor
+        .encode(
+          "heavy_api_details",
+          { revision: big.index.revision, method: "POST", path: "/heavy" },
+          JSON.stringify({ i: 1, o: splitPair }),
+        )
+        .pipe(Effect.provideService(ContinuationStorage, storage)),
+    );
+    await expect(big.call("details", { method: "POST", path: "/heavy", cursor: splitCursor })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     const whole = await walk(big.call, { method: "POST", path: "/heavy" });
     expect(whole.pages.some((page) => page["chunk"]?.of === "body.schema.properties.must")).toBe(true);
     expect(whole.contract).toEqual(original(big.index));
@@ -448,7 +517,7 @@ it(
       apiConnector("framed", { tools: hatch({ name: "framed", index: framed, verdicts: {}, connection }) }).callTool(
         `framed_api_${kind}`,
         args,
-        connectorContext(),
+        connectorContext(storage),
       ) as Promise<Record<string, any>>;
     const framedPages = await walk(framedCall, { method: "POST", path: "/framed" });
     expect(framedPages.pages.some((page) => page["chunk"]?.of === "body.schema")).toBe(true);
@@ -469,7 +538,7 @@ it(
     const searchLong = (args: Record<string, unknown>) =>
       tracksEveryRequest(
         apiConnector("long", { tools: hatch({ name: "long", index: long, verdicts: {}, connection }) }),
-      ).callTool("long_api_search", args, connectorContext()) as Promise<Record<string, any>>;
+      ).callTool("long_api_search", args, connectorContext(storage)) as Promise<Record<string, any>>;
     const trimmed = await searchLong({ query: "xxx", limit: 8 });
     expect(trimmed["operations"].length).toBeLessThan(8);
     expect(size(trimmed)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
@@ -487,14 +556,16 @@ it(
       { vendor: "label", title: "Label" },
     );
     const labelled = apiConnector("label", { tools: hatch({ name: "label", index: label, verdicts: {}, connection }) });
-    const found = (await labelled.callTool("label_api_search", { query: "things" }, connectorContext())) as Record<
-      string,
-      any
-    >;
+    const found = (await labelled.callTool(
+      "label_api_search",
+      { query: "things" },
+      connectorContext(storage),
+    )) as Record<string, any>;
     expect(size(found)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
     expect(found["truncated"]).toEqual(["operations[0].operationId"]);
     const labels = await walk(
-      (kind, args) => labelled.callTool(`label_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>,
+      (kind, args) =>
+        labelled.callTool(`label_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>,
       { method: "GET", path: "/things" },
     );
     expect(labels.pages[0]!["truncated"]).toEqual(["operationId"]);
@@ -542,6 +613,28 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       args: { method: "POST", path: "/form", body: { name: "alice", tag: ["a", "b"] } },
       body: "name=alice&tag=a&tag=b",
     },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "unredacted" } },
+      body: '{"name":"unredacted"}',
+    },
+    ...["[redacted]", "prefix[redacted]tail", "%5Bredacted%5D"].flatMap((marker) => [
+      { kind: "write", args: { method: "POST", path: "/items", body: { name: marker } }, message: "withheld" },
+      {
+        kind: "write",
+        args: { method: "POST", path: "/items", body: { name: "alice", payload: { nested: [marker] } } },
+        message: "withheld",
+      },
+      {
+        kind: "write",
+        args: { method: "POST", path: "/items", body: { name: "alice", payload: { [marker]: true } } },
+        message: "withheld",
+      },
+      { kind: "write", args: { method: "POST", path: "/form", body: { name: marker } }, message: "withheld" },
+      { kind: "write", args: { method: "DELETE", path: `/items/${marker}` }, message: "withheld" },
+      { kind: "read", args: { path: "/items", query: { tag: [marker] } }, message: "withheld" },
+      { kind: "read", args: { method: "POST", path: "/query", body: { filter: marker } }, message: "withheld" },
+    ]),
     { kind: "read", args: { path: "/touch" }, message: "items_api_write" },
     { kind: "write", args: { method: "GET", path: "/items" }, message: "items_api_read" },
     { kind: "read", args: { path: "/blocked" }, message: "refuses" },

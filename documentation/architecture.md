@@ -2085,6 +2085,35 @@ index's parameters, bodies, summaries and declared fields (optional
 `VendorErrors.meanings` and an `idempotencyKey` checked against the write
 builders at construction, which the generated Conventions state.
 
+Hatch request paths, query keys/values and bodies refuse the shared
+`[redacted]` marker, including embedded and URL-encoded forms, with
+`invalid_args` before authentication or dispatch. Kit write builders apply
+the same iterative key/value admission to all arguments, including named
+writes, before running the program. Ordinary text such as `unredacted` is
+accepted. Legacy non-kit tools retain their existing withheld-link admission;
+this rule does not decode arbitrary binary or base64 arguments. The kit sets
+`refusesWithheld` for its standard hatch so generated Conventions state the
+withheld-values refusal. Declared `VendorErrors.meanings.unknownId` and kit
+error-code facts must belong to the closed `ConnectorCallErrorCode` set at
+construction (INV-11); request-dependent classification callbacks are not
+evaluated at construction.
+
+The bound cursor codec authenticates its version, tool/argument digest and
+continuation payload with HMAC-SHA-256. Hatch discovery also binds the index
+revision, rejects out-of-range/noncanonical search offsets, and checks details
+piece indexes, chunk offsets and surrogate boundaries. Tampering or a changed
+revision fails `invalid_args`; changing only `limit` remains allowed. One
+256-bit random signing key lives durably in the deployment's root store under
+the `continuationKeys` family. Lazy initialization uses compare-and-set so
+concurrent first calls agree; only the imported nonextractable key is cached
+per storage instance, never a request promise or logged value. Registry call
+services carry the root store across connector and principal partitions;
+standalone connector calls use their supplied store. Every deployment has a
+store (omitting it supplies memory storage), so there is no unauthenticated
+fallback. SQL-backed cursors survive process/isolate changes; an in-memory
+deployment loses them with its store. Pre-hardening unsigned cursors must be
+restarted. Offline goldens preseed a fixed signing key only in their harness.
+
 The helper derives connection metadata and probe messages from
 validated options and accepts complete legacy usage guides, which providers in
 `PENDING.step2` keep. Candidate checks can refuse before authentication while

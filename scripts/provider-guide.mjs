@@ -101,7 +101,7 @@ function errorsLine(name, errors) {
  * declarations mean for an agent. `kit` is the definition's `ProviderKitFacts`
  * (page size, hatch verdicts, error meanings and the idempotency fact). The
  * withheld-values line renders only for a kit whose hatch refuses a write
- * carrying a withheld placeholder (`kit.refusesWithheld`); none does yet.
+ * carrying a withheld placeholder (`kit.refusesWithheld`).
  */
 export function renderConventions({ name, kind, kit }) {
   if (kind !== "api") fail(name, `a standard provider's kind is api, not ${kind}`);
