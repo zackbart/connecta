@@ -2173,6 +2173,15 @@ Conventions; parameter-based providers retain their existing guide bytes.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.
+A binding may expand deployment-owned path defaults before indexed resolution,
+and may prepare a reviewed text/NDJSON body before validation. Both the original
+and resolved paths pass withheld-value admission. Closed request-header enums
+are opt-in; selected headers join the paging cursor's call identity. Text body
+inputs are opt-in too. A provider with bounded call-owned scope lookups declares
+its fixed write steps, preserving the resource call's single-attempt slot.
+An optional `fieldsRoot` supplies vendor-envelope selection guidance and the
+corresponding generated convention; it never changes the declared response roots.
+Selections accept `result.id` or the equivalent `result[].id` array notation.
 Bindings retain the hatch's other-server and JSON/form body-type guards by
 default. `allowOtherServers: true` and `allowOtherBodyTypes: true` explicitly
 replace those guards with the binding's reviewed routing or encoding checks.

@@ -133,6 +133,13 @@ export function renderConventions({ name, kind, kit }) {
       "- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a " +
         "result cut for size; the ids that fetch what was cut stay in the result.",
     );
+    if (kit?.hatch?.fieldsRoot !== undefined) {
+      const root = kit.hatch.fieldsRoot;
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(root)) fail(name, "kit.hatch.fieldsRoot is a property name");
+      api.push(
+        `- **Envelope fields:** hatch data keeps the vendor envelope. Select declared fields with \`fields: ["${root}.id", "${root}.name"]\`; array traversal also accepts \`${root}[].id\`. Named reads keep their projected fields.`,
+      );
+    }
     if (kit?.hatch !== undefined) api.push(hatchLine(name, kit.hatch));
     if (kit?.refusesWithheld === true) {
       tail.push(

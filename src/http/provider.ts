@@ -233,6 +233,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
             hatch: {
               name: hatchOptions.name,
               verdicts: hatchOptions.verdicts,
+              ...(hatchOptions.fieldsRoot ? { fieldsRoot: hatchOptions.fieldsRoot } : {}),
               ...(hatchOptions.pageCursor && Object.keys(hatchOptions.pages ?? {}).length
                 ? { paging: hatchOptions.pageCursor }
                 : {}),
