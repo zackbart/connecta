@@ -982,7 +982,7 @@
         },
         "limit": 2
       },
-      "select": [
+      "fields": [
         "data.id",
         "data.amount"
       ]

@@ -133,7 +133,7 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "invalid_args",
+            "code": "conflict",
             "message": "Stripe invalid_request_error golden_409: Golden 409 failure. Request req_golden.",
             "retryable": false
           }
@@ -523,7 +523,7 @@
           "dispatched": true,
           "answered": true,
           "error": {
-            "code": "invalid_args",
+            "code": "conflict",
             "message": "Stripe invalid_request_error golden_409: Golden 409 failure. Request req_golden. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Reusing it with the exact original arguments retries this write without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
             "retryable": false
           }

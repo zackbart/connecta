@@ -32,7 +32,7 @@ import {
   type HttpFailure,
   type VendorErrors,
 } from "./errors.js";
-import { hatch, type HatchDeclaration } from "./hatch.js";
+import { hatch, type HatchBinding, type HatchDeclaration } from "./hatch.js";
 import { takesIdempotencyKey } from "./tools.js";
 import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
@@ -113,7 +113,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */
-  readonly hatch?: HatchDeclaration & {
+  readonly hatch?: Omit<HatchDeclaration, "binding"> & {
+    readonly binding?: (kit: { connection: Connection; options: Readonly<O> }) => HatchBinding;
     readonly notes?: (options: Readonly<O>) => { readonly read?: string; readonly write?: string };
   };
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
@@ -126,12 +127,17 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
 }
 
 /** A declared hatch for one connection: its notes resolved from that connection's options. */
-function hatchDeclaration<O>(
-  declared: HatchDeclaration & { readonly notes?: (options: Readonly<O>) => { read?: string; write?: string } },
+function hatchDeclaration<O extends ProviderOptions>(
+  declared: NonNullable<ApiProviderDefinition<O>["hatch"]>,
   options: Readonly<O>,
+  connection: Connection,
 ): HatchDeclaration & { readonly notes?: { readonly read?: string; readonly write?: string } } {
-  const { notes, ...rest } = declared;
-  return notes ? { ...rest, notes: notes(options) } : rest;
+  const { notes, binding, ...rest } = declared;
+  return {
+    ...rest,
+    ...(notes ? { notes: notes(options) } : {}),
+    ...(binding ? { binding: binding({ connection, options }) } : {}),
+  };
 }
 
 /** Bind the Promise OAuth facade belonging to this call, never a connection-wide grant. */
@@ -361,7 +367,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           return typeof override === "number" ? override : pageSize.default;
         },
       });
-      const hatchTools = hatchOptions ? hatch({ ...hatchDeclaration(hatchOptions, options), connection }) : [];
+      const hatchTools = hatchOptions
+        ? hatch({ ...hatchDeclaration(hatchOptions, options, connection), connection })
+        : [];
       // The declared fact the Writes convention states must match what the write builders send.
       if (idempotencyKey !== undefined && [...builtTools, ...hatchTools].some(takesIdempotencyKey) !== idempotencyKey)
         throw new Error(

@@ -207,9 +207,9 @@ definition: results (`fields`, `truncated`) for an `api` surface, paging from
 against the kit write builders at construction), and the Errors line from
 `VendorErrors.meanings` (the code an unknown id fails with, whether it proves
 absence, and each documented conflict source); a standard provider must
-declare both. The withheld-value rule renders only with `kit.refusesWithheld`,
-which nothing sets yet: the hatch refuses withheld links, not withheld scalar
-placeholders.
+declare both. The withheld-value rule renders only with the standard hatch's
+derived `kit.refusesWithheld`, which covers whole marker values and withheld
+links, plus marker containment in paths and queries.
 
 ## The agent-facing surface (S)
 
