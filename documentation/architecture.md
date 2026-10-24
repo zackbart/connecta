@@ -1322,8 +1322,8 @@ endpoint contract digests do not depend on this metadata. Legacy REST tools
 retain their catalog and discovery behavior until each provider's step 2.
 Fields are optional additive metadata in format 4, so a previously compiled
 index without the source bytes remains usable without inventing a response
-contract. Vercel's pinned document is unavailable: its index leaves fields
-absent until its step-2 pin review. Breeze's pin declares no response
+contract. Vercel's step-2 pin review restores response metadata from the reviewed public
+document; operations without declared response properties still refuse fields. Breeze's pin declares no response
 properties. GitHub's immutable official OpenAPI pin supplies its complete index and response fields; a reviewed repository allowlist controls dispatch. Natural queries with reviewed matches scope discovery to those matches and named-only operations; explicit paths and unmatched queries retain full-pin refusal discovery.
 `check:providers-generated` checks each index header against its source record
 offline; `providers:check` reports a pin that differs from the live document.
@@ -2201,6 +2201,9 @@ both directions or a cursor with any raw anchor are refused before dispatch.
 Returned tokens authenticate the selected adapter parameter and value as well
 as the call. Search/v2 raw page tokens cannot replace cursor. Providers without
 this declaration keep parameter-based continuation.
+An explicit initialAnchor adapter on parameter-based paging can retain a numeric
+timestamp as a first-page time-window anchor; opaque string continuations still
+require a signed token.
 Separate-cursor paging also adds the hatch Paging line to generated
 Conventions. `pageCursor: "parameter"` explicitly opts parameter-based providers
 into guidance for restoring `page.nextCursor` at `page.param`/`page.in`; omitting
@@ -2209,6 +2212,9 @@ the safe page data with `hasMore: true` and no `nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.
+A binding may resolve configured query routing before validation and signed
+cursor binding. Vercel uses this to apply its teamId default and deliberate
+teamId/slug/null overrides consistently with named tools and uploads.
 A binding may opt into `truncated: true` to supply reviewed size-cut paths
 (such as `data.content`) in its answer. The hatch then declares and propagates
 an optional top-level `truncated: string[]` on reads and writes. Without the

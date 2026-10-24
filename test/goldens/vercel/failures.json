@@ -136,7 +136,7 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "invalid_args",
+            "code": "connector_call_failed",
             "message": "Vercel conflict: Golden 409 failure.",
             "retryable": false
           }
@@ -210,7 +210,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Vercel internal_server_error: Golden 500 failure. Vercel is failing upstream.",
+            "message": "Vercel internal_server_error: Golden 500 failure.",
             "retryable": true
           }
         }
@@ -485,7 +485,7 @@
           "dispatched": true,
           "answered": true,
           "error": {
-            "code": "invalid_args",
+            "code": "connector_call_failed",
             "message": "Vercel answered HTTP 409 (conflict); its message is withheld because this operation handles secret values.",
             "retryable": false
           }
@@ -579,7 +579,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Vercel answered HTTP 500 (internal_server_error); its message is withheld because this operation handles secret values. Vercel is failing upstream. Whether the write took effect at Vercel is unknown; check the target before repeating it.",
+            "message": "Vercel answered HTTP 500 (internal_server_error); its message is withheld because this operation handles secret values. Whether the write took effect at Vercel is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }

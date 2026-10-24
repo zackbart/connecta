@@ -33,6 +33,30 @@ export function counterexamples(
   const cases: { name: string; world?: World; trace?: AgentTrace; check?: string }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
+  if (task.id.startsWith("vercel-step2-")) {
+    const changedCalls = (calls: World["ledger"]["calls"]): World =>
+      Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+        ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
+      });
+    cases.push({ name: "no vendor evidence", world: changedCalls([]) });
+    cases.push({
+      name: "secret output",
+      trace: { ...trace, finalAnswer: (trace.finalAnswer ?? "") + " eval_old_production_value" },
+    });
+    if (task.id.endsWith("deployment-paging"))
+      cases.push({
+        name: "first page only",
+        world: changedCalls(world.ledger.calls.filter((c) => !(c.args.query as any)?.until)),
+      });
+    const write = world.ledger.calls.find((c) => c.kind === "write");
+    if (write)
+      cases.push({ name: "duplicate write", world: changedCalls([...world.ledger.calls, { ...write, seq: 9999 }]) });
+    if (write && task.id.endsWith("env-recovery"))
+      cases.push({
+        name: "no reconciliation",
+        world: changedCalls(world.ledger.calls.filter((c) => c.seq <= write.seq)),
+      });
+  }
   if (task.id.startsWith("github-")) {
     const changedCalls = (calls: World["ledger"]["calls"]): World =>
       Object.assign(Object.create(Object.getPrototypeOf(world)), world, {

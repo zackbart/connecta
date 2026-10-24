@@ -6,7 +6,8 @@ export interface HatchPageAdapter {
   readonly param: string;
   readonly in: "query" | "body";
   readonly headers?: readonly string[];
-  /** A raw vendor record-id anchor is allowed only on the first request without cursor. */
+  /** With a separate cursor, permit a first-request raw record id. Parameter-based
+   * paging permits only a numeric timestamp anchor; opaque tokens stay signed. */
   readonly initialAnchor?: boolean;
   /** Opt-in repair guidance for unsigned first-page/raw vendor continuations. */
   readonly cursorInputMessage?: string;
