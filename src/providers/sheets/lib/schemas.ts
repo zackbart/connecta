@@ -17,7 +17,11 @@ const str = (description: string, max: number, pattern?: RegExp) =>
   ).annotate({ description });
 const int = (description: string, min: number, max: number) =>
   Integer.check(Schema.isGreaterThanOrEqualTo(min), Schema.isLessThanOrEqualTo(max)).annotate({ description });
-const id = str("Spreadsheet id from its Drive file URL; find by name through Drive.", 256, /^[A-Za-z0-9_-]+$/);
+const id = str(
+  "Use a supplied spreadsheet id as is, such as sheets1; search Drive only for a name.",
+  256,
+  /^[A-Za-z0-9_-]+$/,
+);
 const range = str(
   "A1 range or named range; quote sheet titles and double internal apostrophes.",
   512,

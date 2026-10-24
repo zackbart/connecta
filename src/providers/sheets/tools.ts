@@ -15,7 +15,7 @@ import { boundCursor } from "../../http/paging.js";
 import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
 import { Operation } from "../../runtime/call.js";
 import { sheetsIndex } from "./lib/hatch.js";
-import { SHEETS_ADMITTED_KINDS, sheetsExternalDataProblem } from "./lib/requests.js";
+import { SHEETS_ADMITTED_KINDS, SHEETS_REFUSED_KINDS, sheetsExternalDataProblem } from "./lib/requests.js";
 import { inputs, outputs } from "./lib/schemas.js";
 
 /** Cells per page of get_values: connecta's cap, since Sheets has no paging. */
@@ -248,6 +248,9 @@ function projectUpdate(value: unknown): JsonRecord {
 
 /** Refuse a raw request that is not exactly one known kind, unsent. */
 function checkRequestKinds(requests: readonly unknown[]): void {
+  for (const request of requests)
+    for (const kind of Object.keys(asRecord(request)))
+      if (SHEETS_REFUSED_KINDS[kind]) throw new ConnectorCallError("invalid_args", SHEETS_REFUSED_KINDS[kind]);
   const problem = sheetsExternalDataProblem(requests);
   if (problem) throw new ConnectorCallError("invalid_args", problem);
   requests.forEach((request, index) => {

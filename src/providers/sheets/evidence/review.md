@@ -118,3 +118,32 @@ Refreshed Node 22.23.3 esbuild/gzip-9 measurements against main ff3f7c3b:
 standalone Sheets 353,251 → 394,761 bytes (+41,510); all six Google providers
 418,022 → 461,176 (+43,154). These supersede the earlier bundle sample for
 this updated head and remain below the product's +60 KB threshold.
+
+## Round-1 follow-up (#1022)
+
+The batchUpdate summary uses the reviewer's exact action-first sentence.
+A product-local discovery category, `spreadsheets ranges headers`, supplies
+the nouns needed for “sort range” and “freeze header row”; the compiler's
+120-character summary remains intact. It changes no method, path, schema,
+execution verdict or archived Discovery bytes. Six more natural queries and
+all ten blocked kinds' actual refusal reasons on both batch routes are
+asserted inside existing cases. No case is added.
+
+The guide and spreadsheet-id parameter explicitly accept a supplied id such
+as `sheets1`. The guide names `get_spreadsheet` and the INSERT_ROWS-pinned
+`append_values`. Migration notes disclose the shared builder's omission of
+the previous create/add/append `destructiveHint:false` (#1017); host approval
+routing is unchanged. Unrelated Drive/Gmail fixture escaping is reverted.
+
+The paid snapshot predates these fixes. The independent review identifies
+nine exact-range failures as a frozen-grader defect. Its range-neutral
+17/28 → 21/28 recount is diagnostic analysis only in the eval notes and JSON;
+the scored 12/28 → 17/28 table, trial grades and frozen grader are unchanged.
+
+The 42-query surface probe loses no previously top-two batchUpdate match;
+all five requested queries rank it first. The same 541 selected Node cases
+pass. Against main f9bf5afb, matched Node 22.23.3/esbuild 0.28.1/gzip-9
+measurements are standalone Sheets 353,251 → 394,992 B (+41,741 B) and all
+six Google providers 434,797 → 472,684 B (+37,887 B). Docs stays 370,111 B.
+The report-only Sheets baseline is the 394,984 B snapshot before refreshing
+the embedded bundle facts; caps and other providers' entries are unchanged.

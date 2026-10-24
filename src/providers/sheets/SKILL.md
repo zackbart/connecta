@@ -7,9 +7,10 @@
 
 ## Find the workbook and resolve ranges
 
-Sheets starts from a spreadsheet id. Find a workbook by name with Drive;
-the Drive file id is the spreadsheet id. Moving, sharing and trashing the
-file also belong to Drive. Resolve sheet titles, numeric sheet ids and named
+Sheets starts from a spreadsheet id. A spreadsheet id the person gives, such
+as `sheets1`, works as is; search Drive only for a name. The Drive file id is
+the spreadsheet id. Moving, sharing and trashing the file also belong to Drive.
+Read `get_spreadsheet` first to resolve sheet titles, numeric sheet ids and named
 ranges before writing. Sheet id zero is valid; a tab's position is not its id.
 
 A1 ranges use sheet titles; structural GridRanges use numeric sheet ids with
@@ -34,8 +35,8 @@ returning them. Read an oversized cell separately to recover its full text.
 
 Use RAW for external data; USER_ENTERED can turn leading equals signs into
 formulas. In cell writes, null leaves a cell unchanged and an empty string
-clears it. Clearing preserves formatting and validation. The named append
-workflow inserts rows after the detected table. A vendor append using
+clears it. Clearing preserves formatting and validation. `append_values` is
+pinned to INSERT_ROWS and inserts rows after the detected table. A vendor append using
 OVERWRITE can replace existing cells below that table.
 
 Read just before replacing another person's cells. Sheets has no revision

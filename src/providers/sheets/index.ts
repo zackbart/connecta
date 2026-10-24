@@ -2,8 +2,8 @@ import { skill } from "./skill.generated.js";
 /**
  * Google Sheets as the signed-in Workspace user: read a spreadsheet's shape
  * and its values, write, append, and clear values, create spreadsheets and
- * sheets, and reach the rest of the editor through one approval-gated
- * `batchUpdate`. Hand-written against the Sheets API v4 reference
+ * sheets, and use indexed discovery, details, reads and writes for reviewed
+ * editor operations. Pinned against the Sheets API v4 Discovery contract
  * (https://developers.google.com/workspace/sheets/api/reference/rest).
  *
  * Whose spreadsheets. Access is a service account with domain-wide delegation
@@ -19,12 +19,12 @@ import { skill } from "./skill.generated.js";
  * the Sheets API has no list method — so this connection starts from an id.
  * It never moves, shares, or trashes a file, which are Drive's too.
  *
- * The safety classes. Reads are read-only. Creating a spreadsheet, adding a
- * sheet, and appending rows lose nothing and are additive writes. Writing over
- * a range, clearing one, and the raw `batchUpdate` — whose requests can delete
- * sheets, rows, and protections — are destructive. Append is pinned to
- * `INSERT_ROWS`: Google's `OVERWRITE` writes over whatever sits below the
- * table, and a tool that could do that is not additive.
+ * The safety classes. Reads are read-only. All writes use the host's
+ * destructive route. Named create/add/append catalog entries omit the previous
+ * explicit destructiveHint:false through the shared builder (#1017); approval
+ * routing is unchanged. Named append is pinned to `INSERT_ROWS`; hatch append
+ * may choose Google's `OVERWRITE`, which can replace cells below the table.
+ * Structural batches can delete sheets, rows and protections.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `src/providers/sheets/drift.json` records all 17 indexed methods, including those the named tools
@@ -88,18 +88,17 @@ export type SheetsOptions = GoogleWorkspaceOptions;
  *    Agents never reach that function: give each pool they use an `owner`,
  *    the address they act as there (decisions/0006).
  *
- * Reads are read-only. `create_spreadsheet`, `add_sheet`, and `append_values`
- * are additive writes the host approves through call_destructive_tool or a
- * program on a writable endpoint; the value writes, `clear_values`, and the raw
- * `batch_update_spreadsheet` are destructive.
+ * Reads are read-only. Every write, including `create_spreadsheet`, `add_sheet`,
+ * `append_values` and `batch_update_spreadsheet`, uses call_destructive_tool or a
+ * program on a writable endpoint, with approval controlled by the host.
  */
 export const sheets = defineApiProvider<SheetsOptions>({
   name: "sheets",
   title: "Google Sheets",
   readme: "Google Sheets",
   bundle: {
-    baselineGzip: 394761,
-    note: "./providers/sheets step-2 merge with main f9bf5afb measures 394,761 B gzip standalone before recording these bundle facts, versus 353,251 B on main f9bf5afb (+41,510 B), Node 22.23.3, esbuild 0.28.1 and gzip level 9. The all-six Google entry is 472,479 B versus 434,797 B (+37,682 B). This includes the shared Effect kit, paid once per deployment; provider entries remain report-only, uncapped and non-additive (#703).",
+    baselineGzip: 394984,
+    note: "./providers/sheets step-2 round-1 fixes measure 394,984 B gzip standalone before recording these bundle facts, versus 353,251 B on main f9bf5afb (+41,733 B), Node 22.23.3, esbuild 0.28.1 and gzip level 9. The all-six Google entry is 472,678 B versus 434,797 B (+37,881 B). This includes the shared Effect kit, paid once per deployment; provider entries remain report-only, uncapped and non-additive (#703).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

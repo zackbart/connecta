@@ -24,8 +24,8 @@
     "evidence": {
       "discovery.document.json": "sha256:94799a4eedbb5115c6a656bb96c9d6af73167b9980b91586ce3e45cfd2c630f3",
       "discovery.json": "sha256:45f20583300cef320821d6fa3b0aee28fd10e29fea355c1cceef79ba3d0100a0",
-      "openapi.document.json": "sha256:012310769e62bfdd567978811e43d62171ecbb323062d443f813c0102b2cb445",
-      "openapi.json": "sha256:5a927701ab81b83ce9e00c5bcea149dbb714ccd28a423a532c4924f41b0f1ae0",
+      "openapi.document.json": "sha256:271687300c50028991b76cbd4f96f656ca6c3ac3b7ec4704a71e492495729eb9",
+      "openapi.json": "sha256:a89acf45d61f31fd153bf2fec4453341ac8f65f1893fe07451d41d14b0c7ec48",
       "value-safety.json": "sha256:d72e7aa298dad48f0f8e8757cf931bdebbd47d9003fe8a34254f879b415d4b51"
     }
   },

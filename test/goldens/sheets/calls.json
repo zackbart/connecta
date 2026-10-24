@@ -73,7 +73,7 @@
         "method": "POST",
         "path": "/spreadsheets/{spreadsheetId}:batchUpdate",
         "operationId": "sheets.spreadsheets.batchUpdate",
-        "summary": "Batch update sheet structure and make cells bold; format cells; Refused: preview comments or external data source kinds.",
+        "summary": "Make cells bold, format, sort, merge, insert or delete rows, freeze, rename sheet; Refused: comments, data sources.",
         "parameters": [
           {
             "name": "prettyPrint",
@@ -116,7 +116,7 @@
         "revision": "20261019",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiMTQ4YWQ4MzEyN2IyN2U2YjljYzhlNjViYzU1NmI2NzAiLCJjIjoie1wiaVwiOjMsXCJvXCI6MH0iLCJtIjoiLURUN04wbVJDZzB3cVB4XzRhaFZDbWlQMDZlNHpYRHAxTEZ5bTVfTHZzVSJ9"
+          "nextCursor": "eyJ2IjoyLCJkIjoiNGUwNjdlMjMxZDc0NzUwZjMxNjAzMDJkMWU1ODFlY2EiLCJjIjoie1wiaVwiOjMsXCJvXCI6MH0iLCJtIjoiUEM5N1ZHU3Q4ODRyNkJPVGpydlBZWngwUmdHbkNxYW9WTWJzWEpGQVFwMCJ9"
         }
       }
     }

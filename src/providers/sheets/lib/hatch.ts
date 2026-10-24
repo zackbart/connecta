@@ -6,7 +6,19 @@ import type { RestCall } from "../../_shared/rest/tools.js";
 import { openapi } from "../openapi.generated.js";
 import { SHEETS_ADMITTED_KINDS, SHEETS_REFUSED_KINDS, sheetsExternalDataProblem } from "./requests.js";
 
-export const sheetsIndex = new OperationIndex(openapi, {
+// Keep range/header nouns searchable alongside the reviewed 120-character action summary.
+// This discovery-only category changes no method, path, schema or execution verdict.
+const sheetsDiscovery = {
+  ...openapi,
+  tags: [...openapi.tags, "spreadsheets ranges headers"],
+  ops: openapi.ops.map((row) => {
+    if (row[2] !== "sheets.spreadsheets.batchUpdate") return row;
+    const [method, path, operationId, summary, , ...server] = row;
+    return [method, path, operationId, summary, openapi.tags.length, ...server] as const;
+  }),
+};
+
+export const sheetsIndex = new OperationIndex(sheetsDiscovery, {
   vendor: "sheets",
   title: "Google Sheets",
   pathMatching: "uri-template",

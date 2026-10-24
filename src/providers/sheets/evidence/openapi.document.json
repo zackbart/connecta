@@ -14985,7 +14985,7 @@
             "description": "Success"
           }
         },
-        "summary": "Batch update sheet structure and make cells bold; format cells; Refused: preview comments or external data source kinds.",
+        "summary": "Make cells bold, format, sort, merge, insert or delete rows, freeze, rename sheet; Refused: comments, data sources.",
         "tags": [
           "spreadsheets"
         ],

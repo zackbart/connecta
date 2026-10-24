@@ -672,9 +672,11 @@ Repeated ranges remain arrays in vendor `query.ranges`. Vendor masks under
 
 The read hatch admits seven explicit methods, including three read-only POSTs;
 the destructive write hatch admits ten methods with the same value limits and
-batch-kind guards. Every hatch write uses the host's destructive route; retained
-named create/add/append tools keep their additive annotations. Generic append
-can explicitly select `OVERWRITE`; named append stays pinned to `INSERT_ROWS`.
+batch-kind guards. Every hatch write uses the host's destructive route.
+Create/add/append catalog entries omit the previous explicit
+`destructiveHint:false` through the shared builder (#1017); approval routing is
+unchanged. Generic append can explicitly select `OVERWRITE`; named append stays
+pinned to `INSERT_ROWS`.
 No scope expansion, revision guarantee, idempotency key or write replay is added.
 Standard kit errors now distinguish incomplete reads from malformed complete
 responses and use its shared status fallbacks. An inaccessible or unknown id

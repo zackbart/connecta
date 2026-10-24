@@ -17,8 +17,9 @@ BEFORE product source is clean main
 `src/` tree equals main; this snapshot is preserved in the branch's merge history.
 AFTER is clean `535ce06584b83ef8d1036c1301fdd78e92feec2b`, source tree
 `407307124b301b7aaf810b4f8cc465d7b0e9cbd2`. The evaluation-artifact and provenance commits preserve that product source.
-The later main merge described below brings Docs changes and refreshes Sheets
-bundle facts; it does not change Sheets execution behavior. Both arms include H1 (#1008), the
+The later main merge brings Docs changes and refreshes Sheets bundle facts.
+The round-1 fixes below subsequently change Sheets discovery, guidance and refused-kind
+messages; the paid trials measure the frozen source above, before those fixes. Both arms include H1 (#1008), the
 route-neutral graders/checker fixes (#1011) and delegated-caller binding (#1013).
 
 The reference-only change replaces S4's `get_spreadsheet.raw` call with a GET
@@ -79,9 +80,12 @@ Drive for `sheets1` or the tab name instead of invoking Sheets with the supplied
 spreadsheet id. Neither reaches append or reconciliation. One explicitly reports
 no append, and the physical ledger confirms no Sheets write. This is a real task
 completion loss and remains in the score. Similar supplied-id deferrals occur in
-BEFORE S1/S4 and AFTER S1/S4/S5/S7; the observed behavior does not identify a
-provider execution defect or justify a paid-trace-specific prompt/guide change.
-No extra trial or source refresh was used to erase the regression.
+BEFORE S1/S4 and AFTER S1/S4/S5/S7. The independent round-1 review counts the
+same **7/14 supplied-id deferrals in each arm**; only the affected tasks shifted.
+Neither arm's guide explicitly said a supplied id works as is. The review identifies
+this as weak guidance shared by both arms, without attributing an AFTER miss to
+a surface execution defect. The review-requested guide correction is described
+below; no paid trial was rerun and the S6 regression remains in the scored table.
 
 Luna gains a join, a formatting workflow and a metadata read; it successfully uses
 both indexed read and write hatches. Sonnet gains one paging answer and both S7
@@ -90,7 +94,7 @@ in the final JSON's spreadsheet `id`. BEFORE Luna's failed join returns a
 record-to-name object where the frozen expected `names` value is an array. These
 answer-shape failures remain failures.
 
-## Frozen append-path grader limitation
+## Frozen append-path grader defect (review analysis only)
 
 Nine trials fail only `only-requested-writes`: five BEFORE and four AFTER. The
 frozen guard accepts exactly
@@ -101,10 +105,16 @@ one physical append, correct final state, and recovery read-back where required.
 These are all four Sonnet S5/S6 rows in each arm, plus BEFORE Luna S5 repeat 1.
 The JSON records the canonical and observed paths beside their unchanged scores.
 
-No grader was changed or loosened and no adjusted success score is published.
-This limitation reduces what the primary append score can say about otherwise
-successful fake-world writes; it does not explain Luna's S6 regression, whose
-AFTER trials never dispatched the requested append.
+The independent Opus round-1 review confirms these nine failures are a defect in
+the frozen grader: the prompts specify the sheet, not an exact append range, and
+values.append uses that range to find the table. The saved calls target the correct
+sheet and satisfy every other required check.
+
+The reviewer's **range-neutral diagnostic recount is 17/28 BEFORE → 21/28 AFTER**
+(Luna 6/14 → 7/14; Sonnet 11/14 → 14/14). This is analysis only: no grader, saved
+grade, trial status or scored table is changed. The primary scores remain
+**12/28 → 17/28**. The grader defect does not explain Luna's S6 regression,
+whose AFTER trials never dispatched the requested append.
 
 ## Calls, discovery, tokens and latency
 

@@ -177,6 +177,12 @@ describe("reading values (H9, H10)", () => {
       ["write cell values", "/spreadsheets/{spreadsheetId}/values:batchUpdate"],
       ["format cells", "/spreadsheets/{spreadsheetId}:batchUpdate"],
       ["make cells bold", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["sort range", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["sort rows", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["merge cells", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["delete rows", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["rename sheet", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["freeze header row", "/spreadsheets/{spreadsheetId}:batchUpdate"],
       ["append literal rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
       ["create spreadsheet", "/spreadsheets"],
       ["find developer metadata", "/spreadsheets/{spreadsheetId}/developerMetadata:search"],
@@ -446,7 +452,10 @@ describe("the raw batchUpdate hatch", () => {
           { method: "POST", path: `/spreadsheets/${ID}:batchUpdate`, body: { requests: [{ [kind]: {} }] } },
         ],
       ] as const)
-        await expect(call(connector, tool, args)).rejects.toMatchObject({ code: "invalid_args" });
+        await expect(call(connector, tool, args)).rejects.toMatchObject({
+          code: "invalid_args",
+          message: expect.stringContaining(SHEETS_REFUSED_KINDS[kind]!),
+        });
     }
     for (const body of [
       { requests: [] },

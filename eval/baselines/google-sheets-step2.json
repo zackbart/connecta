@@ -10396,7 +10396,38 @@
         "finding": "Both AFTER attempts searched Drive instead of invoking Sheets with the supplied spreadsheet id. Neither reached the append/reconciliation workflow. The loss is retained."
       }
     ],
-    "graderLimitation": "The frozen only-requested-writes check accepts only the exact Alice costs A:D append path. Nine trials fail only that check despite the requested row, RAW/INSERT_ROWS, one physical append, correct state and required read-back. Original grades are retained; no grader fix or rescoring."
+    "graderLimitation": "The independent Opus round-1 review confirms a frozen-grader defect: only-requested-writes accepts only the exact Alice costs A:D append path although the prompt specifies only the sheet. Nine same-sheet A1:D1/A1:D7 trials satisfy RAW/INSERT_ROWS, one physical append, correct state and required read-back. Original grades and the scored table remain unchanged.",
+    "reviewDiagnostic": {
+      "source": "reviews/1022-r1/RESULTS.txt",
+      "analysisOnly": true,
+      "appliedToScores": false,
+      "affectedTrials": 9,
+      "rangeNeutralRegrade": {
+        "before": {
+          "gpt-6-luna": 6,
+          "claude-sonnet-5-5": 11,
+          "total": 17,
+          "trials": 28
+        },
+        "after": {
+          "gpt-6-luna": 7,
+          "claude-sonnet-5-5": 14,
+          "total": 21,
+          "trials": 28
+        }
+      },
+      "originalScoredTotals": {
+        "before": 12,
+        "after": 17,
+        "trialsPerArm": 28
+      },
+      "suppliedIdDeferrals": {
+        "model": "gpt-6-luna",
+        "before": "7/14",
+        "after": "7/14"
+      },
+      "finding": "No AFTER miss is surface-caused. Both guides omitted explicit supplied-id guidance. Luna S6 remains an ordinary scored regression; the range defect does not explain it."
+    }
   },
   "sources": {
     "main": "ff3f7c3b9cbf0e8958599834850876c24ab64d7e",
@@ -10413,7 +10444,7 @@
     },
     "sourceChangedAfterPaidSnapshot": true,
     "sharedEnvelopeControlFixApplied": false,
-    "sheetsExecutionChangedAfterPaidSnapshot": false
+    "sheetsExecutionChangedAfterPaidSnapshot": true
   },
   "bundle": {
     "node": "v22.23.3",
