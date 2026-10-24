@@ -5,82 +5,40 @@
 }
 ---
 
-<!-- fragment: guide_0 -->
-# Google Docs usage
+## Find the document first
 
-Reads and edits Google Docs as the signed-in person through Workspace delegation; it cannot search or list documents.
+Document ids join Docs to Drive: take the part after `/d/` in a document URL,
+or find the file by name through a Google Drive connection. Docs has no
+account-data search or listing; its operation search discovers API methods.
+A missing document may be absent or inaccessible to the mapped Workspace user.
 
-Connection purpose: <!-- endfragment -->
+## Read before editing
 
-<!-- fragment: guide_1 -->
+The rendering follows document tabs, including nested tabs. Headers, footers,
+floating images and comments are not rendered; `notRendered` names omitted
+kinds. Suggested insertions and deletions can appear together without marks.
+An accepted or rejected suggestions preview cannot supply edit indexes.
 
+Use the inline view's UTF-16 start/end indexes and revision to plan edits.
+Indexes shift after each edit, including earlier requests in the same atomic
+batch. Apply independent deletions from the end backwards. A revision is a
+precondition, never an idempotency key. Re-read and recompute after a revision
+conflict.
 
-## Whose documents
+Styles, named ranges, headers and footers live in the complete document
+resource. Read that resource when a rendering cannot answer the task. A Docs
+create payload sets a title only; initial text is a separate edit. Appending
+joins the final paragraph, so begin with a newline when a new paragraph is
+intended. A broad text replacement can rewrite every tab.
 
-Every call acts as the Workspace account deployment config maps the caller
-to, and reaches exactly the documents Drive shares with that person; an
-agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names an
-account. A call with none mapped fails `auth_required`; only an operator can change
-that.
+## Recover a partial create
 
-## Finding a document
+If creation succeeded but initial text failed, keep the created document id.
+Append the missing text directly only when the failure proves Google refused
+it. Otherwise read that document and add only what is missing. Creating again
+would make another document. If the create reply lost its id, search Drive for
+the title before attempting a fresh create.
 
-There is no search or list tool. Take the id from a
-docs.google.com URL (the part after `/d/`), from the person, or from a
-Google Drive connection's file search. A failure on an id may mean it does
-not exist or is not shared with this person; Google does not say which.
-
-## Reading
-
-- `get_document` renders every tab as markdown-ish text: headings, lists,
-  links, tables as pipe rows, footnotes after the body, images and other
-  embeds as bracketed markers. Headers, footers, floating images, and
-  comments are not rendered; a tab's `notRendered` names any it holds, and
-  `suggestion_marks` there means the text mixes unmarked suggested
-  insertions and deletions in (read with `suggestions` to preview). Text past `maxChars` (shared across tabs) ends with a marker;
-  pass `tabId` to read one tab.
-- Before an index-based edit, read with `withIndexes: true` and target an
-  element's `startIndex`/`endIndex`. A long document's rows page with
-  `page.nextCursor`; send `maxChars: 0` on later pages, and start over if
-  `revisionId` changed between them. Indexes are UTF-16 code units and
-  shift after every edit. Keep `revisionId` and pass it as
-  `requiredRevisionId`, so an edit against a document someone else has
-  changed fails `conflict` with nothing applied; re-read and recompute. Indexes
-  from a suggestions preview (`accepted`/`rejected`) are not valid for
-  edits.
-- `raw: true` returns Google's document resource for the tabs instead of
-  the rendering — styles, headers, footers, named ranges, list and segment ids
-  that `batch_update_document` requests may need. It is large: pass
-  `tabId`, and call it directly rather than inside `execute_code`,
-  which carries at most 256 KiB per result.
-- The same holds for a `maxChars` above the default: a long rendering
-  can pass here and still be refused inside `execute_code`, even when the
-  program would only measure it. Read it with a direct `call_tool`, paged
-  with `connecta.result`, or read one tab at a time.
-
-## Editing
-
-- `create_document` makes a new document in My Drive's root. Never create
-  again after a failure that may have left one behind; the message says
-  which. When the document exists but its starting text failed, the message
-  names its id: append the text with `append_text` straight away only when
-  Google refused it; otherwise read the document first and append only what
-  is missing.
-- An edit sent with no answer back, answered with a server error, or
-  redirected says its outcome is unknown: re-read the document with
-  `get_document` to check whether it took effect before any fresh call.
-  `requiredRevisionId` is a precondition, not an idempotency key, so it
-  makes no repeat safe. One Google answered 2xx whose reply was unreadable
-  says it was applied: do not repeat it.
-- `append_text` joins the last paragraph; begin with `\n` for a new one.
-- `replace_all_text` changes every match at once; read first and make
-  `find` specific.
-- `batch_update_document` takes raw Docs API requests (`deleteContentRange`,
-  `updateTextStyle`, `insertTable`, `createParagraphBullets`, …) for what
-  the named tools cannot do. It is always destructive, and requires the
-  `requiredRevisionId` from the read it was planned against: up to 100
-  requests, each exactly one generally available kind (the Developer Preview
-  comment and suggestion kinds are refused). Several requests in one
-  call apply atomically, and each sees the index shifts of those before it;
-  order deletions from the end of the document backwards.
-<!-- endfragment -->
+Preview comment and suggestion mutations are unavailable. Comments belong to
+Drive. Copying a template or choosing a destination folder also belongs to
+Drive; a Docs create starts in My Drive's root.

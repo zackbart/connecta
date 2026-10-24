@@ -1,0 +1,26 @@
+{
+  "url": "https://docs.googleapis.com/$discovery/rest?version=v1",
+  "revision": "20261019",
+  "digest": "sha256:9f7c1120a3156c723bc1fc0b65332d00a22ae30dc516af131dbbb6b82b42e780",
+  "vendored": true,
+  "discovery": {
+    "pin": "discovery.json",
+    "format": "google-discovery-v1",
+    "summaries": {
+      "docs.documents.get": "Get read document tabs text named ranges styles headers footers and revision",
+      "docs.documents.create": "Create add blank document with title",
+      "docs.documents.batchUpdate": "Batch update document: append paragraph insert text at index replace all text format document text styles named ranges delete text range"
+    }
+  },
+  "options": {
+    "depth": 3,
+    "descriptions": 160,
+    "maxEnum": 50,
+    "formats": true,
+    "numericBounds": true,
+    "requestGraph": true,
+    "deprecations": true,
+    "allSuccessResponses": true,
+    "valueSafety": true
+  }
+}

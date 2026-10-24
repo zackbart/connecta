@@ -83,6 +83,31 @@ export default defineGoldenSpec({
     body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
+    { tool: "docs_api_search", args: { query: "format document text" } },
+    { tool: "docs_api_details", args: { method: "GET", path: "/documents/doc-1" } },
+    {
+      tool: "docs_api_read",
+      args: {
+        path: "/documents/doc-1",
+        query: { includeTabsContent: true },
+        fields: ["documentId", "revisionId", "tabs"],
+      },
+      replies: [{ body: DOCUMENT }],
+    },
+    {
+      tool: "docs_api_write",
+      args: {
+        method: "POST",
+        path: "/documents/doc-1:batchUpdate",
+        body: {
+          requests: [
+            { updateTextStyle: { range: { startIndex: 1, endIndex: 4 }, textStyle: { bold: true }, fields: "bold" } },
+          ],
+          writeControl: { requiredRevisionId: "r1" },
+        },
+      },
+      replies: [{ body: { documentId: "doc-1", replies: [{}], writeControl: { requiredRevisionId: "r2" } } }],
+    },
     { tool: "get_document", args: { documentId: "doc-1" }, replies: [{ body: DOCUMENT }] },
     {
       label: "get_document withIndexes",

@@ -101,8 +101,13 @@ function context(): ConnectorContext {
   return { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
 }
 
+let sharedContext = context();
+beforeEach(() => {
+  sharedContext = context();
+});
+
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
-  return connector.callTool(name, args, context()) as Promise<any>;
+  return connector.callTool(name, args, sharedContext) as Promise<any>;
 }
 
 // --- A document, as documents.get returns it with includeTabsContent ----------------
@@ -235,7 +240,7 @@ describe("reading a document (H9)", () => {
     route = () => ({ body: DOCUMENT });
     const result = await call(connection(), "get_document", { documentId: "doc-1", tabId: "t.0", withIndexes: true });
     expect(result.tabs).toHaveLength(1);
-    expect(result.page).toEqual({ hasMore: false, nextCursor: null });
+    expect(result.page).toEqual({ hasMore: false });
     const elements = result.tabs[0].elements;
     expect(elements.slice(0, 3)).toEqual([
       { type: "paragraph", startIndex: 1, endIndex: 16, style: "TITLE", text: "Elders meeting" },
@@ -265,6 +270,7 @@ describe("reading a document (H9)", () => {
     const seen: string[] = [];
     let cursor: string | undefined;
     let pages = 0;
+    let firstCursor: string | undefined;
     do {
       const result: any = await call(connection(), "get_document", {
         documentId: "big",
@@ -273,9 +279,10 @@ describe("reading a document (H9)", () => {
         ...(cursor ? { cursor } : {}),
       });
       pages += 1;
+      firstCursor ??= result.page.nextCursor;
       expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(96 * 1024);
       for (const each of result.tabs) for (const row of each.elements) seen.push(row.text);
-      expect(result.page.hasMore).toBe(result.page.nextCursor !== null);
+      expect(result.page.hasMore).toBe(result.page.nextCursor !== undefined);
       cursor = result.page.nextCursor ?? undefined;
     } while (cursor && pages < 50);
     expect(pages).toBeGreaterThan(1);
@@ -283,6 +290,21 @@ describe("reading a document (H9)", () => {
     expect(new Set(seen).size).toBe(3_000);
     expect(seen[0]).toBe("t.0 row 0");
     expect(seen[2_999]).toBe("t.1 row 1499");
+    expect(firstCursor).toBeTruthy();
+    const connector = connection();
+    const before = calls.length;
+    for (const args of [
+      { documentId: "other", withIndexes: true, maxChars: 0, cursor: firstCursor },
+      { documentId: "big", withIndexes: true, maxChars: 1, cursor: firstCursor },
+      { documentId: "big", withIndexes: true, maxChars: 0, cursor: "e:500" },
+      { documentId: "big", withIndexes: true, maxChars: 0, cursor: firstCursor!.slice(0, -5) + "aaaaa" },
+    ])
+      await expect(call(connector, "get_document", args)).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(before);
+    route = () => ({ body: { documentId: "big", revisionId: "new", tabs: [tab("t.0", 1500)] } });
+    await expect(
+      call(connector, "get_document", { documentId: "big", withIndexes: true, maxChars: 0, cursor: firstCursor }),
+    ).rejects.toMatchObject({ code: "conflict" });
   });
 });
 
@@ -312,7 +334,7 @@ describe("editing a document", () => {
     });
     const projected = await send();
     expect(bytes(projected)).toBeLessThanOrEqual(BUDGET);
-    expect(projected).toMatchObject({ documentId: "doc-1", revisionId: "r2", replyCount: 100, repliesTruncated: true });
+    expect(projected).toMatchObject({ documentId: "doc-1", revisionId: "r2", truncated: ["replies[]"] });
     expect(projected.replies).toHaveLength(100);
     expect(projected.replies[42].addDocumentTab.tabProperties).toMatchObject({ tabId: "t.42", index: 42 });
     expect(projected.replies[42].addDocumentTab.echo).toBeUndefined();
@@ -332,7 +354,7 @@ describe("editing a document", () => {
     });
     const cut = await send();
     expect(bytes(cut)).toBeLessThanOrEqual(BUDGET);
-    expect(cut.replyCount).toBe(100);
+    expect(cut.truncated).toEqual(["replies[]"]);
     expect(cut.replies.length).toBeGreaterThan(0);
     expect(cut.replies.length).toBeLessThan(100);
     expect(cut.replies[0].createNamedRange.id0.startsWith("0-")).toBe(true);
@@ -345,7 +367,6 @@ describe("editing a document", () => {
     expect(small).toEqual({
       documentId: "doc-1",
       replies: [{}, { createNamedRange: { namedRangeId: "kix.1" } }],
-      replyCount: 2,
     });
   });
 });
@@ -415,28 +436,107 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   });
 });
 
-describe("raw reads (H9)", () => {
-  it("measures the raw ceiling on the whole result, to the byte", async () => {
-    const LIMIT = 4 * 1024 * 1024;
-    const documentWith = (padding: number) => ({
-      documentId: "edge",
-      title: "Edge",
-      revisionId: "r",
-      tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [{ note: "x".repeat(padding) }] } } }],
+describe("indexed Docs surface", () => {
+  it("INV-1 INV-2 INV-9: admits full JSON reads and guarded batches without widening preview or credential access", async () => {
+    installOwnedTransport();
+    const connector = connection();
+    route = () => ({
+      body: {
+        ...DOCUMENT,
+        headers: { h1: { content: [] } },
+        namedRanges: { agenda: { namedRanges: [] } },
+        inlineObjects: {
+          image: {
+            inlineObjectProperties: {
+              embeddedObject: {
+                imageProperties: {
+                  contentUri: "https://images.example/private",
+                  sourceUri: "https://example.com/image",
+                },
+              },
+            },
+          },
+        },
+      },
     });
-    route = () => ({ body: documentWith(0) });
-    const base = new TextEncoder().encode(
-      JSON.stringify(await call(connection(), "get_document", { documentId: "edge", raw: true })),
-    ).length;
-
-    route = () => ({ body: documentWith(LIMIT - base) });
-    const exact = await call(connection(), "get_document", { documentId: "edge", raw: true });
-    expect(new TextEncoder().encode(JSON.stringify(exact)).length).toBe(LIMIT);
-
-    route = () => ({ body: documentWith(LIMIT - base + 1) });
-    const over = await call(connection(), "get_document", { documentId: "edge", raw: true }).catch((error) => error);
-    expect(over).toMatchObject({ code: "invalid_args" });
-    expect(over.message).toContain(`${LIMIT + 1} bytes`);
+    const reply = await call(connector, "docs_api_read", {
+      path: "/documents/doc-1",
+      query: { includeTabsContent: true },
+      fields: ["documentId", "headers", "namedRanges", "inlineObjects"],
+    });
+    expect(reply).toMatchObject({ status: 200, data: { documentId: "doc-1", headers: { h1: { content: [] } } } });
+    expect(reply.data.inlineObjects.image.inlineObjectProperties.embeddedObject.imageProperties).toEqual({
+      contentUri: "[redacted]",
+      sourceUri: "https://example.com/image",
+    });
+    const { DOCS_INDEX, DOCS_VERDICTS } = await import("./lib/discovery.js");
+    expect(DOCS_INDEX.pathMatching).toBe("uri-template");
+    expect(DOCS_INDEX.ops.map((op) => `${op.method} ${op.path}`).sort()).toEqual(Object.keys(DOCS_VERDICTS).sort());
+    for (const query of [
+      "append paragraph",
+      "insert text at index",
+      "replace all text",
+      "format document text",
+      "delete text range",
+    ]) {
+      const found = await call(connector, "docs_api_search", { query });
+      expect(found.operations.slice(0, 2).some((op: { path: string }) => op.path.endsWith(":batchUpdate"))).toBe(true);
+    }
+    for (const query of ["document named ranges", "document styles", "read document tabs"]) {
+      const found = await call(connector, "docs_api_search", { query });
+      expect(found.operations.slice(0, 2).some((op: { method: string }) => op.method === "GET")).toBe(true);
+    }
+    expect(calls.at(-1)?.url.pathname).toBe("/v1/documents/doc-1");
+    expect(calls.at(-1)?.url.searchParams.get("includeTabsContent")).toBe("true");
+    const sent = calls.length;
+    const mints = tokenCalls;
+    for (const args of [
+      { path: "/documents/doc-1", fields: ["invented"] },
+      { path: "/documents/doc-1", query: { access_token: "caller-token" } },
+      { path: "/documents/doc-1", query: { alt: "media" } },
+      { path: "/documents/doc-1", headers: { Authorization: "Bearer caller-token" } },
+      { path: "/v1/documents/doc-1" },
+    ])
+      await expect(call(connection(), "docs_api_read", args)).rejects.toMatchObject({ code: "invalid_args" });
+    for (const body of [
+      { requests: [{ insertText: { text: "x" } }] },
+      { requests: [], writeControl: { requiredRevisionId: "r1" } },
+      { requests: [{ createComment: {} }], writeControl: { requiredRevisionId: "r1" } },
+      { requests: [{ insertText: {}, deleteContentRange: {} }], writeControl: { requiredRevisionId: "r1" } },
+      { requests: Array.from({ length: 101 }, () => ({ insertText: {} })), writeControl: { requiredRevisionId: "r1" } },
+      { requests: [{ insertText: {} }], writeControl: { requiredRevisionId: " " } },
+    ]) {
+      await expect(
+        call(connection(), "docs_api_write", { method: "POST", path: "/documents/doc-1:batchUpdate", body }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(
+        call(connection(), "batch_update_document", {
+          documentId: "doc-1",
+          requests: body.requests,
+          requiredRevisionId: body.writeControl?.requiredRevisionId,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toHaveLength(sent);
+    expect(tokenCalls).toBe(mints);
+    route = () => ({ body: { documentId: "doc-1", replies: [{}], writeControl: { requiredRevisionId: "r2" } } });
+    const body = {
+      requests: [
+        { updateTextStyle: { range: { startIndex: 1, endIndex: 4 }, textStyle: { bold: true }, fields: "bold" } },
+      ],
+      writeControl: { requiredRevisionId: "r1" },
+    };
+    expect(
+      await call(connector, "docs_api_write", { method: "POST", path: "/documents/doc-1:batchUpdate", body }),
+    ).toMatchObject({ status: 200, data: { documentId: "doc-1" } });
+    expect(calls).toHaveLength(sent + 1);
+    expect(calls.at(-1)?.body).toEqual(body);
+    route = () => ({ status: 400, body: { error: { status: "FAILED_PRECONDITION" } } });
+    await expect(
+      call(connector, "docs_api_write", { method: "POST", path: "/documents/doc-1:batchUpdate", body }),
+    ).rejects.toMatchObject({ code: "conflict", retryable: false });
+    expect(calls).toHaveLength(sent + 2);
+    expect(connection({ readOnly: true }).readOnly).toBe(true);
   });
 });
 

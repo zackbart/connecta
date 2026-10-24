@@ -4,8 +4,8 @@
   "title": "Google Docs",
   "description": "Google Docs as the signed-in Workspace user: read, create, and edit documents by id — Staff meeting notes",
   "guide": {
-    "summary": "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
-    "content": "# Google Docs usage\n\nReads and edits Google Docs as the signed-in person through Workspace delegation; it cannot search or list documents.\n\nConnection purpose: Staff meeting notes\n\n## Whose documents\n\nEvery call acts as the Workspace account deployment config maps the caller\nto, and reaches exactly the documents Drive shares with that person; an\nagent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names an\naccount. A call with none mapped fails `auth_required`; only an operator can change\nthat.\n\n## Finding a document\n\nThere is no search or list tool. Take the id from a\ndocs.google.com URL (the part after `/d/`), from the person, or from a\nGoogle Drive connection's file search. A failure on an id may mean it does\nnot exist or is not shared with this person; Google does not say which.\n\n## Reading\n\n- `get_document` renders every tab as markdown-ish text: headings, lists,\n  links, tables as pipe rows, footnotes after the body, images and other\n  embeds as bracketed markers. Headers, footers, floating images, and\n  comments are not rendered; a tab's `notRendered` names any it holds, and\n  `suggestion_marks` there means the text mixes unmarked suggested\n  insertions and deletions in (read with `suggestions` to preview). Text past `maxChars` (shared across tabs) ends with a marker;\n  pass `tabId` to read one tab.\n- Before an index-based edit, read with `withIndexes: true` and target an\n  element's `startIndex`/`endIndex`. A long document's rows page with\n  `page.nextCursor`; send `maxChars: 0` on later pages, and start over if\n  `revisionId` changed between them. Indexes are UTF-16 code units and\n  shift after every edit. Keep `revisionId` and pass it as\n  `requiredRevisionId`, so an edit against a document someone else has\n  changed fails `conflict` with nothing applied; re-read and recompute. Indexes\n  from a suggestions preview (`accepted`/`rejected`) are not valid for\n  edits.\n- `raw: true` returns Google's document resource for the tabs instead of\n  the rendering — styles, headers, footers, named ranges, list and segment ids\n  that `batch_update_document` requests may need. It is large: pass\n  `tabId`, and call it directly rather than inside `execute_code`,\n  which carries at most 256 KiB per result.\n- The same holds for a `maxChars` above the default: a long rendering\n  can pass here and still be refused inside `execute_code`, even when the\n  program would only measure it. Read it with a direct `call_tool`, paged\n  with `connecta.result`, or read one tab at a time.\n\n## Editing\n\n- `create_document` makes a new document in My Drive's root. Never create\n  again after a failure that may have left one behind; the message says\n  which. When the document exists but its starting text failed, the message\n  names its id: append the text with `append_text` straight away only when\n  Google refused it; otherwise read the document first and append only what\n  is missing.\n- An edit sent with no answer back, answered with a server error, or\n  redirected says its outcome is unknown: re-read the document with\n  `get_document` to check whether it took effect before any fresh call.\n  `requiredRevisionId` is a precondition, not an idempotency key, so it\n  makes no repeat safe. One Google answered 2xx whose reply was unreadable\n  says it was applied: do not repeat it.\n- `append_text` joins the last paragraph; begin with `\\n` for a new one.\n- `replace_all_text` changes every match at once; read first and make\n  `find` specific.\n- `batch_update_document` takes raw Docs API requests (`deleteContentRange`,\n  `updateTextStyle`, `insertTable`, `createParagraphBullets`, …) for what\n  the named tools cannot do. It is always destructive, and requires the\n  `requiredRevisionId` from the read it was planned against: up to 100\n  requests, each exactly one generally available kind (the Developer Preview\n  comment and suggestion kinds are refused). Several requests in one\n  call apply atomically, and each sees the index shifts of those before it;\n  order deletions from the end of the document backwards.\n"
+    "summary": "Docs by id: tabs, UTF-16 edit indexes, revisions and partial-create recovery.",
+    "content": "# Google Docs usage\n\nPurpose: Staff meeting notes\n\nWorkspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; document access follows that user's Drive sharing.\n\n## Find the document first\n\nDocument ids join Docs to Drive: take the part after `/d/` in a document URL,\nor find the file by name through a Google Drive connection. Docs has no\naccount-data search or listing; its operation search discovers API methods.\nA missing document may be absent or inaccessible to the mapped Workspace user.\n\n## Read before editing\n\nThe rendering follows document tabs, including nested tabs. Headers, footers,\nfloating images and comments are not rendered; `notRendered` names omitted\nkinds. Suggested insertions and deletions can appear together without marks.\nAn accepted or rejected suggestions preview cannot supply edit indexes.\n\nUse the inline view's UTF-16 start/end indexes and revision to plan edits.\nIndexes shift after each edit, including earlier requests in the same atomic\nbatch. Apply independent deletions from the end backwards. A revision is a\nprecondition, never an idempotency key. Re-read and recompute after a revision\nconflict.\n\nStyles, named ranges, headers and footers live in the complete document\nresource. Read that resource when a rendering cannot answer the task. A Docs\ncreate payload sets a title only; initial text is a separate edit. Appending\njoins the final paragraph, so begin with a newline when a new paragraph is\nintended. A broad text replacement can rewrite every tab.\n\n## Recover a partial create\n\nIf creation succeeded but initial text failed, keep the created document id.\nAppend the missing text directly only when the failure proves Google refused\nit. Otherwise read that document and add only what is missing. Creating again\nwould make another document. If the create reply lost its id, search Drive for\nthe title before attempting a fresh create.\n\nPreview comment and suggestion mutations are unavailable. Comments belong to\nDrive. Copying a template or choosing a destination folder also belongs to\nDrive; a Docs create starts in My Drive's root.\n\n## Conventions\n\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `docs_api_search` finds this API's operations and reads no account data, `docs_api_details` shows one operation's contract, and `docs_api_read` calls a reviewed read. `docs_api_write` calls a reviewed write; the host may ask the user to confirm it. An operation without a reviewed verdict is refused.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. An unknown id, or one these credentials cannot reach, fails as `connector_call_failed`; this API does not tell the two apart. `conflict` means: A revision-guarded batch update returned ABORTED or FAILED_PRECONDITION with HTTP 400 or 409; The document content or revision changed during indexed content paging.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
     {
@@ -40,14 +40,8 @@
           },
           "cursor": {
             "type": "string",
-            "minLength": 3,
-            "maxLength": 12,
-            "pattern": "^e:[0-9]{1,9}$",
-            "description": "Opaque page.nextCursor from a withIndexes read; pass it back unchanged with the same arguments, and maxChars: 0 to skip the text again."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Google's document resource (every style, header, footer, named range, list and segment id) for the tabs instead of the rendering; not with maxChars or withIndexes. Connecta caps it at 4194304 bytes."
+            "minLength": 1,
+            "description": "Opaque page.nextCursor from the previous indexed read; keep the same arguments and document revision."
           },
           "suggestions": {
             "type": "string",
@@ -57,6 +51,16 @@
               "rejected"
             ],
             "description": "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits)."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"documentId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -101,9 +105,6 @@
                 },
                 "text": {
                   "type": "string"
-                },
-                "textTruncated": {
-                  "type": "boolean"
                 },
                 "notRendered": {
                   "type": "array",
@@ -152,11 +153,7 @@
                     }
                   }
                 }
-              },
-              "required": [
-                "text",
-                "textTruncated"
-              ]
+              }
             }
           },
           "page": {
@@ -166,16 +163,9 @@
                 "type": "boolean"
               },
               "nextCursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
-            },
-            "required": [
-              "hasMore",
-              "nextCursor"
-            ]
+            }
           },
           "dropped": {
             "type": "array",
@@ -183,98 +173,13 @@
               "type": "string"
             }
           },
-          "raw": {
-            "type": "object",
-            "properties": {
-              "documentId": {
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              },
-              "revisionId": {
-                "type": "string"
-              },
-              "suggestionsViewMode": {
-                "type": "string"
-              },
-              "commentsViewMode": {
-                "type": "string"
-              },
-              "body": {
-                "type": "object"
-              },
-              "headers": {
-                "type": "object"
-              },
-              "footers": {
-                "type": "object"
-              },
-              "footnotes": {
-                "type": "object"
-              },
-              "documentStyle": {
-                "type": "object"
-              },
-              "namedStyles": {
-                "type": "object"
-              },
-              "lists": {
-                "type": "object"
-              },
-              "namedRanges": {
-                "type": "object"
-              },
-              "inlineObjects": {
-                "type": "object"
-              },
-              "positionedObjects": {
-                "type": "object"
-              },
-              "suggestedDocumentStyleChanges": {
-                "type": "object"
-              },
-              "suggestedNamedStylesChanges": {
-                "type": "object"
-              },
-              "comments": {
-                "type": "array",
-                "items": {
-                  "type": "object"
-                }
-              },
-              "suggestions": {
-                "type": "array",
-                "items": {
-                  "type": "object"
-                }
-              },
-              "tabs": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "tabProperties": {
-                      "type": "object"
-                    },
-                    "documentTab": {
-                      "type": "object"
-                    },
-                    "childTabs": {
-                      "type": "array",
-                      "items": {
-                        "type": "object"
-                      }
-                    }
-                  }
-                }
-              }
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
-        },
-        "required": [
-          "documentId"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -336,8 +241,7 @@
         ]
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
@@ -404,8 +308,7 @@
         ]
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
@@ -479,8 +382,7 @@
         ]
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
@@ -519,14 +421,14 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 100,
+            "description": "Only these tabs; omit for every tab.",
             "items": {
               "type": "string",
               "minLength": 1,
               "maxLength": 128,
               "pattern": "^[A-Za-z0-9._-]+$",
               "description": "Tab id from get_document."
-            },
-            "description": "Only these tabs; omit for every tab."
+            }
           },
           "requiredRevisionId": {
             "type": "string",
@@ -592,8 +494,12 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 100,
+            "description": "Requests in order, 1 to 100 (connecta's cap). Later requests see earlier ones' index shifts.",
             "items": {
               "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              },
               "minProperties": 1,
               "maxProperties": 1,
               "propertyNames": {
@@ -644,10 +550,8 @@
                   "updateTableRowStyle",
                   "updateTextStyle"
                 ]
-              },
-              "description": "One Docs API Request, exactly one kind (insertText, deleteContentRange, updateTextStyle, …), e.g. {\"deleteContentRange\":{\"range\":{\"startIndex\":5,\"endIndex\":9}}}. Indexes are UTF-16, from get_document withIndexes."
-            },
-            "description": "Requests in order, 1 to 100 (connecta's cap). Later requests see earlier ones' index shifts."
+              }
+            }
           },
           "requiredRevisionId": {
             "type": "string",
@@ -685,20 +589,402 @@
               "type": "string"
             }
           },
-          "replyCount": {
-            "type": "integer"
-          },
-          "repliesTruncated": {
-            "type": "boolean"
-          },
           "notice": {
             "type": "string"
+          },
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
           "documentId",
-          "replies",
-          "replyCount"
+          "replies"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "docs_api_search",
+      "description": "Find Google Docs API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "description": "Only operations with this method."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; docs_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "docs_api_details",
+      "description": "Read one Google Docs API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "docs_api_read",
+      "description": "Call a reviewed Google Docs API read. The operation index checks arguments before anything is sent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /documents/doc_123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "docs_api_write",
+      "description": "Call a reviewed Google Docs API write; method and path are stated for approval, and the operation index checks arguments first. Batch updates require writeControl.requiredRevisionId, 1–100 requests and exactly one supported GA kind each; preview comment and suggestion kinds are refused.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /documents/doc_123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
         ]
       },
       "annotations": {

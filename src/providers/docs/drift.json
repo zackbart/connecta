@@ -7,7 +7,13 @@
       "POST /v1/documents",
       "POST /v1/documents/{documentId}:batchUpdate"
     ],
-    "evidence": {}
+    "evidence": {
+      "discovery.document.json": "sha256:9f7c1120a3156c723bc1fc0b65332d00a22ae30dc516af131dbbb6b82b42e780",
+      "discovery.json": "sha256:46e30a989cdd5da01a4d112d43d28b3fa1f476255d0f8ec0aa1520189dae0038",
+      "openapi.document.json": "sha256:98cca6b3211bc55603a782bb8ccd1f00b4163c7d06c23217b6ad973fc261b88f",
+      "openapi.json": "sha256:0161648c7fd9248fcef68169b3ec9cf095ffeca290f2775d4cbaded0776c9df7",
+      "value-safety.json": "sha256:cc50ee431500a2e18501b9fe59e56d1aa7fdea075ebaa4b4558b8e38dc0f6450"
+    }
   },
   "checks": [
     {
@@ -21,21 +27,25 @@
       ],
       "endpoints": [
         {
-          "specRevision": "20261005",
-          "contract": "sha256:f0630c58e5817442c02bac8f3e98d1c04d552d4df4ddb7e1f73b714c501a13b2",
-          "operation": "GET /v1/documents/{documentId}"
+          "operation": "GET /v1/documents/{documentId}",
+          "specRevision": "20261019",
+          "contract": "sha256:f0630c58e5817442c02bac8f3e98d1c04d552d4df4ddb7e1f73b714c501a13b2"
         },
         {
-          "specRevision": "20261005",
-          "contract": "sha256:3b8b35ecf2f94776723dbbe586355e9f7fc2002aa488e8b6c32b58e4aadbb477",
-          "operation": "POST /v1/documents"
+          "operation": "POST /v1/documents",
+          "specRevision": "20261019",
+          "contract": "sha256:3b8b35ecf2f94776723dbbe586355e9f7fc2002aa488e8b6c32b58e4aadbb477"
         },
         {
-          "specRevision": "20261005",
-          "contract": "sha256:f22440d7367f202609bbfd061f5208fea9a5a5dfe913a5cdd5aa2283786bd4c3",
-          "operation": "POST /v1/documents/{documentId}:batchUpdate"
+          "operation": "POST /v1/documents/{documentId}:batchUpdate",
+          "specRevision": "20261019",
+          "contract": "sha256:f22440d7367f202609bbfd061f5208fea9a5a5dfe913a5cdd5aa2283786bd4c3"
         }
       ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
     }
   ]
 }
