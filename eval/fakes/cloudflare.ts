@@ -1,7 +1,6 @@
 /** Isolated Cloudflare step-2 fixtures; the historical #801 replies stay unchanged. */
 export const CF_NAMESPACE = "7".repeat(32);
-export const CF_STEP2_ZONE = "1".repeat(32);
-export const CF_STEP2_OTHER_ZONE = "2".repeat(32);
+const CF_STEP2_ZONE = "1".repeat(32);
 export function cloudflareStep2Dns() {
   return Array.from({ length: 137 }, (_, i) => ({
     id: (100 + i).toString(16).padStart(32, "0"),
@@ -27,7 +26,7 @@ export function cloudflareStep2Read(path: string, query: Record<string, string>,
     result,
     ...(result_info ? { result_info } : {}),
   });
-  if (/\/storage\/kv\/namespaces$/.test(path))
+  if (path.endsWith("/storage/kv/namespaces"))
     return envelope([
       { id: CF_NAMESPACE, title: "edge-cache" },
       { id: "8".repeat(32), title: "unrelated" },

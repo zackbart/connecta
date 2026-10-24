@@ -140,7 +140,7 @@ async function reference(suffix: string, ctx: ReferenceContext) {
     const kv = suffix === "kv-hatch";
     const path = kv ? `/accounts/${ACCOUNT_A}/storage/kv/namespaces/${CF_NAMESPACE}/keys` : dnsPath;
     if (kv) await read(ctx, "cloudflare_api_search", { query: "KV namespace keys", method: "GET" });
-    const query: Args = kv ? { prefix: "cache:", limit: 2 } : { per_page: 50 };
+    const query: Args = kv ? { prefix: "cache:", limit: 10 } : { per_page: 50 };
     for (let i = 0; i < 10; i++) {
       const result = await read(ctx, "cloudflare_api_read", { path, query });
       if (result.isError) throw new Error(result.text);

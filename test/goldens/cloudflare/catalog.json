@@ -9,82 +9,91 @@
     "placeholder": "Paste API token"
   },
   "guide": {
-    "summary": "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools.",
-    "content": "# Cloudflare usage\n\nREST with a scoped API token. Connector purpose: Production DNS and Workers\n\n- This is Connecta's REST connector to the Cloudflare v4 API, holding one operator-managed credential. `cloudflare_api_search` finds API operations in a pinned index (not records) and names the tool that calls each; `cloudflare_api_details` returns one operation's parameters and body with types, enums, and required names. Neither sends a request.\n- `cloudflare_api_read` calls GET operations plus reviewed read-only POSTs: analytics queries, Analytics Engine and SQL API queries, Log Explorer SQL, Vectorize queries, KV bulk get, telemetry queries, application-name lookup, and validation checks (including custom posture finding types). `cloudflare_api_write` calls every other POST, PUT, PATCH, and DELETE with `method` and `path` stated. D1 `…/query` and `…/raw`, Durable Object queries, Workers AI `…/ai/run`, AI Search and AutoRAG search (query rewriting runs billed models), monetization checks, and flag evaluation are writes: they can change data, cost money, or activate something.\n- Paths are concrete: substitute ids into the template search returned (`/zones/<zone id>/dns_records/<record id>`). Pass `query` and `body` as JSON named as details lists them; text operations (Analytics Engine SQL, Log Explorer SQL, Worker scripts) take a string body, and Vectorize inserts a list of objects sent as NDJSON. R2 calls accept `headers` with `cf-r2-jurisdiction` or `cf-r2-storage-class`. Encode a `/` inside an R2 object key or KV key name as `%2F`.\n- Every call is checked against the pinned index before it is sent. An unknown path returns the nearest operations; an unknown or missing parameter returns `validation.issues` with the accepted names. Nothing reached Cloudflare, so fix the call from that answer.\n- Under an account pin, each uncached zone-ownership check also spends the connector's call budget. Checks stay capped at three per call and 60 per five minutes per connector; an exhausted budget stops the check and the requested operation.\n- Results arrive as `{ status, data, page? }` with Cloudflare's envelope unwrapped: `data` is the `result`. On a list, pass `page.next` as the `page.param` query argument (`page` for numbered lists, `cursor` for KV, R2, and other cursor lists). Lists belong inside `execute_code`; pass `select` (dot paths such as `id` and `name`) to keep only the fields the question needs.\n- `list_zones` and `list_accounts` resolve names to ids; `verify_credential` separates a bad credential from a missing permission. `graphql_query` runs read-only GraphQL Analytics queries (mutations are refused before sending); filter every `zones` or `accounts` field by `zoneTag` or `accountTag`. A pinned connector sends one query per document, with every fragment it defines used.\n- Multipart, binary, and file bodies go through `cloudflare_api_upload`: Worker scripts and versions, KV values, R2 objects, Pages deployments, Images, Stream, DNS zone-file import, and Snippets. It takes `textBody`, `base64Body`, or multipart `parts`, never a local file.\n- Refused by design: every operation that mints, rotates, or hands back a credential (API tokens, Access service tokens, R2 temporary credentials, tunnel and Mesh node tokens, signing keys, registry credentials, direct-upload URLs, deploy hooks, preview and participant tokens), payment client secrets (including AI Gateway top-up configuration), Cloudforce One priority-intelligence match reads and updates (their response schemas are unreviewed), URL Scanner captures (results, HAR, DOM, raw responses: they hold the scanned session's cookies and headers; use the scan search for verdicts), and GETs that act (an email unsubscribe, a PagerDuty connect). Stored and embedded secrets (Turnstile, TSIG, webhook and identity-provider secrets, Stream keys, Logpush destination credentials, probe, custom-provider, and AI Search crawler headers (every `include_headers` map value; names stay), BGP keys, Zaraz variables, Hyperdrive database passwords, RealtimeKit storage credentials, transform-rule header values) and application setup form defaults and every environment or plain-text binding value (Pages, Containers, Workers, Builds; names and types stay) come back as `\"[redacted]\"` on every method. Notification, RealtimeKit, and data security webhook destinations keep only their scheme and host. Workers KV values are application data and come back as stored. Reviewed operations, and operations that take credentials, report Cloudflare's error codes without its error text. Worker script content is readable: it is code, and secret bindings are not part of it.\n- An `auth_required` failure means the credential is missing, revoked, or malformed: an operator must replace it in this connection in the operator UI, and `authorize_connector` returns that handoff. `provider_permission_denied` means the credential works but lacks this permission or resource, or the call is outside the pin; ask rather than retry.\n- Embedded URL safety uses reviewed paths plus global signing parameters. Generic credential-named query parameters (`code`, `key`, `token`, `sig`, etc.) and credential-looking fragments withhold the destination's entire query/fragment only in Workers build `lines`, Pages log `data.line`, and telemetry `$metadata.message`/`error` and raw string/object `source` payloads in both `events.events` and `invocations.*` on the reviewed log operations and vendor error text. Ordinary `code`/`key` links can therefore be false positives in these diagnostics. DNS TXT content, KV values, Access/Waiting Room custom HTML and other operator content keep those ordinary URL parameters byte for byte. Literal AWS SigV4/Google V4 `X-Amz-*`/`X-Goog-*` Signature, Credential and Security-Token values are withheld in every decoded string before projection. A withheld value is not the original: do not write it back. KV bulk writes also inspect decoded `value` fields with `base64: true` (up to Cloudflare's 25 MiB decoded value limit; malformed or oversized base64 is refused, and the host's inbound body cap still applies). All writes, including named writes and supported raw/base64/multipart uploads, reject URL destinations whose own query/fragment contains the exact `[redacted]` placeholder, plain or encoded, with `invalid_args` before dispatch. Admission iteratively checks every JSON key and value within the host's accepted request size, without separate depth or node-count ceilings; cyclic direct arguments are refused. A marker outside the destination remains ordinary text. Split strings, encoded host/signing names, bare hosts without `//`, and opaque bearer paths remain outside this scan. Binary responses represented as base64, including Worker JavaScript served as `application/javascript`, are returned unchanged and are not decoded/scanned. An envelope cursor that would change under URL sanitizing is omitted rather than echoed or reused.\n- Resolve account and zone ids before acting; never guess one. Ids are 32-character hex strings, and a zone is found by its domain name. Defaults and pins route a connector; Cloudflare's permissions still decide what the credential may do.\n- Read state before replacing, rolling back, or purging. For DNS, PATCH changes the fields you send and PUT replaces the whole record, so read the record first and send its type, name, and content with the change. Prefer a targeted cache purge (files, tags, hosts, or prefixes) over purging everything.\n- Cloudflare reports failures in `errors` with numeric codes and returns `success: false`; read the message instead of retrying the same call.\n- Honor rate-limit waits. Cloudflare documents 1,200 requests per five minutes per user, counted across the dashboard and every token; Connecta's per-runtime window approximates it, and a limited user is blocked for the rest of the window.\n- Treat every create, update, delete, purge, deploy, and upload as a write. For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`.\n- Cloudflare answers a rate limit with HTTP 429; the failure carries `retryAfterMs`. Failed authentication is limited separately (code 10502), so diagnose a credential once with `verify_credential` rather than retrying calls.\n"
+    "summary": "Configured Cloudflare REST credential: resolve domain/account ids, then inspect DNS, Workers, R2, KV or analytics.",
+    "content": "# Cloudflare usage\n\nConnector purpose: Production DNS and Workers\n\nThis connection already has an operator-configured scoped API token; there is no sign-in step.\n\nNo additional deployment pin: the credential's vendor permissions define its reachable estate.\n\n## Accounts, domains and records\n\nResolve account and zone ids before acting. A zone is a domain, found by its name;\nits account id joins it to the account inventory. Cloudflare ids are normally\n32-character hex strings. A default id routes a request; a pin limits its scope.\n\nDNS TTL is in seconds; TTL 1 means automatic. Read the record before changing it.\nPATCH changes supplied fields; PUT replaces the record, so preserve its type,\nname and content. Read state before replacing, rolling back or purging. Prefer\na targeted cache purge by files, tags, hosts or prefixes over purging everything.\n\nHatch data keeps Cloudflare's vendor envelope. For example, select DNS record\nidentities with `fields: [\"result.id\", \"result.name\"]`; a list stays under\n`data.result`. Named account and zone lists keep projected rows with camelCase\naccount and name-server fields.\n\n## Workers, storage and analytics\n\nWorker script source is code; secret binding values are separate and unavailable.\nKV values are application data. Encode a slash inside a KV key or R2 object key\nas `%2F`. R2 requires API-token authentication, rather than a Global API Key.\n\nGraphQL Analytics uses accountTag and zoneTag for account/zone identities.\nFilter every accounts/zones field by equality or an explicit set of those ids.\nA pinned query uses one operation per document and every declared fragment.\nAnalytics Engine SQL is read-only; D1 SQL and Durable Object queries can write.\nAI inference, previews and outbound checks can cost money or activate work.\n\n## Disqualifiers and recovery\n\nCredential minting, rotation, stored secrets, private session captures and signed\nupload or deployment links are unavailable. Use the Cloudflare dashboard for\ncredential administration. A Global API Key cannot change user settings or\nmemberships through this connection.\n\nAfter an authentication failure, use `verify_credential` once to distinguish a\nrejected credential from a permission gap. An operator replaces the credential;\nrepeating the failed request does not add permissions. Cloudflare's global limit\ncounts dashboard traffic and all tokens together, so reduce requests as well as\nhonoring the returned wait.\n\n## Conventions\n\n- **Paging:** a paged `list_*` or `search_*` read takes `limit` (default 20, at most 50) and `cursor`. While `page.hasMore` is true, pass `page.nextCursor` back unchanged as `cursor`; the last page has no `nextCursor`.\n- **Paging:** on a paged hatch read, pass `page.nextCursor` unchanged in the parameter named by `page.param` at `page.in`; keep method, path, filters, page size, fields and headers unchanged. A last page has no cursor. If `page.hasMore` is true without a cursor, the data is incomplete and its continuation was withheld.\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Envelope fields:** hatch data keeps the vendor envelope. Select declared fields with `fields: [\"result.id\", \"result.name\"]`; array traversal also accepts `result[].id`. Named reads keep their projected fields.\n- **Hatch:** `cloudflare_api_search` finds this API's operations and reads no account data, `cloudflare_api_details` shows one operation's contract, and `cloudflare_api_read` calls a reviewed read. `cloudflare_api_write` calls a reviewed write, and every call to it needs approval. An operation without a reviewed verdict is refused; these are refused by design: `DELETE /accounts/{account_id}/tokens/{token_id}`, `DELETE /subscriptions/{subscription_id}`, `DELETE /user/tokens/{token_id}`, `GET /accounts/{account_id}/alerting/v3/destinations/pagerduty/connect/{token_id}`, `GET /accounts/{account_id}/alerting/v3/policies/{policy_id}/email/unsubscribe`, `GET /accounts/{account_id}/cfd_tunnel/{tunnel_id}/token`, `GET /accounts/{account_id}/cloudforce-one/v2/priority-intelligence/{priority_id}/matches`, `GET /accounts/{account_id}/pages/projects/{project_name}/upload-token`, `GET /accounts/{account_id}/urlscanner/v2/dom/{scan_id}`, `GET /accounts/{account_id}/urlscanner/v2/har/{scan_id}`, `GET /accounts/{account_id}/urlscanner/v2/responses/{response_id}`, `GET /accounts/{account_id}/urlscanner/v2/result/{scan_id}`, `GET /accounts/{account_id}/warp_connector/{tunnel_id}/token`, `GET /accounts/{account_id}/workflows/{workflow_name}/instances/{instance_id}/subscribe/token`, `GET /signed-url`, `GET /subscriptions/{subscription_id}`, `GET /subscriptions`, `PATCH /accounts/{account_id}/cloudforce-one/v2/priority-intelligence/{priority_id}/matches`, `POST /accounts/{account_id}/access/service_tokens/{service_token_id}/rotate`, `POST /accounts/{account_id}/access/service_tokens`, `POST /accounts/{account_id}/ai-gateway/billing/topup/config`, `POST /accounts/{account_id}/ai-gateway/billing/topup`, `POST /accounts/{account_id}/ai-search/tokens`, `POST /accounts/{account_id}/alerting/v3/destinations/pagerduty/connect`, `POST /accounts/{account_id}/artifacts/namespaces/{namespace}/tokens`, `POST /accounts/{account_id}/billing/profile/payment-method`, `POST /accounts/{account_id}/builds/tokens`, `POST /accounts/{account_id}/builds/workers/{script_name}/deploy_hooks`, `POST /accounts/{account_id}/bulk/subscriptions`, `POST /accounts/{account_id}/calls/turn_keys`, `POST /accounts/{account_id}/cfd_tunnel/{tunnel_id}/management`, `POST /accounts/{account_id}/challenges/widgets/{sitekey}/rotate_secret`, `POST /accounts/{account_id}/client-secret`, `POST /accounts/{account_id}/containers/registries/{domain}/credentials`, `POST /accounts/{account_id}/custom_pages/preview_tokens`, `POST /accounts/{account_id}/devices/override_codes`, `POST /accounts/{account_id}/hyperdrive/integrationsOperations/planetScale/createDatabaseSignature`, `POST /accounts/{account_id}/images/v2/direct_upload`, `POST /accounts/{account_id}/magic/ipsec_tunnels/{ipsec_tunnel_id}/psk_generate`, `POST /accounts/{account_id}/mnm/vpc-flows/token`, `POST /accounts/{account_id}/moq/relays/{relay_id}/tokens`, `POST /accounts/{account_id}/oauth_clients/{oauth_client_id}/rotate_secret`, `POST /accounts/{account_id}/oauth_clients`, `POST /accounts/{account_id}/pay-bad-debt`, `POST /accounts/{account_id}/pay-invoice`, `POST /accounts/{account_id}/r2/temp-access-credentials`, `POST /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/participants/{participant_id}/token`, `POST /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/participants`, `POST /accounts/{account_id}/stream/direct_upload`, `POST /accounts/{account_id}/stream/keys`, `POST /accounts/{account_id}/stream/live_inputs/{live_input_identifier}/rotate_keys`, `POST /accounts/{account_id}/stream/{identifier}/token`, `POST /accounts/{account_id}/tokens`, `POST /accounts/{account_id}/workers/assets/upload`, `POST /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/assets-upload-session`, `POST /accounts/{account_id}/workers/scripts/{script_name}/assets-upload-session`, `POST /produce`, `POST /subscriptions/{subscription_id}/batches/{batch_id}/ack`, `POST /subscriptions/{subscription_id}/batches/{batch_id}/extend`, `POST /subscriptions/{subscription_id}/batches/{batch_id}/nack`, `POST /subscriptions/{subscription_id}/consume`, `POST /subscriptions`, `POST /user/tokens`, `POST /zones/{zone_id}/access/service_tokens`, `POST /zones/{zone_id}/custom_pages/preview_tokens`, `PUT /accounts/{account_id}/images/v1/keys/{signing_key_name}`, `PUT /accounts/{account_id}/tokens/{token_id}/value`, `PUT /accounts/{account_id}/tokens/{token_id}`, `PUT /user/tokens/{token_id}/value`, `PUT /user/tokens/{token_id}`.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. `not_found` means the record does not exist; this API tells absence from a permission gap. It documents no conflict.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
     {
-      "name": "cloudflare_api_search",
-      "description": "Find Cloudflare API operations by keyword or path in the pinned API index. Returns method, path, and summary; reads no account data.",
+      "name": "list_accounts",
+      "description": "List Cloudflare accounts by name; only pinned accounts. Resolves account ids for zones, Workers, KV and R2.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "query": {
+          "name": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Keywords or a path, e.g. refund charge."
-          },
-          "method": {
-            "type": "string",
-            "enum": [
-              "GET",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "Only operations with this method."
+            "description": "Exact account name."
           },
           "limit": {
             "type": "integer",
-            "minimum": 1,
+            "minimum": 5,
             "maximum": 50,
-            "description": "Most operations to return; default 10."
+            "description": "Results per page: 5 to 50; default 20.",
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
-        "required": [
-          "query"
-        ],
+        "required": [],
         "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
         "properties": {
-          "operations": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "method": {
+                "id": {
                   "type": "string"
                 },
-                "path": {
+                "name": {
                   "type": "string"
                 },
-                "summary": {
-                  "type": "string"
-                },
-                "tool": {
-                  "type": "string",
-                  "description": "The tool that calls it."
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
-              },
-              "required": [
-                "method",
-                "path",
-                "tool"
-              ]
+              }
             }
           },
-          "revision": {
-            "type": "string",
-            "description": "Pinned index revision."
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "operations",
-          "revision"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -92,177 +101,125 @@
       }
     },
     {
-      "name": "cloudflare_api_details",
-      "description": "Read one Cloudflare API operation's request contract: path, query, and body parameters with types, enums, and required names. Reads no account data.",
+      "name": "list_zones",
+      "description": "List Cloudflare zones (domains) by name, status or account; only pinned zones. Resolves domain names to zone/account ids for DNS, cache and analytics.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "method": {
+          "name": {
+            "type": "string",
+            "description": "Exact domain name, e.g. example.com."
+          },
+          "status": {
             "type": "string",
             "enum": [
-              "GET",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "The operation's HTTP method."
+              "initializing",
+              "pending",
+              "active",
+              "moved"
+            ]
           },
-          "path": {
+          "accountId": {
             "type": "string",
-            "minLength": 2,
-            "maxLength": 2048,
-            "description": "The path template from search, or a concrete path."
+            "description": "Only zones in this account."
           },
-          "param": {
+          "limit": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 50,
+            "description": "Results per page: 5 to 50; default 20.",
+            "default": 20
+          },
+          "cursor": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 200,
-            "description": "Return only this parameter."
-          }
-        },
-        "required": [
-          "method",
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string"
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "path": {
-            "type": "string"
-          },
-          "tool": {
-            "type": "string",
-            "description": "The tool that calls it."
-          },
-          "parameters": {
-            "type": "array",
-            "description": "Path and query parameters."
-          },
-          "body": {
-            "type": "object",
-            "description": "Body content type and schema; truncated: true marks unexpanded levels."
-          },
-          "revision": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "method",
-          "path",
-          "tool",
-          "parameters",
-          "revision"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "cloudflare_api_read",
-      "description": "Call a Cloudflare API GET operation, or a reviewed read-only POST. Arguments are checked against the pinned index before anything is sent.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 2048,
-            "description": "Concrete path from search with ids filled in, e.g. /zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records. No query string."
-          },
-          "method": {
-            "type": "string",
-            "enum": [
-              "GET",
-              "POST"
-            ],
-            "description": "GET by default; another method only for an operation search routes here."
-          },
-          "body": {
-            "type": [
-              "object",
-              "string"
-            ],
-            "description": "Body for a reviewed read-only POST; a string for a text-framed operation."
-          },
-          "query": {
-            "type": "object",
-            "description": "Query parameters as JSON, named as details lists them."
-          },
-          "headers": {
-            "type": "object",
-            "description": "Optional request headers this vendor's operations read; nothing else is accepted.",
-            "properties": {
-              "cf-r2-jurisdiction": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "description": "R2 only: default, eu, us, fedramp, or fedramp-high, for a bucket outside the default jurisdiction."
-              },
-              "cf-r2-storage-class": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "description": "R2 only: Standard or InfrequentAccess."
-              }
-            },
-            "additionalProperties": false
-          },
-          "select": {
+          "fields": {
             "type": "array",
             "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
             "items": {
               "type": "string",
               "minLength": 1,
               "maxLength": 200
-            },
-            "description": "Dot paths to keep from data, e.g. data.id; a path through a list applies to each item."
+            }
           }
         },
-        "required": [
-          "path"
-        ],
+        "required": [],
         "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
         "properties": {
-          "status": {
-            "type": "integer",
-            "description": "HTTP status."
-          },
-          "data": {
-            "description": "Response body: JSON, text, NDJSON rows, { contentType, bytes, base64 }, or HEAD's headers."
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "paused": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "accountId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "accountName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "nameServers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "plan": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
           },
           "page": {
             "type": "object",
-            "description": "Present on lists: pass next as the param query parameter (a body field when in is body) for the next page. hasMore without next: no cursor exists.",
             "properties": {
               "hasMore": {
                 "type": "boolean"
               },
-              "next": {
+              "nextCursor": {
                 "type": "string"
               },
-              "param": {
-                "type": "string"
-              },
-              "in": {
-                "type": "string",
-                "enum": [
-                  "query",
-                  "body"
-                ]
-              },
-              "path": {
-                "type": "string",
-                "description": "GET this path for the next page, when it differs from this call's."
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -271,132 +228,12 @@
           }
         },
         "required": [
-          "status",
-          "data"
+          "items",
+          "page"
         ]
       },
       "annotations": {
         "readOnlyHint": true
-      }
-    },
-    {
-      "name": "cloudflare_api_write",
-      "description": "Call a Cloudflare API write (POST, PUT, PATCH, DELETE); method and path are stated for approval. Checked against the pinned index first.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string",
-            "enum": [
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "The operation's HTTP method."
-          },
-          "path": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 2048,
-            "description": "Concrete path from search with ids filled in, e.g. /zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records. No query string."
-          },
-          "query": {
-            "type": "object",
-            "description": "Query parameters as JSON, named as details lists them."
-          },
-          "body": {
-            "type": [
-              "object",
-              "array",
-              "string"
-            ],
-            "description": "Request body as JSON; a string for text, SQL, or script operations, a list of objects for NDJSON."
-          },
-          "headers": {
-            "type": "object",
-            "description": "Optional request headers this vendor's operations read; nothing else is accepted.",
-            "properties": {
-              "cf-r2-jurisdiction": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "description": "R2 only: default, eu, us, fedramp, or fedramp-high, for a bucket outside the default jurisdiction."
-              },
-              "cf-r2-storage-class": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "description": "R2 only: Standard or InfrequentAccess."
-              }
-            },
-            "additionalProperties": false
-          },
-          "select": {
-            "type": "array",
-            "maxItems": 50,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            },
-            "description": "Dot paths to keep from data, e.g. data.id; a path through a list applies to each item."
-          }
-        },
-        "required": [
-          "method",
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "integer",
-            "description": "HTTP status."
-          },
-          "data": {
-            "description": "Response body: JSON, text, NDJSON rows, { contentType, bytes, base64 }, or HEAD's headers."
-          },
-          "page": {
-            "type": "object",
-            "description": "Present on lists: pass next as the param query parameter (a body field when in is body) for the next page. hasMore without next: no cursor exists.",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "next": {
-                "type": "string"
-              },
-              "param": {
-                "type": "string"
-              },
-              "in": {
-                "type": "string",
-                "enum": [
-                  "query",
-                  "body"
-                ]
-              },
-              "path": {
-                "type": "string",
-                "description": "GET this path for the next page, when it differs from this call's."
-              }
-            },
-            "required": [
-              "hasMore"
-            ]
-          }
-        },
-        "required": [
-          "status",
-          "data"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
       }
     },
     {
@@ -404,7 +241,18 @@
       "description": "Verify the configured Cloudflare credential and report its status. Call this first when another call fails with auth_required.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"auth\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
         "required": [],
         "additionalProperties": false
       },
@@ -455,196 +303,7 @@
           "accountId": {
             "type": "string"
           }
-        },
-        "required": [
-          "auth",
-          "status",
-          "scope"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_accounts",
-      "description": "List the Cloudflare accounts this credential reaches (only pinned ones when the connector is pinned). Supplies account ids for /accounts/{account_id} paths.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "Exact account name."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10000,
-            "description": "Page number; default 1."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 5,
-            "maximum": 50,
-            "description": "Results per page; default 20, Cloudflare's max 50."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "accounts": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "type": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "description": "Pass next as the param query argument for the following page.",
-            "properties": {
-              "hasMore": {
-                "type": "boolean",
-                "description": "Whether another page exists."
-              },
-              "next": {
-                "type": "string",
-                "description": "The next page number or cursor."
-              },
-              "param": {
-                "type": "string",
-                "description": "The query parameter that takes next."
-              }
-            },
-            "required": [
-              "hasMore"
-            ]
-          }
-        },
-        "required": [
-          "accounts"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_zones",
-      "description": "List Cloudflare zones (domains) by name, status, or account; only pinned ones when the connector is pinned. Supplies zone ids for /zones/{zone_id} paths.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 253,
-            "description": "Exact domain name, e.g. example.com."
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "initializing",
-              "pending",
-              "active",
-              "moved"
-            ],
-            "description": "Only zones in this status."
-          },
-          "accountId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64,
-            "description": "Only zones in this account."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10000,
-            "description": "Page number; default 1."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 5,
-            "maximum": 50,
-            "description": "Results per page; default 20, Cloudflare's max 50."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "zones": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "status": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "accountId": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "nameServers": {
-                  "type": "array"
-                }
-              }
-            }
-          },
-          "page": {
-            "type": "object",
-            "description": "Pass next as the param query argument for the following page.",
-            "properties": {
-              "hasMore": {
-                "type": "boolean",
-                "description": "Whether another page exists."
-              },
-              "next": {
-                "type": "string",
-                "description": "The next page number or cursor."
-              },
-              "param": {
-                "type": "string",
-                "description": "The query parameter that takes next."
-              }
-            },
-            "required": [
-              "hasMore"
-            ]
-          }
-        },
-        "required": [
-          "zones"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -671,6 +330,16 @@
             "minLength": 1,
             "maxLength": 200,
             "description": "Which query to run when the document has several."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"data\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -688,10 +357,7 @@
             "type": "array",
             "description": "GraphQL errors, when Cloudflare returned partial data."
           }
-        },
-        "required": [
-          "data"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -724,7 +390,6 @@
           },
           "headers": {
             "type": "object",
-            "description": "Optional R2 headers.",
             "properties": {
               "cf-r2-jurisdiction": {
                 "type": "string",
@@ -739,7 +404,8 @@
                 "description": "R2 only: Standard or InfrequentAccess."
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Optional R2 headers."
           },
           "contentType": {
             "type": "string",
@@ -811,6 +477,498 @@
           },
           "data": {
             "description": "Cloudflare's result."
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "cloudflare_api_search",
+      "description": "Find Cloudflare API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "Only operations with this method."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; cloudflare_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "cloudflare_api_details",
+      "description": "Read one Cloudflare API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "cloudflare_api_read",
+      "description": "Call a reviewed Cloudflare API read, including reviewed read-only POST. The operation index checks arguments before anything is sent. DNS records, zones, Workers scripts, R2 buckets and objects, KV namespaces and keys are covered. Data retains the Cloudflare envelope; use fields:[\"result.id\",\"result.name\"]. Pass page.nextCursor in page.param within page.in, preserving the other arguments. Text/SQL reads take a string body.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records. No query string."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "description": "GET by default; another method only for an operation search routes here."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array",
+              "string"
+            ],
+            "description": "Body for a reviewed read-only POST."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data. Envelope fields begin with result, e.g. [\"result.id\"] or [\"result[].id\"], where declared.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "headers": {
+            "type": "object",
+            "properties": {
+              "cf-r2-jurisdiction": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "eu",
+                  "us",
+                  "fedramp",
+                  "fedramp-high"
+                ],
+                "description": "R2 only: default, eu, us, fedramp, or fedramp-high, for a bucket outside the default jurisdiction."
+              },
+              "cf-r2-storage-class": {
+                "type": "string",
+                "enum": [
+                  "Standard",
+                  "InfrequentAccess"
+                ],
+                "description": "R2 only: Standard or InfrequentAccess."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "description": "Put nextCursor in this vendor parameter, unchanged."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "param",
+              "in"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "cloudflare_api_write",
+      "description": "Call a reviewed Cloudflare API write; method and path are stated for approval, and the operation index checks arguments first. Create, update or delete DNS records, purge cache URLs, deploy Workers and change KV/R2 state here. Reviewed uploads use cloudflare_api_upload; JSON, text/SQL and NDJSON writes retain their documented wire formats.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array",
+              "string"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data. Envelope fields begin with result, e.g. [\"result.id\"] or [\"result[].id\"], where declared.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "headers": {
+            "type": "object",
+            "properties": {
+              "cf-r2-jurisdiction": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "eu",
+                  "us",
+                  "fedramp",
+                  "fedramp-high"
+                ],
+                "description": "R2 only: default, eu, us, fedramp, or fedramp-high, for a bucket outside the default jurisdiction."
+              },
+              "cf-r2-storage-class": {
+                "type": "string",
+                "enum": [
+                  "Standard",
+                  "InfrequentAccess"
+                ],
+                "description": "R2 only: Standard or InfrequentAccess."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
           }
         },
         "required": [

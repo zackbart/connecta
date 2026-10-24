@@ -109,7 +109,8 @@ pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
-Stripe, Vercel, and Cloudflare vendor only their APIs.
+Stripe, Vercel, and Cloudflare vendor only their APIs. Cloudflare setup is in
+[Maintained provider setup](./providers.md#cloudflare).
 Keep their existing API auth choices.
 GitHub retains its six App-authenticated REST tools. Hosted servers use distinct
 `remoteMcp()` entries, separate from maintained API providers.

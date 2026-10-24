@@ -29,3 +29,50 @@ Error-chain walkers guard non-object entries, including placeholders from bounde
 The bounded display rows retain the kit limits: two HTTP 403 responses with a 129-character cf-ray omit that header (128-character maximum), on GET /zones/{zone_id} and GET /accounts/{account_id}/workers/scripts/{script_name}/settings. Four withheld responses from the latter operation, at HTTP 400, 401, 403 and 503, display eight of ten numeric codes (eight-entry display maximum). Only their message bytes differ; code, retryability, writeOutcome and request bytes agree. The orchestrator explicitly accepted this class for step 1 without widening or back-porting the kit's bounds.
 
 All 48 separate construction cases match their legacy results or refusal bytes, including the hosted-MCP migration message. All five option-mode catalog/title/description/guide snapshots match. A loaded Linux host measured legacy/kit construction at 36.3/62.6 ms, catalog rendering at 6.7/2.6 ms and the first read at 100.9/88.8 ms; these single cold observations describe this run, not a performance threshold. The full lazy manifest took 3.76 seconds and was not built during catalog rendering or the first read.
+
+## Decision 0011 step 2 (#703)
+
+The standard hatch retains the full safe vendor envelope. Operation-specific
+paths still apply relative to `result`; the envelope itself also passes the
+same value-safety engine so a credential echoed beside `result` cannot escape.
+Pin filtering applies to `result` for account, zone and membership lists.
+`success: false` remains an in-band refusal through the declared fact snapshot,
+including on HTTP 200. A dispatched write is never resent.
+
+The OpenAPI pin remains revision
+843eae2fbf4fe774ef9c91021dd34017ac9c970a, digest
+sha256:128d27e93f42fd16e70c69b09c6deb4c0bbf0539c7b46a3e4cc65dbb6a6e1f81.
+Generation now preserves 120-character parameter descriptions and documented
+numeric bounds. The response fields already compiled from that pin remain the
+pre-dispatch selection contract. Bare, wrapped and array responses derive their
+roots from the pin; schemaless/open replies refuse narrowing rather than invent
+properties. Text/NDJSON and binary replies retain their reviewed safe formats.
+Workflow summaries supplement the original generated action/resource words.
+
+Numbered reads use the kit's Cloudflare adapter. Cursor/after reads use the
+pinned query parameter and `result_info.cursor` or `result_info.cursors.after`.
+Token metadata is validated before signing; URL-shaped cursors pass embedded-URL
+sanitizing. A withheld continuation keeps the safe data with `hasMore: true`
+and no cursor. Numeric metadata fails closed. Named lists expose an exact vendor
+total only without local pin filtering. R2 headers, default-id substitution,
+encoded slash keys, scoped ownership lookups, raw/multipart uploads, SCIM and
+text/SQL/NDJSON framing retain the same transport and admission boundary.
+
+Public contract references checked with the unchanged pin:
+
+- <https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/>
+- <https://developers.cloudflare.com/api/resources/kv/subresources/namespaces/subresources/keys/methods/list/>
+- <https://developers.cloudflare.com/api/resources/r2/subresources/buckets/methods/list/>
+- <https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/objects/methods/list/>
+
+404 keeps its established absence meaning. No reviewed conflict is declared;
+409 uses the kit's generic failure. The documented 1,200-per-five-minutes window
+supports the retained 429 fallback, with Retry-After taking precedence. Error
+code vocabulary and numeric facts remain independent of diagnostic redaction.
+H5 wording changes are deferred; H9 is measured only, without changing deadlines.
+
+Curation retains nine names. Account and zone lists supply identity joins;
+GraphQL retains its query-only AST and pin checks; verification retains user-token,
+account-token and Global API Key diagnosis. Uploads retain their distinct byte/
+multipart safety boundary. The seven frozen evals exercise the lists and GraphQL;
+verification and uploads are workflow/safety choices, not measured eval wins.

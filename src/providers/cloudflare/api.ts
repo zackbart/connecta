@@ -34,6 +34,7 @@ import {
 } from "../_shared/rest/value-safety.js";
 import { CLOUDFLARE_VALUE_SAFETY } from "./safety.js";
 import { openapi } from "./openapi.generated.js";
+import { cloudflareDiscovery } from "./lib/discovery.js";
 import type { CloudflareOptions } from "./index.js";
 import { CLOUDFLARE_API_BASE, type CloudflareRestOptions, type CloudflarePin } from "./lib/config.js";
 export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -325,16 +326,17 @@ interface CloudflareFacts {
   readonly [key: string]: readonly number[] | undefined;
   readonly codes: readonly number[];
 }
-const rejected = ({ status }: { status: number }) => ({
+const rejected = () => ({
   code: "invalid_args" as const,
-  words: (detail: string) => `Cloudflare rejected the request (HTTP ${status}). ${detail}`,
+  words: (detail: string) => detail,
 });
-const authFailure = ({ status }: { status: number }) => ({
+const authFailure = () => ({
   code: "auth_required" as const,
   words: (detail: string) =>
-    `Cloudflare rejected the configured credential (HTTP ${status}). ${detail} An operator must check or replace it in this connection; call verify_credential to confirm.`,
+    `${detail} The configured credential was rejected. An operator must check or replace it in this connection; call verify_credential to confirm.`,
 });
 export const cloudflareErrors: VendorErrors<CloudflareFacts> = {
+  meanings: { unknownId: "not_found", provesAbsence: true, conflicts: [] },
   numericFacts: {
     retryAfterMs: {
       header: "retry-after",
@@ -346,48 +348,39 @@ export const cloudflareErrors: VendorErrors<CloudflareFacts> = {
   facts: (body) => ({ codes: [...errorCodes(errorsOf(body))] }),
   factVocabulary: { codes: [...AUTH_ERROR_CODES] },
   headers: ["cf-ray"],
-  detail: ({ facts, headers, withheld, body }) => {
+  detail: ({ status, facts, headers, withheld, body }) => {
     const codes = facts.codes;
     const described = withheld
       ? `${codes.length ? `Cloudflare error code ${codes.join(", ")}.` : "Cloudflare reported an error."} Its text is withheld because this operation handles credentials.`
       : describeErrors(errorsOf(withholdEmbeddedUrlsIn(body)));
-    return `${described}${headers["cf-ray"] ? ` Ray ${headers["cf-ray"]}.` : ""}`;
+    const detail =
+      errorsOf(body).length || withheld
+        ? `Cloudflare returned HTTP ${status}: ${described.trim()}`
+        : `Cloudflare returned HTTP ${status}.`;
+    return `${detail}${/[.!?]$/.test(detail) ? "" : "."}${headers["cf-ray"] ? ` Ray ${headers["cf-ray"]}.` : ""}`;
   },
   classify: [
     ({ status, facts }) =>
-      status !== 429 && facts.codes.some((code) => AUTH_ERROR_CODES.has(code)) ? authFailure({ status }) : undefined,
+      status !== 429 && facts.codes.some((code) => AUTH_ERROR_CODES.has(code)) ? authFailure() : undefined,
   ],
   statuses: {
     429: ({ retryAfterMs }) => ({
       code: "rate_limited",
       retryAfterMs: retryAfterMs ?? 300_000,
       words: (detail) =>
-        `Cloudflare rate limit reached (HTTP 429). ${detail} The documented limit is 1,200 requests per five minutes per user, counted across the dashboard and every token.`,
+        `${detail} The documented limit is 1,200 requests per five minutes per user, counted across the dashboard and every token.`,
     }),
     401: authFailure,
     403: () => ({
       code: "provider_permission_denied",
       words: (detail) =>
-        `Cloudflare refused access to this resource (HTTP 403). ${detail} Verify the credential first; if it is valid, the token or user lacks this permission or resource.`,
+        `${detail} Verify the credential first; if it is valid, the token or user lacks this permission or resource.`,
     }),
-    400: rejected,
-    409: rejected,
-    422: rejected,
     405: rejected,
     415: rejected,
     404: () => ({
       code: "not_found",
-      words: (detail) =>
-        `Cloudflare found no such resource (HTTP 404). ${detail} Confirm the id with list_zones, list_accounts, or a list read.`,
-    }),
-    serverError: ({ status }) => ({
-      code: "unavailable",
-      words: (detail) => `Cloudflare is unavailable (HTTP ${status}). ${detail}`,
-    }),
-    otherwise: ({ status }) => ({
-      code: "connector_call_failed",
-      retryable: false,
-      words: (detail) => `Cloudflare request failed (HTTP ${status}). ${detail}`,
+      words: (detail) => `${detail} Confirm the id with list_zones, list_accounts, or a list read.`,
     }),
   },
   unreadable: "Cloudflare returned malformed JSON.",
@@ -467,7 +460,7 @@ function queryOf(call: RestCall): RestFraming["query"] {
 
 // --- The vendor ----------------------------------------------------------------
 
-export const cloudflareIndex = new OperationIndex(openapi, {
+export const cloudflareIndex = new OperationIndex(cloudflareDiscovery(openapi), {
   vendor: "cloudflare",
   title: "Cloudflare",
   slashParams: SLASH_PARAMS,
@@ -551,7 +544,10 @@ export const safety = (): SafetyOptions => {
         method === "POST" && path === "/graphql" ? { method, template: path } : reviewed.resolve!(method, path),
       redact: (body, operation) =>
         isEnvelope(body)
-          ? { ...body, result: SAFETY.redact(body["result"], operation.method, canonical(operation)) }
+          ? {
+              ...record(SAFETY.redact(body, operation.method, canonical(operation))),
+              result: SAFETY.redact(body["result"], operation.method, canonical(operation)),
+            }
           : SAFETY.redact(body, operation.method, canonical(operation)),
       withholdsErrors: (operation) =>
         operation.method === "POST" && operation.template === "/graphql" ? false : reviewed.withholdsErrors(operation),
@@ -935,7 +931,7 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
       ...(input.headers ? { headers: input.headers } : {}),
     });
   };
-  const send = (call: RestCall): Effect.Effect<RestResult, HttpFailure, CallServices> =>
+  const send = (call: RestCall, envelope = false): Effect.Effect<RestResult, HttpFailure, CallServices> =>
     checked(() => {
       const refusal = checkServer(call.op.server);
       if (refusal) invalid(refusal);
@@ -972,7 +968,17 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
       Effect.flatMap((request) => connection.sendPath(request)),
       Effect.map((reply) => {
         const body = reply.data;
-        const data = isEnvelope(body) ? filterListed(call.op, body["result"]) : body;
+        const data = isEnvelope(body)
+          ? envelope
+            ? {
+                ...body,
+                ...(body["result_info"] !== undefined
+                  ? { result_info: withholdEmbeddedUrlsIn(body["result_info"]) }
+                  : {}),
+                result: filterListed(call.op, body["result"]),
+              }
+            : filterListed(call.op, body["result"])
+          : body;
         const next = call.op.path === "/graphql" ? undefined : page(body, call);
         return { status: reply.status, data, ...(next ? { page: next } : {}) };
       }),
@@ -1022,7 +1028,19 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
       ),
     );
   };
-  return { send, read, call, verify, assertAccount, assertZone, refuse, fillDefaults, scope, checkServer };
+  return {
+    send,
+    sendEnvelope: (call: RestCall) => send(call, true),
+    read,
+    call,
+    verify,
+    assertAccount,
+    assertZone,
+    refuse,
+    fillDefaults,
+    scope,
+    checkServer,
+  };
 }
 export function describeProbe(data: unknown, options: Readonly<CloudflareOptions>): CredentialTestResult {
   const verified = record(data);

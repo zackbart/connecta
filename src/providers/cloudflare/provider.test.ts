@@ -262,7 +262,7 @@ describe("cloudflare() over a key", () => {
       const error = await refusal(
         connector.callTool("cloudflare_api_read", { method: "POST", path, body: {} }, token()),
       );
-      expect(error.message, path).toContain("is not a reviewed read");
+      expect(error.message, path).toContain("cloudflare_api_write");
     }
     expect(sent).toEqual([]);
     respond = () => Response.json({ meta: [], data: [{ count: 3 }] });
@@ -555,20 +555,135 @@ describe("cloudflare() over a key", () => {
           ],
           { result_info: { page: 1, per_page: 20, count: 2, total_pages: 1 } },
         );
-      expect(((await connector.callTool("list_zones", {}, token())) as any).zones.map((zone: any) => zone.id)).toEqual([
+      expect(((await connector.callTool("list_zones", {}, token())) as any).items.map((zone: any) => zone.id)).toEqual([
         ZONE,
       ]);
-      expect(((await connector.callTool("cloudflare_api_read", { path: "/zones" }, token())) as any).data).toHaveLength(
-        1,
-      );
+      expect(
+        ((await connector.callTool("cloudflare_api_read", { path: "/zones" }, token())) as any).data.result,
+      ).toHaveLength(1);
       respond = () =>
         envelope([
           { id: ACCOUNT, name: "Mine" },
           { id: OTHER_ACCOUNT, name: "Theirs" },
         ]);
       expect(await connector.callTool("list_accounts", {}, token())).toEqual({
-        accounts: [{ id: ACCOUNT, name: "Mine", type: null }],
+        items: [{ id: ACCOUNT, name: "Mine", type: null }],
+        page: { hasMore: false },
       });
+      for (const [query, method, path] of [
+        ["DNS records", "GET", "/zones/{zone_id}/dns_records"],
+        ["set DNS TTL", "PATCH", "/zones/{zone_id}/dns_records/{dns_record_id}"],
+        ["purge cache URL", "POST", "/zones/{zone_id}/purge_cache"],
+        ["Workers scripts", "GET", "/accounts/{account_id}/workers/scripts"],
+        ["R2 buckets", "GET", "/accounts/{account_id}/r2/buckets"],
+        ["R2 objects", "GET", "/accounts/{account_id}/r2/buckets/{bucket_name}/objects"],
+        ["KV keys", "GET", "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/keys"],
+        ["zones", "GET", "/zones"],
+      ] as const) {
+        for (const filter of [undefined, method]) {
+          const result = (await connector.callTool(
+            "cloudflare_api_search",
+            { query, ...(filter ? { method: filter } : {}) },
+            token(),
+          )) as any;
+          expect(JSON.stringify(result).length).toBeLessThanOrEqual(16384);
+          expect(
+            result.operations.slice(0, 2).some((op: any) => op.method === method && op.path === path),
+            query,
+          ).toBe(true);
+        }
+      }
+      const scoped = cloudflare("bounded", { ...TOKEN, zoneId: ZONE, pin: { zoneIds: [ZONE] } });
+      const ctx = token();
+      for (const [tool, extra] of [
+        ["cloudflare_api_read", {}],
+        ["cloudflare_api_write", { method: "PATCH", body: { ttl: 300 } }],
+      ] as const) {
+        sent = [];
+        const path = `/zones/{zone_id}/dns_records${tool.endsWith("write") ? "/r1" : ""}`;
+        const error = await refusal(scoped.callTool(tool, { path, ...extra, fields: ["id"] }, ctx));
+        expect(error).toMatchObject({ code: "invalid_args" });
+        expect(error.message).toContain("result[].id");
+        expect(sent).toHaveLength(0);
+      }
+      for (const query of [
+        { per_page: 0 },
+        { per_page: 5000001 },
+        { per_page: 1.5 },
+        { per_page: "abc" },
+        { page: 2 },
+      ]) {
+        sent = [];
+        await expect(
+          scoped.callTool("cloudflare_api_read", { path: `/zones/${ZONE}/dns_records`, query }, ctx),
+        ).rejects.toMatchObject({ code: "invalid_args" });
+        expect(sent).toHaveLength(0);
+      }
+      for (const limit of [4, 51]) {
+        sent = [];
+        await expect(connector.callTool("list_zones", { limit }, token())).rejects.toMatchObject({
+          code: "invalid_args",
+        });
+        expect(sent).toHaveLength(0);
+      }
+      respond = (request) =>
+        envelope([{ id: request.url.searchParams.get("page") === "2" ? "r2" : "r1", ttl: 300 }], {
+          result_info: {
+            page: request.url.searchParams.get("page") === "2" ? 2 : 1,
+            total_pages: 2,
+            per_page: 1,
+            count: 1,
+          },
+        });
+      const first = (await scoped.callTool(
+        "cloudflare_api_read",
+        { path: "/zones/{zone_id}/dns_records", query: { per_page: 1 }, fields: ["result[].id"] },
+        ctx,
+      )) as any;
+      expect(first.data).toEqual({ result: [{ id: "r1" }] });
+      expect(first.page).toMatchObject({ hasMore: true, param: "page", in: "query" });
+      const last = (await scoped.callTool(
+        "cloudflare_api_read",
+        {
+          path: `/zones/${ZONE}/dns_records`,
+          query: { per_page: 1, page: first.page.nextCursor },
+          fields: ["result[].id"],
+        },
+        ctx,
+      )) as any;
+      expect(last).toMatchObject({ data: { result: [{ id: "r2" }] }, page: { hasMore: false } });
+      expect(last.page).not.toHaveProperty("nextCursor");
+      const sends = sent.length;
+      for (const query of [
+        { per_page: 2, page: first.page.nextCursor },
+        { per_page: 1, page: first.page.nextCursor.slice(0, -1) + "x" },
+      ])
+        await expect(
+          scoped.callTool(
+            "cloudflare_api_read",
+            { path: `/zones/${ZONE}/dns_records`, query, fields: ["result[].id"] },
+            ctx,
+          ),
+        ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(sent).toHaveLength(sends);
+      for (const [tool, extra] of [
+        ["cloudflare_api_read", {}],
+        ["cloudflare_api_write", { method: "PATCH", body: { ttl: 300 } }],
+      ] as const) {
+        sent = [];
+        respond = () =>
+          Response.json({ success: false, result: null, errors: [{ code: 1234, message: "Refused in band" }] });
+        const error = await refusal(
+          scoped.callTool(
+            tool,
+            { path: `/zones/${ZONE}/dns_records${tool.endsWith("write") ? "/r1" : ""}`, ...extra },
+            ctx,
+          ),
+        );
+        expect(error.code).toBe("invalid_args");
+        expect(sent).toHaveLength(1);
+        if (tool.endsWith("write")) expect(error.retryable).toBe(false);
+      }
     });
 
     it("holds GraphQL to pinned tags and refuses unscoped or negated filters", async () => {
@@ -744,7 +859,7 @@ describe("cloudflare() over a key", () => {
   describe("value safety (round 1, findings 2–4)", () => {
     // The table's completeness, coverage, keeps, and refusal sweep run in the
     // shared harness (value-safety.node.test.ts); these are the regressions.
-    it("INV-5: withholds every AI Search crawler header value in object/list and echoed configuration before select (#890)", async () => {
+    it("INV-5: withholds every AI Search crawler header value in object/list and echoed configuration before fields (#890)", async () => {
       const connector = cloudflare("cf", TOKEN);
       const path = `/accounts/${ACCOUNT}/ai-search/namespaces/default/instances`;
       const headerPath = "source_params.web_crawler.parse_options.include_headers";
@@ -770,10 +885,15 @@ describe("cloudflare() over a key", () => {
           respond = () => envelope(method === "GET" && !suffix ? [instance] : instance);
           const result = (await connector.callTool(
             tool,
-            { method, path: path + suffix, ...(body ? { body } : {}), ...(select ? { select } : {}) },
+            {
+              method,
+              path: path + suffix,
+              ...(body ? { body } : {}),
+              ...(select ? { fields: select.map((field) => `result.${field}`) } : {}),
+            },
             token(),
           )) as any;
-          const data = Array.isArray(result.data) ? result.data[0] : result.data;
+          const data = Array.isArray(result.data.result) ? result.data.result[0] : result.data.result;
           expect(data.source_params.web_crawler.parse_options.include_headers).toEqual({
             "X-Proof": "[redacted]",
             Accept: "[redacted]",
@@ -822,7 +942,7 @@ describe("cloudflare() over a key", () => {
     });
   });
 
-  it("INV-5: withholds application setup form defaults before select without losing field metadata", async () => {
+  it("INV-5: withholds application setup form defaults before fields without losing field metadata", async () => {
     const connector = cloudflare("cf", TOKEN);
     const form_fields = [
       { name: "client_secret", type: "password", default_value: "stored-secret-marker" },
@@ -835,25 +955,27 @@ describe("cloudflare() over a key", () => {
       "cloudflare_api_read",
       {
         path: `/accounts/${ACCOUNT}/one/applications/app1/setup-flows`,
-        select: ["id", "steps.form_fields"],
+        fields: ["result.id", "result.steps.form_fields"],
       },
       token(),
     );
     expect(JSON.stringify(result)).not.toMatch(/stored-secret-marker|stored-password-marker|default-region/);
     expect(result).toMatchObject({
-      data: [
-        {
-          id: "flow_1",
-          steps: [
-            {
-              form_fields: form_fields.map(({ default_value: _, ...field }) => ({
-                ...field,
-                default_value: "[redacted]",
-              })),
-            },
-          ],
-        },
-      ],
+      data: {
+        result: [
+          {
+            id: "flow_1",
+            steps: [
+              {
+                form_fields: form_fields.map(({ default_value: _, ...field }) => ({
+                  ...field,
+                  default_value: "[redacted]",
+                })),
+              },
+            ],
+          },
+        ],
+      },
     });
   });
 
@@ -866,7 +988,7 @@ describe("cloudflare() over a key", () => {
     expect(JSON.stringify(read)).not.toContain("stored-password");
     // Password hashes are not documented responses; the password field is
     // still removed if the vendor returns it despite its closed schema.
-    expect(read).toMatchObject({ data: [{ id: "s1", password: "[redacted]" }] });
+    expect(read).toMatchObject({ data: { result: [{ id: "s1", password: "[redacted]" }] } });
     respond = () => Response.json({ success: true, result: { id: "s1", expires_at: null } });
     expect(
       await connector.callTool(
@@ -874,7 +996,7 @@ describe("cloudflare() over a key", () => {
         { method: "POST", path, body: { password: "new-password" } },
         token(),
       ),
-    ).toMatchObject({ data: { id: "s1", expires_at: null } });
+    ).toMatchObject({ data: { result: { id: "s1", expires_at: null } } });
     const before = sent.length;
     const error = await refusal(
       connector.callTool(
@@ -902,7 +1024,7 @@ describe("cloudflare() over a key", () => {
       const error = await refusal(
         connector.callTool("cloudflare_api_read", { method: "POST", path, body: {} }, token()),
       );
-      expect(error.message, path).toContain("is not a reviewed read");
+      expect(error.message, path).toContain("cloudflare_api_write");
     }
     expect(sent).toEqual([]);
   });
@@ -1048,7 +1170,7 @@ describe("cloudflare() over a key", () => {
           { path: `/accounts/${ACCOUNT}/ai-gateway/custom-providers/p1` },
           token(),
         )) as any;
-        expect(result.data).toEqual({ id: "p1", name: "mine", headers: "[redacted]" });
+        expect(result.data.result).toEqual({ id: "p1", name: "mine", headers: "[redacted]" });
       }
     });
 
@@ -1101,7 +1223,7 @@ describe("cloudflare() over a key", () => {
       for (const [path, result, check] of cases) {
         respond = () => envelope(result);
         const response = (await connector.callTool("cloudflare_api_read", { path }, token())) as any;
-        check(response.data);
+        check(response.data.result);
         expect(JSON.stringify(response)).not.toContain("THIRD-PARTY");
       }
     });
@@ -1228,10 +1350,10 @@ describe("cloudflare() over a key", () => {
       const text = JSON.stringify(result);
       for (const secret of ["COOKIE-VALUE", "ARRAY-VALUE", "COOKIE-HEADER", "API-KEY"])
         expect(text, secret).not.toContain(secret);
-      expect(result.data[0].headers[1]).toEqual({ name: "Accept", value: "text/html" });
-      expect(result.data[0].header_map.Host).toBe("example.com");
+      expect(result.data.result[0].headers[1]).toEqual({ name: "Accept", value: "text/html" });
+      expect(result.data.result[0].header_map.Host).toBe("example.com");
       // A credential-named subtree goes whole (the stricter of the two former engines).
-      expect(result.data[0].cookies).toBe("[redacted]");
+      expect(result.data.result[0].cookies).toBe("[redacted]");
     });
   });
 
@@ -1240,7 +1362,7 @@ describe("cloudflare() over a key", () => {
       const connector = cloudflare("cf", TOKEN);
       const read = async (path: string, result: unknown) => {
         respond = () => envelope(result);
-        return ((await connector.callTool("cloudflare_api_read", { path }, token())) as any).data;
+        return ((await connector.callTool("cloudflare_api_read", { path }, token())) as any).data.result;
       };
       expect(
         await read(`/accounts/${ACCOUNT}/alerting/v3/destinations/webhooks/w1`, {

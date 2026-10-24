@@ -217,9 +217,9 @@
         "type": "A",
         "per_page": 2
       },
-      "select": [
-        "id",
-        "ttl"
+      "fields": [
+        "result.id",
+        "result.ttl"
       ]
     },
     "cloudflare_api_write": {
@@ -231,7 +231,7 @@
     },
     "verify_credential": {},
     "list_accounts": {
-      "perPage": 5
+      "limit": 5
     },
     "list_zones": {
       "name": "example.com",

@@ -9,7 +9,7 @@ import { skill } from "./skill.generated.js";
  */
 import type { ConnectorCallAdmissionPolicy, ConnectorCredentialConfig } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { CALL_ADMISSION } from "../../provider.js";
+import { CALL_ADMISSION, type ProviderGuideInput } from "../../provider.js";
 import { defineApiProvider } from "../../http/provider.js";
 import {
   CloudflareApi,
@@ -22,10 +22,14 @@ import {
   result,
   describeProbe,
   settings,
+  cloudflareIndex,
+  WRITE_STEPS,
+  UPLOADS,
 } from "./api.js";
 import { cloudflareTools } from "./tools.js";
+import { CLOUDFLARE_VERDICTS, CLOUDFLARE_PAGES, CLOUDFLARE_HEADERS, cloudflareBinding } from "./lib/hatch.js";
 
-import type { CloudflareKeyAuth, CloudflarePin } from "./lib/config.js";
+import type { CloudflarePin } from "./lib/config.js";
 export { CLOUDFLARE_API_BASE } from "./lib/config.js";
 export type { CloudflarePin } from "./lib/config.js";
 
@@ -132,50 +136,6 @@ const GLOBAL_API_KEY_CREDENTIAL: ConnectorCredentialConfig = {
   ],
 };
 
-function instructionsSection(instructions: string | undefined): string {
-  const text = instructions?.trim();
-  return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
-function idList(ids: readonly string[] | undefined): string {
-  return ids?.length ? ids.map((id) => `\`${id}\``).join(", ") : "none";
-}
-
-function keyUsageGuide(
-  auth: CloudflareKeyAuth,
-  options: {
-    purpose: string;
-    accountId?: string | undefined;
-    zoneId?: string | undefined;
-    pin?: CloudflarePin | undefined;
-    instructions?: string | undefined;
-  },
-): string {
-  const { key, global_warning, shared, key_tail } = skill.fragments;
-  const scheme = auth === "apiToken" ? "a scoped API token" : "a Global API Key";
-  const pinned = options.pin
-    ? [
-        options.pin.accountIds?.length ? `accounts ${idList(options.pin.accountIds)} and every zone in them` : "",
-        options.pin.zoneIds?.length ? `zones ${idList(options.pin.zoneIds)}` : "",
-      ].filter(Boolean)
-    : [];
-  const pin = options.pin
-    ? `\n\nPinned to ${pinned.join(", plus ")}. Calls naming any other account or zone are refused before they are sent, and so is every operation that names neither, except the credential's own user, the filtered account, zone, and membership lists, zone creation in a pinned account, and public data.`
-    : auth === "globalApiKey"
-      ? "\n\nUnpinned: this connector reaches every account and zone the key's user can."
-      : "";
-  const defaults = [
-    options.accountId ? `\`{account_id}\` in a path fills with \`${options.accountId}\`` : "",
-    options.zoneId ? `\`{zone_id}\` fills with \`${options.zoneId}\`` : "",
-  ].filter(Boolean);
-  const defaultLine = defaults.length
-    ? `\n\nDefaults: ${defaults.join("; ")}. Pass another id in the path when the request names a different one.`
-    : "";
-  return `# Cloudflare usage
-
-REST with ${scheme}. Connector purpose: ${options.purpose}${auth === "globalApiKey" ? global_warning.trimEnd() : ""}${pin}${defaultLine}${key}${shared}${key_tail}${instructionsSection(options.instructions)}`;
-}
-
 const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 const KEY_COMMON = keys("accountId", "zoneId", "baseUrl", "maxConcurrency");
 const PIN = optionsOf<CloudflarePin>()(keys("accountIds", "zoneIds"));
@@ -203,20 +163,30 @@ const CLOUDFLARE_OPTIONS = variants(
   ["oauth"],
 );
 
-function usageGuide(options: Readonly<CloudflareOptions>) {
+function usageGuide(options: Readonly<CloudflareOptions>): ProviderGuideInput {
   const { auth, accountId, zoneId, pin } = settings(options);
   return {
-    content: keyUsageGuide(auth, {
-      purpose: options.purpose,
-      accountId,
-      zoneId,
-      pin,
-      instructions: options.instructions,
-    }),
+    heading: "Cloudflare usage",
     summary:
-      auth === "globalApiKey"
-        ? "GLOBAL API KEY: the user's whole estate, limited by pin. Search operations, read details, then read or write."
-        : "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools.",
+      "Configured Cloudflare REST credential: resolve domain/account ids, then inspect DNS, Workers, R2, KV or analytics.",
+    context: [
+      `Connector purpose: ${options.purpose}`,
+      `This connection already has an operator-configured ${auth === "apiToken" ? "scoped API token" : "Global API Key"}; there is no sign-in step.`,
+      ...(auth === "globalApiKey"
+        ? [
+            "A Global API Key acts as its user across the user's estate. R2 requires an API token; user-setting and membership writes are refused.",
+          ]
+        : []),
+      ...(pin
+        ? [
+            `Pin: account ids ${pin.accountIds?.join(", ") || "none"}; zone ids ${pin.zoneIds?.join(", ") || "none"}. A pinned account includes its zones. Calls outside this boundary are refused.`,
+          ]
+        : ["No additional deployment pin: the credential's vendor permissions define its reachable estate."]),
+      ...(accountId ? [`Default account id: ${accountId}.`] : []),
+      ...(zoneId ? [`Default zone id: ${zoneId}.`] : []),
+      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+    ],
+    required: true,
   };
 }
 /** Maintained API connection. Hosted MCP uses a separate generic remoteMcp entry. */
@@ -225,8 +195,8 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
   title: "Cloudflare",
   readme: "Cloudflare",
   bundle: {
-    baselineGzip: 483872,
-    note: "./providers/cloudflare measures 483,872 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 596183,
+    note: "./providers/cloudflare measures 596,183 B gzip standalone in its decision 0011 step 2, versus 530,871 B on main ce0c7492 (Node 26.12.0, zlib-ng 1.3.1). The standard hatch, response-field metadata, retained 120-character parameter descriptions and numeric bounds account for this reviewed growth. The shared Effect kit is paid once per deployment; provider entries are report-only, not capped (#899).",
   },
   skill,
   options: CLOUDFLARE_OPTIONS,
@@ -242,6 +212,8 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
   authenticate,
   errors: cloudflareErrors,
   inBandRefusals: true,
+  idempotencyKey: false,
+  pageSize: { default: 20, max: 50 },
   safety,
   result,
   probe: {
@@ -249,5 +221,30 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
     describe: describeProbe,
   },
   guide: usageGuide,
+  hatch: {
+    name: "cloudflare",
+    title: "Cloudflare",
+    index: cloudflareIndex,
+    verdicts: CLOUDFLARE_VERDICTS,
+    named: {
+      ...Object.fromEntries(UPLOADS.map(([method, path]) => [`${method} ${path}`, "cloudflare_api_upload"])),
+      "GET /accounts": "list_accounts",
+      "GET /zones": "list_zones",
+      "GET /user/tokens/verify": "verify_credential",
+    },
+    fieldsRoot: "result",
+    pageCursor: "parameter",
+    headers: CLOUDFLARE_HEADERS,
+    textBodies: true,
+    writeSteps: WRITE_STEPS,
+    pages: CLOUDFLARE_PAGES,
+    binding: cloudflareBinding,
+    pathExample: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
+    notes: () => ({
+      read: 'DNS records, zones, Workers scripts, R2 buckets and objects, KV namespaces and keys are covered. Data retains the Cloudflare envelope; use fields:["result.id","result.name"]. Pass page.nextCursor in page.param within page.in, preserving the other arguments. Text/SQL reads take a string body.',
+      write:
+        "Create, update or delete DNS records, purge cache URLs, deploy Workers and change KV/R2 state here. Reviewed uploads use cloudflare_api_upload; JSON, text/SQL and NDJSON writes retain their documented wire formats.",
+    }),
+  },
   tools: cloudflareTools,
 });

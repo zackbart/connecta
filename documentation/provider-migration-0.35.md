@@ -344,3 +344,41 @@ HTTP 409 remains generic and is not `conflict`. Other classification and write
 settlement rules remain, while messages become complete standalone sentences.
 Writes take no idempotency key and are sent once; reconcile an unknown outcome
 with a read. Setup is in [Maintained provider setup](./providers.md#overflow).
+
+## Cloudflare
+
+All nine tool names remain: `cloudflare_api_search`, `cloudflare_api_details`,
+`cloudflare_api_read`, `cloudflare_api_write`, `cloudflare_api_upload`,
+`verify_credential`, `list_accounts`, `list_zones`, and `graphql_query`.
+Approval classifications do not change: hatch writes and uploads are destructive.
+
+- Rename hatch `select` to `fields`. Hatch data now retains the full safe vendor
+  envelope: **`data.id` becomes `data.result.id`**, and a result array is
+  `data.result`. Select `fields: ["result.id", "result.name"]` (or equivalent
+  `result[].id` for list traversal). `fields: ["id"]` on an envelope response is
+  refused before any request. Value safety and pin filtering still apply to
+  `result`, and `success: false` remains an error rather than returned data.
+- On `list_accounts` and `list_zones`, replace `perPage` with `limit` (default
+  20, range 5–50) and numbered `page` with opaque `cursor`. Their noun arrays
+  `accounts`/`zones` become `items`. They always return `page.hasMore`; a
+  continuing page has `page.nextCursor`, and a terminal page omits it. Exact
+  vendor totals appear only when the returned scope supports them. Named tools
+  otherwise retain projected shapes; all named reads add narrowing `fields`.
+- Hatch `page.next` becomes signed `page.nextCursor`. Put it unchanged into
+  `page.param` at `page.in`; do not send raw vendor page numbers or tokens.
+  Preserve the path, filters, page size, selected fields and R2 headers.
+- Operation search defaults to six hits, with maximum eight (previously ten
+  and fifty). Search and details expose signed continuation and `truncated`
+  paths for labels cut for size; larger details remain recoverable in pages
+  or chunks. Refused operations have no callable tool pointer.
+- Documented numeric constraints from the pinned contract now fail before I/O,
+  including paging bounds and numeric body fields.
+  HTTP 409 is generic `connector_call_failed`, rather than `invalid_args`;
+  Cloudflare declares no conflict category. 404 remains `not_found`. 429 keeps
+  the reviewed five-minute fallback, overridden by a supplied Retry-After.
+  Error wording is complete and includes the HTTP status once.
+
+Configured path placeholders, encoded slashes inside KV/R2 keys, closed R2
+headers and reviewed text/SQL/NDJSON/upload framing remain supported. No tool
+argument can widen pin scope or reveal a stored secret. Operator setup is in
+[Cloudflare](./providers.md#cloudflare).

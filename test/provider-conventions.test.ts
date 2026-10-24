@@ -309,7 +309,8 @@ describe("Cloudflare states its two pagination conventions in the schema (H10)",
     for (const name of ["cloudflare_api_read", "list_zones", "list_accounts"]) {
       const page = (tools.find((tool) => tool.name === name)!.outputSchema as any).properties.page;
       expect(page.properties.hasMore, name).toBeDefined();
-      expect(page.properties.param, name).toBeDefined();
+      if (name === "cloudflare_api_read") expect(page.properties.param, name).toBeDefined();
+      else expect(page.properties.nextCursor, name).toBeDefined();
     }
   });
 });

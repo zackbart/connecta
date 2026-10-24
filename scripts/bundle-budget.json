@@ -29,7 +29,7 @@
     "Gmail on the shared Google provider kit; local measurement follows.",
     "./providers/breeze measures 348,592 B gzip standalone at ead939ea (step-2 round-1 fix snapshot), versus 341,226 B on main e4401cd7 (+7,366 B), Node 26.12.0 with system zlib. This includes the shared Effect kit, paid once per deployment; provider entries are reported, not capped, and their sizes are not additive (#899).",
     "./providers/ccb measures 328,952 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
-    "./providers/cloudflare measures 483,872 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    "./providers/cloudflare measures 596,183 B gzip standalone in its decision 0011 step 2, versus 530,871 B on main ce0c7492 (Node 26.12.0, zlib-ng 1.3.1). The standard hatch, response-field metadata, retained 120-character parameter descriptions and numeric bounds account for this reviewed growth. The shared Effect kit is paid once per deployment; provider entries are report-only, not capped (#899).",
     "./providers/docs measures 335,623 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/drive measures 338,386 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/forms measures 334,835 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
@@ -67,7 +67,7 @@
       "baselineGzip": 328952
     },
     "./providers/cloudflare": {
-      "baselineGzip": 483872
+      "baselineGzip": 596183
     },
     "./providers/docs": {
       "baselineGzip": 335623
