@@ -273,7 +273,13 @@ nothing it reports proves its write was not sent. A raw network error or an
 keeps its code. Failures before
 the handler runs stay ordinary refusals: argument validation against
 `inputSchema` and missing authorization. Declare input constraints in
-`inputSchema` so a malformed write is refused before the handler starts. A
+`inputSchema` so a malformed write is refused before the handler starts. In-process
+calls treat undefined properties of plain objects as absent during validation,
+including records nested in arrays. Other objects, such as dates, byte arrays
+and class instances, retain their identity. For example, `{ title: "Minutes", cursor: undefined }` validates
+like `{ title: "Minutes" }`. Validation leaves the caller's arguments intact;
+handlers receive the normalized input. One input evaluation failure cannot
+disable validation for later calls. A
 read's failure keeps its own advice, so a network error stays a retryable
 `unavailable`. `ctx.oauth.fetch` never resends a write the API answered with
 HTTP 401 (see [Downstream OAuth on api()](./auth.md#downstream-oauth-on-api)).

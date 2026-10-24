@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import type { JsonSchema } from "../src/types.js";
-import { validateToolInput } from "../src/validate.js";
+import { normalizeToolInput, validateToolInput } from "../src/validate.js";
 import { spyLogger } from "./fixtures/misc.js";
 import { silentLogger } from "./helpers.js";
 
@@ -150,6 +150,67 @@ describe("validateToolInput", () => {
     expect(validateToolInput(schema, { mode: "token", apiKey: "secret" }, OPTS)).toBeNull();
     expect(validateToolInput(schema, { mode: "basic", apiKey: "wrong-mode" }, OPTS)?.code).toBe("invalid_args");
     expect(validateToolInput(schema, { mode: "basic", surprise: true }, OPTS)?.code).toBe("invalid_args");
+    // Optional in-process properties behave like omitted JSON properties,
+    // including inside arrays. A bad instance must not disable this schema.
+    const optional: JsonSchema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string" },
+        cursor: { type: "string" },
+        rows: { type: "array", items: schema },
+      },
+      required: ["title"],
+    };
+    const valid = Object.freeze({
+      title: "Minutes",
+      cursor: undefined,
+      extra: undefined,
+      rows: [Object.freeze({ mode: "basic", apiKey: undefined, surprise: undefined })],
+    });
+    const throwing = {
+      get title(): string {
+        throw new Error("Input getter failed.");
+      },
+    };
+    for (const [input, accepted] of [
+      [valid, true],
+      [{ title: undefined }, false],
+      [{ title: 1n }, false],
+      [valid, true],
+      [throwing, false],
+      [valid, true],
+      [{ title: 42 }, false],
+      [valid, true],
+    ] as const) {
+      const result = validateToolInput(optional, input, { ...OPTS, failClosed: true });
+      if (accepted) expect(result).toBeNull();
+      else expect(result?.code).toBe("invalid_args");
+    }
+    expect(Object.hasOwn(valid, "cursor")).toBe(true);
+    class Instance {
+      optional = undefined;
+      get value(): never {
+        throw new Error("Do not traverse class instances.");
+      }
+    }
+    for (const value of [new Uint8Array([1, 2, 3]), new Date(0), new Instance()]) {
+      expect(normalizeToolInput(value)).toBe(value);
+      const input = { value, rows: [{ value, optional: undefined }], optional: undefined };
+      const normalized = normalizeToolInput(input);
+      expect(normalized).not.toBe(input);
+      expect(normalized.value).toBe(value);
+      expect(normalized.rows[0]?.value).toBe(value);
+      expect(normalized).not.toHaveProperty("optional");
+      expect(normalized.rows[0]).not.toHaveProperty("optional");
+      expect(Object.hasOwn(input, "optional")).toBe(true);
+    }
+    const plain = Object.assign(Object.create(null), { value: "kept", optional: undefined });
+    const normalized = normalizeToolInput({ rows: [plain, undefined] });
+    expect(normalized.rows).toHaveLength(2);
+    expect(normalized.rows[1]).toBeUndefined();
+    expect(Object.getPrototypeOf(normalized.rows[0])).toBeNull();
+    expect(Object.keys(normalized.rows[0])).toEqual(["value"]);
   });
 });
 

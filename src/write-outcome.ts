@@ -194,7 +194,8 @@ function writeFailure(
 ): unknown {
   if (requests) {
     // In flight counts as sent. The call is closed, so nothing else leaves.
-    const sent = (request: ProviderRequest) => request.dispatched && !request.auxiliary;
+    const sent = (request: ProviderRequest) =>
+      request.dispatched && (!request.auxiliary || request.blocksAuxiliaryProof === true);
     const dispatched = requests.filter(sent);
     // What api() boundaries nested in the handler sent is this call's too.
     const nested = nestedProviderRequests(ctx).filter(sent);
