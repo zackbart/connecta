@@ -274,7 +274,8 @@ export class FakeRestService {
           has_more: Number(query.limit ?? 10) < rows.length,
         });
       }
-      if (method === "POST" && path === "/v1/refunds") {
+      const chargeRefund = this.stripeStep2 ? /^\/v1\/charges\/([^/]+)\/refund$/.exec(path) : null;
+      if (method === "POST" && (path === "/v1/refunds" || chargeRefund)) {
         const key = String(headers["idempotency-key"] ?? "");
         // Stripe v1 scopes keys to account and mode, not API credential.
         const scope = JSON.stringify([headers["stripe-account"] ?? this.stripeAccount, this.stripeMode, key]);
@@ -297,7 +298,7 @@ export class FakeRestService {
         const refund = {
           id: `re_eval_${this.state.refunds.length + 1}`,
           object: "refund",
-          charge: body.charge,
+          charge: chargeRefund?.[1] ?? body.charge,
           amount: Number(body.amount),
           currency: "usd",
           status: "succeeded",
@@ -305,9 +306,21 @@ export class FakeRestService {
         this.state.refunds.push(refund);
         const fault = this.refundFault && !this.state.refundFaulted;
         if (fault) this.state.refundFaulted = true;
+        const success = chargeRefund
+          ? {
+              id: refund.charge,
+              object: "charge",
+              amount: 5000,
+              currency: "usd",
+              paid: true,
+              amount_refunded: refund.amount,
+              refunded: false,
+              refunds: { object: "list", data: [refund], has_more: false },
+            }
+          : refund;
         const result = fault
           ? { status: 500, value: { error: { type: "api_error", message: "Refund outcome unknown" } } }
-          : { status: 200, value: refund };
+          : { status: 200, value: success };
         if (key) this.state.refundKeys[scope] = { params, ...structuredClone(result) };
         return result;
       }
