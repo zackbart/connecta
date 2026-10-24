@@ -5064,7 +5064,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search apps; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: List find search apps; outside the reviewed Drive execution allowlist.",
         "tags": [
           "apps"
         ],
@@ -5123,7 +5123,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve apps; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Get read retrieve apps; outside the reviewed Drive execution allowlist.",
         "tags": [
           "apps"
         ],
@@ -5336,7 +5336,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search changes; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: List find search changes; outside the reviewed Drive execution allowlist.",
         "tags": [
           "changes"
         ],
@@ -5438,7 +5438,7 @@
             "description": "Success"
           }
         },
-        "summary": "get Start Page Token changes; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: get Start Page Token changes; outside the reviewed Drive execution allowlist.",
         "tags": [
           "changes"
         ],
@@ -5662,7 +5662,7 @@
             "description": "Success"
           }
         },
-        "summary": "watch changes; refused: Persistent watch delivery and channel administration are outside this connection.",
+        "summary": "Refused: watch changes; watch delivery and channels are outside this connection.",
         "tags": [
           "changes"
         ],
@@ -5721,7 +5721,7 @@
             "description": "Success"
           }
         },
-        "summary": "stop channels; refused: Persistent watch delivery and channel administration are outside this connection.",
+        "summary": "Refused: stop channels; watch delivery and channels are outside this connection.",
         "tags": [
           "channels"
         ],
@@ -5890,7 +5890,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add drives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Create add drives; shared-drive administration is outside this connection.",
         "tags": [
           "drives"
         ],
@@ -5964,7 +5964,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove drives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Delete remove drives; shared-drive administration is outside this connection.",
         "tags": [
           "drives"
         ],
@@ -6032,7 +6032,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve drives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Get read retrieve drives; shared-drive administration is outside this connection.",
         "tags": [
           "drives"
         ],
@@ -6111,7 +6111,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit modify drives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Update edit modify drives; shared-drive administration is outside this connection.",
         "tags": [
           "drives"
         ],
@@ -6170,7 +6170,7 @@
             "description": "Success"
           }
         },
-        "summary": "hide drives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: hide drives; shared-drive administration is outside this connection.",
         "tags": [
           "drives"
         ],
@@ -6229,7 +6229,7 @@
             "description": "Success"
           }
         },
-        "summary": "unhide drives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: unhide drives; shared-drive administration is outside this connection.",
         "tags": [
           "drives"
         ],
@@ -6613,7 +6613,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create file or folder metadata. For uploads use create_file.",
+        "summary": "Create or save file or folder metadata; upload attachments with named create_file.",
         "tags": [
           "files"
         ],
@@ -6684,7 +6684,7 @@
             "description": "Success"
           }
         },
-        "summary": "Generate CSE access token; refused: Credential minting is outside this connection; no CSE access token is returned.",
+        "summary": "Refused: Generate CSE access token; credential minting is outside this connection.",
         "tags": [
           "files"
         ],
@@ -6769,7 +6769,7 @@
             "description": "Success"
           }
         },
-        "summary": "generate Ids files; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: generate Ids files; outside the reviewed Drive execution allowlist.",
         "tags": [
           "files"
         ],
@@ -6836,7 +6836,7 @@
             "description": "Success"
           }
         },
-        "summary": "empty Trash files; refused: Permanent deletion is outside this connection; use trash_file for recoverable trash.",
+        "summary": "Refused: empty Trash files; use trash_file for recoverable trash.",
         "tags": [
           "files"
         ],
@@ -6925,7 +6925,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete file permanently; refused: Permanent deletion is outside this connection; use trash_file for recoverable trash.",
+        "summary": "Refused: Delete file permanently; use trash_file for recoverable trash.",
         "tags": [
           "files"
         ],
@@ -7222,7 +7222,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update rename file, change description, move file to folder, trash or restore file.",
+        "summary": "Rename or update file metadata, move files to a folder, trash or restore a file.",
         "tags": [
           "files"
         ],
@@ -7306,7 +7306,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search accessproposals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: List find search accessproposals; approval workflows need separate review.",
         "tags": [
           "accessproposals"
         ],
@@ -7379,7 +7379,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve accessproposals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: Get read retrieve accessproposals; approval workflows need separate review.",
         "tags": [
           "accessproposals"
         ],
@@ -7455,7 +7455,7 @@
             "description": "Success"
           }
         },
-        "summary": "resolve accessproposals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: resolve accessproposals; approval workflows need separate review.",
         "tags": [
           "accessproposals"
         ],
@@ -7536,7 +7536,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: List find search approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -7610,7 +7610,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: Get read retrieve approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -7694,7 +7694,7 @@
             "description": "Success"
           }
         },
-        "summary": "approve approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: approve approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -7775,7 +7775,7 @@
             "description": "Success"
           }
         },
-        "summary": "cancel approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: cancel approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -7856,7 +7856,7 @@
             "description": "Success"
           }
         },
-        "summary": "comment approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: comment approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -7937,7 +7937,7 @@
             "description": "Success"
           }
         },
-        "summary": "decline approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: decline approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -8018,7 +8018,7 @@
             "description": "Success"
           }
         },
-        "summary": "reassign approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: reassign approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -8089,7 +8089,7 @@
             "description": "Success"
           }
         },
-        "summary": "start approvals; refused: Approval and access-proposal workflows require separate review and are outside this connection.",
+        "summary": "Refused: start approvals; approval workflows need separate review.",
         "tags": [
           "approvals"
         ],
@@ -8195,7 +8195,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search comments; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: List find search comments; outside the reviewed Drive execution allowlist.",
         "tags": [
           "comments"
         ],
@@ -8265,7 +8265,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add comments; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Create add comments; outside the reviewed Drive execution allowlist.",
         "tags": [
           "comments"
         ],
@@ -8328,7 +8328,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove comments; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Delete remove comments; outside the reviewed Drive execution allowlist.",
         "tags": [
           "comments"
         ],
@@ -8407,7 +8407,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve comments; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Get read retrieve comments; outside the reviewed Drive execution allowlist.",
         "tags": [
           "comments"
         ],
@@ -8487,7 +8487,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit modify comments; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Update edit modify comments; outside the reviewed Drive execution allowlist.",
         "tags": [
           "comments"
         ],
@@ -8592,7 +8592,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search replies; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: List find search replies; outside the reviewed Drive execution allowlist.",
         "tags": [
           "replies"
         ],
@@ -8672,7 +8672,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add replies; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Create add replies; outside the reviewed Drive execution allowlist.",
         "tags": [
           "replies"
         ],
@@ -8745,7 +8745,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove replies; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Delete remove replies; outside the reviewed Drive execution allowlist.",
         "tags": [
           "replies"
         ],
@@ -8834,7 +8834,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve replies; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Get read retrieve replies; outside the reviewed Drive execution allowlist.",
         "tags": [
           "replies"
         ],
@@ -8924,7 +8924,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit modify replies; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: Update edit modify replies; outside the reviewed Drive execution allowlist.",
         "tags": [
           "replies"
         ],
@@ -9176,7 +9176,7 @@
             "description": "Success"
           }
         },
-        "summary": "download files; refused: Media transport and private download destinations are outside the hatch; use get_file_content for bounded safe content.",
+        "summary": "Refused: download files; use get_file_content for bounded safe content.",
         "tags": [
           "files"
         ],
@@ -9240,7 +9240,7 @@
             "description": "Success"
           }
         },
-        "summary": "export files; refused: Media transport and private download destinations are outside the hatch; use get_file_content for bounded safe content.",
+        "summary": "Refused: export files; use get_file_content for bounded safe content.",
         "tags": [
           "files"
         ],
@@ -9326,7 +9326,7 @@
             "description": "Success"
           }
         },
-        "summary": "list Labels files; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: list Labels files; outside the reviewed Drive execution allowlist.",
         "tags": [
           "files"
         ],
@@ -9400,7 +9400,7 @@
             "description": "Success"
           }
         },
-        "summary": "modify Labels files; refused: This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
+        "summary": "Refused: modify Labels files; outside the reviewed Drive execution allowlist.",
         "tags": [
           "files"
         ],
@@ -9705,7 +9705,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create share file permission without emailing; refused: Use share_file for every grant; it validates the grantee and defaults notification email to false. The pinned Discovery marks emailAddress and domain output-only.",
+        "summary": "Refused: create or share a file permission; use share_file for every grant.",
         "tags": [
           "permissions"
         ],
@@ -10072,7 +10072,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update existing file permission role or expiration; ownership transfer is refused.",
+        "summary": "Change or update file permission role or expiration; ownership transfer is refused.",
         "tags": [
           "permissions"
         ],
@@ -10225,7 +10225,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove revisions; refused: Revision mutations can remove retained content or change publication; only revision metadata reads are admitted.",
+        "summary": "Refused: Delete remove revisions; only revision metadata reads are admitted.",
         "tags": [
           "revisions"
         ],
@@ -10389,7 +10389,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit modify revisions; refused: Revision mutations can remove retained content or change publication; only revision metadata reads are admitted.",
+        "summary": "Refused: Update edit modify revisions; only revision metadata reads are admitted.",
         "tags": [
           "revisions"
         ],
@@ -10515,7 +10515,7 @@
             "description": "Success"
           }
         },
-        "summary": "watch files; refused: Persistent watch delivery and channel administration are outside this connection.",
+        "summary": "Refused: watch files; watch delivery and channels are outside this connection.",
         "tags": [
           "files"
         ],
@@ -10581,7 +10581,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve operations; refused: Media transport and private download destinations are outside the hatch; use get_file_content for bounded safe content.",
+        "summary": "Refused: Get read retrieve operations; use get_file_content for bounded safe content.",
         "tags": [
           "operations"
         ],
@@ -10678,7 +10678,7 @@
             "description": "Success"
           }
         },
-        "summary": "List find search teamdrives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: List find search teamdrives; shared-drive administration is outside this connection.",
         "tags": [
           "teamdrives"
         ],
@@ -10746,7 +10746,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create add teamdrives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Create add teamdrives; shared-drive administration is outside this connection.",
         "tags": [
           "teamdrives"
         ],
@@ -10798,7 +10798,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete remove teamdrives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Delete remove teamdrives; shared-drive administration is outside this connection.",
         "tags": [
           "teamdrives"
         ],
@@ -10866,7 +10866,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read retrieve teamdrives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Get read retrieve teamdrives; shared-drive administration is outside this connection.",
         "tags": [
           "teamdrives"
         ],
@@ -10945,7 +10945,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update edit modify teamdrives; refused: Shared-drive administration and ownership changes are outside this connection; list_shared_drives reads membership.",
+        "summary": "Refused: Update edit modify teamdrives; shared-drive administration is outside this connection.",
         "tags": [
           "teamdrives"
         ],

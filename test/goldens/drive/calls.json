@@ -1884,13 +1884,13 @@
             "method": "PATCH",
             "path": "/files/{fileId}/revisions/{revisionId}",
             "operationId": "drive.revisions.update",
-            "summary": "Update edit modify revisions; refused: Revision mutations can remove retained content or change publication; only revis…"
+            "summary": "Refused: Update edit modify revisions; only revision metadata reads are admitted."
           },
           {
             "method": "DELETE",
             "path": "/files/{fileId}/revisions/{revisionId}",
             "operationId": "drive.revisions.delete",
-            "summary": "Delete remove revisions; refused: Revision mutations can remove retained content or change publication; only revision m…"
+            "summary": "Refused: Delete remove revisions; only revision metadata reads are admitted."
           },
           {
             "method": "GET",
@@ -1904,7 +1904,7 @@
             "method": "POST",
             "path": "/files",
             "operationId": "drive.files.create",
-            "summary": "Create file or folder metadata.",
+            "summary": "Create or save file or folder metadata; upload attachments with named create_file.",
             "tool": "drive_api_write",
             "named": "create_file"
           }
@@ -1912,7 +1912,7 @@
         "revision": "20261020",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiMzMzYzhmNjBmOTVmZDAxMjk3MzZjZDBiYjlmODIwYzgiLCJjIjoiNiIsIm0iOiJmc1VOWHduUEJNYWRqYUppZkZCSE9rN2JfZGZVMm9mLW9NVU0tM3N4WDJzIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiOWMzYzcxZmQ0Y2UwZTUxMmVhYmVhZDczYWIzNTBhZDMiLCJjIjoiNiIsIm0iOiJldDR5T3pXMGV0MEpqdkZwSlM4UGRuUlptb25WMm5DUVlkS1VQdWRWUXk4In0"
         }
       }
     }
@@ -2067,7 +2067,7 @@
         },
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiODdkMTcxZjE1MmEyYjMxNTkwYTJiYTdiMGNiNzRmNjEiLCJjIjoie1wicGFyYW1cIjpcInBhZ2VUb2tlblwiLFwiaW5cIjpcInF1ZXJ5XCIsXCJ2YWx1ZVwiOlwicmV2aXNpb25zLW5leHRcIn0iLCJtIjoiNHhNVmRrWGRDaEZRT25YN3pOU2tGZTlSeXloSkNHOElnTjNHZkRHbmIwQSJ9",
+          "nextCursor": "eyJ2IjoyLCJkIjoiZmQzMzU4YjBhNWU4ODY3YmM4YzBhZWQ2NTI0ZmE2ZjEiLCJjIjoie1wicGFyYW1cIjpcInBhZ2VUb2tlblwiLFwiaW5cIjpcInF1ZXJ5XCIsXCJ2YWx1ZVwiOlwicmV2aXNpb25zLW5leHRcIn0iLCJtIjoiUlV6eGh3dHF6SnRwUlZPMEctdlUxN2o4MnZKSlFrVkFrNFQ2eVhoV2tLcyJ9",
           "param": "pageToken",
           "in": "query"
         }

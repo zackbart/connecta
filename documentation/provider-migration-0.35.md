@@ -613,8 +613,8 @@ ownership transfer, watches, credential minting and hatch media remain refused.
 - Read `items` instead of `files` from `search_files`/`list_folder_items`,
   `permissions` from `list_permissions`, or `drives` from `list_shared_drives`.
   Keep named `limit`/`cursor`; terminal `page.nextCursor` is omitted instead of
-  null. Old cursors must be discarded; new cursors bind the connection, owner
-  and arguments, including the source-page checks.
+  null. Old cursors must be discarded; new cursors bind the connection, owner,
+  delegated caller and arguments, including the source-page checks.
 - Read `truncated` dot paths instead of `truncatedFields`. A true
   `contentTruncated` becomes `truncated: ["content"]`; false is omitted.
   Every named read accepts `fields`; for lists these paths address each item.

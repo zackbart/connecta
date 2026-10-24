@@ -50,5 +50,14 @@ on bigserv, with Node 22, recorded in the implementation handoff; no deadline
 or service-level claim changes.
 
 The seven planned eval tasks are D1–D7. D4 revision metadata is new coverage.
-Paid BEFORE/AFTER trials wait for the orchestrator's eval slot. Existing named
-wrappers remain because no measured BEFORE evidence supports retirement.
+The 56 paid BEFORE/AFTER trials retain frozen outcomes: 15/28 before and
+17/28 after, with existing capabilities 15/24 in both arms and D4 0/4 to 2/4.
+The eval notes retain Sonnet's pagination regression separately. Existing named
+wrappers remain; there is no approved retirement.
+
+The final deterministic follow-up keeps refusal reasons and write action words
+in compiled first sentences, preserves truncated metadata after every named
+read's field selection, and narrows the D4 reference to revision id/time fields.
+The reference contains no raw argument, and no out-of-repository preload was
+used. Its refreshed hash is disclosed separately from the paid snapshot. No
+prompt, fake, grader or paid outcome changed.

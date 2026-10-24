@@ -1520,8 +1520,11 @@ function buildTool(connection: Connection, tool: DriveTool): ApiTool {
           );
         return isRead
           ? isList
-            ? { ...result, items: selectFields(result["items"], fields) }
-            : selectFields(result, fields)
+            ? {
+                ...result,
+                items: asArray(result["items"]).map((item) => retainTruncated(item, selectFields(item, fields))),
+              }
+            : retainTruncated(result, selectFields(result, fields))
           : result;
       }).pipe(
         Effect.catchDefect((error) =>
@@ -1532,6 +1535,12 @@ function buildTool(connection: Connection, tool: DriveTool): ApiTool {
   return isRead
     ? read(connection, spec)
     : write(connection, { ...spec, destructive: tool.annotations.destructiveHint === true });
+}
+
+/** Field selection narrows data, while size provenance remains result metadata. */
+function retainTruncated(source: unknown, selected: unknown): unknown {
+  const truncated = asRecord(source)["truncated"];
+  return truncated === undefined ? selected : { ...asRecord(selected), truncated };
 }
 /** Convert size reports before the final byte guard and field selection. */
 function standardResult(value: unknown): any {
