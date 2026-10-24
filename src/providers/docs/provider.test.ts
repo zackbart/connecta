@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docs } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
+import { usesCallerIdentity } from "../../connector-caller.js";
+import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -255,7 +256,7 @@ describe("reading a document (H9)", () => {
     expect(elements.some((element: any) => /bylaws/.test(element.text ?? ""))).toBe(false);
   });
 
-  it("pages index rows across tabs by cursor, every row exactly once", async () => {
+  it("INV-3 INV-4: pages index rows once and binds continuation to the delegated caller", async () => {
     const tab = (id: string, count: number) => ({
       tabProperties: { tabId: id },
       documentTab: {
@@ -301,6 +302,39 @@ describe("reading a document (H9)", () => {
     ])
       await expect(call(connector, "get_document", args)).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(before);
+    // A real mapped provider carries the identity tag through its public factory.
+    // Both callers share the same root store and can reach the same document.
+    const mapped = connection({ subject: (who: { principal?: { id: string } }) => `${who.principal?.id}@example.com` });
+    expect(usesCallerIdentity(mapped)).toBe(true);
+    const registry = makeRegistry([mapped]);
+    const callerContext = (id: string) =>
+      registry
+        .scoped({
+          connectorIds: "all",
+          caller: {
+            authenticated: true,
+            identity: {
+              actor: { kind: "test-users", id },
+              subject: { namespace: "https://identity.test", id },
+              principal: { namespace: "https://identity.test", id },
+              interactive: true,
+            },
+          },
+        })
+        .contextFor("docs", "https://connecta.example");
+    const pagingArgs = { documentId: "big", withIndexes: true, maxChars: 0 };
+    const alicePage = (await mapped.callTool("get_document", pagingArgs, callerContext("alice"))) as any;
+    const continuation = { ...pagingArgs, cursor: alicePage.page.nextCursor };
+    const sentBeforeBob = calls.length,
+      mintedBeforeBob = tokenCalls;
+    await expect(mapped.callTool("get_document", continuation, callerContext("bob"))).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    expect(calls).toHaveLength(sentBeforeBob);
+    expect(tokenCalls).toBe(mintedBeforeBob);
+    const aliceNext = (await mapped.callTool("get_document", continuation, callerContext("alice"))) as any;
+    expect(calls).toHaveLength(sentBeforeBob + 1);
+    expect(aliceNext.tabs.flatMap((tab: any) => tab.elements)[0].text).not.toBe(alicePage.tabs[0].elements[0].text);
     route = () => ({ body: { documentId: "big", revisionId: "new", tabs: [tab("t.0", 1500)] } });
     await expect(
       call(connector, "get_document", { documentId: "big", withIndexes: true, maxChars: 0, cursor: firstCursor }),
