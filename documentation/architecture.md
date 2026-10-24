@@ -2126,9 +2126,28 @@ declared response roots before dispatch. Search answers stay within 16 KiB
 (at most eight compact entries, long labels cut and marked, continuation by
 cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
-cursor. Search ranks exact path nouns, root collections and authored
-operations first, then operations found by a field they return or take, and
-points at the authored tool that serves an operation. `_api_read` omits
+cursor. Standard hatch search removes conversational framing; framing-only
+queries return no matches. It admits partial lexical matches alongside full
+matches. Action/read queries require all content nouns in the operation text,
+or any noun in the path/id with at least half the nouns in the text. Their
+field-only matches need half-noun coverage across text and declared field
+names. Verb-less noun phrases retain their broader rule: any noun in the
+path/id, or all nouns in the text. A leading create/add/update/edit/delete/remove/cancel/stop
+with an object sets write intent and retains later read words as nouns.
+Otherwise, a read word anywhere sets read intent, including after
+refund/charge/issue/process. Reviewed intent and a verb/synonym match in
+summary, id or path sort before resource focus. With one resource noun,
+root collections sort before nested routes, including person/people,
+s/es/ies plurals and hyphenated list roots. Authored operations break otherwise
+equal collection ties. Sort keys are computed once per operation per query;
+lexical relevance and index order resolve remaining ties. Operations found
+only through a request or response field follow those primary matches, and
+search names an authored tool whenever one serves an operation.
+This narrows [decision 0014](https://github.com/zackbart/connecta/blob/main/decisions/0014-api-tool-shape.md):
+collection preference applies to one resource noun and authored preference
+only breaks collection ties, rather than leading every multi-word noun phrase.
+Broader phrase ranking remains planned in [#1001](https://github.com/zackbart/connecta/issues/1001).
+`_api_read` omits
 `method` only when GET is its one reviewed read method.
 The hatch's optional `pages` table declares an adapter for each indexed read
 that pages. `src/http/hatch-paging.ts` supplies Stripe forward lists

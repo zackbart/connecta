@@ -31,6 +31,12 @@ import { tracksEveryRequest } from "../src/provider-call.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { HATCH_SEARCH_QUERIES } from "./fixtures/hatch-search.js";
+import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
+import { fixture as pcoFixture } from "../src/providers/planning-center/fixtures.js";
+import { fixture as tithelyFixture } from "../src/providers/tithely/fixtures.js";
+import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
+import { fixture as breezeFixture } from "../src/providers/breeze/fixtures.js";
 
 const DATA: OpenApiData = {
   source: "https://api.example/openapi.json",
@@ -203,7 +209,7 @@ function setup(
 
 it(
   "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
-  NODE,
+  { ...NODE, timeout: 30_000 },
   async () => {
     const verdicts = { ...VERDICTS };
     const { call, tools, index, connection, sendPath, authenticate } = setup({ verdicts });
@@ -232,6 +238,120 @@ it(
     // An exact path noun leads, root collection first.
     const first = (await call("search", { query: "items", limit: 3 })) as { operations: Array<{ path: string }> };
     expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
+    const fixtures = new Map(
+      [stripeFixture, pcoFixture, tithelyFixture, overflowFixture, breezeFixture].map((fixture) => [
+        fixture.name,
+        fixture.create(),
+      ]),
+    );
+    for (const [provider, query, method, path, maxRank] of HATCH_SEARCH_QUERIES) {
+      const connector = fixtures.get(provider)!;
+      const prefix = provider === "planning-center" ? "pco" : provider;
+      const args = { query, limit: 8 };
+      const searchContext = connectorContext();
+      const found = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as {
+        operations: Array<{ method: string; path: string }>;
+        page: { hasMore: boolean; nextCursor?: string };
+      };
+      const rank = found.operations.findIndex((op) => op.method === method && op.path === path) + 1;
+      expect(rank, `${provider}: ${query}`).toBeGreaterThan(0);
+      expect(rank, `${provider}: ${query}`).toBeLessThanOrEqual(maxRank);
+      expect(found.operations.length).toBeLessThanOrEqual(8);
+      expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
+      expect(await connector.callTool(`${prefix}_api_search`, args, searchContext)).toEqual(found);
+    }
+    for (const [provider, query] of [
+      ["planning-center", "Show All"],
+      ["planning-center", "please show all"],
+      ["planning-center", "delete dns record"],
+      ["planning-center", "please list all of the dns records for the zone by name"],
+      ["overflow", "delete dns record"],
+      ["tithely", "list zones"],
+      ["breeze", "create a dns zone"],
+      ["planning-center", "xyzzy"],
+      ["planning-center", "list xyzzy"],
+      ["stripe", "create xyzzy"],
+      ["stripe", "get xyzzy details"],
+      ["stripe", "the"],
+      ["stripe", "show me"],
+      ["stripe", "constructor"],
+      ["stripe", "delete toString"],
+      ["stripe", "__proto__"],
+    ] as const) {
+      const prefix = provider === "planning-center" ? "pco" : provider;
+      const found = await fixtures.get(provider)!.callTool(`${prefix}_api_search`, { query }, connectorContext());
+      expect(found, `${provider}: ${query}`).toMatchObject({ operations: [], page: { hasMore: false } });
+    }
+    // Verb-less noun phrases keep their broader eligibility rule.
+    const broad = (await fixtures
+      .get("planning-center")!
+      .callTool(
+        "pco_api_search",
+        { query: "account member roles permissions groups tokens policies settings", limit: 8 },
+        connectorContext(),
+      )) as { operations: unknown[]; page: { hasMore: boolean } };
+    expect(broad.operations).toHaveLength(8);
+    expect(broad.page.hasMore).toBe(true);
+    // Nouns survive verb ambiguity; common inflections share one root key.
+    const nounOps: OpenApiData["ops"] = [
+      ["GET", "/issues", "ListIssues", "List issues", 0],
+      ["GET", "/issues/{issue}", "GetIssue", "Get issue", 0],
+      ["PATCH", "/issues/{issue}", "CloseIssue", "Close issue", 0],
+      ["POST", "/refunds", "IssueRefund", "Issue a refund", 0],
+      ...["campuses", "batches", "categories", "processes"].flatMap((noun): OpenApiData["ops"] => [
+        ["GET", `/${noun}`, `List${noun}`, `List ${noun}`, 0],
+        ["GET", `/items/{item}/${noun}`, `Related${noun}`, `Related ${noun}`, 0],
+      ]),
+    ];
+    const nouns = setup({
+      data: { ...DATA, ops: nounOps, details: JSON.stringify({ d: [], o: nounOps.map(() => 0) }), fields: [] },
+      verdicts: Object.fromEntries(
+        nounOps.map(([method, path]) => [`${method} ${path}`, method === "GET" ? "read" : "write"]),
+      ),
+    });
+    for (const [query, method, path] of [
+      ["issue", "GET", "/issues"],
+      ["get issue 42", "GET", "/issues/{issue}"],
+      ["close issue", "PATCH", "/issues/{issue}"],
+      ["issue a refund", "POST", "/refunds"],
+      ...["campus", "campuses", "batch", "batches", "category", "categories", "process"].map((noun) => [
+        noun,
+        "GET",
+        noun.startsWith("campus")
+          ? "/campuses"
+          : noun.startsWith("batch")
+            ? "/batches"
+            : noun.startsWith("categor")
+              ? "/categories"
+              : "/processes",
+      ]),
+    ]) {
+      const found = (await nouns.call("search", { query })) as { operations: Array<{ method: string; path: string }> };
+      expect(found.operations[0], query).toMatchObject({ method, path });
+    }
+    expect(await nouns.call("search", { query: "constructor" })).toMatchObject({ operations: [] });
+    // A broad person lookup ranks all five People profile operations first,
+    // then continues into other products and relationships without losing any.
+    const pco = fixtures.get("planning-center")!;
+    const pcoContext = connectorContext();
+    const profiles = (await pco.callTool("pco_api_search", { query: "person", limit: 5 }, pcoContext)) as any;
+    expect(profiles.operations.map((op: any) => op.path)).toEqual([
+      "/people/v2/people",
+      "/people/v2/people",
+      "/people/v2/people/{person_id}",
+      "/people/v2/people/{person_id}",
+      "/people/v2/people/{person_id}",
+    ]);
+    expect(profiles.page.hasMore).toBe(true);
+    const others = (await pco.callTool(
+      "pco_api_search",
+      { query: "person", cursor: profiles.page.nextCursor },
+      pcoContext,
+    )) as any;
+    expect(others.operations.length).toBeGreaterThan(0);
+    expect(
+      others.operations.some((op: any) => !["/people/v2/people", "/people/v2/people/{person_id}"].includes(op.path)),
+    ).toBe(true);
     await expect(call("search", { query: "item", limit: 9 })).rejects.toMatchObject({ code: "invalid_args" });
     await expect(call("search", { query: "item", cursor: "e30" })).rejects.toMatchObject({ code: "invalid_args" });
     const searchPage = (await call("search", { query: "item", limit: 1 })) as { page: { nextCursor: string } };
