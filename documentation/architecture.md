@@ -2128,10 +2128,14 @@ cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
 cursor. Standard hatch search removes conversational framing; framing-only
 queries return no matches. It admits partial lexical matches alongside full
-matches, requiring a resource word in the path/id or all content nouns in the
-operation text. Action/read queries anchor path/id and field-only eligibility
-to their first content noun; noun phrases may match any resource noun.
-Any read word sets read intent. Reviewed intent and a verb/synonym match in
+matches. Action/read queries require all content nouns in the operation text,
+or any noun in the path/id with at least half the nouns in the text. Their
+field-only matches need half-noun coverage across text and declared field
+names. Verb-less noun phrases retain their broader rule: any noun in the
+path/id, or all nouns in the text. A leading create/add/update/edit/delete/remove/cancel/stop
+with an object sets write intent and retains later read words as nouns.
+Otherwise, a read word anywhere sets read intent, including after
+refund/charge/issue/process. Reviewed intent and a verb/synonym match in
 summary, id or path sort before resource focus. With one resource noun,
 root collections sort before nested routes, including person/people,
 s/es/ies plurals and hyphenated list roots. Authored operations break otherwise

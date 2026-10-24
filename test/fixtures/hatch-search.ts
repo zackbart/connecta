@@ -1,6 +1,7 @@
 // Regression queries across five independently reviewed API indexes. The
 // original 43 rows are supplemented by the #996 review's verb/read/plural
-// cases; its independent 70-query corpus is measured separately.
+// cases and final modifier/object regressions. The complete adversarial 47
+// and independent 70-query corpora are measured separately.
 export const HATCH_SEARCH_QUERIES = [
   ["stripe", "refund", "POST", "/v1/refunds", 3],
   ["stripe", "refunds", "GET", "/v1/refunds", 3],
@@ -85,4 +86,31 @@ export const HATCH_SEARCH_QUERIES = [
   ["planning-center", "batch", "GET", "/giving/v2/batches", 1],
   ["planning-center", "batches", "GET", "/giving/v2/batches", 1],
   ["tithely", "organizations", "GET", "/organizations-list", 1],
+  // Modifiers may precede the resource without anchoring eligibility to them.
+  ["stripe", "create new customer", "POST", "/v1/customers", 1],
+  ["stripe", "create a new subscription", "POST", "/v1/subscriptions", 2],
+  ["stripe", "update existing customer", "POST", "/v1/customers/{customer}", 1],
+  ["stripe", "get recent payouts", "GET", "/v1/payouts", 1],
+  ["stripe", "list failed charges", "GET", "/v1/charges", 1],
+  ["stripe", "list pending refunds", "GET", "/v1/refunds", 1],
+  ["stripe", "cancel active subscription", "DELETE", "/v1/subscriptions/{subscription_exposed_id}", 2],
+  ["overflow", "create a new donor", "POST", "/donors", 1],
+  ["overflow", "list recent contributions", "GET", "/contributions", 1],
+  ["overflow", "list failed contributions", "GET", "/contributions", 1],
+  ["tithely", "list recent charges", "GET", "/charges-list", 1],
+  // Broader collection preference regressed an existing row; ranking remains
+  // planned in #1001. Retain these actual tolerances rather than hiding the gap.
+  ["stripe", "list open invoices", "GET", "/v1/invoices", 3],
+  ["planning-center", "list upcoming events", "GET", "/calendar/v2/events", 3],
+  ["breeze", "list upcoming events", "GET", "/events", 4],
+  // Read words are objects when an explicit write verb leads the query.
+  ["planning-center", "update list", "PATCH", "/people/v2/lists/{list_id}", 1],
+  ["planning-center", "update a list", "PATCH", "/people/v2/lists/{list_id}", 1],
+  ["stripe", "delete value list", "DELETE", "/v1/radar/value_lists/{value_list}", 2],
+  ["stripe", "create value list", "POST", "/v1/radar/value_lists", 2],
+  ["stripe", "update value list", "POST", "/v1/radar/value_lists/{value_list}", 1],
+  ["planning-center", "delete marital status", "DELETE", "/people/v2/marital_statuses/{marital_status_id}", 1],
+  ["planning-center", "create marital status", "POST", "/people/v2/marital_statuses", 1],
+  ["planning-center", "update marital status", "PATCH", "/people/v2/marital_statuses/{marital_status_id}", 1],
+  ["stripe", "update subscription status", "POST", "/v1/subscriptions/{subscription_exposed_id}", 2],
 ] as const;

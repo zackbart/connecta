@@ -375,6 +375,7 @@ export function hatch(
     lexicalSearchContent(query)
       .split(/[^a-z0-9]+/)
       .filter((word) => word.length >= 2);
+  const writeVerbs = new Set(["create", "add", "update", "edit", "delete", "remove", "cancel", "stop"]);
   const queryTerms = (query: string) => {
     const terms = queryWords(query).filter((term) => term !== "by");
     const lookup = terms.find((term) => readActions.has(term));
@@ -385,6 +386,9 @@ export function hatch(
       Object.hasOwn(verbs, first) &&
       (!["issue", "process", "refund", "charge"].includes(first) ||
         (!lookup && terms.slice(1).some((term) => !readActions.has(term) && !/^\d+$/.test(term))));
+    // An explicit leading write verb wins; a later read word (list, status) is its object.
+    if (first !== undefined && terms.length > 1 && writeVerbs.has(first))
+      return { terms, nouns: terms.slice(1), verbWords: verbs[first], intent: "write" as const };
     const verb = lookup ?? (leadingVerb ? first : undefined);
     return {
       terms,
@@ -393,7 +397,10 @@ export function hatch(
           !readActions.has(term) && !(position === 0 && leadingVerb && !["refund", "charge"].includes(term)),
       ),
       verbWords: verb === undefined ? undefined : verbs[verb],
-      intent: lookup ? "read" : leadingVerb && writeActions.has(first!) ? "write" : undefined,
+      intent: (lookup ? "read" : leadingVerb && writeActions.has(first!) ? "write" : undefined) as
+        | "read"
+        | "write"
+        | undefined,
     };
   };
   // Compare inflections symmetrically: campus/campuses must not stem campus to campu.
@@ -412,7 +419,9 @@ export function hatch(
   const rank = (found: readonly Operation[], query: ReturnType<typeof queryTerms>, pathQuery: boolean): Operation[] => {
     if (pathQuery) return [...found];
     const { nouns, intent, verbWords } = query;
-    const topics = intent === undefined ? nouns : nouns.slice(0, 1);
+    // Modifiers may precede the resource in action/read queries. Noun phrases
+    // retain their broader resource match without the half-coverage threshold.
+    const half = Math.ceil(nouns.length / 2);
     const features = found
       .map((op, position) => {
         const parts = op.path.toLowerCase().split("/").filter(Boolean);
@@ -432,12 +441,15 @@ export function hatch(
           verbMatch: verbWords !== undefined && verbal.some((word) => verbWords.includes(word)),
         };
       })
-      .filter(
-        ({ identity, text }) =>
+      .filter(({ identity, text }) => {
+        const covered = nouns.filter((term) => text.some((word) => matches(word, term))).length;
+        return (
           nouns.length === 0 ||
-          topics.some((term) => identity.some((word) => matches(word, term))) ||
-          nouns.every((term) => text.some((word) => matches(word, term))),
-      );
+          covered === nouns.length ||
+          ((intent === undefined || covered >= half) &&
+            nouns.some((term) => identity.some((word) => matches(word, term))))
+        );
+      });
     const focus = nouns.find((term) => features.some(({ literal }) => literal.some((word) => sameNoun(word, term))));
     const resourceOnly = nouns.length === 1 && !pathQuery;
     const keyed = features.map(({ op, position, parts, literal, root, parameter, verbMatch }) => ({
@@ -485,7 +497,7 @@ export function hatch(
       .split(/[^a-z0-9]+/)
       .filter((word) => word.length >= 2);
   const same = (term: string, word: string) => term === word || term === `${word}s` || word === `${term}s`;
-  const byField = (query: string, method: RestMethod | undefined, found: ReadonlySet<Operation>, topic?: string) => {
+  const byField = (query: string, method: RestMethod | undefined, found: ReadonlySet<Operation>) => {
     const candidates = index.ops.filter((op) => method === undefined || op.method === method);
     const leaf = (field: OperationField) => words(field.path.split(".").at(-1)!);
     // Eligibility and rarity count every declared path, nested ones included; depth only lowers rank.
@@ -502,7 +514,7 @@ export function hatch(
     if (weights.size === 0) return [];
     const order = new Map(index.ops.map((op, position) => [op, position]));
     return candidates
-      .filter((op) => !found.has(op) && (topic === undefined || carries(op, topic)))
+      .filter((op) => !found.has(op))
       .flatMap((op) => {
         const best = index
           .fields(op)
@@ -527,6 +539,14 @@ export function hatch(
           order.get(a.op)! - order.get(b.op)!,
       )
       .map(({ op, field }) => ({ op, field }));
+  };
+  // Nouns an operation's text or declared field names cover.
+  const coverage = (op: Operation, nouns: readonly string[]) => {
+    const own = [
+      ...words(`${op.summary} ${op.operationId} ${op.path} ${op.tag}`),
+      ...index.fields(op).flatMap((field) => words(field.path.split(".").at(-1)!)),
+    ];
+    return nouns.filter((term) => own.some((word) => matches(word, term))).length;
   };
   const methodsWith = (wanted: (verdict: Verdict) => boolean) =>
     index.methods.filter((method) => index.ops.some((op) => op.method === method && wanted(verdictOf(op))));
@@ -630,7 +650,11 @@ export function hatch(
               pathQuery ? args.query : (query.nouns.length ? query.nouns : query.terms).join(" "),
               args.method,
               new Set(primary),
-              pathQuery || query.intent === undefined ? undefined : query.nouns[0],
+            ).filter(
+              ({ op }) =>
+                pathQuery ||
+                query.intent === undefined ||
+                coverage(op, query.nouns) >= Math.ceil(query.nouns.length / 2),
             ),
           ];
           const reachable = ranked.filter(({ op }) => [...op.path].length <= 2048).length;

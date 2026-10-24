@@ -8,14 +8,19 @@ procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
 Standard API operation search accepts resource nouns, actions and conversational
-phrasing. Read words anywhere in a query prefer reviewed reads; action queries
-then prefer the requested verb or a synonym in an operation's summary or id.
+phrasing. A leading create/add/update/edit/delete/remove/cancel/stop with an
+object prefers reviewed writes and keeps later read words as nouns, as in
+`update list` or `update subscription status`. Otherwise, read words anywhere
+prefer reviewed reads, including after refund/charge/issue/process. Action
+queries then prefer the requested verb or a synonym in an operation's summary or id.
 A single resource noun ranks its root collection before nested routes.
 Partial lexical matches are included even when other operations match every
-term. They must match a resource word in the path or operation id, or every
-content noun in the operation's text. Action/read queries use the first
-content noun as their resource, so a generic modifier cannot supply a loose
-match for an unrelated resource.
+term. For action/read queries, an operation must cover every content noun in
+its text, or match a noun in its path or operation id while covering at least
+half the nouns. Field-only matches need half-noun coverage across the text and
+declared field names. This allows modifiers before the resource without
+admitting verb-only matches for unrelated nouns. Verb-less noun phrases keep
+their broader rule: any noun in the path/id, or every noun in the text.
 Queries containing only conversational filler return no matches. Search order
 is deterministic; multi-word noun phrases retain lexical relevance, and
 authored tools break otherwise equal collection ties.
