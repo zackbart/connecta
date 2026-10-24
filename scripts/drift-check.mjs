@@ -478,7 +478,12 @@ async function checkOpenApiIndex(provider, check, options) {
     } catch {
       throw new ParserError(`${provider}'s Discovery specification at ${live} is not JSON`);
     }
-    const archived = JSON.parse(await readFile(resolvePath(directory, "evidence/discovery.document.json"), "utf8"));
+    let archived;
+    try {
+      archived = JSON.parse(await readFile(resolvePath(directory, "evidence/discovery.document.json"), "utf8"));
+    } catch {
+      throw new EvidenceError(`${provider}'s evidence/discovery.document.json is missing or invalid JSON`);
+    }
     const digest = sha256(JSON.stringify(canonicalDiscovery(published)));
     const pinned = sha256(JSON.stringify(canonicalDiscovery(archived)));
     return {

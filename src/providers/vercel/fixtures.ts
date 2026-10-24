@@ -1,7 +1,6 @@
 import { vercel } from "./index.js";
 type Options = Parameters<typeof vercel>[1];
-// The token connector is the default: its tools are Connecta's own, so the
-// hand-written conventions apply to it. The OAuth case reaches hosted MCP.
+// Offline token-authenticated authored tools; hosted MCP uses a generic connection.
 const options: Options = { "purpose":"Audit fixture", "auth":{"type":"token"} };
 export const fixture = {
   name: "vercel",

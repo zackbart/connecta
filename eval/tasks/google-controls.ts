@@ -145,6 +145,69 @@ export async function googleBoundaryControls(): Promise<void> {
   const world = new World({ google: { product: "forms", task: 1 } });
   await world.start();
   const account = world.google.state.accounts[ALICE];
+  const fakeRead = async (url: URL | string, scope: string) =>
+    (
+      await world.google.handle(new Request(url), ALICE, [`https://www.googleapis.com/auth/${scope}`])
+    ).json() as Promise<Record<string, any>>;
+  for (const [fields, grid, metadata] of [
+    ["developerMetadata", false, true],
+    ["sheets/dataValidation", false, false],
+    ["sheets.dataValidation", false, false],
+    ["sheets.properties(sheetId,title)", false, false],
+    ["sheets(properties,data(rowData))", true, false],
+    ["sheets/data/rowData", true, false],
+    ["sheets.data.rowData", true, false],
+    ["sheets.data(rowData)", true, false],
+    ["sheets.properties,developerMetadata", false, true],
+  ] as const) {
+    const url = new URL("https://sheets.googleapis.com/v4/spreadsheets/sheets1");
+    url.searchParams.set("fields", fields);
+    const result = await fakeRead(url, "spreadsheets");
+    if (!!result.sheets[0].data !== grid) throw new Error(`Google fake misread field mask ${fields}`);
+    if (Array.isArray(result.developerMetadata) !== metadata)
+      throw new Error(`Google fake exposed unselected metadata for ${fields}`);
+  }
+  for (const fields of ["id,permissions", "permissions.role", "permissions(emailAddress)"]) {
+    const url = new URL("https://www.googleapis.com/drive/v3/files/pdf1");
+    url.searchParams.set("fields", fields);
+    const file = await fakeRead(url, "drive");
+    if (file.id !== "pdf1" || file.permissions?.length !== 2)
+      throw new Error("Google fake omitted selected file permissions");
+  }
+  const grid = await fakeRead(
+    "https://sheets.googleapis.com/v4/spreadsheets/sheets1?includeGridData=true",
+    "spreadsheets",
+  );
+  if (grid.sheets[1]?.data?.[0]?.rowData?.[1]?.values?.[1]?.userEnteredValue?.stringValue !== "Bob")
+    throw new Error("Google fake omitted People grid data");
+  for (const [range, sheetId] of [
+    ["'People'", 1],
+    ["'Alice''s costs'", 0],
+  ] as const) {
+    const url = new URL("https://sheets.googleapis.com/v4/spreadsheets/sheets1?includeGridData=true");
+    url.searchParams.set("ranges", range);
+    const selected = await fakeRead(url, "spreadsheets");
+    if (selected.sheets.length !== 1 || selected.sheets[0].properties.sheetId !== sheetId)
+      throw new Error(`Google fake ignored quoted sheet-only range ${range}`);
+  }
+  const selectedGrid = await fakeRead(
+    "https://sheets.googleapis.com/v4/spreadsheets/sheets1?includeGridData=true&ranges=People!B2:B2",
+    "spreadsheets",
+  );
+  if (
+    selectedGrid.sheets.length !== 1 ||
+    selectedGrid.sheets[0].properties.sheetId !== 1 ||
+    selectedGrid.sheets[0].data[0].startRow !== 1 ||
+    selectedGrid.sheets[0].data[0].startColumn !== 1 ||
+    selectedGrid.sheets[0].data[0].rowData[0].values[0].userEnteredValue.stringValue !== "Bob"
+  )
+    throw new Error("Google fake ignored the selected sheet/grid range");
+  const layout = await fakeRead(
+    "https://slides.googleapis.com/v1/presentations/slides1/pages/layout1",
+    "presentations",
+  );
+  if (layout.objectId !== "layout1" || layout.pageElements?.[0]?.objectId !== "placeholder1")
+    throw new Error("Google fake omitted the layout page join");
   const item = structuredClone(account.form.items[0]);
   account.form.items = Array.from({ length: 800 }, (_, i) => {
     const copy = structuredClone(item);

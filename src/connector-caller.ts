@@ -43,6 +43,22 @@ export interface ConnectorCaller {
   poolOwner?: string;
 }
 
+const callerIdentities = new WeakSet<object>();
+
+/** Mark a connector whose downstream identity depends on the admitted caller. */
+export function tagCallerIdentity<C extends object>(connector: C): C {
+  callerIdentities.add(connector);
+  return connector;
+}
+
+/** Provider construction may wrap a connector in an inheriting object. */
+export function usesCallerIdentity(connector: object): boolean {
+  for (let current: object | null = connector; current; current = Object.getPrototypeOf(current) as object | null) {
+    if (callerIdentities.has(current)) return true;
+  }
+  return false;
+}
+
 export function attachCaller(ctx: ConnectorContext, caller: ConnectorCaller | undefined): ConnectorContext {
   setViewService(ctx, Caller, caller);
   return ctx;

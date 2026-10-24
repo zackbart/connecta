@@ -207,61 +207,148 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
   });
   add("answer-evidence", answer?.source === product && subset(answer, expected));
   const reads = source.filter((c) => c.kind === "read" && c.outcome === "ok");
-  const requirements: RegExp[] =
-    product === "gmail"
-      ? task === 2
-        ? [/^\/threads\/t1$/, /^\/threads\/t2$/, /^\/labels$/]
-        : task === 4 || task === 5
-          ? [/^\/messages\/m1$/]
-          : task === 6
-            ? [/^\/drafts\/draft1$/]
-            : task === 7
-              ? [/^\/drafts\/draft-inline$/]
-              : [/^\/(?:threads|messages)(?:\/[^/]+)?$/]
-      : product === "drive"
-        ? task === 1 || task === 3
-          ? [/^\/files$/]
-          : task === 2
-            ? [/^\/files\/folder1$/, /^\/files\/pdf1\/permissions$/]
-            : task === 4
-              ? [/^\/files\/pdf1\/revisions$/]
-              : task === 6
-                ? [/^\/files\/pdf1$/]
-                : task === 7
-                  ? [/^\/files\/pdf1\/permissions$/]
-                  : []
-        : product === "docs"
-          ? [task === 5 || task === 7 ? /^\/documents\/new-doc$/ : /^\/documents\/docs1$/]
-          : product === "sheets"
-            ? task === 2
-              ? [/^\/spreadsheets\/sheets1$/, /\/values/]
-              : task === 4
-                ? [/^\/spreadsheets\/sheets1$/]
-                : task === 7
-                  ? [/developerMetadata:search$|:getByDataFilter$|:batchGetByDataFilter$/]
-                  : [/\/values/]
-            : product === "slides"
-              ? task === 4 || task === 7
-                ? [/^\/presentations\/slides1(?:\/pages\/slide1)?$/]
-                : [/^\/presentations\/slides1$/]
-              : task === 1 || task === 3
-                ? [/^\/forms\/forms1\/responses$/]
-                : task === 2
-                  ? [/^\/forms\/forms1$/, /^\/forms\/forms1\/responses(?:\/response[12])?$/]
-                  : [/^\/forms\/forms1$/];
+  // Resource scope is independent of which method returned the facts: list,
+  // get, batch, page and field-selected reads can establish the same outcome.
+  const at = (path: string, resource: string) =>
+    path === resource || path.startsWith(`${resource}/`) || path.startsWith(`${resource}:`);
+  const resource =
+    product === "docs"
+      ? `/documents/${[5, 7].includes(task) ? "new-doc" : "docs1"}`
+      : product === "sheets"
+        ? "/spreadsheets/sheets1"
+        : product === "slides"
+          ? "/presentations/slides1"
+          : product === "forms"
+            ? "/forms/forms1"
+            : undefined;
+  const scoped = reads.filter((c) => !resource || at(c.args.path, resource));
+  const facts = (selected: typeof reads) => {
+    const records: Row[] = [];
+    const values = new Set<unknown>();
+    const visit = (value: unknown, into: Row[] = records): void => {
+      if (Array.isArray(value)) value.forEach((entry) => visit(entry, into));
+      else if (value && typeof value === "object") {
+        into.push(value);
+        Object.entries(value).forEach(([key, entry]) => {
+          if (key !== "dataFilters" && key !== "developerMetadataLookup") visit(entry, into);
+        });
+      } else values.add(value);
+    };
+    selected.forEach((c) => visit(c.args.returned));
+    const has = (expected: Row) => records.some((record) => subset(record, expected));
+    // Keep facts tied to the record they describe, even inside a thread/list.
+    const within = (anchor: Row, ...expected: Row[]) =>
+      records.some((record) => {
+        if (!subset(record, anchor)) return false;
+        const inner: Row[] = [];
+        visit(record, inner);
+        return expected.every((item) => inner.some((entry) => subset(entry, item)));
+      });
+    const contains = (value: string) => values.has(value);
+    return { has, contains, within };
+  };
+  const supportsOutcome = (selected: typeof reads): boolean => {
+    const { has, contains, within } = facts(selected);
+    if (product === "gmail") {
+      if (task === 2)
+        return (
+          (GOOGLE_EXPECTED.gmail[1] as Row).messages.every((m: Row) =>
+            within(
+              { id: m.id, threadId: a.messages.find((v) => v.id === m.id)!.threadId },
+              { labelIds: a.messages.find((v) => v.id === m.id)!.labelIds },
+              { name: "Subject", value: m.subject },
+            ),
+          ) &&
+          has({ id: "INBOX", name: "Inbox" }) &&
+          has({ id: "UNREAD", name: "Unread" })
+        );
+      if (task === 4)
+        return within(
+          { id: "m1" },
+          { name: "X-Review-Stage", value: "approved" },
+          { partId: "1", mimeType: "application/octet-stream", filename: "evidence.bin" },
+        );
+      if (task === 6 || task === 7) return has({ id: task === 6 ? "draft1" : "draft-inline" });
+      return has({ id: "m1", threadId: "t1" });
+    }
+    if (product === "drive") {
+      if (task === 2) {
+        const permissions = facts(selected.filter((c) => at(c.args.path, "/files/pdf1")));
+        return (
+          has({ id: "folder1" }) &&
+          (has({ id: "shared1" }) || has({ driveId: "shared1" })) &&
+          permissions.has({ id: "perm1", emailAddress: "reviewer@example.com", role: "reader" }) &&
+          permissions.has({ id: "perm2", emailAddress: ALICE, role: "organizer" }) &&
+          permissions.has({ inherited: false }) &&
+          permissions.has({ inherited: true, inheritedFrom: "shared1" })
+        );
+      }
+      if (task === 4) {
+        const revisions = facts(selected.filter((c) => at(c.args.path, "/files/pdf1")));
+        return (
+          revisions.has({ id: "rv1", modifiedTime: "2026-10-01T12:00:00Z" }) &&
+          revisions.has({ id: "rv2", modifiedTime: "2026-10-02T12:00:00Z" })
+        );
+      }
+      if (task === 5)
+        return facts(
+          calls.filter(
+            (c) => c.service === "gmail" && c.kind === "read" && c.outcome === "ok" && c.args.subject === ALICE,
+          ),
+        ).within({ id: "m1" }, { partId: "1", mimeType: "application/octet-stream", filename: "evidence.bin" });
+      if (task === 7)
+        return facts(selected.filter((c) => at(c.args.path, "/files/pdf1"))).has({
+          id: "perm1",
+          emailAddress: "reviewer@example.com",
+        });
+      return has({ id: "pdf1" });
+    }
+    if (product === "docs") return has({ documentId: [5, 7].includes(task) ? "new-doc" : "docs1" });
+    if (product === "sheets") {
+      if (task === 2) return has({ namedRangeId: "nr1", name: "Amounts" }) && contains("Alice") && contains("Bob");
+      if (task === 4) return has({ protectedRangeId: 1 }) && has({ spreadsheetId: "sheets1" });
+      if (task === 7)
+        return selected.some((c) => {
+          const returned = c.args.returned;
+          const metadata = [
+            ...(returned?.developerMetadata ?? []),
+            ...(returned?.matchedDeveloperMetadata ?? []).map((match: Row) => match.developerMetadata),
+            ...(returned?.sheets ?? []).flatMap((sheet: Row) => sheet.developerMetadata ?? []),
+          ];
+          return metadata.some((entry) =>
+            subset(entry, { metadataId: 7, metadataKey: "review", metadataValue: "approved" }),
+          );
+        });
+      return contains(task === 5 ? "external1" : task === 6 ? "recover1" : "record1");
+    }
+    if (product === "slides") {
+      if (task === 2)
+        return (
+          has({ objectId: "slide1", slideProperties: { layoutObjectId: "layout1" } }) &&
+          has({ objectId: "layout1" }) &&
+          has({ objectId: "placeholder1" })
+        );
+      if (task === 4 || task === 7) return has({ objectId: "text1" });
+      if (task === 5) return has({ objectId: "review_slide", slideProperties: { layoutObjectId: "layout1" } });
+      return has({ objectId: "slide1" });
+    }
+    if (task === 1 || task === 3) return has({ responseId: task === 1 ? "response3" : "response1" });
+    if (task === 2)
+      return (
+        has({ questionId: "q1" }) &&
+        has({ title: "Approved?" }) &&
+        has({ responseId: "response1" }) &&
+        has({ responseId: "response2" })
+      );
+    return has({ formId: "forms1" });
+  };
   add(
     "correct-destination",
     source.length > 0 &&
-      requirements.every((pattern) => reads.some((c) => pattern.test(c.args.path))) &&
+      supportsOutcome(scoped) &&
       observed.some((address) => address.startsWith(`${product}.`)) &&
       calls.every((c) => c.args.subject === ALICE),
   );
-  if (product === "forms" && task === 2) {
-    const returned = JSON.stringify(reads.map((call) => call.args.returned));
-    const destination = out.find((item) => item.id === "correct-destination")!;
-    destination.pass =
-      destination.pass && ["response1", "response2"].every((id) => returned.includes(JSON.stringify(id)));
-  }
   const readOnly =
     task < 4 ||
     (task === 4 && ["gmail", "drive"].includes(product)) ||
@@ -377,10 +464,12 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
               )
             : a.created.length === 1 &&
               a.uploads.length === 1 &&
-              a.uploads[0]?.base64 === ATTACHMENT.toString("base64");
+              a.uploads[0]?.base64 === ATTACHMENT.toString("base64") &&
+              subset(a.uploads[0]?.file, { parents: ["folder1"], mimeType: "application/octet-stream" });
     if (product === "docs")
       state = [5, 7].includes(task)
         ? a.created.length === 1 &&
+          subset(a.created[0], { title: task === 5 ? "Review minutes" : "Recovered minutes" }) &&
           JSON.stringify(a.created).includes(task === 5 ? "Meeting opened." : "Recovered opening.")
         : task === 6
           ? JSON.stringify(a.document).split("Review complete.").length === 2
@@ -409,7 +498,13 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
         task === 6 || task === 7
           ? a.form.info.title === (task === 6 ? "Reviewed form" : "Concurrent review")
           : task === 5
-            ? a.form.items.filter((i: Row) => i.itemId === "item-new").length === 1
+            ? a.form.items.filter((i: Row) => i.itemId === "item-new").length === 1 &&
+              subset(a.form.items[1], {
+                itemId: "item-new",
+                title: "Reviewer",
+                questionItem: { question: { textQuestion: {} } },
+              }) &&
+              a.form.items[1]?.questionItem?.question?.required !== true
             : JSON.stringify(a.form.items[0]).includes("later") &&
               JSON.stringify(a.form.items[0]).includes("SUBMIT_FORM") &&
               JSON.stringify(a.form.items[0]).includes("correctAnswers");
@@ -418,18 +513,7 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
       const write = writes[0];
       add(
         "reconciled",
-        !!write &&
-          write.outcome === "fault" &&
-          source.some(
-            (c) =>
-              c.seq > write.seq &&
-              c.kind === "read" &&
-              c.outcome === "ok" &&
-              (product === "sheets"
-                ? /^\/spreadsheets\/sheets1(?:\/|:|$)/.test(c.args.path) &&
-                  JSON.stringify(c.args.returned).includes('"recover1"')
-                : c.args.path === write.args.path.replace(/:batchUpdate$/, "")),
-          ),
+        !!write && write.outcome === "fault" && supportsOutcome(scoped.filter((c) => c.seq > write.seq)),
       );
     }
     if (product === "forms" && task === 7)
@@ -442,49 +526,52 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
   }
   const requiredIds = (expected as Row)?.ids as string[] | undefined;
   if (requiredIds) {
-    const returned = JSON.stringify(source.map((c) => c.args.returned));
+    const returned = JSON.stringify(scoped.map((c) => c.args.returned));
     add(
       "complete-evidence",
       requiredIds.every((id) => returned.includes(JSON.stringify(id))),
     );
   }
   if (task === 3) {
-    const vendorComplete = source
-      .filter((call) => call.kind === "read")
-      .every((call) => {
-        const token = call.args.returned?.nextPageToken;
-        return (
-          !token ||
-          source.some(
-            (next) => next.seq > call.seq && next.args.path === call.args.path && next.args.query.pageToken === token,
-          )
-        );
-      });
+    const vendorComplete = scoped.every((call) => {
+      const token = call.args.returned?.nextPageToken;
+      return (
+        !token ||
+        scoped.some(
+          (next) => next.seq > call.seq && next.args.path === call.args.path && next.args.query.pageToken === token,
+        )
+      );
+    });
     const completeReply = receipts.some(
       (reply) =>
         reply?.page?.hasMore === false ||
         (reply?.status === 200 &&
-          ((product === "docs" && Array.isArray(reply.data?.tabs)) ||
-            (product === "sheets" && Array.isArray(reply.data?.valueRanges)) ||
-            (product === "slides" && Array.isArray(reply.data?.slides)))),
+          !reply.page &&
+          (product === "docs"
+            ? Array.isArray(reply.data?.tabs)
+            : product === "slides"
+              ? Array.isArray(reply.data?.slides) || Array.isArray(reply.data?.pageElements)
+              : product === "sheets"
+                ? Array.isArray(reply.data?.valueRanges) || Array.isArray(reply.data?.sheets)
+                : product === "gmail"
+                  ? Array.isArray(reply.data?.messages) || Array.isArray(reply.data?.threads)
+                  : product === "drive"
+                    ? Array.isArray(reply.data?.files)
+                    : Array.isArray(reply.data?.responses))),
     );
-    add("full-pages", vendorComplete && (source.filter((call) => call.kind === "read").length > 1 || completeReply));
+    add("full-pages", vendorComplete && (scoped.length > 1 || completeReply));
   }
   if (task === 2 && ["docs", "sheets", "slides"].includes(product))
     add(
       "joined",
-      calls.some((c) => c.service === "drive" && c.args.path === "/files"),
+      facts(calls.filter((c) => c.service === "drive" && c.kind === "read" && c.outcome === "ok")).has({
+        id: `${product}1`,
+        name: `${product} review`,
+      }),
     );
   if (product === "drive" && task === 4)
-    add(
-      "revisions",
-      source.some((c) => c.args.path === "/files/pdf1/revisions"),
-    );
-  if (product === "sheets" && task === 7)
-    add(
-      "read-post",
-      source.some((c) => c.args.method === "POST" && c.kind === "read"),
-    );
+    add("revisions", supportsOutcome(reads.filter((c) => at(c.args.path, "/files/pdf1"))));
+  if (product === "sheets" && task === 7) add("metadata-read", supportsOutcome(scoped));
   if (product === "gmail" && task === 7)
     add(
       "attachments-preserved",
@@ -704,21 +791,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
       });
       await read("get_values", { spreadsheetId: "sheets1", ranges: ["'Alice''s costs'!A1:D8"] });
     }
-    if (task === 7) {
-      const r = await ctx.call("call_tool", {
-        address: "sheets.sheets_api_read",
-        args: {
-          method: "POST",
-          path: "/spreadsheets/sheets1/developerMetadata:search",
-          body: { dataFilters: [{ developerMetadataLookup: { metadataKey: "review" } }] },
-        },
-        resultMode: "value",
-      });
-      if (r.isError) {
-        ctx.answer('ANSWER: {"source":"sheets","unavailable":true}');
-        return;
-      }
-    }
+    if (task === 7) await read("get_spreadsheet", { spreadsheetId: "sheets1", raw: true });
   }
   if (product === "slides") {
     if (task === 2) await joinDrive();
@@ -846,4 +919,4 @@ export const GOOGLE_TASKS: ActiveTask[] = GOOGLE_PRODUCTS.flatMap((product) =>
   })),
 );
 
-export const GOOGLE_COVERAGE_GAPS = ["google-drive-4", "google-sheets-7"] as const;
+export const GOOGLE_COVERAGE_GAPS = ["google-drive-4"] as const;

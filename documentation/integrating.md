@@ -111,7 +111,8 @@ deletes files. Slides setup is in [Maintained provider setup](./providers.md#goo
 
 Stripe, Vercel, and Cloudflare vendor only their APIs. Cloudflare setup is in
 [Maintained provider setup](./providers.md#cloudflare).
-Keep their existing API auth choices.
+Keep their existing API auth choices. For token setup, team routing, bounded logs
+and upload limits, see [Vercel setup](./providers.md#vercel).
 GitHub provides scoped App-authenticated repository reads, release writes and guarded merges; see [GitHub setup](./providers.md#github). Hosted servers use distinct
 `remoteMcp()` entries, separate from maintained API providers.
 

@@ -646,6 +646,10 @@ for (const task of selected) {
       required((await play(task, "noop")).correct).every((c) => c.pass)
     )
       throw new Error(`Capability gap incorrectly passed: ${task.id}`);
+    for (const control of played.regressions) {
+      if (!control.rejected) throw new Error(`Capability-gap control was accepted: ${task.id}: ${control.name}`);
+      console.log(`       rejected: ${control.name}`);
+    }
     console.log(`ok   ${task.id}: expected BEFORE capability gap; outcome grader still fails unavailable data`);
     continue;
   }

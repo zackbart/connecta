@@ -6,7 +6,8 @@ import type { Connection } from "../../../http/vendor.js";
 import type { RestCall } from "../rest/tools.js";
 import type { OperationIndex } from "../rest/operation-index.js";
 
-export function requireGoogleIndex(index: OperationIndex): void {
+export function requireGoogleIndex(index: OperationIndex | undefined): void {
+  if (!index) throw new Error("Google requests require their reviewed operation index.");
   if (index.pathMatching !== "uri-template") throw new Error('Google indexes require pathMatching: "uri-template".');
 }
 
