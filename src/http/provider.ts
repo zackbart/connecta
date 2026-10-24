@@ -229,7 +229,16 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       operations: operations(vendor),
       ...(pageSize ? { pageSize } : {}),
       ...(hatchOptions
-        ? { hatch: { name: hatchOptions.name, verdicts: hatchOptions.verdicts }, refusesWithheld: true }
+        ? {
+            hatch: {
+              name: hatchOptions.name,
+              verdicts: hatchOptions.verdicts,
+              ...(hatchOptions.pageCursor && Object.keys(hatchOptions.pages ?? {}).length
+                ? { paging: hatchOptions.pageCursor }
+                : {}),
+            },
+            refusesWithheld: true,
+          }
         : {}),
       ...(meanings ? { errors: meanings } : {}),
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),

@@ -49,6 +49,10 @@ type OperationKey = `${RestMethod} ${string}`;
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
+  /** Explicitly replace the default other-server guard with the binding's confined routing. */
+  readonly allowOtherServers?: true;
+  /** Explicitly replace the default JSON/form guard with the binding's reviewed encoding. */
+  readonly allowOtherBodyTypes?: true;
   readonly refuse?: (call: RestCall) => string | undefined;
   readonly send: (
     call: RestCall,
@@ -115,6 +119,17 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function withheldCursor(value: string | number): boolean {
   return redactionAltered(value) || (typeof value === "string" && /%5bredacted%5d/i.test(value));
+}
+
+/** Detect the signed envelope, including damaged signatures, without admitting it as a record id. */
+function signedCursorShape(value: unknown): boolean {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) return false;
+  try {
+    const decoded = JSON.parse(atob(value.replace(/-/g, "+").replace(/_/g, "/"))) as unknown;
+    return record(decoded) && decoded["v"] === 2 && ["d", "c", "m"].every((key) => typeof decoded[key] === "string");
+  } catch {
+    return false;
+  }
 }
 
 /** A method enum; a single method renders as a plain enum, not a one-branch anyOf. */
@@ -751,8 +766,10 @@ export function hatch(
       const separateCursor = options.pageCursor === "argument";
       yield* checked(() => {
         if (supplied.length > 1) invalid("Choose one paging direction; do not combine cursor parameters.");
-        if (args.cursor !== undefined && (!adapter || supplied.length))
-          invalid("Pass cursor without a raw paging anchor.");
+        if (args.cursor !== undefined && !adapter) invalid("This operation does not page; omit cursor.");
+        if (args.cursor !== undefined && supplied.length) invalid("Pass cursor without a raw paging anchor.");
+        if (separateCursor && supplied.some((entry) => entry.initialAnchor && signedCursorShape(at(entry))))
+          invalid("Pass the signed paging cursor as top-level cursor, not as a raw query anchor.");
       });
       const withoutCursors = (values: Readonly<Record<string, unknown>>, location: "query" | "body") =>
         Object.fromEntries(
@@ -814,17 +831,17 @@ export function hatch(
         const refusal = options.binding?.refuse?.(call());
         if (refusal) invalid(refusal);
         const contentType = index.bodyType(op)?.split(";", 1)[0]!.trim().toLowerCase();
-        if (!options.binding) {
-          if (op.server) invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
-          if (
-            contentType &&
-            contentType !== "application/x-www-form-urlencoded" &&
-            !/^application\/(?:[^/]+\+)?json$/.test(contentType)
-          ) {
-            invalid(
-              `${method} ${op.path} takes ${contentType}; this connection's path binding supports only JSON and form bodies.`,
-            );
-          }
+        if (op.server && options.binding?.allowOtherServers !== true)
+          invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
+        if (
+          options.binding?.allowOtherBodyTypes !== true &&
+          contentType &&
+          contentType !== "application/x-www-form-urlencoded" &&
+          !/^application\/(?:[^/]+\+)?json$/.test(contentType)
+        ) {
+          invalid(
+            `${method} ${op.path} takes ${contentType}; this connection's path binding supports only JSON and form bodies.`,
+          );
         }
         if ((method === "GET" || method === "HEAD") && body !== undefined)
           invalid(`A ${method} operation takes query, not body.`);
@@ -885,7 +902,11 @@ export function hatch(
       let page;
       if (adapter && next !== undefined) {
         const secrets = yield* RequestSecrets;
-        if (next !== null && (withheldCursor(next) || secrets.redact(String(next)) !== String(next))) {
+        if (
+          next !== null &&
+          typeof next !== "object" &&
+          (withheldCursor(next) || secrets.redact(String(next)) !== String(next))
+        ) {
           yield* checked(() => {
             throw new ConnectorCallError("connector_call_failed", "The vendor returned a withheld paging cursor.", {
               retryable: false,
@@ -894,7 +915,7 @@ export function hatch(
         }
         page = {
           hasMore: next !== null,
-          ...(next === null
+          ...(next === null || typeof next === "object"
             ? {}
             : {
                 nextCursor: yield* boundCursor.encode(

@@ -19,3 +19,7 @@ failure and unknown-write semantics, and failed body reads receive truthful
 wording. Writes refuse whole withheld placeholders and links before dispatch.
 The guide uses generated conventions. See the Stripe section of
 `documentation/provider-migration-0.35.md` for the complete mapping.
+The guide identifies the configured account and its confirmation read. V2
+pages retain fetched data without a continuation when the next URL adds
+omitted parameters; a signed cursor in a raw record anchor is refused with
+guidance to use `cursor`.

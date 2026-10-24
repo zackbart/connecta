@@ -109,11 +109,12 @@ function usageGuide(options: Readonly<StripeOptions>): ProviderGuideInput {
     heading: "Stripe usage",
     summary:
       options.mode === "production"
-        ? "PRODUCTION: real money. One live-mode key over REST; resolve ids and account scope before acting."
-        : "Sandbox: test data only. One test-mode key over REST; resolve ids and account scope before acting.",
+        ? "PRODUCTION: real money. One configured live-mode key over REST; resolve ids before acting."
+        : "Sandbox: test data only. One configured test-mode key over REST; resolve ids before acting.",
     context: [
       `Mode: ${options.mode}. Connector purpose: ${options.purpose}`,
       copy.warning,
+      "This connection's key is already configured and reaches exactly one Stripe account in this mode; there is no account selection or sign-in step.",
       ...(account
         ? [
             `Connected account: ${account}. Every call acts as this Connect account; the platform account's own objects are out of reach here.`,

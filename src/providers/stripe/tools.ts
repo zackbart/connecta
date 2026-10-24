@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect";
 import { read } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
 import type { RestCall } from "../_shared/rest/tools.js";
-import { connectedAccount, record, text, sendStripe, stripeConnection, stripeIndex } from "./api.js";
+import { connectedAccount, record, text, sendStripe, stripeIndex } from "./api.js";
 import type { StripeApiKeyOptions } from "./index.js";
 const NullableText = Schema.Union([Schema.String, Schema.Null]);
 const NullableFlag = Schema.Union([Schema.Boolean, Schema.Null]);
@@ -14,8 +14,8 @@ export function stripeTools({
   connection: Connection;
   options: Readonly<StripeApiKeyOptions>;
 }) {
-  const files = stripeConnection(options, "files");
-  const send = (call: RestCall) => sendStripe(connection, options, call, files);
+  // Both named reads use the API origin; only the coverage binding needs files.
+  const send = (call: RestCall) => sendStripe(connection, options, call, connection);
   const call = (path: string) => {
     const { op, params } = stripeIndex.resolve("GET", path);
     return send({ method: "GET", path, op, params, query: {}, body: undefined });

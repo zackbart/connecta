@@ -60,6 +60,9 @@ omitted; DELETE and the invoice-preview read send no key.
 `fields` unchanged. Omit both raw anchors on continuation. Do not combine
 directions. Search and v2 lists also continue through `cursor`; their raw
 vendor page tokens are not accepted there.
+If a v2 next-page URL adds omitted parameters, the fetched data remains
+available with `page.hasMore: true` but no `nextCursor`. It is incomplete;
+repeat with explicit parameters or narrow the request to continue safely.
 
 ```ts
 const first = await connecta.call("billing.stripe_api_read", {
