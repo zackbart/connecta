@@ -197,3 +197,29 @@ report-only and no cap changes. The refreshed read-only public drift check finds
 no pinned drift and repeats the newer-People-publication advisory above.
 The evaluation notes retain the full validation/provenance details, including
 the earlier combined-run unit-test timeout and unchanged-budget isolated pass.
+
+Final review found five stale cross-provider fixtures: list GETs received an
+object, composed evidence was treated as one pin, and redaction/native replay
+controls called retired hatches. The fixtures now use the current surface,
+retain their INV-5/INV-9 assertions, require every named-tool request in the
+manifest and exact manifest/index equality, and verify child pin bytes.
+Local verification is a selected set of suites; the full unfiltered
+`pnpm run test:node` was not run locally.
+
+The reviewed workflow summaries now retain each generated CRUD/resource phrase
+without its product suffix. Four rows in the existing ranking case require
+the affected roots in the first two hits; previous natural phrases stay covered.
+The longest label is 126 characters, with no shared ranking change. The optional
+bare-person filter remains because the hatch reorders results after the local
+index. The final clean `30fb1f4b632d` AFTER follow-up scores Luna 11/14 and Sonnet
+14/14; all 140 trials remain retained. The lower Luna score includes a real count
+mistake, a source-label failure and numeric/string id mismatch, not a claimed
+improvement. Detailed provenance, costs and validation are in the eval notes.
+
+Final review verification passes all 16 selected Node files (880 cases), the
+three enrolled workerd files (77 native cases), Node golden determinism,
+`check:static`, `check:build`, browser 20/20, and Node 24 Eve 5/5 plus packed
+runtime/type smoke. The full local unfiltered Node suite is not claimed.
+The final PCO bundle is 638,120 B gzip, +288,567 B from the recorded pre-step-2
+entry and +94 B from R1. No case, deadline or cap increases; complete details
+and raw logs are referenced from the eval notes.

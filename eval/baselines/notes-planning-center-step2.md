@@ -478,3 +478,81 @@ current-surface positive call.
 The production summary correction is validated separately from the completed
 CI-fixture selection above. Final checks and a fresh AFTER-only follow-up will
 be recorded below; prompts, graders, PCO fake behavior and deadlines stay fixed.
+
+
+### Final AFTER-only result
+
+The final summary fix is frozen at clean commit `30fb1f4b632d`, source tree
+`49154fca9f95`. Both required models rerun all seven unchanged tasks twice on
+Node 22.23.3, one trial per runner (at most two globally), with the same CLI
+versions/default effort, six/outcome surface, eight-minute limits and frozen
+PCO fake/graders. Pair id `planning-center-step2-r2-2026-10-24` uses the same
+`ad9aaf9a…` task and `4dd487f0…` harness hashes as R1, already given in full above.
+This is an AFTER-only follow-up, not a newly paired BEFORE/AFTER comparison.
+The JSON now retains **all 140 trials**, with the 28 final trials under `after-r2`
+and raw-file hashes; no trial is selectively retried, dropped or regraded.
+
+| Task | Luna final | Sonnet final |
+| --- | ---: | ---: |
+| Filtered People profiles | 0/2 | 2/2 |
+| Groups → People → Services schedules | 2/2 | 2/2 |
+| Plan/items/team join | 2/2 | 2/2 |
+| All 137 profiles, count ids divisible by seven | 2/2 | 2/2 |
+| Merger history through coverage hatch | 1/2 | 2/2 |
+| Exactly one categorized note | 2/2 | 2/2 |
+| Reconcile update committed before HTTP 500 | 2/2 | 2/2 |
+| Total | 11/14 | 14/14 |
+
+Luna filtered repeat 1 returns all 73 correct ids but says `count:72`; this is
+an actual count error. Repeat 2 has all 73 ids and count 73 but returns the
+unsupported source label `Planning Center People`. Merger repeat 1 returns
+correct ids 2999/1001 as numbers rather than the required strings. All fail
+only answer-evidence; destination, read-only and write/recovery checks pass.
+No executor startup failure occurs. The final aggregate 25/28 is one below
+R1's 26/28 and equals the original BEFORE 25/28. These small unpaired follow-ups
+do not establish a success improvement. The targeted search cases/probes prove
+restored vocabulary/ranking; they do not explain away the answer failures.
+
+| Metric (14 trials per runner) | Luna final | Sonnet final |
+| --- | ---: | ---: |
+| MCP / HTTP calls | 66 / 49 | 61 / 52 |
+| Tool errors | 3 | 6 |
+| Maximum / cumulative discovery bytes | 24,157 / 436,002 | 31,037 / 209,557 |
+| Uncached input / output tokens | 351,776 / 7,016 | 146 / 11,306 |
+| Cache-read / cache-creation tokens | 1,398,912 / 0 | 472,971 / 89,805 |
+| Median wall time, ms | 15,088 | 13,338.5 |
+
+The largest discovery results are generic search responses. Luna's indexed
+search/details maxima are 1,415/2,039 B; Sonnet uses known paths without
+retrieving indexed metadata. Local regression queries retain the 16/32 KiB
+budgets. Costs vary across runs: final Luna reads less metadata but more uncached
+input than R1, while Sonnet's metadata grows. No universal cost gain is claimed.
+Only evidence and final bundle reporting follow this source snapshot.
+
+
+### Final verification and bundle
+
+All final checks pass with Node 22.23.3 and `VITEST_MAX_WORKERS=2` (Eve uses
+Node 24). The 16 selected Node files pass **880/880** tests, including every
+PCO-referencing suite/provider enumerator in the recorded inventory and the
+full all-provider golden determinism matrix. This remains a partial selection:
+the full unfiltered local `pnpm run test:node` and its INV/spec enforcement
+were **not** run. Test names/citations, counts and deadlines remain unchanged.
+
+The three enrolled workerd files pass **77** native cases: HTTP kit 13,
+golden harness 48 and goldens 16; their Node-only exclusions stay in effect.
+Final Node/workerd PCO golden cases take 71.437/7.905 seconds within existing
+budgets. No golden changes during verification; the only new fixture values
+are the two expected PCO summaries. All other providers' goldens match main.
+`check:static`, `check:build`, browser 20/20, Node 24 Eve 5/5 and packed
+runtime/type smoke pass. The suite inventory, exact commands, statuses and logs
+are retained in `ci-pco-suite-inventory.json`, `r2-final-check-results.json` and
+`r2-final-*.log`; `r2-final-audit.txt` records the complete final name/argument
+audit. The interrupted pre-R2 workerd run is not counted as a passing final run.
+
+The final system-zlib build reports **638,120 B gzip**, **+288,567 B** against
+the recorded pre-step-2 349,553 B, +2,551 B against the historical initial
+635,569 B metadata baseline, and +94 B from R1. No baseline/cap is raised.
+Final review adds zero cases; the complete step-2 test-count delta stays −42.
+Only evaluation/evidence records change after the clean final source snapshot.
+CI owns the unfiltered coverage gate and the orchestrator owns merge decisions.
