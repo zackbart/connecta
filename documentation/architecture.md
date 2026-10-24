@@ -2105,6 +2105,12 @@ cursor. Search ranks exact path nouns, root collections and authored
 operations first, then operations found by a field they return or take, and
 points at the authored tool that serves an operation. `_api_read` omits
 `method` only when GET is its one reviewed read method.
+A provider may opt into `hatch.writeEnabled(options)` to omit its write hatch
+from a connection whose deployment configuration permits only reads. Discovery
+omits write-tool routing on that connection; reviewed reads do not gain write
+verdicts. The default remains enabled, and endpoint read-only policy still
+enforces every invocation.
+
 The hatch's optional `pages` table declares an adapter for each indexed read
 that pages. `src/http/hatch-paging.ts` supplies Stripe forward lists
 (`has_more`, last `data` id → `starting_after`), Cloudflare

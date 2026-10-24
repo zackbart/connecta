@@ -146,6 +146,7 @@ afterEach(() => vi.unstubAllGlobals());
 function setup(
   options: {
     deny?: boolean;
+    writeEnabled?: boolean;
     revision?: string;
     verdicts?: Parameters<typeof hatch>[0]["verdicts"];
     pages?: Parameters<typeof hatch>[0]["pages"];
@@ -192,6 +193,7 @@ function setup(
     ...(options.pages ? { pages: options.pages } : {}),
     ...(options.pageCursor ? { pageCursor: options.pageCursor } : {}),
     ...(options.binding ? { binding: options.binding } : {}),
+    ...(options.writeEnabled === undefined ? {} : { writeEnabled: options.writeEnabled }),
     connection,
   });
   const connector = tracksEveryRequest(apiConnector("items", { tools }));
@@ -205,6 +207,17 @@ it(
   "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
   NODE,
   async () => {
+    const closed = setup({ writeEnabled: false });
+    expect(closed.tools.map((tool) => tool.name)).not.toContain("items_api_write");
+    const closedSearch = (await closed.call("search", { query: "create item", method: "POST" })) as {
+      operations: Array<{ tool?: string }>;
+    };
+    expect(closedSearch.operations.every((row) => row.tool === undefined)).toBe(true);
+    await expect(closed.call("write", { method: "POST", path: "/items", body: { name: "alice" } })).rejects.toThrow(
+      /Unknown tool/,
+    );
+    expect(closed.sendPath).not.toHaveBeenCalled();
+    expect(closed.authenticate).not.toHaveBeenCalled();
     const verdicts = { ...VERDICTS };
     const { call, tools, index, connection, sendPath, authenticate } = setup({ verdicts });
     expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
