@@ -26,6 +26,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
 import { ConnectorCallError } from "../errors.js";
 import { readRequest, recordProviderResponse, type ProviderRequest } from "../provider-call.js";
+import { recordRequestField } from "../provider-call-facts.js";
 import { fromSignal } from "../runtime/run.js";
 import {
   RedirectRefused,
@@ -329,6 +330,8 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           try: (interrupted) => {
             // Synchronous with the send: from here the core counts it as left,
             // and it refuses a request whose call has already ended.
+            if (facts.effect === "read" && !readRequest({ classification: "read", method: request.method }, headers))
+              recordRequestField(entry, "blocksAuxiliaryProof", true);
             core.dispatch(entry, headers, request.method);
             dispatch.state = "pending";
             return transport.send(url, {

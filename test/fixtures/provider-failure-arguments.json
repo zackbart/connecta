@@ -421,28 +421,27 @@
     }
   },
   "github": {
+    "github_api_search": {
+      "query": "issues"
+    },
+    "github_api_details": {
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues"
+    },
+    "github_api_read": {
+      "path": "/repos/acme/one/issues"
+    },
+    "github_api_write": {
+      "method": "PATCH",
+      "path": "/repos/acme/one/releases/501",
+      "body": {
+        "draft": false
+      }
+    },
     "list_scopes": {},
     "search_scoped": {
       "terms": "widget",
       "kind": "repositories"
-    },
-    "create_release": {
-      "owner": "other",
-      "repo": "one",
-      "tag_name": "v1.2.0",
-      "name": "Release v1.2.0",
-      "draft": true
-    },
-    "update_release": {
-      "owner": "acme",
-      "repo": "one",
-      "release_id": 501,
-      "draft": false
-    },
-    "delete_release": {
-      "owner": "other",
-      "repo": "one",
-      "release_id": 501
     },
     "merge_pull_request": {
       "owner": "other",

@@ -1,9 +1,16 @@
-import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
-import { ConnectorCallError, resendAdvice } from "../../../errors.js";
-import { attachFailureFacts } from "../../../operator-record.js";
+import { guardedFetch, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
+import { ConnectorCallError } from "../../../errors.js";
+import {
+  captureClassifierFacts,
+  StatusFailure,
+  toConnectorCallError,
+  withClassifierFacts,
+} from "../../../http/errors.js";
+import { errors, rejectedToken } from "../api.js";
 import type { ConnectorContext } from "../../../types.js";
 import { appJwt, privateKeyDer } from "./key.js";
 import { ScopePolicy, target, type Target } from "./scope.js";
+import { sentSecretsFor } from "../../../sent-secrets.js";
 
 export interface GitHubApp {
   appId: string | number;
@@ -92,6 +99,7 @@ export class AppAuth {
 
   private async key(ctx: ConnectorContext): Promise<{ der: Uint8Array<ArrayBuffer>; fingerprint: string }> {
     ctx.signal?.throwIfAborted();
+    if (this.app.privateKey !== undefined) sentSecretsFor(ctx).add(this.app.privateKey);
     let der = this.configuredDer;
     if (!der) {
       const pem = await ctx.credential?.get("privateKey");
@@ -128,40 +136,21 @@ export class AppAuth {
         if (!response.ok) {
           // Dispose of the body without interpreting error text or Content-Type.
           await response.prefix(0);
-          const status = response.status;
-          const reset = Number(response.headers.get("x-ratelimit-reset"));
-          const retry = retryAfterMs(response.headers);
-          const wait =
-            retry ?? (Number.isFinite(reset) && reset > 0 ? Math.max(0, reset * 1000 - Date.now()) : undefined);
-          const rate =
-            status === 429 ||
-            (status === 403 && (retry !== undefined || response.headers.get("x-ratelimit-remaining") === "0"));
-          if (status === 401 || (status === 403 && !rate)) this.invalidate(bearer);
-          const code = rate
-            ? "rate_limited"
-            : status === 401 || status === 403
-              ? "auth_required"
-              : status === 409
-                ? "conflict"
-                : status >= 500
-                  ? "unavailable"
-                  : "connector_call_failed";
-          const failure = new ConnectorCallError(
-            code,
-            rate
-              ? "GitHub rate limit reached."
-              : code === "auth_required"
-                ? "Verify the GitHub App key, installation, repository selection and required permissions."
-                : code === "conflict"
-                  ? "GitHub rejected a stale version. Read the current state."
-                  : status === 404
-                    ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
-                    : "The GitHub API request failed; downstream error text is withheld.",
-            { retryable: rate || status >= 500, ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}) },
+          if (rejectedToken(response.status, response.headers)) this.invalidate(bearer);
+          const failure = withClassifierFacts(
+            new StatusFailure({
+              status: response.status,
+              headers: response.headers,
+              body: undefined,
+              operation: { method: request.method, template: request.path },
+            }),
+            captureClassifierFacts(undefined, errors, response.headers),
           );
-          if (rate) resendAdvice(failure, " Honor the retry timing before trying again.");
-          else if (code === "conflict") resendAdvice(failure, " before resubmitting");
-          throw attachFailureFacts(failure, { httpStatus: status });
+          throw toConnectorCallError(failure, errors, {
+            classification: write ? "write" : "read",
+            dispatches: [],
+            withholds: () => true,
+          });
         }
         const parsed = await response.jsonResult();
         ctx.signal?.throwIfAborted();

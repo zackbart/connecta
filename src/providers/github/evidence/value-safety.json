@@ -1,0 +1,3339 @@
+{
+  "format": 5,
+  "digest": "sha256:3177ad6a86ca04c57a9bef3fc24e28a339efb8eb040c6f950af3d3ed2fee7fa3",
+  "options": {},
+  "candidates": {
+    "GET /": {
+      "fields": ["authorizations_url", "current_user_authorizations_html_url"],
+      "named": false
+    },
+    "GET /agents/automations/available-tools": {
+      "fields": ["[].tools[].scope"],
+      "named": false
+    },
+    "POST /app-manifests/{code}/conversions": {
+      "fields": ["client_secret", "webhook_secret"],
+      "named": true
+    },
+    "GET /app/hook/config": {
+      "fields": ["secret"],
+      "named": true
+    },
+    "PATCH /app/hook/config": {
+      "fields": ["secret"],
+      "named": true
+    },
+    "GET /app/hook/deliveries": {
+      "fields": [],
+      "named": true
+    },
+    "GET /app/hook/deliveries/{delivery_id}": {
+      "fields": ["request.headers", "response.headers"],
+      "named": true
+    },
+    "POST /app/hook/deliveries/{delivery_id}/attempts": {
+      "fields": [],
+      "named": true
+    },
+    "GET /app/installations": {
+      "fields": [
+        "[].access_tokens_url",
+        "[].permissions.actions",
+        "[].permissions.administration",
+        "[].permissions.artifact_metadata",
+        "[].permissions.attestations",
+        "[].permissions.checks",
+        "[].permissions.code_quality",
+        "[].permissions.codespaces",
+        "[].permissions.contents",
+        "[].permissions.custom_properties_for_organizations",
+        "[].permissions.dependabot_secrets",
+        "[].permissions.deployments",
+        "[].permissions.discussions",
+        "[].permissions.email_addresses",
+        "[].permissions.enterprise_custom_properties_for_organizations",
+        "[].permissions.environments",
+        "[].permissions.followers",
+        "[].permissions.git_ssh_keys",
+        "[].permissions.gpg_keys",
+        "[].permissions.interaction_limits",
+        "[].permissions.issues",
+        "[].permissions.members",
+        "[].permissions.merge_queues",
+        "[].permissions.metadata",
+        "[].permissions.organization_administration",
+        "[].permissions.organization_announcement_banners",
+        "[].permissions.organization_copilot_agent_settings",
+        "[].permissions.organization_copilot_requests",
+        "[].permissions.organization_copilot_seat_management",
+        "[].permissions.organization_custom_org_roles",
+        "[].permissions.organization_custom_properties",
+        "[].permissions.organization_custom_roles",
+        "[].permissions.organization_events",
+        "[].permissions.organization_external_properties_for_repos",
+        "[].permissions.organization_hooks",
+        "[].permissions.organization_packages",
+        "[].permissions.organization_personal_access_token_requests",
+        "[].permissions.organization_personal_access_tokens",
+        "[].permissions.organization_plan",
+        "[].permissions.organization_projects",
+        "[].permissions.organization_secrets",
+        "[].permissions.organization_self_hosted_runners",
+        "[].permissions.organization_user_blocking",
+        "[].permissions.packages",
+        "[].permissions.pages",
+        "[].permissions.profile",
+        "[].permissions.pull_requests",
+        "[].permissions.repository_custom_properties",
+        "[].permissions.repository_hooks",
+        "[].permissions.repository_projects",
+        "[].permissions.secret_scanning_alerts",
+        "[].permissions.secrets",
+        "[].permissions.security_events",
+        "[].permissions.single_file",
+        "[].permissions.starring",
+        "[].permissions.statuses",
+        "[].permissions.vulnerability_alerts",
+        "[].permissions.workflows"
+      ],
+      "named": false
+    },
+    "GET /app/installations/{installation_id}": {
+      "fields": [
+        "access_tokens_url",
+        "permissions.actions",
+        "permissions.administration",
+        "permissions.artifact_metadata",
+        "permissions.attestations",
+        "permissions.checks",
+        "permissions.code_quality",
+        "permissions.codespaces",
+        "permissions.contents",
+        "permissions.custom_properties_for_organizations",
+        "permissions.dependabot_secrets",
+        "permissions.deployments",
+        "permissions.discussions",
+        "permissions.email_addresses",
+        "permissions.enterprise_custom_properties_for_organizations",
+        "permissions.environments",
+        "permissions.followers",
+        "permissions.git_ssh_keys",
+        "permissions.gpg_keys",
+        "permissions.interaction_limits",
+        "permissions.issues",
+        "permissions.members",
+        "permissions.merge_queues",
+        "permissions.metadata",
+        "permissions.organization_administration",
+        "permissions.organization_announcement_banners",
+        "permissions.organization_copilot_agent_settings",
+        "permissions.organization_copilot_requests",
+        "permissions.organization_copilot_seat_management",
+        "permissions.organization_custom_org_roles",
+        "permissions.organization_custom_properties",
+        "permissions.organization_custom_roles",
+        "permissions.organization_events",
+        "permissions.organization_external_properties_for_repos",
+        "permissions.organization_hooks",
+        "permissions.organization_packages",
+        "permissions.organization_personal_access_token_requests",
+        "permissions.organization_personal_access_tokens",
+        "permissions.organization_plan",
+        "permissions.organization_projects",
+        "permissions.organization_secrets",
+        "permissions.organization_self_hosted_runners",
+        "permissions.organization_user_blocking",
+        "permissions.packages",
+        "permissions.pages",
+        "permissions.profile",
+        "permissions.pull_requests",
+        "permissions.repository_custom_properties",
+        "permissions.repository_hooks",
+        "permissions.repository_projects",
+        "permissions.secret_scanning_alerts",
+        "permissions.secrets",
+        "permissions.security_events",
+        "permissions.single_file",
+        "permissions.starring",
+        "permissions.statuses",
+        "permissions.vulnerability_alerts",
+        "permissions.workflows"
+      ],
+      "named": false
+    },
+    "POST /app/installations/{installation_id}/access_tokens": {
+      "fields": [
+        "permissions.actions",
+        "permissions.administration",
+        "permissions.artifact_metadata",
+        "permissions.attestations",
+        "permissions.checks",
+        "permissions.code_quality",
+        "permissions.codespaces",
+        "permissions.contents",
+        "permissions.custom_properties_for_organizations",
+        "permissions.dependabot_secrets",
+        "permissions.deployments",
+        "permissions.discussions",
+        "permissions.email_addresses",
+        "permissions.enterprise_custom_properties_for_organizations",
+        "permissions.environments",
+        "permissions.followers",
+        "permissions.git_ssh_keys",
+        "permissions.gpg_keys",
+        "permissions.interaction_limits",
+        "permissions.issues",
+        "permissions.members",
+        "permissions.merge_queues",
+        "permissions.metadata",
+        "permissions.organization_administration",
+        "permissions.organization_announcement_banners",
+        "permissions.organization_copilot_agent_settings",
+        "permissions.organization_copilot_requests",
+        "permissions.organization_copilot_seat_management",
+        "permissions.organization_custom_org_roles",
+        "permissions.organization_custom_properties",
+        "permissions.organization_custom_roles",
+        "permissions.organization_events",
+        "permissions.organization_external_properties_for_repos",
+        "permissions.organization_hooks",
+        "permissions.organization_packages",
+        "permissions.organization_personal_access_token_requests",
+        "permissions.organization_personal_access_tokens",
+        "permissions.organization_plan",
+        "permissions.organization_projects",
+        "permissions.organization_secrets",
+        "permissions.organization_self_hosted_runners",
+        "permissions.organization_user_blocking",
+        "permissions.packages",
+        "permissions.pages",
+        "permissions.profile",
+        "permissions.pull_requests",
+        "permissions.repository_custom_properties",
+        "permissions.repository_hooks",
+        "permissions.repository_projects",
+        "permissions.secret_scanning_alerts",
+        "permissions.secrets",
+        "permissions.security_events",
+        "permissions.single_file",
+        "permissions.starring",
+        "permissions.statuses",
+        "permissions.vulnerability_alerts",
+        "permissions.workflows",
+        "repositories[].temp_clone_token",
+        "token"
+      ],
+      "named": true
+    },
+    "DELETE /applications/{client_id}/grant": {
+      "fields": [],
+      "named": true
+    },
+    "POST /applications/{client_id}/token": {
+      "fields": [
+        "hashed_token",
+        "installation.permissions.actions",
+        "installation.permissions.administration",
+        "installation.permissions.artifact_metadata",
+        "installation.permissions.attestations",
+        "installation.permissions.checks",
+        "installation.permissions.code_quality",
+        "installation.permissions.codespaces",
+        "installation.permissions.contents",
+        "installation.permissions.custom_properties_for_organizations",
+        "installation.permissions.dependabot_secrets",
+        "installation.permissions.deployments",
+        "installation.permissions.discussions",
+        "installation.permissions.email_addresses",
+        "installation.permissions.enterprise_custom_properties_for_organizations",
+        "installation.permissions.environments",
+        "installation.permissions.followers",
+        "installation.permissions.git_ssh_keys",
+        "installation.permissions.gpg_keys",
+        "installation.permissions.interaction_limits",
+        "installation.permissions.issues",
+        "installation.permissions.members",
+        "installation.permissions.merge_queues",
+        "installation.permissions.metadata",
+        "installation.permissions.organization_administration",
+        "installation.permissions.organization_announcement_banners",
+        "installation.permissions.organization_copilot_agent_settings",
+        "installation.permissions.organization_copilot_requests",
+        "installation.permissions.organization_copilot_seat_management",
+        "installation.permissions.organization_custom_org_roles",
+        "installation.permissions.organization_custom_properties",
+        "installation.permissions.organization_custom_roles",
+        "installation.permissions.organization_events",
+        "installation.permissions.organization_external_properties_for_repos",
+        "installation.permissions.organization_hooks",
+        "installation.permissions.organization_packages",
+        "installation.permissions.organization_personal_access_token_requests",
+        "installation.permissions.organization_personal_access_tokens",
+        "installation.permissions.organization_plan",
+        "installation.permissions.organization_projects",
+        "installation.permissions.organization_secrets",
+        "installation.permissions.organization_self_hosted_runners",
+        "installation.permissions.organization_user_blocking",
+        "installation.permissions.packages",
+        "installation.permissions.pages",
+        "installation.permissions.profile",
+        "installation.permissions.pull_requests",
+        "installation.permissions.repository_custom_properties",
+        "installation.permissions.repository_hooks",
+        "installation.permissions.repository_projects",
+        "installation.permissions.secret_scanning_alerts",
+        "installation.permissions.secrets",
+        "installation.permissions.security_events",
+        "installation.permissions.single_file",
+        "installation.permissions.starring",
+        "installation.permissions.statuses",
+        "installation.permissions.vulnerability_alerts",
+        "installation.permissions.workflows",
+        "token",
+        "token_last_eight"
+      ],
+      "named": true
+    },
+    "PATCH /applications/{client_id}/token": {
+      "fields": [
+        "hashed_token",
+        "installation.permissions.actions",
+        "installation.permissions.administration",
+        "installation.permissions.artifact_metadata",
+        "installation.permissions.attestations",
+        "installation.permissions.checks",
+        "installation.permissions.code_quality",
+        "installation.permissions.codespaces",
+        "installation.permissions.contents",
+        "installation.permissions.custom_properties_for_organizations",
+        "installation.permissions.dependabot_secrets",
+        "installation.permissions.deployments",
+        "installation.permissions.discussions",
+        "installation.permissions.email_addresses",
+        "installation.permissions.enterprise_custom_properties_for_organizations",
+        "installation.permissions.environments",
+        "installation.permissions.followers",
+        "installation.permissions.git_ssh_keys",
+        "installation.permissions.gpg_keys",
+        "installation.permissions.interaction_limits",
+        "installation.permissions.issues",
+        "installation.permissions.members",
+        "installation.permissions.merge_queues",
+        "installation.permissions.metadata",
+        "installation.permissions.organization_administration",
+        "installation.permissions.organization_announcement_banners",
+        "installation.permissions.organization_copilot_agent_settings",
+        "installation.permissions.organization_copilot_requests",
+        "installation.permissions.organization_copilot_seat_management",
+        "installation.permissions.organization_custom_org_roles",
+        "installation.permissions.organization_custom_properties",
+        "installation.permissions.organization_custom_roles",
+        "installation.permissions.organization_events",
+        "installation.permissions.organization_external_properties_for_repos",
+        "installation.permissions.organization_hooks",
+        "installation.permissions.organization_packages",
+        "installation.permissions.organization_personal_access_token_requests",
+        "installation.permissions.organization_personal_access_tokens",
+        "installation.permissions.organization_plan",
+        "installation.permissions.organization_projects",
+        "installation.permissions.organization_secrets",
+        "installation.permissions.organization_self_hosted_runners",
+        "installation.permissions.organization_user_blocking",
+        "installation.permissions.packages",
+        "installation.permissions.pages",
+        "installation.permissions.profile",
+        "installation.permissions.pull_requests",
+        "installation.permissions.repository_custom_properties",
+        "installation.permissions.repository_hooks",
+        "installation.permissions.repository_projects",
+        "installation.permissions.secret_scanning_alerts",
+        "installation.permissions.secrets",
+        "installation.permissions.security_events",
+        "installation.permissions.single_file",
+        "installation.permissions.starring",
+        "installation.permissions.statuses",
+        "installation.permissions.vulnerability_alerts",
+        "installation.permissions.workflows",
+        "token",
+        "token_last_eight"
+      ],
+      "named": true
+    },
+    "DELETE /applications/{client_id}/token": {
+      "fields": [],
+      "named": true
+    },
+    "POST /applications/{client_id}/token/scoped": {
+      "fields": [
+        "hashed_token",
+        "installation.permissions.actions",
+        "installation.permissions.administration",
+        "installation.permissions.artifact_metadata",
+        "installation.permissions.attestations",
+        "installation.permissions.checks",
+        "installation.permissions.code_quality",
+        "installation.permissions.codespaces",
+        "installation.permissions.contents",
+        "installation.permissions.custom_properties_for_organizations",
+        "installation.permissions.dependabot_secrets",
+        "installation.permissions.deployments",
+        "installation.permissions.discussions",
+        "installation.permissions.email_addresses",
+        "installation.permissions.enterprise_custom_properties_for_organizations",
+        "installation.permissions.environments",
+        "installation.permissions.followers",
+        "installation.permissions.git_ssh_keys",
+        "installation.permissions.gpg_keys",
+        "installation.permissions.interaction_limits",
+        "installation.permissions.issues",
+        "installation.permissions.members",
+        "installation.permissions.merge_queues",
+        "installation.permissions.metadata",
+        "installation.permissions.organization_administration",
+        "installation.permissions.organization_announcement_banners",
+        "installation.permissions.organization_copilot_agent_settings",
+        "installation.permissions.organization_copilot_requests",
+        "installation.permissions.organization_copilot_seat_management",
+        "installation.permissions.organization_custom_org_roles",
+        "installation.permissions.organization_custom_properties",
+        "installation.permissions.organization_custom_roles",
+        "installation.permissions.organization_events",
+        "installation.permissions.organization_external_properties_for_repos",
+        "installation.permissions.organization_hooks",
+        "installation.permissions.organization_packages",
+        "installation.permissions.organization_personal_access_token_requests",
+        "installation.permissions.organization_personal_access_tokens",
+        "installation.permissions.organization_plan",
+        "installation.permissions.organization_projects",
+        "installation.permissions.organization_secrets",
+        "installation.permissions.organization_self_hosted_runners",
+        "installation.permissions.organization_user_blocking",
+        "installation.permissions.packages",
+        "installation.permissions.pages",
+        "installation.permissions.profile",
+        "installation.permissions.pull_requests",
+        "installation.permissions.repository_custom_properties",
+        "installation.permissions.repository_hooks",
+        "installation.permissions.repository_projects",
+        "installation.permissions.secret_scanning_alerts",
+        "installation.permissions.secrets",
+        "installation.permissions.security_events",
+        "installation.permissions.single_file",
+        "installation.permissions.starring",
+        "installation.permissions.statuses",
+        "installation.permissions.vulnerability_alerts",
+        "installation.permissions.workflows",
+        "token",
+        "token_last_eight"
+      ],
+      "named": true
+    },
+    "GET /codes_of_conduct/{key}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /credentials/revoke": {
+      "fields": [],
+      "named": true
+    },
+    "GET /enterprises/{enterprise}/code-security/configurations": {
+      "fields": [
+        "[].secret_scanning",
+        "[].secret_scanning_delegated_alert_dismissal",
+        "[].secret_scanning_delegated_bypass",
+        "[].secret_scanning_delegated_bypass_options",
+        "[].secret_scanning_delegated_bypass_options.reviewers",
+        "[].secret_scanning_extended_metadata",
+        "[].secret_scanning_generic_secrets",
+        "[].secret_scanning_non_provider_patterns",
+        "[].secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "POST /enterprises/{enterprise}/code-security/configurations": {
+      "fields": [
+        "secret_scanning",
+        "secret_scanning_delegated_alert_dismissal",
+        "secret_scanning_delegated_bypass",
+        "secret_scanning_delegated_bypass_options",
+        "secret_scanning_delegated_bypass_options.reviewers",
+        "secret_scanning_extended_metadata",
+        "secret_scanning_generic_secrets",
+        "secret_scanning_non_provider_patterns",
+        "secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "GET /enterprises/{enterprise}/code-security/configurations/defaults": {
+      "fields": [
+        "[].configuration.secret_scanning",
+        "[].configuration.secret_scanning_delegated_alert_dismissal",
+        "[].configuration.secret_scanning_delegated_bypass",
+        "[].configuration.secret_scanning_delegated_bypass_options",
+        "[].configuration.secret_scanning_delegated_bypass_options.reviewers",
+        "[].configuration.secret_scanning_extended_metadata",
+        "[].configuration.secret_scanning_generic_secrets",
+        "[].configuration.secret_scanning_non_provider_patterns",
+        "[].configuration.secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "GET /enterprises/{enterprise}/code-security/configurations/{configuration_id}": {
+      "fields": [
+        "secret_scanning",
+        "secret_scanning_delegated_alert_dismissal",
+        "secret_scanning_delegated_bypass",
+        "secret_scanning_delegated_bypass_options",
+        "secret_scanning_delegated_bypass_options.reviewers",
+        "secret_scanning_extended_metadata",
+        "secret_scanning_generic_secrets",
+        "secret_scanning_non_provider_patterns",
+        "secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "PATCH /enterprises/{enterprise}/code-security/configurations/{configuration_id}": {
+      "fields": [
+        "secret_scanning",
+        "secret_scanning_delegated_alert_dismissal",
+        "secret_scanning_delegated_bypass",
+        "secret_scanning_delegated_bypass_options",
+        "secret_scanning_delegated_bypass_options.reviewers",
+        "secret_scanning_extended_metadata",
+        "secret_scanning_generic_secrets",
+        "secret_scanning_non_provider_patterns",
+        "secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "PUT /enterprises/{enterprise}/code-security/configurations/{configuration_id}/defaults": {
+      "fields": [
+        "configuration.secret_scanning",
+        "configuration.secret_scanning_delegated_alert_dismissal",
+        "configuration.secret_scanning_delegated_bypass",
+        "configuration.secret_scanning_delegated_bypass_options",
+        "configuration.secret_scanning_delegated_bypass_options.reviewers",
+        "configuration.secret_scanning_extended_metadata",
+        "configuration.secret_scanning_generic_secrets",
+        "configuration.secret_scanning_non_provider_patterns",
+        "configuration.secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "GET /events": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /installation/repositories": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": false
+    },
+    "DELETE /installation/token": {
+      "fields": [],
+      "named": true
+    },
+    "GET /issues": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /meta": {
+      "fields": ["commit_signing_keys", "ssh_keys", "verifiable_password_authentication"],
+      "named": false
+    },
+    "GET /networks/{owner}/{repo}/events": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /notifications": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /notifications/threads/{thread_id}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}": {
+      "fields": [
+        "secret_scanning_enabled_for_new_repositories",
+        "secret_scanning_push_protection_custom_link",
+        "secret_scanning_push_protection_enabled_for_new_repositories"
+      ],
+      "named": false
+    },
+    "PATCH /orgs/{org}": {
+      "fields": [
+        "secret_scanning_enabled_for_new_repositories",
+        "secret_scanning_push_protection_custom_link",
+        "secret_scanning_push_protection_enabled_for_new_repositories"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/actions/oidc/customization/sub": {
+      "fields": ["include_claim_keys", "use_immutable_subject"],
+      "named": true
+    },
+    "PUT /orgs/{org}/actions/oidc/customization/sub": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/actions/permissions/fork-pr-workflows-private-repos": {
+      "fields": ["send_secrets_and_variables", "send_write_tokens_to_workflows"],
+      "named": false
+    },
+    "GET /orgs/{org}/actions/permissions/repositories": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": false
+    },
+    "GET /orgs/{org}/actions/permissions/self-hosted-runners/repositories": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": false
+    },
+    "GET /orgs/{org}/actions/runner-groups/{runner_group_id}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/actions/runners/downloads": {
+      "fields": ["[].temp_download_token"],
+      "named": false
+    },
+    "POST /orgs/{org}/actions/runners/registration-token": {
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
+      "named": true
+    },
+    "POST /orgs/{org}/actions/runners/remove-token": {
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
+      "named": true
+    },
+    "GET /orgs/{org}/actions/secrets": {
+      "fields": ["secrets", "secrets[].name", "secrets[].visibility"],
+      "named": true
+    },
+    "GET /orgs/{org}/actions/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/actions/secrets/{secret_name}": {
+      "fields": ["name", "visibility"],
+      "named": true
+    },
+    "PUT /orgs/{org}/actions/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/actions/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/actions/secrets/{secret_name}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": true
+    },
+    "PUT /orgs/{org}/actions/secrets/{secret_name}/repositories": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /orgs/{org}/actions/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/actions/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/actions/variables/{name}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/agents/secrets": {
+      "fields": ["secrets", "secrets[].name", "secrets[].visibility"],
+      "named": true
+    },
+    "GET /orgs/{org}/agents/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/agents/secrets/{secret_name}": {
+      "fields": ["name", "visibility"],
+      "named": true
+    },
+    "PUT /orgs/{org}/agents/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/agents/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/agents/secrets/{secret_name}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": true
+    },
+    "PUT /orgs/{org}/agents/secrets/{secret_name}/repositories": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /orgs/{org}/agents/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/agents/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/agents/variables/{name}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/code-security/configurations": {
+      "fields": [
+        "[].secret_scanning",
+        "[].secret_scanning_delegated_alert_dismissal",
+        "[].secret_scanning_delegated_bypass",
+        "[].secret_scanning_delegated_bypass_options",
+        "[].secret_scanning_delegated_bypass_options.reviewers",
+        "[].secret_scanning_extended_metadata",
+        "[].secret_scanning_generic_secrets",
+        "[].secret_scanning_non_provider_patterns",
+        "[].secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "POST /orgs/{org}/code-security/configurations": {
+      "fields": [
+        "secret_scanning",
+        "secret_scanning_delegated_alert_dismissal",
+        "secret_scanning_delegated_bypass",
+        "secret_scanning_delegated_bypass_options",
+        "secret_scanning_delegated_bypass_options.reviewers",
+        "secret_scanning_extended_metadata",
+        "secret_scanning_generic_secrets",
+        "secret_scanning_non_provider_patterns",
+        "secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/code-security/configurations/defaults": {
+      "fields": [
+        "[].configuration.secret_scanning",
+        "[].configuration.secret_scanning_delegated_alert_dismissal",
+        "[].configuration.secret_scanning_delegated_bypass",
+        "[].configuration.secret_scanning_delegated_bypass_options",
+        "[].configuration.secret_scanning_delegated_bypass_options.reviewers",
+        "[].configuration.secret_scanning_extended_metadata",
+        "[].configuration.secret_scanning_generic_secrets",
+        "[].configuration.secret_scanning_non_provider_patterns",
+        "[].configuration.secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/code-security/configurations/{configuration_id}": {
+      "fields": [
+        "secret_scanning",
+        "secret_scanning_delegated_alert_dismissal",
+        "secret_scanning_delegated_bypass",
+        "secret_scanning_delegated_bypass_options",
+        "secret_scanning_delegated_bypass_options.reviewers",
+        "secret_scanning_extended_metadata",
+        "secret_scanning_generic_secrets",
+        "secret_scanning_non_provider_patterns",
+        "secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "PATCH /orgs/{org}/code-security/configurations/{configuration_id}": {
+      "fields": [
+        "secret_scanning",
+        "secret_scanning_delegated_alert_dismissal",
+        "secret_scanning_delegated_bypass",
+        "secret_scanning_delegated_bypass_options",
+        "secret_scanning_delegated_bypass_options.reviewers",
+        "secret_scanning_extended_metadata",
+        "secret_scanning_generic_secrets",
+        "secret_scanning_non_provider_patterns",
+        "secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "PUT /orgs/{org}/code-security/configurations/{configuration_id}/defaults": {
+      "fields": [
+        "configuration.secret_scanning",
+        "configuration.secret_scanning_delegated_alert_dismissal",
+        "configuration.secret_scanning_delegated_bypass",
+        "configuration.secret_scanning_delegated_bypass_options",
+        "configuration.secret_scanning_delegated_bypass_options.reviewers",
+        "configuration.secret_scanning_extended_metadata",
+        "configuration.secret_scanning_generic_secrets",
+        "configuration.secret_scanning_non_provider_patterns",
+        "configuration.secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/codespaces": {
+      "fields": [
+        "codespaces[].repository.security_and_analysis.advanced_security",
+        "codespaces[].repository.security_and_analysis.secret_scanning",
+        "codespaces[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "codespaces[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "codespaces[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/codespaces/secrets": {
+      "fields": ["secrets", "secrets[].name", "secrets[].selected_repositories_url", "secrets[].visibility"],
+      "named": true
+    },
+    "GET /orgs/{org}/codespaces/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/codespaces/secrets/{secret_name}": {
+      "fields": ["name", "selected_repositories_url", "visibility"],
+      "named": true
+    },
+    "PUT /orgs/{org}/codespaces/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/codespaces/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/codespaces/secrets/{secret_name}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": true
+    },
+    "PUT /orgs/{org}/codespaces/secrets/{secret_name}/repositories": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /orgs/{org}/codespaces/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/codespaces/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/copilot/coding-agent/permissions/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/dependabot/secrets": {
+      "fields": ["secrets", "secrets[].name", "secrets[].visibility"],
+      "named": true
+    },
+    "GET /orgs/{org}/dependabot/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/dependabot/secrets/{secret_name}": {
+      "fields": ["name", "visibility"],
+      "named": true
+    },
+    "PUT /orgs/{org}/dependabot/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/dependabot/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/dependabot/secrets/{secret_name}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": true
+    },
+    "PUT /orgs/{org}/dependabot/secrets/{secret_name}/repositories": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /orgs/{org}/dependabot/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/dependabot/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/docker/conflicts": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/events": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /orgs/{org}/failed_invitations": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/hooks": {
+      "fields": ["[].config.secret"],
+      "named": true
+    },
+    "POST /orgs/{org}/hooks": {
+      "fields": ["config.secret"],
+      "named": true
+    },
+    "GET /orgs/{org}/hooks/{hook_id}": {
+      "fields": ["config.secret"],
+      "named": true
+    },
+    "PATCH /orgs/{org}/hooks/{hook_id}": {
+      "fields": ["config.secret"],
+      "named": true
+    },
+    "DELETE /orgs/{org}/hooks/{hook_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/hooks/{hook_id}/config": {
+      "fields": ["secret"],
+      "named": true
+    },
+    "PATCH /orgs/{org}/hooks/{hook_id}/config": {
+      "fields": ["secret"],
+      "named": true
+    },
+    "GET /orgs/{org}/hooks/{hook_id}/deliveries": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/hooks/{hook_id}/deliveries/{delivery_id}": {
+      "fields": ["request.headers", "response.headers"],
+      "named": true
+    },
+    "POST /orgs/{org}/hooks/{hook_id}/deliveries/{delivery_id}/attempts": {
+      "fields": [],
+      "named": true
+    },
+    "POST /orgs/{org}/hooks/{hook_id}/pings": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/installation": {
+      "fields": [
+        "access_tokens_url",
+        "permissions.actions",
+        "permissions.administration",
+        "permissions.artifact_metadata",
+        "permissions.attestations",
+        "permissions.checks",
+        "permissions.code_quality",
+        "permissions.codespaces",
+        "permissions.contents",
+        "permissions.custom_properties_for_organizations",
+        "permissions.dependabot_secrets",
+        "permissions.deployments",
+        "permissions.discussions",
+        "permissions.email_addresses",
+        "permissions.enterprise_custom_properties_for_organizations",
+        "permissions.environments",
+        "permissions.followers",
+        "permissions.git_ssh_keys",
+        "permissions.gpg_keys",
+        "permissions.interaction_limits",
+        "permissions.issues",
+        "permissions.members",
+        "permissions.merge_queues",
+        "permissions.metadata",
+        "permissions.organization_administration",
+        "permissions.organization_announcement_banners",
+        "permissions.organization_copilot_agent_settings",
+        "permissions.organization_copilot_requests",
+        "permissions.organization_copilot_seat_management",
+        "permissions.organization_custom_org_roles",
+        "permissions.organization_custom_properties",
+        "permissions.organization_custom_roles",
+        "permissions.organization_events",
+        "permissions.organization_external_properties_for_repos",
+        "permissions.organization_hooks",
+        "permissions.organization_packages",
+        "permissions.organization_personal_access_token_requests",
+        "permissions.organization_personal_access_tokens",
+        "permissions.organization_plan",
+        "permissions.organization_projects",
+        "permissions.organization_secrets",
+        "permissions.organization_self_hosted_runners",
+        "permissions.organization_user_blocking",
+        "permissions.packages",
+        "permissions.pages",
+        "permissions.profile",
+        "permissions.pull_requests",
+        "permissions.repository_custom_properties",
+        "permissions.repository_hooks",
+        "permissions.repository_projects",
+        "permissions.secret_scanning_alerts",
+        "permissions.secrets",
+        "permissions.security_events",
+        "permissions.single_file",
+        "permissions.starring",
+        "permissions.statuses",
+        "permissions.vulnerability_alerts",
+        "permissions.workflows"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/installations": {
+      "fields": [
+        "installations[].access_tokens_url",
+        "installations[].permissions.actions",
+        "installations[].permissions.administration",
+        "installations[].permissions.artifact_metadata",
+        "installations[].permissions.attestations",
+        "installations[].permissions.checks",
+        "installations[].permissions.code_quality",
+        "installations[].permissions.codespaces",
+        "installations[].permissions.contents",
+        "installations[].permissions.custom_properties_for_organizations",
+        "installations[].permissions.dependabot_secrets",
+        "installations[].permissions.deployments",
+        "installations[].permissions.discussions",
+        "installations[].permissions.email_addresses",
+        "installations[].permissions.enterprise_custom_properties_for_organizations",
+        "installations[].permissions.environments",
+        "installations[].permissions.followers",
+        "installations[].permissions.git_ssh_keys",
+        "installations[].permissions.gpg_keys",
+        "installations[].permissions.interaction_limits",
+        "installations[].permissions.issues",
+        "installations[].permissions.members",
+        "installations[].permissions.merge_queues",
+        "installations[].permissions.metadata",
+        "installations[].permissions.organization_administration",
+        "installations[].permissions.organization_announcement_banners",
+        "installations[].permissions.organization_copilot_agent_settings",
+        "installations[].permissions.organization_copilot_requests",
+        "installations[].permissions.organization_copilot_seat_management",
+        "installations[].permissions.organization_custom_org_roles",
+        "installations[].permissions.organization_custom_properties",
+        "installations[].permissions.organization_custom_roles",
+        "installations[].permissions.organization_events",
+        "installations[].permissions.organization_external_properties_for_repos",
+        "installations[].permissions.organization_hooks",
+        "installations[].permissions.organization_packages",
+        "installations[].permissions.organization_personal_access_token_requests",
+        "installations[].permissions.organization_personal_access_tokens",
+        "installations[].permissions.organization_plan",
+        "installations[].permissions.organization_projects",
+        "installations[].permissions.organization_secrets",
+        "installations[].permissions.organization_self_hosted_runners",
+        "installations[].permissions.organization_user_blocking",
+        "installations[].permissions.packages",
+        "installations[].permissions.pages",
+        "installations[].permissions.profile",
+        "installations[].permissions.pull_requests",
+        "installations[].permissions.repository_custom_properties",
+        "installations[].permissions.repository_hooks",
+        "installations[].permissions.repository_projects",
+        "installations[].permissions.secret_scanning_alerts",
+        "installations[].permissions.secrets",
+        "installations[].permissions.security_events",
+        "installations[].permissions.single_file",
+        "installations[].permissions.starring",
+        "installations[].permissions.statuses",
+        "installations[].permissions.vulnerability_alerts",
+        "installations[].permissions.workflows"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/invitations": {
+      "fields": [],
+      "named": true
+    },
+    "POST /orgs/{org}/invitations": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/invitations/{invitation_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/invitations/{invitation_id}/teams": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/issues": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /orgs/{org}/members/{username}/codespaces": {
+      "fields": [
+        "codespaces[].repository.security_and_analysis.advanced_security",
+        "codespaces[].repository.security_and_analysis.secret_scanning",
+        "codespaces[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "codespaces[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "codespaces[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /orgs/{org}/members/{username}/codespaces/{codespace_name}/stop": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/migrations": {
+      "fields": ["[].repositories[].temp_clone_token"],
+      "named": false
+    },
+    "POST /orgs/{org}/migrations": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": false
+    },
+    "GET /orgs/{org}/migrations/{migration_id}": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": false
+    },
+    "GET /orgs/{org}/migrations/{migration_id}/repositories": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "PUT /orgs/{org}/organization-roles/teams/{team_slug}/{role_id}": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /orgs/{org}/organization-roles/users/{username}/{role_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/packages": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/packages/{package_type}/{package_name}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/personal-access-token-requests": {
+      "fields": ["[].id", "[].repositories_url", "[].token_expired"],
+      "named": true
+    },
+    "POST /orgs/{org}/personal-access-token-requests": {
+      "fields": [],
+      "named": true
+    },
+    "POST /orgs/{org}/personal-access-token-requests/{pat_request_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/personal-access-token-requests/{pat_request_id}/repositories": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": true
+    },
+    "GET /orgs/{org}/personal-access-tokens": {
+      "fields": ["[].id", "[].repositories_url", "[].token_expired"],
+      "named": true
+    },
+    "POST /orgs/{org}/personal-access-tokens": {
+      "fields": [],
+      "named": true
+    },
+    "POST /orgs/{org}/personal-access-tokens/{pat_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/personal-access-tokens/{pat_id}/repositories": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": true
+    },
+    "GET /orgs/{org}/private-registries/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/private-registries/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "PATCH /orgs/{org}/private-registries/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /orgs/{org}/private-registries/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /orgs/{org}/projectsV2/{project_number}/drafts": {
+      "fields": [
+        "content.base.repo.temp_clone_token",
+        "content.head.repo.temp_clone_token",
+        "content.repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /orgs/{org}/projectsV2/{project_number}/items": {
+      "fields": [
+        "content.base.repo.temp_clone_token",
+        "content.head.repo.temp_clone_token",
+        "content.repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/repos": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /orgs/{org}/repos": {
+      "fields": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/rulesets": {
+      "fields": ["[].bypass_actors", "[].current_user_can_bypass"],
+      "named": false
+    },
+    "POST /orgs/{org}/rulesets": {
+      "fields": ["bypass_actors", "current_user_can_bypass"],
+      "named": false
+    },
+    "GET /orgs/{org}/rulesets/rule-suites/{rule_suite_id}": {
+      "fields": ["rule_evaluations[].metadata.pull_request.proof_of_presence.verifier"],
+      "named": false
+    },
+    "GET /orgs/{org}/rulesets/{ruleset_id}": {
+      "fields": ["bypass_actors", "current_user_can_bypass"],
+      "named": false
+    },
+    "PUT /orgs/{org}/rulesets/{ruleset_id}": {
+      "fields": ["bypass_actors", "current_user_can_bypass"],
+      "named": false
+    },
+    "GET /orgs/{org}/secret-scanning/alerts": {
+      "fields": [
+        "[].first_location_detected.discussion_body_url",
+        "[].first_location_detected.discussion_comment_url",
+        "[].first_location_detected.discussion_title_url",
+        "[].first_location_detected.end_column",
+        "[].first_location_detected.end_line",
+        "[].first_location_detected.html_url",
+        "[].first_location_detected.issue_body_url",
+        "[].first_location_detected.issue_comment_url",
+        "[].first_location_detected.issue_title_url",
+        "[].first_location_detected.pull_request_body_url",
+        "[].first_location_detected.pull_request_comment_url",
+        "[].first_location_detected.pull_request_review_comment_url",
+        "[].first_location_detected.pull_request_review_url",
+        "[].first_location_detected.pull_request_title_url",
+        "[].first_location_detected.start_column",
+        "[].first_location_detected.start_line",
+        "[].has_more_locations",
+        "[].multi_repo",
+        "[].provider",
+        "[].provider_slug",
+        "[].publicly_leaked",
+        "[].push_protection_bypass_request_comment",
+        "[].push_protection_bypass_request_html_url",
+        "[].push_protection_bypass_request_reviewer",
+        "[].push_protection_bypass_request_reviewer_comment",
+        "[].push_protection_bypassed",
+        "[].push_protection_bypassed_by",
+        "[].secret",
+        "[].state",
+        "[].validity"
+      ],
+      "named": true
+    },
+    "GET /orgs/{org}/secret-scanning/custom-patterns": {
+      "fields": ["[].must_match", "[].must_not_match"],
+      "named": true
+    },
+    "POST /orgs/{org}/secret-scanning/custom-patterns": {
+      "fields": ["created_patterns[].must_match", "created_patterns[].must_not_match"],
+      "named": true
+    },
+    "DELETE /orgs/{org}/secret-scanning/custom-patterns": {
+      "fields": [],
+      "named": true
+    },
+    "PATCH /orgs/{org}/secret-scanning/custom-patterns/{pattern_id}": {
+      "fields": ["must_match", "must_not_match"],
+      "named": true
+    },
+    "GET /orgs/{org}/secret-scanning/pattern-configurations": {
+      "fields": ["custom_pattern_overrides[].bypass_rate", "provider_pattern_overrides[].bypass_rate"],
+      "named": true
+    },
+    "PATCH /orgs/{org}/secret-scanning/pattern-configurations": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/settings/immutable-releases/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/teams/{team_slug}/invitations": {
+      "fields": [],
+      "named": true
+    },
+    "GET /orgs/{org}/teams/{team_slug}/repos": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}": {
+      "fields": ["temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}": {
+      "fields": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}": {
+      "fields": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "DELETE /repos/{owner}/{repo}/actions/caches": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/actions/oidc/customization/sub": {
+      "fields": ["include_claim_keys", "use_immutable_subject"],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/actions/oidc/customization/sub": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/actions/organization-secrets": {
+      "fields": ["secrets", "secrets[].name"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/actions/permissions/fork-pr-workflows-private-repos": {
+      "fields": ["send_secrets_and_variables", "send_write_tokens_to_workflows"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/actions/runners/downloads": {
+      "fields": ["[].temp_download_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/actions/runners/registration-token": {
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/actions/runners/remove-token": {
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/actions/runs": {
+      "fields": [
+        "workflow_runs[].head_repository.security_and_analysis.advanced_security",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].head_repository.temp_clone_token",
+        "workflow_runs[].repository.security_and_analysis.advanced_security",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/actions/runs/{run_id}": {
+      "fields": [
+        "head_repository.security_and_analysis.advanced_security",
+        "head_repository.security_and_analysis.secret_scanning",
+        "head_repository.security_and_analysis.secret_scanning_ai_detection",
+        "head_repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "head_repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "head_repository.temp_clone_token",
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}": {
+      "fields": [
+        "head_repository.security_and_analysis.advanced_security",
+        "head_repository.security_and_analysis.secret_scanning",
+        "head_repository.security_and_analysis.secret_scanning_ai_detection",
+        "head_repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "head_repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "head_repository.temp_clone_token",
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/actions/secrets": {
+      "fields": ["secrets", "secrets[].name"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/actions/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/actions/secrets/{secret_name}": {
+      "fields": ["name"],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/actions/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/actions/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs": {
+      "fields": [
+        "workflow_runs[].head_repository.security_and_analysis.advanced_security",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].head_repository.temp_clone_token",
+        "workflow_runs[].repository.security_and_analysis.advanced_security",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/agents/organization-secrets": {
+      "fields": ["secrets", "secrets[].name"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/agents/secrets": {
+      "fields": ["secrets", "secrets[].name"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/agents/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/agents/secrets/{secret_name}": {
+      "fields": ["name"],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/agents/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/agents/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/branches": {
+      "fields": [
+        "[].protection.required_pull_request_reviews.bypass_pull_request_allowances",
+        "[].protection.required_signatures"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/branches/{branch}": {
+      "fields": [
+        "commit.commit.verification.signature",
+        "protection.required_pull_request_reviews.bypass_pull_request_allowances",
+        "protection.required_signatures"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/branches/{branch}/protection": {
+      "fields": ["required_pull_request_reviews.bypass_pull_request_allowances", "required_signatures"],
+      "named": false
+    },
+    "PUT /repos/{owner}/{repo}/branches/{branch}/protection": {
+      "fields": ["required_pull_request_reviews.bypass_pull_request_allowances", "required_signatures"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews": {
+      "fields": ["bypass_pull_request_allowances"],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews": {
+      "fields": ["bypass_pull_request_allowances"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/branches/{branch}/rename": {
+      "fields": [
+        "commit.commit.verification.signature",
+        "protection.required_pull_request_reviews.bypass_pull_request_allowances",
+        "protection.required_signatures"
+      ],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/check-suites": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}/check-suites/preferences": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/check-suites/{check_suite_id}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/code-scanning/alerts/{alert_number}": {
+      "fields": [
+        "linked_pull_requests[].base.repo.temp_clone_token",
+        "linked_pull_requests[].head.repo.temp_clone_token"
+      ],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}/code-scanning/alerts/{alert_number}": {
+      "fields": [
+        "linked_pull_requests[].base.repo.temp_clone_token",
+        "linked_pull_requests[].head.repo.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/code-scanning/default-setup": {
+      "fields": ["threat_model"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/code-security-configuration": {
+      "fields": [
+        "configuration.secret_scanning",
+        "configuration.secret_scanning_delegated_alert_dismissal",
+        "configuration.secret_scanning_delegated_bypass",
+        "configuration.secret_scanning_delegated_bypass_options",
+        "configuration.secret_scanning_delegated_bypass_options.reviewers",
+        "configuration.secret_scanning_extended_metadata",
+        "configuration.secret_scanning_generic_secrets",
+        "configuration.secret_scanning_non_provider_patterns",
+        "configuration.secret_scanning_validity_checks"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/codespaces": {
+      "fields": [
+        "codespaces[].repository.security_and_analysis.advanced_security",
+        "codespaces[].repository.security_and_analysis.secret_scanning",
+        "codespaces[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "codespaces[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "codespaces[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/codespaces": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/codespaces/secrets": {
+      "fields": ["secrets", "secrets[].name"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/codespaces/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/codespaces/secrets/{secret_name}": {
+      "fields": ["name"],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/codespaces/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/codespaces/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/collaborators/{username}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/commits": {
+      "fields": ["[].commit.verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls": {
+      "fields": ["[].base.repo.temp_clone_token", "[].head.repo.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/commits/{ref}": {
+      "fields": ["commit.verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/commits/{ref}/check-suites": {
+      "fields": [
+        "check_suites[].repository.security_and_analysis.advanced_security",
+        "check_suites[].repository.security_and_analysis.secret_scanning",
+        "check_suites[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "check_suites[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "check_suites[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/commits/{ref}/status": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/compare/{basehead}": {
+      "fields": [
+        "base_commit.commit.verification.signature",
+        "commits[].commit.verification.signature",
+        "merge_base_commit.commit.verification.signature"
+      ],
+      "named": false
+    },
+    "PUT /repos/{owner}/{repo}/contents/{path}": {
+      "fields": ["commit.verification.signature"],
+      "named": false
+    },
+    "DELETE /repos/{owner}/{repo}/contents/{path}": {
+      "fields": ["commit.verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/copilot/cloud-agent/configuration": {
+      "fields": ["enabled_tools.secret_scanning"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/dependabot/secrets": {
+      "fields": ["secrets", "secrets[].name"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/dependabot/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/dependabot/secrets/{secret_name}": {
+      "fields": ["name"],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/dependabot/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/dependabot/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets": {
+      "fields": ["secrets", "secrets[].name"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}": {
+      "fields": ["name"],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/events": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/forks": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/forks": {
+      "fields": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/git/commits": {
+      "fields": ["verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/git/commits/{commit_sha}": {
+      "fields": ["verification.signature"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/git/tags": {
+      "fields": ["verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/git/tags/{tag_sha}": {
+      "fields": ["verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/hooks": {
+      "fields": ["[].config.secret"],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/hooks": {
+      "fields": ["config.secret"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/hooks/{hook_id}": {
+      "fields": ["config.secret"],
+      "named": true
+    },
+    "PATCH /repos/{owner}/{repo}/hooks/{hook_id}": {
+      "fields": ["config.secret"],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/hooks/{hook_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/hooks/{hook_id}/config": {
+      "fields": ["secret"],
+      "named": true
+    },
+    "PATCH /repos/{owner}/{repo}/hooks/{hook_id}/config": {
+      "fields": ["secret"],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}": {
+      "fields": ["request.headers", "response.headers"],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts": {
+      "fields": [],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/hooks/{hook_id}/pings": {
+      "fields": [],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/hooks/{hook_id}/tests": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/installation": {
+      "fields": [
+        "access_tokens_url",
+        "permissions.actions",
+        "permissions.administration",
+        "permissions.artifact_metadata",
+        "permissions.attestations",
+        "permissions.checks",
+        "permissions.code_quality",
+        "permissions.codespaces",
+        "permissions.contents",
+        "permissions.custom_properties_for_organizations",
+        "permissions.dependabot_secrets",
+        "permissions.deployments",
+        "permissions.discussions",
+        "permissions.email_addresses",
+        "permissions.enterprise_custom_properties_for_organizations",
+        "permissions.environments",
+        "permissions.followers",
+        "permissions.git_ssh_keys",
+        "permissions.gpg_keys",
+        "permissions.interaction_limits",
+        "permissions.issues",
+        "permissions.members",
+        "permissions.merge_queues",
+        "permissions.metadata",
+        "permissions.organization_administration",
+        "permissions.organization_announcement_banners",
+        "permissions.organization_copilot_agent_settings",
+        "permissions.organization_copilot_requests",
+        "permissions.organization_copilot_seat_management",
+        "permissions.organization_custom_org_roles",
+        "permissions.organization_custom_properties",
+        "permissions.organization_custom_roles",
+        "permissions.organization_events",
+        "permissions.organization_external_properties_for_repos",
+        "permissions.organization_hooks",
+        "permissions.organization_packages",
+        "permissions.organization_personal_access_token_requests",
+        "permissions.organization_personal_access_tokens",
+        "permissions.organization_plan",
+        "permissions.organization_projects",
+        "permissions.organization_secrets",
+        "permissions.organization_self_hosted_runners",
+        "permissions.organization_user_blocking",
+        "permissions.packages",
+        "permissions.pages",
+        "permissions.profile",
+        "permissions.pull_requests",
+        "permissions.repository_custom_properties",
+        "permissions.repository_hooks",
+        "permissions.repository_projects",
+        "permissions.secret_scanning_alerts",
+        "permissions.secrets",
+        "permissions.security_events",
+        "permissions.single_file",
+        "permissions.starring",
+        "permissions.statuses",
+        "permissions.vulnerability_alerts",
+        "permissions.workflows"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/interaction-limits/pulls/bypass-list": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /repos/{owner}/{repo}/interaction-limits/pulls/bypass-list": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/interaction-limits/pulls/bypass-list": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/invitations": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": true
+    },
+    "PATCH /repos/{owner}/{repo}/invitations/{invitation_id}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/invitations/{invitation_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/issues": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/issues": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/events": {
+      "fields": ["[].issue.repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/events/{event_id}": {
+      "fields": ["issue.repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/{issue_number}": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}/issues/{issue_number}": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/issues/{issue_number}/assignees": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "DELETE /repos/{owner}/{repo}/issues/{issue_number}/assignees": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "DELETE /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by/{issue_id}": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocking": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/parent": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/relates_to": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/issues/{issue_number}/relates_to": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "DELETE /repos/{owner}/{repo}/issues/{issue_number}/relates_to/{issue_id}": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "DELETE /repos/{owner}/{repo}/issues/{issue_number}/sub_issue": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/sub_issues": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/issues/{issue_number}/sub_issues": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}/issues/{issue_number}/sub_issues/priority": {
+      "fields": ["repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/timeline": {
+      "fields": ["[].source.issue.repository.temp_clone_token", "[].verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/keys": {
+      "fields": [],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/keys": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/keys/{key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/keys/{key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/merges": {
+      "fields": ["commit.verification.signature"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/notifications": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/pulls": {
+      "fields": ["[].base.repo.temp_clone_token", "[].head.repo.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/pulls": {
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/pulls/{pull_number}": {
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}/pulls/{pull_number}": {
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/pulls/{pull_number}/codespaces": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits": {
+      "fields": ["[].commit.verification.signature"],
+      "named": false
+    },
+    "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge-async": {
+      "fields": ["details.bypass_rules"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/pulls/{pull_number}/merge-async/{uuid}": {
+      "fields": ["details.bypass_rules"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers": {
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "named": false
+    },
+    "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers": {
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers/rerequest": {
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/releases": {
+      "fields": ["[].upload_url"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/releases": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/releases/latest": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/releases/tags/{tag}": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/releases/{release_id}": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "PATCH /repos/{owner}/{repo}/releases/{release_id}": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/rulesets": {
+      "fields": ["[].bypass_actors", "[].current_user_can_bypass"],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/rulesets": {
+      "fields": ["bypass_actors", "current_user_can_bypass"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/rulesets/rule-suites/{rule_suite_id}": {
+      "fields": ["rule_evaluations[].metadata.pull_request.proof_of_presence.verifier"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/rulesets/{ruleset_id}": {
+      "fields": ["bypass_actors", "current_user_can_bypass"],
+      "named": false
+    },
+    "PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}": {
+      "fields": ["bypass_actors", "current_user_can_bypass"],
+      "named": false
+    },
+    "GET /repos/{owner}/{repo}/secret-scanning/alerts": {
+      "fields": [
+        "[].first_location_detected.discussion_body_url",
+        "[].first_location_detected.discussion_comment_url",
+        "[].first_location_detected.discussion_title_url",
+        "[].first_location_detected.end_column",
+        "[].first_location_detected.end_line",
+        "[].first_location_detected.html_url",
+        "[].first_location_detected.issue_body_url",
+        "[].first_location_detected.issue_comment_url",
+        "[].first_location_detected.issue_title_url",
+        "[].first_location_detected.pull_request_body_url",
+        "[].first_location_detected.pull_request_comment_url",
+        "[].first_location_detected.pull_request_review_comment_url",
+        "[].first_location_detected.pull_request_review_url",
+        "[].first_location_detected.pull_request_title_url",
+        "[].first_location_detected.start_column",
+        "[].first_location_detected.start_line",
+        "[].has_more_locations",
+        "[].multi_repo",
+        "[].provider",
+        "[].provider_slug",
+        "[].publicly_leaked",
+        "[].push_protection_bypass_request_comment",
+        "[].push_protection_bypass_request_html_url",
+        "[].push_protection_bypass_request_reviewer",
+        "[].push_protection_bypass_request_reviewer_comment",
+        "[].push_protection_bypassed",
+        "[].push_protection_bypassed_by",
+        "[].secret",
+        "[].state",
+        "[].validity"
+      ],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}": {
+      "fields": [
+        "first_location_detected.discussion_body_url",
+        "first_location_detected.discussion_comment_url",
+        "first_location_detected.discussion_title_url",
+        "first_location_detected.end_column",
+        "first_location_detected.end_line",
+        "first_location_detected.html_url",
+        "first_location_detected.issue_body_url",
+        "first_location_detected.issue_comment_url",
+        "first_location_detected.issue_title_url",
+        "first_location_detected.pull_request_body_url",
+        "first_location_detected.pull_request_comment_url",
+        "first_location_detected.pull_request_review_comment_url",
+        "first_location_detected.pull_request_review_url",
+        "first_location_detected.pull_request_title_url",
+        "first_location_detected.start_column",
+        "first_location_detected.start_line",
+        "has_more_locations",
+        "metadata",
+        "metadata[].value",
+        "multi_repo",
+        "provider",
+        "provider_slug",
+        "publicly_leaked",
+        "push_protection_bypass_request_comment",
+        "push_protection_bypass_request_html_url",
+        "push_protection_bypass_request_reviewer",
+        "push_protection_bypass_request_reviewer_comment",
+        "push_protection_bypassed",
+        "push_protection_bypassed_by",
+        "secret",
+        "state",
+        "validity"
+      ],
+      "named": true
+    },
+    "PATCH /repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}": {
+      "fields": [
+        "first_location_detected.discussion_body_url",
+        "first_location_detected.discussion_comment_url",
+        "first_location_detected.discussion_title_url",
+        "first_location_detected.end_column",
+        "first_location_detected.end_line",
+        "first_location_detected.html_url",
+        "first_location_detected.issue_body_url",
+        "first_location_detected.issue_comment_url",
+        "first_location_detected.issue_title_url",
+        "first_location_detected.pull_request_body_url",
+        "first_location_detected.pull_request_comment_url",
+        "first_location_detected.pull_request_review_comment_url",
+        "first_location_detected.pull_request_review_url",
+        "first_location_detected.pull_request_title_url",
+        "first_location_detected.start_column",
+        "first_location_detected.start_line",
+        "has_more_locations",
+        "metadata",
+        "metadata[].value",
+        "multi_repo",
+        "provider",
+        "provider_slug",
+        "publicly_leaked",
+        "push_protection_bypass_request_comment",
+        "push_protection_bypass_request_html_url",
+        "push_protection_bypass_request_reviewer",
+        "push_protection_bypass_request_reviewer_comment",
+        "push_protection_bypassed",
+        "push_protection_bypassed_by",
+        "secret",
+        "state",
+        "validity"
+      ],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}/locations": {
+      "fields": [
+        "[].details.discussion_body_url",
+        "[].details.discussion_comment_url",
+        "[].details.discussion_title_url",
+        "[].details.end_column",
+        "[].details.end_line",
+        "[].details.html_url",
+        "[].details.issue_body_url",
+        "[].details.issue_comment_url",
+        "[].details.issue_title_url",
+        "[].details.pull_request_body_url",
+        "[].details.pull_request_comment_url",
+        "[].details.pull_request_review_comment_url",
+        "[].details.pull_request_review_url",
+        "[].details.pull_request_title_url",
+        "[].details.start_column",
+        "[].details.start_line",
+        "[].type"
+      ],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/secret-scanning/custom-patterns": {
+      "fields": ["[].must_match", "[].must_not_match"],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/secret-scanning/custom-patterns": {
+      "fields": ["created_patterns[].must_match", "created_patterns[].must_not_match"],
+      "named": true
+    },
+    "DELETE /repos/{owner}/{repo}/secret-scanning/custom-patterns": {
+      "fields": [],
+      "named": true
+    },
+    "PATCH /repos/{owner}/{repo}/secret-scanning/custom-patterns/{pattern_id}": {
+      "fields": ["must_match", "must_not_match"],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/secret-scanning/push-protection-bypasses": {
+      "fields": [],
+      "named": true
+    },
+    "GET /repos/{owner}/{repo}/secret-scanning/scan-history": {
+      "fields": ["generic_secrets_backfill_scans"],
+      "named": true
+    },
+    "POST /repos/{owner}/{repo}/security-advisories/{ghsa_id}/forks": {
+      "fields": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /repos/{owner}/{repo}/transfer": {
+      "fields": [
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "temp_clone_token"
+      ],
+      "named": true
+    },
+    "POST /repos/{template_owner}/{template_repo}/generate": {
+      "fields": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /repositories": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /search/code": {
+      "fields": [
+        "items[].repository.security_and_analysis.advanced_security",
+        "items[].repository.security_and_analysis.secret_scanning",
+        "items[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "items[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "items[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /search/commits": {
+      "fields": [
+        "items[].commit.verification.signature",
+        "items[].repository.security_and_analysis.advanced_security",
+        "items[].repository.security_and_analysis.secret_scanning",
+        "items[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "items[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "items[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /search/issues": {
+      "fields": ["items[].repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /search/repositories": {
+      "fields": ["items[].temp_clone_token"],
+      "named": false
+    },
+    "GET /user/codespaces": {
+      "fields": [
+        "codespaces[].repository.security_and_analysis.advanced_security",
+        "codespaces[].repository.security_and_analysis.secret_scanning",
+        "codespaces[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "codespaces[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "codespaces[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "codespaces[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /user/codespaces": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /user/codespaces/secrets": {
+      "fields": ["secrets", "secrets[].name", "secrets[].selected_repositories_url", "secrets[].visibility"],
+      "named": true
+    },
+    "GET /user/codespaces/secrets/public-key": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/codespaces/secrets/{secret_name}": {
+      "fields": ["name", "selected_repositories_url", "visibility"],
+      "named": true
+    },
+    "PUT /user/codespaces/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /user/codespaces/secrets/{secret_name}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/codespaces/secrets/{secret_name}/repositories": {
+      "fields": [
+        "repositories[].security_and_analysis.advanced_security",
+        "repositories[].security_and_analysis.secret_scanning",
+        "repositories[].security_and_analysis.secret_scanning_ai_detection",
+        "repositories[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repositories[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repositories[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "repositories[].temp_clone_token"
+      ],
+      "named": true
+    },
+    "PUT /user/codespaces/secrets/{secret_name}/repositories": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /user/codespaces/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /user/codespaces/secrets/{secret_name}/repositories/{repository_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/codespaces/{codespace_name}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "PATCH /user/codespaces/{codespace_name}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /user/codespaces/{codespace_name}/publish": {
+      "fields": [
+        "repository.parent.temp_clone_token",
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.source.temp_clone_token",
+        "repository.temp_clone_token",
+        "repository.template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /user/codespaces/{codespace_name}/start": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /user/codespaces/{codespace_name}/stop": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /user/docker/conflicts": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /user/gpg_keys": {
+      "fields": ["[].subkeys", "[].subkeys[].subkeys"],
+      "named": true
+    },
+    "POST /user/gpg_keys": {
+      "fields": ["subkeys", "subkeys[].subkeys"],
+      "named": true
+    },
+    "GET /user/gpg_keys/{gpg_key_id}": {
+      "fields": ["subkeys", "subkeys[].subkeys"],
+      "named": true
+    },
+    "DELETE /user/gpg_keys/{gpg_key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/installations": {
+      "fields": [
+        "installations[].access_tokens_url",
+        "installations[].permissions.actions",
+        "installations[].permissions.administration",
+        "installations[].permissions.artifact_metadata",
+        "installations[].permissions.attestations",
+        "installations[].permissions.checks",
+        "installations[].permissions.code_quality",
+        "installations[].permissions.codespaces",
+        "installations[].permissions.contents",
+        "installations[].permissions.custom_properties_for_organizations",
+        "installations[].permissions.dependabot_secrets",
+        "installations[].permissions.deployments",
+        "installations[].permissions.discussions",
+        "installations[].permissions.email_addresses",
+        "installations[].permissions.enterprise_custom_properties_for_organizations",
+        "installations[].permissions.environments",
+        "installations[].permissions.followers",
+        "installations[].permissions.git_ssh_keys",
+        "installations[].permissions.gpg_keys",
+        "installations[].permissions.interaction_limits",
+        "installations[].permissions.issues",
+        "installations[].permissions.members",
+        "installations[].permissions.merge_queues",
+        "installations[].permissions.metadata",
+        "installations[].permissions.organization_administration",
+        "installations[].permissions.organization_announcement_banners",
+        "installations[].permissions.organization_copilot_agent_settings",
+        "installations[].permissions.organization_copilot_requests",
+        "installations[].permissions.organization_copilot_seat_management",
+        "installations[].permissions.organization_custom_org_roles",
+        "installations[].permissions.organization_custom_properties",
+        "installations[].permissions.organization_custom_roles",
+        "installations[].permissions.organization_events",
+        "installations[].permissions.organization_external_properties_for_repos",
+        "installations[].permissions.organization_hooks",
+        "installations[].permissions.organization_packages",
+        "installations[].permissions.organization_personal_access_token_requests",
+        "installations[].permissions.organization_personal_access_tokens",
+        "installations[].permissions.organization_plan",
+        "installations[].permissions.organization_projects",
+        "installations[].permissions.organization_secrets",
+        "installations[].permissions.organization_self_hosted_runners",
+        "installations[].permissions.organization_user_blocking",
+        "installations[].permissions.packages",
+        "installations[].permissions.pages",
+        "installations[].permissions.profile",
+        "installations[].permissions.pull_requests",
+        "installations[].permissions.repository_custom_properties",
+        "installations[].permissions.repository_hooks",
+        "installations[].permissions.repository_projects",
+        "installations[].permissions.secret_scanning_alerts",
+        "installations[].permissions.secrets",
+        "installations[].permissions.security_events",
+        "installations[].permissions.single_file",
+        "installations[].permissions.starring",
+        "installations[].permissions.statuses",
+        "installations[].permissions.vulnerability_alerts",
+        "installations[].permissions.workflows"
+      ],
+      "named": true
+    },
+    "GET /user/installations/{installation_id}/repositories": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": true
+    },
+    "GET /user/issues": {
+      "fields": ["[].repository.temp_clone_token"],
+      "named": false
+    },
+    "GET /user/keys": {
+      "fields": [],
+      "named": true
+    },
+    "POST /user/keys": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/keys/{key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /user/keys/{key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/migrations": {
+      "fields": ["[].repositories[].temp_clone_token"],
+      "named": false
+    },
+    "POST /user/migrations": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": false
+    },
+    "GET /user/migrations/{migration_id}": {
+      "fields": ["repositories[].temp_clone_token"],
+      "named": false
+    },
+    "GET /user/migrations/{migration_id}/repositories": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /user/packages": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /user/packages/{package_type}/{package_name}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /user/repos": {
+      "fields": ["[].temp_clone_token"],
+      "named": false
+    },
+    "POST /user/repos": {
+      "fields": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /user/repository_invitations": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": true
+    },
+    "PATCH /user/repository_invitations/{invitation_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /user/repository_invitations/{invitation_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/ssh_signing_keys": {
+      "fields": [],
+      "named": true
+    },
+    "POST /user/ssh_signing_keys": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/ssh_signing_keys/{ssh_signing_key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /user/ssh_signing_keys/{ssh_signing_key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /user/starred": {
+      "fields": ["[].repo.temp_clone_token", "[].temp_clone_token"],
+      "named": false
+    },
+    "GET /user/subscriptions": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /user/{user_id}/projectsV2/{project_number}/drafts": {
+      "fields": [
+        "content.base.repo.temp_clone_token",
+        "content.head.repo.temp_clone_token",
+        "content.repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /users/{username}/docker/conflicts": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /users/{username}/events": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /users/{username}/events/orgs/{org}": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /users/{username}/events/public": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /users/{username}/gpg_keys": {
+      "fields": ["[].subkeys", "[].subkeys[].subkeys"],
+      "named": true
+    },
+    "GET /users/{username}/installation": {
+      "fields": [
+        "access_tokens_url",
+        "permissions.actions",
+        "permissions.administration",
+        "permissions.artifact_metadata",
+        "permissions.attestations",
+        "permissions.checks",
+        "permissions.code_quality",
+        "permissions.codespaces",
+        "permissions.contents",
+        "permissions.custom_properties_for_organizations",
+        "permissions.dependabot_secrets",
+        "permissions.deployments",
+        "permissions.discussions",
+        "permissions.email_addresses",
+        "permissions.enterprise_custom_properties_for_organizations",
+        "permissions.environments",
+        "permissions.followers",
+        "permissions.git_ssh_keys",
+        "permissions.gpg_keys",
+        "permissions.interaction_limits",
+        "permissions.issues",
+        "permissions.members",
+        "permissions.merge_queues",
+        "permissions.metadata",
+        "permissions.organization_administration",
+        "permissions.organization_announcement_banners",
+        "permissions.organization_copilot_agent_settings",
+        "permissions.organization_copilot_requests",
+        "permissions.organization_copilot_seat_management",
+        "permissions.organization_custom_org_roles",
+        "permissions.organization_custom_properties",
+        "permissions.organization_custom_roles",
+        "permissions.organization_events",
+        "permissions.organization_external_properties_for_repos",
+        "permissions.organization_hooks",
+        "permissions.organization_packages",
+        "permissions.organization_personal_access_token_requests",
+        "permissions.organization_personal_access_tokens",
+        "permissions.organization_plan",
+        "permissions.organization_projects",
+        "permissions.organization_secrets",
+        "permissions.organization_self_hosted_runners",
+        "permissions.organization_user_blocking",
+        "permissions.packages",
+        "permissions.pages",
+        "permissions.profile",
+        "permissions.pull_requests",
+        "permissions.repository_custom_properties",
+        "permissions.repository_hooks",
+        "permissions.repository_projects",
+        "permissions.secret_scanning_alerts",
+        "permissions.secrets",
+        "permissions.security_events",
+        "permissions.single_file",
+        "permissions.starring",
+        "permissions.statuses",
+        "permissions.vulnerability_alerts",
+        "permissions.workflows"
+      ],
+      "named": false
+    },
+    "GET /users/{username}/keys": {
+      "fields": [],
+      "named": true
+    },
+    "GET /users/{username}/packages": {
+      "fields": [
+        "[].repository.security_and_analysis.advanced_security",
+        "[].repository.security_and_analysis.secret_scanning",
+        "[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /users/{username}/packages/{package_type}/{package_name}": {
+      "fields": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "POST /users/{username}/projectsV2/{project_number}/items": {
+      "fields": [
+        "content.base.repo.temp_clone_token",
+        "content.head.repo.temp_clone_token",
+        "content.repository.temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /users/{username}/received_events": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /users/{username}/received_events/public": {
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
+      "named": false
+    },
+    "GET /users/{username}/repos": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    },
+    "GET /users/{username}/ssh_signing_keys": {
+      "fields": [],
+      "named": true
+    },
+    "GET /users/{username}/starred": {
+      "fields": ["[].repo.temp_clone_token", "[].temp_clone_token"],
+      "named": false
+    },
+    "GET /users/{username}/subscriptions": {
+      "fields": [
+        "[].security_and_analysis.advanced_security",
+        "[].security_and_analysis.secret_scanning",
+        "[].security_and_analysis.secret_scanning_ai_detection",
+        "[].security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "[].security_and_analysis.secret_scanning_delegated_bypass",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options",
+        "[].security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "[].security_and_analysis.secret_scanning_non_provider_patterns",
+        "[].temp_clone_token"
+      ],
+      "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /installation/repositories": ["repositories[].temp_clone_token"],
+      "GET /repos/{owner}/{repo}": [
+        "parent.temp_clone_token",
+        "security_and_analysis.advanced_security",
+        "security_and_analysis.secret_scanning",
+        "security_and_analysis.secret_scanning_ai_detection",
+        "security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "security_and_analysis.secret_scanning_delegated_bypass",
+        "security_and_analysis.secret_scanning_delegated_bypass_options",
+        "security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "security_and_analysis.secret_scanning_non_provider_patterns",
+        "source.temp_clone_token",
+        "temp_clone_token",
+        "template_repository.temp_clone_token"
+      ],
+      "GET /repos/{owner}/{repo}/actions/runs": [
+        "workflow_runs[].head_repository.security_and_analysis.advanced_security",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].head_repository.temp_clone_token",
+        "workflow_runs[].repository.security_and_analysis.advanced_security",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].repository.temp_clone_token"
+      ],
+      "GET /repos/{owner}/{repo}/actions/runs/{run_id}": [
+        "head_repository.security_and_analysis.advanced_security",
+        "head_repository.security_and_analysis.secret_scanning",
+        "head_repository.security_and_analysis.secret_scanning_ai_detection",
+        "head_repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "head_repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "head_repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "head_repository.temp_clone_token",
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
+      "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs": [
+        "workflow_runs[].head_repository.security_and_analysis.advanced_security",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].head_repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].head_repository.temp_clone_token",
+        "workflow_runs[].repository.security_and_analysis.advanced_security",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "workflow_runs[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "workflow_runs[].repository.temp_clone_token"
+      ],
+      "GET /repos/{owner}/{repo}/commits": ["[].commit.verification.signature"],
+      "GET /repos/{owner}/{repo}/commits/{ref}": ["commit.verification.signature"],
+      "GET /repos/{owner}/{repo}/compare/{basehead}": [
+        "base_commit.commit.verification.signature",
+        "commits[].commit.verification.signature",
+        "merge_base_commit.commit.verification.signature"
+      ],
+      "GET /repos/{owner}/{repo}/issues": ["[].repository.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/issues/{issue_number}": ["repository.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/pulls": ["[].base.repo.temp_clone_token", "[].head.repo.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits": ["[].commit.verification.signature"],
+      "GET /repos/{owner}/{repo}/releases": ["[].upload_url"],
+      "POST /repos/{owner}/{repo}/releases": ["upload_url"],
+      "GET /repos/{owner}/{repo}/releases/latest": ["upload_url"],
+      "GET /repos/{owner}/{repo}/releases/tags/{tag}": ["upload_url"],
+      "GET /repos/{owner}/{repo}/releases/{release_id}": ["upload_url"],
+      "PATCH /repos/{owner}/{repo}/releases/{release_id}": ["upload_url"],
+      "GET /search/code": [
+        "items[].repository.security_and_analysis.advanced_security",
+        "items[].repository.security_and_analysis.secret_scanning",
+        "items[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "items[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "items[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "items[].repository.temp_clone_token"
+      ],
+      "GET /search/issues": ["items[].repository.temp_clone_token"],
+      "GET /search/repositories": ["items[].temp_clone_token"]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

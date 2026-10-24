@@ -266,11 +266,12 @@ an exact `"write"` or `"hidden"` deployment override.
 
 ### GitHub
 
-`github()` has no hosted selector. It keeps its connector id and these six REST
-tools: `list_scopes`, `search_scoped`, `create_release`, `update_release`,
-`delete_release`, and `merge_pull_request`. Its 26 hosted tools disappear. Update
-programs, instructions, and exact grants that name them after discovering the
-new generic catalog.
+`github()` has no hosted selector. Its REST connection keeps the configured
+App identity and repository scopes. From 0.35 it exposes the four github_api
+hatches, list_scopes, search_scoped and guarded merge_pull_request. The raw
+search and merge routes, secret/admin operations and downloads are refused.
+See [GitHub's 0.35 migration](./provider-migration-0.35.md#github) for removed
+release-tool names and paging/result changes.
 
 Former URL: `https://api.githubcopilot.com/mcp/`, shared request auth with
 `Authorization: Bearer <installation token>`, `requireHttps: true`, and

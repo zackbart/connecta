@@ -1,0 +1,1374 @@
+{
+  "version": 1,
+  "runs": [
+    {
+      "name": "before-final-luna",
+      "meta": {
+        "createdAt": "2026-10-24T11:43:27.341Z",
+        "git": {
+          "commit": "0620a237347f",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "cf0235226a2a",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "6d1f63acb570a4ed7f82b88448516eab2ad31589a817a93c375e77e529ca399d",
+        "harnessHash": "44b849de4d88399c2ae97174e11417b12a0c615d5f7615835c7379f8285fcb47"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "github-filtered-issues",
+          "github-repository-pr-join",
+          "github-repository-paging",
+          "github-contents-hatch",
+          "github-release-once",
+          "github-merge-once",
+          "github-search-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 360000,
+        "effort": "medium"
+      },
+      "cli": "codex-cli 0.163.0",
+      "score": {
+        "passed": 10,
+        "total": 14
+      },
+      "comparable": {
+        "passed": 10,
+        "total": 12
+      },
+      "tasks": [
+        {
+          "task": "github-filtered-issues",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-pr-join",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-paging",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-contents-hatch",
+          "passed": 0,
+          "total": 2
+        },
+        {
+          "task": "github-release-once",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-merge-once",
+          "passed": 0,
+          "total": 2
+        },
+        {
+          "task": "github-search-recovery",
+          "passed": 2,
+          "total": 2
+        }
+      ],
+      "totals": {
+        "mcpCalls": 49,
+        "discoveryBytes": 92728,
+        "maxDiscoveryReplyBytes": 5282,
+        "writes": 2,
+        "duplicateWrites": 0,
+        "authHandoffs": 0
+      },
+      "trials": [
+        {
+          "task": "github-filtered-issues",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 1
+          },
+          "discoveryBytes": 6035,
+          "maxDiscoveryReplyBytes": 4314,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 11591
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 2,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 5282,
+          "maxDiscoveryReplyBytes": 5282,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 13497
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.list_scopes": 2
+          },
+          "discoveryBytes": 6340,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 14632
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 1,
+          "status": "fail",
+          "failures": [
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 3,
+          "selectedTools": {},
+          "discoveryBytes": 7027,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 0,
+          "wallMs": 9774
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.create_release": 1
+          },
+          "discoveryBytes": 5550,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 11132
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 1,
+          "status": "fail",
+          "failures": [
+            "state",
+            "only-requested-writes",
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 7,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 10004,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 17194
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 5,
+          "selectedTools": {
+            "github.search_scoped": 3
+          },
+          "discoveryBytes": 6535,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 14837
+        },
+        {
+          "task": "github-filtered-issues",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 6134,
+          "maxDiscoveryReplyBytes": 4853,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 14454
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 5175,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 11253
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.list_scopes": 2
+          },
+          "discoveryBytes": 6340,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 12887
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 2,
+          "status": "fail",
+          "failures": [
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 3,
+          "selectedTools": {},
+          "discoveryBytes": 7028,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 0,
+          "wallMs": 10500
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.create_release": 1
+          },
+          "discoveryBytes": 5550,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 13286
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 2,
+          "status": "fail",
+          "failures": [
+            "state",
+            "only-requested-writes",
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 5,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 10447,
+          "maxDiscoveryReplyBytes": 4099,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 16266
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 5281,
+          "maxDiscoveryReplyBytes": 5281,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 13496
+        }
+      ]
+    },
+    {
+      "name": "before-final-sonnet",
+      "meta": {
+        "createdAt": "2026-10-24T11:43:27.239Z",
+        "git": {
+          "commit": "0620a237347f",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "cf0235226a2a",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "6d1f63acb570a4ed7f82b88448516eab2ad31589a817a93c375e77e529ca399d",
+        "harnessHash": "44b849de4d88399c2ae97174e11417b12a0c615d5f7615835c7379f8285fcb47"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "github-filtered-issues",
+          "github-repository-pr-join",
+          "github-repository-paging",
+          "github-contents-hatch",
+          "github-release-once",
+          "github-merge-once",
+          "github-search-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 360000
+      },
+      "cli": "2.1.309 (Claude Code)",
+      "score": {
+        "passed": 12,
+        "total": 14
+      },
+      "comparable": {
+        "passed": 12,
+        "total": 12
+      },
+      "tasks": [
+        {
+          "task": "github-filtered-issues",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-pr-join",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-paging",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-contents-hatch",
+          "passed": 0,
+          "total": 2
+        },
+        {
+          "task": "github-release-once",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-merge-once",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-search-recovery",
+          "passed": 2,
+          "total": 2
+        }
+      ],
+      "totals": {
+        "mcpCalls": 51,
+        "discoveryBytes": 81607,
+        "maxDiscoveryReplyBytes": 4237,
+        "writes": 4,
+        "duplicateWrites": 0,
+        "authHandoffs": 0
+      },
+      "trials": [
+        {
+          "task": "github-filtered-issues",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 1
+          },
+          "discoveryBytes": 5235,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 9021
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 5235,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 12680
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.list_scopes": 2
+          },
+          "discoveryBytes": 7956,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 9362
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 1,
+          "status": "fail",
+          "failures": [
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 8,
+          "selectedTools": {
+            "github.search_scoped": 4,
+            "github.list_scopes": 1
+          },
+          "discoveryBytes": 5959,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 16953
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.create_release": 1
+          },
+          "discoveryBytes": 5176,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 6213
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.merge_pull_request": 1
+          },
+          "discoveryBytes": 6087,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 6860
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 5235,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 8659
+        },
+        {
+          "task": "github-filtered-issues",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 1
+          },
+          "discoveryBytes": 5235,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 8271
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 5235,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 8966
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.list_scopes": 2
+          },
+          "discoveryBytes": 7956,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 8669
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 2,
+          "status": "fail",
+          "failures": [
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 7,
+          "selectedTools": {
+            "github.search_scoped": 4
+          },
+          "discoveryBytes": 5800,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 12723
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.create_release": 1
+          },
+          "discoveryBytes": 5176,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 5675
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.merge_pull_request": 1
+          },
+          "discoveryBytes": 6087,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 7000
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 5235,
+          "maxDiscoveryReplyBytes": 4237,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 8810
+        }
+      ]
+    },
+    {
+      "name": "after-luna",
+      "meta": {
+        "createdAt": "2026-10-24T11:46:58.528Z",
+        "git": {
+          "commit": "6cb6298db610",
+          "branch": "t3/github-step2",
+          "dirty": false,
+          "srcTree": "88ca362d9810",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "6d1f63acb570a4ed7f82b88448516eab2ad31589a817a93c375e77e529ca399d",
+        "harnessHash": "44b849de4d88399c2ae97174e11417b12a0c615d5f7615835c7379f8285fcb47"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "github-filtered-issues",
+          "github-repository-pr-join",
+          "github-repository-paging",
+          "github-contents-hatch",
+          "github-release-once",
+          "github-merge-once",
+          "github-search-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 360000,
+        "effort": "medium"
+      },
+      "cli": "codex-cli 0.163.0",
+      "score": {
+        "passed": 14,
+        "total": 14
+      },
+      "comparable": {
+        "passed": 12,
+        "total": 12
+      },
+      "tasks": [
+        {
+          "task": "github-filtered-issues",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-pr-join",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-paging",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-contents-hatch",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-release-once",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-merge-once",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-search-recovery",
+          "passed": 2,
+          "total": 2
+        }
+      ],
+      "totals": {
+        "mcpCalls": 46,
+        "discoveryBytes": 119735,
+        "maxDiscoveryReplyBytes": 6026,
+        "writes": 4,
+        "duplicateWrites": 0,
+        "authHandoffs": 0
+      },
+      "trials": [
+        {
+          "task": "github-filtered-issues",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 5,
+          "selectedTools": {
+            "github.search_scoped": 3
+          },
+          "discoveryBytes": 6429,
+          "maxDiscoveryReplyBytes": 5101,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 16754
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 4
+          },
+          "discoveryBytes": 1534,
+          "maxDiscoveryReplyBytes": 1328,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 11,
+          "wallMs": 12026
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.list_scopes": 2
+          },
+          "discoveryBytes": 8645,
+          "maxDiscoveryReplyBytes": 4895,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 13390
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.github_api_read": 2,
+            "github.github_api_search": 1,
+            "github.github_api_details": 1
+          },
+          "discoveryBytes": 8739,
+          "maxDiscoveryReplyBytes": 6024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 6,
+          "wallMs": 11490
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.github_api_search": 1,
+            "github.github_api_details": 1,
+            "github.github_api_write": 1
+          },
+          "discoveryBytes": 13800,
+          "maxDiscoveryReplyBytes": 6023,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 11743
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.merge_pull_request": 1
+          },
+          "discoveryBytes": 9822,
+          "maxDiscoveryReplyBytes": 4927,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 9842
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.search_scoped": 3
+          },
+          "discoveryBytes": 6194,
+          "maxDiscoveryReplyBytes": 6025,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 14275
+        },
+        {
+          "task": "github-filtered-issues",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 6022,
+          "maxDiscoveryReplyBytes": 6022,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 13397
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 2,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 6023,
+          "maxDiscoveryReplyBytes": 6023,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 10952
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 2,
+          "selectedTools": {
+            "github.list_scopes": 2
+          },
+          "discoveryBytes": 11108,
+          "maxDiscoveryReplyBytes": 6026,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 17171
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 2,
+          "selectedTools": {
+            "github.github_api_read": 1
+          },
+          "discoveryBytes": 9112,
+          "maxDiscoveryReplyBytes": 5369,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 6,
+          "wallMs": 10321
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.github_api_search": 1,
+            "github.github_api_details": 1,
+            "github.github_api_write": 1
+          },
+          "discoveryBytes": 13800,
+          "maxDiscoveryReplyBytes": 6023,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 11499
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.merge_pull_request": 1
+          },
+          "discoveryBytes": 12284,
+          "maxDiscoveryReplyBytes": 6023,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 12312
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 6223,
+          "maxDiscoveryReplyBytes": 4895,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 12437
+        }
+      ]
+    },
+    {
+      "name": "after-sonnet",
+      "meta": {
+        "createdAt": "2026-10-24T11:46:53.723Z",
+        "git": {
+          "commit": "6cb6298db610",
+          "branch": "t3/github-step2",
+          "dirty": false,
+          "srcTree": "88ca362d9810",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "6d1f63acb570a4ed7f82b88448516eab2ad31589a817a93c375e77e529ca399d",
+        "harnessHash": "44b849de4d88399c2ae97174e11417b12a0c615d5f7615835c7379f8285fcb47"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "github-filtered-issues",
+          "github-repository-pr-join",
+          "github-repository-paging",
+          "github-contents-hatch",
+          "github-release-once",
+          "github-merge-once",
+          "github-search-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 360000
+      },
+      "cli": "2.1.309 (Claude Code)",
+      "score": {
+        "passed": 14,
+        "total": 14
+      },
+      "comparable": {
+        "passed": 12,
+        "total": 12
+      },
+      "tasks": [
+        {
+          "task": "github-filtered-issues",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-pr-join",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-repository-paging",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-contents-hatch",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-release-once",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-merge-once",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "task": "github-search-recovery",
+          "passed": 2,
+          "total": 2
+        }
+      ],
+      "totals": {
+        "mcpCalls": 51,
+        "discoveryBytes": 109433,
+        "maxDiscoveryReplyBytes": 6027,
+        "writes": 4,
+        "duplicateWrites": 0,
+        "authHandoffs": 0
+      },
+      "trials": [
+        {
+          "task": "github-filtered-issues",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 1
+          },
+          "discoveryBytes": 6275,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 8751
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 5,
+          "selectedTools": {
+            "github.search_scoped": 2,
+            "github.github_api_read": 2
+          },
+          "discoveryBytes": 8281,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 10,
+          "wallMs": 11549
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.list_scopes": 3
+          },
+          "discoveryBytes": 9618,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 10627
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.github_api_read": 1
+          },
+          "discoveryBytes": 11754,
+          "maxDiscoveryReplyBytes": 6027,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 6,
+          "wallMs": 9992
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.github_api_write": 1
+          },
+          "discoveryBytes": 6185,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 5928
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.merge_pull_request": 1
+          },
+          "discoveryBytes": 8281,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 6934
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 2
+          },
+          "discoveryBytes": 6275,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 9,
+          "wallMs": 9143
+        },
+        {
+          "task": "github-filtered-issues",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.search_scoped": 1
+          },
+          "discoveryBytes": 6275,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 8,
+          "wallMs": 9620
+        },
+        {
+          "task": "github-repository-pr-join",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 5,
+          "selectedTools": {
+            "github.search_scoped": 2,
+            "github.github_api_read": 2
+          },
+          "discoveryBytes": 6275,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 10,
+          "wallMs": 11162
+        },
+        {
+          "task": "github-repository-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.list_scopes": 2
+          },
+          "discoveryBytes": 9618,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 279,
+          "wallMs": 10278
+        },
+        {
+          "task": "github-contents-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 5,
+          "selectedTools": {
+            "github.github_api_read": 2
+          },
+          "discoveryBytes": 9855,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 6,
+          "wallMs": 12159
+        },
+        {
+          "task": "github-release-once",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.github_api_write": 1
+          },
+          "discoveryBytes": 6185,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 5,
+          "wallMs": 5674
+        },
+        {
+          "task": "github-merge-once",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 3,
+          "selectedTools": {
+            "github.merge_pull_request": 1
+          },
+          "discoveryBytes": 8281,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 1,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 7,
+          "wallMs": 6618
+        },
+        {
+          "task": "github-search-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failures": [],
+          "mcpCalls": 4,
+          "selectedTools": {
+            "github.search_scoped": 4
+          },
+          "discoveryBytes": 6275,
+          "maxDiscoveryReplyBytes": 5024,
+          "writes": 0,
+          "duplicateWrites": 0,
+          "authHandoffs": 0,
+          "downstreamReads": 15,
+          "wallMs": 11627
+        }
+      ]
+    }
+  ]
+}

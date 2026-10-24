@@ -18,15 +18,17 @@ import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest"
 import { z } from "zod";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { recordRecovery } from "../src/call-recovery.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError, resendAdvice } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
 import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
 import { github } from "../src/providers/github/index.js";
+import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { hatch } from "../src/http/hatch.js";
 import { STRIPE_VERDICTS, stripeBinding, stripeConnection, stripeIndex } from "../src/providers/stripe/api.js";
@@ -87,7 +89,7 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
     expect(sent).toBe(2);
   });
 
-  it("INV-9: a tracked api() write answered 408 whose mapper throws timeout is unknown, not a refusal", async () => {
+  it("INV-9: only a complete call's auxiliary-only failure rules out a write, including a reported timeout", async () => {
     let sent = 0;
     const deadline = guardedFetch({
       provider: "Tickets",
@@ -118,6 +120,293 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
     expect(sent).toBe(1);
     expect(classifyCallError(error)).toMatchObject({ code: "timeout", retryable: false, writeOutcome: "unknown" });
     expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
+
+    for (const code of ["auth_required", "timeout", "unavailable"] as const) {
+      for (const ownership of ["auxiliary", "call-owned"] as const) {
+        for (const tracking of ["complete", "untracked", "wrapper", "no-ledger", "explicit-marker"] as const) {
+          const explicitMarker = tracking === "explicit-marker";
+          if (explicitMarker && (ownership !== "auxiliary" || code === "timeout")) continue;
+          const label = `${code}, ${ownership}, ${tracking}`;
+          const requests: string[] = [];
+          const request = guardedFetch({
+            provider: "Tickets",
+            baseUrl: "https://tickets.test",
+            authenticate: () => ({}),
+            maxResponseBytes: 1024,
+            fetch: async (_input, init) => {
+              requests.push(init?.method ?? "GET");
+              return Response.json({}, { status: code === "auth_required" ? 401 : code === "timeout" ? 408 : 503 });
+            },
+          });
+          const send = (ctx: ConnectorContext) =>
+            request(
+              {
+                method: ownership === "auxiliary" ? "GET" : "POST",
+                path: "/items",
+                auxiliary: ownership === "auxiliary",
+                classification: ownership === "auxiliary" ? "read" : "write",
+              },
+              ctx,
+              () => {
+                throw resendAdvice(
+                  new ConnectorCallError(code, "The request failed.", {
+                    retryable: code === "unavailable",
+                    ...(explicitMarker ? { writeOutcome: "unknown" } : {}),
+                  }),
+                  "Retry this call later.",
+                );
+              },
+            );
+          let boundary = api("tickets", {
+            tools: [
+              {
+                name: "send",
+                description: "Look up, then send",
+                annotations: { readOnlyHint: false },
+                handler: (_args, ctx) => send(ctx),
+              },
+            ],
+          });
+          if (tracking !== "untracked") boundary = tracksEveryRequest(boundary);
+          const target: Connector =
+            tracking === "no-ledger"
+              ? { ...boundary, callTool: (_name, _args, ctx) => send(ctx) }
+              : tracking === "wrapper"
+                ? { ...boundary }
+                : boundary;
+          const registry = makeRegistry([target]);
+          const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+            "tickets.send",
+            {},
+            { source: "call_destructive_tool" },
+          );
+          expect(requests, label).toEqual([ownership === "auxiliary" ? "GET" : "POST"]);
+          if (served.ok) throw new Error(`expected failure: ${label}`);
+          const noWrite = ownership === "auxiliary" && tracking === "complete";
+          expect(served.answered, label).toBe(noWrite || (explicitMarker && code === "unavailable"));
+          expect(classifyWriteOutcome(served), label).toBe(noWrite ? "failed" : "unknown");
+          if (noWrite) expect(served.error.writeOutcome, label).toBeUndefined();
+          else if (code !== "timeout") expect(served.error.writeOutcome, label).toBe("unknown");
+          expect(served.error.code, label).toBe(
+            code === "timeout" && !noWrite
+              ? "write_outcome_unknown"
+              : code === "unavailable" && (ownership === "call-owned" || tracking === "untracked")
+                ? "connector_call_failed"
+                : code,
+          );
+          if (code === "timeout" && !noWrite) expect(served.error.uncertainCall, label).toBeDefined();
+          else expect(served.error.uncertainCall, label).toBeUndefined();
+          if (code === "auth_required") {
+            expect(served.error.reconciliationRequired, label).toBe(noWrite ? undefined : true);
+            expect(served.error.retry, label).toBe(
+              noWrite
+                ? "Retry tickets.send after the operator completes recovery."
+                : "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
+            );
+          }
+          if (code === "unavailable") {
+            expect(served.error.retryable, label).toBe(noWrite);
+            expect(served.error.message.includes("Retry this call later."), label).toBe(noWrite);
+          }
+          if (explicitMarker) {
+            const program = await catchingProgram(registry, "tickets.send");
+            expect(program.structuredContent, label).toMatchObject({
+              error: {
+                retryable: false,
+                writes: { succeeded: 0, failed: 0, unknown: 1 },
+                ...(code === "auth_required" ? { reconciliationRequired: true } : {}),
+              },
+            });
+            expect(JSON.stringify(program.structuredContent), label).not.toContain("Retry this call later.");
+            expect(requests, label).toEqual(["GET", "GET"]);
+          }
+        }
+      }
+    }
+
+    // A token POST alone supplies no auxiliary-read proof. Its direct auth
+    // handoff and the caught program must both report an uncertain write.
+    const token = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.test",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async () => Response.json({}, { status: 401 }),
+    });
+    const tokenBoundary = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Authenticate, then send",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) =>
+              token({ method: "POST", path: "/token", auxiliary: true, classification: "write" }, ctx, () => {
+                throw new ConnectorCallError("auth_required", "Token refused.");
+              }),
+          },
+        ],
+      }),
+    );
+    const tokenRegistry = makeRegistry([tokenBoundary]);
+    const tokenFailure = await new InvocationService(tokenRegistry, new CatalogService(tokenRegistry, BASE)).invoke(
+      "tickets.send",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    expect(tokenFailure).toMatchObject({
+      ok: false,
+      answered: false,
+      error: { code: "auth_required", retryable: false, reconciliationRequired: true },
+    });
+    expect(classifyWriteOutcome(tokenFailure)).toBe("unknown");
+    expect((await catchingProgram(tokenRegistry, "tickets.send")).structuredContent).toMatchObject({
+      error: { reconciliationRequired: true, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+    });
+
+    // Maintained providers supply the same auxiliary-only evidence as the
+    // synthetic rows: GitHub installation discovery and an unpinned zone's
+    // ownership lookup both fail before the resource write can depart.
+    for (const scenario of ["github-401", "cloudflare-401", "cloudflare-503"] as const) {
+      const githubLookup = scenario === "github-401";
+      const status = scenario === "cloudflare-503" ? 503 : 401;
+      const zone = "023e105f4ecef8ad9ca31a8372d0c353";
+      const path = githubLookup ? "/app/installations" : `/client/v4/zones/${zone}`;
+      const requests: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requests.push(`${request.method} ${new URL(request.url).pathname}`);
+        return Response.json(
+          githubLookup
+            ? { message: "Lookup refused." }
+            : { success: false, errors: [{ code: 10000, message: "Lookup refused." }] },
+          { status },
+        );
+      });
+      const connector = githubLookup
+        ? github("tickets", {
+            purpose: "Review",
+            app: { appId: "12345", privateKey: PRIVATE_KEY },
+            scopes: [{ org: "acme", access: "read-write" }],
+          })
+        : cloudflare("tickets", {
+            purpose: "Review",
+            auth: { type: "apiToken" },
+            pin: { accountIds: ["0123456789abcdef0123456789abcdef"] },
+          });
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+      await vault.set("tickets", "cf_7z9ob83m4p6x2q0l", "fixture");
+      const registry = makeRegistry([connector], { storage, credentialVault: vault });
+      const address = githubLookup ? "tickets.github_api_write" : "tickets.cloudflare_api_write";
+      const args = githubLookup
+        ? { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "v1.2.0" } }
+        : { method: "PATCH", path: `/zones/${zone}/dns_records/r1`, body: { ttl: 300 } };
+      const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(address, args, {
+        source: "call_destructive_tool",
+      });
+      if (served.ok) throw new Error(`expected lookup failure: ${scenario}`);
+      expect(served.answered, scenario).toBe(true);
+      expect(classifyWriteOutcome(served), scenario).toBe("failed");
+      expect(served.error, scenario).toMatchObject({
+        code: status === 401 ? "auth_required" : "unavailable",
+        retryable: status === 503,
+        ...(status === 401 ? { retry: `Retry ${address} after the operator completes recovery.` } : {}),
+      });
+      expect(served.error, scenario).not.toHaveProperty("writeOutcome");
+      expect(served.error, scenario).not.toHaveProperty("reconciliationRequired");
+      // Fail after catching so program accounting renders its failed count.
+      const program = await catchingProgram(registry, address, args, true);
+      expect(program.structuredContent, scenario).toMatchObject({
+        error: { writes: { succeeded: 0, failed: 1, unknown: 0 } },
+      });
+      expect(requests, scenario).toEqual([`GET ${path}`, `GET ${path}`]);
+    }
+
+    // Without complete auxiliary-read proof, a custom entry's declaration
+    // and recovery facts cannot prove that a timed-out write never left.
+    for (const entry of ["custom", "api", "declared-api", "declared-auth", "declared-override"] as const) {
+      const declared = entry.startsWith("declared-");
+      const sent: string[] = [];
+      vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(init?.method ?? "GET");
+        return Response.json({ id: "created" });
+      });
+      const lookup = guardedFetch({
+        provider: "Tickets",
+        baseUrl: "https://tickets.test",
+        authenticate: () => ({}),
+        maxResponseBytes: 1024,
+      });
+      const run = async (ctx: ConnectorContext) => {
+        recordRecovery(ctx, { idempotencyKey: "recorded-before-deadline" });
+        if (entry === "api")
+          await lookup({ method: "GET", path: "/items", auxiliary: true, classification: "read" }, ctx, (response) =>
+            response.json(),
+          );
+        if (entry === "declared-auth")
+          await lookup({ method: "POST", path: "/token", auxiliary: true, classification: "write" }, ctx, (response) =>
+            response.json(),
+          );
+        if (entry === "declared-override")
+          await lookup(
+            {
+              method: "GET",
+              path: "/items",
+              auxiliary: true,
+              classification: "read",
+              headers: { "X-HTTP-Method-Override": "POST" },
+            },
+            ctx,
+            (response) => response.json(),
+          );
+        if (!declared) await fetch("https://tickets.test/items", { method: "POST" });
+        throw new ConnectorCallError("timeout", "Lost reply.");
+      };
+      const boundary = api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) => run(ctx),
+          },
+        ],
+      });
+      const target: Connector =
+        entry === "custom"
+          ? { ...boundary, callTool: (_name, _args, ctx) => run(ctx) }
+          : declared
+            ? tracksEveryRequest(boundary)
+            : boundary;
+      const registry = makeRegistry([target]);
+      const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "tickets.send",
+        {},
+        { source: "call_destructive_tool" },
+      );
+      if (served.ok) throw new Error(`expected a timeout: ${entry}`);
+      expect(served.error, entry).toMatchObject({
+        code: "write_outcome_unknown",
+        retryable: false,
+        uncertainCall: { recovery: { idempotencyKey: "recorded-before-deadline" } },
+      });
+      expect(classifyWriteOutcome(served), entry).toBe("unknown");
+      expect(served.error.retry, entry).not.toContain("cannot repeat the write");
+      const program = await catchingProgram(registry, "tickets.send");
+      expect(program.structuredContent, entry).toMatchObject({
+        error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } },
+      });
+      expect(sent, entry).toEqual(
+        entry === "declared-api"
+          ? []
+          : entry === "api"
+            ? ["GET", "POST", "GET", "POST"]
+            : entry === "declared-override"
+              ? ["GET", "GET"]
+              : ["POST", "POST"],
+      );
+    }
   });
 });
 
@@ -278,6 +567,7 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       [422, "failed"],
       [408, "unknown"],
     ] as const) {
+      let dispatched = 0;
       const downstream = httpDownstream((server) => {
         server.registerTool(
           "create_item",
@@ -287,7 +577,10 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const rpc = typeof init?.body === "string" ? (JSON.parse(init.body) as { method?: string }) : {};
-        if (rpc.method === "tools/call") return new Response("refused", { status });
+        if (rpc.method === "tools/call") {
+          dispatched++;
+          return new Response("refused", { status });
+        }
         return downstream.fetch(String(input), init);
       });
       const connector = remoteMcp("tickets", { url: downstream.url, versionNegotiation: "legacy" });
@@ -296,6 +589,27 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       const error = await failure(connector.callTool("create_item", {}, ctx));
       expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe(state);
       expect(classifyCallError(error).retryable).toBe(false);
+      const registry = makeRegistry([connector]);
+      const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "tickets.create_item",
+        {},
+        { source: "call_destructive_tool" },
+      );
+      if (served.ok) throw new Error("expected the remote MCP request to fail");
+      expect(classifyWriteOutcome(served)).toBe(state);
+      expect(served.error.retryable).toBe(false);
+      expect(dispatched).toBe(2);
+      if (status === 408) {
+        expect(served.error).toMatchObject({
+          code: "write_outcome_unknown",
+          uncertainCall: { address: "tickets.create_item" },
+        });
+        const program = await catchingProgram(registry, "tickets.create_item");
+        expect(program.structuredContent).toMatchObject({
+          error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } },
+        });
+        expect(dispatched).toBe(3);
+      }
       await connector.closeScope?.(ctx);
     }
   });
@@ -330,15 +644,22 @@ describe("an operation hint grants no retry credit (round 11)", () => {
 });
 
 /** A program that calls `address` once, catches its failure, and returns. */
-function catchingProgram(registry: ReturnType<typeof makeRegistry>, address: string) {
+function catchingProgram(
+  registry: ReturnType<typeof makeRegistry>,
+  address: string,
+  args: Record<string, unknown> = {},
+  failAfterCatch = false,
+) {
   const executor: Executor = {
     async execute(_code, providers) {
       try {
-        await providers.find((provider) => provider.name === "connecta")!.fns["call"]!(address, {});
+        await providers.find((provider) => provider.name === "connecta")!.fns["call"]!(address, args);
       } catch {
         /* caught by the guest */
       }
-      return { result: "caught and continued" };
+      return failAfterCatch
+        ? { result: undefined, error: "Stopped after the caught call." }
+        : { result: "caught and continued" };
     },
   };
   return createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({

@@ -13,6 +13,30 @@ export interface Target {
 const OWNER = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/i;
 const REPO = /^[a-z0-9_.-]{1,100}$/i;
 
+/** A PR head label filters the selected repository; its login is not a scope target. */
+export function isPullHead(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const [login, ref, ...extra] = value.split(":");
+  if (!OWNER.test(login ?? "") || !ref || extra.length) return false;
+  if (
+    /[~^:?*[\\%]/.test(ref) ||
+    Array.from(ref).some((char) => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127) ||
+    ref.includes("..") ||
+    ref.includes("@{") ||
+    ref === "@" ||
+    ref.startsWith("-") ||
+    ref.endsWith(".") ||
+    ref.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".lock"))
+  )
+    return false;
+  try {
+    encodeURIComponent(ref);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function target(owner: unknown, repo: unknown): Target {
   if (
     typeof owner !== "string" ||

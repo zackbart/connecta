@@ -301,6 +301,72 @@ accounts with separate key pairs.
 and bank tokens for one-time charges and new payment methods come only from
 Tithely.js in a donor's browser. A response is read up to 4 MiB.
 
+## GitHub
+
+```ts
+import { github } from "@zackbart/connecta/providers/github";
+
+const source = github("source", {
+  purpose: "Repository issue triage and release work",
+  app: { appId: env.GITHUB_APP_ID },
+  scopes: [{ org: "alice", access: "read-write" }],
+});
+```
+
+Create a GitHub App with repository Metadata permission and install it on each
+configured owner. Omit privateKey to populate the connector's encrypted privateKey
+vault field, or supply app.privateKey from an environment secret. No per-user
+OAuth is supported. Installation tokens remain in bounded memory and refresh
+before expiry; key rotation partitions caches by key fingerprint.
+
+Each scope names an organization or an exact owner/repository and explicit
+read or read-write access. Exact repository grants can narrow their organization
+grant. Org grants require an organization installation with All repositories,
+including future repositories. Exact grants can use selected-repository installs.
+A grant binds repository IDs for the provider instance; reconfigure after reviewing
+a replacement repository or installation. Set readOnly:true for deployment-wide
+write refusal. Only deployment code can grant workflows:"write", and only on a
+read-write scope. A merge requires this explicit grant because GitHub's head-SHA
+guard does not bind a concurrent base retarget.
+
+Enable only vendor permissions needed by the workflows: Metadata read for
+repository lookup; Issues read for issues/comments/labels; Pull requests read
+for PRs/reviews/review comments/changed files/PR commits; Contents read for
+repository commits/comparisons/contents/releases; Actions read for workflows,
+runs and jobs. Release writes require Contents write. The guarded merge retains
+Contents, Pull requests and Workflows write. Code search retains Contents read
+and GitHub's own search restrictions. Each operation token is narrowed to its
+reviewed permission and repository IDs; an org grant does not permit org admin.
+
+The four github_api tools cover a pinned operation index with a bounded reviewed
+repository read and release-write allowlist. All other operations are refused.
+Use search_scoped for account data search and merge_pull_request for merges; the
+corresponding raw routes are refused. Native tools present these same operations
+and enforcement. Each named list defaults to 30 items, maximum 100. Search
+continuation visits one partition page per call, at most twenty partitions and
+ten vendor pages per partition; incomplete_results preserves capped/incomplete
+searches. Cursors bind the configured grants, arguments, limit and deployment storage.
+Keep the same limit with a cursor. Omission uses 30 and is accepted for a cursor
+issued with limit 30; other limits must be repeated. Mismatches name the expected limit.
+
+The transport reads at most 4 MiB per response. Inline UTF-8 file text and patch
+values are redacted before a 32,768-character cut, with dot paths in truncated.
+File contents retain base64 encoding; the character bound applies after decoding.
+Use `/repos/alice/widget/contents/src/index.ts` for a nested file and
+`/repos/alice/widget/contents` for the root directory. Contents paths must be
+canonical relative paths, without dot/empty segments, backslashes or encoded
+traversal. Encode branch-name slashes as `%2F` in `commits/{ref}` and
+`compare/{basehead}`. Owner-prefixed object refs and cross-repository compares are
+refused before authentication. PR-list head filters require `login:branch`, for
+example `head:"alice:feature/x"`; they filter the selected repository's PRs.
+Bare head branches are refused because GitHub silently ignores them. The base
+filter stays a branch name. Configured App private keys are withheld from echoed content.
+Identifiers remain beside cut patches. Raw diffs, binary files, log downloads,
+archives, uploads and secret/admin operations are unavailable. Download URLs and
+credentials remain withheld. fields narrows safe output and does not reduce the
+bytes the vendor sends. Directory listings and search also have vendor caps;
+missing content/patches do not establish completeness.
+
 ## Cloudflare
 
 `cloudflare()` connects the reviewed v4 API with an operator-managed credential.

@@ -8,6 +8,7 @@ import { cloudflareStep2Dns } from "./cloudflare.js";
 import { FakeCcb, ccbState } from "./ccb.js";
 import { FakePlanningCenter, planningCenterState } from "./planning-center.js";
 import { FakeOverflow, overflowState } from "./overflow.js";
+import { FakeGitHub, githubState } from "./github.js";
 import { FakeBreeze, breezeState } from "./breeze.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
@@ -54,7 +55,8 @@ export interface ConnectorSpec {
     serviceAccount: { clientEmail: string; privateKey: string };
     subject: "mapped" | "fixed";
   };
-  rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow";
+  rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow" | "github";
+  githubApp?: { appId: string; privateKey: string };
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
@@ -62,6 +64,7 @@ export interface ConnectorSpec {
 export interface WorldOptions {
   google?: GoogleOptions;
   restVendor?: RestVendor;
+  github?: { fault?: "search-503" };
   breeze?: { fault?: "update-500" };
   ccb?: { fault?: "update-500" };
   planningCenter?: { fault?: "update-500" };
@@ -100,8 +103,9 @@ export class World {
   }
   readonly rest = restState();
   readonly restServices: Array<
-    FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakePlanningCenter | FakeOverflow
+    FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakePlanningCenter | FakeOverflow | FakeGitHub
   > = [];
+  readonly github = githubState();
   readonly breeze = breezeState();
   readonly ccb = ccbState();
   readonly pco = planningCenterState();
@@ -144,6 +148,7 @@ export class World {
     }
     if (options.tithely)
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
+    if (options.github) this.restServices = [new FakeGitHub("github", this.ledger, this.github, options.github.fault)];
     if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
     if (options.ccb) this.restServices = [new FakeCcb("ccb", this.ledger, this.ccb, options.ccb.fault)];
     if (options.planningCenter)
@@ -194,7 +199,8 @@ export class World {
       this.options.breeze ||
       this.options.ccb ||
       this.options.planningCenter ||
-      this.options.overflow
+      this.options.overflow ||
+      this.options.github
     )
       return this.restServices.map((service) => ({
         id: service.name,
@@ -205,7 +211,12 @@ export class World {
             : `Fake ${service.vendor} REST`,
         url: service.url,
         rest: service.vendor,
-        credential: { label: "Fake vendor credential", value: service.credential },
+        ...(service instanceof FakeGitHub
+          ? { githubApp: { appId: service.appId, privateKey: service.privateKey } }
+          : {}),
+        ...(service instanceof FakeGitHub
+          ? {}
+          : { credential: { label: "Fake vendor credential", value: service.credential } }),
       }));
     return [...this.services.values()].map((service) => {
       const id = service.name as ServiceId;

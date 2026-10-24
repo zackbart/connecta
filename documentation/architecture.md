@@ -1234,7 +1234,7 @@ factory stamps its provider name onto `describe().source.provider`. API
 implementations and their contract evidence remain vendored. Hosted MCP servers
 use generic `remoteMcp()` entries; provider reviews and hosted defaults are
 removed. Legacy hosted selectors fail at construction with the generic migration
-path. GitHub retains only its six scope-enforced REST tools.
+path. GitHub retains its scope-enforced App identity and exposes a bounded repository-read and release-write hatch plus local scope discovery, scoped data search and guarded merge.
 
 [Decision 0011](https://github.com/zackbart/connecta/blob/main/decisions/0011-provider-standard.md)
 sets the provider standard the providers above are migrating to. It fixes
@@ -1324,7 +1324,7 @@ Fields are optional additive metadata in format 4, so a previously compiled
 index without the source bytes remains usable without inventing a response
 contract. Vercel's pinned document is unavailable: its index leaves fields
 absent until its step-2 pin review. Breeze's pin declares no response
-properties. GitHub's finite REST complement has no pinned OpenAPI document.
+properties. GitHub's immutable official OpenAPI pin supplies its complete index and response fields; a reviewed repository allowlist controls dispatch. Natural queries with reviewed matches scope discovery to those matches and named-only operations; explicit paths and unmatched queries retain full-pin refusal discovery.
 `check:providers-generated` checks each index header against its source record
 offline; `providers:check` reports a pin that differs from the live document.
 No maintained provider selects an implementation with `surface` any more. See
@@ -2209,8 +2209,15 @@ the safe page data with `hasMore: true` and no `nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.
-A binding may expand deployment-owned path defaults before indexed resolution,
-and may prepare a reviewed text/NDJSON body before validation. Both the original
+A binding may opt into `truncated: true` to supply reviewed size-cut paths
+(such as `data.content`) in its answer. The hatch then declares and propagates
+an optional top-level `truncated: string[]` on reads and writes. Without the
+opt-in, the schemas and results are unchanged; size-cut metadata is not inferred
+from vendor booleans or added to other providers.
+
+A binding may expand deployment-owned path defaults (Cloudflare) or canonicalize
+repository contents paths (GitHub) before indexed resolution, and may prepare a
+reviewed text/NDJSON body before validation. Both the original
 and resolved paths pass withheld-value admission. Closed request-header enums
 are opt-in; selected headers join the paging cursor's call identity. Text body
 inputs are opt-in too. A provider with bounded call-owned scope lookups declares
@@ -2433,7 +2440,7 @@ value is ignored, so it cannot replace or wrap the connector. Google Workspace
 uses it to tag whose account the connector acts as, which the registry reads to
 hide a mapping-subject connector from agents in a pool without an owner.
 
-GitHub's finite REST tools use kit read/write builders and a confined
+GitHub's tools and allowlisted indexed hatch use kit read/write builders and a confined
 Connection while its App authentication and scope-verification transport stays
 private. Its tokens are partitioned by App/key, installation, repository IDs,
 permissions and purpose. A resource 401, or a 403 without rate-limit evidence,
@@ -2971,6 +2978,35 @@ compiling and configuring the real thing.
   the failing request carries the refusal. A custom connector that composes
   calls, or that could send around them, never inherits an inner verdict; the
   invocation withdraws the mark and the write is unknown.
+  Write inference also needs positive evidence before relaxing timeout or auth
+  reconciliation. `LogicalCall.auxiliaryReads` records each auxiliary GET or HEAD
+  at dispatch, without method-override headers, separately from the call-owned
+  requests in `sent`. Its physical read proof does not depend on the served
+  tool's write classification. `onlyAuxiliaryRequests` requires exactly one
+  boundary that owns the logical call and declares complete request tracking
+  (`tracksEveryRequest`), at least one dispatched auxiliary resource read, and
+  no dispatched call-owned request or kit auxiliary falsely declared as a read.
+  The kit records `blocksAuxiliaryProof` at dispatch for an `effect: "read"`
+  request without physical GET/HEAD proof; `nonReadAuxiliaryDispatched` retains
+  that blocking fact on the logical call. The
+  invocation's `mayHaveWritten` is true
+  for an entered write unless the call answered with that proof; an explicit
+  `writeOutcome: "unknown"` always overrides the relaxation. Empty or partial
+  ledgers, token POSTs alone, multiple boundaries, custom `api()` and
+  `remoteMcp()` connectors, deadlines, and caller cancellation supply no such
+  proof. Only maintained providers have the internal tracking declaration;
+  they must route every dispatch through their tracked transports. The kit
+  still classifies auxiliary POSTs and method-overridden GETs as writes for
+  reservation and replay; the effect label does not change those rules.
+  Their dispatches block auxiliary-only inference even beside a genuine
+  auxiliary read. Guarded authentication token POSTs supply no read proof,
+  but do not invalidate a later auxiliary resource read. A conservative
+  timeout withdraws `answered`; a conservative auth failure does so only with
+  an empty resource ledger, also withdrawing that ledger's private known-failure
+  mark before advice is composed. A refused call-owned write keeps its
+  `answered` evidence and resource-refusal provenance. Token-only auth failures
+  therefore keep conservative program accounting as well as reconciliation
+  wording.
   Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
   validation, `remoteMcp()`'s allowlist, connect, and any failure before its
   `tools/call` is sent, and GitHub's REST target check and token mint.

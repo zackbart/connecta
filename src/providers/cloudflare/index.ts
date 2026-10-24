@@ -195,8 +195,8 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
   title: "Cloudflare",
   readme: "Cloudflare",
   bundle: {
-    baselineGzip: 596645,
-    note: "./providers/cloudflare measures 596,645 B gzip standalone after merging CCB #995 into its decision 0011 step 2, versus 528,947 B on main ce0c7492 (Node 26.12.0, zlib-ng 1.3.1, gzip level 9). The standard hatch, response-field metadata, retained 120-character parameter descriptions and numeric bounds account for this reviewed growth. The shared Effect kit is paid once per deployment; provider entries are report-only, not capped (#899).",
+    baselineGzip: 597127,
+    note: "./providers/cloudflare merged GitHub/Cloudflare/CCB step-2 snapshot measures 597,127 B gzip standalone before recording these bundle facts, versus 528,947 B on main ce0c7492 (Node 26.12.0, zlib-ng 1.3.1, gzip level 9). The standard hatch, response-field metadata, retained 120-character parameter descriptions and numeric bounds account for this reviewed growth. The shared Effect kit is paid once per deployment; provider entries are report-only, not capped (#899).",
   },
   skill,
   options: CLOUDFLARE_OPTIONS,

@@ -148,7 +148,7 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "connector_call_failed",
+            "code": "invalid_args",
             "message": "The GitHub API request failed; downstream error text is withheld.",
             "retryable": false
           }
@@ -743,7 +743,7 @@
           "dispatched": true,
           "error": {
             "code": "conflict",
-            "message": "GitHub rejected a stale version. Read the current state before resubmitting.",
+            "message": "GitHub reported a conflict. Read the current state before resubmitting.",
             "retryable": false
           }
         }
@@ -885,7 +885,7 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "connector_call_failed",
+            "code": "invalid_args",
             "message": "The GitHub API request failed; downstream error text is withheld.",
             "retryable": false
           }
@@ -1632,11 +1632,13 @@
     }
   },
   "write": {
-    "tool": "create_release",
+    "tool": "github_api_write",
     "args": {
-      "owner": "other",
-      "repo": "one",
-      "tag_name": "v1.2.0"
+      "method": "POST",
+      "path": "/repos/other/one/releases",
+      "body": {
+        "tag_name": "v1.2.0"
+      }
     },
     "cases": {
       "400": {
@@ -1783,7 +1785,7 @@
           "dispatched": true,
           "answered": true,
           "error": {
-            "code": "connector_call_failed",
+            "code": "invalid_args",
             "message": "The GitHub API request failed; downstream error text is withheld.",
             "retryable": false
           }
@@ -1937,7 +1939,7 @@
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "github",
-            "operation": "github.create_release",
+            "operation": "github.github_api_write",
             "recovery": "unavailable",
             "reconciliationRequired": true,
             "nextAction": {
@@ -2099,7 +2101,7 @@
             "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
             "retryable": false,
             "connector": "github",
-            "operation": "github.create_release",
+            "operation": "github.github_api_write",
             "recovery": "unavailable",
             "reconciliationRequired": true,
             "nextAction": {
@@ -2408,7 +2410,7 @@
           "answered": true,
           "error": {
             "code": "conflict",
-            "message": "GitHub rejected a stale version. Read the current state before resubmitting.",
+            "message": "GitHub reported a conflict. Read the current state before resubmitting.",
             "retryable": false
           }
         }
@@ -2557,7 +2559,7 @@
           "dispatched": true,
           "answered": true,
           "error": {
-            "code": "connector_call_failed",
+            "code": "invalid_args",
             "message": "The GitHub API request failed; downstream error text is withheld.",
             "retryable": false
           }
@@ -3012,7 +3014,7 @@
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "github",
-            "operation": "github.create_release",
+            "operation": "github.github_api_write",
             "recovery": "unavailable",
             "reconciliationRequired": true,
             "nextAction": {
@@ -3320,24 +3322,26 @@
           "dispatched": true,
           "error": {
             "code": "write_outcome_unknown",
-            "message": "Operation \"github.create_release\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "message": "Operation \"github.github_api_write\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
             "retryable": false,
             "details": {
               "host": "https://api.github.com",
               "code": "timeout",
-              "operation": "github.create_release",
+              "operation": "github.github_api_write",
               "stage": "downstream",
               "elapsedMs": 0
             },
             "writeOutcome": "unknown",
             "connector": "github",
-            "operation": "github.create_release",
+            "operation": "github.github_api_write",
             "uncertainCall": {
-              "address": "github.create_release",
+              "address": "github.github_api_write",
               "args": {
-                "owner": "other",
-                "repo": "one",
-                "tag_name": "v1.2.0"
+                "method": "POST",
+                "path": "/repos/other/one/releases",
+                "body": {
+                  "tag_name": "v1.2.0"
+                }
               }
             },
             "retry": "Do not retry automatically. Check whether the write took effect first."
