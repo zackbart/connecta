@@ -391,7 +391,7 @@
     ],
     "evidence": {
       "openapi.document.json": "sha256:2f532bfdcd2c4d40add8373218d3ea371c215ad7d754cfa72fb241fc7c45348d",
-      "openapi.json": "sha256:385ad931af88bc5f7ec25d6d4f62c5146e4d1d415b8ff4a2011aa996e3f96e61",
+      "openapi.json": "sha256:535ae6738e393ddaf588aec4f39cc10145f5a199036136b6c12e19a69e18200a",
       "value-safety.json": "sha256:b6a3c375f2554b488274abf4a1d548e8b10a0ed4928b25bbd2cc4b7660b38fbe"
     }
   },

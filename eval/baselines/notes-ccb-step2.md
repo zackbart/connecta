@@ -36,7 +36,13 @@ and fake files are byte-identical across arms:
 - Fake SHA-256: `7b882693701adc0bedf372f49976152e8c73a9bc7def336ba4473d64cf62a8c7`.
 
 The merge adds Overflow's unrelated eval wiring; it changes no CCB prompt,
-state, HTTP fake, grader or expected answer. The first five tasks use read-only
+state, HTTP fake, grader or expected answer. The `reads-only` classifier uses
+the running tree's `REST_TOOL_KINDS` catalog. Offline BEFORE regrades must
+therefore run in the BEFORE tree, and AFTER regrades in the AFTER tree.
+Regrading BEFORE under HEAD instead flips all four campus-hatch passes because
+`ccb_api_get` no longer exists there; arm-native regrades reproduce all 56
+recorded outcomes. This catalog dependence is separate from grader-code identity.
+The first five tasks use read-only
 endpoints. Selftests pass both six/code surfaces and route/outcome grading,
 including no-op, missing-answer and duplicate-write counterexamples. The
 post-eval change to a test tuple's `as const` annotation has no runtime effect.
@@ -68,14 +74,19 @@ Luna's two AFTER failures send no writes. Update-once repeat 1 selects
 `fields: ["status", "data"]` as vendor-body fields; the hatch refuses before
 dispatch, and Luna stops. Recovery repeat 1 discovers the write hatch but
 stops for approval already supplied by the task, without attempting a write.
-The latter is the shared approval-wording observation from #991, not a new
-permission requirement. Both repeat-2 writes succeed and reconcile. Sonnet
+This trial saw both the CCB-local “reads plus approval-gated writes” line
+and shared “every call ... needs approval” / “stated for approval” text.
+The harness auto-approves, and no write call or host approval request occurred.
+BEFORE had the same local line and stronger “always needs approval” text, yet
+Luna attempted writes in all four BEFORE write trials. These observations do
+not isolate the cause of the deferral. Both repeat-2 writes succeed and reconcile. Sonnet
 passes all AFTER tasks. All six dispatched AFTER mutations occur once and
 are read back; no other business state changes.
 
 BEFORE Luna's two failed writes guess PATCH and do not perform the requested
 PUT. Its paging repeat 2 omits inactive people and reports 109 rather than
-137. BEFORE Sonnet's three failures first send unsupported PATCH, then PUT:
+137. Its initial malformed `call_tool` omitted the address, so that trial also
+fails `reads-only` despite dispatching no write. BEFORE Sonnet's three failures first send unsupported PATCH, then PUT:
 the business update occurs once and is verified, but two HTTP mutation
 attempts correctly fail the frozen exactly-once condition. No identical
 HTTP write is duplicated in either arm. These failures remain in the scores.
@@ -86,9 +97,15 @@ HTTP write is duplicated in either arm. These failures remain in the scores.
 | Observed discovery bytes | 26,586 → 31,558 | 14,802 → 14,337 |
 | Wall time | 15.65 s → 14.82 s | 10.55 s → 11.48 s |
 
-Discovery bytes sum serialized observed search/describe/guide and operation
-search/details results, including guest calls; they are not tokenized model
-context. Accuracy improves here, while call counts increase. No general
+The table preserves the original address-based discovery-byte calculation:
+it counts serialized search/describe/guide and `_api_search`/details results,
+including guest calls, without tokenization. That rule mistakenly includes
+BEFORE's old data `ccb_api_search` (four calls across both models), while
+excluding AFTER's data-search counterparts. With operation discovery only,
+Luna is **25,895.86 → 31,558 B (+21.9%)**, and Sonnet is
+**14,118.43 → 14,336.79 B (+1.5%)**. The table's apparent Sonnet decrease is
+an artifact of the old definition. Raw transcripts, recorded metrics and
+scores are unchanged. Accuracy improves here, while call counts increase. No general
 accuracy or efficiency gain is claimed. One Luna `individual update` search
 places the intended PUT fifth under the shared exact-path-word ranking, then
 finds it with `updateIndividual`; a template query also falls through to
@@ -186,6 +203,8 @@ label with “reads and writes.” The source guide and write-tool note name
 `ccb_api_write` and say the host may ask the user to confirm. The shared
 generated Conventions sentence belongs to still-unmerged #998; this change
 does not copy that PR's shared changes or assert that it has merged.
+The `ffd64b04` local rewording is unevaluated; it cannot be claimed to fix
+the deferral or to establish that the shared text alone caused it.
 No model trials were rerun for this follow-up; the complete original 56-trial
 record and its frozen source stamps above remain unchanged.
 
@@ -206,3 +225,40 @@ Workerd canonical goldens and the native hatch case also pass: 17 passing,
 2 intentional Node-case skips.
 Only CCB's generated bundle entry/note changes; all other bundle entries,
 notes and caps compare identically with the automatic merge.
+
+
+## Round-1 corrections
+
+The generator's CCB-only `emptyObjectsOpen` option admits vendor-defined search
+filter keys, with dispatch assertions for both `search_records` and POST
+`ccb_api_read`. All ten reviewed modeled-object wildcard writes are admitted
+as JSON; real multipart uploads remain refused before dispatch. Named output
+schemas now include every emitted individual/group key. Natural operation and
+catalog queries cover attendance, group membership/roles, phone edits, new
+individuals, donations and contributions. These assertions fold into existing
+cases; the frozen model trials and raw scores remain unchanged.
+
+The recorded bundle baseline is now **389,649 B gzip**, from [CI static run
+`40080865116`](https://github.com/zackbart/connecta/actions/runs/40080865116/job/120833959810) at `ffd64b04` on Node 22.23.3. Its main base `ce0c7492` measured
+**345,272 B**, so that CI comparison is **+44,377 B**. This supersedes the local
+Node 26 snapshot as the declared baseline; the historical measurements above
+retain their original commits and toolchains. Provider entries remain uncapped
+and non-additive, and no composite cap changes.
+
+The shared integer path-parameter validation follow-up is
+[#1002](https://github.com/zackbart/connecta/issues/1002); this fix round makes
+no shared path-validation change.
+
+Fresh round-1 checks pass 651 cases in nine targeted files, including the
+443-case failure sweep. Static checks (including generated-provider freshness)
+and build/declarations/all bundle caps pass. The fresh Node 26.12.0/zlib-ng
+build measures CCB at **389,200 B gzip**; this remains separate from the cited
+CI baseline. Strict provider checks find no drift across 385 endpoints.
+Other providers' 42 golden JSON files and five operation indexes are byte-identical
+to both `ffd64b04` and merged main `ce0c7492`.
+
+All-provider deterministic Node goldens and harness/source probes pass **85
+cases**. Workerd canonical goldens plus the native hatch pass **17 cases**,
+with two intentional Node-only skips. This round adds/removes no test cases
+(delta 0); the PR's overall affected-case delta remains **−8**. Round-1 logs
+and the byte audit use the `r1-` prefix in the scratch evidence directory.

@@ -236,6 +236,14 @@ describe("ccb() construction", () => {
       ["create a person", "POST /individuals"],
       ["add a pastoral note", "POST /individuals/{id}/notes"],
       ["church campuses", "GET /campuses"],
+      ["record attendance", "POST /events/{id}/attendance/{occurrence}"],
+      ["take attendance", "POST /events/{id}/attendance/{occurrence}"],
+      ["add person to group", "POST /groups/{id}/members"],
+      ["change group role", "PUT /groups/{group_id}/members/roles"],
+      ["change phone number", "PUT /individuals/{id}"],
+      ["new individual", "POST /individuals"],
+      ["donations", "GET /individuals/{id}/metrics/giving"],
+      ["contributions", "GET /families/{id}/metrics/giving"],
     ]) {
       const result = (await searchable.callTool("ccb_api_search", { query }, catalogContext)) as any;
       expect(
@@ -259,6 +267,13 @@ describe("ccb() construction", () => {
       ["assignments", "ccb_api_read"],
       ["update email", "ccb_api_write"],
       ["edit person email", "ccb_api_write"],
+      ["record attendance", "ccb_api_write"],
+      ["add person to group", "ccb_api_write"],
+      ["change group role", "ccb_api_write"],
+      ["change phone number", "ccb_api_write"],
+      ["new individual", "ccb_api_write"],
+      ["donations", "ccb_api_read"],
+      ["contributions", "ccb_api_read"],
     ] as const)
       expect(
         rankTools([...searchable.staticTools!], query).map((entry) => entry.tool.name),
@@ -372,6 +387,11 @@ describe("ccb() reads", () => {
   it("INV-4 INV-5: fields, hatches and POST search preserve deployment privacy and permanent secret withholding", async () => {
     const individual = {
       ...PERSON,
+      school_grade: "5",
+      baptized_date: "2001-01-01",
+      limited_access_user: false,
+      created: "2020-01-01",
+      modified: "2021-01-01",
       allergies: "peanuts",
       confirmed_no_allergies: false,
       giving_number: "G-17",
@@ -381,10 +401,12 @@ describe("ccb() reads", () => {
       family: { members: [{ id: 43, allergies: "shellfish" }] },
       custom_fields: [{ id: 1, value: { notes: "private nested value" } }],
     };
+    const filterBody = { configuration: {}, filters: { name: { operator: "contains", value: "Rowan" } } };
     const attendance = { event_id: 12, occurrence: "20260927", prayer_requests: "private", notes: "leader notes" };
     const response = { id: 5, form_id: 2, payment: { method: "CREDIT_CARD", total: 2500 }, payment_status: "PAID" };
     const routes = [
       on("GET", "/individuals/42", () => json(individual)),
+      on("GET", "/groups", () => json([{ id: 5, member_count: 12 }], { "x-next-page": "" })),
       on("GET", "/events/12/attendance/20260927", () => json(attendance)),
       on("GET", "/forms/2/responses", () => json([response], { "x-next-page": "" })),
       on("POST", "/search/individuals/results", () => json([individual], { "x-next-page": "" })),
@@ -418,20 +440,62 @@ describe("ccb() reads", () => {
       ["ccb_api_read", { path: "/forms/2/responses" }],
       ["ccb_api_read", { path: "/individuals/42" }],
       ["ccb_api_read", { path: "/events/12/attendance/20260927" }],
-      ["search_records", { domain: "individuals", body: { configuration: {}, filters: {} } }],
+      ["search_records", { domain: "individuals", body: filterBody }],
+      ["ccb_api_read", { method: "POST", path: "/search/individuals/results", body: filterBody }],
       ["ccb_api_write", { method: "PUT", path: "/individuals/42", body: { first_name: "Ada" } }],
     ];
     const secrets = ["peanuts", "shellfish", "G-17", "envelope", "giving", "statement", "private", "leader notes"];
     const dropped = await connected({ access: "read-write" });
     dropped.fake.route(...routes);
     for (const [tool, args] of reads) {
+      const before = dropped.fake.requests.length;
       const text = JSON.stringify(await dropped.call(tool, args));
+      if (args.body === filterBody) {
+        expect(dropped.fake.requests).toHaveLength(before + 1);
+        expect(dropped.fake.requests.at(-1)!.body).toEqual(filterBody);
+      }
       for (const secret of [...secrets, "allerg", "CREDIT_CARD"])
         expect(text, `${tool} ${secret}`).not.toContain(secret);
     }
     expect(JSON.stringify(await dropped.call("ccb_api_read", { path: "/individuals/42" }))).toContain(
       '"name":"Grace Hopper"',
     );
+
+    expect(await dropped.call("get_individual", { individualId: 42, fields: ["created"] })).toEqual({
+      created: "2020-01-01",
+    });
+    expect((await dropped.call("list_groups", { fields: ["memberCount"] })).items).toEqual([{ memberCount: 12 }]);
+    const emitted = await dropped.call("get_individual", { individualId: 42 });
+    const individualSchema = dropped.connector.staticTools!.find((tool) => tool.name === "get_individual")!
+      .outputSchema as any;
+    expect(Object.keys(emitted).filter((key) => !Object.hasOwn(individualSchema.properties, key))).toEqual([]);
+    for (const [method, path, body] of [
+      ["POST", "/forms/2/responses", { individual_id: 42, answers: [{ question_id: 1, answer: "Yes" }] }],
+      ["PUT", "/individuals/42/groups/5", { receive_sms: false }],
+      ["PUT", "/individuals/42/privacy_settings", { listed: false }],
+      ["POST", "/church/privacy_defaults", { default_listed: false }],
+      ["PUT", "/messages/2", { body: "Updated message" }],
+      ["POST", "/messages/2/comments", { body: "New comment" }],
+      ["PUT", "/messages/2/comments/3", { body: "Updated comment" }],
+      ["POST", "/scheduling/categories/2/notifications", { schedule_ids: [3], message: "Reminder", dry_run: true }],
+      ["PUT", "/individuals/42/assignments", { status: "ACCEPTED" }],
+      ["PUT", "/scheduling/families/9/assignments", { status: "DECLINED" }],
+    ] as const) {
+      dropped.fake.route(on(method, path, () => json(response)));
+      const before = dropped.fake.requests.length;
+      const result = await dropped.call("ccb_api_write", { method, path, body });
+      expect(result.status, path).toBe(200);
+      expect(dropped.fake.requests, path).toHaveLength(before + 1);
+      expect(dropped.fake.requests.at(-1)!.body, path).toEqual(body);
+      expect(dropped.fake.requests.at(-1)!.headers.get("content-type"), path).toContain("application/json");
+      expect(JSON.stringify(result), path).not.toContain("CREDIT_CARD");
+    }
+    const beforeUpload = dropped.fake.requests.length;
+    await expect(dropped.call("ccb_api_write", { method: "POST", path: "/files", body: {} })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("multipart/form-data"),
+    });
+    expect(dropped.fake.requests).toHaveLength(beforeUpload);
 
     // An argument cannot widen it; only the deployment's option can.
     const returned = await connected({ access: "read-write", sensitiveFields: "return" });

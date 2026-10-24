@@ -57,7 +57,7 @@
         "revision": "sha256:2f532bfdcd2c",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiYjBiZGIwOTQzNjFkZTYzZDRkMDQxODE3YWE1OTZjNTIiLCJjIjoiNiIsIm0iOiJjRUJpT1lmUGZxdmJ0OV9pQWZDU0RLRjBiZ2NxX0dqMTkzNnNiazcwOG04In0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiZmMxNjU1ZTJiM2YxYmJlMTdlODFhMDQ0NzA5OTk5NjgiLCJjIjoiNiIsIm0iOiJzNVlhX1dUY3pkUTdobkRIYldjaENNbUplWDhPbWt5NTlWM2FPeWdBUEpzIn0"
         }
       }
     }
@@ -241,6 +241,36 @@
     }
   },
   {
+    "label": "get_individual fields created",
+    "tool": "get_individual",
+    "args": {
+      "individualId": 42,
+      "fields": [
+        "created"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "created": "2020-01-01"
+      }
+    }
+  },
+  {
     "label": "get_individual fields",
     "tool": "get_individual",
     "args": {
@@ -414,6 +444,43 @@
               "name": "Grace Hopper"
             },
             "departmentId": 4
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "total": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_groups fields memberCount",
+    "tool": "list_groups",
+    "args": {
+      "fields": [
+        "memberCount"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/groups?page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "items": [
+          {
+            "memberCount": 12
           }
         ],
         "page": {
@@ -1399,7 +1466,12 @@
             "active"
           ]
         },
-        "filters": {}
+        "filters": {
+          "name": {
+            "operator": "contains",
+            "value": "Rowan"
+          }
+        }
       },
       "limit": 100
     },
@@ -1421,7 +1493,12 @@
                   "active"
                 ]
               },
-              "filters": {}
+              "filters": {
+                "name": {
+                  "operator": "contains",
+                  "value": "Rowan"
+                }
+              }
             }
           }
         }
@@ -1439,8 +1516,139 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiODBiNTdiMTIyMDg3OTAzZmIzZGZhN2I5ZTM4ZmM3MjIiLCJjIjoie1wicGFnZVwiOjIsXCJsaW1pdFwiOjEwMCxcInJldmlzaW9uXCI6XCJzaGEyNTY6MmY1MzJiZmRjZDJjXCJ9IiwibSI6Ilk0NkZjNU05ODJZaDVPd18yR2tMSE92RHZGZWoxbWZTbDdkNVBaNVBTVWcifQ"
+          "nextCursor": "eyJ2IjoyLCJkIjoiNjU0MzNiYTQxNmI1YTA1YWU5MTcyNjA0NzRlMjY4MGEiLCJjIjoie1wicGFnZVwiOjIsXCJsaW1pdFwiOjEwMCxcInJldmlzaW9uXCI6XCJzaGEyNTY6MmY1MzJiZmRjZDJjXCJ9IiwibSI6Im9uUjByeVExUXdKSzl3d1huV25YUnNmeTVPTUJHdWVTMGJ0cDZ1QUN4cmMifQ"
         }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_read POST with filters",
+    "tool": "ccb_api_read",
+    "args": {
+      "method": "POST",
+      "path": "/search/individuals/results",
+      "body": {
+        "filters": {
+          "name": {
+            "operator": "contains",
+            "value": "Rowan"
+          }
+        }
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/search/individuals/results",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "filters": {
+                "name": {
+                  "operator": "contains",
+                  "value": "Rowan"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": [
+          {
+            "id": 7,
+            "name": "Ada Rowan"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write form response JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/forms/31/responses",
+      "body": {
+        "individual_id": 42,
+        "answers": [
+          {
+            "question_id": 1,
+            "answer": "Yes"
+          }
+        ]
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/forms/31/responses",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "individual_id": 42,
+              "answers": [
+                {
+                  "question_id": 1,
+                  "answer": "Yes"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": 501,
+          "payment_status": "NONE"
+        }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write refuses binary upload",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/files",
+      "body": {}
+    },
+    "steps": [],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "answered": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "CCB's JSON hatch cannot send multipart/form-data request bodies; use the vendor application for this operation.",
+        "retryable": false
       }
     }
   },

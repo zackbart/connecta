@@ -195,18 +195,44 @@ export const SEARCH_DOMAINS = [
 const summaries: Readonly<Record<string, string>> = {
   "GET /individuals": "List people (person profiles, individuals), search names, email and phone",
   "GET /individuals/{id}": "Get a person profile (individual) for identity or update reconciliation",
-  "PUT /individuals/{id}": "Update or change a person's email, edit an individual profile, name or phone",
-  "POST /individuals": "Create or add a person profile (individual)",
+  "PUT /individuals/{id}": "Update or change a person's email, edit an individual profile, name or change phone number",
+  "POST /individuals": "Create or add a person profile, new individual",
   "POST /individuals/{id}/notes": "Add or create a pastoral note for a person (individual)",
   "GET /families": "List households and families",
   "GET /groups/{id}/members": "List church group members and leaders, roster",
+  "POST /groups/{id}/members": "Add person to group, create group membership",
+  "PUT /groups/{group_id}/members/roles": "Change group role, update member or leader roles",
+  "POST /events/{id}/attendance/{occurrence}": "Record attendance, take attendance for an event occurrence",
+  "GET /individuals/{id}/metrics/giving": "Get individual giving metrics, donations and contributions counts",
+  "GET /families/{id}/metrics/giving": "Get family giving metrics, donations and contributions counts",
   "POST /search/individuals/results": "Search people and individual profiles with advanced configuration and filters",
   "GET /campuses": "List church campuses, timezone and public gift message",
 };
 const details = JSON.parse(openapi.details) as {
   d: unknown[];
-  o: Array<0 | [Array<[string, string, number, unknown, string?]>, unknown]>;
+  o: Array<0 | [Array<[string, string, number, unknown, string?]>, 0 | [string, unknown, number?]]>;
 };
+// These ten wildcard-labelled request schemas describe JSON objects, not
+// uploads. Their exact, byte-pinned contracts were reviewed for JSON dispatch.
+const jsonBodies = new Set([
+  "POST /forms/{id}/responses",
+  "PUT /individuals/{id}/groups/{group_id}",
+  "PUT /individuals/{id}/privacy_settings",
+  "POST /church/privacy_defaults",
+  "PUT /messages/{id}",
+  "POST /messages/{id}/comments",
+  "PUT /messages/{id}/comments/{comment_id}",
+  "POST /scheduling/categories/{id}/notifications",
+  "PUT /individuals/{id}/assignments",
+  "PUT /scheduling/families/{id}/assignments",
+]);
+for (const [i, row] of details.o.entries()) {
+  const op = openapi.ops[i]!;
+  if (jsonBodies.has(`${op[0]} ${op[1]}`)) {
+    if (!row || !row[1] || row[1][0] !== "*/*") throw new Error("CCB JSON request review is stale.");
+    row[1][0] = "application/json";
+  }
+}
 for (const row of details.o) {
   if (row)
     for (const parameter of row[0])
@@ -361,8 +387,8 @@ export const ccbBinding = ({
     if (page !== undefined && (!/^[1-9]\d*$/.test(String(page)) || !Number.isSafeInteger(Number(page))))
       return "CCB page must be a positive whole number.";
     const content = CCB_INDEX.bodyType(call.op);
-    return call.body !== undefined && content && !/^application\/(?:[^/]+\+)?json$/.test(content)
-      ? "CCB's indexed hatch supports JSON requests; upload files in the vendor application."
+    return content && !/^application\/(?:[^/]+\+)?json$/.test(content)
+      ? `CCB's JSON hatch cannot send ${content} request bodies; use the vendor application for this operation.`
       : undefined;
   },
   send: (call, settings) =>

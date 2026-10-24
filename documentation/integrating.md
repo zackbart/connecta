@@ -125,7 +125,10 @@ and `pco_api_details` discover reviewed operations; `pco_api_read` reads them,
 and `pco_api_write` sends approved writes.
 
 Church Community Builder's `sensitiveFields` option controls the documented
-sensitive response fields. See [Church Community Builder](./providers.md#church-community-builder)
+sensitive response fields. Advanced search can still filter on dropped sensitive
+fields, so matching rows can reveal their values by inference. Where that
+matters, omit `read:advanced_searches` from the exact configured OAuth scopes.
+See [Church Community Builder](./providers.md#church-community-builder)
 for OAuth setup, scope boundaries, permanent withholding, paging and limits.
 Tithe.ly's option works the same way; see [Tithe.ly](./providers.md#tithely).
 

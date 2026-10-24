@@ -318,9 +318,14 @@ const INDIVIDUAL_SCHEMA = Schema.Struct({
   "campusName": Schema.optionalKey(Schema.String),
   "membershipTypeName": Schema.optionalKey(Schema.String),
   "membershipDate": Schema.optionalKey(Schema.String),
+  "schoolGrade": Schema.optionalKey(Schema.String),
   "baptized": Schema.optionalKey(Schema.Boolean),
+  "baptizedDate": Schema.optionalKey(Schema.String),
   "lastAttendedDate": Schema.optionalKey(Schema.String),
+  "limitedAccessUser": Schema.optionalKey(Schema.Boolean),
   "listed": Schema.optionalKey(Schema.Boolean),
+  "created": Schema.optionalKey(Schema.String),
+  "modified": Schema.optionalKey(Schema.String),
   "customFields": Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
 });
 const FAMILY_SCHEMA = Schema.Struct({
@@ -336,19 +341,6 @@ const FAMILY_SCHEMA = Schema.Struct({
     }),
   ),
   "members": Schema.optionalKey(Schema.Array(PERSON_SCHEMA)),
-});
-const GROUP_SCHEMA = Schema.Struct({
-  "id": Schema.optionalKey(Integer),
-  "name": Schema.optionalKey(Schema.String),
-  "campusId": Schema.optionalKey(Integer),
-  "inactive": Schema.optionalKey(Schema.Boolean),
-  "groupType": Schema.optionalKey(Schema.String),
-  "interactionType": Schema.optionalKey(Schema.String),
-  "membershipType": Schema.optionalKey(Schema.String),
-  "mainLeader": Schema.optionalKey(
-    Schema.Struct({ "id": Schema.optionalKey(Integer), "name": Schema.optionalKey(Schema.String) }),
-  ),
-  "departmentId": Schema.optionalKey(Integer),
 });
 const GROUP_DETAIL_SCHEMA = Schema.Struct({
   "id": Schema.optionalKey(Integer),
@@ -509,12 +501,16 @@ export function ccbTools({
       let page = 1;
       if (cursor) {
         const saved = JSON.parse(cursor);
-        if (
-          !Number.isSafeInteger(saved.page) ||
-          saved.page < 1 ||
-          saved.limit !== size ||
-          saved.revision !== CCB_INDEX.revision
-        )
+        if (saved.revision !== CCB_INDEX.revision)
+          return yield* fail(
+            new ConnectorCallError(
+              "invalid_args",
+              "This CCB cursor belongs to a different API revision; start a new list.",
+            ),
+          );
+        if (!Number.isSafeInteger(saved.page) || saved.page < 1)
+          return yield* fail(new ConnectorCallError("invalid_args", "This CCB cursor contains no valid page number."));
+        if (saved.limit !== size)
           return yield* fail(
             new ConnectorCallError("invalid_args", "Keep the same limit when continuing this CCB page."),
           );
@@ -706,7 +702,7 @@ export function ccbTools({
           Integer.check(Schema.isGreaterThanOrEqualTo(1)).annotate({ description: "Only groups at this campus." }),
         ),
       },
-      row: GROUP_SCHEMA,
+      row: GROUP_DETAIL_SCHEMA,
       limit,
       total: true,
       cursor: "bound",
@@ -939,7 +935,7 @@ export function ccbTools({
     read(connection, {
       name: "get_giving_metrics",
       description:
-        "Get gift counts by period for one CCB individual or family, over at most 12 months. Counts only; v2 exposes no amounts or transactions.",
+        "Get gift counts by period for one CCB individual or family, over at most 12 months. No per-gift amounts or transactions; pledges and scheduled gifts are available through indexed reads.",
       input: Schema.Struct({
         "individualId": Schema.optionalKey(
           Integer.check(Schema.isGreaterThanOrEqualTo(1)).annotate({

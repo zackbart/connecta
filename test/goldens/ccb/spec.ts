@@ -131,6 +131,12 @@ export default defineGoldenSpec({
     },
     { tool: "get_individual", args: { individualId: 42 }, replies: json(INDIVIDUAL) },
     {
+      label: "get_individual fields created",
+      tool: "get_individual",
+      args: { individualId: 42, fields: ["created"] },
+      replies: json({ created: "2020-01-01", modified: "2021-01-01" }),
+    },
+    {
       label: "get_individual fields",
       tool: "get_individual",
       args: { individualId: 42, fields: ["id", "name"] },
@@ -164,6 +170,12 @@ export default defineGoldenSpec({
       tool: "list_groups",
       args: { name: "Tuesday", campusId: 1 },
       replies: json([GROUP], { "x-next-page": "", "x-total": "1" }),
+    },
+    {
+      label: "list_groups fields memberCount",
+      tool: "list_groups",
+      args: { fields: ["memberCount"] },
+      replies: json([{ id: 5, member_count: 12, description: "Weekly group" }], PAGE_HEADERS),
     },
     {
       label: "list_groups short page",
@@ -481,10 +493,39 @@ export default defineGoldenSpec({
       tool: "search_records",
       args: {
         domain: "individuals",
-        body: { configuration: { filter_profile_type: ["active"] }, filters: {} },
+        body: {
+          configuration: { filter_profile_type: ["active"] },
+          filters: { name: { operator: "contains", value: "Rowan" } },
+        },
         limit: 100,
       },
       replies: json([{ id: 7, name: "Ada Pastor" }], { "x-next-page": "2" }),
+    },
+    {
+      label: "ccb_api_read POST with filters",
+      tool: "ccb_api_read",
+      args: {
+        method: "POST",
+        path: "/search/individuals/results",
+        body: { filters: { name: { operator: "contains", value: "Rowan" } } },
+      },
+      replies: json([{ id: 7, name: "Ada Rowan" }], PAGE_HEADERS),
+    },
+    {
+      label: "ccb_api_write form response JSON",
+      tool: "ccb_api_write",
+      args: {
+        method: "POST",
+        path: "/forms/31/responses",
+        body: { individual_id: 42, answers: [{ question_id: 1, answer: "Yes" }] },
+      },
+      replies: json({ id: 501, payment_status: "NONE", payment: { card_last4: "4242" } }),
+    },
+    {
+      label: "ccb_api_write refuses binary upload",
+      tool: "ccb_api_write",
+      args: { method: "POST", path: "/files", body: {} },
+      replies: [],
     },
     {
       tool: "ccb_api_write",

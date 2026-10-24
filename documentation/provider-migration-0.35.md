@@ -193,16 +193,23 @@ The factory and v2 OAuth configuration remain `ccb()` from
 `@zackbart/connecta/providers/ccb`. The legacy v1 XML API is outside this provider.
 Update saved programs, pool grants, classification entries and instructions:
 
-| Before                                                       | After                                                                                                                                                |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ccb_api_get`                                                | `ccb_api_read` with the same canonical absolute API path, query object and optional response `fields`                                                |
-| `ccb_api_mutate`                                             | `ccb_api_write` with explicit method, canonical path and JSON body; the host may ask the user to confirm                                             |
-| `ccb_api_search({ domain, body, page, perPage })`            | `search_records({ domain, body, limit, cursor, fields })` for advanced data searches                                                                 |
-| —                                                            | `ccb_api_search({ query, method?, limit?, cursor? })` searches the offline operation index; `ccb_api_details({ method, path, ... })` reads contracts |
-| `page` and `perPage` on named lists and advanced searches    | `limit` is exactly 25, 50, 75 or 100 (default 25, or configured `defaultPerPage`); continue with signed `cursor`                                     |
-| `raw` on named reads/lists                                   | Removed; named results remain projected. Use `fields` for projected records or the read hatch for vendor records                                     |
-| Named list `{ data, page: { number, perPage, total, ... } }` | `{ items, page: { hasMore, nextCursor? } }`; optional exact vendor `total`                                                                           |
-| HTTP 409 classified as `conflict`                            | `connector_call_failed`; the public pin does not establish a conflict meaning                                                                        |
+| Before                                                                                                                                              | After                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ccb_api_get`                                                                                                                                       | `ccb_api_read` with the same canonical absolute API path, query object and optional response `fields`                                                |
+| `ccb_api_mutate`                                                                                                                                    | `ccb_api_write` with explicit method, canonical path and JSON body; the host may ask the user to confirm                                             |
+| `ccb_api_search({ domain, body, page, perPage })`                                                                                                   | `search_records({ domain, body, limit, cursor, fields })` for advanced data searches                                                                 |
+| —                                                                                                                                                   | `ccb_api_search({ query, method?, limit?, cursor? })` searches the offline operation index; `ccb_api_details({ method, path, ... })` reads contracts |
+| `page` and `perPage` on named lists and advanced searches                                                                                           | `limit` is exactly 25, 50, 75 or 100 (default 25, or configured `defaultPerPage`); continue with signed `cursor`                                     |
+| `raw` on named reads/lists                                                                                                                          | Removed; named results remain projected. Use `fields` for projected records or the read hatch for vendor records                                     |
+| Named list noun keys (`individuals`, `families`, `groups`, `members`, `occurrences`, `attendees`, `notes`) and `page: { hasMore, nextPage, total }` | `{ items, page: { hasMore, nextCursor?, total? } }`; `nextPage` becomes a signed `nextCursor`, with exact vendor `total`                             |
+| HTTP 409 classified as `conflict`                                                                                                                   | `connector_call_failed`; the public pin does not establish a conflict meaning                                                                        |
+
+Legacy read/data-search hatch envelopes `{ result, page }` become
+`{ status, data, page }`. `search_records` uses the standard list envelope and
+projects rows to `id`, `name`, `individualId`, `groupId`, `status`, `active`,
+`campusId`, `familyId`, `membershipTypeId`, `email` and `counts`, when present.
+Use `ccb_api_read` with `method: "POST"` and `/search/<domain>/results` for
+full vendor rows instead of that projection.
 
 These nine named reads are removed. Use `ccb_api_read` with the following
 indexed paths and vendor query names, after inspecting operation details:
@@ -232,7 +239,7 @@ query strings embedded in a path, percent encodings, semicolons and traversal
 segments are refused. For example delete group members with
 `DELETE /groups/5/members` and JSON `{ ids: [42] }`, rather than an invented
 `/groups/5/members/42` path. JSON-only transport refuses multipart, form and
-wildcard request bodies. Optional wildcard GET bodies may be omitted.
+unmodeled wildcard request bodies. The ten reviewed wildcard-labelled JSON-object writes, including form-response creation, remain admitted as JSON. Optional wildcard GET bodies may be omitted.
 
 Use `ccb_api_write` for writes; the host may ask the user to confirm. Writes
 are sent once. Configured read-only

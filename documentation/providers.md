@@ -312,6 +312,10 @@ read-only access on every endpoint. Optional `subdomain` pre-fills consent.
 sensitive fields through the hatches; named projections stay narrow. OAuth
 credentials, private file download destinations, payment-session links and
 private calendar feeds remain withheld. No tool argument changes this boundary.
+Advanced-search filters can still test
+dropped sensitive fields, so matching rows can reveal their values by inference.
+Where that matters, omit `read:advanced_searches` from the exact configured
+OAuth scopes.
 
 Named lists take `limit` equal to 25, 50, 75 or 100; the vendor default is 25.
 `defaultPerPage` optionally chooses another allowed deployment default. Return

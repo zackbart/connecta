@@ -8,6 +8,7 @@
     "descriptions": 160,
     "maxEnum": 100,
     "valueSafety": true,
+    "emptyObjectsOpen": true,
     "additionalResponseMediaTypes": ["*/*"]
   }
 }
