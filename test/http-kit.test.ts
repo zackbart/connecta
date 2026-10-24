@@ -22,6 +22,8 @@ import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
   recordUnauthorized,
   validateVendorErrors,
+  captureClassifierFacts,
+  withClassifierFacts,
   RequestRefused,
   ResendRefused,
   ResponseTooLarge,
@@ -89,6 +91,9 @@ import { OperationIndex } from "../src/providers/_shared/rest/operation-index.js
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
+import { googleErrors } from "../src/providers/_shared/google/kit.js";
+import { stripeErrors } from "../src/providers/stripe/api.js";
+import { cloudflareErrors } from "../src/providers/cloudflare/api.js";
 import {
   closeProviderCall,
   dispatchProviderRequest,
@@ -520,6 +525,35 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       expect(() => validateVendorErrors({ ...VENDOR, presence: { bad: { path: [], content: "text" } } })).toThrow(
         /presence/,
       );
+      for (const factVocabulary of [{ "prose name": ["token"] }, { code: ["private prose"] }, { code: [Infinity] }])
+        expect(() => validateVendorErrors({ ...VENDOR, factVocabulary })).toThrow(/vocabularies/);
+      for (const privateValue of ["UNDECLARED_PRIVATE_REASON", "declared"]) {
+        let seen: unknown;
+        const reviewed: VendorErrors<{ reasons: readonly string[] }> = {
+          ...VENDOR,
+          facts: (body) => body as { reasons: readonly string[] },
+          factVocabulary: { reasons: ["declared"] },
+          classify: [
+            (input) => {
+              seen = input.facts;
+              return undefined;
+            },
+          ],
+        };
+        const secrets = new SentSecrets();
+        secrets.arguments(
+          { private: privateValue },
+          { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+        );
+        const body = { reasons: ["declared", "UNDECLARED_PRIVATE_REASON"] };
+        const failure = withClassifierFacts(
+          status(403, {}, secrets.redact(body, "values")),
+          captureClassifierFacts(body, reviewed),
+        );
+        toConnectorCallError(failure, reviewed, { classification: "read", dispatches: [] });
+        expect(seen, privateValue).toEqual({ reasons: ["declared"] });
+        expect(JSON.stringify(seen)).not.toContain("UNDECLARED_PRIVATE_REASON");
+      }
     },
   ],
   [
@@ -1338,7 +1372,7 @@ const keys = get("listKeys", "/keys");
 const ACME_API = vendor("Acme", keys);
 
 it(
-  "INV-5 INV-6: reviewed media bodies keep bounded text and bytes, sent-secret safety and withheld errors",
+  "INV-5 INV-6: reviewed media bodies keep bounded text and bytes; redacted display preserves reviewed failure classification",
   WORKERS,
   async () => {
     for (const row of [
@@ -1470,6 +1504,117 @@ it(
     const [plainSafety, dropSafety] = [[], ["paragraph"]].map((names) =>
       resultSafety({ review: "Fixture JSON has no stored values.", sensitiveFields: { names, choice: "drop" } }),
     );
+    const google = googleErrors({
+      provider: "Google Docs",
+      api: "Docs API",
+      scopes: ["documents"],
+      notFound: "absent",
+    });
+    const googleRows = [
+      ["userRateLimitExceeded", 403, "rate_limited", true, "meters this API", ["user", "Rate", "Limit", "Exceeded"]],
+      ["RATE_LIMIT_EXCEEDED", 403, "rate_limited", true, "meters this API", ["RATE", "LIMIT"]],
+      ["FAILED_PRECONDITION", 400, "connector_call_failed", false, "precondition", ["FAILED"]],
+      ["SERVICE_DISABLED", 403, "connector_call_failed", false, "not enabled", ["SERVICE"]],
+      [
+        "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+        403,
+        "provider_permission_denied",
+        false,
+        "lacks a scope",
+        ["SCOPE", "TOKEN", "ACCESS"],
+      ],
+      ["domainPolicy", 403, "provider_permission_denied", false, "domain policy", ["domain", "Policy"]],
+      ["exportSizeLimitExceeded", 403, "connector_call_failed", false, "larger than Google will export", ["Limit"]],
+      [
+        "UNDECLARED_PRIVATE_REASON",
+        403,
+        "provider_permission_denied",
+        false,
+        "Google refused the request",
+        ["UNDECLARED_PRIVATE_REASON"],
+      ],
+    ] as const;
+    const rows = googleRows.flatMap(([reason, status, code, retryable, meaning, privateValues]) =>
+      privateValues.flatMap((privateValue) =>
+        ["errors", "details", "status"].map((field) => ({
+          errors: google,
+          status,
+          body: {
+            error: { message: `Private echo: ${privateValue}`, [field]: field === "status" ? reason : [{ reason }] },
+          },
+          privateValue,
+          code,
+          retryable,
+          meaning,
+        })),
+      ),
+    );
+    for (const row of [
+      ...rows,
+      ...["lock", "timeout", "lock_timeout"].map((privateValue) => ({
+        errors: stripeErrors,
+        status: 429,
+        body: { error: { code: "lock_timeout", message: `Private echo: ${privateValue}` } },
+        privateValue,
+        code: "conflict",
+        retryable: true,
+        meaning: "lock conflict",
+      })),
+      {
+        errors: cloudflareErrors,
+        status: 400,
+        body: { errors: [{ code: 6003, message: "Private echo: 6003" }] },
+        privateValue: "6003",
+        code: "auth_required",
+        retryable: false,
+        meaning: "configured credential",
+      },
+    ]) {
+      const secrets = new SentSecrets();
+      secrets.arguments(
+        { private: row.privateValue },
+        { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+      );
+      // Exercise served errors and refusals reported in a successful envelope.
+      for (const inBand of [false, true]) {
+        answers.push(() => Response.json(row.body, { status: inBand ? 200 : row.status }));
+        const connection = connect(ACME_API, guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }), {
+          errors: row.errors,
+          safety: plainSafety!,
+          ...(inBand
+            ? { inBandRefusals: true, result: (body: unknown) => Effect.fail(status(row.status, {}, body)) }
+            : {}),
+        });
+        const result = await runEdge(
+          Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services("read", secrets))),
+        );
+        expect(result._tag).toBe("Failure");
+        if (result._tag !== "Failure") continue;
+        const mapped = toConnectorCallError(result.failure, row.errors, { classification: "read", dispatches: [] });
+        const label = `${row.errors.provider}: ${JSON.stringify(row.body)} (in-band ${inBand})`;
+        expect.soft(mapped, label).toMatchObject({ code: row.code, retryable: row.retryable });
+        expect.soft(mapped.message, label).toContain(row.meaning);
+        expect(mapped.message).not.toContain(`Private echo: ${row.privateValue}`);
+        if (row.privateValue === "UNDECLARED_PRIVATE_REASON") expect(mapped.message).not.toContain(row.privateValue);
+        expect(JSON.stringify(failureRecord({}, mapped))).not.toContain(row.privateValue);
+        if (result.failure._tag === "StatusFailure") {
+          expect(JSON.stringify(result.failure.body)).not.toContain(row.privateValue);
+          expect(Object.keys(result.failure)).not.toContain("facts");
+        }
+      }
+    }
+    for (const inBandRefusals of [false, true]) {
+      const facts = vi.fn(() => ({ reasons: ["declared"] }));
+      answers.push(() => Response.json({ reasons: ["declared"] }));
+      const connection = connect(ACME_API, guardedClient(OPTIONS), {
+        errors: { ...VENDOR, facts, factVocabulary: { reasons: ["declared"] } },
+        safety: plainSafety!,
+        result: (body) => Effect.succeed(body),
+        ...(inBandRefusals ? { inBandRefusals } : {}),
+      });
+      await runEdge(connection.send(keys, {}).pipe(Effect.provideContext(services())));
+      expect(facts).toHaveBeenCalledTimes(inBandRefusals ? 1 : 0);
+    }
     const privateSecrets = new SentSecrets();
     privateSecrets.arguments(
       { private: "paragraph" },

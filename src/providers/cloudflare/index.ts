@@ -241,6 +241,7 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
   credential: (options) => (options.auth.type === "globalApiKey" ? GLOBAL_API_KEY_CREDENTIAL : API_TOKEN_CREDENTIAL),
   authenticate,
   errors: cloudflareErrors,
+  inBandRefusals: true,
   safety,
   result,
   probe: {

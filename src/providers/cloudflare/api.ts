@@ -337,6 +337,7 @@ const authFailure = ({ status }: { status: number }) => ({
 export const cloudflareErrors: VendorErrors<CloudflareFacts> = {
   provider: "Cloudflare",
   facts: (body) => ({ codes: [...errorCodes(errorsOf(body))] }),
+  factVocabulary: { codes: [...AUTH_ERROR_CODES] },
   headers: ["cf-ray"],
   detail: ({ facts, headers, withheld, body }) => {
     const codes = facts.codes;
