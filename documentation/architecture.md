@@ -2329,6 +2329,59 @@ arguments permissively; step 2 replaces those schemas with Effect declarations.
 The bridge also forwards optional fixed write steps, which the kit snapshots
 at construction. Docs declares a create and its optional initial-text edit as
 separate steps, each sent at most once.
+
+The shared Google step-2 support is opt-in; the six legacy product surfaces
+remain pending their own migrations. `scripts/google-discovery.mjs` converts
+archived exact-byte official Discovery documents into deterministic OpenAPI.
+The primary vendored pin retains the official URL, revision and source digest;
+its `discovery` relation names the sibling source pin and normalizer format.
+Generation and offline freshness reproduce the conversion, and the generated
+module records its independent document digest. Full source method inventory
+and canonical source-to-relative-path mappings survive normalization. Gmail's
+source `userId` becomes deployment-owned `me`; runtime paths are relative to
+the existing connection root. Reserved Slides ids remain one encoded segment.
+Only safe JSON query globals enter the contract. Source bytes are contributor
+evidence and never runtime imports.
+
+An index can retain `requestSchemas`, a lazy referenced graph for complete
+request details, independently of the compact depth-bounded admission checker.
+Details attach the reachable `$defs`, preserving recursion, required fields,
+dynamic maps and parent schema metadata through the existing bounded
+continuations. This does not make the compact checker a full JSON Schema
+validator. Product admission still needs literal reviewed verdicts and
+independent batch-kind, revision and resource guards. The resolver handles
+literal-route precedence, encoded literal collisions and parameter action
+suffixes. An indexed `googleClient` requires each named request's declared
+template and refuses a substituted id resolving to another operation before
+grant evaluation. Products opt in with `googleClient(connection, title,
+{ standard: true, index })`; their requests carry `template`.
+
+`src/providers/_shared/google/hatch.ts` supplies JSON framing over the existing
+confined `Connection.sendPath`. It retains the hatch's origin/media guards,
+delegated grant, safety and field-selection pipeline. The `googlePageToken`
+adapter is separately opt-in by exact list key with `pageCursor: "argument"`.
+It treats missing/empty `nextPageToken` as terminal, rejects malformed tokens,
+and continues empty pages when a nonempty token exists. `query.fields` is a
+Google vendor mask; the adapter preserves `nextPageToken` on the wire. The
+top-level `fields` argument narrows safe result data only after paging. Omit
+`pageToken` initially and restore the signed `page.nextCursor` as `cursor`;
+the raw token in safe vendor data is not accepted as continuation input.
+For example, a direct value-mode result has outer `result.data`, the hatch's
+`result.data.page.nextCursor`, and vendor JSON at `result.data.data`:
+`call_tool({ address: "crm.forms_api_read", args: { path:
+"/forms/form_1/responses", cursor: previous.data.page.nextCursor },
+resultMode: "value" })`. This is an envelope illustration for an opted-in
+provider, not a claim that the Forms migration has shipped.
+
+`googleErrors(product, { standard: true })` declares the product's 404 meaning
+and uses common status fallbacks; revision-conflict meanings require a
+separate declaration. Standard-mode `googleClient` preserves failure phase
+metadata for partial-create recovery while leaving settlement and wording to
+the kit. Its incomplete-body wording covers JSON and binary reads without
+claiming that binary success was expected to be JSON. Legacy mode retains
+its catalog and failure bytes. No shared-core auxiliary-write outcome change
+is part of this opt-in support.
+
 Drive's two-request reads also declare fixed steps: `get_file_content` uses
 `metadata` and `content`, and non-root `list_folder_items` uses `folder` and
 `files`. These reads still send both GETs when deployment classification

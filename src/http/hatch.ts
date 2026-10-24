@@ -314,7 +314,8 @@ export function hatch(
           !adapter?.param.trim() ||
           !["query", "body"].includes(adapter.in) ||
           typeof adapter.next !== "function" ||
-          typeof adapter.decode !== "function"
+          typeof adapter.decode !== "function" ||
+          (adapter.prepareQuery !== undefined && typeof adapter.prepareQuery !== "function")
         ) {
           throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
         }
@@ -1073,9 +1074,11 @@ export function hatch(
         else body = { ...(record(body) ? body : {}), [adapter.param]: restored };
       } else if (separateCursor && supplied.length) {
         yield* checked(() => {
-          if (!adapter?.initialAnchor) invalid("This vendor continuation is accepted only as an opaque cursor.");
+          if (!adapter?.initialAnchor)
+            invalid(adapter?.cursorInputMessage ?? "This vendor continuation is accepted only as an opaque cursor.");
         });
       }
+      if (adapter?.prepareQuery) query = yield* checked(() => adapter!.prepareQuery!(query));
       const request = yield* checked((): WriteRequest | undefined => {
         refuseWithheldValues({ path, query }, name, true);
         refuseWithheldValues(body, name);

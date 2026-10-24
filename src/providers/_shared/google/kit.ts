@@ -31,6 +31,8 @@ import { providerFailureMessage, unsentAfterUnauthorized } from "../../../write-
 import { delegatedToken, forgetDelegatedToken, type DelegatedTokenRequest } from "./service-account.js";
 import { subjectFor, workspaceConnection, type GoogleWorkspaceOptions, type WorkspaceConnection } from "./workspace.js";
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
+import { googleNamedOperation } from "./hatch.js";
+import type { OperationIndex } from "../rest/operation-index.js";
 
 type Json = Record<string, unknown>;
 
@@ -93,7 +95,10 @@ const REASONS = {
  * the revision guard (the `revisionGuarded` request flag), then the status.
  * Each verdict's words are the legacy client's, so the messages stay.
  */
-export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> {
+export function googleErrors(
+  product: GoogleProduct,
+  options: { readonly standard?: boolean; readonly revisionConflicts?: boolean } = {},
+): VendorErrors<GoogleFacts> {
   const { provider, api, scopes, notFound } = product;
   const has = (facts: GoogleFacts, names: readonly string[]) => names.some((name) => facts.reasons.includes(name));
   return {
@@ -142,7 +147,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
             }
           : undefined,
       ({ status, facts, retryAfterMs }) =>
-        status === 429 || has(facts, REASONS.rateLimited)
+        (status === 429 && !options.standard) || has(facts, REASONS.rateLimited)
           ? {
               code: "rate_limited",
               retryAfterMs,
@@ -236,6 +241,41 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
       otherwise: () => ({ code: "connector_call_failed", retryable: false }),
     },
     unreadable: `${provider} returned a successful response that is not JSON.`,
+    ...(options.standard
+      ? {
+          meanings: {
+            unknownId: notFound === "absent" ? ("not_found" as const) : ("connector_call_failed" as const),
+            provesAbsence: notFound === "absent",
+            conflicts: options.revisionConflicts
+              ? ["A revision-guarded batch update returned ABORTED or FAILED_PRECONDITION with HTTP 400 or 409."]
+              : [],
+          },
+          bodyFailures: {
+            review:
+              "An incomplete Google response cannot establish the requested result, including named binary reads.",
+            statusOnly: [],
+            readFailed: `${provider}'s response could not be read completely.`,
+          },
+          statuses: {
+            401: () => ({ code: "auth_required" as const }),
+            403: () => ({
+              code: "provider_permission_denied" as const,
+              retryable: false,
+              words: (detail: string) =>
+                `${detail} The account may lack access, or a Workspace policy may block this request.`,
+            }),
+            404: () =>
+              notFound === "absent"
+                ? { code: "not_found" as const }
+                : {
+                    code: "connector_call_failed" as const,
+                    retryable: false,
+                    words: (detail: string) =>
+                      `${detail} The id is unknown or not visible to this account; Google does not distinguish them.`,
+                  },
+          },
+        }
+      : {}),
   };
 }
 
@@ -389,6 +429,8 @@ type QueryValue = string | number | boolean | readonly (string | number | boolea
 export interface GoogleRequest {
   readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
+  /** Canonical pinned template when opting a named client into index confinement. */
+  readonly template?: string;
   readonly query?: Readonly<Record<string, QueryValue>>;
   /** JSON body, serialized as the legacy transport did. */
   readonly body?: unknown;
@@ -485,7 +527,11 @@ export interface GoogleClient {
   ) => ReturnType<Connection["sendPath"]>;
 }
 
-export function googleClient(connection: Connection, provider: string): GoogleClient {
+export function googleClient(
+  connection: Connection,
+  provider: string,
+  configuration: { readonly standard?: boolean; readonly index?: OperationIndex } = {},
+): GoogleClient {
   const send = (
     request: GoogleRequest,
     accept: string,
@@ -493,6 +539,19 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
     binary = false,
   ) =>
     Effect.gen(function* () {
+      if (configuration.index) {
+        yield* Effect.try({
+          try: () => {
+            if (!request.template)
+              throw new ConnectorCallError(
+                "invalid_args",
+                "This indexed Google named request needs its declared operation template.",
+              );
+            googleNamedOperation(configuration.index!, request.method, request.path, request.template);
+          },
+          catch: (error) => new Refusal({ error: error as ConnectorCallError }),
+        });
+      }
       const active = yield* Effect.serviceOption(Operation);
       const callWrite = (yield* Classification) === "write";
       const dispatches = yield* Dispatches;
@@ -558,6 +617,23 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
     const at = (phase: GoogleOutcome["phase"], code = status) =>
       ({ dispatched, phase, ...(code === undefined ? {} : { status: code }) }) as GoogleOutcome;
     if (!dispatched) return noted(failure, { dispatched: false, phase: "before-send" });
+    if (configuration.standard) {
+      // Preserve phase evidence for partial-create recovery; settlement and
+      // reconciliation wording belong to the kit in standard mode.
+      const phase: GoogleOutcome["phase"] =
+        failure._tag === "TransportFailure"
+          ? "awaiting-response"
+          : failure._tag === "UnreadableBody" || failure._tag === "ResponseTooLarge"
+            ? "reading-body"
+            : failure._tag === "RedirectRefused" || (status !== undefined && status >= 300 && status < 400)
+              ? "redirected"
+              : status === 401
+                ? "unauthorized"
+                : status !== undefined && status >= 500
+                  ? "server-error"
+                  : "refused";
+      return noted(failure, at(phase));
+    }
     switch (failure._tag) {
       case "StatusFailure": {
         const code = failure.status;

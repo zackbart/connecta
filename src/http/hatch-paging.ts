@@ -10,6 +10,8 @@ export interface HatchPageAdapter {
   readonly initialAnchor?: boolean;
   /** Opt-in repair guidance for unsigned first-page/raw vendor continuations. */
   readonly cursorInputMessage?: string;
+  /** Preserve required protocol metadata in vendor field masks before dispatch. */
+  readonly prepareQuery?: (query: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
   /** Validate and restore a decoded cursor's vendor type before index.check. */
   readonly decode: (cursor: string | number) => string | number;
   /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor;
@@ -41,6 +43,78 @@ function integer(cursor: string | number): number {
   }
   return value;
 }
+
+/** Google list methods explicitly opt in; row count and resultSizeEstimate are irrelevant. */
+export const googlePageToken: HatchPageAdapter = {
+  param: "pageToken",
+  in: "query",
+  cursorInputMessage:
+    "Omit pageToken on the first call; pass page.nextCursor unchanged as top-level cursor thereafter.",
+  decode(cursor) {
+    if (
+      typeof cursor !== "string" ||
+      !cursor.trim() ||
+      /^[a-z][a-z0-9+.-]*:/i.test(cursor) ||
+      [...cursor].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+    )
+      throw new ConnectorCallError("invalid_args", "This paging cursor contains no valid Google page token.");
+    return cursor;
+  },
+  prepareQuery(query) {
+    const mask = query["fields"];
+    if (mask === undefined) return query;
+    // Google's field-mask grammar includes balanced nested selectors. Restrict
+    // to that grammar; no wild guessing after the vendor drops its token.
+    if (typeof mask !== "string" || !mask || !/^[A-Za-z0-9_*/(),]+$/.test(mask))
+      throw new ConnectorCallError(
+        "invalid_args",
+        "query.fields must be a Google field mask; omit it to read the full JSON response.",
+      );
+    const tokens = mask.match(/[A-Za-z_][A-Za-z0-9_]*|\*|[/(),]/g) ?? [];
+    let depth = 0,
+      name = true,
+      child = false,
+      valid = tokens.join("") === mask;
+    for (const token of tokens) {
+      if (token === "(") {
+        if (name || !child) valid = false;
+        depth++;
+        name = true;
+        child = false;
+      } else if (token === ")") {
+        if (name || depth === 0) valid = false;
+        depth--;
+        name = false;
+        child = false;
+      } else if (token === ",") {
+        if (name) valid = false;
+        name = true;
+        child = false;
+      } else if (token === "/") {
+        if (name || !child) valid = false;
+        name = true;
+        child = false;
+      } else {
+        if (!name) valid = false;
+        name = false;
+        child = true;
+      }
+    }
+    if (!valid || name || depth !== 0)
+      throw new ConnectorCallError("invalid_args", "query.fields has invalid selectors.");
+    return { ...query, fields: `${mask},nextPageToken` };
+  },
+  next(data) {
+    const token = record(data)["nextPageToken"];
+    if (token === undefined || token === "") return null;
+    if (typeof token !== "string") return bad();
+    try {
+      return googlePageToken.decode(token);
+    } catch {
+      return bad();
+    }
+  },
+};
 
 /** Stripe forward lists: never infer another page from a full result. */
 export const stripePage: HatchPageAdapter = {

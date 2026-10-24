@@ -33,7 +33,7 @@ import {
 import { workspaceConnection, type GoogleWorkspaceSubject } from "../src/providers/_shared/google/workspace.js";
 import { DRIVE, DriveApi, driveClient, result as driveResult } from "../src/providers/drive/api.js";
 import { guardedClient } from "../src/http/client.js";
-import { toConnectorCallError, type HttpFailure } from "../src/http/errors.js";
+import { StatusFailure, UnreadableBody, toConnectorCallError, type HttpFailure } from "../src/http/errors.js";
 import { bearer, Grant, refreshOnce } from "../src/http/oauth.js";
 import { resultSafety } from "../src/http/safety.js";
 import {
@@ -1937,6 +1937,36 @@ describe("API refusals map by Google's reason codes", () => {
   });
 
   it("maps either rate-limit reason to rate_limited, whatever the status", NODE, async () => {
+    const standard = googleErrors({ ...DRIVE, notFound: "ambiguous" }, { standard: true, revisionConflicts: true });
+    const map = { classification: "read" as const, dispatches: [] };
+    expect(standard.meanings).toMatchObject({ unknownId: "connector_call_failed", provesAbsence: false });
+    expect(standard.bodyFailures?.statusOnly).toEqual([]);
+    expect(toConnectorCallError(new UnreadableBody({ readFailed: true }), standard, map).message).toBe(
+      "Google Drive's response could not be read completely.",
+    );
+    for (const [status, code] of [
+      [400, "invalid_args"],
+      [422, "invalid_args"],
+      [429, "rate_limited"],
+      [500, "unavailable"],
+      [404, "connector_call_failed"],
+    ] as const) {
+      const error = toConnectorCallError(
+        new StatusFailure({
+          status,
+          headers: new Headers(),
+          body: undefined,
+          operation: { method: "GET", template: "/files/:id" },
+        }),
+        standard,
+        map,
+      );
+      expect(error.code).toBe(code);
+      expect(error.message).toContain(`Google Drive returned HTTP ${status}.`);
+    }
+    const gmailStandard = googleErrors({ ...DRIVE, provider: "Gmail", notFound: "absent" }, { standard: true });
+    expect(gmailStandard.meanings).toMatchObject({ unknownId: "not_found", provesAbsence: true, conflicts: [] });
+
     for (const reason of ["rateLimitExceeded", "userRateLimitExceeded"]) {
       const failure = await apiFailure(403, { message: "Rate Limit Exceeded", errors: [{ reason }] });
       expect(failure.code).toBe("rate_limited");
