@@ -1,3 +1,4 @@
+import { ConnectorCallError } from "../../../errors.js";
 export type JsonRecord = Record<string, any>;
 export type Query = Record<string, string | number | boolean | undefined>;
 
@@ -93,14 +94,22 @@ export interface Page {
 }
 
 /** One branchable signal: `meta.next.offset`, Planning Center's own cursor. */
-export function pageOf(document: JsonRecord): Page {
+export function pageOf(document: JsonRecord, offset = 0): Page {
   const meta = asRecord(document["meta"]);
   const next = asRecord(meta["next"])["offset"];
-  const nextOffset = typeof next === "number" && Number.isInteger(next) ? next : null;
   const total = meta["total_count"];
+  if (
+    (meta["next"] != null && (next === undefined || !Number.isSafeInteger(next) || next <= offset)) ||
+    (total !== undefined && (!Number.isSafeInteger(total) || total < 0))
+  ) {
+    throw new ConnectorCallError("connector_call_failed", "Planning Center returned invalid paging metadata.", {
+      retryable: false,
+    });
+  }
+  const nextOffset = next === undefined ? null : (next as number);
   return {
     hasMore: nextOffset !== null,
     nextOffset,
-    totalCount: typeof total === "number" ? total : null,
+    totalCount: total === undefined ? null : (total as number),
   };
 }

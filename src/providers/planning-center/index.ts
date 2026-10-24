@@ -5,6 +5,8 @@ import { defineApiProvider } from "../../http/provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   PlanningCenterApi,
+  PLANNING_CENTER_APPS,
+  PLANNING_CENTER_API_VERSIONS,
   PLANNING_CENTER_API_BASE_URL,
   MAX_PAGE_SIZE,
   DEFAULT_PAGE_SIZE,
@@ -17,10 +19,16 @@ import {
   transport,
   probe,
   APP_TITLES,
+  PCO_PREFIX,
+  PCO_INDEX,
+  PCO_VERDICTS,
+  PCO_NAMED,
+  PCO_PAGES,
+  pcoBinding,
 } from "./api.js";
 import type { PlanningCenterExcludableApp } from "./lib/constants.js";
 import { planningCenterTools } from "./tools.js";
-import { series, DESCRIBED_APPS, usageGuide, excludedApps } from "./lib/guide.js";
+import { series, DESCRIBED_APPS, excludedApps } from "./lib/guide.js";
 export { PLANNING_CENTER_API_BASE_URL, PLANNING_CENTER_APPS, PLANNING_CENTER_API_VERSIONS } from "./lib/constants.js";
 export type { PlanningCenterApp, PlanningCenterExcludableApp } from "./lib/constants.js";
 export interface PlanningCenterOptions {
@@ -80,14 +88,14 @@ const PLANNING_CENTER_OPTIONS = optionsOf<PlanningCenterOptions>()({
   ...keys("userAgent", "defaultPageSize", "excludeApps", "baseUrl"),
 });
 
-/** Planning Center step 1: the provider kit preserves the existing authored surface. */
+/** Planning Center over the reviewed product pins and standard agent surface. */
 export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   name: "planning-center",
   title: "Planning Center",
   readme: "Planning Center",
   bundle: {
-    baselineGzip: 336325,
-    note: "./providers/planning-center measures 336,325 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 635569,
+    note: "./providers/planning-center initial step-2 baseline is 635,569 B gzip, versus 349,553 B on main 8e92eed9 (+286,016 B), Node 22.23.3 with system zlib. The ten products now index 1,752 operations after omitting one empty-path artifact. Review attributes about 263 KB gzip to the index, mostly repeated where[] rows; lossless shared compaction is deferred. Reviewed safety and standard discovery remain. The shared Effect kit is paid once per deployment; provider entries are reported, not capped, and sizes are not additive (#899).",
   },
   skill,
   options: PLANNING_CENTER_OPTIONS,
@@ -99,15 +107,53 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
   defaultCallAdmission: PLANNING_CENTER_ADMISSION,
   transport,
+  idempotencyKey: false,
   credential: CREDENTIAL,
   authenticate,
   errors,
   safety: () => safety,
   probe,
+  blocks: {
+    keys: [...PLANNING_CENTER_APPS, "lists", "limited"],
+    select: (options) => [
+      ...PLANNING_CENTER_APPS.filter((app) => !excludedApps(options.excludeApps).has(app)),
+      excludedApps(options.excludeApps).size === 0 ? "lists" : "limited",
+    ],
+  },
   guide: (options) => ({
-    content: usageGuide(options.purpose.trim(), options.instructions, excludedApps(options.excludeApps), skill),
-    summary:
-      "Person ids join every product, offset paging, per-product write limits, JSON:API hatches, pinned versions.",
+    heading: "Planning Center usage",
+    summary: "People ids join products; Groups leaders, Services plans and schedules, local dates, seconds and cents.",
+    required: true,
+    context: [
+      `Purpose: ${options.purpose.trim()}`,
+      `Reachable products: ${PLANNING_CENTER_APPS.filter(
+        (app) => app !== "api" && !excludedApps(options.excludeApps).has(app),
+      )
+        .map((app) => APP_TITLES[app])
+        .join(", ")}.`,
+      `API pins: ${PLANNING_CENTER_APPS.filter((app) => !excludedApps(options.excludeApps).has(app))
+        .map((app) => `${app} ${PLANNING_CENTER_API_VERSIONS[app]}`)
+        .join(", ")}.`,
+      ...(options.readOnly === true ? ["This connection is read-only; writes are refused."] : []),
+      ...(options.defaultPageSize === undefined
+        ? []
+        : [`This connection's default list limit is ${options.defaultPageSize}.`]),
+      "Stored credentials and private calendar access codes are permanently withheld.",
+    ],
   }),
+  hatch: {
+    name: PCO_PREFIX,
+    title: "Planning Center",
+    index: PCO_INDEX,
+    verdicts: PCO_VERDICTS,
+    named: PCO_NAMED,
+    pages: PCO_PAGES,
+    binding: pcoBinding,
+    pathExample: "/people/v2/people/123",
+    notes: () => ({
+      read: "JSON:API records retain data, included and meta; named reads resolve common joins.",
+      write: "Bodies are JSON:API documents, not flat attributes.",
+    }),
+  },
   tools: planningCenterTools,
 });

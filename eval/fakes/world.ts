@@ -3,6 +3,7 @@
  * ledger and one clock, started fresh and thrown away afterwards.
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
+import { FakePlanningCenter, planningCenterState } from "./planning-center.js";
 import { FakeOverflow, overflowState } from "./overflow.js";
 import { FakeBreeze, breezeState } from "./breeze.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
@@ -45,7 +46,7 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor | "tithely" | "breeze" | "overflow";
+  rest?: RestVendor | "tithely" | "breeze" | "planning-center" | "overflow";
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
@@ -53,6 +54,7 @@ export interface ConnectorSpec {
 export interface WorldOptions {
   restVendor?: RestVendor;
   breeze?: { fault?: "update-500" };
+  planningCenter?: { fault?: "update-500" };
   overflow?: { fault?: "update-500" };
   /** A Tithe.ly giving world, with an optional injected fault. */
   tithely?: { fault?: TithelyFault };
@@ -82,8 +84,9 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 
 export class World {
   readonly rest = restState();
-  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze | FakeOverflow> = [];
+  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze | FakePlanningCenter | FakeOverflow> = [];
   readonly breeze = breezeState();
+  readonly pco = planningCenterState();
   readonly overflow = overflowState();
   readonly tithely = tithelyState();
   readonly now = Date.now();
@@ -122,6 +125,8 @@ export class World {
     if (options.tithely)
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
     if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
+    if (options.planningCenter)
+      this.restServices = [new FakePlanningCenter("pco", this.ledger, this.pco, options.planningCenter.fault)];
     if (options.overflow)
       this.restServices = [new FakeOverflow("overflow", this.ledger, this.overflow, options.overflow.fault)];
     this.tracker = trackerState(this.now);
@@ -159,7 +164,13 @@ export class World {
   }
 
   connectorSpecs(): ConnectorSpec[] {
-    if (this.options.restVendor || this.options.tithely || this.options.breeze || this.options.overflow)
+    if (
+      this.options.restVendor ||
+      this.options.tithely ||
+      this.options.breeze ||
+      this.options.planningCenter ||
+      this.options.overflow
+    )
       return this.restServices.map((service) => ({
         id: service.name,
         title: service.name,

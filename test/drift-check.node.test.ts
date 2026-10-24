@@ -8,7 +8,12 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { contractDigest } from "../scripts/drift-contract.mjs";
-import { checkView, supplementalDocument } from "../scripts/drift-validate.mjs";
+import {
+  checkView,
+  supplementalDocument,
+  validOpenApiComposition,
+  validSupplementalPin,
+} from "../scripts/drift-validate.mjs";
 // Hosted reviewed names and endpoints are vendor evidence, independent of runtime modules.
 const providerDirectory = fileURLToPath(new URL("../src/providers", import.meta.url));
 async function driftRecord(provider: string, directory = providerDirectory): Promise<any> {
@@ -580,6 +585,7 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
     const folderEntry = join(providerDirectory, "planning-center", "index.ts");
     const source = existsSync(folderEntry) ? folderEntry : join(providerDirectory, "planning-center.ts");
     const { PLANNING_CENTER_API_VERSIONS, planningCenter } = await import(pathToFileURL(source).href);
+    const { PCO_INDEX } = await import("../src/providers/planning-center/api.js");
     const { memoryStorage } = await import("../src/storage/memory.js");
     const { silentLogger } = await import("./helpers.js");
     const manifest = JSON.parse(
@@ -592,6 +598,10 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
       expect(entry.url).toBe(`https://api.planningcenteronline.com/${app}/v2/open_api/${entry.version}`);
       expect(entry.documentation).toBe(`https://api.planningcenteronline.com/${app}/v2/documentation`);
     }
+    const operation = (endpoint: Pick<Endpoint, "method" | "path">) => `${endpoint.method} ${endpoint.path}`;
+    // The manifest now covers the whole hatch index, including operations
+    // whose convenience wrappers were retired. Keep exact coverage both ways.
+    expect(manifest.endpoints.map(operation).sort()).toEqual(PCO_INDEX.ops.map(operation).sort());
 
     const { installOwnedTransport } = await import("./fixtures/owned-transport.js");
     const transport = installOwnedTransport();
@@ -602,8 +612,17 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
     const sent = new Set<string>();
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
-      sent.add(`${init.method ?? "GET"} ${new URL(String(input)).pathname}`);
-      return new Response(JSON.stringify({ data: { type: "Thing", id: "1", attributes: {} } }), { status: 200 });
+      const path = new URL(String(input)).pathname;
+      const method = init.method ?? "GET";
+      sent.add(`${method} ${path}`);
+      const app = path.split("/")[1] as keyof typeof PLANNING_CENTER_API_VERSIONS;
+      expect(new Headers(init.headers).get("X-PCO-API-Version")).toBe(PLANNING_CENTER_API_VERSIONS[app]);
+      const row = { type: "Thing", id: "1", attributes: {} };
+      const single =
+        method !== "GET" ||
+        /^\/people\/v2\/(?:me|people\/[^/]+)$/.test(path) ||
+        /^\/services\/v2\/service_types\/[^/]+\/plans\/[^/]+$/.test(path);
+      return Response.json({ data: single ? row : [row], meta: { total_count: 1 } });
     }) as typeof fetch;
     try {
       const connector = planningCenter("pco", { purpose: "manifest coverage" });
@@ -645,14 +664,8 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
               : [minimal(schema)];
         for (const args of variants) await connector.callTool(tool.name, args, ctx);
       }
-      // The optional ids that switch a list to a nested collection.
-      for (const [tool, args] of [
-        ["list_donations", { personId: "1" }],
-        ["list_group_events", { groupId: "1" }],
-        ["list_check_ins", { eventId: "1" }],
-      ] as const) {
-        await connector.callTool(tool, args, ctx);
-      }
+      // The retained named list's optional person id selects a nested collection.
+      await connector.callTool("list_donations", { personId: "1" }, ctx);
     } finally {
       transport.restore();
       globalThis.fetch = realFetch;
@@ -664,11 +677,6 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
     expect([...sent].filter((request) => !manifest.endpoints.some((endpoint) => matches(request, endpoint)))).toEqual(
       [],
     );
-    expect(
-      manifest.endpoints
-        .filter((endpoint) => ![...sent].some((request) => matches(request, endpoint)))
-        .map((endpoint) => `${endpoint.method} ${endpoint.path}`),
-    ).toEqual([]);
   });
 });
 
@@ -721,8 +729,23 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
         expect(["endpoints", "versioned-endpoints", "manual", "openapi-index"]).toContain(check.type);
         if (check.type === "openapi-index") {
           const source = JSON.parse(await readFile(join(providerDirectory, provider, check.source), "utf8"));
-          expect(source.url).toMatch(/^https:\/\//);
-          expect(source.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+          const pins = [];
+          if ("documents" in source) {
+            expect(validOpenApiComposition(source)).toBe(true);
+            const directory = join(providerDirectory, provider, check.source, "..");
+            for (const entry of source.documents) {
+              const pin = JSON.parse(await readFile(join(directory, entry.pin), "utf8"));
+              expect(validSupplementalPin(pin)).toBe(true);
+              const document = supplementalDocument(entry.pin)!;
+              const bytes = await readFile(join(directory, document));
+              expect(pin.digest).toBe(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);
+              pins.push(pin);
+            }
+          } else pins.push(source);
+          for (const pin of pins) {
+            expect(pin.url).toMatch(/^https:\/\//);
+            expect(pin.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+          }
           expect(existsSync(join(providerDirectory, provider, "openapi.generated.ts"))).toBe(true);
         }
         if (check.type === "endpoints" || check.type === "versioned-endpoints") {

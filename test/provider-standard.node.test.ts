@@ -232,6 +232,32 @@ describe("the provider standard's rules", () => {
         rule,
       ).toBe(true);
     }
+    const base = standard();
+    const source = { revision: "alpha@1", documents: [{ pin: "alpha.json", prefix: "/alpha/v2" }] };
+    const extra: Record<string, string> = {
+      "evidence/openapi.json": JSON.stringify(source),
+      "evidence/alpha.json": JSON.stringify({
+        url: "https://vendor.example/alpha",
+        documentation: "https://vendor.example/docs",
+        vendored: true,
+        digest: DIGEST,
+      }),
+      "evidence/alpha.document.json": "{}",
+    };
+    const drift = JSON.parse(base.read("drift.json")!);
+    drift.generated.evidence["alpha.json"] = DIGEST;
+    drift.generated.evidence["alpha.document.json"] = DIGEST;
+    extra["drift.json"] = JSON.stringify(drift);
+    const composed = {
+      ...base,
+      files: [...new Set([...base.files, ...Object.keys(extra)])],
+      read: (path: string) => extra[path] ?? base.read(path),
+    };
+    expect(evidenceViolations(composed, today)).toEqual([]);
+    for (const pin of ["../alpha.json", "openapi.json"]) {
+      extra["evidence/openapi.json"] = JSON.stringify({ ...source, documents: [{ pin, prefix: "/alpha/v2" }] });
+      expect(evidenceViolations(composed, today)).toContainEqual(expect.stringContaining("E3: evidence/openapi.json"));
+    }
   });
 
   it("holds when-blocks to declared keys on their own lines", () => {

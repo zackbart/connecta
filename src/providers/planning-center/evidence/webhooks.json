@@ -1,0 +1,7 @@
+{
+  "url": "https://api.planningcenteronline.com/webhooks/v2/open_api/2022-10-20",
+  "documentation": "https://developer.planning.center/docs/#/webhooks/2022-10-20",
+  "revision": "2022-10-20",
+  "digest": "sha256:2d7629aaef4e29ebdda98280806af295c11d111331b82a8dbf892ccf6d1faf1c",
+  "vendored": true
+}

@@ -1,0 +1,7 @@
+{
+  "url": "https://api.planningcenteronline.com/groups/v2/open_api/2023-07-10",
+  "documentation": "https://developer.planning.center/docs/#/groups/2023-07-10",
+  "revision": "2023-07-10",
+  "digest": "sha256:c3fccd1d23fe0dd8d192c371b4cce16abb0b391717d4077e91c4c7ffba31d544",
+  "vendored": true
+}

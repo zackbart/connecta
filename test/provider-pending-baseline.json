@@ -1,16 +1,4 @@
 {
   "step1": [],
-  "step2": [
-    "ccb",
-    "cloudflare",
-    "docs",
-    "drive",
-    "forms",
-    "github",
-    "gmail",
-    "planning-center",
-    "sheets",
-    "slides",
-    "vercel"
-  ]
+  "step2": ["ccb", "cloudflare", "docs", "drive", "forms", "github", "gmail", "sheets", "slides", "vercel"]
 }

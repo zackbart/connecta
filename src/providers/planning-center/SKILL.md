@@ -1,160 +1,155 @@
 ---
 {
   "name": "planning-center",
-  "instructionsHeading": "Organization instructions",
-  "content": "published"
+  "instructionsHeading": "Organization instructions"
 }
 ---
 
-<!-- fragment: heading -->
-# Planning Center usage
-
-Planning Center Online church management — <!-- endfragment -->
-
-<!-- fragment: purpose -->
- — for: <!-- endfragment -->
-
-<!-- fragment: identity -->
-
-
 ## Identity first
 
-- A person id is the join key across every product: the id `search_people` returns is the person id (`personId` argument, `person_id` field) for <!-- endfragment -->
+A People person id joins records across products. Resolve people by identity,
+then join on `person_id`; names can repeat. A membership, scheduled person,
+workflow card and person each have their own record id.
 
-<!-- fragment: conventions -->
-. Resolve ids with list tools; never guess one.
-- A person id that used to resolve and now answers `not_found` was most likely merged. Read `/people/v2/person_mergers` with `where[person_to_remove_id]` and follow `person_to_keep_id`.
-- `get_me` names the user this token acts as. Every read and write runs with that user's permissions, product by product; a `provider_permission_denied` means an administrator must grant that user access to the product or record.
+`get_me` identifies the token's user and the organization's time zone. Bare
+dates mean the organization's local day; use a timestamp with an offset for
+an exact boundary. Name filters are exact unless their value ends in `%`.
 
-## Results and paging
+An old person id may have been merged. Read `/people/v2/person_mergers` with
+`where[person_to_remove_id]`, follow `person_to_keep_id`, then read that profile.
+An empty history does not establish that a person was merged.
 
-- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the JSON:API resources as sent, and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
-- Lists page by offset: `perPage` up to 100, then pass `page.nextOffset` back as `offset` while `page.hasMore` is true. `page.totalCount` answers "how many" without paging — request `perPage: 1`.
-- A bare date in a date filter is the organization's local day; pass a full timestamp for exact bounds. Name filters are exact; end one with `%` for a prefix match.
-<!-- endfragment -->
+Reduce pastoral information inside `execute_code` and return aggregates unless
+the task needs named people. A named projection omits some safe vendor fields;
+read the indexed record when the task needs those fields.
 
-<!-- fragment: plans -->
-- `get_plan` fetches the plan, its items, and its team in one call and sets `itemsTruncated`/`teamMembersTruncated` past 100 rows; page the rest with `pco_api_get`.
-<!-- endfragment -->
+<!-- when: people -->
+## People and follow-up
 
-<!-- fragment: writes -->
+Resolve a person before changing their profile. An omitted attribute leaves
+the current value alone; `null` clears it. Archiving a person is reversible;
+deleting a profile is permanent.
 
-## What each product lets the API write
+Workflow cards join people to a workflow and its ordered steps. Resolve both
+the card id and its person id before acting on a card. Snoozing needs a duration;
+promoting a card completes its step, while skipping moves on without completing
+it. A workflow card note and a profile note are different records. Profile note
+categories can notify their subscribers.
 
-<!-- endfragment -->
+Custom field values need their field-definition records to supply names and
+data types. Form answers similarly join submissions, values and fields; the
+API cannot submit a form on someone's behalf.
+<!-- end -->
 
-<!-- fragment: people -->
-- People: full read/write. `update_person` with `status: inactive` archives reversibly; a DELETE is permanent and only reachable through `pco_api_mutate`. `run_list` can fire list automations.
-<!-- endfragment -->
+<!-- when: lists -->
+Saved People lists are live cross-product queries. Their results are only as
+fresh as their last refresh. Refreshing a list can fire its automations, such
+as adding a person to a workflow, and is a write even when the task is a count.
+<!-- end -->
 
-<!-- fragment: people_without_lists -->
-- People: full read/write, except lists. `update_person` with `status: inactive` archives reversibly; a DELETE is permanent and only reachable through `pco_api_mutate`.
-<!-- endfragment -->
+<!-- when: services -->
+## Services plans and schedules
 
-<!-- fragment: services -->
-- Services: full read/write. A plan's dates come from its plan times. Scheduling needs a team.
-<!-- endfragment -->
+Resolve the service type before finding a dated plan. Plan times define the
+service dates. `get_plan` combines the plan, order of service and scheduled
+team; a cut section can be read through its indexed items or team-members path.
+Item durations are seconds, so divide by 60 when reporting minutes.
 
-<!-- fragment: groups -->
-- Groups: memberships and group settings are writable; groups cannot be created, and events and attendance are read-only.
-<!-- endfragment -->
+Scheduling needs a team and may need a position. `C` means confirmed, `U`
+unconfirmed and `D` declined. Preparing a notification and sending it are
+different actions. A song item's identity comes from its song and arrangement;
+musical keys are not credentials. Services cannot upload a file through this
+connection.
+<!-- end -->
 
-<!-- fragment: check_ins_registrations -->
-- Check-Ins and Registrations: read-only. Nobody can be checked in or registered through the API.
-<!-- endfragment -->
+<!-- when: groups -->
+## Groups membership joins
 
-<!-- fragment: check_ins -->
-- Check-Ins: read-only. Nobody can be checked in through the API.
-<!-- endfragment -->
+Use a group's membership records to distinguish leaders from members. On this
+API version memberships carry no person attributes; `include=person` supplies
+names, and the related person id supplies contact details and other product
+records. The API can change memberships and group settings, but cannot create
+a group, create a meeting or record group attendance.
+<!-- end -->
 
-<!-- fragment: registrations -->
-- Registrations: read-only. Nobody can be registered through the API.
-<!-- endfragment -->
+<!-- when: check-ins -->
+## Check-Ins occurrences
 
-<!-- fragment: calendar -->
-- Calendar: events, instances, and times are read-only; tags, resources, rooms, and folders are writable through `pco_api_mutate`.
-<!-- endfragment -->
+An event is recurring; its event period is a dated occurrence. Period counts
+are the efficient attendance answer. Individual check-ins join a person to a
+period, and date filtering uses the period's start, not the check-in's creation
+time. The API cannot check anyone in or out.
+<!-- end -->
 
-<!-- fragment: giving -->
-- Giving: the named tools only read, amounts in integer cents. Creating or editing donations, refunds, and committing a batch move money and go through `pco_api_mutate`.
-<!-- endfragment -->
+<!-- when: calendar -->
+## Calendar occurrences
 
-<!-- fragment: publishing_api -->
-- Publishing and the `api` product (organization, OAuth applications, personal access tokens) have no named tools; use the hatches.
-<!-- endfragment -->
+Event instances expand recurrence into occurrences. A booking can return a
+`BookedEvent` stub when the user lacks access to its event. Events, instances
+and times are read-only; tags, resources, rooms and folders have write APIs.
+<!-- end -->
 
-<!-- fragment: publishing -->
-- Publishing has no named tools; use the hatches.
-<!-- endfragment -->
+<!-- when: registrations -->
+## Registrations
 
-<!-- fragment: api -->
-- The `api` product (organization, OAuth applications, personal access tokens) has no named tools; use the hatches.
-<!-- endfragment -->
+A signup describes a registration event. Its attendee records join back to
+People and distinguish active, waitlisted and canceled attendees. This API
+cannot register someone.
+<!-- end -->
 
-<!-- fragment: hatches -->
+<!-- when: giving -->
+## Giving amounts and donor joins
 
-## The hatches
+Amounts are integer cents with an explicit currency. A donation's designations
+allocate it across funds; do not count a donation once per designation. Join
+donors by person id and funds by fund id. Recurring schedules and the donations
+they produce are different records. Creating/editing a donation, refunding it
+or committing a batch changes financial records; named giving tools only read.
+<!-- end -->
 
-- `pco_api_get` reaches any GET; `pco_api_mutate` any POST, PATCH, or DELETE, always approval-gated. Paths start `/<app>/v2`, exactly as Planning Center documents them; the connector owns host, auth, content type, and the `X-PCO-API-Version` header.
-- Bodies are JSON:API documents: `{"data":{"type":"Email","attributes":{...}}}`. `null` clears an attribute; an omitted key is left alone.
-- Credentials never come back from any tool: a webhook subscription's signing secret (`authenticity_secret`, also in a create or `rotate_secret` reply) and an organization `secret`. An operator reads them in Planning Center.
-- Each product is pinned to a reviewed API version: <!-- endfragment -->
+<!-- when: publishing -->
+## Publishing
 
-<!-- fragment: pins -->
-. Pass `version` only for an endpoint those versions lack.
-- Query parameters are name/value pairs with literal brackets: `where[status]`, `include`, `order`, `filter`, `fields[Person]`. Every list response's `meta` names the `can_query_by`, `can_order_by`, and `can_include` values for that endpoint; an unknown `where` key is ignored rather than refused.
-- File uploads go to a separate host (upload.planningcenteronline.com), which this connection does not reach.
-<!-- endfragment -->
+Episodes, channels and resources are available through the indexed API. A public
+Church Center link and a media resource are different things; use the record
+the task asks for. Signed download URL generation is refused because the
+private link would remain withheld.
+<!-- end -->
 
-<!-- fragment: disabled -->
-- This deployment disables some products, and the hatches refuse their paths before sending. While any product is disabled they also refuse People lists, list results, rules, and conditions, by path or `include`, because a list's conditions can draw on any product; webhook event and delivery payloads; and any change to an existing webhook subscription, whose id does not name its product. A new subscription must name a reachable product's event.
-<!-- endfragment -->
+<!-- when: webhooks -->
+## Webhooks
 
-<!-- fragment: limits -->
+A subscription names an event and callback destination. Signing keys, private
+download destinations and opaque event/delivery payloads or headers remain
+withheld. Status and event metadata are available for audits.
+Webhook signing-key rotation is refused: the new credential cannot be returned
+or installed on the receiver through this connection.
+<!-- end -->
 
-## Rate limits
+<!-- when: api -->
+## Organization API
 
-Planning Center allows 100 requests per 20 seconds per user, shared by every integration running as that user. This connection admits 100 calls per 20 seconds, five at a time, per runtime — an approximation, not a guarantee. A `rate_limited` failure carries Planning Center's wait. Filter server-side and use `totalCount` rather than paging to count.
-<!-- endfragment -->
+The organization API includes application metadata and personal-access-token
+inventory. Inventory records describe tokens; they do not return their values.
+Revoking a token is a write and may interrupt another integration, including
+this connection if its own token is revoked.
+<!-- end -->
 
-<!-- fragment: published -->
-# Planning Center usage
+<!-- when: limited -->
+## Product boundary
 
-Planning Center Online church management — People, Services, Groups, Check-Ins, Calendar, Registrations, Giving, Publishing, Webhooks.
+Some products are unavailable on this connection. People lists and their rules
+are unavailable because they can query another product. Webhook payloads and
+changes to existing subscriptions are unavailable because their ids do not name
+their product. A new subscription must name a reachable product's event.
 
-## Identity first
+Stored workflow cards, notes, custom fields and form answers remain readable
+when reachable: staff or automations may have copied information into them.
+The connection does not infer the provenance of those stored records.
+<!-- end -->
 
-- A person id is the join key across every product: the id `search_people` returns is the person id (`personId` argument, `person_id` field) for Services schedules, Groups memberships, Giving donations, and Check-Ins. Resolve ids with list tools; never guess one.
-- A person id that used to resolve and now answers `not_found` was most likely merged. Read `/people/v2/person_mergers` with `where[person_to_remove_id]` and follow `person_to_keep_id`.
-- `get_me` names the user this token acts as. Every read and write runs with that user's permissions, product by product; a `provider_permission_denied` means an administrator must grant that user access to the product or record.
+## Not available
 
-## Results and paging
-
-- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the JSON:API resources as sent, and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
-- Lists page by offset: `perPage` up to 100, then pass `page.nextOffset` back as `offset` while `page.hasMore` is true. `page.totalCount` answers "how many" without paging — request `perPage: 1`.
-- A bare date in a date filter is the organization's local day; pass a full timestamp for exact bounds. Name filters are exact; end one with `%` for a prefix match.
-- `get_plan` fetches the plan, its items, and its team in one call and sets `itemsTruncated`/`teamMembersTruncated` past 100 rows; page the rest with `pco_api_get`.
-
-## What each product lets the API write
-
-- People: full read/write. `update_person` with `status: inactive` archives reversibly; a DELETE is permanent and only reachable through `pco_api_mutate`. `run_list` can fire list automations.
-- Services: full read/write. A plan's dates come from its plan times. Scheduling needs a team.
-- Groups: memberships and group settings are writable; groups cannot be created, and events and attendance are read-only.
-- Check-Ins and Registrations: read-only. Nobody can be checked in or registered through the API.
-- Calendar: events, instances, and times are read-only; tags, resources, rooms, and folders are writable through `pco_api_mutate`.
-- Giving: the named tools only read, amounts in integer cents. Creating or editing donations, refunds, and committing a batch move money and go through `pco_api_mutate`.
-- Publishing and the `api` product (organization, OAuth applications, personal access tokens) have no named tools; use the hatches.
-
-## The hatches
-
-- `pco_api_get` reaches any GET; `pco_api_mutate` any POST, PATCH, or DELETE, always approval-gated. Paths start `/<app>/v2`, exactly as Planning Center documents them; the connector owns host, auth, content type, and the `X-PCO-API-Version` header.
-- Bodies are JSON:API documents: `{"data":{"type":"Email","attributes":{...}}}`. `null` clears an attribute; an omitted key is left alone.
-- Credentials never come back from any tool: a webhook subscription's signing secret (`authenticity_secret`, also in a create or `rotate_secret` reply) and an organization `secret`. An operator reads them in Planning Center.
-- Each product is pinned to a reviewed API version: people 2026-06-04, services 2018-11-01, groups 2023-07-10, check-ins 2025-05-28, calendar 2026-06-22, registrations 2025-05-01, giving 2019-10-18, publishing 2024-03-25, webhooks 2022-10-20, api 2026-09-24. Pass `version` only for an endpoint those versions lack.
-- Query parameters are name/value pairs with literal brackets: `where[status]`, `include`, `order`, `filter`, `fields[Person]`. Every list response's `meta` names the `can_query_by`, `can_order_by`, and `can_include` values for that endpoint; an unknown `where` key is ignored rather than refused.
-- File uploads go to a separate host (upload.planningcenteronline.com), which this connection does not reach.
-
-## Rate limits
-
-Planning Center allows 100 requests per 20 seconds per user, shared by every integration running as that user. This connection admits 100 calls per 20 seconds, five at a time, per runtime — an approximation, not a guarantee. A `rate_limited` failure carries Planning Center's wait. Filter server-side and use `totalCount` rather than paging to count.
-<!-- endfragment -->
+Only reviewed product versions and indexed operations are callable. File
+uploads use a separate host this connection does not reach. Credentials and
+private calendar access codes cannot be recovered through a tool.

@@ -1,0 +1,7 @@
+{
+  "url": "https://api.planningcenteronline.com/giving/v2/open_api/2019-10-18",
+  "documentation": "https://developer.planning.center/docs/#/giving/2019-10-18",
+  "revision": "2019-10-18",
+  "digest": "sha256:d354e9cc0d1832b8c1e0878c80c4e95d081cc6f39127db3b43a6590af7a47a56",
+  "vendored": true
+}

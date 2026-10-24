@@ -1,0 +1,7 @@
+{
+  "url": "https://api.planningcenteronline.com/people/v2/open_api/2026-06-04",
+  "documentation": "https://developer.planning.center/docs/#/people/2026-06-04",
+  "revision": "2026-06-04",
+  "digest": "sha256:de07f847e8f76dfea589e8c2345853c2e1a0d2ccd457716bd3abd29eb835063f",
+  "vendored": true
+}

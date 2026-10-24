@@ -57,7 +57,7 @@ async function planningCenterWrite(baseUrl: string, args: Record<string, unknown
     const result = await new InvocationService(
       registry,
       new CatalogService(registry, "https://connecta.example"),
-    ).invoke("pco.pco_api_mutate", args, { source: "call_destructive_tool" });
+    ).invoke("pco.pco_api_write", args, { source: "call_destructive_tool" });
     if (result.ok) throw new Error("expected the write to fail");
     return {
       error: result.error,

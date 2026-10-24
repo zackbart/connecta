@@ -7,6 +7,68 @@ roster](./integrating.md#add-or-remove-a-connector) covers the general
 procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
+## Planning Center
+
+`planningCenter()` connects one organization's reviewed product APIs.
+
+```ts
+import { planningCenter } from "@zackbart/connecta/providers/planning-center";
+
+const crm = planningCenter("crm", {
+  purpose: "Staff follow-up, groups and service planning",
+  excludeApps: ["giving"],
+});
+```
+
+**Credential.** Create a Personal Access Token in Planning Center's API
+applications dashboard as a user whose product permissions match this
+connection's purpose. Enter its Application ID and Secret in the operator UI.
+The credential test reads `/people/v2/me` with the organization included.
+A missing or malformed pair is refused before transport. Personal auth ownership
+is available with `authScope: "personal"`; agents use shared credentials.
+
+**Options and boundaries.** `readOnly: true` omits and refuses writes.
+`defaultPageSize` sets the named lists' default limit (25 normally, at most 100).
+`userAgent` identifies the deployment and a contact; a nonempty single line is
+required. `baseUrl` is an HTTPS proxy override, or HTTP on loopback for tests.
+The connector supplies each product's reviewed `X-PCO-API-Version`; tool calls
+cannot override it.
+
+`excludeApps` removes product endpoints and named tools. People cannot be
+excluded because its identities join other products and its me endpoint tests
+the token. While any product is excluded, People lists/results/rules/conditions
+are also refused by path or include: a saved list can query another product.
+Webhook event/delivery payloads and changes to existing subscriptions are
+refused because their ids do not name a product. A new subscription must name
+a reachable product's event. Paths must be literal while exclusions apply:
+no traversal, ambiguous separators, whitespace or encoded delimiters. Checks
+run before credentials and again on the exact URL to fetch.
+
+Exclusion controls live API access. It cannot identify information staff or
+automations copied into reachable notes, workflows, forms or custom fields.
+For a hard product boundary, use a PAT belonging to a user with No Access in
+that product. No tool argument or nominal `sensitiveFields` option returns
+stored credentials. Signing secrets, organization secrets, private calendar
+codes, private file destinations and opaque webhook payload/header fields
+stay withheld in named and hatch replies, including included resources.
+
+**Vendor prerequisites.** The organization must subscribe to each product it
+uses, and the PAT's user needs that product's permissions. Permissions are
+per user and product; organization administrator status does not grant every
+product. File uploads use a separate host this connector does not reach.
+
+**Limits.** Planning Center meters 100 requests per 20 seconds per user,
+shared with every integration using that user's tokens. The default per-runtime
+admission budget is 100 calls per 20 seconds, concurrency five; `callAdmission`
+can narrow or split it when connections share a user. Isolates and other
+integrations share no local counter, so this is an approximation. `get_plan`
+issues three bounded reads. A response is capped at 8 MiB; named lists request
+at most 100 rows. Search answers have at most eight hits and 16 KiB of tool
+JSON; details have 32 KiB with explicit continuation for larger contracts.
+Named lists use signed cursors over the vendor offset; paged hatch reads return
+`page.nextCursor` for the `offset` query parameter. Keep the other query and
+field arguments unchanged when continuing a hatch read.
+
 ## Stripe
 
 `stripe()` connects one Stripe account in one mode through the pinned REST API.

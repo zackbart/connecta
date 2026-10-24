@@ -1,0 +1,7 @@
+{
+  "url": "https://api.planningcenteronline.com/publishing/v2/open_api/2024-03-25",
+  "documentation": "https://developer.planning.center/docs/#/publishing/2024-03-25",
+  "revision": "2024-03-25",
+  "digest": "sha256:7aa86ff1732c45a8e381fee37fc481b2918ca8f653d75ca62c538e9e1ab1ff80",
+  "vendored": true
+}

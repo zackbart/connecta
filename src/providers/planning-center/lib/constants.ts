@@ -46,8 +46,8 @@ export type PlanningCenterExcludableApp = Exclude<PlanningCenterApp, "people">;
  * - webhooks `2022-10-20` renamed `Subscription` to `WebhookSubscription`.
  * - services `2018-11-01` and giving `2019-10-18` are simply the newest there is.
  *
- * The hatches send the same pin for the app their path names and accept a
- * per-call `version` override for an endpoint only a newer version serves.
+ * Every request uses the pin for its product; another version requires a
+ * reviewed pin and regenerated operation index.
  */
 export const PLANNING_CENTER_API_VERSIONS: Readonly<Record<PlanningCenterApp, string>> = {
   people: "2026-06-04",
