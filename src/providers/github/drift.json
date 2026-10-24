@@ -16,9 +16,16 @@
       "POST /repos/{owner}/{repo}/releases",
       "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"
     ],
-    "evidence": {}
+    "evidence": {
+      "openapi.json": "sha256:e7e54e7b71d97d8933afdf9561d40563d3b2c0d16de4cc627ad01e6f0b5a23fa",
+      "value-safety.json": "sha256:032af53822f1cb8e85096e0d07a436d567ccd891c9bfce7c675456175dd64ad1"
+    }
   },
   "checks": [
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
     {
       "type": "endpoints",
       "specification": {

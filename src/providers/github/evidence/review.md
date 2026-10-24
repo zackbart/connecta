@@ -59,3 +59,23 @@ provider suite and the GitHub REST 401 rows in
 mint failures, token invalidation across successive calls, request bytes,
 credential echo and bounded/streamed/error responses. Caller-supplied release
 JSON keys may be sent in schema order; parsed bodies remain identical.
+
+## Immutable step-2 index pin (2026-10-24)
+
+The index uses the official rest-api-description commit
+`755ee33b4a81d51f6f07a902cce26cbec3b822f2`, fetched from the immutable
+URL in openapi.json. Source SHA-256 is
+`3177ad6a86ca04c57a9bef3fc24e28a339efb8eb040c6f950af3d3ed2fee7fa3`;
+the retained public bytes are 13,502,446 bytes. The compiler emits all 1,204
+nondeprecated operations; the generated source is 760,257 bytes. API requests
+keep the independently declared `2022-11-28` header. Description version 1.1.4
+is the document revision, not that request API version. Response-field metadata
+comes from these pinned bytes, independently of request shrinking.
+
+A same-toolchain esbuild probe (Node 26.12.0, zlib-ng 1.3.1, gzip level 9,
+neutral platform with workerd/worker/browser/import conditions) retains the
+existing provider and the complete index as exports. Baseline is 335,233 B gzip;
+with the full index it is 426,226 B, growth 90,993 B, below the approved
+approximately 300 KB gate. This is an early index-retention probe, not a final
+measurement of the implemented provider. The final PR reports the actual
+standalone entry as well. No dispatch or tool surface changes in this pin commit.
