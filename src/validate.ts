@@ -601,14 +601,30 @@ export function validateCatalogToolInput(
     // Told from the reviewed findings, never the validator's own sentences,
     // which quote the schema's types, enums, and patterns.
     const validation = validationDetails(schema, units);
-    const shown = nestedUnits.length > 0 ? validationDetails(schema, nestedUnits) : validation;
+    const limit = (schema as { properties?: { limit?: { enum?: unknown[] } } }).properties?.limit?.enum;
+    const supplied = args !== null && typeof args === "object" ? (args as Record<string, unknown>)["limit"] : undefined;
+    const discreteLimit =
+      supplied !== undefined &&
+      Array.isArray(limit) &&
+      limit.length > 0 &&
+      limit.length <= 8 &&
+      limit.every((size) => Number.isSafeInteger(size) && Number(size) > 0) &&
+      !limit.includes(supplied);
+    const otherUnits = units.filter((unit) => unit.instanceLocation !== "#/limit");
+    const otherIssues = otherUnits.length > 0;
+    const shown = discreteLimit
+      ? validationDetails(schema, otherUnits)
+      : nestedUnits.length > 0
+        ? validationDetails(schema, nestedUnits)
+        : validation;
     const detail = boundedEchoText(
       shown.issues.map((issue) => `${issue.path}: expected ${issue.expected} (${issue.code})`).join("; "),
       256,
     );
+    const ordinary = `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`;
     return new ConnectorCallError(
       "invalid_args",
-      `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`,
+      discreteLimit ? `The limit must be one of ${limit.join(", ")}.${otherIssues ? ` ${ordinary}` : ""}` : ordinary,
       { validation, repair: repairDetails(schema, args, units, validator) },
     );
   }

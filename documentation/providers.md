@@ -355,3 +355,56 @@ archives, uploads and secret/admin operations are unavailable. Download URLs and
 credentials remain withheld. fields narrows safe output and does not reduce the
 bytes the vendor sends. Directory listings and search also have vendor caps;
 missing content/patches do not establish completeness.
+
+## Church Community Builder
+
+```ts
+import { ccb } from "@zackbart/connecta/providers/ccb";
+
+const crm = ccb("crm", {
+  purpose: "Household and group coordination",
+  environment: "production",
+  mode: "system",
+  clientId: env.CCB_CLIENT_ID,
+  clientSecret: env.CCB_CLIENT_SECRET,
+});
+```
+
+Obtain a v2 OAuth client from Pushpay and register the deployment's exact
+`<publicUrl>/oauth/callback/crm` redirect URI and required scopes. Production
+and sandbox clients use different hosts and credentials. `environment` and
+`mode` are required. System Auth stores one shared church grant authorized by
+an administrator. Identity Auth stores personal grants with each person's
+permissions and requires prior System Auth for the same client. Start consent
+from the connector's operator connection page; catalog and status reads do
+not start consent. The connector manages token rotation.
+
+`access: "read"` is the default. `access: "read-write"` requests the maintained
+write scope set; alternatively specify a nonempty exact `scopes` list.
+`access` and `scopes` are exclusive. Read-only configured scopes omit the
+write hatch and never dispatch a write. `readOnly: true` additionally enforces
+read-only access on every endpoint. Optional `subdomain` pre-fills consent.
+
+`sensitiveFields: "drop"` is the default. `"return"` permits the documented
+sensitive fields through the hatches; named projections stay narrow. OAuth
+credentials, private file download destinations, payment-session links and
+private calendar feeds remain withheld. No tool argument changes this boundary.
+Advanced-search filters can still test
+dropped sensitive fields, so matching rows can reveal their values by inference.
+Where that matters, omit `read:advanced_searches` from the exact configured
+OAuth scopes.
+
+Named lists take `limit` equal to 25, 50, 75 or 100; the vendor default is 25.
+`defaultPerPage` optionally chooses another allowed deployment default. Return
+`page.nextCursor` unchanged as `cursor` and keep the same effective limit.
+Named `page.total` is present only when CCB states an exact `X-Total` count. Indexed reads retain vendor
+`query.per_page` plus a top-level signed `cursor`; use operation details for
+filters and JSON request bodies. Advanced POST searches are reads.
+
+The default admission rule is a per-runtime, per-endpoint rolling window of
+60 calls per minute. It does not coordinate other runtimes sharing this OAuth
+client or emulate the vendor's no-burst exceptions. Individual gets allow one
+call per second, individual advanced searches one per five seconds, and
+category schedule lists one per two seconds. Override `callAdmission` to match
+shared usage, and respect the vendor's rate-limit wait. Replies are bounded
+at 8 MiB. The legacy per-church v1 XML API is outside this provider's scope.

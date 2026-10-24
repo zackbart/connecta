@@ -22,7 +22,7 @@ export const CCB_ENVIRONMENTS = {
  * `security` requirements of the operations they call (spec revision recorded
  * in the drift manifest). `read:campuses` and `read:church` are there so the
  * ids every projection carries — campus, membership type — can be resolved
- * through `ccb_api_get`. Request these on Pushpay's API access form.
+ * through `ccb_api_read`. Request these on Pushpay's API access form.
  */
 export const CCB_READ_SCOPES: readonly string[] = [
   "read:advanced_searches",

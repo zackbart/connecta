@@ -1,5 +1,6 @@
 /** Classify attempts from the published providers' complete static REST catalogs. */
 import { github } from "@zackbart/connecta/providers/github";
+import { ccb } from "@zackbart/connecta/providers/ccb";
 import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
@@ -17,6 +18,14 @@ const connectors = [
       { org: "alice", access: "read-write", workflows: "write" },
       { repo: "bob/one", access: "read" },
     ],
+  }),
+  ccb("ccb", {
+    purpose: "Deterministic CCB acceptance grading",
+    environment: "production",
+    mode: "system",
+    access: "read-write",
+    clientId: "50cd5d6a-1943-4fb8-a24a-4e138851df2b",
+    clientSecret: "3c841e51-c2a4-496a-8800-8d23875c0193",
   }),
   planningCenter("pco", { purpose: "Deterministic Planning Center acceptance grading" }),
   overflow("overflow", { purpose: "Deterministic Overflow acceptance grading", environment: "staging" }),

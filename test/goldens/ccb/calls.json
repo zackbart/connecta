@@ -1,5 +1,102 @@
 [
   {
+    "label": "ccb_api_search",
+    "tool": "ccb_api_search",
+    "args": {
+      "query": "campus"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "GET",
+            "path": "/campuses",
+            "operationId": "getCampuses",
+            "summary": "List church campuses, timezone and public gift message; Get campus list",
+            "tool": "ccb_api_read"
+          },
+          {
+            "method": "PUT",
+            "path": "/campuses",
+            "operationId": "updateCampus",
+            "summary": "Update campus information",
+            "tool": "ccb_api_write"
+          },
+          {
+            "method": "GET",
+            "path": "/campuses/{id}/service_times",
+            "operationId": "getCampusServiceTimes",
+            "summary": "Get campus service times",
+            "tool": "ccb_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/campuses/{id}/leadership_roles",
+            "operationId": "getLeadershipRoles",
+            "summary": "Get campus leadership roles",
+            "tool": "ccb_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/events/shared_campuses",
+            "operationId": "getSharedEvents",
+            "summary": "Get list of shared events, campuses, statuses",
+            "tool": "ccb_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/events/{id}/shared_campuses",
+            "operationId": "getEventSharedCampuses",
+            "summary": "Get an events's shared campuses",
+            "tool": "ccb_api_read"
+          }
+        ],
+        "revision": "sha256:2f532bfdcd2c",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiY2UzM2IwZGUwMzM2MTM0YmI0ZmE3Y2UwMGQzZTZkMmYiLCJjIjoiNiIsIm0iOiJYVnVHd1RmaXNsRkJOak9BMktPd3hKLW10d2thSVhhUkpsY1JhOXgwU0dzIn0"
+        }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_details",
+    "tool": "ccb_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/individuals/{id}"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/individuals/{id}",
+        "operationId": "getIndividual",
+        "summary": "Get a person profile (individual) for identity or update reconciliation; Get details about an individual",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The individual's id",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "verdict": "read",
+        "tool": "ccb_api_read",
+        "named": "get_individual",
+        "revision": "sha256:2f532bfdcd2c"
+      }
+    }
+  },
+  {
     "label": "get_me",
     "tool": "get_me",
     "args": {},
@@ -38,15 +135,14 @@
     "args": {
       "query": "hop",
       "includeInactive": true,
-      "page": 2,
-      "perPage": 50
+      "limit": 50
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/individuals?name=hop&include_inactive=true&page=2&per_page=50",
+          "url": "https://api.ccbchurch.com/individuals?name=hop&include_inactive=true&page=1&per_page=50",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -58,7 +154,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "individuals": [
+        "items": [
           {
             "id": 42,
             "name": "Grace Hopper",
@@ -79,7 +175,7 @@
         ],
         "page": {
           "hasMore": true,
-          "nextPage": 3,
+          "nextCursor": "eyJ2IjoyLCJkIjoiZWQ3YTUwZmRiYzdjMjA1ZWQ5YmMyZTZiNmE4MmU0N2MiLCJjIjoie1wicGFnZVwiOjIsXCJsaW1pdFwiOjUwLFwicmV2aXNpb25cIjpcInNoYTI1NjoyZjUzMmJmZGNkMmNcIn0iLCJtIjoid2Y1ZmcyMTJROF9jWlp6NFVPcFkxS21iTkxkOU1yWjBMYlM1MHJnYzJGNCJ9",
           "total": 77
         }
       }
@@ -145,11 +241,44 @@
     }
   },
   {
-    "label": "get_individual raw",
+    "label": "get_individual fields created",
     "tool": "get_individual",
     "args": {
       "individualId": 42,
-      "raw": true
+      "fields": [
+        "created"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "created": "2020-01-01"
+      }
+    }
+  },
+  {
+    "label": "get_individual fields",
+    "tool": "get_individual",
+    "args": {
+      "individualId": 42,
+      "fields": [
+        "id",
+        "name"
+      ]
     },
     "steps": [
       [
@@ -196,7 +325,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "families": [
+        "items": [
           {
             "id": 9,
             "lastName": "Hopper",
@@ -211,7 +340,6 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
           "total": 1
         }
       }
@@ -302,7 +430,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "groups": [
+        "items": [
           {
             "id": 5,
             "name": "Tuesday Small Group",
@@ -320,7 +448,43 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
+          "total": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_groups fields memberCount",
+    "tool": "list_groups",
+    "args": {
+      "fields": [
+        "memberCount"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/groups?page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "items": [
+          {
+            "memberCount": 12
+          }
+        ],
+        "page": {
+          "hasMore": false,
           "total": 1
         }
       }
@@ -347,16 +511,14 @@
       "ok": true,
       "format": "json",
       "value": {
-        "groups": [
+        "items": [
           {
             "id": 1,
             "name": "Alpha"
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextPage": null,
-          "total": null
+          "hasMore": false
         }
       }
     }
@@ -437,7 +599,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "members": [
+        "items": [
           {
             "groupId": 5,
             "individualId": 42,
@@ -455,7 +617,6 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
           "total": 1
         }
       }
@@ -485,7 +646,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "groups": [
+        "items": [
           {
             "groupId": 5,
             "individualId": 42,
@@ -503,7 +664,6 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
           "total": 1
         }
       }
@@ -533,7 +693,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "occurrences": [
+        "items": [
           {
             "eventId": 12,
             "occurrence": "20260927",
@@ -548,7 +708,6 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
           "total": 1
         }
       }
@@ -667,7 +826,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "attendees": [
+        "items": [
           {
             "individualId": 42,
             "name": "Grace Hopper",
@@ -677,24 +836,26 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
           "total": 1
         }
       }
     }
   },
   {
-    "label": "list_forms",
-    "tool": "list_forms",
+    "label": "list_forms through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "status": "ACTIVE"
+      "path": "/forms",
+      "query": {
+        "status": "ACTIVE"
+      }
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/forms?status=ACTIVE&page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/forms?status=ACTIVE",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -706,12 +867,13 @@
       "ok": true,
       "format": "json",
       "value": {
-        "forms": [
+        "status": 200,
+        "data": [
           {
             "id": 31,
             "title": "Visitor Card",
             "status": "ACTIVE",
-            "campusId": 1,
+            "campus_id": 1,
             "start": "2026-01-01",
             "end": "",
             "public": true,
@@ -720,24 +882,24 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
   },
   {
-    "label": "list_form_responses",
-    "tool": "list_form_responses",
+    "label": "list_form_responses through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "formId": 31
+      "path": "/forms/31/responses"
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/forms/31/responses?page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/forms/31/responses",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -749,16 +911,17 @@
       "ok": true,
       "format": "json",
       "value": {
-        "responses": [
+        "status": 200,
+        "data": [
           {
             "id": 501,
-            "formId": 31,
-            "individualId": 42,
+            "form_id": 31,
+            "individual_id": 42,
             "created": "2026-09-01T10:00:00Z",
-            "paymentStatus": "NONE",
+            "payment_status": "NONE",
             "answers": [
               {
-                "questionId": 1,
+                "question_id": 1,
                 "answer": "A friend invited me"
               }
             ]
@@ -766,25 +929,28 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
   },
   {
-    "label": "list_processes",
-    "tool": "list_processes",
+    "label": "list_processes through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "status": "ACTIVE",
-      "managedByMe": true
+      "path": "/processes",
+      "query": {
+        "statuses": "ACTIVE",
+        "managed_by_me": true
+      }
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/processes?statuses=ACTIVE&managed_by_me=true&page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/processes?statuses=ACTIVE&managed_by_me=true",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -796,15 +962,16 @@
       "ok": true,
       "format": "json",
       "value": {
-        "processes": [
+        "status": 200,
+        "data": [
           {
             "id": 8,
             "name": "New Visitor Follow-up",
-            "campusId": 1,
-            "ownerId": 7,
+            "campus_id": 1,
+            "owner_id": 7,
             "hidden": false,
             "archived": false,
-            "managers": [
+            "process_managers": [
               {
                 "id": 7,
                 "name": "Ada Pastor"
@@ -814,24 +981,29 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
   },
   {
-    "label": "list_queues",
-    "tool": "list_queues",
+    "label": "list_queues through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "processId": 8
+      "path": "/queues",
+      "query": {
+        "process_ids": [
+          8
+        ]
+      }
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/queues?process_ids=8&page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/queues?process_ids=8",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -843,37 +1015,47 @@
       "ok": true,
       "format": "json",
       "value": {
-        "queues": [
+        "status": 200,
+        "data": [
           {
             "id": 81,
             "name": "First Contact",
-            "processId": 8,
-            "processName": "New Visitor Follow-up",
-            "assignedCount": 2,
-            "unassignedCount": 1
+            "process_id": 8,
+            "process": {
+              "id": 8,
+              "name": "New Visitor Follow-up"
+            },
+            "description": "",
+            "assigned_count": 2,
+            "unassigned_count": 1
           }
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
   },
   {
-    "label": "list_queue_individuals",
-    "tool": "list_queue_individuals",
+    "label": "list_queue_individuals through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "status": "IN_PROCESS",
-      "assignment": "ASSIGNED_TO_ME"
+      "path": "/queues_individuals",
+      "query": {
+        "statuses": [
+          "IN_PROCESS"
+        ],
+        "assignment": "ASSIGNED_TO_ME"
+      }
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/queues_individuals?statuses=IN_PROCESS&assignment=ASSIGNED_TO_ME&page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/queues_individuals?statuses=IN_PROCESS&assignment=ASSIGNED_TO_ME",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -885,40 +1067,47 @@
       "ok": true,
       "format": "json",
       "value": {
-        "queueIndividuals": [
+        "status": 200,
+        "data": [
           {
-            "queueIndividualId": 9001,
-            "queueId": 81,
-            "queueName": "First Contact",
-            "processId": 8,
-            "processName": "New Visitor Follow-up",
-            "individualId": 42,
-            "name": "Grace Hopper",
+            "queue_individual_id": 9001,
+            "queue_id": 81,
+            "queue": {
+              "name": "First Contact",
+              "process_id": 8,
+              "process_name": "New Visitor Follow-up"
+            },
+            "individual_id": 42,
+            "individual": {
+              "id": 42,
+              "name": "Grace Hopper"
+            },
             "status": "IN_PROCESS",
             "due": "2026-10-01",
-            "created": "2026-09-20"
+            "created": "2026-09-20",
+            "completed": null
           }
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
   },
   {
-    "label": "list_scheduling_categories",
-    "tool": "list_scheduling_categories",
+    "label": "list_scheduling_categories through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "search": "Worship"
+      "path": "/scheduling/categories"
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/scheduling/categories?search_term=Worship",
+          "url": "https://api.ccbchurch.com/scheduling/categories",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -930,7 +1119,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "categories": [
+        "status": 200,
+        "data": [
           {
             "id": 3,
             "name": "Worship Team",
@@ -955,18 +1145,20 @@
     }
   },
   {
-    "label": "list_schedules",
-    "tool": "list_schedules",
+    "label": "list_schedules through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "categoryId": 3,
-      "after": "2026-09-01"
+      "path": "/scheduling/categories/3/schedules",
+      "query": {
+        "after": "2026-09-01"
+      }
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/scheduling/categories/3/schedules?after=2026-09-01&withMetrics=true&page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/scheduling/categories/3/schedules?after=2026-09-01",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -978,10 +1170,11 @@
       "ok": true,
       "format": "json",
       "value": {
-        "schedules": [
+        "status": 200,
+        "data": [
           {
             "id": 300,
-            "categoryId": 3,
+            "category_id": 3,
             "name": "October",
             "start": "2026-10-01",
             "end": "2026-10-31",
@@ -1002,26 +1195,24 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
   },
   {
-    "label": "list_individual_assignments",
-    "tool": "list_individual_assignments",
+    "label": "list_individual_assignments through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "individualId": 42,
-      "startDate": "2026-10-01",
-      "endDate": "2026-10-31"
+      "path": "/individuals/42/assignments"
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/individuals/42/assignments?start_date=2026-10-01&end_date=2026-10-31&page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/individuals/42/assignments",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -1033,23 +1224,29 @@
       "ok": true,
       "format": "json",
       "value": {
-        "assignments": [
+        "status": 200,
+        "data": [
           {
             "id": 7001,
-            "categoryId": 3,
-            "scheduleId": 300,
-            "eventId": 12,
-            "eventPositionId": 55,
+            "category_id": 3,
+            "schedule_id": 300,
+            "event_id": 12,
+            "event_position_id": 55,
             "status": "ACCEPTED",
-            "dateNotified": "2026-09-20",
-            "individualId": 42,
-            "name": "Grace Hopper"
+            "status_reason": "",
+            "date_notified": "2026-09-20",
+            "volunteer": {
+              "individual": {
+                "id": 42,
+                "name": "Grace Hopper"
+              }
+            }
           }
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
@@ -1078,7 +1275,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "notes": [
+        "items": [
           {
             "id": 61,
             "individualId": 42,
@@ -1095,7 +1292,6 @@
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
           "total": 1
         }
       }
@@ -1176,17 +1372,17 @@
     }
   },
   {
-    "label": "list_individual_pledges",
-    "tool": "list_individual_pledges",
+    "label": "list_individual_pledges through hatch",
+    "tool": "ccb_api_read",
     "args": {
-      "individualId": 42
+      "path": "/individuals/42/pledges"
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/individuals/42/pledges?page=1&per_page=25",
+          "url": "https://api.ccbchurch.com/individuals/42/pledges",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -1198,43 +1394,46 @@
       "ok": true,
       "format": "json",
       "value": {
-        "pledges": [
+        "status": 200,
+        "data": [
           {
             "id": 77,
-            "campusId": 1,
-            "fund": "Building Fund",
+            "campus_id": 1,
+            "coa": {
+              "id": 2,
+              "name": "Building Fund"
+            },
             "pledged": 1200,
             "paid": 300,
             "expected": 400,
             "total": 1200,
-            "frequency": "MONTHLY",
             "start": "2026-01-01",
-            "end": "2026-12-31"
+            "recurrence": {
+              "frequency": "MONTHLY",
+              "end": "2026-12-31"
+            }
           }
         ],
         "page": {
           "hasMore": false,
-          "nextPage": null,
-          "total": 1
+          "param": "page",
+          "in": "query"
         }
       }
     }
   },
   {
-    "label": "ccb_api_get",
-    "tool": "ccb_api_get",
+    "label": "ccb_api_read",
+    "tool": "ccb_api_read",
     "args": {
-      "path": "/church/membership_types",
-      "query": {
-        "per_page": 50
-      }
+      "path": "/church/membership_types"
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://api.ccbchurch.com/church/membership_types?per_page=50",
+          "url": "https://api.ccbchurch.com/church/membership_types",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
             "authorization": "Bearer <secret:accessToken>"
@@ -1246,36 +1445,35 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": [
+        "status": 200,
+        "data": [
           {
             "id": 1,
             "name": "Member"
           }
-        ],
-        "page": {
-          "hasMore": false,
-          "nextPage": null,
-          "total": null
-        }
+        ]
       }
     }
   },
   {
-    "label": "ccb_api_search",
-    "tool": "ccb_api_search",
+    "label": "search_records",
+    "tool": "search_records",
     "args": {
       "domain": "individuals",
       "body": {
         "configuration": {
-          "columns": [
-            "name"
+          "filter_profile_type": [
+            "active"
           ]
         },
         "filters": {
-          "name": "Ada"
+          "name": {
+            "operator": "contains",
+            "value": "Rowan"
+          }
         }
       },
-      "perPage": 100
+      "limit": 100
     },
     "steps": [
       [
@@ -1291,12 +1489,15 @@
           "body": {
             "json": {
               "configuration": {
-                "columns": [
-                  "name"
+                "filter_profile_type": [
+                  "active"
                 ]
               },
               "filters": {
-                "name": "Ada"
+                "name": {
+                  "operator": "contains",
+                  "value": "Rowan"
+                }
               }
             }
           }
@@ -1307,7 +1508,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": [
+        "items": [
           {
             "id": 7,
             "name": "Ada Pastor"
@@ -1315,15 +1516,296 @@
         ],
         "page": {
           "hasMore": true,
-          "nextPage": 2,
-          "total": null
+          "nextCursor": "eyJ2IjoyLCJkIjoiNjU0MzNiYTQxNmI1YTA1YWU5MTcyNjA0NzRlMjY4MGEiLCJjIjoie1wicGFnZVwiOjIsXCJsaW1pdFwiOjEwMCxcInJldmlzaW9uXCI6XCJzaGEyNTY6MmY1MzJiZmRjZDJjXCJ9IiwibSI6Im9uUjByeVExUXdKSzl3d1huV25YUnNmeTVPTUJHdWVTMGJ0cDZ1QUN4cmMifQ"
         }
       }
     }
   },
   {
-    "label": "ccb_api_mutate",
-    "tool": "ccb_api_mutate",
+    "label": "ccb_api_read POST with filters",
+    "tool": "ccb_api_read",
+    "args": {
+      "method": "POST",
+      "path": "/search/individuals/results",
+      "body": {
+        "filters": {
+          "name": {
+            "operator": "contains",
+            "value": "Rowan"
+          }
+        }
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/search/individuals/results",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "filters": {
+                "name": {
+                  "operator": "contains",
+                  "value": "Rowan"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": [
+          {
+            "id": 7,
+            "name": "Ada Rowan"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write form response JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/forms/31/responses",
+      "body": {
+        "individual_id": 42,
+        "answers": [
+          {
+            "question_id": 1,
+            "answer": "Yes"
+          }
+        ]
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/forms/31/responses",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "individual_id": 42,
+              "answers": [
+                {
+                  "question_id": 1,
+                  "answer": "Yes"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": 501,
+          "payment_status": "NONE"
+        }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write bulk group removal JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "PUT",
+      "path": "/individuals/42/groups/bulk",
+      "body": [
+        {
+          "groupId": 5,
+          "action": "REMOVE"
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "PUT",
+          "url": "https://api.ccbchurch.com/individuals/42/groups/bulk",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": [
+              {
+                "groupId": 5,
+                "action": "REMOVE"
+              }
+            ]
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 204,
+        "data": null
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write create saved search JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/search/save",
+      "body": {
+        "name": "Active adults",
+        "domain": "individuals"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/search/save",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Active adults",
+              "domain": "individuals"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": 2,
+          "name": "Active adults",
+          "domain": "individuals"
+        }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write update saved search JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "PUT",
+      "path": "/search/save/2",
+      "body": {
+        "name": "Renamed search"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "PUT",
+          "url": "https://api.ccbchurch.com/search/save/2",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Renamed search"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": 2,
+          "name": "Renamed search"
+        }
+      }
+    }
+  },
+  {
+    "label": "search_records refuses withheld filter",
+    "tool": "search_records",
+    "args": {
+      "domain": "individuals",
+      "body": {
+        "filters": {
+          "name": "[redacted]"
+        }
+      }
+    },
+    "steps": [],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "Not sent: search_records arguments contain a whole withheld value ([redacted]) or a withheld link. Supply the original value/link or omit the field. Longer prose may mention the marker.",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write refuses binary upload",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/files",
+      "body": {}
+    },
+    "steps": [],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "answered": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "CCB's JSON hatch cannot send multipart/form-data request bodies; use the vendor application for this operation.",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write",
+    "tool": "ccb_api_write",
     "args": {
       "method": "POST",
       "path": "/individuals/42/notes",
@@ -1354,7 +1836,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "id": 3,
           "note": "Visited"
         }
@@ -1362,21 +1845,34 @@
     }
   },
   {
-    "label": "ccb_api_mutate DELETE",
-    "tool": "ccb_api_mutate",
+    "label": "ccb_api_write DELETE",
+    "tool": "ccb_api_write",
     "args": {
       "method": "DELETE",
-      "path": "/groups/5/members/42"
+      "path": "/groups/5/members",
+      "body": {
+        "ids": [
+          42
+        ]
+      }
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "DELETE",
-          "url": "https://api.ccbchurch.com/groups/5/members/42",
+          "url": "https://api.ccbchurch.com/groups/5/members",
           "headers": {
             "accept": "application/vnd.ccbchurch.v2+json",
-            "authorization": "Bearer <secret:accessToken>"
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "ids": [
+                42
+              ]
+            }
           }
         }
       ]
@@ -1385,7 +1881,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": null
+        "status": 204,
+        "data": null
       }
     }
   },

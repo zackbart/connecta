@@ -3,6 +3,7 @@
  * ledger and one clock, started fresh and thrown away afterwards.
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
+import { FakeCcb, ccbState } from "./ccb.js";
 import { FakePlanningCenter, planningCenterState } from "./planning-center.js";
 import { FakeOverflow, overflowState } from "./overflow.js";
 import { FakeGitHub, githubState } from "./github.js";
@@ -47,7 +48,7 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor | "tithely" | "breeze" | "planning-center" | "overflow" | "github";
+  rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow" | "github";
   githubApp?: { appId: string; privateKey: string };
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
@@ -57,6 +58,7 @@ export interface WorldOptions {
   restVendor?: RestVendor;
   github?: { fault?: "search-503" };
   breeze?: { fault?: "update-500" };
+  ccb?: { fault?: "update-500" };
   planningCenter?: { fault?: "update-500" };
   overflow?: { fault?: "update-500" };
   /** A Tithe.ly giving world, with an optional injected fault. */
@@ -88,10 +90,11 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 export class World {
   readonly rest = restState();
   readonly restServices: Array<
-    FakeRestService | FakeTithely | FakeBreeze | FakePlanningCenter | FakeOverflow | FakeGitHub
+    FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakePlanningCenter | FakeOverflow | FakeGitHub
   > = [];
   readonly github = githubState();
   readonly breeze = breezeState();
+  readonly ccb = ccbState();
   readonly pco = planningCenterState();
   readonly overflow = overflowState();
   readonly tithely = tithelyState();
@@ -132,6 +135,7 @@ export class World {
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
     if (options.github) this.restServices = [new FakeGitHub("github", this.ledger, this.github, options.github.fault)];
     if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
+    if (options.ccb) this.restServices = [new FakeCcb("ccb", this.ledger, this.ccb, options.ccb.fault)];
     if (options.planningCenter)
       this.restServices = [new FakePlanningCenter("pco", this.ledger, this.pco, options.planningCenter.fault)];
     if (options.overflow)
@@ -175,6 +179,7 @@ export class World {
       this.options.restVendor ||
       this.options.tithely ||
       this.options.breeze ||
+      this.options.ccb ||
       this.options.planningCenter ||
       this.options.overflow ||
       this.options.github

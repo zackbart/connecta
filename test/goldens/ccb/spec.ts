@@ -109,6 +109,8 @@ export default defineGoldenSpec({
   ],
   failureReply: (status, message) => ({ status, body: { message } }),
   calls: [
+    { tool: "ccb_api_search", args: { query: "campus" }, replies: [] },
+    { tool: "ccb_api_details", args: { method: "GET", path: "/individuals/{id}" }, replies: [] },
     {
       tool: "get_me",
       replies: json({
@@ -124,14 +126,20 @@ export default defineGoldenSpec({
     },
     {
       tool: "list_individuals",
-      args: { query: "hop", includeInactive: true, page: 2, perPage: 50 },
-      replies: json([PERSON], { "x-page": "2", "x-total-pages": "4", "x-total": "77", "x-next-page": "3" }),
+      args: { query: "hop", includeInactive: true, limit: 50 },
+      replies: json([PERSON], { "x-page": "1", "x-total-pages": "4", "x-total": "77", "x-next-page": "2" }),
     },
     { tool: "get_individual", args: { individualId: 42 }, replies: json(INDIVIDUAL) },
     {
-      label: "get_individual raw",
+      label: "get_individual fields created",
       tool: "get_individual",
-      args: { individualId: 42, raw: true },
+      args: { individualId: 42, fields: ["created"] },
+      replies: json({ created: "2020-01-01", modified: "2021-01-01" }),
+    },
+    {
+      label: "get_individual fields",
+      tool: "get_individual",
+      args: { individualId: 42, fields: ["id", "name"] },
       replies: json({ id: 42, name: "Grace Hopper", allergies: "peanuts", giving_number: "G-17" }),
     },
     {
@@ -162,6 +170,12 @@ export default defineGoldenSpec({
       tool: "list_groups",
       args: { name: "Tuesday", campusId: 1 },
       replies: json([GROUP], { "x-next-page": "", "x-total": "1" }),
+    },
+    {
+      label: "list_groups fields memberCount",
+      tool: "list_groups",
+      args: { fields: ["memberCount"] },
+      replies: json([{ id: 5, member_count: 12, description: "Weekly group" }], PAGE_HEADERS),
     },
     {
       label: "list_groups short page",
@@ -264,8 +278,9 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "list_forms",
-      args: { status: "ACTIVE" },
+      label: "list_forms through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/forms", query: { "status": "ACTIVE" } },
       replies: json(
         [
           {
@@ -283,8 +298,9 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "list_form_responses",
-      args: { formId: 31 },
+      label: "list_form_responses through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/forms/31/responses" },
       replies: json(
         [
           {
@@ -301,8 +317,9 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "list_processes",
-      args: { status: "ACTIVE", managedByMe: true },
+      label: "list_processes through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/processes", query: { "statuses": "ACTIVE", "managed_by_me": true } },
       replies: json(
         [
           {
@@ -319,8 +336,9 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "list_queues",
-      args: { processId: 8 },
+      label: "list_queues through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/queues", query: { "process_ids": [8] } },
       replies: json(
         [
           {
@@ -337,8 +355,9 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "list_queue_individuals",
-      args: { status: "IN_PROCESS", assignment: "ASSIGNED_TO_ME" },
+      label: "list_queue_individuals through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/queues_individuals", query: { "statuses": ["IN_PROCESS"], "assignment": "ASSIGNED_TO_ME" } },
       replies: json(
         [
           {
@@ -357,8 +376,9 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "list_scheduling_categories",
-      args: { search: "Worship" },
+      label: "list_scheduling_categories through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/scheduling/categories" },
       replies: json([
         {
           id: 3,
@@ -371,8 +391,9 @@ export default defineGoldenSpec({
       ]),
     },
     {
-      tool: "list_schedules",
-      args: { categoryId: 3, after: "2026-09-01" },
+      label: "list_schedules through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/scheduling/categories/3/schedules", query: { "after": "2026-09-01" } },
       replies: json(
         [
           {
@@ -390,8 +411,9 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "list_individual_assignments",
-      args: { individualId: 42, startDate: "2026-10-01", endDate: "2026-10-31" },
+      label: "list_individual_assignments through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/individuals/42/assignments" },
       replies: json(
         [
           {
@@ -442,8 +464,9 @@ export default defineGoldenSpec({
       replies: json([{ start: "2026-08-01", count: 2 }]),
     },
     {
-      tool: "list_individual_pledges",
-      args: { individualId: 42 },
+      label: "list_individual_pledges through hatch",
+      tool: "ccb_api_read",
+      args: { path: "/individuals/42/pledges" },
       replies: json(
         [
           {
@@ -462,28 +485,81 @@ export default defineGoldenSpec({
       ),
     },
     {
-      tool: "ccb_api_get",
-      args: { path: "/church/membership_types", query: { per_page: 50 } },
+      tool: "ccb_api_read",
+      args: { path: "/church/membership_types" },
       replies: json([{ id: 1, name: "Member" }], { "x-next-page": "" }),
     },
     {
-      tool: "ccb_api_search",
+      tool: "search_records",
       args: {
         domain: "individuals",
-        body: { configuration: { columns: ["name"] }, filters: { name: "Ada" } },
-        perPage: 100,
+        body: {
+          configuration: { filter_profile_type: ["active"] },
+          filters: { name: { operator: "contains", value: "Rowan" } },
+        },
+        limit: 100,
       },
       replies: json([{ id: 7, name: "Ada Pastor" }], { "x-next-page": "2" }),
     },
     {
-      tool: "ccb_api_mutate",
+      label: "ccb_api_read POST with filters",
+      tool: "ccb_api_read",
+      args: {
+        method: "POST",
+        path: "/search/individuals/results",
+        body: { filters: { name: { operator: "contains", value: "Rowan" } } },
+      },
+      replies: json([{ id: 7, name: "Ada Rowan" }], PAGE_HEADERS),
+    },
+    {
+      label: "ccb_api_write form response JSON",
+      tool: "ccb_api_write",
+      args: {
+        method: "POST",
+        path: "/forms/31/responses",
+        body: { individual_id: 42, answers: [{ question_id: 1, answer: "Yes" }] },
+      },
+      replies: json({ id: 501, payment_status: "NONE", payment: { card_last4: "4242" } }),
+    },
+    {
+      label: "ccb_api_write bulk group removal JSON",
+      tool: "ccb_api_write",
+      args: { method: "PUT", path: "/individuals/42/groups/bulk", body: [{ groupId: 5, action: "REMOVE" }] },
+      replies: [{ status: 204 }],
+    },
+    {
+      label: "ccb_api_write create saved search JSON",
+      tool: "ccb_api_write",
+      args: { method: "POST", path: "/search/save", body: { name: "Active adults", domain: "individuals" } },
+      replies: json({ id: 2, name: "Active adults", domain: "individuals" }),
+    },
+    {
+      label: "ccb_api_write update saved search JSON",
+      tool: "ccb_api_write",
+      args: { method: "PUT", path: "/search/save/2", body: { name: "Renamed search" } },
+      replies: json({ id: 2, name: "Renamed search" }),
+    },
+    {
+      label: "search_records refuses withheld filter",
+      tool: "search_records",
+      args: { domain: "individuals", body: { filters: { name: "[redacted]" } } },
+      replies: [],
+    },
+    {
+      label: "ccb_api_write refuses binary upload",
+      tool: "ccb_api_write",
+      args: { method: "POST", path: "/files", body: {} },
+      replies: [],
+    },
+    {
+      tool: "ccb_api_write",
       args: { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } },
       replies: json({ id: 3, note: "Visited" }),
     },
     {
-      label: "ccb_api_mutate DELETE",
-      tool: "ccb_api_mutate",
-      args: { method: "DELETE", path: "/groups/5/members/42" },
+      label: "ccb_api_write DELETE",
+      tool: "ccb_api_write",
+      args: { method: "DELETE", path: "/groups/5/members", body: { ids: [42] } },
       replies: [{ status: 204 }],
     },
   ],
@@ -492,7 +568,7 @@ export default defineGoldenSpec({
   failures: {
     read: { tool: "get_group", args: { groupId: 5 } },
     write: {
-      tool: "ccb_api_mutate",
+      tool: "ccb_api_write",
       args: { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } },
     },
   },

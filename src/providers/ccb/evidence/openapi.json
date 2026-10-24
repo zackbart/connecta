@@ -1,0 +1,14 @@
+{
+  "url": "https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json?download=1",
+  "revision": "sha256:2f532bfdcd2c",
+  "digest": "sha256:2f532bfdcd2c4d40add8373218d3ea371c215ad7d754cfa72fb241fc7c45348d",
+  "vendored": true,
+  "options": {
+    "depth": 3,
+    "descriptions": 160,
+    "maxEnum": 100,
+    "valueSafety": true,
+    "emptyObjectsOpen": true,
+    "additionalResponseMediaTypes": ["*/*"]
+  }
+}
