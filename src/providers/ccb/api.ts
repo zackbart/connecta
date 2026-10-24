@@ -195,7 +195,7 @@ export const SEARCH_DOMAINS = [
 const summaries: Readonly<Record<string, string>> = {
   "GET /individuals": "List people (person profiles, individuals), search names, email and phone",
   "GET /individuals/{id}": "Get a person profile (individual) for identity or update reconciliation",
-  "PUT /individuals/{id}": "Update a person's email or edit a person profile, name or phone (individual)",
+  "PUT /individuals/{id}": "Update or change a person's email, edit an individual profile, name or phone",
   "POST /individuals": "Create or add a person profile (individual)",
   "POST /individuals/{id}/notes": "Add or create a pastoral note for a person (individual)",
   "GET /families": "List households and families",

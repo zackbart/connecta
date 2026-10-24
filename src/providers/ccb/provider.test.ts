@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
+import { rankTools } from "../../catalog.js";
 import { identityStorageKey } from "../../identity.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext } from "../../types.js";
@@ -229,6 +230,9 @@ describe("ccb() construction", () => {
     const catalogContext = makeRegistry([searchable]).contextFor("church", BASE);
     for (const [query, operation] of [
       ["update a person's email", "PUT /individuals/{id}"],
+      ["update person email", "PUT /individuals/{id}"],
+      ["edit individual email", "PUT /individuals/{id}"],
+      ["change a person's email", "PUT /individuals/{id}"],
       ["create a person", "POST /individuals"],
       ["add a pastoral note", "POST /individuals/{id}/notes"],
       ["church campuses", "GET /campuses"],
@@ -249,6 +253,17 @@ describe("ccb() construction", () => {
     expect(JSON.stringify(detail)).toContain("location");
     expect(CCB_INDEX.responseRoots(CCB_INDEX.resolve("GET", "/campuses").op)).toContain("public_gift_message");
     expect(fetchSpy).not.toHaveBeenCalled();
+    for (const [query, name] of [
+      ["campus", "ccb_api_read"],
+      ["forms", "ccb_api_read"],
+      ["assignments", "ccb_api_read"],
+      ["update email", "ccb_api_write"],
+      ["edit person email", "ccb_api_write"],
+    ])
+      expect(
+        rankTools([...searchable.staticTools!], query).map((entry) => entry.tool.name),
+        query,
+      ).toContain(name);
   });
 });
 
@@ -326,7 +341,7 @@ describe("ccb() reads", () => {
   it("reads the last page from an empty x-next-page, then from x-total-pages, then from a short page", async () => {
     const { fake, call } = await connected();
     fake.route(on("GET", "/groups", () => json([{ id: 1, name: "Alpha" }], { "x-next-page": "", "x-total": "1" })));
-    expect((await call("list_groups")).page).toEqual({ hasMore: false });
+    expect((await call("list_groups")).page).toEqual({ hasMore: false, total: 1 });
     fake.route(on("GET", "/groups", () => json([{ id: 1 }], { "x-page": "1", "x-total-pages": "2" })));
     const continued = (await call("list_groups")).page;
     expect(continued).toEqual({ hasMore: true, nextCursor: expect.any(String) });

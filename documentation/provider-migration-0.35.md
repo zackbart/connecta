@@ -201,7 +201,7 @@ Update saved programs, pool grants, classification entries and instructions:
 | —                                                            | `ccb_api_search({ query, method?, limit?, cursor? })` searches the offline operation index; `ccb_api_details({ method, path, ... })` reads contracts |
 | `page` and `perPage` on named lists and advanced searches    | `limit` is exactly 25, 50, 75 or 100 (default 25, or configured `defaultPerPage`); continue with signed `cursor`                                     |
 | `raw` on named reads/lists                                   | Removed; named results remain projected. Use `fields` for projected records or the read hatch for vendor records                                     |
-| Named list `{ data, page: { number, perPage, total, ... } }` | `{ items, page: { hasMore, nextCursor? } }`; no total is returned in this change                                                                     |
+| Named list `{ data, page: { number, perPage, total, ... } }` | `{ items, page: { hasMore, nextCursor? } }`; optional exact vendor `total`                                                                           |
 | HTTP 409 classified as `conflict`                            | `connector_call_failed`; the public pin does not establish a conflict meaning                                                                        |
 
 These nine named reads are removed. Use `ccb_api_read` with the following

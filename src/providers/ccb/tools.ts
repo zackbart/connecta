@@ -540,10 +540,20 @@ export function ccbTools({
           }),
         );
       const rows = answer.body;
+      const totalText = answer.headers.get("x-total");
+      const total = yield* checked(() => {
+        if (totalText === null || totalText === "") return undefined;
+        if (!/^(0|[1-9]\d*)$/.test(totalText) || !Number.isSafeInteger(Number(totalText)))
+          throw new ConnectorCallError("connector_call_failed", "CCB returned an invalid exact total.", {
+            retryable: false,
+          });
+        return Number(totalText);
+      });
       const next = yield* checked(() => ccbPageInfo(Object.fromEntries(answer.headers), page, size, rows.length));
       return {
         rows: rows.map(project),
         page: {
+          ...(total === undefined ? {} : { total }),
           hasMore: next !== null,
           nextCursor: next === null ? null : JSON.stringify({ page: next, limit: size, revision: CCB_INDEX.revision }),
         },
@@ -596,6 +606,7 @@ export function ccbTools({
       },
       row: PERSON_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -646,6 +657,7 @@ export function ccbTools({
       },
       row: FAMILY_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -696,6 +708,7 @@ export function ccbTools({
       },
       row: GROUP_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -743,6 +756,7 @@ export function ccbTools({
       },
       row: MEMBERSHIP_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -770,6 +784,7 @@ export function ccbTools({
       },
       row: MEMBERSHIP_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -800,6 +815,7 @@ export function ccbTools({
       },
       row: OCCURRENCE_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -877,6 +893,7 @@ export function ccbTools({
       },
       row: ATTENDEE_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -903,6 +920,7 @@ export function ccbTools({
       },
       row: NOTE_SCHEMA,
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         Effect.gen(function* () {
@@ -1037,6 +1055,7 @@ export function ccbTools({
         ),
       }),
       limit,
+      total: true,
       cursor: "bound",
       page: (args, cursor) =>
         fetchPage(

@@ -191,6 +191,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -519,6 +523,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -766,6 +774,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -1017,6 +1029,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -1142,6 +1158,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -1258,6 +1278,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -1536,6 +1560,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -1658,6 +1686,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -1873,6 +1905,10 @@
               },
               "nextCursor": {
                 "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
@@ -2162,7 +2198,7 @@
     },
     {
       "name": "ccb_api_read",
-      "description": "Call a reviewed CCB API read, including reviewed read-only POST. The operation index checks arguments before anything is sent.",
+      "description": "Call a reviewed CCB API read, including reviewed read-only POST. The operation index checks arguments before anything is sent. Read people and individual profiles, households and families, groups and memberships, events and attendance, campuses, forms and responses, processes and queues, schedules and assignments, notes, pledges and giving metrics. Discover the exact operation with ccb_api_search, then inspect ccb_api_details.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2259,7 +2295,7 @@
     },
     {
       "name": "ccb_api_write",
-      "description": "Call a reviewed CCB API write; method and path are stated for approval, and the operation index checks arguments first.",
+      "description": "Call a reviewed CCB API write; method and path are stated for approval, and the operation index checks arguments first. Update, edit or change a person's email or phone; create people and individual profiles, pastoral notes, group memberships and events. Discover the exact operation with ccb_api_search, then inspect ccb_api_details. Writes require authorized configured scopes.",
       "inputSchema": {
         "type": "object",
         "properties": {

@@ -216,6 +216,11 @@ export const ccb = defineApiProvider<CcbOptions>({
     binding: ccbBinding,
     writeEnabled: writable,
     pathExample: "/individuals/42",
+    notes: () => ({
+      read: "Read people and individual profiles, households and families, groups and memberships, events and attendance, campuses, forms and responses, processes and queues, schedules and assignments, notes, pledges and giving metrics. Discover the exact operation with ccb_api_search, then inspect ccb_api_details.",
+      write:
+        "Update, edit or change a person's email or phone; create people and individual profiles, pastoral notes, group memberships and events. Discover the exact operation with ccb_api_search, then inspect ccb_api_details. Writes require authorized configured scopes.",
+    }),
   },
   tools: ccbTools,
 });

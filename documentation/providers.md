@@ -254,7 +254,7 @@ private calendar feeds remain withheld. No tool argument changes this boundary.
 Named lists take `limit` equal to 25, 50, 75 or 100; the vendor default is 25.
 `defaultPerPage` optionally chooses another allowed deployment default. Return
 `page.nextCursor` unchanged as `cursor` and keep the same effective limit.
-No exact `page.total` is currently returned. Indexed reads retain vendor
+Named `page.total` is present only when CCB states an exact `X-Total` count. Indexed reads retain vendor
 `query.per_page` plus a top-level signed `cursor`; use operation details for
 filters and JSON request bodies. Advanced POST searches are reads.
 

@@ -39,7 +39,8 @@ as truncated rather than claiming exhaustive nested validation.
 All operation summaries are nonempty. Parameter descriptions are reviewed
 vendor text, with explicit page/id/name fallbacks and a humanized contract
 label for missing descriptions. Authored synonyms augment the vendor's CRUD
-words. Regression assertions require natural profile-update, person-create,
+words. Read/write hatch notes carry resource and edit vocabulary for catalog searches.
+Regression assertions require natural profile-update, person-create,
 pastoral-note and campus queries to find the intended operation at rank 1/2.
 
 The former 41-operation drift inventory described named calls, not the API.
@@ -66,8 +67,9 @@ nonadvancing and empty continuing pages fail closed. Adapter decisions run on
 safe rows before `fields`. Arrays and merge-history `items` are understood;
 unknown object replies use explicit safe paging headers, otherwise omit page
 metadata. The schedules-totals aggregate is not cursor paged. `search_records`
-wraps its projected counts in one terminal item. Exact totals are deferred
-until the shared #991 extension merges, per the approved scope ruling.
+wraps its projected counts in one terminal item. The merged #991 opt-in standard-list extension (ab707ee4) exposes
+`page.total` only when the existing `X-Total` header supplies an exact safe
+integer. No count is derived from page size or observed rows.
 
 The writable catalog is 27 to 20: fifteen existing workflow reads, a named
 advanced-search read and four standard hatches. The nine removed wrappers

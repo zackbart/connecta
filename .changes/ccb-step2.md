@@ -8,7 +8,7 @@ to `ccb_api_read`, `ccb_api_mutate` to `ccb_api_write`, and the old data-search
 `ccb_api_search` to `search_records`; `ccb_api_search` now searches an offline
 operation index and `ccb_api_details` exposes its contracts. Replace named-list
 `page`/`perPage` with enum `limit` (25/50/75/100, default 25) and signed `cursor`,
-return `items` and standard page metadata, remove `raw`, add validated `fields`
+return `items` and standard page metadata with optional exact vendor `total`, remove `raw`, add validated `fields`
 and standard `truncated` envelopes. Remove `list_forms`, `list_form_responses`,
 `list_processes`, `list_queues`, `list_queue_individuals`,
 `list_scheduling_categories`, `list_schedules`, `list_individual_assignments` and
