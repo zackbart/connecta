@@ -100,7 +100,7 @@ export const SLIDES_NAMED = {
 } as const satisfies HatchDeclaration["named"];
 
 export function slidesBinding(connection: Connection): HatchBinding {
-  const binding = googleHatchBinding(connection, {
+  return googleHatchBinding(connection, {
     index: SLIDES_INDEX,
     review:
       "Four reviewed Slides JSON routes; thumbnails mint a temporary capability and remain named-only. Batch requests retain the 49 shipped kinds and revision precondition. No new preview methods.",
@@ -111,11 +111,8 @@ export function slidesBinding(connection: Connection): HatchBinding {
           ? googleBatchGuard(call.body, { kinds: REQUEST_KINDS, revision: true, max: 100 })
           : undefined,
     revisionGuarded: (call) => call.op.path.endsWith(":batchUpdate"),
-  });
-  return {
-    ...binding,
-    send: (call, options) =>
-      binding.send(call, options).pipe(
+    wrapSend: (call, send) =>
+      send().pipe(
         Effect.map((answer) => {
           if (!call.op.path.endsWith(":batchUpdate")) return answer;
           const body = call.body as { requests?: Record<string, unknown>[] };
@@ -139,7 +136,7 @@ export function slidesBinding(connection: Connection): HatchBinding {
           return answer;
         }),
       ),
-  };
+  });
 }
 
 /** Guard rich-text lanes before styles can separate adjacent fragments of a sent secret. */
