@@ -4,35 +4,23 @@
   "options": {},
   "candidates": {
     "GET /": {
-      "fields": [
-        "authorizations_url",
-        "current_user_authorizations_html_url"
-      ],
+      "fields": ["authorizations_url", "current_user_authorizations_html_url"],
       "named": false
     },
     "GET /agents/automations/available-tools": {
-      "fields": [
-        "[].tools[].scope"
-      ],
+      "fields": ["[].tools[].scope"],
       "named": false
     },
     "POST /app-manifests/{code}/conversions": {
-      "fields": [
-        "client_secret",
-        "webhook_secret"
-      ],
+      "fields": ["client_secret", "webhook_secret"],
       "named": true
     },
     "GET /app/hook/config": {
-      "fields": [
-        "secret"
-      ],
+      "fields": ["secret"],
       "named": true
     },
     "PATCH /app/hook/config": {
-      "fields": [
-        "secret"
-      ],
+      "fields": ["secret"],
       "named": true
     },
     "GET /app/hook/deliveries": {
@@ -40,10 +28,7 @@
       "named": true
     },
     "GET /app/hook/deliveries/{delivery_id}": {
-      "fields": [
-        "request.headers",
-        "response.headers"
-      ],
+      "fields": ["request.headers", "response.headers"],
       "named": true
     },
     "POST /app/hook/deliveries/{delivery_id}/attempts": {
@@ -536,16 +521,11 @@
       "named": false
     },
     "GET /events": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /installation/repositories": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": false
     },
     "DELETE /installation/token": {
@@ -553,24 +533,15 @@
       "named": true
     },
     "GET /issues": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "GET /meta": {
-      "fields": [
-        "commit_signing_keys",
-        "ssh_keys",
-        "verifiable_password_authentication"
-      ],
+      "fields": ["commit_signing_keys", "ssh_keys", "verifiable_password_authentication"],
       "named": false
     },
     "GET /networks/{owner}/{repo}/events": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /notifications": {
@@ -618,10 +589,7 @@
       "named": false
     },
     "GET /orgs/{org}/actions/oidc/customization/sub": {
-      "fields": [
-        "include_claim_keys",
-        "use_immutable_subject"
-      ],
+      "fields": ["include_claim_keys", "use_immutable_subject"],
       "named": true
     },
     "PUT /orgs/{org}/actions/oidc/customization/sub": {
@@ -629,22 +597,15 @@
       "named": true
     },
     "GET /orgs/{org}/actions/permissions/fork-pr-workflows-private-repos": {
-      "fields": [
-        "send_secrets_and_variables",
-        "send_write_tokens_to_workflows"
-      ],
+      "fields": ["send_secrets_and_variables", "send_write_tokens_to_workflows"],
       "named": false
     },
     "GET /orgs/{org}/actions/permissions/repositories": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": false
     },
     "GET /orgs/{org}/actions/permissions/self-hosted-runners/repositories": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": false
     },
     "GET /orgs/{org}/actions/runner-groups/{runner_group_id}/repositories": {
@@ -662,33 +623,19 @@
       "named": false
     },
     "GET /orgs/{org}/actions/runners/downloads": {
-      "fields": [
-        "[].temp_download_token"
-      ],
+      "fields": ["[].temp_download_token"],
       "named": false
     },
     "POST /orgs/{org}/actions/runners/registration-token": {
-      "fields": [
-        "repositories",
-        "repositories[].temp_clone_token",
-        "token"
-      ],
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
       "named": true
     },
     "POST /orgs/{org}/actions/runners/remove-token": {
-      "fields": [
-        "repositories",
-        "repositories[].temp_clone_token",
-        "token"
-      ],
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
       "named": true
     },
     "GET /orgs/{org}/actions/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name",
-        "secrets[].visibility"
-      ],
+      "fields": ["secrets", "secrets[].name", "secrets[].visibility"],
       "named": true
     },
     "GET /orgs/{org}/actions/secrets/public-key": {
@@ -696,10 +643,7 @@
       "named": true
     },
     "GET /orgs/{org}/actions/secrets/{secret_name}": {
-      "fields": [
-        "name",
-        "visibility"
-      ],
+      "fields": ["name", "visibility"],
       "named": true
     },
     "PUT /orgs/{org}/actions/secrets/{secret_name}": {
@@ -751,11 +695,7 @@
       "named": false
     },
     "GET /orgs/{org}/agents/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name",
-        "secrets[].visibility"
-      ],
+      "fields": ["secrets", "secrets[].name", "secrets[].visibility"],
       "named": true
     },
     "GET /orgs/{org}/agents/secrets/public-key": {
@@ -763,10 +703,7 @@
       "named": true
     },
     "GET /orgs/{org}/agents/secrets/{secret_name}": {
-      "fields": [
-        "name",
-        "visibility"
-      ],
+      "fields": ["name", "visibility"],
       "named": true
     },
     "PUT /orgs/{org}/agents/secrets/{secret_name}": {
@@ -916,12 +853,7 @@
       "named": false
     },
     "GET /orgs/{org}/codespaces/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name",
-        "secrets[].selected_repositories_url",
-        "secrets[].visibility"
-      ],
+      "fields": ["secrets", "secrets[].name", "secrets[].selected_repositories_url", "secrets[].visibility"],
       "named": true
     },
     "GET /orgs/{org}/codespaces/secrets/public-key": {
@@ -929,11 +861,7 @@
       "named": true
     },
     "GET /orgs/{org}/codespaces/secrets/{secret_name}": {
-      "fields": [
-        "name",
-        "selected_repositories_url",
-        "visibility"
-      ],
+      "fields": ["name", "selected_repositories_url", "visibility"],
       "named": true
     },
     "PUT /orgs/{org}/codespaces/secrets/{secret_name}": {
@@ -985,11 +913,7 @@
       "named": false
     },
     "GET /orgs/{org}/dependabot/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name",
-        "secrets[].visibility"
-      ],
+      "fields": ["secrets", "secrets[].name", "secrets[].visibility"],
       "named": true
     },
     "GET /orgs/{org}/dependabot/secrets/public-key": {
@@ -997,10 +921,7 @@
       "named": true
     },
     "GET /orgs/{org}/dependabot/secrets/{secret_name}": {
-      "fields": [
-        "name",
-        "visibility"
-      ],
+      "fields": ["name", "visibility"],
       "named": true
     },
     "PUT /orgs/{org}/dependabot/secrets/{secret_name}": {
@@ -1052,10 +973,7 @@
       "named": false
     },
     "GET /orgs/{org}/events": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /orgs/{org}/failed_invitations": {
@@ -1063,27 +981,19 @@
       "named": true
     },
     "GET /orgs/{org}/hooks": {
-      "fields": [
-        "[].config.secret"
-      ],
+      "fields": ["[].config.secret"],
       "named": true
     },
     "POST /orgs/{org}/hooks": {
-      "fields": [
-        "config.secret"
-      ],
+      "fields": ["config.secret"],
       "named": true
     },
     "GET /orgs/{org}/hooks/{hook_id}": {
-      "fields": [
-        "config.secret"
-      ],
+      "fields": ["config.secret"],
       "named": true
     },
     "PATCH /orgs/{org}/hooks/{hook_id}": {
-      "fields": [
-        "config.secret"
-      ],
+      "fields": ["config.secret"],
       "named": true
     },
     "DELETE /orgs/{org}/hooks/{hook_id}": {
@@ -1091,15 +1001,11 @@
       "named": true
     },
     "GET /orgs/{org}/hooks/{hook_id}/config": {
-      "fields": [
-        "secret"
-      ],
+      "fields": ["secret"],
       "named": true
     },
     "PATCH /orgs/{org}/hooks/{hook_id}/config": {
-      "fields": [
-        "secret"
-      ],
+      "fields": ["secret"],
       "named": true
     },
     "GET /orgs/{org}/hooks/{hook_id}/deliveries": {
@@ -1107,10 +1013,7 @@
       "named": true
     },
     "GET /orgs/{org}/hooks/{hook_id}/deliveries/{delivery_id}": {
-      "fields": [
-        "request.headers",
-        "response.headers"
-      ],
+      "fields": ["request.headers", "response.headers"],
       "named": true
     },
     "POST /orgs/{org}/hooks/{hook_id}/deliveries/{delivery_id}/attempts": {
@@ -1264,9 +1167,7 @@
       "named": true
     },
     "GET /orgs/{org}/issues": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "GET /orgs/{org}/members/{username}/codespaces": {
@@ -1298,21 +1199,15 @@
       "named": false
     },
     "GET /orgs/{org}/migrations": {
-      "fields": [
-        "[].repositories[].temp_clone_token"
-      ],
+      "fields": ["[].repositories[].temp_clone_token"],
       "named": false
     },
     "POST /orgs/{org}/migrations": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": false
     },
     "GET /orgs/{org}/migrations/{migration_id}": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": false
     },
     "GET /orgs/{org}/migrations/{migration_id}/repositories": {
@@ -1366,11 +1261,7 @@
       "named": false
     },
     "GET /orgs/{org}/personal-access-token-requests": {
-      "fields": [
-        "[].id",
-        "[].repositories_url",
-        "[].token_expired"
-      ],
+      "fields": ["[].id", "[].repositories_url", "[].token_expired"],
       "named": true
     },
     "POST /orgs/{org}/personal-access-token-requests": {
@@ -1396,11 +1287,7 @@
       "named": true
     },
     "GET /orgs/{org}/personal-access-tokens": {
-      "fields": [
-        "[].id",
-        "[].repositories_url",
-        "[].token_expired"
-      ],
+      "fields": ["[].id", "[].repositories_url", "[].token_expired"],
       "named": true
     },
     "POST /orgs/{org}/personal-access-tokens": {
@@ -1489,37 +1376,23 @@
       "named": false
     },
     "GET /orgs/{org}/rulesets": {
-      "fields": [
-        "[].bypass_actors",
-        "[].current_user_can_bypass"
-      ],
+      "fields": ["[].bypass_actors", "[].current_user_can_bypass"],
       "named": false
     },
     "POST /orgs/{org}/rulesets": {
-      "fields": [
-        "bypass_actors",
-        "current_user_can_bypass"
-      ],
+      "fields": ["bypass_actors", "current_user_can_bypass"],
       "named": false
     },
     "GET /orgs/{org}/rulesets/rule-suites/{rule_suite_id}": {
-      "fields": [
-        "rule_evaluations[].metadata.pull_request.proof_of_presence.verifier"
-      ],
+      "fields": ["rule_evaluations[].metadata.pull_request.proof_of_presence.verifier"],
       "named": false
     },
     "GET /orgs/{org}/rulesets/{ruleset_id}": {
-      "fields": [
-        "bypass_actors",
-        "current_user_can_bypass"
-      ],
+      "fields": ["bypass_actors", "current_user_can_bypass"],
       "named": false
     },
     "PUT /orgs/{org}/rulesets/{ruleset_id}": {
-      "fields": [
-        "bypass_actors",
-        "current_user_can_bypass"
-      ],
+      "fields": ["bypass_actors", "current_user_can_bypass"],
       "named": false
     },
     "GET /orgs/{org}/secret-scanning/alerts": {
@@ -1558,17 +1431,11 @@
       "named": true
     },
     "GET /orgs/{org}/secret-scanning/custom-patterns": {
-      "fields": [
-        "[].must_match",
-        "[].must_not_match"
-      ],
+      "fields": ["[].must_match", "[].must_not_match"],
       "named": true
     },
     "POST /orgs/{org}/secret-scanning/custom-patterns": {
-      "fields": [
-        "created_patterns[].must_match",
-        "created_patterns[].must_not_match"
-      ],
+      "fields": ["created_patterns[].must_match", "created_patterns[].must_not_match"],
       "named": true
     },
     "DELETE /orgs/{org}/secret-scanning/custom-patterns": {
@@ -1576,17 +1443,11 @@
       "named": true
     },
     "PATCH /orgs/{org}/secret-scanning/custom-patterns/{pattern_id}": {
-      "fields": [
-        "must_match",
-        "must_not_match"
-      ],
+      "fields": ["must_match", "must_not_match"],
       "named": true
     },
     "GET /orgs/{org}/secret-scanning/pattern-configurations": {
-      "fields": [
-        "custom_pattern_overrides[].bypass_rate",
-        "provider_pattern_overrides[].bypass_rate"
-      ],
+      "fields": ["custom_pattern_overrides[].bypass_rate", "provider_pattern_overrides[].bypass_rate"],
       "named": true
     },
     "PATCH /orgs/{org}/secret-scanning/pattern-configurations": {
@@ -1626,9 +1487,7 @@
       "named": false
     },
     "GET /orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}": {
-      "fields": [
-        "temp_clone_token"
-      ],
+      "fields": ["temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}": {
@@ -1670,10 +1529,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/actions/oidc/customization/sub": {
-      "fields": [
-        "include_claim_keys",
-        "use_immutable_subject"
-      ],
+      "fields": ["include_claim_keys", "use_immutable_subject"],
       "named": true
     },
     "PUT /repos/{owner}/{repo}/actions/oidc/customization/sub": {
@@ -1681,39 +1537,23 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/actions/organization-secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name"
-      ],
+      "fields": ["secrets", "secrets[].name"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/actions/permissions/fork-pr-workflows-private-repos": {
-      "fields": [
-        "send_secrets_and_variables",
-        "send_write_tokens_to_workflows"
-      ],
+      "fields": ["send_secrets_and_variables", "send_write_tokens_to_workflows"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/actions/runners/downloads": {
-      "fields": [
-        "[].temp_download_token"
-      ],
+      "fields": ["[].temp_download_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/actions/runners/registration-token": {
-      "fields": [
-        "repositories",
-        "repositories[].temp_clone_token",
-        "token"
-      ],
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
       "named": true
     },
     "POST /repos/{owner}/{repo}/actions/runners/remove-token": {
-      "fields": [
-        "repositories",
-        "repositories[].temp_clone_token",
-        "token"
-      ],
+      "fields": ["repositories", "repositories[].temp_clone_token", "token"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/actions/runs": {
@@ -1786,10 +1626,7 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/actions/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name"
-      ],
+      "fields": ["secrets", "secrets[].name"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/actions/secrets/public-key": {
@@ -1797,9 +1634,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/actions/secrets/{secret_name}": {
-      "fields": [
-        "name"
-      ],
+      "fields": ["name"],
       "named": true
     },
     "PUT /repos/{owner}/{repo}/actions/secrets/{secret_name}": {
@@ -1834,17 +1669,11 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/agents/organization-secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name"
-      ],
+      "fields": ["secrets", "secrets[].name"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/agents/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name"
-      ],
+      "fields": ["secrets", "secrets[].name"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/agents/secrets/public-key": {
@@ -1852,9 +1681,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/agents/secrets/{secret_name}": {
-      "fields": [
-        "name"
-      ],
+      "fields": ["name"],
       "named": true
     },
     "PUT /repos/{owner}/{repo}/agents/secrets/{secret_name}": {
@@ -1881,29 +1708,19 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/branches/{branch}/protection": {
-      "fields": [
-        "required_pull_request_reviews.bypass_pull_request_allowances",
-        "required_signatures"
-      ],
+      "fields": ["required_pull_request_reviews.bypass_pull_request_allowances", "required_signatures"],
       "named": false
     },
     "PUT /repos/{owner}/{repo}/branches/{branch}/protection": {
-      "fields": [
-        "required_pull_request_reviews.bypass_pull_request_allowances",
-        "required_signatures"
-      ],
+      "fields": ["required_pull_request_reviews.bypass_pull_request_allowances", "required_signatures"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews": {
-      "fields": [
-        "bypass_pull_request_allowances"
-      ],
+      "fields": ["bypass_pull_request_allowances"],
       "named": false
     },
     "PATCH /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews": {
-      "fields": [
-        "bypass_pull_request_allowances"
-      ],
+      "fields": ["bypass_pull_request_allowances"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/branches/{branch}/rename": {
@@ -1971,9 +1788,7 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/code-scanning/default-setup": {
-      "fields": [
-        "threat_model"
-      ],
+      "fields": ["threat_model"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/code-security-configuration": {
@@ -2019,10 +1834,7 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/codespaces/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name"
-      ],
+      "fields": ["secrets", "secrets[].name"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/codespaces/secrets/public-key": {
@@ -2030,9 +1842,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/codespaces/secrets/{secret_name}": {
-      "fields": [
-        "name"
-      ],
+      "fields": ["name"],
       "named": true
     },
     "PUT /repos/{owner}/{repo}/codespaces/secrets/{secret_name}": {
@@ -2058,22 +1868,15 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/commits": {
-      "fields": [
-        "[].commit.verification.signature"
-      ],
+      "fields": ["[].commit.verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls": {
-      "fields": [
-        "[].base.repo.temp_clone_token",
-        "[].head.repo.temp_clone_token"
-      ],
+      "fields": ["[].base.repo.temp_clone_token", "[].head.repo.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/commits/{ref}": {
-      "fields": [
-        "commit.verification.signature"
-      ],
+      "fields": ["commit.verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/commits/{ref}/check-suites": {
@@ -2113,28 +1916,19 @@
       "named": false
     },
     "PUT /repos/{owner}/{repo}/contents/{path}": {
-      "fields": [
-        "commit.verification.signature"
-      ],
+      "fields": ["commit.verification.signature"],
       "named": false
     },
     "DELETE /repos/{owner}/{repo}/contents/{path}": {
-      "fields": [
-        "commit.verification.signature"
-      ],
+      "fields": ["commit.verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/copilot/cloud-agent/configuration": {
-      "fields": [
-        "enabled_tools.secret_scanning"
-      ],
+      "fields": ["enabled_tools.secret_scanning"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/dependabot/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name"
-      ],
+      "fields": ["secrets", "secrets[].name"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/dependabot/secrets/public-key": {
@@ -2142,9 +1936,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/dependabot/secrets/{secret_name}": {
-      "fields": [
-        "name"
-      ],
+      "fields": ["name"],
       "named": true
     },
     "PUT /repos/{owner}/{repo}/dependabot/secrets/{secret_name}": {
@@ -2156,10 +1948,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name"
-      ],
+      "fields": ["secrets", "secrets[].name"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets/public-key": {
@@ -2167,9 +1956,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}": {
-      "fields": [
-        "name"
-      ],
+      "fields": ["name"],
       "named": true
     },
     "PUT /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}": {
@@ -2181,10 +1968,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/events": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/forks": {
@@ -2219,51 +2003,35 @@
       "named": false
     },
     "POST /repos/{owner}/{repo}/git/commits": {
-      "fields": [
-        "verification.signature"
-      ],
+      "fields": ["verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/git/commits/{commit_sha}": {
-      "fields": [
-        "verification.signature"
-      ],
+      "fields": ["verification.signature"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/git/tags": {
-      "fields": [
-        "verification.signature"
-      ],
+      "fields": ["verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/git/tags/{tag_sha}": {
-      "fields": [
-        "verification.signature"
-      ],
+      "fields": ["verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/hooks": {
-      "fields": [
-        "[].config.secret"
-      ],
+      "fields": ["[].config.secret"],
       "named": true
     },
     "POST /repos/{owner}/{repo}/hooks": {
-      "fields": [
-        "config.secret"
-      ],
+      "fields": ["config.secret"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/hooks/{hook_id}": {
-      "fields": [
-        "config.secret"
-      ],
+      "fields": ["config.secret"],
       "named": true
     },
     "PATCH /repos/{owner}/{repo}/hooks/{hook_id}": {
-      "fields": [
-        "config.secret"
-      ],
+      "fields": ["config.secret"],
       "named": true
     },
     "DELETE /repos/{owner}/{repo}/hooks/{hook_id}": {
@@ -2271,15 +2039,11 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/hooks/{hook_id}/config": {
-      "fields": [
-        "secret"
-      ],
+      "fields": ["secret"],
       "named": true
     },
     "PATCH /repos/{owner}/{repo}/hooks/{hook_id}/config": {
-      "fields": [
-        "secret"
-      ],
+      "fields": ["secret"],
       "named": true
     },
     "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries": {
@@ -2287,10 +2051,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}": {
-      "fields": [
-        "request.headers",
-        "response.headers"
-      ],
+      "fields": ["request.headers", "response.headers"],
       "named": true
     },
     "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts": {
@@ -2413,130 +2174,87 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/issues": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/issues": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/events": {
-      "fields": [
-        "[].issue.repository.temp_clone_token"
-      ],
+      "fields": ["[].issue.repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/events/{event_id}": {
-      "fields": [
-        "issue.repository.temp_clone_token"
-      ],
+      "fields": ["issue.repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/{issue_number}": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "PATCH /repos/{owner}/{repo}/issues/{issue_number}": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/issues/{issue_number}/assignees": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "DELETE /repos/{owner}/{repo}/issues/{issue_number}/assignees": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "DELETE /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by/{issue_id}": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocking": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/{issue_number}/parent": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/{issue_number}/relates_to": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/issues/{issue_number}/relates_to": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "DELETE /repos/{owner}/{repo}/issues/{issue_number}/relates_to/{issue_id}": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "DELETE /repos/{owner}/{repo}/issues/{issue_number}/sub_issue": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/{issue_number}/sub_issues": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/issues/{issue_number}/sub_issues": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "PATCH /repos/{owner}/{repo}/issues/{issue_number}/sub_issues/priority": {
-      "fields": [
-        "repository.temp_clone_token"
-      ],
+      "fields": ["repository.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/issues/{issue_number}/timeline": {
-      "fields": [
-        "[].source.issue.repository.temp_clone_token",
-        "[].verification.signature"
-      ],
+      "fields": ["[].source.issue.repository.temp_clone_token", "[].verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/keys": {
@@ -2556,9 +2274,7 @@
       "named": true
     },
     "POST /repos/{owner}/{repo}/merges": {
-      "fields": [
-        "commit.verification.signature"
-      ],
+      "fields": ["commit.verification.signature"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/notifications": {
@@ -2576,31 +2292,19 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/pulls": {
-      "fields": [
-        "[].base.repo.temp_clone_token",
-        "[].head.repo.temp_clone_token"
-      ],
+      "fields": ["[].base.repo.temp_clone_token", "[].head.repo.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/pulls": {
-      "fields": [
-        "base.repo.temp_clone_token",
-        "head.repo.temp_clone_token"
-      ],
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/pulls/{pull_number}": {
-      "fields": [
-        "base.repo.temp_clone_token",
-        "head.repo.temp_clone_token"
-      ],
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
       "named": false
     },
     "PATCH /repos/{owner}/{repo}/pulls/{pull_number}": {
-      "fields": [
-        "base.repo.temp_clone_token",
-        "head.repo.temp_clone_token"
-      ],
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/pulls/{pull_number}/codespaces": {
@@ -2618,112 +2322,71 @@
       "named": false
     },
     "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits": {
-      "fields": [
-        "[].commit.verification.signature"
-      ],
+      "fields": ["[].commit.verification.signature"],
       "named": false
     },
     "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge-async": {
-      "fields": [
-        "details.bypass_rules"
-      ],
+      "fields": ["details.bypass_rules"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/pulls/{pull_number}/merge-async/{uuid}": {
-      "fields": [
-        "details.bypass_rules"
-      ],
+      "fields": ["details.bypass_rules"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers": {
-      "fields": [
-        "base.repo.temp_clone_token",
-        "head.repo.temp_clone_token"
-      ],
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
       "named": false
     },
     "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers": {
-      "fields": [
-        "base.repo.temp_clone_token",
-        "head.repo.temp_clone_token"
-      ],
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers/rerequest": {
-      "fields": [
-        "base.repo.temp_clone_token",
-        "head.repo.temp_clone_token"
-      ],
+      "fields": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/releases": {
-      "fields": [
-        "[].upload_url"
-      ],
+      "fields": ["[].upload_url"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/releases": {
-      "fields": [
-        "upload_url"
-      ],
+      "fields": ["upload_url"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/releases/latest": {
-      "fields": [
-        "upload_url"
-      ],
+      "fields": ["upload_url"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/releases/tags/{tag}": {
-      "fields": [
-        "upload_url"
-      ],
+      "fields": ["upload_url"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/releases/{release_id}": {
-      "fields": [
-        "upload_url"
-      ],
+      "fields": ["upload_url"],
       "named": false
     },
     "PATCH /repos/{owner}/{repo}/releases/{release_id}": {
-      "fields": [
-        "upload_url"
-      ],
+      "fields": ["upload_url"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/rulesets": {
-      "fields": [
-        "[].bypass_actors",
-        "[].current_user_can_bypass"
-      ],
+      "fields": ["[].bypass_actors", "[].current_user_can_bypass"],
       "named": false
     },
     "POST /repos/{owner}/{repo}/rulesets": {
-      "fields": [
-        "bypass_actors",
-        "current_user_can_bypass"
-      ],
+      "fields": ["bypass_actors", "current_user_can_bypass"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/rulesets/rule-suites/{rule_suite_id}": {
-      "fields": [
-        "rule_evaluations[].metadata.pull_request.proof_of_presence.verifier"
-      ],
+      "fields": ["rule_evaluations[].metadata.pull_request.proof_of_presence.verifier"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/rulesets/{ruleset_id}": {
-      "fields": [
-        "bypass_actors",
-        "current_user_can_bypass"
-      ],
+      "fields": ["bypass_actors", "current_user_can_bypass"],
       "named": false
     },
     "PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}": {
-      "fields": [
-        "bypass_actors",
-        "current_user_can_bypass"
-      ],
+      "fields": ["bypass_actors", "current_user_can_bypass"],
       "named": false
     },
     "GET /repos/{owner}/{repo}/secret-scanning/alerts": {
@@ -2858,17 +2521,11 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/secret-scanning/custom-patterns": {
-      "fields": [
-        "[].must_match",
-        "[].must_not_match"
-      ],
+      "fields": ["[].must_match", "[].must_not_match"],
       "named": true
     },
     "POST /repos/{owner}/{repo}/secret-scanning/custom-patterns": {
-      "fields": [
-        "created_patterns[].must_match",
-        "created_patterns[].must_not_match"
-      ],
+      "fields": ["created_patterns[].must_match", "created_patterns[].must_not_match"],
       "named": true
     },
     "DELETE /repos/{owner}/{repo}/secret-scanning/custom-patterns": {
@@ -2876,10 +2533,7 @@
       "named": true
     },
     "PATCH /repos/{owner}/{repo}/secret-scanning/custom-patterns/{pattern_id}": {
-      "fields": [
-        "must_match",
-        "must_not_match"
-      ],
+      "fields": ["must_match", "must_not_match"],
       "named": true
     },
     "POST /repos/{owner}/{repo}/secret-scanning/push-protection-bypasses": {
@@ -2887,9 +2541,7 @@
       "named": true
     },
     "GET /repos/{owner}/{repo}/secret-scanning/scan-history": {
-      "fields": [
-        "generic_secrets_backfill_scans"
-      ],
+      "fields": ["generic_secrets_backfill_scans"],
       "named": true
     },
     "POST /repos/{owner}/{repo}/security-advisories/{ghsa_id}/forks": {
@@ -2984,15 +2636,11 @@
       "named": false
     },
     "GET /search/issues": {
-      "fields": [
-        "items[].repository.temp_clone_token"
-      ],
+      "fields": ["items[].repository.temp_clone_token"],
       "named": false
     },
     "GET /search/repositories": {
-      "fields": [
-        "items[].temp_clone_token"
-      ],
+      "fields": ["items[].temp_clone_token"],
       "named": false
     },
     "GET /user/codespaces": {
@@ -3024,12 +2672,7 @@
       "named": false
     },
     "GET /user/codespaces/secrets": {
-      "fields": [
-        "secrets",
-        "secrets[].name",
-        "secrets[].selected_repositories_url",
-        "secrets[].visibility"
-      ],
+      "fields": ["secrets", "secrets[].name", "secrets[].selected_repositories_url", "secrets[].visibility"],
       "named": true
     },
     "GET /user/codespaces/secrets/public-key": {
@@ -3037,11 +2680,7 @@
       "named": true
     },
     "GET /user/codespaces/secrets/{secret_name}": {
-      "fields": [
-        "name",
-        "selected_repositories_url",
-        "visibility"
-      ],
+      "fields": ["name", "selected_repositories_url", "visibility"],
       "named": true
     },
     "PUT /user/codespaces/secrets/{secret_name}": {
@@ -3166,24 +2805,15 @@
       "named": false
     },
     "GET /user/gpg_keys": {
-      "fields": [
-        "[].subkeys",
-        "[].subkeys[].subkeys"
-      ],
+      "fields": ["[].subkeys", "[].subkeys[].subkeys"],
       "named": true
     },
     "POST /user/gpg_keys": {
-      "fields": [
-        "subkeys",
-        "subkeys[].subkeys"
-      ],
+      "fields": ["subkeys", "subkeys[].subkeys"],
       "named": true
     },
     "GET /user/gpg_keys/{gpg_key_id}": {
-      "fields": [
-        "subkeys",
-        "subkeys[].subkeys"
-      ],
+      "fields": ["subkeys", "subkeys[].subkeys"],
       "named": true
     },
     "DELETE /user/gpg_keys/{gpg_key_id}": {
@@ -3254,15 +2884,11 @@
       "named": true
     },
     "GET /user/installations/{installation_id}/repositories": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": true
     },
     "GET /user/issues": {
-      "fields": [
-        "[].repository.temp_clone_token"
-      ],
+      "fields": ["[].repository.temp_clone_token"],
       "named": false
     },
     "GET /user/keys": {
@@ -3282,21 +2908,15 @@
       "named": true
     },
     "GET /user/migrations": {
-      "fields": [
-        "[].repositories[].temp_clone_token"
-      ],
+      "fields": ["[].repositories[].temp_clone_token"],
       "named": false
     },
     "POST /user/migrations": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": false
     },
     "GET /user/migrations/{migration_id}": {
-      "fields": [
-        "repositories[].temp_clone_token"
-      ],
+      "fields": ["repositories[].temp_clone_token"],
       "named": false
     },
     "GET /user/migrations/{migration_id}/repositories": {
@@ -3342,9 +2962,7 @@
       "named": false
     },
     "GET /user/repos": {
-      "fields": [
-        "[].temp_clone_token"
-      ],
+      "fields": ["[].temp_clone_token"],
       "named": false
     },
     "POST /user/repos": {
@@ -3403,10 +3021,7 @@
       "named": true
     },
     "GET /user/starred": {
-      "fields": [
-        "[].repo.temp_clone_token",
-        "[].temp_clone_token"
-      ],
+      "fields": ["[].repo.temp_clone_token", "[].temp_clone_token"],
       "named": false
     },
     "GET /user/subscriptions": {
@@ -3446,31 +3061,19 @@
       "named": false
     },
     "GET /users/{username}/events": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /users/{username}/events/orgs/{org}": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /users/{username}/events/public": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /users/{username}/gpg_keys": {
-      "fields": [
-        "[].subkeys",
-        "[].subkeys[].subkeys"
-      ],
+      "fields": ["[].subkeys", "[].subkeys[].subkeys"],
       "named": true
     },
     "GET /users/{username}/installation": {
@@ -3577,17 +3180,11 @@
       "named": false
     },
     "GET /users/{username}/received_events": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /users/{username}/received_events/public": {
-      "fields": [
-        "[].payload.issue.repository.temp_clone_token",
-        "[].payload.release.upload_url"
-      ],
+      "fields": ["[].payload.issue.repository.temp_clone_token", "[].payload.release.upload_url"],
       "named": false
     },
     "GET /users/{username}/repos": {
@@ -3609,10 +3206,7 @@
       "named": true
     },
     "GET /users/{username}/starred": {
-      "fields": [
-        "[].repo.temp_clone_token",
-        "[].temp_clone_token"
-      ],
+      "fields": ["[].repo.temp_clone_token", "[].temp_clone_token"],
       "named": false
     },
     "GET /users/{username}/subscriptions": {
@@ -3632,9 +3226,7 @@
   },
   "reviewed": {
     "operations": {
-      "GET /installation/repositories": [
-        "repositories[].temp_clone_token"
-      ],
+      "GET /installation/repositories": ["repositories[].temp_clone_token"],
       "GET /repos/{owner}/{repo}": [
         "parent.temp_clone_token",
         "security_and_analysis.advanced_security",
@@ -3709,52 +3301,24 @@
         "workflow_runs[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
         "workflow_runs[].repository.temp_clone_token"
       ],
-      "GET /repos/{owner}/{repo}/commits": [
-        "[].commit.verification.signature"
-      ],
-      "GET /repos/{owner}/{repo}/commits/{ref}": [
-        "commit.verification.signature"
-      ],
+      "GET /repos/{owner}/{repo}/commits": ["[].commit.verification.signature"],
+      "GET /repos/{owner}/{repo}/commits/{ref}": ["commit.verification.signature"],
       "GET /repos/{owner}/{repo}/compare/{basehead}": [
         "base_commit.commit.verification.signature",
         "commits[].commit.verification.signature",
         "merge_base_commit.commit.verification.signature"
       ],
-      "GET /repos/{owner}/{repo}/issues": [
-        "[].repository.temp_clone_token"
-      ],
-      "GET /repos/{owner}/{repo}/issues/{issue_number}": [
-        "repository.temp_clone_token"
-      ],
-      "GET /repos/{owner}/{repo}/pulls": [
-        "[].base.repo.temp_clone_token",
-        "[].head.repo.temp_clone_token"
-      ],
-      "GET /repos/{owner}/{repo}/pulls/{pull_number}": [
-        "base.repo.temp_clone_token",
-        "head.repo.temp_clone_token"
-      ],
-      "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits": [
-        "[].commit.verification.signature"
-      ],
-      "GET /repos/{owner}/{repo}/releases": [
-        "[].upload_url"
-      ],
-      "POST /repos/{owner}/{repo}/releases": [
-        "upload_url"
-      ],
-      "GET /repos/{owner}/{repo}/releases/latest": [
-        "upload_url"
-      ],
-      "GET /repos/{owner}/{repo}/releases/tags/{tag}": [
-        "upload_url"
-      ],
-      "GET /repos/{owner}/{repo}/releases/{release_id}": [
-        "upload_url"
-      ],
-      "PATCH /repos/{owner}/{repo}/releases/{release_id}": [
-        "upload_url"
-      ],
+      "GET /repos/{owner}/{repo}/issues": ["[].repository.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/issues/{issue_number}": ["repository.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/pulls": ["[].base.repo.temp_clone_token", "[].head.repo.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}": ["base.repo.temp_clone_token", "head.repo.temp_clone_token"],
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits": ["[].commit.verification.signature"],
+      "GET /repos/{owner}/{repo}/releases": ["[].upload_url"],
+      "POST /repos/{owner}/{repo}/releases": ["upload_url"],
+      "GET /repos/{owner}/{repo}/releases/latest": ["upload_url"],
+      "GET /repos/{owner}/{repo}/releases/tags/{tag}": ["upload_url"],
+      "GET /repos/{owner}/{repo}/releases/{release_id}": ["upload_url"],
+      "PATCH /repos/{owner}/{repo}/releases/{release_id}": ["upload_url"],
       "GET /search/code": [
         "items[].repository.security_and_analysis.advanced_security",
         "items[].repository.security_and_analysis.secret_scanning",
@@ -3766,12 +3330,8 @@
         "items[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
         "items[].repository.temp_clone_token"
       ],
-      "GET /search/issues": [
-        "items[].repository.temp_clone_token"
-      ],
-      "GET /search/repositories": [
-        "items[].temp_clone_token"
-      ]
+      "GET /search/issues": ["items[].repository.temp_clone_token"],
+      "GET /search/repositories": ["items[].temp_clone_token"]
     },
     "resources": {},
     "bindings": {}
