@@ -101,3 +101,19 @@ Round-1 review B1 restores `get_thread.page` after field selection and the guide
 The optional refresh below is AFTER only, restricted to G3 and G4, both original models and two repeats each. It is additional evidence after the fixes; it does not replace the original table or rerun BEFORE. Prompts, fake responses, grading rules, ordering requirements, deadlines and result budgets remain frozen.
 
 The fixed standalone entry build measures Gmail **379,265 B gzip** and Docs **370,210 B**. Gmail's recorded baseline is the 379,199 B snapshot before adding the measurement note itself; no cap is raised. Focused Gmail tests remain 24, and all 760 standard/boundary checks pass after rerunning the 113-test delegation suite for a search-description collision. All seven fixed Gmail selftests pass on both presentations and both grading modes. Node 24 Eve's five tests, typecheck/build and packed runtime/emitted-type smoke pass.
+
+## Disclosed post-fix refresh: AFTER G3/G4 only
+
+Clean fix commit `3aa5764d12a800698c341ccbe18c6fded57b3192`, source tree `3cf90001d9a5374e7c17cf6a0f91c32996cd7d21`, runs eight additional trials under pair id `google-gmail-step2-r1-refresh-20261024`. CLI versions, default effort, six-tool surface, outcome grading, two repeats, eight-minute deadline and concurrency one per runner match the original settings. At most two trials run simultaneously. The task/harness hashes match the merged protocol above. The [refresh JSON](./google-gmail-step2-r1-refresh.json) retains every status, check, answer, source/CLI/protocol fact, request/discovery/usage metric and original raw-artifact hash. Complete raw JSON and transcripts remain alongside the original scratch artifacts.
+
+| Workflow | Original AFTER Luna | Post-fix Luna | Original AFTER Sonnet | Post-fix Sonnet |
+| --- | ---: | ---: | ---: | ---: |
+| G3 complete paging and sorted ids | 0/2 | 1/2 | 0/2 | 0/2 |
+| G4 rare header/MIME metadata | 1/2 | 2/2 | 2/2 | 2/2 |
+| **Two-task subset** | **1/4** | **3/4** | **2/4** | **2/4** |
+
+The refresh passes **5/8** overall. Every G3 repeat returns exactly the complete set of 100 unique message ids, with no thread ids, and passes `full-pages` and `complete-evidence`. Luna repeat 1 uses lexical order and passes. Luna repeat 2 and both Sonnet repeats use numeric order and fail only the frozen `answer-evidence` check. All four G4 repeats read the requested m1 and return the header and attachment facts correctly; the example-id/empty-200 failure does not recur. This sample shows no remaining paging failure, while ordering ambiguity remains visible. It is an AFTER-only sample of two repeats, not a replacement seven-task comparison or a reliability estimate. No failed trial is replaced or rescored; there are no infrastructure errors, timeouts or skipped trials.
+
+Luna uses 23 MCP calls and 53 HTTP reads; Sonnet uses 18 MCP calls and 28 HTTP reads. Neither runner dispatches a write, duplicate write or unauthorized request. Discovery totals are 83,789 B and 74,789 B, with maximum single replies 10,667 B and 17,651 B respectively. Median/max wall times are 23.4/27.9 s and 17.8/25.4 s. Sonnet reports USD 0.2039592 in API-equivalent usage; Luna dollar cost remains unknown. G3's repeated thread reads remain a cost even though pagination completes.
+
+Final fixed-source verification passes all 85 provider Node determinism/harness tests and 100 workerd tests (184 expected tag skips), along with static, build/declarations/bundle, focused suites, selftests and Node 24 Eve checks noted above. All non-Gmail stored goldens remain byte-identical to merged main. The results commit changes only this note and the separate refresh JSON; the measured fixed `src/` tree is unchanged.

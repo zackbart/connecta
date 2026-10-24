@@ -1,0 +1,1590 @@
+{
+  "kind": "google-gmail-step2-round1-after-refresh",
+  "note": "Disclosed post-fix AFTER-only G3/G4 refresh: both models, two repeats each, at most two concurrent. Original 56-trial table remains unchanged; no BEFORE rerun or pooled replacement score.",
+  "runs": [
+    {
+      "arm": "after-post-fix",
+      "runner": "codex",
+      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-codex.json",
+      "rawSha256": "1597d9ac675911c51c2f7fb0333c3a2fcc68fe0f3f5b06ba76a82218ca273f27",
+      "meta": {
+        "createdAt": "2026-10-24T18:30:45.812Z",
+        "git": {
+          "commit": "3aa5764d12a8",
+          "branch": "t3/google-gmail-step2",
+          "dirty": false,
+          "srcTree": "3cf90001d9a5",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v22.23.3",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "pairId": "google-gmail-step2-r1-refresh-20261024",
+        "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+        "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "outcome",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "google-gmail-3",
+          "google-gmail-4"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "codex-cli 0.163.0"
+    },
+    {
+      "arm": "after-post-fix",
+      "runner": "claude",
+      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-claude.json",
+      "rawSha256": "1db1ad624a703f31671469853644495828ad2c6cc0bc7496539048f1dff9c81b",
+      "meta": {
+        "createdAt": "2026-10-24T18:30:45.302Z",
+        "git": {
+          "commit": "3aa5764d12a8",
+          "branch": "t3/google-gmail-step2",
+          "dirty": false,
+          "srcTree": "3cf90001d9a5",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v22.23.3",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "pairId": "google-gmail-step2-r1-refresh-20261024",
+        "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+        "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "outcome",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "google-gmail-3",
+          "google-gmail-4"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "2.1.309 (Claude Code)"
+    }
+  ],
+  "aggregates": [
+    {
+      "arm": "after-post-fix",
+      "model": "gpt-6-luna",
+      "passed": 3,
+      "trials": 4,
+      "perTask": {
+        "google-gmail-3": {
+          "passed": 1,
+          "trials": 2
+        },
+        "google-gmail-4": {
+          "passed": 2,
+          "trials": 2
+        }
+      },
+      "meanMcpCalls": 5.75,
+      "httpReads": 53,
+      "httpWrites": 0,
+      "duplicateWrites": 0,
+      "unauthorizedRequests": 0,
+      "meanDiscoveryBytes": 20947.25,
+      "maxCumulativeDiscoveryBytes": 26435,
+      "maxDiscoveryReplyBytes": 10667,
+      "maxHatchDiscoveryReplyBytes": 1457,
+      "namedTools": {
+        "gmail.get_thread": 21,
+        "gmail.search_threads": 12,
+        "gmail.get_message": 1
+      },
+      "errors": 0,
+      "timeouts": 0,
+      "skipped": 0,
+      "permissionDenials": 0,
+      "authorizationAttempts": 0,
+      "totalMcpCalls": 23,
+      "totalDiscoveryBytes": 83789,
+      "meanWallMs": 23214.75,
+      "medianWallMs": 23445.5,
+      "maxWallMs": 27925,
+      "tokens": {
+        "input": 102272,
+        "output": 3853,
+        "cacheRead": 401536,
+        "cacheCreation": 0
+      },
+      "costUsd": null,
+      "duplicateReads": 32,
+      "httpErrors": 0,
+      "toolErrors": 0,
+      "confirmationNudges": 0,
+      "surfaceToolAttempts": {
+        "gmail.get_thread": 21,
+        "gmail.search_threads": 12,
+        "gmail.gmail_api_read": 3,
+        "gmail.gmail_api_search": 2,
+        "gmail.get_message": 1
+      },
+      "successfulWorkflowNamedTools": {
+        "gmail.get_thread": 16,
+        "gmail.search_threads": 3,
+        "gmail.get_message": 1
+      }
+    },
+    {
+      "arm": "after-post-fix",
+      "model": "claude-sonnet-5-5",
+      "passed": 2,
+      "trials": 4,
+      "perTask": {
+        "google-gmail-3": {
+          "passed": 0,
+          "trials": 2
+        },
+        "google-gmail-4": {
+          "passed": 2,
+          "trials": 2
+        }
+      },
+      "meanMcpCalls": 4.5,
+      "httpReads": 28,
+      "httpWrites": 0,
+      "duplicateWrites": 0,
+      "unauthorizedRequests": 0,
+      "meanDiscoveryBytes": 18697.25,
+      "maxCumulativeDiscoveryBytes": 25833,
+      "maxDiscoveryReplyBytes": 17651,
+      "maxHatchDiscoveryReplyBytes": 0,
+      "namedTools": {
+        "gmail.get_thread": 14,
+        "gmail.search_threads": 5
+      },
+      "errors": 0,
+      "timeouts": 0,
+      "skipped": 0,
+      "permissionDenials": 0,
+      "authorizationAttempts": 0,
+      "totalMcpCalls": 18,
+      "totalDiscoveryBytes": 74789,
+      "meanWallMs": 18325,
+      "medianWallMs": 17764.0,
+      "maxWallMs": 25406,
+      "tokens": {
+        "input": 40,
+        "output": 5308,
+        "cacheRead": 149872,
+        "cacheCreation": 33953
+      },
+      "costUsd": 0.2039592,
+      "duplicateReads": 16,
+      "httpErrors": 0,
+      "toolErrors": 4,
+      "confirmationNudges": 0,
+      "surfaceToolAttempts": {
+        "gmail.get_thread": 14,
+        "gmail.search_threads": 5,
+        "gmail.gmail_api_read": 4
+      },
+      "successfulWorkflowNamedTools": {}
+    }
+  ],
+  "trials": [
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-3",
+      "model": "gpt-6-luna",
+      "repeat": 1,
+      "status": "pass",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "complete-evidence",
+          "description": "complete evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "full-pages",
+          "description": "full pages",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": false,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Read every message in threads `t1` and `t2`. The Gmail search for “Budget” returned those two threads on one page (`hasMore: false`); their messages yielded the complete sorted unique ID list below.\n\nSource: Gmail `search_threads` and `get_thread` results.\n\nANSWER: {\"source\":\"gmail\",\"ids\":[\"m1\",\"m10\",\"m100\",\"m11\",\"m12\",\"m13\",\"m14\",\"m15\",\"m16\",\"m17\",\"m18\",\"m19\",\"m2\",\"m20\",\"m21\",\"m22\",\"m23\",\"m24\",\"m25\",\"m26\",\"m27\",\"m28\",\"m29\",\"m3\",\"m30\",\"m31\",\"m32\",\"m33\",\"m34\",\"m35\",\"m36\",\"m37\",\"m38\",\"m39\",\"m4\",\"m40\",\"m41\",\"m42\",\"m43\",\"m44\",\"m45\",\"m46\",\"m47\",\"m48\",\"m49\",\"m5\",\"m50\",\"m51\",\"m52\",\"m53\",\"m54\",\"m55\",\"m56\",\"m57\",\"m58\",\"m59\",\"m6\",\"m60\",\"m61\",\"m62\",\"m63\",\"m64\",\"m65\",\"m66\",\"m67\",\"m68\",\"m69\",\"m7\",\"m70\",\"m71\",\"m72\",\"m73\",\"m74\",\"m75\",\"m76\",\"m77\",\"m78\",\"m79\",\"m8\",\"m80\",\"m81\",\"m82\",\"m83\",\"m84\",\"m85\",\"m86\",\"m87\",\"m88\",\"m89\",\"m9\",\"m90\",\"m91\",\"m92\",\"m93\",\"m94\",\"m95\",\"m96\",\"m97\",\"m98\",\"m99\"]}",
+      "runnerMetadata": {
+        "requestedModel": "gpt-6-luna",
+        "servedModel": "gpt-6-luna",
+        "version": "codex-cli 0.163.0",
+        "exitCode": 0,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"/tmp/connecta-eval-codex-vnjkWD/codex-home\"))\n\u001b[2m2026-10-24T18:30:47.728279Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_app_server\u001b[0m\u001b[2m:\u001b[0m Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.\n",
+        "loadedTools": [
+          "mcp__connecta__skills",
+          "mcp__connecta__call_destructive_tool",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__authorize_connector",
+          "mcp__connecta__execute_code",
+          "mcp__connecta__search_tools"
+        ],
+        "skillInventory": [
+          {
+            "name": "imagegen",
+            "enabled": false
+          },
+          {
+            "name": "openai-docs",
+            "enabled": false
+          },
+          {
+            "name": "review-agent",
+            "enabled": false
+          },
+          {
+            "name": "skill-creator",
+            "enabled": false
+          },
+          {
+            "name": "skill-installer",
+            "enabled": false
+          }
+        ],
+        "pluginInventory": []
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 27925,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 23677,
+          "output": 1540,
+          "cacheRead": 64640,
+          "cacheCreation": 0
+        },
+        "metaTools": {
+          "execute_code": 3,
+          "skills": 1
+        },
+        "otherTools": {},
+        "toolErrors": 0,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 22,
+          "writes": 0,
+          "duplicateReads": 17,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /threads/t1": 6,
+            "gmail.GET /threads/t2": 14,
+            "gmail.GET /threads": 2
+          }
+        }
+      },
+      "mcpCalls": 4,
+      "httpReads": 22,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {
+        "gmail.get_thread": 16,
+        "gmail.search_threads": 2
+      },
+      "surfaceToolAttempts": {
+        "gmail.get_thread": 16,
+        "gmail.search_threads": 2
+      },
+      "discoveryBytes": 15499,
+      "maxDiscoveryReplyBytes": 8025,
+      "hatchDiscoveryReplyBytes": []
+    },
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-4",
+      "model": "gpt-6-luna",
+      "repeat": 1,
+      "status": "pass",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Source: Gmail message `m1` (`GET /messages/m1`).\n\n- X-Review-Stage: `approved`\n- Attachment part id: `1`\n- MIME type: `application/octet-stream`\n- Filename: `evidence.bin`\n\nANSWER: {\"source\":\"gmail\",\"header\":\"approved\",\"partId\":\"1\",\"mimeType\":\"application/octet-stream\",\"filename\":\"evidence.bin\"}",
+      "runnerMetadata": {
+        "requestedModel": "gpt-6-luna",
+        "servedModel": "gpt-6-luna",
+        "version": "codex-cli 0.163.0",
+        "exitCode": 0,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"/tmp/connecta-eval-codex-7tkLrI/codex-home\"))\n\u001b[2m2026-10-24T18:31:17.311865Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_app_server\u001b[0m\u001b[2m:\u001b[0m Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.\n",
+        "loadedTools": [
+          "mcp__connecta__search_tools",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__authorize_connector",
+          "mcp__connecta__execute_code",
+          "mcp__connecta__skills",
+          "mcp__connecta__call_destructive_tool"
+        ],
+        "skillInventory": [
+          {
+            "name": "imagegen",
+            "enabled": false
+          },
+          {
+            "name": "openai-docs",
+            "enabled": false
+          },
+          {
+            "name": "review-agent",
+            "enabled": false
+          },
+          {
+            "name": "skill-creator",
+            "enabled": false
+          },
+          {
+            "name": "skill-installer",
+            "enabled": false
+          }
+        ],
+        "pluginInventory": []
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 19114,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 21615,
+          "output": 461,
+          "cacheRead": 86272,
+          "cacheCreation": 0
+        },
+        "metaTools": {
+          "execute_code": 4,
+          "skills": 1
+        },
+        "otherTools": {},
+        "toolErrors": 0,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 2,
+          "writes": 0,
+          "duplicateReads": 0,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /messages": 1,
+            "gmail.GET /messages/m1": 1
+          }
+        }
+      },
+      "mcpCalls": 5,
+      "httpReads": 2,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {},
+      "surfaceToolAttempts": {
+        "gmail.gmail_api_read": 2,
+        "gmail.gmail_api_search": 1
+      },
+      "discoveryBytes": 25608,
+      "maxDiscoveryReplyBytes": 10478,
+      "hatchDiscoveryReplyBytes": [
+        1261
+      ]
+    },
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-3",
+      "model": "gpt-6-luna",
+      "repeat": 2,
+      "status": "fail",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [
+        "answer-evidence"
+      ],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": false,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "complete-evidence",
+          "description": "complete evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "full-pages",
+          "description": "full pages",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": false,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Read every message in threads `t1` and `t2`. The Budget search (limit 1) returned `t1`, an empty continuation page, then `t2`. The threads contained message IDs `m1`–`m2` and `m3`–`m100`, respectively. Source: Gmail `search_threads` and `get_thread`.\n\nANSWER: {\"source\":\"gmail\",\"ids\":[\"m1\",\"m2\",\"m3\",\"m4\",\"m5\",\"m6\",\"m7\",\"m8\",\"m9\",\"m10\",\"m11\",\"m12\",\"m13\",\"m14\",\"m15\",\"m16\",\"m17\",\"m18\",\"m19\",\"m20\",\"m21\",\"m22\",\"m23\",\"m24\",\"m25\",\"m26\",\"m27\",\"m28\",\"m29\",\"m30\",\"m31\",\"m32\",\"m33\",\"m34\",\"m35\",\"m36\",\"m37\",\"m38\",\"m39\",\"m40\",\"m41\",\"m42\",\"m43\",\"m44\",\"m45\",\"m46\",\"m47\",\"m48\",\"m49\",\"m50\",\"m51\",\"m52\",\"m53\",\"m54\",\"m55\",\"m56\",\"m57\",\"m58\",\"m59\",\"m60\",\"m61\",\"m62\",\"m63\",\"m64\",\"m65\",\"m66\",\"m67\",\"m68\",\"m69\",\"m70\",\"m71\",\"m72\",\"m73\",\"m74\",\"m75\",\"m76\",\"m77\",\"m78\",\"m79\",\"m80\",\"m81\",\"m82\",\"m83\",\"m84\",\"m85\",\"m86\",\"m87\",\"m88\",\"m89\",\"m90\",\"m91\",\"m92\",\"m93\",\"m94\",\"m95\",\"m96\",\"m97\",\"m98\",\"m99\",\"m100\"]}",
+      "runnerMetadata": {
+        "requestedModel": "gpt-6-luna",
+        "servedModel": "gpt-6-luna",
+        "version": "codex-cli 0.163.0",
+        "exitCode": 0,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"/tmp/connecta-eval-codex-zMDfLJ/codex-home\"))\n\u001b[2m2026-10-24T18:31:37.418311Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_app_server\u001b[0m\u001b[2m:\u001b[0m Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.\n",
+        "loadedTools": [
+          "mcp__connecta__call_destructive_tool",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__execute_code",
+          "mcp__connecta__search_tools",
+          "mcp__connecta__skills",
+          "mcp__connecta__authorize_connector"
+        ],
+        "skillInventory": [
+          {
+            "name": "imagegen",
+            "enabled": false
+          },
+          {
+            "name": "openai-docs",
+            "enabled": false
+          },
+          {
+            "name": "review-agent",
+            "enabled": false
+          },
+          {
+            "name": "skill-creator",
+            "enabled": false
+          },
+          {
+            "name": "skill-installer",
+            "enabled": false
+          }
+        ],
+        "pluginInventory": []
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 27777,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 35354,
+          "output": 1352,
+          "cacheRead": 113792,
+          "cacheCreation": 0
+        },
+        "metaTools": {
+          "execute_code": 6,
+          "skills": 1
+        },
+        "otherTools": {},
+        "toolErrors": 0,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 24,
+          "writes": 0,
+          "duplicateReads": 14,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /threads": 9,
+            "gmail.GET /threads/t1": 7,
+            "gmail.GET /threads/t2": 8
+          }
+        }
+      },
+      "mcpCalls": 7,
+      "httpReads": 24,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {
+        "gmail.search_threads": 9,
+        "gmail.get_thread": 5
+      },
+      "surfaceToolAttempts": {
+        "gmail.search_threads": 9,
+        "gmail.get_thread": 5
+      },
+      "discoveryBytes": 16247,
+      "maxDiscoveryReplyBytes": 8025,
+      "hatchDiscoveryReplyBytes": []
+    },
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-4",
+      "model": "gpt-6-luna",
+      "repeat": 2,
+      "status": "pass",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Source: Gmail message `m1` (`GET /messages/m1`), RFC headers and MIME parts.\n\nANSWER: {\"source\":\"gmail\",\"header\":\"approved\",\"partId\":\"1\",\"mimeType\":\"application/octet-stream\",\"filename\":\"evidence.bin\"}",
+      "runnerMetadata": {
+        "requestedModel": "gpt-6-luna",
+        "servedModel": "gpt-6-luna",
+        "version": "codex-cli 0.163.0",
+        "exitCode": 0,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"/tmp/connecta-eval-codex-XCRvff/codex-home\"))\n\u001b[2m2026-10-24T18:32:06.419262Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_app_server\u001b[0m\u001b[2m:\u001b[0m Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.\n",
+        "loadedTools": [
+          "mcp__connecta__authorize_connector",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__call_destructive_tool",
+          "mcp__connecta__search_tools",
+          "mcp__connecta__skills",
+          "mcp__connecta__execute_code"
+        ],
+        "skillInventory": [
+          {
+            "name": "imagegen",
+            "enabled": false
+          },
+          {
+            "name": "openai-docs",
+            "enabled": false
+          },
+          {
+            "name": "review-agent",
+            "enabled": false
+          },
+          {
+            "name": "skill-creator",
+            "enabled": false
+          },
+          {
+            "name": "skill-installer",
+            "enabled": false
+          }
+        ],
+        "pluginInventory": []
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 18043,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 21626,
+          "output": 500,
+          "cacheRead": 136832,
+          "cacheCreation": 0
+        },
+        "metaTools": {
+          "execute_code": 6,
+          "skills": 1
+        },
+        "otherTools": {},
+        "toolErrors": 0,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 5,
+          "writes": 0,
+          "duplicateReads": 1,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /threads": 1,
+            "gmail.GET /threads/t1": 1,
+            "gmail.GET /threads/t2": 1,
+            "gmail.GET /messages/m1": 2
+          }
+        }
+      },
+      "mcpCalls": 7,
+      "httpReads": 5,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {
+        "gmail.search_threads": 1,
+        "gmail.get_message": 1
+      },
+      "surfaceToolAttempts": {
+        "gmail.search_threads": 1,
+        "gmail.get_message": 1,
+        "gmail.gmail_api_search": 1,
+        "gmail.gmail_api_read": 1
+      },
+      "discoveryBytes": 26435,
+      "maxDiscoveryReplyBytes": 10667,
+      "hatchDiscoveryReplyBytes": [
+        1457
+      ]
+    },
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-3",
+      "model": "claude-sonnet-5-5",
+      "repeat": 1,
+      "status": "fail",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [
+        "answer-evidence"
+      ],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": false,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "complete-evidence",
+          "description": "complete evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "full-pages",
+          "description": "full pages",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": false,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Threads t1 and t2 hold 100 messages in total: m1 and m2 in t1, and m3 through m100 in t2. I read both threads in full, following every continuation page on each.\n\nA paged Gmail search for \"Budget\" returned only one page, with no further continuation. That page listed threads t1 (2 messages) and t2 (98 messages), so the search covers all 100 messages. The search returns thread ids, so I took the message ids from reading those threads.\n\nI listed the ids in numeric order (m1, m2, … m100) rather than string order. I changed nothing in the mailbox.\n\nSource: Gmail, via `search_threads` (query \"Budget\") and `get_thread` for t1 and t2.\n\nANSWER: {\"source\":\"gmail\",\"ids\":[\"m1\",\"m2\",\"m3\",\"m4\",\"m5\",\"m6\",\"m7\",\"m8\",\"m9\",\"m10\",\"m11\",\"m12\",\"m13\",\"m14\",\"m15\",\"m16\",\"m17\",\"m18\",\"m19\",\"m20\",\"m21\",\"m22\",\"m23\",\"m24\",\"m25\",\"m26\",\"m27\",\"m28\",\"m29\",\"m30\",\"m31\",\"m32\",\"m33\",\"m34\",\"m35\",\"m36\",\"m37\",\"m38\",\"m39\",\"m40\",\"m41\",\"m42\",\"m43\",\"m44\",\"m45\",\"m46\",\"m47\",\"m48\",\"m49\",\"m50\",\"m51\",\"m52\",\"m53\",\"m54\",\"m55\",\"m56\",\"m57\",\"m58\",\"m59\",\"m60\",\"m61\",\"m62\",\"m63\",\"m64\",\"m65\",\"m66\",\"m67\",\"m68\",\"m69\",\"m70\",\"m71\",\"m72\",\"m73\",\"m74\",\"m75\",\"m76\",\"m77\",\"m78\",\"m79\",\"m80\",\"m81\",\"m82\",\"m83\",\"m84\",\"m85\",\"m86\",\"m87\",\"m88\",\"m89\",\"m90\",\"m91\",\"m92\",\"m93\",\"m94\",\"m95\",\"m96\",\"m97\",\"m98\",\"m99\",\"m100\"]}",
+      "runnerMetadata": {
+        "requestedModel": "claude-sonnet-5-5",
+        "servedModel": "claude-sonnet-5-5",
+        "version": "2.1.309",
+        "exitCode": 143,
+        "terminatedAfterCompletion": true,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "",
+        "loadedTools": [
+          "mcp__connecta__authorize_connector",
+          "mcp__connecta__call_destructive_tool",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__execute_code",
+          "mcp__connecta__search_tools",
+          "mcp__connecta__skills"
+        ]
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 21422,
+        "apiMs": 13587,
+        "modelTurns": 5,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 8,
+          "output": 1680,
+          "cacheRead": 32038,
+          "cacheCreation": 10367
+        },
+        "costUsd": 0.061487799999999995,
+        "metaTools": {
+          "skills": 1,
+          "search_tools": 1,
+          "execute_code": 2
+        },
+        "otherTools": {},
+        "toolErrors": 0,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 11,
+          "writes": 0,
+          "duplicateReads": 6,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /threads/t1": 4,
+            "gmail.GET /threads/t2": 5,
+            "gmail.GET /threads": 2
+          }
+        }
+      },
+      "mcpCalls": 4,
+      "httpReads": 11,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {
+        "gmail.get_thread": 5,
+        "gmail.search_threads": 2
+      },
+      "surfaceToolAttempts": {
+        "gmail.get_thread": 5,
+        "gmail.search_threads": 2
+      },
+      "discoveryBytes": 18495,
+      "maxDiscoveryReplyBytes": 10313,
+      "hatchDiscoveryReplyBytes": []
+    },
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-4",
+      "model": "claude-sonnet-5-5",
+      "repeat": 1,
+      "status": "pass",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Message m1 (subject \"Budget 1\", from alice@example.com) has these values:\n\n- **X-Review-Stage header:** `approved`\n- **Attachment part id:** `1`\n- **MIME type:** `application/octet-stream`\n- **Filename:** `evidence.bin` (8 bytes)\n\nSource: Gmail, a read-only `GET /messages/m1?format=full`. Part 0 is the text/plain body, not the attachment. I changed nothing.\n\nANSWER: {\"source\":\"gmail\",\"header\":\"approved\",\"partId\":\"1\",\"mimeType\":\"application/octet-stream\",\"filename\":\"evidence.bin\"}",
+      "runnerMetadata": {
+        "requestedModel": "claude-sonnet-5-5",
+        "servedModel": "claude-sonnet-5-5",
+        "version": "2.1.309",
+        "exitCode": 143,
+        "terminatedAfterCompletion": true,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "",
+        "loadedTools": [
+          "mcp__connecta__authorize_connector",
+          "mcp__connecta__call_destructive_tool",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__execute_code",
+          "mcp__connecta__search_tools",
+          "mcp__connecta__skills"
+        ]
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 12366,
+        "apiMs": 7068,
+        "modelTurns": 5,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 10,
+          "output": 631,
+          "cacheRead": 30525,
+          "cacheCreation": 5587
+        },
+        "costUsd": 0.0317305,
+        "metaTools": {
+          "skills": 1,
+          "execute_code": 3
+        },
+        "otherTools": {},
+        "toolErrors": 1,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 1,
+          "writes": 0,
+          "duplicateReads": 0,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /messages/m1": 1
+          }
+        }
+      },
+      "mcpCalls": 4,
+      "httpReads": 1,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {},
+      "surfaceToolAttempts": {
+        "gmail.gmail_api_read": 2
+      },
+      "discoveryBytes": 25833,
+      "maxDiscoveryReplyBytes": 17651,
+      "hatchDiscoveryReplyBytes": []
+    },
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-3",
+      "model": "claude-sonnet-5-5",
+      "repeat": 2,
+      "status": "fail",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [
+        "answer-evidence"
+      ],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": false,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "complete-evidence",
+          "description": "complete evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "full-pages",
+          "description": "full pages",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": false,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Both threads came up in one page of the Budget search. That search returned threads t1 and t2, and the page had no continuation. I read both threads in full, following every thread page, and changed nothing.\n\n- t1 has 2 messages: m1 and m2.\n- t2 has 98 messages: m3 through m100.\n\nTogether that is 100 unique message ids, m1 through m100. I've listed them in numeric order, not string order, because \"sorted\" could mean either.\n\nSource: Gmail, using `search_threads` with the query \"Budget\" and `get_thread` on t1 and t2.\n\nANSWER: {\"source\":\"gmail\",\"ids\":[\"m1\",\"m2\",\"m3\",\"m4\",\"m5\",\"m6\",\"m7\",\"m8\",\"m9\",\"m10\",\"m11\",\"m12\",\"m13\",\"m14\",\"m15\",\"m16\",\"m17\",\"m18\",\"m19\",\"m20\",\"m21\",\"m22\",\"m23\",\"m24\",\"m25\",\"m26\",\"m27\",\"m28\",\"m29\",\"m30\",\"m31\",\"m32\",\"m33\",\"m34\",\"m35\",\"m36\",\"m37\",\"m38\",\"m39\",\"m40\",\"m41\",\"m42\",\"m43\",\"m44\",\"m45\",\"m46\",\"m47\",\"m48\",\"m49\",\"m50\",\"m51\",\"m52\",\"m53\",\"m54\",\"m55\",\"m56\",\"m57\",\"m58\",\"m59\",\"m60\",\"m61\",\"m62\",\"m63\",\"m64\",\"m65\",\"m66\",\"m67\",\"m68\",\"m69\",\"m70\",\"m71\",\"m72\",\"m73\",\"m74\",\"m75\",\"m76\",\"m77\",\"m78\",\"m79\",\"m80\",\"m81\",\"m82\",\"m83\",\"m84\",\"m85\",\"m86\",\"m87\",\"m88\",\"m89\",\"m90\",\"m91\",\"m92\",\"m93\",\"m94\",\"m95\",\"m96\",\"m97\",\"m98\",\"m99\",\"m100\"]}",
+      "runnerMetadata": {
+        "requestedModel": "claude-sonnet-5-5",
+        "servedModel": "claude-sonnet-5-5",
+        "version": "2.1.309",
+        "exitCode": 143,
+        "terminatedAfterCompletion": true,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "",
+        "loadedTools": [
+          "mcp__connecta__authorize_connector",
+          "mcp__connecta__call_destructive_tool",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__execute_code",
+          "mcp__connecta__search_tools",
+          "mcp__connecta__skills"
+        ]
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 25406,
+        "apiMs": 17146,
+        "modelTurns": 6,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 10,
+          "output": 2225,
+          "cacheRead": 45723,
+          "cacheCreation": 11080
+        },
+        "costUsd": 0.0711623,
+        "metaTools": {
+          "skills": 1,
+          "search_tools": 1,
+          "execute_code": 3
+        },
+        "otherTools": {},
+        "toolErrors": 1,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 15,
+          "writes": 0,
+          "duplicateReads": 10,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /threads/t1": 6,
+            "gmail.GET /threads/t2": 7,
+            "gmail.GET /threads": 2
+          }
+        }
+      },
+      "mcpCalls": 5,
+      "httpReads": 15,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {
+        "gmail.get_thread": 9,
+        "gmail.search_threads": 3
+      },
+      "surfaceToolAttempts": {
+        "gmail.get_thread": 9,
+        "gmail.search_threads": 3
+      },
+      "discoveryBytes": 18495,
+      "maxDiscoveryReplyBytes": 10313,
+      "hatchDiscoveryReplyBytes": []
+    },
+    {
+      "arm": "after-post-fix",
+      "task": "google-gmail-4",
+      "model": "claude-sonnet-5-5",
+      "repeat": 2,
+      "status": "pass",
+      "taskDefinitionsHash": "895e90db78494b6563dd74aba9f92d4f1ca400ad7527f8ce95ae8b25b9ee9a20",
+      "failedChecks": [],
+      "checks": [
+        {
+          "id": "conversation-completed",
+          "description": "every turn ended normally within the time limit",
+          "pass": true,
+          "detail": "success",
+          "kind": "outcome"
+        },
+        {
+          "id": "answer-evidence",
+          "description": "answer evidence",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "correct-destination",
+          "description": "correct destination",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "reads-only",
+          "description": "reads only",
+          "pass": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "hatch-diagnostic",
+          "description": "Observed operation search/details/read/write usage",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        },
+        {
+          "id": "no-duplicate-writes",
+          "description": "no identical downstream write was dispatched twice",
+          "pass": true,
+          "detail": "0 duplicate write(s)",
+          "kind": "outcome"
+        },
+        {
+          "id": "no-confirmation-needed",
+          "description": "finished without stopping to ask permission it had been given",
+          "pass": true,
+          "advisory": true,
+          "kind": "outcome"
+        }
+      ],
+      "error": null,
+      "finalAnswer": "Message m1 in Gmail has the `X-Review-Stage` header set to `approved`. I read this from the message's full payload (`GET /messages/m1`, format full) and changed nothing.\n\n- **Attachment:** part `1` is the attachment, with MIME type `application/octet-stream` and filename `evidence.bin`. Its size is 8 bytes and its attachment id is `a1`.\n- **Body:** part `0` is the `text/plain` body and has no filename.\n\nANSWER: {\"source\":\"gmail\",\"header\":\"approved\",\"partId\":\"1\",\"mimeType\":\"application/octet-stream\",\"filename\":\"evidence.bin\"}",
+      "runnerMetadata": {
+        "requestedModel": "claude-sonnet-5-5",
+        "servedModel": "claude-sonnet-5-5",
+        "version": "2.1.309",
+        "exitCode": 143,
+        "terminatedAfterCompletion": true,
+        "timedOut": false,
+        "aborted": false,
+        "resultSubtypes": [
+          "success"
+        ],
+        "stderrTail": "",
+        "loadedTools": [
+          "mcp__connecta__authorize_connector",
+          "mcp__connecta__call_destructive_tool",
+          "mcp__connecta__call_tool",
+          "mcp__connecta__execute_code",
+          "mcp__connecta__search_tools",
+          "mcp__connecta__skills"
+        ]
+      },
+      "approvals": {
+        "allowed": [
+          "skills",
+          "search_tools",
+          "call_tool",
+          "call_destructive_tool",
+          "authorize_connector",
+          "execute_code"
+        ],
+        "denied": [],
+        "gated": [
+          "call_destructive_tool",
+          "authorize_connector"
+        ],
+        "exercised": [],
+        "permissionDenials": []
+      },
+      "metrics": {
+        "wallMs": 14106,
+        "apiMs": 8532,
+        "modelTurns": 6,
+        "conversationTurns": 1,
+        "tokens": {
+          "input": 12,
+          "output": 772,
+          "cacheRead": 41586,
+          "cacheCreation": 6919
+        },
+        "costUsd": 0.039578600000000005,
+        "metaTools": {
+          "skills": 1,
+          "execute_code": 1,
+          "search_tools": 1,
+          "call_tool": 2
+        },
+        "otherTools": {},
+        "toolErrors": 2,
+        "confirmationNudges": 0,
+        "downstream": {
+          "reads": 1,
+          "writes": 0,
+          "duplicateReads": 0,
+          "duplicateWrites": 0,
+          "errors": 0,
+          "unauthorizedRequests": 0,
+          "byTool": {
+            "gmail.GET /messages/m1": 1
+          }
+        }
+      },
+      "mcpCalls": 5,
+      "httpReads": 1,
+      "httpWrites": 0,
+      "writeDestinations": [],
+      "namedTools": {},
+      "surfaceToolAttempts": {
+        "gmail.gmail_api_read": 2
+      },
+      "discoveryBytes": 11966,
+      "maxDiscoveryReplyBytes": 8182,
+      "hatchDiscoveryReplyBytes": []
+    }
+  ],
+  "measuredSource": {
+    "commit": "3aa5764d12a800698c341ccbe18c6fded57b3192",
+    "srcTree": "3cf90001d9a5374e7c17cf6a0f91c32996cd7d21",
+    "mainMerge": "348e9c85321bf634951d5580001f3e96a92af457",
+    "main": "f9bf5afbb9432656bfa6708b85cbdc4642710e6b"
+  },
+  "originalResults": {
+    "summary": "google-gmail-step2.json",
+    "originalTrials": 56,
+    "preserved": true,
+    "originalTableUnchanged": true,
+    "beforeRerun": false,
+    "pooledReplacementScore": false
+  },
+  "analysis": {
+    "g3": [
+      {
+        "model": "gpt-6-luna",
+        "repeat": 1,
+        "status": "pass",
+        "complete100Ids": true,
+        "fullPages": true,
+        "lexicalOrder": true,
+        "numericOrder": false,
+        "failure": "none"
+      },
+      {
+        "model": "gpt-6-luna",
+        "repeat": 2,
+        "status": "fail",
+        "complete100Ids": true,
+        "fullPages": true,
+        "lexicalOrder": false,
+        "numericOrder": true,
+        "failure": "numeric ordering instead of frozen lexical ordering"
+      },
+      {
+        "model": "claude-sonnet-5-5",
+        "repeat": 1,
+        "status": "fail",
+        "complete100Ids": true,
+        "fullPages": true,
+        "lexicalOrder": false,
+        "numericOrder": true,
+        "failure": "numeric ordering instead of frozen lexical ordering"
+      },
+      {
+        "model": "claude-sonnet-5-5",
+        "repeat": 2,
+        "status": "fail",
+        "complete100Ids": true,
+        "fullPages": true,
+        "lexicalOrder": false,
+        "numericOrder": true,
+        "failure": "numeric ordering instead of frozen lexical ordering"
+      }
+    ],
+    "g4": "All four read the requested m1 header and MIME facts. No copyable example id is used.",
+    "interpretation": "No observed paging failure or thread/message-id mixing in the refresh. Three strict ordering-only failures remain. Small AFTER-only sample; no causal or reliability estimate."
+  },
+  "verification": {
+    "gmailProvider": 24,
+    "standardsAndBoundaries": 760,
+    "delegationRerun": 113,
+    "nodeGoldensDeterminismAndHarness": 85,
+    "workersPassed": 100,
+    "workersExpectedTagSkips": 184,
+    "allGoogleMergeSelftest": "42 tasks, six/code, route/outcome; four expected Drive D4 capability gaps",
+    "fixedGmailSelftest": "7 tasks, six/code, route/outcome; recovery and negative/equivalent controls pass",
+    "static": "pass",
+    "buildDeclarationsBundle": "pass",
+    "eveNode24": "5 tests, typecheck and build pass",
+    "evePackedConsumer": "pass",
+    "nonGmailGoldens": "byte-identical to main f9bf5afb",
+    "testDelta": 0,
+    "fullCheck": "Not run under common load policy; CI remains required."
+  },
+  "bundle": {
+    "node": "22.23.3",
+    "esbuild": "0.28.1",
+    "conditions": [
+      "workerd",
+      "worker",
+      "browser",
+      "import"
+    ],
+    "gzipLevel": 9,
+    "standaloneEntrypoints": {
+      "gmail": 379265,
+      "docs": 370210
+    },
+    "gmailBaselineBeforeRecordingFacts": 379199,
+    "capsChanged": false
+  }
+}
