@@ -54,7 +54,10 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     destination = reached("/contributions") && reached("/campaigns") && reached("/locations");
     evidence &&= new RegExp(`ANSWER:\\s*${expectedCount}\\b`, "i").test(answer);
   } else if (id === ids[1]) {
-    destination = reached("/subscriptions") && reached("/donors") && reached("/contributions");
+    const donorRead =
+      reached("/donors") ||
+      ledger.some((c) => c.args.method === "GET" && String(c.args.path).startsWith("/donors/") && c.outcome === "ok");
+    destination = reached("/subscriptions") && donorRead && reached("/contributions");
     const wanted = matching.map((s) => seed.donors.find((d) => d.id === s.donorId)!);
     evidence &&=
       wanted.every((d) => answer.includes(d.email)) &&

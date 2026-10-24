@@ -186,6 +186,10 @@ const WEBHOOK = {
   enabledEvents: ["contribution.approved", "donor.updated"],
   status: "enabled",
   secret: "whsec_not_projected",
+  Secret: "whsec-private-case",
+  secretKey: "whsec-private-key",
+  signing_key: "whsec-private-signing",
+  hmacSecret: "whsec-private-hmac",
   createdAt: "2025-01-01T00:00:00.000Z",
   updatedAt: "2025-01-01T00:00:00.000Z",
 };
@@ -382,6 +386,18 @@ export default defineGoldenSpec({
       tool: "overflow_api_read",
       args: { path: `/webhooks/${WEBHOOK_ID}/event-logs`, fields: ["data.id", "data.response.code"] },
       replies: [{ body: { data: [ATTEMPT], pageInfo: { hasNextPage: false, nextCursor: null } } }],
+    },
+    {
+      label: "overflow_api_write refund JSON acknowledgement",
+      tool: "overflow_api_write",
+      args: { method: "POST", path: `/contributions/${CONTRIBUTION_ID}/initiate-refund` },
+      replies: [{ status: 202, body: "Refund initiated" }],
+    },
+    {
+      label: "overflow_api_write refund text acknowledgement",
+      tool: "overflow_api_write",
+      args: { method: "POST", path: `/contributions/${CONTRIBUTION_ID}/initiate-refund` },
+      replies: [{ status: 202, text: "Refund initiated", headers: { "content-type": "text/html; charset=utf-8" } }],
     },
   ],
   echo: {

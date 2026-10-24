@@ -7,8 +7,9 @@ opt-in exact-total commit `ab707ee4`. The JSON summary records observed
 protocol hashes, settings, trial outcomes, metrics and full-result digests.
 Full transcripts, fake state and HTTP ledgers remain under
 `/home/zackbart/.t3/scratch/connecta-orchestrator/step2/overflow`.
-Subsequent commits record evidence, local-tool test inventory and bundle
-metadata; they do not change the evaluated contracts or guide.
+The original post-eval commit records evidence, local-tool test inventory and
+bundle metadata. Round 1 merges main `9e3fbbfb` and changes the reviewed
+contracts and guide; its separate neutral-key evaluations are recorded below.
 
 ## Protocol and controls
 
@@ -18,7 +19,8 @@ surface, outcome grading, two repeats, concurrency one and an eight-minute
 trial timeout. The two arms run together, so at most two model trials run at
 once. Pair id: `overflow-step2-20261024`. Both use Node 26.12.0 on Linux x64
 (`bigserv`), with substantial unrelated host load. No production nonprofit
-API was called and no trials were discarded, regraded or selectively rerun.
+API was called. No original model trials were discarded or selectively rerun;
+the later uniform grader correction is disclosed in the round-1 section.
 
 The prompts, fake seed and grading semantics stay fixed. The tasks cover:
 
@@ -50,7 +52,7 @@ Offline replay through both grader definitions produces identical checks for
 all 28 BEFORE observations. Observed task/harness hashes therefore differ and
 are recorded rather than claimed identical.
 
-## Results
+## Original results (credential-confounded)
 
 | Task | Luna BEFORE | Luna AFTER | Sonnet BEFORE | Sonnet AFTER |
 | --- | ---: | ---: | ---: | ---: |
@@ -63,7 +65,14 @@ are recorded rather than claimed identical.
 | donor-update-recovery | 2/2 | 2/2 | 2/2 | 2/2 |
 | **Total** | **12/14** | **10/14** | **14/14** | **14/14** |
 
-AFTER is worse overall: 24/28 versus 26/28. Luna's two BEFORE misses were
+These original arms used fake credentials containing `overflow`, which the
+sent-secret boundary withheld in public tool addresses and guide text. The
+review found affected model-visible replies in BEFORE Luna 3/14, AFTER Luna
+9/14, BEFORE Sonnet 2/14 and AFTER Sonnet 5/14. This exposure differs by arm;
+the scores are retained historical observations, not a clean accuracy
+comparison. Neutral-credential round-1 runs below supersede that comparison.
+
+The recorded AFTER score is lower overall: 24/28 versus 26/28. Luna's two BEFORE misses were
 a false zero count despite returned `PAID_OUT` gifts and a join it could not
 complete. AFTER's first join compares `type === "cash"` against returned
 `CASH`, retaining all six donors. Its second join omits the one-time frequency
@@ -79,8 +88,8 @@ All eight BEFORE writes and all seven AFTER writes dispatch once; neither arm
 has a duplicate write. Both models retain 2/2 donor paging, reconciliation,
 Tap discovery and failed-edit recovery. The misses do not demonstrate a
 transport/contract defect: the relevant records are returned and Sonnet solves
-all tasks. They do demonstrate that standardization did not preserve Luna's
-accuracy in this sample. No fresh retry replaces a failed measured trial.
+all tasks. The fake-key confound prevents attributing this score difference to
+standardization. No fresh retry replaces a failed measured trial.
 
 Both models also spend more calls and cumulative discovery bytes AFTER.
 Repeated broad catalog searches and guide reads contribute to that cost;
@@ -131,12 +140,13 @@ framing, for example `statusBucket[]`. The public document names unbracketed
 parameters; unbracketed wire behavior is not promised. The review records the
 public document's empty donor entity and erroneous donor-id entity reference.
 
-Text `/health`, JSON-string writes and empty acknowledgements use explicit
-body formats. Numbered named lists pass exact vendor counts through the
+Text `/health`, JSON/plain-text refund acknowledgements and empty writes
+use explicit body formats. Numbered named lists pass exact vendor counts through the
 small generic opt-in `list({ total: true })` extension; omitted counts stay
-omitted. Signed cursors bind connection, owner, content, filters and fields;
-numbered named continuations additionally fix limit. Native delivery cursors
-use the hatch adapter. Permanently remove webhook signing-secret keys from
+omitted. Signed hatch cursors bind connection, owner, content, filters and
+fields. Named-list cursors bind connection, owner and filters, deliberately
+allow changing fields between pages, and numbered continuations fix limit.
+Native delivery cursors use the hatch adapter. Permanently remove webhook signing-secret keys from
 bare, wrapped and list replies before selection; the configurable sensitive
 set remains empty. HTTP 422 adopts `invalid_args`, 409 remains generic, and
 numeric retry/reset facts retain their reviewed sources.

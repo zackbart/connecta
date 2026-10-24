@@ -1346,6 +1346,66 @@
     }
   },
   {
+    "label": "overflow_api_write refund JSON acknowledgement",
+    "tool": "overflow_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/contributions/6710f34fd5061afeec3eab57/initiate-refund"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57/initiate-refund",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 202,
+        "data": "Refund initiated"
+      }
+    }
+  },
+  {
+    "label": "overflow_api_write refund text acknowledgement",
+    "tool": "overflow_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/contributions/6710f34fd5061afeec3eab57/initiate-refund"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57/initiate-refund",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 202,
+        "data": "Refund initiated"
+      }
+    }
+  },
+  {
     "label": "overflow_api_read echoes sent secrets",
     "tool": "overflow_api_read",
     "args": {
