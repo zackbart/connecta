@@ -330,7 +330,7 @@ describe("Stripe splits its guarded raw access by safety class (H14)", () => {
     if (typeof guide !== "object" || guide === undefined) {
       throw new Error("expected a structured usage guide");
     }
-    expect(guide.content).toContain("Refused by design");
+    expect(guide.content).toContain("refused by design");
   });
 });
 

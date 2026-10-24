@@ -43,7 +43,7 @@ export default defineGoldenSpec({
       args: {
         path: "/v1/charges",
         query: { customer: "cus_1", expand: ["data.customer"], created: { gte: 10 }, limit: 2 },
-        select: ["data.id", "data.amount"],
+        fields: ["data.id", "data.amount"],
       },
       replies: [
         {

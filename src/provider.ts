@@ -151,6 +151,8 @@ export interface ProviderKitFacts {
   readonly hatch?: {
     readonly name: string;
     readonly verdicts: Readonly<Record<string, "read" | "write" | "destructive" | "refuse">>;
+    /** Separate-cursor paging opts into the generated hatch paging convention. */
+    readonly paging?: "argument";
   };
   /**
    * The vendor's declared error meanings, for the Errors convention: the code
@@ -295,7 +297,13 @@ function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
     operations: Object.freeze([...kit.operations]),
     ...(kit.pageSize ? { pageSize: Object.freeze({ ...kit.pageSize }) } : {}),
     ...(kit.hatch
-      ? { hatch: Object.freeze({ name: kit.hatch.name, verdicts: Object.freeze({ ...kit.hatch.verdicts }) }) }
+      ? {
+          hatch: Object.freeze({
+            name: kit.hatch.name,
+            verdicts: Object.freeze({ ...kit.hatch.verdicts }),
+            ...(kit.hatch.paging ? { paging: kit.hatch.paging } : {}),
+          }),
+        }
       : {}),
     ...(kit.errors
       ? { errors: Object.freeze({ ...kit.errors, conflicts: Object.freeze([...kit.errors.conflicts]) }) }

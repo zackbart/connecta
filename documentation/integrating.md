@@ -114,7 +114,7 @@ Keep their existing API auth choices.
 GitHub retains its six App-authenticated REST tools. Hosted servers use distinct
 `remoteMcp()` entries, separate from maintained API providers.
 
-For Stripe API-key setup, see [Stripe setup](./provider-auth-migration.md).
+For Stripe API-key setup, see [Stripe setup](./providers.md#stripe).
 Prefer a restricted `rk_` key with only read permissions for read-only access;
 Stripe enforces it too.
 

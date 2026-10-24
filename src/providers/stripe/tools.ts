@@ -1,21 +1,9 @@
-// Stripe's six tools; the connection applies safety before hatches and projections.
+// Stripe's two curated reads; the definition supplies the standard coverage hatch.
 import { Effect, Schema } from "effect";
 import { read } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
-import { restKitTools } from "../_shared/rest/kit.js";
 import type { RestCall } from "../_shared/rest/tools.js";
-import {
-  checkServer,
-  connectedAccount,
-  record,
-  text,
-  READ_POSTS,
-  refuse,
-  sendStripe,
-  stripeConnection,
-  stripeIndex,
-  stripeSafety,
-} from "./api.js";
+import { connectedAccount, record, text, sendStripe, stripeIndex } from "./api.js";
 import type { StripeApiKeyOptions } from "./index.js";
 const NullableText = Schema.Union([Schema.String, Schema.Null]);
 const NullableFlag = Schema.Union([Schema.Boolean, Schema.Null]);
@@ -26,32 +14,19 @@ export function stripeTools({
   connection: Connection;
   options: Readonly<StripeApiKeyOptions>;
 }) {
-  const files = stripeConnection(options, "files");
-  const send = (call: RestCall) => sendStripe(connection, options, call, files);
+  // Both named reads use the API origin; only the coverage binding needs files.
+  const send = (call: RestCall) => sendStripe(connection, options, call, connection);
   const call = (path: string) => {
     const { op, params } = stripeIndex.resolve("GET", path);
     return send({ method: "GET", path, op, params, query: {}, body: undefined });
   };
   return [
-    ...restKitTools({
-      vendor: "stripe",
-      title: "Stripe",
-      index: stripeIndex,
-      valueSafety: stripeSafety,
-      readPosts: READ_POSTS,
-      refuse,
-      checkServer,
-      idempotencyHeader: "Idempotency-Key",
-      upload: "Upload files in the Stripe Dashboard; this connector sends no multipart bodies.",
-      bodyHint: "v1 bodies are form-encoded for you, v2 bodies sent as JSON",
-      connection,
-      send,
-    }),
     read(connection, {
+      fields: true,
       name: "get_stripe_account_info",
       description:
         "Read the Stripe account this key reaches: id, name, country, default currency, mode, and connected account. Use it to confirm scope first.",
-      input: Schema.Record(Schema.String, Schema.Never),
+      input: Schema.Struct({}),
       output: Schema.Struct({
         accountId: Schema.String,
         name: Schema.optionalKey(NullableText),
@@ -84,10 +59,11 @@ export function stripeTools({
         ),
     }),
     read(connection, {
+      fields: true,
       name: "get_balance_summary",
       description:
         "Read the account's available and pending Stripe balance per currency, in minor units. Excludes balance transactions; list those with stripe_api_read.",
-      input: Schema.Record(Schema.String, Schema.Never),
+      input: Schema.Struct({}),
       output: Schema.Struct({
         livemode: Schema.Boolean,
         available: Schema.Array(Schema.Unknown).annotate({ description: "Funds available to pay out, per currency." }),

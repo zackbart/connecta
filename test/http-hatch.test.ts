@@ -8,7 +8,16 @@ import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { DETAILS_BUDGET_BYTES, hatch, SEARCH_BUDGET } from "../src/http/hatch.js";
-import { cloudflarePage, githubPage, stripePage, vercelPage, type HatchPageAdapter } from "../src/http/hatch-paging.js";
+import {
+  cloudflarePage,
+  githubPage,
+  stripePage,
+  stripeBackwardPage,
+  stripeSearchPage,
+  stripeV2Page,
+  vercelPage,
+  type HatchPageAdapter,
+} from "../src/http/hatch-paging.js";
 import { boundCursor } from "../src/http/paging.js";
 import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
 import { Registry } from "../src/registry.js";
@@ -140,6 +149,8 @@ function setup(
     revision?: string;
     verdicts?: Parameters<typeof hatch>[0]["verdicts"];
     pages?: Parameters<typeof hatch>[0]["pages"];
+    pageCursor?: "argument";
+    binding?: Parameters<typeof hatch>[0]["binding"];
     data?: OpenApiData;
     context?: ReturnType<typeof connectorContext>;
   } = {},
@@ -179,6 +190,8 @@ function setup(
     index,
     verdicts: options.verdicts ?? VERDICTS,
     ...(options.pages ? { pages: options.pages } : {}),
+    ...(options.pageCursor ? { pageCursor: options.pageCursor } : {}),
+    ...(options.binding ? { binding: options.binding } : {}),
     connection,
   });
   const connector = tracksEveryRequest(apiConnector("items", { tools }));
@@ -338,6 +351,25 @@ it(
       "items_api_details",
       "items_api_read",
     ]);
+    for (const methods of [[], ["HEAD"]] as const)
+      expect(() =>
+        hatch({
+          name: "items",
+          index,
+          connection,
+          verdicts: VERDICTS,
+          idempotency: { header: "Idempotency-Key", methods },
+        }),
+      ).toThrow(/idempotency methods/);
+    expect(() =>
+      hatch({
+        name: "items",
+        index,
+        connection,
+        verdicts: VERDICTS,
+        binding: { review: "", send: () => Effect.succeed({ status: 200, data: null }) },
+      }),
+    ).toThrow(/binding needs/);
     for (const bad of [{ "GET /missing": "read" }, { "GET /items": "unknown" }]) {
       expect(() => hatch({ name: "items", index, connection, verdicts: bad as never })).toThrow();
     }
@@ -1022,6 +1054,137 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     expect(await personal.callTool("items_api_read", personalContinuation, personalContext("alice"))).toMatchObject({
       page: { hasMore: false },
     });
+  }
+  // A binding replaces neither guard unless it explicitly owns that check.
+  for (const allowOtherServers of [false, true]) {
+    for (const allowOtherBodyTypes of [false, true]) {
+      const send = vi.fn(() => Effect.succeed({ status: 200, data: { id: "bound" } }));
+      const bound = setup({
+        binding: {
+          review: "Fixture routing and multipart framing, independently opted in.",
+          send,
+          ...(allowOtherServers ? { allowOtherServers: true as const } : {}),
+          ...(allowOtherBodyTypes ? { allowOtherBodyTypes: true as const } : {}),
+        },
+      });
+      for (const [allowed, kind, args, message] of [
+        [allowOtherServers, "read", { path: "/elsewhere" }, "different server"],
+        [allowOtherBodyTypes, "write", { method: "POST", path: "/upload", body: { file: "bytes" } }, "multipart"],
+      ] as const) {
+        send.mockClear();
+        if (allowed) {
+          expect(await bound.call(kind, args)).toEqual({ status: 200, data: { id: "bound" } });
+          expect(send).toHaveBeenCalledTimes(1);
+        } else {
+          await expect(bound.call(kind, args)).rejects.toMatchObject({
+            code: "invalid_args",
+            message: expect.stringContaining(message),
+          });
+          expect(send).not.toHaveBeenCalled();
+        }
+        expect(bound.sendPath).not.toHaveBeenCalled();
+        expect(bound.authenticate).not.toHaveBeenCalled();
+      }
+    }
+  }
+  // A separate cursor preserves raw first-request record anchors and keeps
+  // every returned continuation signed, including reverse/search/v2 paging.
+  for (const row of [
+    {
+      adapter: stripePage,
+      param: "starting_after",
+      first: { data: [{ id: "first-id" }, { id: "last-id" }], has_more: true },
+      last: { data: [], has_more: false },
+      raw: "last-id",
+      anchor: "initial-id",
+    },
+    {
+      adapter: stripeBackwardPage,
+      param: "ending_before",
+      first: { data: [{ id: "first-id" }, { id: "last-id" }], has_more: true },
+      last: { data: [], has_more: false },
+      raw: "first-id",
+      anchor: "initial-id",
+    },
+    {
+      adapter: stripeSearchPage,
+      param: "page",
+      first: { data: [], has_more: true, next_page: "next-search" },
+      last: { has_more: false },
+      raw: "next-search",
+    },
+    {
+      adapter: stripeV2Page,
+      param: "page",
+      first: { data: [], next_page_url: "https://api.stripe.com/items?page=next-v2" },
+      last: { next_page_url: null },
+      raw: "next-v2",
+    },
+  ]) {
+    const details = JSON.parse(DATA.details);
+    for (const param of ["starting_after", "ending_before", "page"])
+      details.o[0][0].push([param, "query", 0, { t: "string" }]);
+    const data = { ...DATA, details: JSON.stringify(details) };
+    const adapters = row.param === "page" ? row.adapter : [stripePage, stripeBackwardPage];
+    const paged = setup({ data, pageCursor: "argument", pages: { "GET /items": adapters } });
+    sent = [];
+    response = () => Response.json(row.first);
+    const query = { limit: 2, tag: ["active", "a b"] };
+    const first = (await paged.call("read", {
+      path: "/items",
+      query: { ...query, ...("anchor" in row ? { [row.param]: row.anchor } : {}) },
+      fields: ["id"],
+    })) as any;
+    expect(first.page).toMatchObject({ hasMore: true, param: row.param, in: "query", nextCursor: expect.any(String) });
+    if (row.param !== "page") {
+      for (const param of ["starting_after", "ending_before"]) {
+        await expect(
+          paged.call("read", { path: "/items", query: { ...query, [param]: first.page.nextCursor } }),
+        ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("top-level cursor") });
+      }
+    }
+    await expect(
+      paged.call("read", { path: "/items/nonpaged", method: "HEAD", cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("does not page") });
+    for (const invalid of [
+      { path: "/items", query, fields: ["id"], cursor: row.raw },
+      { path: "/items", query: { ...query, [row.param]: row.raw }, fields: ["id"], cursor: first.page.nextCursor },
+      { path: "/items", query: { ...query, tag: ["other"] }, fields: ["id"], cursor: first.page.nextCursor },
+      ...(row.param !== "page"
+        ? [{ path: "/items", query: { ...query, starting_after: "a", ending_before: "b" } }]
+        : [{ path: "/items", query: { ...query, page: row.raw } }]),
+    ])
+      await expect(paged.call("read", invalid)).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(1);
+    response = () => Response.json(row.last);
+    const last = (await paged.call("read", {
+      path: "/items",
+      query,
+      fields: ["id"],
+      cursor: first.page.nextCursor,
+    })) as any;
+    expect(last.page).toEqual({ hasMore: false, param: row.param, in: "query" });
+    expect(new URL(sent.at(-1)!.url).searchParams.get(row.param)).toBe(row.raw);
+    expect(new URL(sent.at(-1)!.url).searchParams.getAll("tag")).toEqual(["active", "a b"]);
+    const count = sent.length;
+    await expect(
+      apiConnector("other", { tools: paged.tools }).callTool(
+        "items_api_read",
+        { path: "/items", query, fields: ["id"], cursor: first.page.nextCursor },
+        connectorContext(storage),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(count);
+    if (row.adapter === stripeV2Page) {
+      response = () => Response.json({ id: "kept", next_page_url: "/items?page=next-v2&limit=20" });
+      const incomplete = (await paged.call("read", { path: "/items" })) as any;
+      expect(incomplete).toMatchObject({
+        data: { id: "kept" },
+        page: { hasMore: true, param: "page", in: "query" },
+      });
+      expect(incomplete.page).not.toHaveProperty("nextCursor");
+      expect(new URL(sent.at(-1)!.url).search).toBe("");
+    }
   }
   // Body continuations use the same binding, without ever dispatching the opaque bytes.
   const bodyAdapter: HatchPageAdapter = { ...stripePage, param: "after", in: "body" };

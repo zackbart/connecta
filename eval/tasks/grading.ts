@@ -13,6 +13,14 @@ export function parseGrading(value = "route"): Grading {
 
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
+  ...Object.fromEntries(
+    ["scope-balance", "filtered-customers", "decline-join", "customer-paging", "tax-settings"].map((suffix) => [
+      `stripe-step2-${suffix}`,
+      { route: [], outcome: ["reads-only"] },
+    ]),
+  ),
+  "stripe-step2-refund-once": { route: [], outcome: ["state", "once", "only-requested-writes"] },
+  "stripe-step2-refund-recovery": { route: [], outcome: ["state", "once", "only-requested-writes", "reconciled"] },
   "801-stripe-failed-payment": { route: [], outcome: ["reads-only", "no-guessed-search", "efficient-route"] },
   "801-stripe-guessed-parameter-recovery": { route: [], outcome: ["recovery", "reads-only"] },
   "801-stripe-idempotent-refund": { route: [], outcome: ["state", "idempotency", "only-requested-writes"] },

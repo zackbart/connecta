@@ -1637,11 +1637,59 @@ it(
         expect(hooks, test.name).toBe(1);
       }
     }
-    // Parsed JSON keeps its keys for value safety and projections (#703), while
-    // every value and JSON embedded in text keep the ordinary protection.
     const [plainSafety, dropSafety] = [[], ["paragraph"]].map((names) =>
       resultSafety({ review: "Fixture JSON has no stored values.", sensitiveFields: { names, choice: "drop" } }),
     );
+    // Stripe's body-failure opt-in changes only its reviewed status and wording.
+    for (const errors of [stripeErrors, VENDOR]) {
+      for (const declared of [false, true]) {
+        const ctx = services();
+        const connection = connect(ACME_API, guardedClient(OPTIONS), { errors, safety: plainSafety! });
+        answers.push(() =>
+          declared
+            ? new Response("", { status: 424, headers: { "content-length": "65" } })
+            : new Response("x".repeat(65), { status: 424 }),
+        );
+        const failed = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(ctx)));
+        expect(failed._tag).toBe("Failure");
+        if (failed._tag === "Failure") {
+          const mapped = toConnectorCallError(failed.failure, errors, {
+            classification: "read",
+            dispatches: Context.get(ctx, Dispatches),
+          });
+          expect(mapped.code).toBe(errors === stripeErrors ? "unavailable" : "connector_call_failed");
+          expect(mapped.message).toContain("response ceiling");
+        }
+      }
+      answers.push(
+        () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                c.error(new Error("private body cause"));
+              },
+            }),
+          ),
+      );
+      const connection = connect(ACME_API, guardedClient(OPTIONS), { errors, safety: plainSafety! });
+      const failed = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services())));
+      expect(failed._tag).toBe("Failure");
+      if (failed._tag === "Failure") {
+        const mapped = toConnectorCallError(failed.failure, errors, { classification: "read", dispatches: [] });
+        expect(mapped.message).toBe(
+          errors === stripeErrors ? "Stripe's response body could not be read completely." : VENDOR.unreadable,
+        );
+        expect(mapped.message).not.toContain("private body cause");
+      }
+    }
+    for (const bodyFailures of [
+      { review: "", statusOnly: [424], readFailed: "Read failed." },
+      { review: "Reviewed", statusOnly: [401], readFailed: "Read failed." },
+      { review: "Reviewed", statusOnly: [424.5], readFailed: "Read failed." },
+    ])
+      expect(() => validateVendorErrors({ ...VENDOR, bodyFailures })).toThrow(/Body-failure/);
+    // Parsed JSON keeps its keys for value safety and projections (#703), while
+    // every value and JSON embedded in text keep the ordinary protection.
     const google = googleErrors({
       provider: "Google Docs",
       api: "Docs API",

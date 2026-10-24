@@ -1975,6 +1975,15 @@ Non-2xx responses always take this capture path. A connection opts in with
 successful statuses; their declared facts come from the whole response.
 Required vendor meanings for 401/403/404 precede the other defaults; 409 has no
 shared conflict default.
+Stripe declares HTTP 409 as a conflict, alongside its fact-driven 429
+`lock_timeout` rule. Its reviewed `bodyFailures` opt-in applies status-only
+classification to an oversized 424 reply, preserving the dependency-failure
+meaning when the bounded body cannot be read. The original ceiling diagnostic
+and answered status remain; the core still decides write outcomes. It does not
+apply to 401 or alter Q8. A fixed read-phase fact distinguishes failed body
+reads from malformed JSON only for vendors declaring that wording; raw
+exceptions never enter diagnostics. Other providers retain their mapping and
+wording.
 A 421 is `unavailable` and retryable only when the transport's core
 positive-read classification proves that request a read, including its actual
 method and method-override headers. The agent chooses another call; the kit
@@ -2101,11 +2110,18 @@ that pages. `src/http/hatch-paging.ts` supplies Stripe forward lists
 (`has_more`, last `data` id → `starting_after`), Cloudflare
 (`result_info.page/total_pages`, falling back to `total_count/per_page/count`
 → `page`), Vercel (`pagination.next` → `until`), and GitHub (quoted or unquoted
-Link `rel=next` → `page`). No maintained REST provider opts in
-yet. A declaration names the cursor parameter and `query` or `body`; it must
+Link `rel=next` → `page`). Stripe opts into indexed forward lists, reverse
+lists (`ending_before`, first safe row id), v1 search (`next_page`) and v2
+lists (a confined `next_page_url` supplying only `page`).
+If a Stripe v2 URL adds query parameters the original call omitted, the read
+keeps its data and returns `hasMore: true` without `nextCursor`; a continuation
+cannot be minted without guessing which vendor defaults to preserve. Changed
+explicit filters and URLs outside the confined origin/path remain refused.
+A declaration names the cursor parameter and `query` or `body`; it must
 exist in that operation's request contract. The response remains
 `{ status, data, page? }`, with `page: { hasMore, nextCursor?, param, in }`.
-Put the opaque `nextCursor` back in the named parameter. The hatch binds it
+With parameter-based continuation, put the opaque `nextCursor` back in the named
+parameter. The hatch binds it
 to its tool, content-hash index revision, method, path, other arguments and selected fields,
 canonicalizing nested object key order while preserving array order and scalar types.
 It decodes the cursor before index validation and sends only the vendor value. Paging is
@@ -2120,6 +2136,25 @@ Adapter continuations use the same root-store HMAC key and admitted
 connection/personal-owner binding as discovery cursors. The signed v2 token's
 claims preserve the vendor value's string/number type and pass the request-secret
 encoder. An unpaged hatch keeps its existing result schema.
+The optional `pageCursor: "argument"` declaration separates a top-level
+signed `cursor` from raw first-request anchors. Stripe allows a raw
+`starting_after` or `ending_before` record id in `query` only without cursor;
+both directions or a cursor with any raw anchor are refused before dispatch.
+Returned tokens authenticate the selected adapter parameter and value as well
+as the call. Search/v2 raw page tokens cannot replace cursor. Providers without
+this declaration keep parameter-based continuation.
+Separate-cursor paging also adds the hatch Paging line to generated
+Conventions; parameter-based providers retain their existing guide bytes.
+A reviewed `HatchBinding` can supply vendor encoding/origin routing through
+the same Connection API; the shared hatch retains resolution, verdicts,
+index/fields validation, withheld-value admission, paging and projection.
+Bindings retain the hatch's other-server and JSON/form body-type guards by
+default. `allowOtherServers: true` and `allowOtherBodyTypes: true` explicitly
+replace those guards with the binding's reviewed routing or encoding checks.
+Stripe uses it for nested v1 form parameters, v2 JSON, account/context headers
+and the confined PDF origin. An optional hatch idempotency declaration uses
+the kit write builder's checked key hook: Stripe POST writes take or generate
+keys, while DELETE and the read-only invoice-preview POST send none.
 Redacted or withheld cursor values are refused both before minting a continuation
 and after restoring a decoded continuation, before dispatch. The shared
 `refuseWithheldValues` check runs on the restored query/body: paths and queries

@@ -7,6 +7,79 @@ roster](./integrating.md#add-or-remove-a-connector) covers the general
 procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
+## Stripe
+
+`stripe()` connects one Stripe account in one mode through the pinned REST API.
+
+```ts
+import { stripe } from "@zackbart/connecta/providers/stripe";
+
+const billing = stripe("billing", {
+  purpose: "Payment investigations and reconciliation",
+  auth: { type: "apiKey" },
+  mode: "sandbox",
+  readOnly: true,
+});
+```
+
+**Credential.** Enter one secret (`sk_test_…`/`sk_live_…`) or restricted
+(`rk_test_…`/`rk_live_…`) key in this connection in the operator UI. Prefer a
+restricted key with only the required permissions. The key prefix must match
+the declared mode; publishable and organization keys are refused. The Test
+action reads the account. If account-read permission is absent, the test can
+still establish that the key was accepted. Stored keys never reach agents.
+
+**Options.** `mode` is required: `"sandbox"` or `"production"`.
+`connectedAccount: "acct_example"` binds every call to that Connect account
+using Stripe-Account on v1 and Stripe-Context on v2. `readOnly: true` omits
+writes and refuses their calls on every endpoint. `authScope: "personal"`
+partitions stored credentials by admitted owner instead of sharing a grant.
+`maxResultBytes` narrows this connector's inline result budget. There is no
+separate optional sensitive-field set: reviewed secret withholding applies to
+every result, and `fields` only reduces the remaining data. No tool argument
+widens that boundary.
+
+**Vendor prerequisites.** The key must have permission for each API operation
+the workflow needs. Hosted MCP is a separate generic connection; follow
+[the hosted Stripe migration](./hosted-mcp-migration.md#stripe).
+
+**Limits.** The index is pinned to Stripe-Version `2026-09-30.endive`.
+Responses are bounded to 8 MiB and request reads to 60 seconds. Default
+admission is 100 calls/second and 8 concurrent calls in production, or
+25 calls/second and 4 concurrent calls in sandbox; Stripe can apply stricter
+endpoint limits. Stripe v1 lists normally default to 10 and cap at 100;
+the hatch keeps the pinned operation's vendor query parameters. Files can be
+read as quote PDFs from the confined files origin; multipart uploads and
+the meter-event stream are refused. POST writes take an optional
+`idempotencyKey` (up to 255 characters), generating and returning one when
+omitted; DELETE and the invoice-preview read send no key.
+
+**Paging example.** A first read can set a raw record-id anchor in
+`query.starting_after` or `query.ending_before`. To continue, pass the signed
+`page.nextCursor` as the top-level `cursor`, keeping the path, filters and
+`fields` unchanged. Omit both raw anchors on continuation. Do not combine
+directions. Search and v2 lists also continue through `cursor`; their raw
+vendor page tokens are not accepted there.
+If a v2 next-page URL adds omitted parameters, the fetched data remains
+available with `page.hasMore: true` but no `nextCursor`. It is incomplete;
+repeat with explicit parameters or narrow the request to continue safely.
+
+```ts
+const first = await connecta.call("billing.stripe_api_read", {
+  path: "/v1/charges",
+  query: { customer: "cus_example", starting_after: "ch_example", limit: 20 },
+  fields: ["data.id", "data.amount"],
+});
+if (first.data.page?.hasMore) {
+  const next = await connecta.call("billing.stripe_api_read", {
+    path: "/v1/charges",
+    query: { customer: "cus_example", limit: 20 },
+    fields: ["data.id", "data.amount"],
+    cursor: first.data.page.nextCursor,
+  });
+}
+```
+
 ## Breeze ChMS
 
 `breeze()` connects one church's Breeze account through its API.
