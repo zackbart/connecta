@@ -2,6 +2,7 @@
 // language, one heuristic that is the union of the two former vendor engines,
 // and one error policy, for every REST vendor.
 import { describe, expect, it } from "vitest";
+import { SentSecrets } from "../src/sent-secrets.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import {
   carriesWithheldLink,
@@ -401,13 +402,134 @@ describe("reviewed text policy and global admission (#846)", () => {
     });
   });
 
-  it("INV-5: removes a private suffix after an existing signing placeholder", () => {
+  it("INV-5: withholds complete signing values and private suffixes across character references", () => {
     for (const text of [
       "X-Amz-Signature=[redacted]PRIVATE",
       "/a?X-Amz-Signature=[redacted]PRIVATE",
       "https://files.example/a?X-Amz-Signature=[redacted]PRIVATE",
     ])
       expect(withholdEmbeddedUrls(text)).not.toContain("PRIVATE");
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    // References are value data even when they spell punctuation. Keep the original spelling of
+    // ordinary text and of the genuine query parameter after the signing value (#703).
+    for (const [value, remainder] of [
+      ["&#50;&#97;PRIVATE", true],
+      ["&#x32;&#X61;PRIVATE", true],
+      ["raw&#50;mixed&#x61;PRIVATE", true],
+      ["&amp;&equals;&plus;&sol;PRIVATE", true],
+      ["&plus;&sol;&equals;", true],
+      ["&#43;&#47;&#61;", true],
+      ["&quot;&apos;&#32;&#41;PRIVATE", false],
+      ["&amp;#50;&amp;#x61;PRIVATE", true],
+      ["&amp#50;&amp#x61;PRIVATE", true],
+      ["&#38;#50;PRIVATE", true],
+      ["&CounterClockwiseContourIntegral;PRIVATE", false],
+      ["&#00000000000000000000000000000050;PRIVATE", true],
+      ["&#50&#97PRIVATE", true],
+      ["raw&#479PRIVATE", true],
+      ["&#x2faPRIVATE", true],
+      ["&#00000479PRIVATE", true],
+      ["&#x0002faPRIVATE", true],
+      ["&#1000PRIVATE", true],
+      ["&#x250PRIVATE", true],
+      ["&amp;#479PRIVATE", true],
+      ["&#479;PRIVATE", false],
+      ["&#x2fa;PRIVATE", false],
+      ["&amp;#479;PRIVATE", false],
+    ] as const) {
+      for (const name of ["X-Amz-Signature", "X-Goog-Credential", "X-Amz-Security-Token"]) {
+        const input = `diagnostic ${name}=${value}&name=alice now`;
+        const expected = `diagnostic ${name}=[redacted]&name=alice now`;
+        expect(safety.redact({ description: input }, "GET", "/v1/things"), input).toEqual({ description: expected });
+        expect(withholdEmbeddedUrls(input), input).toBe(expected);
+        for (const prefix of [`${name}=[redacted]`, "[redacted]"]) {
+          const split = `diagnostic ${prefix}${value}&name=alice now`;
+          const clean = `diagnostic ${prefix}&name=alice now`;
+          expect(safety.redact({ description: split }, "GET", "/v1/things"), split).toEqual({
+            description: prefix === "[redacted]" && !remainder ? split : clean,
+          });
+        }
+        const link = `see https://files.example/a?${name}=${value}&name=alice now`;
+        expect(safety.redact({ message: link }, "GET", "/v1/things"), link).toEqual({
+          message: `see https://files.example/a?${name}=[redacted]&name=alice now`,
+        });
+        expect(withholdEmbeddedUrls(link), link).toBe("see https://files.example/a?[redacted] now");
+        const ending = `see [file](https://files.example/a?${name}=${value}).`;
+        expect(withholdEmbeddedUrls(ending), ending).toBe("see [file](https://files.example/a?[redacted]).");
+      }
+    }
+    const schema = { type: "object", properties: { pin: { type: "string", writeOnly: true } } } as const;
+    for (const [parameter, pin] of [
+      ["X-Amz-Security-Token=raw&#479PRIVATE", "X-Amz-Security-Token="],
+      ["X-Amz-Security-Token=raw&#479PRIVATE", "X-Amz-Security-Token=raw&"],
+      ["X-Amz-Security-Token=raw&#479PRIVATE", "Security-Token"],
+      ["X-Amz-Security-Token&#619PRIVATE", "X-Amz-Security-Token&"],
+    ]) {
+      const secrets = new SentSecrets();
+      secrets.arguments({ pin }, schema);
+      const input = secrets.redact(`diagnostic ${parameter}&name=alice now`);
+      const out = safety.redact({ description: input }, "GET", "/v1/things") as { description: string };
+      expect(out.description, pin).not.toContain("PRIVATE");
+      expect(out.description, pin).toContain("&name=alice now");
+    }
+    // Every cut is inside an encoded value or separator, before the private value is replaced.
+    for (const prefix of ["&", "&a", "&am", "&amp", "&amp;", "&amp#", "&amp;#", "&#", "&#x"]) {
+      const hex = prefix === "&#x";
+      const value = `${hex ? "&#x50;" : prefix.startsWith("&a") ? "&amp;#80;" : "&#80;"}RIVATE`;
+      // The semicolon-less amp spelling is valid only immediately before `#`.
+      const encoded = prefix === "&amp#" ? value.replace("amp;", "amp") : value;
+      const secrets = new SentSecrets();
+      secrets.arguments({ pin: `X-Amz-Signature=${prefix}` }, schema);
+      const input = secrets.redact(`diagnostic X-Amz-Signature=${encoded}&name=alice now`);
+      expect(safety.redact({ description: input }, "GET", "/v1/things"), prefix).toEqual({
+        description: "diagnostic [redacted]&name=alice now",
+      });
+    }
+    for (const separator of [
+      "&amp;#61;",
+      "&amp;#x3d;",
+      "&amp;equals;",
+      "&#38;#61;",
+      "&#x26;#x3d;",
+      "&amp;amp;#61;",
+      "&amp#61;",
+    ]) {
+      const input = `diagnostic X-Amz-Security-Token${separator}PRIVATE&name=alice now`;
+      expect(safety.redact({ description: input }, "GET", "/v1/things"), separator).toEqual({
+        description: `diagnostic X-Amz-Security-Token${separator}[redacted]&name=alice now`,
+      });
+      const secrets = new SentSecrets();
+      secrets.arguments({ pin: "X-Amz-Security-Token&" }, schema);
+      const altered = secrets.redact(input);
+      expect(safety.redact({ description: altered }, "GET", "/v1/things"), separator).toEqual({
+        description: "diagnostic [redacted]&name=alice now",
+      });
+    }
+    for (const text of [
+      "ordinary prose &amp; &equals; &#50; stays here",
+      "see https://public.example/a?width=400&name=alice now",
+      "see https://public.example/a?width=400&amp;name=alice now",
+      "an assignment name=alice&other=bob now",
+      "[redacted]&nbsp;was rotated",
+      "value [redacted]&#8212;rotated yesterday",
+      "[redacted]&amp;nbsp;was rotated",
+      "[redacted]#160;was rotated",
+    ]) {
+      expect(safety.redact({ description: text, message: text }, "GET", "/v1/things")).toEqual({
+        description: text,
+        message: text,
+      });
+    }
+    expect(withholdEmbeddedUrls("value [redacted]abc&nbsp;was rotated")).toBe("value [redacted]&nbsp;was rotated");
+    for (const reference of ["&plus;", "&sol;", "&equals;", "&percnt;", "&lowbar;", "&UnderBar;", "&fjlig;"]) {
+      expect(withholdEmbeddedUrls(`value [redacted]${reference}PRIVATE now`), reference).toBe("value [redacted] now");
+    }
+    expect(withholdEmbeddedUrls("X-Amz-Signature=PRIVATE&amp=public&name=alice now")).toBe(
+      "X-Amz-Signature=[redacted]&amp=public&name=alice now",
+    );
+    expect(withholdEmbeddedUrls("X-Amz-Signature=PRIVATE#123&name=alice now")).toBe(
+      "X-Amz-Signature=[redacted]&name=alice now",
+    );
   });
 
   it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
@@ -466,7 +588,11 @@ describe("reviewed text policy and global admission (#846)", () => {
   it.each([
     "[f](/proxy/https://files.example/a%3Ftoken%3DPRIVATE)".repeat(30_000),
     "https://public.example/a<br>https://files.example/a?X-Amz-Signature&#61;PRIVATE ".repeat(25_000),
-    `see https://public.example/a?${"?&a&".repeat(400_000)}`,
+    `see https://public.example/a?${"?&a&".repeat(400_000)} ${"see https://files.example/a?X-Amz-Signature=&#50;&#x61;&amp;&equals;&plus;&sol;PRIVATE&name=alice now ".repeat(
+      15_000,
+    )} diagnostic X-Goog-Credential=[redacted]${"&#00000000000000000000000050;&amp;#x61;".repeat(30_000)}PRIVATE now ${"diagnostic [redacted]#50;PRIVATE now X-Amz-Security-Token&amp;#61;PRIVATE now ".repeat(
+      15_000,
+    )}`,
   ])(
     "INV-5: scans large reviewed paths, global signing values and admission with bounded linear passes",
     (input) => {
