@@ -224,7 +224,8 @@ For paged indexed operations, retain `query.per_page`, omit `query.page` on
 continuation, and pass the returned signed token as top-level `cursor`. Keep the
 path, filters, fields, body and page size unchanged. Old numeric or unsigned
 continuations cannot be reused. Metadata search/details also page with signed
-cursors. Standard envelopes add `truncated`; a full inline result has `false`.
+cursors. A result cut for size reports the affected dot paths in `truncated: string[]`;
+uncut results omit that property.
 
 Paths must be canonical API paths with concrete ids. Absolute URLs, OAuth paths,
 query strings embedded in a path, percent encodings, semicolons and traversal

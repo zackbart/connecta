@@ -259,7 +259,7 @@ describe("ccb() construction", () => {
       ["assignments", "ccb_api_read"],
       ["update email", "ccb_api_write"],
       ["edit person email", "ccb_api_write"],
-    ])
+    ] as const)
       expect(
         rankTools([...searchable.staticTools!], query).map((entry) => entry.tool.name),
         query,
