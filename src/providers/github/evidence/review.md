@@ -113,8 +113,8 @@ approximately 300 KB gate. This is an early index-retention probe, not a final
 measurement of the implemented provider. The final PR reports the actual
 standalone entry as well. No dispatch or tool surface changes in this pin commit.
 
-The final same-toolchain standalone probe is 1,867,321 B minified and 450,446 B
-gzip: growth 760,181 B raw and 115,213 B gzip from the original 1,107,140 B /
+The final same-toolchain standalone probe is 1,867,320 B minified and 450,437 B
+gzip: growth 760,180 B raw and 115,204 B gzip from the original 1,107,140 B /
 335,233 B entry. The complete index is reachable without an artificial retained
 export. The canonical bundle report measured 450,413 B before its descriptive
 baseline annotation was updated; its reviewed baseline uses that observation.
@@ -124,10 +124,14 @@ within their unchanged caps. Other providers' baselines and caps are unchanged.
 H9 characterization uses five fresh Node 26.12.0 processes per arm on this shared
 Linux host, with warmed filesystem caches and the same fake installation /
 one-repository owner listing. Median provider import: before 1,264 ms, after
-1,196 ms; factory construction: 40.0 / 43.0 ms; first completed list call:
-171.9 / 173.9 ms. Each arm sends five fake requests, including lazy authentication
+1,546 ms; factory construction: 40.0 / 52.8 ms; first completed list call:
+171.9 / 206.1 ms. Each arm sends five fake requests, including lazy authentication
 and repository verification; no operational vendor request or real credential
 is used. RSA key generation is outside the measured phases. Import/factory
 startup precedes a call deadline; the first-call measurement includes lazy App
 resolution, signing, minting and verified resource handling. Shared-host noise
 precludes a latency improvement claim. No timeout policy changes are made.
+
+Runtime TypeScript source (excluding fixtures and test suites) grows from
+73,767 B to 851,314 B, +777,547 B, including the new 760,257 B generated index.
+The retained upstream JSON is scratch evidence; it is not bundled or shipped.
