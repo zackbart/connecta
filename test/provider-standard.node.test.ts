@@ -8,7 +8,7 @@ import { generatedProblems } from "../scripts/drift-validate.mjs";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { VendorErrors } from "../src/http/errors.js";
 import type { ConnectorContext } from "../src/types.js";
@@ -25,6 +25,46 @@ import {
   type ProviderFacts,
 } from "./provider-standard.js";
 import { authoredFixtures } from "./providers.generated.js";
+
+// Check the actual hatch constructor reached by every Google product fixture,
+// including products still awaiting step 2 and declarations through the kit.
+const googleBindings = vi.hoisted(() => {
+  type Declaration = { connection: { provider: string }; index: object; binding?: { send?: object; index?: object } };
+  const bindings = new WeakMap<object, { connection: object; index: object }>();
+  const check = ({ connection, index, binding }: Declaration) => {
+    if (
+      !["Gmail", "Google Drive", "Google Docs", "Google Sheets", "Google Slides", "Google Forms"].includes(
+        connection.provider,
+      )
+    )
+      return;
+    const reviewed = binding?.send && bindings.get(binding.send);
+    if (!reviewed || reviewed.connection !== connection || reviewed.index !== index || binding?.index !== index)
+      throw new Error("Google hatch requires googleHatchBinding with its connection and index.");
+  };
+  return { bindings, check };
+});
+vi.mock("../src/providers/_shared/google/hatch.js", async (original) => {
+  const module = await original<typeof import("../src/providers/_shared/google/hatch.js")>();
+  return {
+    ...module,
+    googleHatchBinding: (...args: Parameters<typeof module.googleHatchBinding>) => {
+      const binding = module.googleHatchBinding(...args);
+      googleBindings.bindings.set(binding.send, { connection: args[0], index: args[1].index });
+      return binding;
+    },
+  };
+});
+vi.mock("../src/http/hatch.js", async (original) => {
+  const module = await original<typeof import("../src/http/hatch.js")>();
+  return {
+    ...module,
+    hatch: (options: Parameters<typeof module.hatch>[0]) => {
+      googleBindings.check(options);
+      return module.hatch(options);
+    },
+  };
+});
 
 const root = fileURLToPath(new URL("../src/providers/", import.meta.url));
 const documentationPath = fileURLToPath(new URL("../documentation/providers.md", import.meta.url));
@@ -117,6 +157,21 @@ describe("the provider standard (decision 0011)", () => {
   it("holds every provider past step 2 to the guide and surface rules (G, S)", () => {
     const found = folders.filter((folder) => !PENDING.step2.has(folder.facts.name)).flatMap(stepTwo);
     expect(found).toEqual([]);
+    const index = {},
+      other = {},
+      connection = { provider: "Google Docs" },
+      binding = { send: () => {}, index };
+    googleBindings.bindings.set(binding.send, { connection, index });
+    expect(() => googleBindings.check({ connection, index, binding })).not.toThrow();
+    expect(() => googleBindings.check({ connection, index, binding: { ...binding } })).not.toThrow();
+    for (const options of [
+      { connection, index },
+      { connection, index, binding: {} },
+      { connection, index, binding: { send: binding.send } },
+      { connection, index: other, binding },
+      { connection: { provider: "Gmail" }, index, binding },
+    ])
+      expect(() => googleBindings.check(options)).toThrow("googleHatchBinding");
   });
 
   it("fails while a listed provider already meets the step it is excused from", () => {
@@ -233,30 +288,68 @@ describe("the provider standard's rules", () => {
       ).toBe(true);
     }
     const base = standard();
-    const source = { revision: "alpha@1", documents: [{ pin: "alpha.json", prefix: "/alpha/v2" }] };
-    const extra: Record<string, string> = {
-      "evidence/openapi.json": JSON.stringify(source),
-      "evidence/alpha.json": JSON.stringify({
-        url: "https://vendor.example/alpha",
-        documentation: "https://vendor.example/docs",
-        vendored: true,
-        digest: DIGEST,
-      }),
-      "evidence/alpha.document.json": "{}",
-    };
-    const drift = JSON.parse(base.read("drift.json")!);
-    drift.generated.evidence["alpha.json"] = DIGEST;
-    drift.generated.evidence["alpha.document.json"] = DIGEST;
-    extra["drift.json"] = JSON.stringify(drift);
-    const composed = {
-      ...base,
-      files: [...new Set([...base.files, ...Object.keys(extra)])],
-      read: (path: string) => extra[path] ?? base.read(path),
-    };
-    expect(evidenceViolations(composed, today)).toEqual([]);
-    for (const pin of ["../alpha.json", "openapi.json"]) {
-      extra["evidence/openapi.json"] = JSON.stringify({ ...source, documents: [{ pin, prefix: "/alpha/v2" }] });
-      expect(evidenceViolations(composed, today)).toContainEqual(expect.stringContaining("E3: evidence/openapi.json"));
+    for (const [label, source, pin] of [
+      [
+        "composed OpenAPI",
+        { revision: "alpha@1", documents: [{ pin: "alpha.json", prefix: "/alpha/v2" }] },
+        "alpha.json",
+      ],
+      [
+        "primary pin references Discovery evidence",
+        {
+          url: "https://vendor.example/discovery",
+          revision: "r1",
+          digest: DIGEST,
+          vendored: true,
+          discovery: { format: "google-discovery-v1", pin: "discovery.json" },
+        },
+        "discovery.json",
+      ],
+    ] as const) {
+      const document = pin.replace(".json", ".document.json");
+      const extra: Record<string, string> = {
+        "evidence/openapi.json": JSON.stringify(source),
+        [`evidence/${pin}`]: JSON.stringify({
+          url: "https://vendor.example/discovery",
+          documentation: "https://vendor.example/docs",
+          revision: "r1",
+          vendored: true,
+          digest: DIGEST,
+        }),
+        [`evidence/${document}`]: "{}",
+        ...("discovery" in source ? { "evidence/openapi.document.json": "{}" } : {}),
+      };
+      const drift = JSON.parse(base.read("drift.json")!);
+      drift.generated.evidence[pin] = DIGEST;
+      drift.generated.evidence[document] = DIGEST;
+      if ("discovery" in source) drift.generated.evidence["openapi.document.json"] = DIGEST;
+      extra["drift.json"] = JSON.stringify(drift);
+      const fixture = {
+        ...base,
+        files: [...new Set([...base.files, ...Object.keys(extra)])],
+        read: (path: string) => extra[path] ?? base.read(path),
+      };
+      expect(evidenceViolations(fixture, today), label).toEqual([]);
+      for (const invalid of ["../alpha.json", "openapi.json"]) {
+        extra["evidence/openapi.json"] = JSON.stringify(
+          "discovery" in source
+            ? { ...source, discovery: { ...source.discovery, pin: invalid } }
+            : { ...source, documents: [{ pin: invalid, prefix: "/alpha/v2" }] },
+        );
+        expect(evidenceViolations(fixture, today), label).toContainEqual(expect.stringMatching(/^E3:/));
+      }
+      extra["evidence/openapi.json"] = JSON.stringify(source);
+      for (const corrupt of [
+        { documentation: "http://vendor.example/docs" },
+        { vendored: false },
+        { digest: `sha256:${"1".repeat(64)}` },
+        ...("discovery" in source ? [{ revision: "other" }, { url: "https://other.example/discovery" }] : []),
+      ]) {
+        const original = extra[`evidence/${pin}`]!;
+        extra[`evidence/${pin}`] = JSON.stringify({ ...JSON.parse(original), ...corrupt });
+        expect(evidenceViolations(fixture, today), label).toContainEqual(expect.stringMatching(/^E3:/));
+        extra[`evidence/${pin}`] = original;
+      }
     }
   });
 

@@ -2377,8 +2377,12 @@ grant evaluation. Products opt in with `googleClient(connection, title,
 { standard: true, index })`; their requests carry `template`.
 Both the client and `googleHatchBinding(connection, { index, review })` require
 the explicit URI-template mode at construction. The hatch requires the binding's
-exact index identity. The Google binding additionally refuses percent-encoded
-unreserved characters and colons before dispatch.
+exact index identity. Standard clients and Google bindings reject a missing
+index with an explicit construction error. The provider-standard suite checks
+actual hatch construction through every Google product fixture, requiring its
+Google binding with the same connection and index. The Google binding
+additionally refuses percent-encoded unreserved characters and colons before
+dispatch.
 
 The generator's `allSuccessResponses: true` option unions JSON response fields
 from every 2xx. Existing providers keep the first JSON success contract until
@@ -2391,7 +2395,8 @@ adapter is separately opt-in by exact list key with `pageCursor: "argument"`.
 It treats missing/empty `nextPageToken` as terminal, rejects malformed tokens,
 and continues empty pages when a nonempty token exists. `query.fields` is a
 Google vendor mask; the adapter preserves `nextPageToken` on the wire. The
-top-level `fields` argument narrows safe result data only after paging. Omit
+token must be selected as a complete top-level field; `nextPageToken/x` does
+not select it. The top-level `fields` argument narrows safe result data only after paging. Omit
 `pageToken` initially and restore the signed `page.nextCursor` as `cursor`;
 the raw token in safe vendor data is not accepted as continuation input.
 For example, a direct value-mode result has outer `result.data`, the hatch's
