@@ -29,7 +29,6 @@ export const PENDING = {
   step1: new Set<string>(),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */
   step2: new Set([
-    "breeze",
     "ccb",
     "cloudflare",
     "docs",
@@ -471,7 +470,13 @@ export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
       found.push(`S2: ${tool.name} cursor is a string`);
     }
     const rows = !isHatch && /^(?:list|search)_/.test(tool.name);
-    if (rows && "page" in output) {
+    const hasMore = properties(output["page"])["hasMore"];
+    // A capped, non-pageable vendor list can declare only a terminal page.
+    const fixedLast =
+      record(hasMore) &&
+      (hasMore["const"] === false ||
+        (Array.isArray(hasMore["enum"]) && hasMore["enum"].length === 1 && hasMore["enum"][0] === false));
+    if (rows && "page" in output && !fixedLast) {
       if (!("cursor" in input && "limit" in input)) {
         found.push(`S2: ${tool.name} pages with limit and cursor`);
       }
@@ -491,8 +496,8 @@ export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
       const page = properties(schema);
       if (
         !hasType(schema, "object") ||
-        !hasType(page["hasMore"], "boolean") ||
-        !hasType(page["nextCursor"], "string") ||
+        (!hasType(page["hasMore"], "boolean") && !fixedLast) ||
+        (!fixedLast && !hasType(page["nextCursor"], "string")) ||
         !required(schema, "hasMore") ||
         ("total" in page && !hasType(page["total"], "integer"))
       ) {

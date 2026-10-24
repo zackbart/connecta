@@ -278,6 +278,14 @@ vendor-proven idempotent replays from duplicate business writes. The grader
 still requires identical arguments and one nonempty key across attempts.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
+Seven [Breeze tasks](tasks/breeze.ts) cover filtered profile/tag reads, occurrence
+attendance joins, offset paging with an empty terminal page, archival pledge
+coverage, exactly one person creation, a committed update answered HTTP 500,
+and exact decimal giving totals. The real Breeze provider keeps its fixed
+church hostname; a fresh fake-only credential routes it to loopback. GET
+endpoints have explicit read/write verdicts in the fake ledger. Graders use
+state, requests and final answers, independent of the provider tool surface.
+
 Seven [Tithe.ly tasks](tasks/tithely.ts) cover decision 0011's first step-2
 surface against a loopback Tithe.ly v1 fake reached through the real
 `tithely()` factory's `baseUrl`: filtered fund totals, a recurring/one-time

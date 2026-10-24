@@ -1,22 +1,24 @@
 {
   "breeze": {
-    "breeze_api_get": {
-      "path": "/people/157857",
-      "query": [
-        {
-          "name": "details",
-          "value": 1
-        }
-      ]
+    "breeze_api_search": {
+      "query": "people"
     },
-    "breeze_api_mutate": {
+    "breeze_api_details": {
+      "method": "GET",
+      "path": "/people"
+    },
+    "breeze_api_read": {
+      "path": "/people/157857",
+      "query": {
+        "details": 1
+      }
+    },
+    "breeze_api_write": {
       "path": "/giving/delete",
-      "query": [
-        {
-          "name": "payment_id",
-          "value": "56789123"
-        }
-      ]
+      "query": {
+        "payment_id": "56789123"
+      },
+      "method": "GET"
     },
     "get_account_summary": {},
     "list_people": {
@@ -24,8 +26,7 @@
       "filter": {
         "2000138015": "226-227"
       },
-      "limit": 2,
-      "cursor": "40"
+      "limit": 2
     },
     "get_person": {
       "personId": "157857"
@@ -40,30 +41,9 @@
       "calendarId": "1553",
       "limit": 1
     },
-    "list_calendars": {},
     "list_attendance": {
       "instanceId": "3778451",
       "includeNames": true
-    },
-    "list_forms": {},
-    "list_form_fields": {
-      "formId": "15326"
-    },
-    "list_form_entries": {
-      "formId": "15326",
-      "includeResponses": true
-    },
-    "list_volunteers": {
-      "instanceId": "123456"
-    },
-    "list_volunteer_roles": {
-      "instanceId": "123456"
-    },
-    "list_account_log": {
-      "action": "person_updated",
-      "start": "2025-08-01",
-      "includeDetails": true,
-      "limit": 1
     },
     "list_contributions": {
       "start": "2022-01-01",
@@ -80,7 +60,7 @@
     "add_person": {
       "firstName": "Jiminy",
       "lastName": "Cricket",
-      "fields": [
+      "values": [
         {
           "fieldId": "1508481877",
           "type": "email",
@@ -92,25 +72,13 @@
     },
     "update_person": {
       "personId": "12345678",
-      "fields": [
+      "values": [
         {
           "fieldId": "2000138811",
           "type": "radio",
           "response": "459"
         }
       ]
-    },
-    "assign_tag": {
-      "personId": "157857",
-      "tagId": "16681"
-    },
-    "unassign_tag": {
-      "personId": "157857",
-      "tagId": "16681"
-    },
-    "record_check_in": {
-      "personId": "157857",
-      "instanceId": "40984"
     }
   },
   "ccb": {

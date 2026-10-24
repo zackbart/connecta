@@ -40,12 +40,31 @@ function installTransport() {
   globalThis.fetch = (async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (!Object.values(HOSTS).flat().includes(url.hostname)) return forward(request);
-    const key = request.headers.get("x-auth-key") ?? request.headers.get("authorization")?.replace(/^Bearer /, "");
+    if (!Object.values(HOSTS).flat().includes(url.hostname) && url.hostname !== "church.breezechms.com")
+      return forward(request);
+    const key =
+      request.headers.get("api-key") ??
+      request.headers.get("x-auth-key") ??
+      request.headers.get("authorization")?.replace(/^Bearer /, "");
     const target = key ? routes.get(key) : undefined;
     if (!target || !target.hosts.includes(url.hostname)) throw new Error("Eval refused non-fake vendor transport");
     return forward(new Request(`${target.url}${url.pathname}${url.search}`, request));
   }) as typeof fetch;
+}
+/** Register an explicitly confined fake credential, shared by provider evals. */
+export function registerFakeRoute(key: string, url: string, hosts: string[]) {
+  installTransport();
+  routes.set(key, { url, hosts });
+}
+export function unregisterFakeRoute(key: string) {
+  routes.delete(key);
+  if (!routes.size && originalFetch) {
+    globalThis.fetch = originalFetch;
+    originalFetch = undefined;
+    if (kitInstalled) configureGuardedTransport(previousKitTransport);
+    kitInstalled = false;
+    previousKitTransport = undefined;
+  }
 }
 type Row = Record<string, any>;
 // Stripe compares parameters rather than their serialization order.
