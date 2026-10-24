@@ -3,6 +3,7 @@
  * ledger and one clock, started fresh and thrown away afterwards.
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
+import { FakeBreeze, breezeState } from "./breeze.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
 import { FakeOAuth } from "./oauth.js";
@@ -43,13 +44,14 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor | "tithely";
+  rest?: RestVendor | "tithely" | "breeze";
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
 
 export interface WorldOptions {
   restVendor?: RestVendor;
+  breeze?: { fault?: "update-500" };
   /** A Tithe.ly giving world, with an optional injected fault. */
   tithely?: { fault?: TithelyFault };
   refundFault?: boolean;
@@ -76,7 +78,8 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 
 export class World {
   readonly rest = restState();
-  readonly restServices: Array<FakeRestService | FakeTithely> = [];
+  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze> = [];
+  readonly breeze = breezeState();
   readonly tithely = tithelyState();
   readonly now = Date.now();
   readonly ledger = new Ledger();
@@ -101,6 +104,7 @@ export class World {
     }
     if (options.tithely)
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
+    if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
     this.tracker = trackerState(this.now);
     this.chat = chatState(this.now);
     const clock = () => Date.now();
@@ -136,7 +140,7 @@ export class World {
   }
 
   connectorSpecs(): ConnectorSpec[] {
-    if (this.options.restVendor || this.options.tithely)
+    if (this.options.restVendor || this.options.tithely || this.options.breeze)
       return this.restServices.map((service) => ({
         id: service.name,
         title: service.name,

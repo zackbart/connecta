@@ -4,6 +4,7 @@ import type { ActiveTask, PlannedTask } from "./types.js";
 import { withCorrectness, EXISTING_CORRECTNESS } from "./correctness.js";
 import { REST_TASKS } from "./rest.js";
 import { P5_TASKS } from "./p5.js";
+import { BREEZE_TASKS } from "./breeze.js";
 import { TITHELY_TASKS } from "./tithely.js";
 
 /** Retained tasks from the historical 19-task #765 paired experiment. */
@@ -11,5 +12,5 @@ export const COMPARISON_TASKS: ActiveTask[] = [
   ...BASELINE_TASKS.map((task) => withCorrectness(task, EXISTING_CORRECTNESS[task.id]!)),
   ...P5_TASKS,
 ];
-export const ACTIVE_TASKS: ActiveTask[] = [...COMPARISON_TASKS, ...REST_TASKS, ...TITHELY_TASKS];
+export const ACTIVE_TASKS: ActiveTask[] = [...COMPARISON_TASKS, ...REST_TASKS, ...TITHELY_TASKS, ...BREEZE_TASKS];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;
