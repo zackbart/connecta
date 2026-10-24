@@ -1,4 +1,5 @@
 // Node-only: executes the generator against temporary provider folders.
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
@@ -586,7 +587,123 @@ describe("OpenAPI operation index generation", () => {
   const source = { url: "https://vendor.example/r1.json", revision: "r1", digest: `sha256:${"0".repeat(64)}` };
 
   it("drops deprecated operations, records per-operation servers, and shares repeated schema nodes", async () => {
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
     const { buildOperationIndex } = await generator();
+    const { normalizeDiscovery, discoveryMethods } = await import(
+      new URL("../scripts/google-discovery.mjs", import.meta.url).href
+    );
+    const pins = JSON.parse(
+      readFileSync(new URL("./fixtures/google-discovery/manifest.json", import.meta.url), "utf8"),
+    );
+    let operations = 0,
+      requiredAnnotations = 0;
+    for (const pin of pins) {
+      const bytes = readFileSync(new URL(`./fixtures/google-discovery/${pin.provider}.json`, import.meta.url));
+      expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(pin.digest);
+      const original = JSON.parse(bytes.toString());
+      const normalized = normalizeDiscovery(original);
+      const deprecations = (raw: any, converted: any) => {
+        if (raw?.deprecated === true) expect(converted?.deprecated).toBe(true);
+        for (const [name, field] of Object.entries(raw?.properties ?? {}))
+          deprecations(field, converted?.properties?.[name]);
+        if (raw?.items) deprecations(raw.items, converted?.items);
+        if (raw?.additionalProperties && typeof raw.additionalProperties === "object")
+          deprecations(raw.additionalProperties, converted?.additionalProperties);
+      };
+      for (const [name, schema] of Object.entries(original.schemas))
+        deprecations(schema, normalized.components.schemas[name]);
+      const compiled = buildOperationIndex(normalized, {
+        ...pin,
+        options: { depth: 5, numericBounds: true, formats: true, requestGraph: true, deprecations: true },
+      });
+      expect(compiled.ops).toHaveLength(pin.methods);
+      expect(new Set(compiled.ops.map((row: string[]) => `${row[0]} ${row[1]}`)).size).toBe(pin.methods);
+      const names = { vendor: pin.provider, title: pin.provider };
+      const legacyIndex = new OperationIndex(compiled, names);
+      const index = new OperationIndex(compiled, { ...names, pathMatching: "uri-template" });
+      expect(await index.cursorRevision()).not.toBe(await legacyIndex.cursorRevision());
+      for (const row of normalized["x-google-discovery"].mapping) {
+        operations++;
+        const op = index.ops.find((op) => op.operationId === row.id)!;
+        expect(`${op.method} ${op.path}`).toBe(row.operation);
+        const operation = normalized.paths[op.path][op.method.toLowerCase()];
+        const contract = index.contract(op);
+        const variables = [...op.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).sort();
+        expect(
+          operation.parameters
+            .filter((p: any) => p.in === "path")
+            .map((p: any) => p.name)
+            .sort(),
+        ).toEqual(variables);
+        expect(
+          contract.parameters
+            .filter((p) => p.in === "path")
+            .map((p) => p.name)
+            .sort(),
+        ).toEqual(variables);
+        for (const parameter of operation.parameters.filter((p: any) => p.deprecated))
+          expect(contract.parameters.find((p) => p.name === parameter.name)?.schema).toHaveProperty("deprecated", true);
+        const ref = operation.responses[200].content?.["application/json"]?.schema?.$ref;
+        if (ref) {
+          const properties = normalized.components.schemas[ref.split("/").at(-1)].properties ?? {};
+          for (const root of Object.keys(properties)) expect(index.responseRoots(op)?.has(root)).toBe(true);
+        }
+        expect(index.contract(op).parameters.map((p) => p.name)).not.toEqual(expect.arrayContaining(["access_token"]));
+        const concrete = op.path.replace(/\{[^}]+\}/g, "fixture-id");
+        expect(index.resolve(op.method, concrete).op.operationId).toBe(op.operationId);
+        if (operation.requestBody) {
+          expect(index.contract(op).body?.schema).toHaveProperty("properties");
+          expect(JSON.stringify(index.contract(op).body?.schema)).not.toContain('"truncated":true');
+          const method = discoveryMethods(original).find((method: any) => method.id === op.operationId);
+          const full = contract.body!.schema as any;
+          const verify = (raw: any, node: any, seen = new Set<string>()) => {
+            if (raw?.$ref) {
+              if (seen.has(raw.$ref)) return;
+              seen = new Set([...seen, raw.$ref]);
+              raw = original.schemas[raw.$ref];
+            }
+            while (node?.$ref) node = full.$defs[node.$ref.split("/").at(-1)];
+            for (const [name, value] of Object.entries(raw?.properties ?? {}) as [string, any][]) {
+              if (value.annotations?.required?.includes(op.operationId)) {
+                requiredAnnotations++;
+                expect(node?.required, `${op.operationId}.${name}`).toContain(name);
+              } else if (value.annotations?.required && value.required !== true && !raw.required?.includes(name)) {
+                expect(node?.required ?? [], `${op.operationId}.${name} must remain optional`).not.toContain(name);
+              }
+              if (node?.properties?.[name]) verify(value, node.properties[name], seen);
+            }
+            if (raw?.items) verify(raw.items, node?.items, seen);
+            if (raw?.additionalProperties && typeof raw.additionalProperties === "object")
+              verify(raw.additionalProperties, node?.additionalProperties, seen);
+          };
+          verify(method.request, full);
+        }
+      }
+      if (pin.provider === "drive") {
+        expect(legacyIndex.resolve("GET", "/files/%67enerateCseToken").op.operationId).toBe("drive.files.get");
+        expect(index.resolve("GET", "/files/generateCseToken").op.operationId).toBe("drive.files.generateCseToken");
+        expect(index.resolve("GET", "/files/%67enerateCseToken").op.operationId).toBe("drive.files.generateCseToken");
+      }
+      if (pin.provider === "docs") {
+        expect(index.resolve("POST", "/documents/id:batchUpdate").params).toEqual({ documentId: "id" });
+        expect(normalized.components.schemas.Document.properties.headers.additionalProperties).toHaveProperty("$ref");
+        expect(() => index.resolve("POST", "/documents/id")).toThrow();
+      }
+      if (pin.provider === "forms") {
+        expect(legacyIndex.resolve("POST", "/forms/f:setPublishSettings").op.operationId).toBe(
+          "forms.forms.batchUpdate",
+        );
+        expect(index.resolve("POST", "/forms/f:setPublishSettings").op.operationId).toBe(
+          "forms.forms.setPublishSettings",
+        );
+        expect(normalized.components.schemas.FormResponse.properties.answers.additionalProperties).toHaveProperty(
+          "$ref",
+        );
+      }
+      expect(JSON.stringify(normalized)).toBe(JSON.stringify(normalizeDiscovery(JSON.parse(JSON.stringify(original)))));
+    }
+    expect(operations).toBe(178);
+    expect(requiredAnnotations).toBeGreaterThan(10);
     const data = buildOperationIndex(document, { ...source, options: { depth: 2, descriptions: 40 } });
     expect(data.fields).toBeUndefined();
     const { renderOpenApiModule } = await generator();
@@ -620,7 +737,6 @@ describe("OpenAPI operation index generation", () => {
     expect(details.o[2]).toEqual([[["thing", "path", 1, { t: "string" }]], 0]);
     // Response metadata is independent of request depth, shared, deterministic,
     // and consumable by the standard hatch's field search and preflight.
-    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
     const success = {
       content: {
         "application/json": {
@@ -657,6 +773,16 @@ describe("OpenAPI operation index generation", () => {
       city: { type: "string", maxLength: 5000 },
     };
     expect(buildOperationIndex(reversed, source).fields).toBe(compiled.fields);
+    const successes = structuredClone(withResponses);
+    successes.paths["/v1/things"].get.responses["202"] = {
+      content: { "application/json": { schema: { properties: { accepted_only: {} } } } },
+    };
+    expect(buildOperationIndex(successes, source).fields).toBe(compiled.fields);
+    const union = new OperationIndex(
+      buildOperationIndex(successes, { ...source, options: { allSuccessResponses: true } }),
+      { vendor: "fixture", title: "Fixture" },
+    );
+    expect(union.responseRoots(union.ops[0]!)?.has("accepted_only")).toBe(true);
     // Root arrays, union variants, local response refs and recursive schemas.
     withResponses.components.responses = {
       list: {
@@ -1316,6 +1442,36 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
 
   it("compiles a vendored document offline and moves its pin only by review", async () => {
     const { readOpenApiSource, sha256, specProvider } = await spec();
+    const { normalizeDiscovery, GOOGLE_DISCOVERY_FORMAT } = await import(
+      new URL("../scripts/google-discovery.mjs", import.meta.url).href
+    );
+    const original = readFileSync(new URL("./fixtures/google-discovery/forms.json", import.meta.url), "utf8");
+    const originalPin = {
+      url: "https://forms.googleapis.com/$discovery/rest?version=v1",
+      documentation: "https://developers.google.com/forms/api",
+      revision: JSON.parse(original).revision,
+      digest: sha256(original),
+      vendored: true,
+    };
+    const normalized = JSON.stringify(normalizeDiscovery(JSON.parse(original)), null, 2) + "\n";
+    const derived = folder({
+      "evidence/openapi.json": JSON.stringify({
+        ...originalPin,
+        discovery: { pin: "discovery.json", format: GOOGLE_DISCOVERY_FORMAT },
+      }),
+      "evidence/discovery.json": JSON.stringify(originalPin),
+      "evidence/discovery.document.json": original,
+      "evidence/openapi.document.json": normalized,
+    });
+    await specProvider(derived.provider);
+    writeFileSync(
+      join(derived.directory, "evidence/openapi.document.json"),
+      normalized.replace('"openapi": "3.1.0"', '"openapi": "3.0.0"'),
+    );
+    await expect(specProvider(derived.provider)).rejects.toThrow("Discovery conversion differs");
+    writeFileSync(join(derived.directory, "evidence/openapi.document.json"), normalized);
+    writeFileSync(join(derived.directory, "evidence/discovery.document.json"), original + " ");
+    await expect(specProvider(derived.provider)).rejects.toThrow("Discovery source bytes");
     const yaml = "openapi: 3.0.0\n";
     const pin = { url: "https://vendor.example/openapi.yaml", revision: "1.0.0", digest: sha256(yaml), vendored: true };
     const { directory, provider } = folder({

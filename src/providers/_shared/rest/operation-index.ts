@@ -36,6 +36,7 @@ export interface SchemaNode {
   readonly $?: number;
   readonly l?: number;
   readonly u?: number;
+  readonly deprecated?: true;
 }
 
 /** `[method, path template, operationId, summary, tag index, server index?]` */
@@ -67,6 +68,8 @@ export interface OpenApiData {
    * aligned with operations. Kit indexes may supply the arrays directly.
    */
   readonly fields?: readonly (readonly OperationField[])[] | string;
+  /** Optional lossless request graph for details; the compact checker remains bounded. */
+  readonly requestSchemas?: string;
 }
 
 /** A property an operation's request body or success response declares, as a dot path (`data[].widget_id`). */
@@ -230,18 +233,35 @@ export class OperationIndex {
   readonly #vendor: string;
   readonly #segments: readonly (readonly string[])[];
   readonly #slashParams: ReadonlySet<string>;
+  readonly #uriTemplates: boolean;
+  get pathMatching(): "segments" | "uri-template" {
+    return this.#uriTemplates ? "uri-template" : "segments";
+  }
   #details: { d: readonly SchemaNode[]; o: readonly (0 | DetailsRow)[] } | undefined;
   #fields: readonly (readonly OperationField[])[] | undefined;
+  #requestSchemas: { definitions: Record<string, JsonSchema>; roots: (JsonSchema | null)[] } | undefined;
   #words: readonly { path: Set<string>; summary: Set<string>; id: Set<string> }[] | undefined;
 
   /**
    * `vendor` is the tool-name prefix; `title` the display name in refusals.
    * `slashParams` names path parameters whose values may carry an encoded
    * "/" (`%2F`), such as an object key, and only as the path's last segment.
+   * `pathMatching: "uri-template"` opts into decoded literals and parameters
+   * embedded in a segment, such as Google's `{id}:batchUpdate`. The default
+   * retains exact literal segments and whole-segment parameters.
    */
-  constructor(data: OpenApiData, names: { vendor: string; title: string; slashParams?: readonly string[] }) {
+  constructor(
+    data: OpenApiData,
+    names: {
+      vendor: string;
+      title: string;
+      slashParams?: readonly string[];
+      pathMatching?: "uri-template";
+    },
+  ) {
     const { title } = names;
     this.#slashParams = new Set(names.slashParams ?? []);
+    this.#uriTemplates = names.pathMatching === "uri-template";
     this.#data = data;
     this.#title = title;
     this.#vendor = names.vendor;
@@ -266,7 +286,14 @@ export class OperationIndex {
 
   /** Content binding for discovery continuations; labels alone never identify an index. */
   async cursorRevision(): Promise<string> {
-    const bytes = new TextEncoder().encode(canonicalJson([this.#data, this.revision, [...this.#slashParams].sort()]));
+    const bytes = new TextEncoder().encode(
+      canonicalJson([
+        this.#data,
+        this.revision,
+        [...this.#slashParams].sort(),
+        ...(this.#uriTemplates ? ["uri-template"] : []),
+      ]),
+    );
     return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");
@@ -325,9 +352,26 @@ export class OperationIndex {
       if (template.length !== segments.length) return;
       let score = 0;
       for (const [index, part] of template.entries()) {
-        if (part.startsWith("{")) continue;
-        if (part !== segments[index]) return;
-        score += 1;
+        if (!this.#uriTemplates) {
+          if (part.startsWith("{")) continue;
+          if (part !== segments[index]) return;
+          score += 1;
+          continue;
+        }
+        const parameter = /^(.*)\{([^{}]+)\}(.*)$/.exec(part);
+        const value = decodeURIComponent(segments[index]!);
+        if (parameter) {
+          if (
+            !value.startsWith(parameter[1]!) ||
+            !value.endsWith(parameter[3]!) ||
+            value.length <= parameter[1]!.length + parameter[3]!.length
+          )
+            return;
+          if (parameter[1] || parameter[3]) score += 0.5;
+        } else {
+          if (part !== value) return;
+          score += 1;
+        }
       }
       if (score > best.score) best = { score, rows: [row] };
       else if (score === best.score) best.rows.push(row);
@@ -355,7 +399,20 @@ export class OperationIndex {
     }
     const params: Record<string, string> = {};
     template.forEach((part, index) => {
-      if (part.startsWith("{")) params[part.slice(1, -1)] = segments[index]!;
+      if (!this.#uriTemplates) {
+        if (part.startsWith("{")) params[part.slice(1, -1)] = segments[index]!;
+        return;
+      }
+      const parameter = /^(.*)\{([^{}]+)\}(.*)$/.exec(part);
+      if (parameter) {
+        const raw = segments[index]!;
+        const prefix = parameter[1]!,
+          suffix = parameter[3]!;
+        params[parameter[2]!] =
+          raw.startsWith(prefix) && raw.endsWith(suffix)
+            ? raw.slice(prefix.length, suffix ? -suffix.length : undefined)
+            : encodeURIComponent(decodeURIComponent(raw).slice(prefix.length, suffix ? -suffix.length : undefined));
+      }
     });
     return { op, params };
   }
@@ -473,11 +530,16 @@ export class OperationIndex {
     const declared = row ? row[0] : [];
     // A generator may omit plain-string path parameters (`pathParams:
     // "typed"`); the template still names them, so the contract does too.
-    const implied: ParamRow[] = this.#segments
-      [op.row]!.filter(
-        (part) => part.startsWith("{") && !declared.some(([name, at]) => at === "path" && name === part.slice(1, -1)),
-      )
-      .map((part) => [part.slice(1, -1), "path", 1, { t: "string" }]);
+    const implied: ParamRow[] = this.#segments[op.row]!.flatMap((part) => {
+      const name = this.#uriTemplates
+        ? /\{([^{}]+)\}/.exec(part)?.[1]
+        : part.startsWith("{")
+          ? part.slice(1, -1)
+          : undefined;
+      return name !== undefined && !declared.some(([key, at]) => at === "path" && key === name)
+        ? [[name, "path", 1, { t: "string" }] as ParamRow]
+        : [];
+    });
     const parameters = [...implied, ...declared]
       .filter(([name]) => only === undefined || name === only)
       .map(([name, at, required, schema, description]) => ({
@@ -491,7 +553,20 @@ export class OperationIndex {
     if (row && row[1] !== 0) {
       const [contentType, schema] = row[1];
       const node = this.#deref(schema);
-      if (only !== undefined && node.p?.[only] !== undefined) {
+      const full = this.#requestSchema(op);
+      if (full && only === undefined) {
+        body = { contentType, ...(row[1][2] === 1 ? { required: true } : {}), schema: full };
+      } else if (full && only !== undefined && (full["properties"] as Record<string, JsonSchema> | undefined)?.[only]) {
+        body = {
+          contentType,
+          schema: {
+            type: "object",
+            properties: { [only]: (full["properties"] as Record<string, JsonSchema>)[only]! },
+            ...(Array.isArray(full["required"]) && full["required"].includes(only) ? { required: [only] } : {}),
+            ...(full["$defs"] ? { $defs: full["$defs"] } : {}),
+          },
+        };
+      } else if (only !== undefined && node.p?.[only] !== undefined) {
         body = {
           contentType,
           schema: {
@@ -579,6 +654,37 @@ export class OperationIndex {
     return `${this.#vendor}_api_${kind}`;
   }
 
+  #requestSchema(op: Operation): JsonSchema | undefined {
+    if (!this.#data.requestSchemas) return undefined;
+    this.#requestSchemas ??= JSON.parse(this.#data.requestSchemas) as {
+      definitions: Record<string, JsonSchema>;
+      roots: (JsonSchema | null)[];
+    };
+    const graph = this.#requestSchemas!;
+    const root = graph.roots[op.row];
+    if (!root) return undefined;
+    const definitions: Record<string, JsonSchema> = {};
+    const visit = (value: unknown): void => {
+      if (!value || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        for (const child of value) visit(child);
+        return;
+      }
+      const object = value as Record<string, unknown>;
+      if (typeof object["$ref"] === "string" && object["$ref"].startsWith("#/$defs/")) {
+        const name = object["$ref"].slice(8);
+        if (!Object.hasOwn(definitions, name)) {
+          definitions[name] = graph.definitions[name] ?? {};
+          visit(definitions[name]);
+        }
+      }
+      for (const child of Object.values(object)) visit(child);
+    };
+    visit(root);
+    const resolved = typeof root["$ref"] === "string" ? graph.definitions[root["$ref"].slice(8)]! : root;
+    return { ...resolved, ...(Object.keys(definitions).length ? { $defs: definitions } : {}) };
+  }
+
   #row(op: Operation): DetailsRow | undefined {
     this.#details ??= JSON.parse(this.#data.details) as { d: SchemaNode[]; o: (0 | DetailsRow)[] };
     const row = this.#details.o[op.row];
@@ -603,6 +709,7 @@ export class OperationIndex {
     if (resolved.n === 1) out["nullable"] = true;
     if (resolved.l !== undefined) out["minimum"] = resolved.l;
     if (resolved.u !== undefined) out["maximum"] = resolved.u;
+    if (resolved.deprecated === true) out["deprecated"] = true;
     if (resolved.a) out["anyOf"] = resolved.a.map((branch) => this.#schema(branch));
     if (resolved.p) {
       out["properties"] = Object.fromEntries(

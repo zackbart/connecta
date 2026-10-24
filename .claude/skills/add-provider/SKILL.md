@@ -110,6 +110,42 @@ The checker reads that document offline from this provider's evidence only,
 checks its digest, and never fetches the pin's URL. Keep dataset semantics
 that the envelope does not describe in a separate manual check.
 
+Google indexes explicitly construct `OperationIndex` with
+`pathMatching: "uri-template"` for decoded literal precedence and embedded
+action parameters. Omit this option for existing providers: exact literal
+matching and its refusal ordering remain the default. Matching mode is part
+of an opt-in index's discovery cursor binding.
+`googleClient` and `googleHatchBinding` reject other matching modes at
+construction. Pass that same index to the binding; a hatch refuses a binding
+constructed for another index. Google bindings also reject encoded unreserved
+characters and encoded action separators before dispatch.
+
+Google Discovery conversions declare `discovery: { pin: "discovery.json",
+format: "google-discovery-v1", summaries?: { [methodId]: summary } }` on the
+vendored OpenAPI pin. Retain exact official bytes in
+`evidence/discovery.document.json`, with their supplemental `discovery.json`
+pin. The primary pin repeats that source URL, revision and digest. Generate
+`openapi.document.json` with `normalizeDiscovery` from
+`scripts/google-discovery.mjs`, serialized with two-space indentation and a
+terminal newline. Generation and offline freshness reproduce that conversion
+and refuse a changed source, mismatched primary pin or edited conversion.
+The generated module separately records the conversion's digest. No live URL
+is an immutable revision; the archived bytes and SHA-256 establish the pin.
+Use `options.formats: true` to retain parameter formats,
+`options.numericBounds: true` for numeric bounds, and `options.requestGraph: true` to retain a complete referenced request
+schema for details, independently of the bounded compact admission checker.
+Execution still requires reviewed literal operation verdicts and independent
+batch-kind guards. Compiler availability does not migrate a product.
+Use `options.deprecations: true` to retain structured deprecation facts in
+compact details. `options.allSuccessResponses: true` opts into response fields
+from every JSON 2xx; absent keeps the first-success contract, including for
+existing Cloudflare indexes. Review any provider regeneration separately.
+Discovery method-specific required annotations become specialized input graphs;
+flat-path parameter aliases must match the template variables exactly. Live
+Discovery drift compares sorted-key JSON and revision, while archived original
+bytes remain verified against their raw SHA-256. Bounds present only in prose
+still need product-owned reviewed guards; do not infer them from arbitrary text.
+
 For a vendor with several public OpenAPI documents, `evidence/openapi.json`
 may instead declare `{ revision, documents: [{ pin, prefix }], options? }`.
 Each `pin` names one supplemental sibling pin/document; each literal `prefix`

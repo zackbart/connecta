@@ -1,0 +1,171 @@
+{
+  "node": "v22.23.3",
+  "options": {
+    "depth": 5,
+    "numericBounds": true,
+    "formats": true,
+    "maxEnum": 200,
+    "requestGraph": true,
+    "deprecations": true,
+    "allSuccessResponses": true
+  },
+  "importMs": 228.423131,
+  "measurements": [
+    {
+      "provider": "gmail",
+      "operations": 79,
+      "sourceDigest": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
+      "normalizedDigest": "sha256:54fe0b6d19f17c2117270830229c254073432d9e145acdeec4f82a467a606799",
+      "indexBytes": 87128,
+      "indexGzip9": 11873,
+      "factoryMs": 1.7512550000001283,
+      "firstSearchMs": 9.7654050000001,
+      "allDetailsMs": 30.22263799999996,
+      "heapDeltaBytes": 2443672
+    },
+    {
+      "provider": "drive",
+      "operations": 64,
+      "sourceDigest": "sha256:1d40cef60f2c8b85c6f9f207affadd4c27bcee9b5d5eb31c9850b88ec5f1ae73",
+      "normalizedDigest": "sha256:0dbb0035ae4ecb2b2a63e2e87e3ccf926766d3a453f1917cbce3a5a1bd1db552",
+      "indexBytes": 106458,
+      "indexGzip9": 15450,
+      "factoryMs": 0.4094220000001769,
+      "firstSearchMs": 4.308154000000059,
+      "allDetailsMs": 20.44604800000002,
+      "heapDeltaBytes": 3526552
+    },
+    {
+      "provider": "docs",
+      "operations": 3,
+      "sourceDigest": "sha256:9f7c1120a3156c723bc1fc0b65332d00a22ae30dc516af131dbbb6b82b42e780",
+      "normalizedDigest": "sha256:4c42efa5be44db97ed14670eca3c01b7cd3f1fa2d1d7f77c98c170bc63f38cd2",
+      "indexBytes": 79995,
+      "indexGzip9": 12372,
+      "factoryMs": 0.05368599999997059,
+      "firstSearchMs": 0.1909530000000359,
+      "allDetailsMs": 22.19544699999983,
+      "heapDeltaBytes": 2595296
+    },
+    {
+      "provider": "sheets",
+      "operations": 17,
+      "sourceDigest": "sha256:94799a4eedbb5115c6a656bb96c9d6af73167b9980b91586ce3e45cfd2c630f3",
+      "normalizedDigest": "sha256:525cb95798e5fa1022d719dde17b2010dab29a2cca018312d7310ed34f8a51e6",
+      "indexBytes": 190500,
+      "indexGzip9": 29397,
+      "factoryMs": 0.07356800000002295,
+      "firstSearchMs": 0.6771790000000237,
+      "allDetailsMs": 40.92253299999993,
+      "heapDeltaBytes": 4579928
+    },
+    {
+      "provider": "slides",
+      "operations": 5,
+      "sourceDigest": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
+      "normalizedDigest": "sha256:917e7c3fb1dce48b5160ff71d8f24000ffb27008255aa0dbb52469698d50f88b",
+      "indexBytes": 114630,
+      "indexGzip9": 18630,
+      "factoryMs": 0.0820730000000367,
+      "firstSearchMs": 0.49995899999998983,
+      "allDetailsMs": 21.39455000000021,
+      "heapDeltaBytes": 1469440
+    },
+    {
+      "provider": "forms",
+      "operations": 10,
+      "sourceDigest": "sha256:2e867ccaa2a404efaffc20705102b90510d1be5cb47ca23795a776cfa0548869",
+      "normalizedDigest": "sha256:6408906ee47fbe15e9603347ec1df43845c169f2f5f179e09d7b1813b3b1b31c",
+      "indexBytes": 29668,
+      "indexGzip9": 5364,
+      "factoryMs": 0.09345299999995405,
+      "firstSearchMs": 0.9455989999999019,
+      "allDetailsMs": 10.238493000000062,
+      "heapDeltaBytes": 560992
+    }
+  ],
+  "bundles": [
+    {
+      "product": "gmail",
+      "before": {
+        "bytes": 1172544,
+        "gzip9": 357537
+      },
+      "after": {
+        "bytes": 1174474,
+        "gzip9": 358006
+      }
+    },
+    {
+      "product": "drive",
+      "before": {
+        "bytes": 1170600,
+        "gzip9": 356449
+      },
+      "after": {
+        "bytes": 1172530,
+        "gzip9": 357002
+      }
+    },
+    {
+      "product": "docs",
+      "before": {
+        "bytes": 1160215,
+        "gzip9": 353676
+      },
+      "after": {
+        "bytes": 1162145,
+        "gzip9": 354227
+      }
+    },
+    {
+      "product": "sheets",
+      "before": {
+        "bytes": 1157952,
+        "gzip9": 352564
+      },
+      "after": {
+        "bytes": 1159882,
+        "gzip9": 353159
+      }
+    },
+    {
+      "product": "slides",
+      "before": {
+        "bytes": 1191784,
+        "gzip9": 362106
+      },
+      "after": {
+        "bytes": 1193714,
+        "gzip9": 362689
+      }
+    },
+    {
+      "product": "forms",
+      "before": {
+        "bytes": 1157492,
+        "gzip9": 352942
+      },
+      "after": {
+        "bytes": 1159421,
+        "gzip9": 353495
+      }
+    },
+    {
+      "product": "all-six",
+      "before": {
+        "bytes": 1380381,
+        "gzip9": 417017
+      },
+      "after": {
+        "bytes": 1382311,
+        "gzip9": 417539
+      },
+      "syntheticWithIndexes": {
+        "bytes": 1926893,
+        "gzip9": 503618
+      }
+    }
+  ],
+  "baseCommit": "e5b2dfaf23f8bcc3cd8cc21cbfcfebfee1e930d4"
+}

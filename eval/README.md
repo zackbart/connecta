@@ -410,6 +410,37 @@ supported `connector:<id>` aliases and `connecta.skill`. The selected arm determ
 
 ## Verification without model spend
 
+The shared [Google tasks](tasks/google.ts) freeze seven prompts and outcome
+graders for each of Gmail, Drive, Docs, Sheets, Slides and Forms. The
+[fake world](fakes/google.ts) uses the maintained providers, fresh RSA keys,
+verified delegated JWTs, subject/scope-bound fake tokens and a physical request
+ledger. Its Drive ids join to editor resources; Gmail attachment bytes cross
+the named Drive multipart upload. Token mints are separate from business writes.
+Long threads, native empty pages, local byte cuts, UTF-16 index pages, revision
+conflicts and post-commit failures are deterministic. The identity controls
+also cover Alice/Bob, fixed subjects, an ownerless pool, read-only refusal and
+native presentation through a real local deployment.
+Deterministic privacy controls cover split text, encoded Gmail bodies, whole
+binary withholding, a credential-bearing continuation and withheld Drive MIME
+metadata. They preserve the existing binary policy; Drive decision guards
+remain a separate product change. Saved Google grading inputs retain both
+subjects' state and regrade identically; omitting that snapshot fails closed.
+
+These are harness additions, not Google product migrations or measured model
+results. The current surface intentionally fails Drive revision discovery
+(`google-drive-4`) and Sheets read-only POST metadata (`google-sheets-7`).
+Selftests recognize those precise missing-tool references as BEFORE capability
+gaps and verify that unavailable data still fails the outcome grader. They
+never turn that failure into a successful trial. Product builders measure
+BEFORE and AFTER with unchanged prompts, fakes and graders; only reference
+call shapes may adapt to a product's new surface. No paid Google trials belong
+to this shared prerequisite. Run only these deterministic references with
+`pnpm run eval:selftest --tasks` followed by the comma-separated Google task ids
+from `eval/tasks/index.ts`.
+For a focused grader/fake iteration, `--primary-only` runs the six-tool route's
+references, saved-input checks and negative controls without the additional
+surface/grading repeats. The default still runs both surfaces and both modes.
+
 ```sh
 pnpm run eval:selftest
 pnpm run eval:smoke
