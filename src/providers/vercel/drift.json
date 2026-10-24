@@ -636,7 +636,7 @@
           "operation": "POST /storage/stores/blob",
           "page": "https://vercel.com/docs/rest-api/storage/create-a-blob-store",
           "specRevision": "0.0.1",
-          "contract": "sha256:271a286732ca0f90670129405c2f6a849d0873fa7bb3207bcb8b74df220392b4"
+          "contract": "sha256:0f826d44a8e2d21ba0fd4462e0d3b522f95d20d2f7735adc1eba16c49d1552cc"
         },
         {
           "operation": "DELETE /storage/stores/blob/{id}",
@@ -648,7 +648,7 @@
           "operation": "GET /storage/stores/{id}",
           "page": "https://vercel.com/docs/rest-api/storage/get-a-store",
           "specRevision": "0.0.1",
-          "contract": "sha256:0fe0f68efa05fe59c7c5f3e0ae710eed346c476c37de9ec4764f8916b2528058"
+          "contract": "sha256:40ece809308c338594c8cf936316e5df1b38ae4eb7f09cfa9d7398c7c5199ceb"
         },
         {
           "operation": "GET /v1/access-groups",
@@ -996,7 +996,7 @@
           "operation": "GET /v1/events/types",
           "page": "https://vercel.com/docs/rest-api/user/list-event-types",
           "specRevision": "0.0.1",
-          "contract": "sha256:9017d8fb6ca9ecf3c9393967fa472700f3b57be5c13c30aae70cbc5be8c84f62"
+          "contract": "sha256:749c321d2b04c8ec21396b8c76718c4732b67e9000617e172ee745460d7316de"
         },
         {
           "operation": "GET /v1/global-config",
@@ -1428,7 +1428,7 @@
           "operation": "GET /v1/microfrontends/groups/{groupId}/projects",
           "page": "https://vercel.com/docs/rest-api/microfrontends/list-projects-in-a-microfrontends-group",
           "specRevision": "0.0.1",
-          "contract": "sha256:16242b7aa5dd2dbb2cd708ac2b5eb27dd936eb1eb7b51b950767ca6fe1c5926e"
+          "contract": "sha256:b1ce9e8895613df895149cbec3e99d1374fea44e80e22b91487d88adfe55dd77"
         },
         {
           "operation": "GET /v1/microfrontends/projects/{projectIdOrName}/production-mfe-config",
@@ -1542,13 +1542,13 @@
           "operation": "POST /v1/projects/{idOrName}/avatar",
           "page": "https://vercel.com/docs/rest-api/projects/upload-a-project-avatar",
           "specRevision": "0.0.1",
-          "contract": "sha256:05707545f7919fb4585508bee4387cc20b0a4e3ad04ed3d32ac8006607c3a744"
+          "contract": "sha256:7d201f439d43b8573e7a61146da43b7edc4e3601e4a38ce7ad1ccc8f18c2af71"
         },
         {
           "operation": "DELETE /v1/projects/{idOrName}/avatar",
           "page": "https://vercel.com/docs/rest-api/projects/delete-a-project-avatar",
           "specRevision": "0.0.1",
-          "contract": "sha256:1cd321f4e26e757555dc4beea19e2f77140a27581b52da92a78926c9c8db33b4"
+          "contract": "sha256:8399b469fde56f17fad6d5edc64cfb90c21d09c5663bc1c767d44dcf9dc48783"
         },
         {
           "operation": "GET /v1/projects/{idOrName}/daemons",
@@ -1776,7 +1776,7 @@
           "operation": "PATCH /v1/projects/{projectId}/microfrontends",
           "page": "https://vercel.com/docs/rest-api/projects/update-the-microfrontends-settings",
           "specRevision": "0.0.1",
-          "contract": "sha256:3c44fed93bee1daa044bccab17a305604eaca2b1b9680de68de3b97f5ba63542"
+          "contract": "sha256:bdf376c0f2cadae56862f7d5206beafb85d8cb241fcd112c94767428f58e287d"
         },
         {
           "operation": "POST /v1/projects/{projectId}/pause",
@@ -1860,25 +1860,25 @@
           "operation": "GET /v1/query/web-analytics/events/aggregate",
           "page": "https://vercel.com/docs/rest-api/web-analytics/aggregates-custom-events",
           "specRevision": "0.0.1",
-          "contract": "sha256:22bba7c56212e420b828ed888c770085a065ba76e808f266831ef1031ee6ba9d"
+          "contract": "sha256:0d44c3131d26dbb2d3264346ae9e90a87a14e47a63e79b14af5cc4a5568b4153"
         },
         {
           "operation": "GET /v1/query/web-analytics/events/count",
           "page": "https://vercel.com/docs/rest-api/web-analytics/counts-custom-events",
           "specRevision": "0.0.1",
-          "contract": "sha256:505ca87b925599ac614d6667809e27a170c8e477aa2bd72001c97cf06ff3ec95"
+          "contract": "sha256:b9733549bee057c03c5fe3f305ef55eee8443683995997c98453eae37bb31179"
         },
         {
           "operation": "GET /v1/query/web-analytics/visits/aggregate",
           "page": "https://vercel.com/docs/rest-api/web-analytics/aggregates-page-views",
           "specRevision": "0.0.1",
-          "contract": "sha256:7344d30a2bd97290ce9711c2a040fca29742b6d53f1292106b2e71889fb439f8"
+          "contract": "sha256:b6086054f3952489399a660ec2be13a1810da0c8d277aad5f9edd07f3ea7a823"
         },
         {
           "operation": "GET /v1/query/web-analytics/visits/count",
           "page": "https://vercel.com/docs/rest-api/web-analytics/counts-page-views",
           "specRevision": "0.0.1",
-          "contract": "sha256:d592b9cf067c94d30d13e23f39ac160a45dd7469e654c7bec5c06e58f475e7e6"
+          "contract": "sha256:61a12fbe3dd8acd401966417211ce39d714fce0a112034de7469d74cea81bf01"
         },
         {
           "operation": "POST /v1/registrar/domains/availability",
@@ -2100,7 +2100,7 @@
           "operation": "POST /v1/storage/stores/integration/direct",
           "page": "https://vercel.com/docs/rest-api/integrations/create-integration-store-free-and-paid-plans",
           "specRevision": "0.0.1",
-          "contract": "sha256:c4e23cdf9a8003638ee7c30f0dd5a115b8c704b7a0abcc663ce7d33aaf0446b7"
+          "contract": "sha256:554fe5a08ae4b59656eedae57cf886e0cc0cba6dd20617e878f16c05880fb9ca"
         },
         {
           "operation": "POST /v1/teams",
@@ -2418,7 +2418,7 @@
           "operation": "GET /v10/projects",
           "page": "https://vercel.com/docs/rest-api/projects/retrieve-a-list-of-projects",
           "specRevision": "0.0.1",
-          "contract": "sha256:2beea7f1b0fed3b87c2237923d1a46a6365d501484d118574a022bf59e2bd659"
+          "contract": "sha256:8dfc6fe8e6e17723a497ffec351a6c500550ce0666b1dab5286596e40804f4dd"
         },
         {
           "operation": "POST /v10/projects/{idOrName}/domains",
@@ -2448,25 +2448,25 @@
           "operation": "POST /v11/projects",
           "page": "https://vercel.com/docs/rest-api/projects/create-a-new-project",
           "specRevision": "0.0.1",
-          "contract": "sha256:be436aba5186913ed2b3c6bb99b95d52da4da0360ca77c8447bf90af320515ca"
+          "contract": "sha256:f84ca6f386bd9009d38347c0de1a5827cddfd73d2c3a40c9fa4fa40a7369826f"
         },
         {
           "operation": "PATCH /v12/deployments/{id}/cancel",
           "page": "https://vercel.com/docs/rest-api/deployments/cancel-a-deployment",
           "specRevision": "0.0.1",
-          "contract": "sha256:aaa79b66d176b1d0a0488d5ca490375d4bdb4467b47ae1ffb75ebaf5f07921c2"
+          "contract": "sha256:46844b5d1975dcf9aa1957a35141d9d7bf85d327f17c3d95de877b16d1e86f15"
         },
         {
           "operation": "POST /v13/deployments",
           "page": "https://vercel.com/docs/rest-api/deployments/create-a-new-deployment",
           "specRevision": "0.0.1",
-          "contract": "sha256:872bd42605b733a1ac36fecf73fe60e01d08608b37661eea4a21c1a84571fe61"
+          "contract": "sha256:c938cda1d358862dfe4d4c1dea0341c30f69b98df31375fa21db29f4d2e8d597"
         },
         {
           "operation": "GET /v13/deployments/{idOrUrl}",
           "page": "https://vercel.com/docs/rest-api/deployments/get-a-deployment-by-id-or-url",
           "specRevision": "0.0.1",
-          "contract": "sha256:9b5eb938979e42928db0827597ad97a2e0442e29f6eb6f2c7d7dd64e7d58d930"
+          "contract": "sha256:87dad069ce63e57396d134a9294a7b00afd9ddfabe734d63f2fc11edc0cd8361"
         },
         {
           "operation": "DELETE /v13/deployments/{id}",
@@ -2952,7 +2952,7 @@
           "operation": "GET /v3/events",
           "page": "https://vercel.com/docs/rest-api/user/list-user-events",
           "specRevision": "0.0.1",
-          "contract": "sha256:794e99b3957367b96432e27a7d1bc326285e5e92862cb67abfeb7cadd2c502eb"
+          "contract": "sha256:325a93ea0b7d3180b605fc98b9edfa6a4da834b7b62bce1491b1874c2cc54691"
         },
         {
           "operation": "POST /v3/sandboxes",
@@ -3060,7 +3060,7 @@
           "operation": "GET /v7/deployments",
           "page": "https://vercel.com/docs/rest-api/deployments/list-deployments",
           "specRevision": "0.0.1",
-          "contract": "sha256:416f86a25b4befdf7da48cf41f0841d3efd999a0ed3c21e0e7f994cc2860bed2"
+          "contract": "sha256:cac84d66b3f3b48c86eca1e2766c730c03c2cfb16842a7d6ef043f89b2ea7115"
         },
         {
           "operation": "POST /v7/domains",
@@ -3162,13 +3162,13 @@
           "operation": "GET /v9/projects/{idOrName}",
           "page": "https://vercel.com/docs/rest-api/projects/find-a-project-by-id-or-name",
           "specRevision": "0.0.1",
-          "contract": "sha256:12834d51d8b61d41c305c0131190df633cc5399d8029fcc593556f50309fd82b"
+          "contract": "sha256:3dfdf771b477ce85b8faa9b9cffb3e4e689472b89089625fab502762ff232c5e"
         },
         {
           "operation": "PATCH /v9/projects/{idOrName}",
           "page": "https://vercel.com/docs/rest-api/projects/update-an-existing-project",
           "specRevision": "0.0.1",
-          "contract": "sha256:be6c0914fce5b105680526c9c0e3b15b91d1d2e2a2090da74662011a6913443c"
+          "contract": "sha256:866e688196d78f8d8f913e862a10a9be69fe8d6240586679ac59a939ed256f08"
         },
         {
           "operation": "DELETE /v9/projects/{idOrName}",

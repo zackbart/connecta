@@ -1,7 +1,7 @@
 // Vercel's pinned contract, authentication, failures and value-safety boundary.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
-import { Refusal, StatusFailure, type VendorErrors } from "../../http/errors.js";
+import { Refusal, StatusFailure, UnreadableBody, type VendorErrors } from "../../http/errors.js";
 import { restSafety } from "../../http/safety.js";
 import { Credentials } from "../../http/services.js";
 import { get, post, patch, type Connection, type ConnectOptions, type SendOptions } from "../../http/vendor.js";
@@ -86,7 +86,7 @@ export function reviewedCode(value: unknown): string | undefined {
 
 export const vercelErrors: VendorErrors = {
   meanings: { unknownId: "not_found", provesAbsence: true, conflicts: [] },
-  factVocabulary: { code: [...REVIEWED_CODES] },
+  factVocabulary: { code: [...REVIEWED_CODES], envRejected: [true, false] },
   numericFacts: {
     retryAfterMs: {
       header: "retry-after",
@@ -101,6 +101,13 @@ export const vercelErrors: VendorErrors = {
   },
   provider: "Vercel",
   facts: (body) => ({
+    // Shape-only fact: no variable names, values or vendor prose survive here.
+    envRejected:
+      Array.isArray(record(body)["failed"]) &&
+      (record(body)["failed"] as unknown[]).length > 0 &&
+      !(Array.isArray(record(body)["created"])
+        ? (record(body)["created"] as unknown[]).length
+        : record(body)["created"]),
     code:
       reviewedCode(record(record(body)["error"])["code"]) ??
       reviewedCode(
@@ -116,10 +123,34 @@ export const vercelErrors: VendorErrors = {
     const message =
       text(error["message"])?.trim() ?? text(root["message"])?.trim() ?? `Vercel returned HTTP ${status}.`;
     const reviewed = withheld ? facts["code"] : reviewedCode(code);
+    const detail = (code ? `Vercel ${code}: ${message}` : message).slice(0, 1_000);
+    if (status >= 200 && status <= 299 && facts["envRejected"] === true)
+      return `Vercel rejected the environment-variable write${reviewed ? ` (${reviewed})` : ""}; its message is withheld because this operation handles secret values.`;
     return withheld
       ? `Vercel answered HTTP ${status}${reviewed ? ` (${reviewed})` : ""}; its message is withheld because this operation handles secret values.`
-      : (code ? `Vercel ${code}: ${message}` : message).slice(0, 1_000);
+      : /[.!?]$/.test(detail)
+        ? detail
+        : `${detail}.`;
   },
+  classify: [
+    ({ status, facts, operation }) =>
+      status >= 200 &&
+      status <= 299 &&
+      facts["envRejected"] === true &&
+      operation.method === "POST" &&
+      canonicalTemplate(operation.template) === "/v10/projects/{idOrName}/env"
+        ? {
+            code: "invalid_args",
+            retryable: false,
+            words: (detail) =>
+              `${detail}${
+                facts["code"] === "ENV_ALREADY_EXISTS" || facts["code"] === "ENV_CONFLICT"
+                  ? " Pass upsert: true to replace it, or update it by id with update_project_env_var."
+                  : ""
+              } Check the target before repeating the write.`,
+          }
+        : undefined,
+  ],
   statuses: {
     429: ({ numbers, retryAfterMs }) => ({
       code: "rate_limited",
@@ -145,7 +176,17 @@ export const vercelErrors: VendorErrors = {
   },
   unreadable: "Vercel returned malformed JSON.",
 };
-export const vercelIndex = new OperationIndex(discoveryIndex(openapi), { vendor: "vercel", title: "Vercel" });
+class VercelIndex extends OperationIndex {
+  override search(query: string, options: Parameters<OperationIndex["search"]>[1]): Operation[] {
+    // A custom environment is a container, not a variable. Only variable-specific
+    // summaries participate in a variable-phrase search; other query words keep
+    // the shared partial-match behavior.
+    const operations = super.search(query, options);
+    const variablePhrase = /\b(?:environment variables?|env vars?)\b/i;
+    return variablePhrase.test(query) ? operations.filter((op) => variablePhrase.test(op.summary)) : operations;
+  }
+}
+export const vercelIndex = new VercelIndex(discoveryIndex(openapi), { vendor: "vercel", title: "Vercel" });
 export const vercelSafety = valueSafety(VERCEL_VALUE_SAFETY, () => vercelIndex);
 const Query = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Array(Schema.String)]));
 const params = (...names: string[]) => Schema.Struct(Object.fromEntries(names.map((name) => [name, Schema.String])));
@@ -181,27 +222,41 @@ export const runtimeLogs = get("runtimeLogs", "/v1/projects/:projectId/deploymen
 export const named = [currentUser, teams, projectEnv, upsertEnv, updateEnv, buildLogs, runtimeLogs];
 const canonicalTemplate = (path: string) => path.replace(/:([^/]+)/g, "{$1}");
 
-/** Only documented stream media and bounded named logs opt out of JSON. */
-const isStream = (type: string) =>
-  /^(?:application\/(?:stream\+json|x-ndjson|jsonl))$/.test(type.split(";", 1)[0]!.trim().toLowerCase());
+/** Exact operation/media pairs from the pin; named logs also accept bounded equivalents. */
+const LOG_PATHS = [
+  "/v3/deployments/{idOrUrl}/events",
+  "/v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs",
+];
+const FRAMED_MEDIA: Readonly<Record<string, readonly string[]>> = {
+  "GET /v1/billing/charges": ["application/jsonl"],
+  "GET /v1/billing/contract-commitments": ["application/jsonl"],
+  "GET /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}/logs": ["application/x-ndjson"],
+  "POST /v2/sandboxes/sessions/{sessionId}/cmd": ["application/x-ndjson"],
+  "GET /v3/deployments/{idOrUrl}/events": ["application/stream+json"],
+  "GET /v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs": ["application/stream+json"],
+};
 export const VercelApi = {
   ...indexedVendor("vercel", vercelIndex, named),
   textBodies: {
     review:
-      "Pinned 4a06e85c documents stream+json for build events/runtime logs only. Bounded named log readers also accept JSON arrays/NDJSON equivalents. JSON-only writes never accept HTML/text (#1000).",
+      "Exact pinned jsonl/ndjson billing and sandbox command operations, plus build/runtime stream+json logs. Bounded named log readers also accept JSON arrays/NDJSON equivalents. JSON-only writes never accept HTML/text (#1000).",
     forResponse: (
       status: number,
-      operation: { template: string; flags?: Readonly<Record<string, true>> },
+      operation: { method: string; template: string; flags?: Readonly<Record<string, true>> },
       type = "",
-    ) =>
-      status >= 200 &&
-      status <= 299 &&
-      ["/v3/deployments/{idOrUrl}/events", "/v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs"].includes(
-        canonicalTemplate(operation.template),
-      ) &&
-      (isStream(type) || (operation.flags?.["log"] && /^application\/(?:json|[^/]+\+json)(?:;|$)/i.test(type)))
+    ) => {
+      const path = canonicalTemplate(operation.template);
+      const media = type.split(";", 1)[0]!.trim().toLowerCase();
+      return status >= 200 &&
+        status <= 299 &&
+        (FRAMED_MEDIA[`${operation.method} ${path}`]?.includes(media) ||
+          (operation.method === "GET" &&
+            operation.flags?.["log"] &&
+            LOG_PATHS.includes(path) &&
+            /^(?:application\/(?:json|[^/]+\+json|x-ndjson|jsonl))$/.test(media)))
         ? ("text" as const)
-        : undefined,
+        : undefined;
+    },
   },
   binaryBodies: {
     review:
@@ -221,22 +276,17 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) => {
     answer.operation.method === "POST"
   ) {
     const payload = record(body);
-    if (Array.isArray(payload["failed"]) && payload["failed"].length)
+    if (
+      Array.isArray(payload["failed"]) &&
+      payload["failed"].length &&
+      !(Array.isArray(payload["created"]) ? payload["created"].length : payload["created"])
+    )
       return Effect.fail(
-        new StatusFailure({ status: 400, headers: answer.headers, body, operation: answer.operation }),
+        new StatusFailure({ status: answer.status, headers: answer.headers, body, operation: answer.operation }),
       );
     const created = Array.isArray(payload["created"]) ? payload["created"][0] : payload["created"];
     const variable = record(created ?? payload);
-    if (!variable["id"] || !variable["key"] || !variable["type"])
-      return Effect.fail(
-        new Refusal({
-          error: new ConnectorCallError(
-            "connector_call_failed",
-            "Vercel accepted the environment-variable write without returning the created variable.",
-            { retryable: false },
-          ),
-        }),
-      );
+    if (!variable["id"] || !variable["key"] || !variable["type"]) return Effect.fail(new UnreadableBody());
   }
   if (answer.operation.flags?.["log"]) return Effect.succeed(typeof body === "string" ? completeRows(body) : []);
   if (answer.bodyFormat === "text" && typeof body === "string") return Effect.succeed(completeRows(body));
@@ -436,6 +486,9 @@ export function usageGuide(options: Readonly<VercelTokenOptions>) {
 
 function operationRefusal(op: Operation): string | undefined {
   return (
+    (op.method === "GET" && op.path === "/v8/artifacts/{hash}"
+      ? "Artifact downloads serve binary bytes despite this pin's JSON contract; this connector does not support artifact downloads."
+      : undefined) ??
     vercelSafety.refusal(op.method, op.path) ??
     checkServer(op.server) ??
     (/octet-stream|^multipart\//.test(vercelIndex.bodyType(op) ?? "")
@@ -455,10 +508,17 @@ export const VERCEL_VERDICTS: HatchDeclaration["verdicts"] = Object.fromEntries(
         : "destructive",
   ]),
 );
+const cursorInputMessage =
+  "Pass the signed page.nextCursor unchanged; omit it for the first page (numeric until may anchor its time window).";
+const continuation = (next: unknown, call: Parameters<HatchPageAdapter["next"]>[1]) =>
+  typeof next === "string" && /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/)/i.test(next.trim())
+    ? { hasMore: true as const }
+    : timestampPage.next({ pagination: { next } }, call);
 /** Only indexed parameters and documented response continuation names opt in. */
 const paginationPage = (param: string, timestamp = false): HatchPageAdapter => ({
   ...timestampPage,
   param,
+  cursorInputMessage,
   ...(timestamp ? { initialAnchor: true } : {}),
   next(data, call) {
     const pagination = record(record(data)["pagination"]);
@@ -472,7 +532,7 @@ const paginationPage = (param: string, timestamp = false): HatchPageAdapter => (
         });
       return null;
     }
-    return timestampPage.next({ pagination: { next } }, call);
+    return continuation(next, call);
   },
 });
 export const VERCEL_PAGES: NonNullable<HatchDeclaration["pages"]> = Object.fromEntries(
@@ -496,11 +556,12 @@ export const VERCEL_PAGES: NonNullable<HatchDeclaration["pages"]> = Object.fromE
             {
               ...timestampPage,
               param: names.has(key) ? key : "cursor",
+              cursorInputMessage,
               next: (data: unknown) => {
                 const value = record(data)[key];
                 return value === null || value === undefined
                   ? null
-                  : timestampPage.next({ pagination: { next: value } }, { path: "", query: {}, headers: {} });
+                  : continuation(value, { path: "", query: {}, headers: {} });
               },
             } satisfies HatchPageAdapter,
           ],

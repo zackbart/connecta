@@ -91,7 +91,10 @@ both. This small correlated sample cannot establish the wording caused a change.
 | **Total** | **10/14** | **9/14** | **11/14** | **14/14** | **14/14** | **14/14** |
 
 Final AFTER is **25/28**, one completion above BEFORE's **24/28**. The residual Luna
-pagination failure again guessed the project name instead of resolving its id.
+pagination failure made zero HTTP calls: top-level search for deployments never
+surfaced the API hatch, and the agent answered zero without reaching it. Probes
+reproduce this shared discovery gap on main; the residual failure was not a
+guessed-id request. The initial AFTER paging failures did use guessed names.
 Both env-once failures performed the correct single write and returned the
 correct id/key; their target array failed the requested scalar answer format.
 All Sonnet trials passed in all three arms. There is no further wording/grader

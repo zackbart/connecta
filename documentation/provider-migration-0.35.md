@@ -449,6 +449,24 @@ uses the signed token. Raw opaque vendor tokens cannot replace signed tokens.
 Vendor record-count limits are validated as positive integers before dispatch,
 with a maximum only where the reviewed contract declares one.
 
+Raw POST `/v10/projects/{projectId}/env` now raises `invalid_args` for a nonempty
+`failed[]` when nothing was created, including on a 2xx response. The message
+keeps the upsert/update-by-id guidance without inventing HTTP 400. Partial
+batches return both `created` and `failed` through the hatch; a partial named
+upsert reports created ids and failed keys/codes with an unknown outcome.
+Missing acknowledgements fail as unreadable/unknown after one dispatch; reconcile
+before repeating.
+
+Documented JSONL billing charges/contract commitments, NDJSON sandbox command
+execution/log reads and stream+json build/runtime logs retain complete-row
+parsing; sandbox file reads retain encoded bytes. These exact operation/media
+exceptions keep the 60-second/8 MiB transport bounds (named logs use 1 MiB).
+GET `/v8/artifacts/{hash}` is explicitly refused because it serves binary bytes
+despite this pin's JSON declaration. Audit-event `drainUrl` is now entirely
+withheld, including credential path components and `?token=` on every shape.
+URL-shaped next-page values retain the data with `page.hasMore:true` and no
+continuation, rather than failing the read.
+
 ## GitHub
 
 GitHub now exposes seven tools: four `github_api_search`, `github_api_details`,

@@ -24,3 +24,13 @@ operations added, no removals, eight changed request contracts. API-key quota
 responses withhold the entire API-key subtree. Configured `teamId` remains a
 routing default with intentional teamId/slug/null overrides, enforced consistently
 across named tools, hatches and uploads; token permissions remain the access boundary.
+
+Raw environment upserts with only `failed[]` now raise `invalid_args` instead of
+returning successful hatch data; upsert/update-by-id guidance remains. Partial
+hatch batches retain both `created` and `failed`. Partial named upserts report
+created ids and failed variables; missing acknowledgements report unknown outcome
+without replay. Documented billing JSONL, sandbox command NDJSON and log stream
+media still parse into rows. Artifact downloads are explicitly refused because
+they serve binary bytes despite the JSON contract. Audit-event `drainUrl` is
+withheld entirely, including secret path components and query tokens. URL-shaped
+continuations retain page data while refusing continuation.

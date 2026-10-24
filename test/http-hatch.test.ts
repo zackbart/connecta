@@ -1434,6 +1434,35 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     message: expect.not.stringContaining("Whether the write"),
   });
   expect(sent).toHaveLength(1);
+  // Every pinned framed billing/command success remains rows, including a dispatched command write.
+  for (const [method, path, media, body] of [
+    ["GET", "/v1/billing/charges", "application/jsonl", undefined],
+    ["GET", "/v1/billing/contract-commitments", "application/jsonl", undefined],
+    ["GET", "/v2/sandboxes/sessions/sbx_1/cmd/cmd_1/logs", "application/x-ndjson", undefined],
+    ["POST", "/v2/sandboxes/sessions/sbx_1/cmd", "application/x-ndjson", { command: "echo", args: ["hello"] }],
+  ] as const) {
+    sent = [];
+    const rows = [
+      { id: "row_1", message: "hello" },
+      { id: "row_2", message: "done" },
+    ];
+    response = () =>
+      new Response(rows.map((row) => JSON.stringify(row)).join("\n") + "\n", { headers: { "content-type": media } });
+    const result = (await hosting.callTool(
+      method === "GET" ? "vercel_api_read" : "vercel_api_write",
+      {
+        method,
+        path,
+        ...(path === "/v1/billing/charges"
+          ? { query: { from: "2026-01-01T00:00:00Z", to: "2026-02-01T00:00:00Z" } }
+          : {}),
+        ...(body ? { body } : {}),
+      },
+      hostingContext,
+    )) as any;
+    expect(result.data, `${method} ${path}`).toEqual(rows);
+    expect(sent).toHaveLength(1);
+  }
   // Body continuations use the same binding, without ever dispatching the opaque bytes.
   const bodyAdapter: HatchPageAdapter = { ...stripePage, param: "after", in: "body" };
   const bodyPaged = setup({ data: pageData("after", "body"), pages: { "POST /query": bodyAdapter } });

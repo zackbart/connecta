@@ -22,7 +22,8 @@ describeValueSafety("Vercel", {
   echo: {
     tool: "vercel_api_read",
     args: { path: "/v1/drains/d1" },
-    stream: { tool: "vercel_api_read", args: { path: "/v3/deployments/dpl_fixture/events" } },
+    // The pin declares NDJSON for sandbox command logs; build events declare stream+json.
+    stream: { tool: "vercel_api_read", args: { path: "/v2/sandboxes/sessions/sbx_fixture/cmd/cmd_fixture/logs" } },
     respond: (marker) =>
       Response.json({ error: { code: "bad_request", message: `drain secret ${marker} rejected` } }, { status: 400 }),
   },

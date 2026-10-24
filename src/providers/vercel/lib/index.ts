@@ -15,11 +15,13 @@ const SUMMARIES: Readonly<Record<string, string>> = {
   "GET /v3/deployments/{idOrUrl}/events": "Get deployment build logs and events without following live output.",
   "GET /v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs":
     "Get deployment runtime request logs through the bounded named reader.",
-  "POST /v10/projects/{idOrName}/env": "Create or replace a project environment variable (env var).",
+  "POST /v13/deployments": "Create deployment or redeploy an existing deployment for a project.",
+  "POST /v10/projects/{idOrName}/env":
+    "Create environment variable, add environment variable, or replace a project env var.",
   "GET /v10/projects/{idOrName}/env":
     "List project environment variables (env vars); use the metadata-only named reader.",
-  "PATCH /v9/projects/{idOrName}/env/{id}": "Update a project environment variable (env var) by id.",
-  "DELETE /v9/projects/{idOrName}/env/{id}": "Delete a project environment variable (env var) by id.",
+  "PATCH /v9/projects/{idOrName}/env/{id}": "Update environment variable by id in a project (env var).",
+  "DELETE /v9/projects/{idOrName}/env/{id}": "Delete environment variable by id in a project; remove env var.",
 };
 const PARAMETERS: Readonly<Record<string, string>> = {
   teamId:

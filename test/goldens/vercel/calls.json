@@ -17,7 +17,7 @@
             "method": "PATCH",
             "path": "/v9/projects/{idOrName}/env/{id}",
             "operationId": "editProjectEnv",
-            "summary": "Update a project environment variable (env var) by id.",
+            "summary": "Update environment variable by id in a project (env var).",
             "tool": "vercel_api_write",
             "named": "update_project_env_var"
           },
@@ -32,7 +32,7 @@
         "revision": "sha256:4a06e85c2848",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiYjI3YjliMjJkZjAzNThlZmQ1OTJiMmY5NjE5OWFlNGMiLCJjIjoiMiIsIm0iOiJNbGFzc0dwa1FZMDZHR2dXdDNzR2N2NHduU0tCaHZKMXdYNVpWczRHRy1JIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYWI2MDQ2NzIxM2FjMDg5Yzc0MTI0MzkzOTA3NWI5NjEiLCJjIjoiMiIsIm0iOiJ3cUhTc0ZhM2dmZVgwM0czOGk4OEtPckswYzZ3MVNDTGlVTDdJN2ExR2t3In0"
         }
       }
     }
@@ -117,7 +117,7 @@
         },
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiNTBkNmUyNDM1NjNiZDhjZmNhOGYwNmM2N2M0NzJjMzMiLCJjIjoiMTcwMDAwMDAwMDAwMCIsIm0iOiJiajd0MFpBZHJTUlZRU0JjZVhZQmZYTVgxNC1VUFB5UjZhNWw5aERVRTNFIn0",
+          "nextCursor": "eyJ2IjoyLCJkIjoiY2YwZDBhODdjM2U3NTUxYjhiMDlmZWYxNzcxNDE5ODYiLCJjIjoiMTcwMDAwMDAwMDAwMCIsIm0iOiJZeXJXbE94RlVpdWRPcmVua2s3N0hiX0g0blBPWXZkTUxWQUZVdnZvYVVvIn0",
           "param": "until",
           "in": "query"
         }

@@ -24,6 +24,7 @@ import {
   queryOf,
   queryPairs,
   record,
+  reviewedCode,
   restCall,
   text,
   vercelIndex,
@@ -306,6 +307,24 @@ export function vercelTools({
             }),
           });
           const payload = record(data);
+          if (Array.isArray(payload["failed"]) && payload["failed"].length) {
+            const created = (Array.isArray(payload["created"]) ? payload["created"] : [payload["created"]])
+              .map((item) => text(record(item)["id"]))
+              .filter(Boolean);
+            const failed = payload["failed"].map((item) => ({
+              key: text(record(item)["key"] ?? record(record(item)["error"])["key"]),
+              code: reviewedCode(record(record(item)["error"])["code"]) ?? "unclassified",
+            }));
+            return yield* Effect.fail(
+              new Refusal({
+                error: new ConnectorCallError(
+                  "connector_call_failed",
+                  `Vercel partially accepted the environment-variable write. Created ids: ${JSON.stringify(created)}. Failed variables: ${JSON.stringify(failed)}. Check the target before repeating it.`,
+                  { retryable: false, writeOutcome: "unknown" },
+                ),
+              }),
+            );
+          }
           const created = Array.isArray(payload["created"]) ? payload["created"][0] : payload["created"];
           return envMetadata(created ?? payload);
         }),

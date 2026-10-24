@@ -165,6 +165,8 @@ describe("vercel() over an access token", () => {
       expect(error.code, message).toBe("invalid_args");
       expect(error.message).toContain(message);
     }
+    const artifact = await refusal(call(connector, "vercel_api_read", { path: "/v8/artifacts/hash_1" }));
+    expect(artifact.message).toContain("Artifact downloads serve binary bytes");
     expect(sent).toEqual([]);
   });
 
@@ -178,6 +180,17 @@ describe("vercel() over an access token", () => {
       inviteCode: REDACTED,
       role: "MEMBER",
     });
+    const event = {
+      id: "ev_drain",
+      payload: { drainUrl: "https://logs.example/secret-path?token=secret-query", id: "drain_1" },
+    };
+    for (const shape of [event, [event], { events: [event] }, { data: { events: [event] } }]) {
+      respond = () => Response.json(shape);
+      const result = await call(connector, "vercel_api_read", { path: "/v3/events" });
+      expect(JSON.stringify(result)).not.toMatch(/secret-path|secret-query|token=/);
+      expect(JSON.stringify(result)).toContain(REDACTED);
+      expect(JSON.stringify(result)).toContain("drain_1");
+    }
     respond = () =>
       Response.json({
         products: [
@@ -270,34 +283,64 @@ describe("vercel() over an access token", () => {
     );
   });
 
-  it("INV-5: names an upsert conflict without echoing the submitted value", async () => {
+  it("INV-5 INV-9: names upsert conflicts, preserves partial commits and reports missing acknowledgements without replay", async () => {
     const connector = vercel("hosting", TOKEN);
-    respond = () =>
-      Response.json({
-        failed: [{ error: { code: "ENV_ALREADY_EXISTS", message: "exists", key: "TOKEN", value: "s3cret" } }],
-      });
-    const conflict = await refusal(
-      call(connector, "upsert_project_env_var", {
-        projectId: "web",
-        key: "TOKEN",
-        value: "s3cret",
-        type: "sensitive",
-        targets: ["preview"],
-      }),
-    );
-    expect(conflict.message).toContain("ENV_ALREADY_EXISTS");
-    expect(conflict.message).not.toContain("s3cret");
+    const body = { key: "TOKEN", value: "s3cret", type: "sensitive", target: ["preview"] };
+    const named = { projectId: "web", key: body.key, value: body.value, type: body.type, targets: body.target };
+    for (const code of ["ENV_ALREADY_EXISTS", "ENV_CONFLICT"])
+      for (const [tool, args] of [
+        ["upsert_project_env_var", named],
+        ["vercel_api_write", { method: "POST", path: "/v10/projects/web/env", body }],
+      ] as const) {
+        sent = [];
+        respond = () =>
+          Response.json(
+            { created: [], failed: [{ error: { code, message: "exists", key: "TOKEN", value: "s3cret" } }] },
+            { status: 201 },
+          );
+        const error = await refusal(call(connector, tool, args));
+        expect(error).toMatchObject({ code: "invalid_args", retryable: false });
+        expect(error.message).toContain(code);
+        expect(error.message).toContain(
+          "Pass upsert: true to replace it, or update it by id with update_project_env_var.",
+        );
+        expect(error.message).not.toMatch(/s3cret|HTTP 400/);
+        expect(sent).toHaveLength(1);
+      }
+    const partial = {
+      created: [{ id: "env_a", key: "FIRST", type: "sensitive", value: "stored-first-secret" }],
+      failed: [{ error: { code: "ENV_CONFLICT", key: "SECOND", value: "stored-second-secret" } }],
+    };
     sent = [];
-    const raw = await refusal(
-      call(connector, "vercel_api_write", {
-        method: "POST",
-        path: "/v10/projects/web/env",
-        body: { key: "TOKEN", value: "s3cret", type: "sensitive", target: ["preview"] },
-      }),
-    );
-    expect(raw).toMatchObject({ code: "invalid_args", retryable: false });
-    expect(raw.message).not.toContain("s3cret");
+    respond = () => Response.json(partial, { status: 201 });
+    const raw = await call(connector, "vercel_api_write", {
+      method: "POST",
+      path: "/v10/projects/web/env",
+      body: [body, { ...body, key: "SECOND" }],
+    });
+    expect(raw.status).toBe(201);
+    expect(raw.data.created[0]).toMatchObject({ id: "env_a", key: "FIRST" });
+    expect(raw.data.failed[0].error).toMatchObject({ code: "ENV_CONFLICT", key: "SECOND" });
+    expect(JSON.stringify(raw)).not.toMatch(/stored-first-secret|stored-second-secret/);
     expect(sent).toHaveLength(1);
+    sent = [];
+    const namedPartial = await refusal(call(connector, "upsert_project_env_var", named));
+    expect(namedPartial).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
+    expect(namedPartial.message).toMatch(/env_a.*SECOND.*ENV_CONFLICT/);
+    expect(namedPartial.message).not.toMatch(/stored-first-secret|stored-second-secret|HTTP 400/);
+    expect(sent).toHaveLength(1);
+    for (const [tool, args] of [
+      ["upsert_project_env_var", named],
+      ["vercel_api_write", { method: "POST", path: "/v10/projects/web/env", body }],
+    ] as const) {
+      sent = [];
+      respond = () => Response.json({ ok: true }, { status: 201 });
+      const missing = await refusal(call(connector, tool, args));
+      expect(missing).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(missing.message).toContain("check the target before repeating");
+      expect(missing.message).not.toMatch(/handler failed|kit|in-band refusal/);
+      expect(sent).toHaveLength(1);
+    }
   });
 
   it("collects runtime logs until waitMs on a stream that never ends, then says why it stopped", async () => {
@@ -447,6 +490,36 @@ describe("vercel() over an access token", () => {
     });
     expect(initialTime.page.hasMore).toBe(false);
     expect(sent.at(-1)!.url.searchParams.get("until")).toBe("1700000000000");
+    respond = () =>
+      Response.json({
+        deployments: [{ uid: "dpl_keep" }],
+        pagination: { next: "https://untrusted.example/next?token=private" },
+      });
+    const unsafeNext = await call(connector, "vercel_api_read", { path: "/v7/deployments" });
+    expect(unsafeNext.data.deployments).toEqual([{ uid: "dpl_keep" }]);
+    expect(unsafeNext.page).toEqual({ hasMore: true, param: "until", in: "query" });
+    respond = () => Response.json({ data: [], pagination: { next: "opaque:continuation" } });
+    const labelPath = "/v1/projects/web/feature-flags/labels";
+    const labelQuery = { entityKind: "user", attributeKey: "name" };
+    const opaqueNext = (await connector.callTool(
+      "vercel_api_read",
+      { path: labelPath, query: labelQuery },
+      ctx,
+    )) as any;
+    expect(opaqueNext.page.nextCursor).toEqual(expect.any(String));
+    respond = () => Response.json({ data: [], pagination: { next: null } });
+    await connector.callTool(
+      "vercel_api_read",
+      { path: labelPath, query: { ...labelQuery, cursor: opaqueNext.page.nextCursor } },
+      ctx,
+    );
+    expect(sent.at(-1)!.url.searchParams.get("cursor")).toBe("opaque:continuation");
+    const beforeBadCursor = sent.length;
+    const badCursor = await refusal(
+      call(connector, "vercel_api_read", { path: "/v7/deployments", query: { until: "abc" } }),
+    );
+    expect(badCursor.message).toContain("Pass the signed page.nextCursor unchanged");
+    expect(sent).toHaveLength(beforeBadCursor);
     for (const limit of [-1, 0, 1.5, "abc"]) {
       const before = sent.length;
       await expect(
