@@ -1315,6 +1315,41 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       expect(new URL(sent.at(-1)!.url).search).toBe("");
     }
   }
+  // Configured query routing participates in validation and cursor identity.
+  const routedTransport = setup();
+  let routingDefault = "scope-a";
+  const routed = setup({
+    data: pageData("until"),
+    pages: { "GET /items": vercelPage },
+    binding: {
+      review: "Fixture routing default resolved before signed continuation binding.",
+      query: (call) => ({ ...call.query, tag: call.query["tag"] ?? [routingDefault] }),
+      send: (call, options) =>
+        routedTransport.connection.sendPath(
+          {
+            method: call.method,
+            path: call.path,
+            template: call.op.path,
+            query: Object.entries(call.query).flatMap(([k, v]) =>
+              (Array.isArray(v) ? v : [v]).map((x) => [k, String(x)] as const),
+            ),
+          },
+          options,
+        ),
+    },
+  });
+  response = () => Response.json({ pagination: { next: 123 } });
+  const routedFirst = (await routed.call("read", { path: "/items" })) as any;
+  expect(new URL(sent.at(-1)!.url).searchParams.get("tag")).toBe("scope-a");
+  routingDefault = "scope-b";
+  const routedSends = sent.length;
+  await expect(
+    routed.call("read", { path: "/items", query: { until: routedFirst.page.nextCursor } }),
+  ).rejects.toMatchObject({ code: "invalid_args" });
+  expect(sent).toHaveLength(routedSends);
+  response = () => Response.json({ pagination: { next: null } });
+  await routed.call("read", { path: "/items", query: { tag: ["scope-a"], until: routedFirst.page.nextCursor } });
+  expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("123");
   // Body continuations use the same binding, without ever dispatching the opaque bytes.
   const bodyAdapter: HatchPageAdapter = { ...stripePage, param: "after", in: "body" };
   const bodyPaged = setup({ data: pageData("after", "body"), pages: { "POST /query": bodyAdapter } });

@@ -66,6 +66,8 @@ function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
+  /** Resolve configured query routing before validation and cursor binding. */
+  readonly query?: (call: RestCall) => Readonly<Record<string, unknown>>;
   /** Explicitly replace the default other-server guard with the binding's confined routing. */
   readonly allowOtherServers?: true;
   /** Explicitly replace the default JSON/form guard with the binding's reviewed encoding. */
@@ -933,6 +935,7 @@ export function hatch(
       const call = (): RestCall => ({ method, path: args.path, op, params, query, body });
       let query = args.query ?? {};
       let body = args.body;
+      if (options.binding?.query) query = yield* checked(() => options.binding!.query!(call()));
       yield* checked(() => {
         const verdict = verdictOf(op);
         if (verdict === "refuse") {
