@@ -53,9 +53,11 @@ backups, Docker provisioning, secrets, and optional modules. Run the deployment'
 `npm run typecheck` after configuration changes.
 
 Retain the Node template's `undici` dependency and serve with `listen` from
-`@zackbart/connecta/node`. That entry configures the owned transport for
-remote MCP writes and for API/provider requests that are writes or use a physical
-HTTP method other than GET or HEAD, including reviewed read-only POSTs. For example, an `assistant` using
+`@zackbart/connecta/node`. `listen()` installs the owned sender for every
+maintained-provider request, reads included, and for remote MCP writes.
+A Node host serving `connecta.fetch` without `listen()` has no owned sender:
+every maintained-provider write, every reviewed POST read and every remote MCP
+write is refused before sending. Each worked in 0.34.1. For example, an `assistant` using
 `vercel_api_read` to POST `/v1/registrar/domains/availability` needs that
 transport even on a read-only endpoint. A Node deployment using only the root
 entry refuses those requests before sending them. Workers use their native
@@ -68,13 +70,15 @@ active responses and deferred work. Its shutdown deadline defaults to ten second
 (`shutdownTimeoutMs`). For example, retain the template's `listen(connecta, port)` when running it under
 Docker Compose so `docker compose stop` uses this cleanup.
 
-The owned Node transport connects directly to the downstream server. Remote MCP
-writes and kit writes ignore `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`,
-and any host proxy dispatcher; remote MCP reads keep native fetch and its proxy
-configuration. There is no supported explicit-proxy setting for the owned sender.
-If your network requires an outbound proxy, move writes to a deployment with
-approved direct egress, or an approved Workers deployment. Until then, configure
-those connectors as `readOnly`. A connection failure after dispatch is unknown
+The owned Node sender connects directly for every maintained-provider request,
+including GET reads, and for remote MCP writes. It ignores `NODE_USE_ENV_PROXY`,
+`HTTP_PROXY`, `HTTPS_PROXY` and any host proxy dispatcher. Only remote MCP reads
+retain native fetch and its proxy settings. There is no supported explicit proxy
+configuration for the owned sender in 0.35.0; support is follow-up work.
+Before upgrading a deployment that needs a proxy for maintained providers or
+remote MCP, arrange approved direct egress or use the Workers shape. `readOnly`
+is a stopgap only for remote MCP connectors; it does not change the sender for
+maintained-provider reads. A connection failure after a write dispatch is unknown
 and non-retryable.
 
 ## Start on Workers
@@ -284,11 +288,15 @@ before starting the upgraded package: `npm install --save-exact undici@6.29.1`.
 The current Node template already declares this dependency.
 
 For 0.35.0, serve Node with `listen` from `@zackbart/connecta/node`, as the
-current template does. Remote MCP writes served through another host's
-`connecta.fetch` are refused before dispatch. The owned write transport connects
-directly, ignoring environment proxies and host dispatchers; deployments that
-require an outbound proxy must keep those connectors read-only until approved
-direct egress or a Workers deployment is available. See [Start on Node](#start-on-node).
+current template does. Without `listen()`, a host serving `connecta.fetch` has
+no owned sender: every maintained-provider write, every reviewed POST read and
+every remote MCP write is refused before sending, although each worked in 0.34.1.
+With `listen()`, every maintained-provider request, reads included, and remote
+MCP writes use the direct sender, ignoring `NODE_USE_ENV_PROXY`, `HTTP_PROXY`,
+`HTTPS_PROXY` and host proxy dispatchers. Only remote MCP reads keep native
+fetch and its proxy settings. A deployment needing a proxy for maintained
+providers or remote MCP needs approved direct egress or the Workers shape
+before upgrading. Explicit proxy support is follow-up work. See [Start on Node](#start-on-node).
 
 After a dispatched write reports an unknown outcome, read the target before
 making another write. Programs retain that outcome even when guest code catches

@@ -1237,14 +1237,14 @@ removed. Legacy hosted selectors fail at construction with the generic migration
 path. GitHub retains its scope-enforced App identity and exposes a bounded repository-read and release-write hatch plus local scope discovery, scoped data search and guarded merge.
 
 [Decision 0011](https://github.com/zackbart/connecta/blob/main/decisions/0011-provider-standard.md)
-sets the provider standard the providers above are migrating to. It fixes
+records the provider standard now implemented by all 15 maintained providers. It fixes
 one folder layout per kind and fixed evidence names. `drift.json` gets a
 generated block and the guide a generated Conventions section, and every
-`api()` surface gets one agent-facing shape. Each provider migrates in two
-PRs: onto the kit with unchanged output, then onto the standard surface.
-`PENDING` in `test/provider-standard.ts` lists the providers that have not
-landed each step, and this section describes their current shapes.
-`test/provider-standard.node.test.ts` holds every other provider folder to the
+`api()` surface gets one agent-facing shape. Providers completed two migration
+steps: onto the kit with unchanged output, then onto the standard surface.
+Both `PENDING.step1` and `PENDING.step2` in `test/provider-standard.ts` are empty;
+every maintained provider now meets the standard without a migration exemption.
+`test/provider-standard.node.test.ts` holds every maintained provider folder to the
 standard, and `test/provider-conventions.test.ts` checks the surface rules on
 Node. `providers:generate` writes the standard's derived parts and
 refuses a provider past step 1 that breaks the `drift.json` rules, or one past
@@ -2339,14 +2339,17 @@ cached keys. Pre-upgrade cursors require a new first page. Offline goldens
 preseed a fixed key only in their harness.
 
 The helper derives connection metadata and probe messages from
-validated options and accepts complete legacy usage guides, which providers in
-`PENDING.step2` keep. Candidate checks can refuse before authentication while
+validated options and still accepts complete legacy usage guides for compatibility.
+All maintained providers have completed the standard-surface migration.
+Candidate checks can refuse before authentication while
 preserving the provider's exact diagnostic. Its optional `authScope(options)`
 selector fixes OAuth grant ownership from deployment mode at construction;
 CCB uses shared System Auth grants and personal Identity Auth grants. Tool
-arguments cannot select a grant's owner. On Node, kit writes go through the
-owned transport `listen` installs, so suites that call one without `listen`
-configure it themselves, as the goldens harness does. Anything a connection
+arguments cannot select a grant's owner. On Node, every maintained-provider
+request uses the owned sender `listen()` installs, reads included. Without it,
+maintained-provider writes and reviewed POST reads are refused before sending;
+suites exercising those requests configure the sender themselves, as the goldens
+harness does. Anything a connection
 caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
@@ -2919,7 +2922,7 @@ compiling and configuring the real thing.
   further. A refusal on the last attempt says nothing about the earlier ones.
   Remote MCP writes on Node use the owned runtime sender installed by
   `listen` from `/node`, selected before recording dispatch. Without it they
-  are refused before sending. Reads retain native fetch; Workers uses native
+  are refused before sending. Remote MCP reads retain native fetch; Workers uses native
   fetch with manual redirects. The owned Node sender bypasses the global
   dispatcher and fetch's 421 replay, preserving the SDK's JSON/SSE bodies and
   abort signals. A reset or unconfirmed server failure remains unknown.

@@ -11,6 +11,27 @@ workload credentials and the Eve helper, follow
 
 For hosted MCP removals, follow [Migrate hosted MCP presets](./hosted-mcp-migration.md).
 
+## Node transport and egress
+
+On Node, serve with `listen()` from `@zackbart/connecta/node` and install the
+exact `undici@6.29.1` peer. `listen()` installs the owned sender for every
+maintained-provider request, including reads, and for remote MCP writes.
+It connects directly, ignoring `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`
+and host proxy dispatchers. Only remote MCP reads retain native fetch and its
+proxy settings.
+
+A Node host serving `connecta.fetch` without `listen()` has no owned sender.
+Every maintained-provider write, every reviewed POST read and every remote MCP
+write is refused before sending; each worked in 0.34.1. For example, the reviewed
+`vercel_api_read` POST to `/v1/registrar/domains/availability` requires `listen()`
+even on a read-only endpoint.
+
+Before upgrading a deployment that needs a proxy for maintained providers or
+remote MCP, arrange approved direct egress or use the Workers shape. Setting
+`readOnly` is a stopgap only for remote MCP connectors, not maintained providers.
+Explicit proxy configuration for the owned sender is follow-up work, not support
+shipped in 0.35.0. Follow [Node startup](./deploying.md#start-on-node) for setup.
+
 ## Provider response media and path hardening
 
 JSON-only Stripe and Cloudflare operations now refuse unexpected text, HTML and
