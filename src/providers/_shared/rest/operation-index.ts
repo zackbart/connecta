@@ -1,4 +1,5 @@
 import { canonicalJson } from "../../../canonical-json.js";
+import { parseIndexDetails } from "./compact-index.js";
 // The pinned operation index a REST connector validates against before it
 // sends anything. `scripts/generate-openapi.mjs` compiles a vendor's OpenAPI
 // document into `OpenApiData` (search rows plus request-side details as one
@@ -702,7 +703,7 @@ export class OperationIndex {
   }
 
   #row(op: Operation): DetailsRow | undefined {
-    this.#details ??= JSON.parse(this.#data.details) as { d: SchemaNode[]; o: (0 | DetailsRow)[] };
+    this.#details ??= parseIndexDetails(this.#data) as { d: SchemaNode[]; o: (0 | DetailsRow)[] };
     const row = this.#details.o[op.row];
     return row === 0 ? undefined : row;
   }

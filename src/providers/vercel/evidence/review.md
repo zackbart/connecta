@@ -214,3 +214,12 @@ array payloads, shared evs lists and updates maps. Safe created and failed metad
 remain in partial reports after whole-body sent-value redaction. Echo cases cover
 raw POST, successful upsert/update metadata, created.id and failed[].key through
 createMetaTools and a real CredentialVault.
+
+Project creation through raw POST /v11/projects also registers every
+environmentVariables[].value through RequestSecrets before dispatch. Echoed
+values in response metadata, map keys and prose are withheld before fields
+selection; existing env[].value safety remains. Regression cases cover multiple
+values, a short whole-field value, success, definite HTTP400 refusal and
+ambiguous HTTP500, with and without fields selection. Each case sends once,
+preserves safe project/environment metadata, and retains the prior error and
+write-outcome classification (#1032).

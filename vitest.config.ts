@@ -11,6 +11,8 @@ const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktr
 // workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
 // Pure logic runs only on Node; never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
+  // Native UTF-8/Web Crypto content identity across physical index formats.
+  "test/compact-index.test.ts",
   "test/storage-sql-d1.test.ts",
   // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
   // service-bound Workers. These skip or fail outside workerd.

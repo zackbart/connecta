@@ -455,6 +455,74 @@ describe("vercel() over an access token", () => {
     }
   });
 
+  it.each([
+    [201, false],
+    [201, true],
+    [400, false],
+    [400, true],
+    [500, false],
+    [500, true],
+  ] as const)(
+    "INV-5 INV-9: withholds all project-create environment echoes at HTTP %s with fields=%s (#1032)",
+    async (status, fields) => {
+      const values = ["fixture-project-env-private-value", "qz"];
+      const body = {
+        name: "web",
+        environmentVariables: values.map((value, index) => ({
+          key: `VALUE_${index}`,
+          value,
+          type: "encrypted",
+          target: ["preview"],
+        })),
+      };
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+      await vault.setAll("hosting", { value: "vercel-token" }, "fixture");
+      const meta = createMetaTools(
+        makeRegistry([vercel("hosting", TOKEN)], { storage, credentialVault: vault }),
+        "https://connecta.example",
+      );
+      respond = () =>
+        Response.json(
+          status === 201
+            ? {
+                id: "prj_public",
+                name: "web",
+                env: [
+                  { id: values[0], key: "VALUE_0", type: "encrypted", value: "stored-project-value" },
+                  { id: "env_public", key: values[1], type: "encrypted", value: "stored-project-value" },
+                ],
+                commandForIgnoringBuildStep: `echo ${values[0]}`,
+                [values[0]!]: "public metadata",
+              }
+            : { error: { code: "bad_request", message: `Rejected ${values.join(" / ")}`, [values[0]!]: values[1] } },
+          { status },
+        );
+      const result = await meta.callDestructiveTool({
+        address: "hosting.vercel_api_write",
+        args: { method: "POST", path: "/v11/projects", body, ...(fields ? { fields: ["id", "name", "env"] } : {}) },
+      });
+      const serialized = JSON.stringify(result);
+      for (const value of [...values, "stored-project-value"]) expect(serialized).not.toContain(value);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ method: "POST", body });
+      if (status === 201) {
+        expect(result.isError).not.toBe(true);
+        for (const value of ["prj_public", "env_public", "VALUE_0", "encrypted", "[redacted]"])
+          expect(serialized).toContain(value);
+      } else {
+        expect(result.structuredContent).toMatchObject({
+          ok: false,
+          error:
+            status === 400
+              ? { code: "invalid_args", retryable: false }
+              : { code: "connector_call_failed", writeOutcome: "unknown", retryable: false },
+        });
+        if (status === 400) expect(result.structuredContent?.["error"]).not.toHaveProperty("writeOutcome");
+      }
+    },
+  );
+
   it("collects runtime logs until waitMs on a stream that never ends, then says why it stopped", async () => {
     const connector = vercel("hosting", TOKEN);
     const lines = [
