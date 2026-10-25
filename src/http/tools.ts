@@ -15,6 +15,7 @@
 // transport records into, so a kit connector declares `tracksEveryRequest`.
 
 import { Context, Effect, Schema } from "effect";
+import { inLogicalCall } from "../provider-call.js";
 import { registerToolEntry } from "../runtime/call-entry.js";
 import type { ApiHandlerContext } from "../connectors/api-connector.js";
 import type { ApiTool } from "../connectors/api-connector.js";
@@ -545,7 +546,7 @@ function build<I extends Input, O extends Schema.Top>(
     annotations,
     handler: (args, ctx) => runEdge(program(args, ctx), { signal: ctx.signal }),
   };
-  const program = (args: unknown, ctx: ApiHandlerContext, native = false) =>
+  const program = (args: unknown, ctx: ApiHandlerContext, served = false) =>
     Effect.suspend(() => {
       // The builder's verdict only stands in for a call no invocation dispatched.
       const lease = fromConnectorContext(ctx, verdict);
@@ -591,7 +592,7 @@ function build<I extends Input, O extends Schema.Top>(
         // invocation settles that interruption from the raw ledger before
         // any completed handler verdict exists, just as at the Promise edge.
         Effect.mapError((failure) =>
-          native && ctx.signal?.aborted ? ctx.signal.reason : toConnectorCallError(failure, connection.errors, map),
+          served && ctx.signal?.aborted ? ctx.signal.reason : toConnectorCallError(failure, connection.errors, map),
         ),
         Effect.catchDefect((defect) => Effect.die(withheldDefect(defect, map))),
         Effect.provideContext(lease.services),
@@ -600,7 +601,7 @@ function build<I extends Input, O extends Schema.Top>(
         Effect.onError((cause) =>
           Effect.sync(() => {
             if (
-              !native &&
+              !served &&
               ctx.signal?.aborted === true &&
               causeError(cause, ctx.signal) === ctx.signal.reason &&
               map.classification === "write"
@@ -610,7 +611,7 @@ function build<I extends Input, O extends Schema.Top>(
         ),
       );
     });
-  registerToolEntry(tool, (args, ctx) => program(args, ctx, true));
+  registerToolEntry(tool, (args, ctx) => program(args, ctx, inLogicalCall(ctx)));
   inputs.set(tool, spec.input);
   if (idempotency) keyed.add(tool);
   return tool;

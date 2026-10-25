@@ -2011,6 +2011,14 @@ downstream OAuth, and the remote SDK retain their existing Promise boundaries.
 Cross-request call admission deliberately remains a Promise handoff so workerd
 resumes queued work in the request waiting for the permit.
 
+The `Storage` service composes built-in `getNativeStorage` operations directly.
+Registry wrappers propagate that optional capability through principal,
+connector, subject, and result prefixes, including nested namespaces; list
+results strip only their own prefix. Custom stores keep the Promise fallback.
+These adapters add no retry, transaction, or storage encoding and preserve
+D1's single atomic batch and SQLite's native transaction. Native activity
+lookup remains available to the route and activity consumers.
+
 ### Native SQL storage (contributor)
 
 `src/storage/sql-native.ts` composes KV, activity schema upgrades, retention,

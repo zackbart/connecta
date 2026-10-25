@@ -37,11 +37,12 @@ import {
   setViewService,
   duringViewEffect,
 } from "./runtime/call.js";
+import { getNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
 import { provideRegistryPrograms, registryProgram } from "./runtime/registry.js";
 import { causeError, runEdge } from "./runtime/run.js";
 import { Storage } from "./runtime/services.js";
 import { SharedRead } from "./runtime/shared-read.js";
-import { storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
+import { runOnPartition, storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
 import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import {
@@ -163,7 +164,7 @@ export interface RegistryOptions {
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
-  return {
+  const edge: KVStorage = {
     capabilities: storage.capabilities,
     get: (k) => storage.get(prefix + k),
     set: (k, v, o) => storage.set(prefix + k, v, o),
@@ -171,6 +172,17 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     list: async (keyPrefix) => (await storage.list(prefix + keyPrefix)).map((key) => key.slice(prefix.length)),
     compareAndSet: (k, expected, next, o) => storage.compareAndSet(prefix + k, expected, next, o),
   };
+  const native = getNativeStorage(storage);
+  return native
+    ? registerNativeStorage(edge, {
+        get: (key) => native.get(prefix + key),
+        set: (key, value, options) => native.set(prefix + key, value, options),
+        delete: (key) => native.delete(prefix + key),
+        list: (keyPrefix) =>
+          native.list(prefix + keyPrefix).pipe(Effect.map((keys) => keys.map((key) => key.slice(prefix.length)))),
+        compareAndSet: (key, expected, next, options) => native.compareAndSet(prefix + key, expected, next, options),
+      })
+    : edge;
 }
 
 export type ConnectorOperationOptions = Pick<ConnectorContext, "signal" | "timeoutMs" | "defer">;
@@ -840,7 +852,7 @@ export class Registry implements RegistryView {
     ttlSeconds: number,
     partition: string = scopes.results,
   ): Promise<boolean> {
-    return runEdge(registryProgram(this, "stashResult", id, chunks, ttlSeconds, partition));
+    return runOnPartition(registryProgram(this, "stashResult", id, chunks, ttlSeconds, partition), this.opts);
   }
 
   /**
@@ -1440,7 +1452,12 @@ class ScopedRegistryView implements RegistryView {
   }
 
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
-    return runEdge(registryProgram(this, "stashResult", id, chunks, ttlSeconds));
+    return this.root.stashResult(
+      id,
+      chunks,
+      ttlSeconds,
+      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
+    );
   }
 
   resultIdentity(): ResultIdentity {

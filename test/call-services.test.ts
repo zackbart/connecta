@@ -35,6 +35,9 @@ import { read } from "../src/http/tools.js";
 import { resultSafety } from "../src/http/safety.js";
 import { errors as tithelyErrors } from "../src/providers/tithely/api.js";
 import { RequestScope, requestOwner } from "../src/runtime/request-scope.js";
+import { getNativeStorage } from "../src/runtime/native-storage.js";
+import { Storage } from "../src/runtime/services.js";
+import { storageGet, storageSet, storageDelete, storageList, storageCompareAndSet } from "../src/runtime/storage.js";
 import { registryProgram } from "../src/runtime/registry.js";
 import { SharedRead } from "../src/runtime/shared-read.js";
 import { authRecoveryFacts, recordAuthFailure, recordCallEntry } from "../src/invocation-auth.js";
@@ -542,6 +545,33 @@ describe("native registry and request entry (D.1)", () => {
     );
     expect(outcome).toMatchObject({ ok: false, error: { code: "auth_required" }, dispatched: false });
     expect(JSON.stringify(outcome)).not.toContain("private-vault-read-text");
+  });
+
+  it("INV-4 INV-13: custom Promise stores keep their fallback across nested registry namespaces", async () => {
+    const storage = memoryStorage();
+    const methods = ["get", "set", "delete", "list", "compareAndSet"] as const;
+    const calls = methods.map((method) => vi.spyOn(storage, method));
+    const connector = { ...fixture(async () => ({})), authScope: "personal" as const };
+    const registry = makeRegistry([connector], { storage });
+    const view = registry.scoped({ connectorIds: ["crm"], principalKey: "alice" }).contextFor("crm", BASE);
+    expect(getNativeStorage(view.storage)).toBeUndefined();
+    await runEdge(
+      Effect.gen(function* () {
+        yield* storageSet("data:key", "first");
+        expect(yield* storageGet("data:key")).toBe("first");
+        expect(yield* storageCompareAndSet("data:key", "first", "next")).toBe(true);
+        expect(yield* storageList("data:")).toEqual(["data:key"]);
+        yield* storageDelete("data:key");
+      }).pipe(Effect.provideService(Storage, view.storage)),
+    );
+    for (const call of calls) expect(call).toHaveBeenCalledTimes(1);
+    const reason = new Error("custom store failure");
+    calls[0]!.mockImplementation(() => {
+      throw reason;
+    });
+    await expect(runEdge(storageGet("data:key").pipe(Effect.provideService(Storage, view.storage)))).rejects.toBe(
+      reason,
+    );
   });
 
   it("INV-4: native registry access honors a replaced Promise method", async () => {

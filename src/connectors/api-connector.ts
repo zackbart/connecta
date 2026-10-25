@@ -445,14 +445,14 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
           // retain their separate request ownership. Ledger settlement below
           // must see the close reason before this call's Promise rejects.
           const native = toolEntry(tool);
-          return yield* duringViewEffect(callCtx, () =>
-            native
-              ? native(input, handlerCtx)
-              : Effect.tryPromise({
-                  try: () => Promise.resolve(tool.handler(input, handlerCtx)),
-                  catch: (error) => error,
-                }),
-          );
+          return yield* native
+            ? duringViewEffect(callCtx, () => native(input, handlerCtx))
+            : Effect.tryPromise({
+                // Custom handlers retain their Promise revocation bridge and
+                // synchronous entry, including their helpers' fact ordering.
+                try: () => settleOnClose(callCtx, () => Promise.resolve(tool.handler(input, handlerCtx))),
+                catch: (error) => error,
+              });
         }),
       );
       if (Exit.isFailure(handled)) {

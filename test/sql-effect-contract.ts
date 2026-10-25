@@ -2,6 +2,12 @@
 import { Effect, Tracer } from "effect";
 import { expect, it, vi } from "vitest";
 import { getNativeActivity, getNativeStorage } from "../src/runtime/native-storage.js";
+import { Registry } from "../src/registry.js";
+import { registryProgram } from "../src/runtime/registry.js";
+import { Storage } from "../src/runtime/services.js";
+import { storageGet, storageSet, storageDelete, storageList, storageCompareAndSet } from "../src/runtime/storage.js";
+import { resultKeys, scopes } from "../src/storage/keys.js";
+import { silentLogger } from "./helpers.js";
 import { runEdge } from "../src/runtime/run.js";
 import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import * as sqlStores from "../src/storage/sql.js";
@@ -67,6 +73,67 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
       }),
     );
     expect((await runEdge(program.list({ limit: 1 }))).events).toHaveLength(1);
+  });
+
+  it("INV-4 INV-9 INV-13: registry namespaces and programs compose native SQL without Promise store re-entry", async () => {
+    const { storage, native } = await setup();
+    const registry = new Registry(
+      [
+        {
+          id: "notes",
+          kind: "api",
+          authScope: "personal",
+          staticTools: [],
+          listTools: async () => [],
+          callTool: async () => ({}),
+        },
+      ],
+      { storage, logger: silentLogger },
+    );
+    for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
+      vi.spyOn(storage, method).mockImplementation(() => {
+        throw new Error("Promise registry store re-entry");
+      });
+    }
+    const scoped = registry.scoped({ connectorIds: ["notes"], principalKey: "alice", subjectKey: "alice-request" });
+    const ctx = scoped.contextFor("notes", "https://connecta.test", {});
+    expect(getNativeStorage(ctx.storage)).toBeDefined();
+    await runEdge(
+      Effect.gen(function* () {
+        yield* storageSet("data:entry", "first", { ttlSeconds: 120 });
+        expect(yield* storageGet("data:entry")).toBe("first");
+        expect(yield* storageCompareAndSet("data:entry", "wrong", "discarded")).toBe(false);
+        expect(yield* storageCompareAndSet("data:entry", "first", "changed")).toBe(true);
+        expect(yield* storageList("data:")).toEqual(["data:entry"]);
+        yield* storageDelete("data:entry");
+        expect(yield* storageGet("data:entry")).toBeNull();
+        yield* storageSet("data:entry", "alice");
+      }).pipe(Effect.provideService(Storage, ctx.storage)),
+    );
+    const key = scopes.principal("alice") + scopes.connector("notes") + "data:entry";
+    expect(await runEdge(native.get(key))).toBe("alice");
+    const bob = registry.personalRegistry("bob").contextFor("notes", "https://connecta.test");
+    expect(await runEdge(getNativeStorage(bob.storage)!.get("data:entry"))).toBeNull();
+    await runEdge(
+      registryProgram(scoped, "bindOAuthHandoff", "notes", "https://provider.test/authorize?state=native-state"),
+    );
+    expect(await runEdge(registryProgram(registry, "oauthCallbackView", "notes", "native-state"))).toMatchObject({
+      principalKey: "alice",
+    });
+    expect(await runEdge(registryProgram(registry, "consumeOAuthHandoff", "notes", "native-state", "bob"))).toBe(false);
+    expect(await runEdge(registryProgram(registry, "consumeOAuthHandoff", "notes", "native-state", "alice"))).toBe(
+      true,
+    );
+    expect(await runEdge(registryProgram(scoped, "stashResult", "native-result", ["header", "chunk"], 120))).toBe(true);
+    expect(await runEdge(native.get(scopes.subject("alice-request") + resultKeys.chunk("native-result", 1)))).toBe(
+      "chunk",
+    );
+    expect(await runEdge(getNativeStorage(scoped.resultsStorage())!.get(resultKeys.chunk("native-result", 0)))).toBe(
+      "header",
+    );
+    expect(
+      await runEdge(getNativeStorage(registry.resultsStorage())!.get(resultKeys.chunk("native-result", 0))),
+    ).toBeNull();
   });
 
   it("INV-9: preserves zero changes, multiple changed rows, and single-statement CAS under 50 native claims", async () => {
