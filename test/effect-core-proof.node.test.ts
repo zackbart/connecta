@@ -79,6 +79,7 @@ type Report = {
         sameError: boolean;
         sameShapedError: boolean;
         sameTypedRouteError: boolean;
+        errorCalls: number[];
         finalized: number;
         response: Wire;
       }
@@ -162,6 +163,7 @@ describe("Effect 4.0.5 compatibility proof", () => {
           sameError: true,
           sameShapedError: true,
           sameTypedRouteError: true,
+          errorCalls: [1, 1, 1],
           finalized: 1,
         });
         expect(seam.response).toEqual({

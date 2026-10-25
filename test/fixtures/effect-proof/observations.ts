@@ -360,7 +360,11 @@ export async function runRouterSeam() {
   const request = new Request(BASE + "/health");
   const response = new Response("owned", { status: 405, headers: { allow: "PUT", "content-type": "application/json", "set-cookie": "a=1; Path=/" } });
   let applicationError: unknown;
-  const route = createRouteDispatcher(() => applicationError ? Effect.fail(applicationError) : Effect.succeed(null),
+  let calls = 0;
+  const route = createRouteDispatcher(() => {
+    calls++;
+    return applicationError ? Effect.fail(applicationError) : Effect.succeed(null);
+  },
     () => Effect.succeed(null), async () => response);
   const context = (path: string, method = "GET") => {
     const request = new Request(BASE + path, { method });
@@ -373,10 +377,13 @@ export async function runRouterSeam() {
   const shaped = { reason: { _tag: "RouteNotFound" } };
   const typed = new HttpServerError.HttpServerError({ reason: new HttpServerError.RouteNotFound({ request: HttpServerRequest.fromWeb(request) }) });
   const retained = [];
+  const errorCalls = [];
   for (const error of [reason, shaped, typed]) {
     applicationError = error;
+    const before = calls;
     try { await runEdge(route(context("/mcp"))); retained.push(false); }
     catch (caught) { retained.push(caught === error); }
+    errorCalls.push(calls - before);
   }
   // The unmatched fallback is outside the router-error catch as well.
   let unmatchedRetainsError = false;
@@ -390,7 +397,7 @@ export async function runRouterSeam() {
   })));
   return { identity: actual === response, missing: missing.status, unowned: unowned.status,
     sameError: retained[0], sameShapedError: retained[1], sameTypedRouteError: retained[2], unmatchedRetainsError,
-    finalized, response: await shape(response) };
+    errorCalls, finalized, response: await shape(response) };
 }
 
 /** First-request races and later calls use the same two real public routers. */

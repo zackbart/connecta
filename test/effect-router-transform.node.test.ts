@@ -51,17 +51,27 @@ describe("production router proof enforcement", () => {
     const directory = await mkdtemp(join(tmpdir(), "connecta-router-mutation-"));
     try {
       const statuses: unknown[] = [];
-      for (const mutation of ["none", "selection", "unmatched"]) {
+      for (const mutation of ["none", "selection", "unmatched", "reentry"]) {
         const result = await build({
           stdin: {
             contents: `import { createRouteDispatcher } from "./src/routes/dispatch.js";
               import { Effect } from "effect";
+              import * as HttpServerError from "effect/http/HttpServerError";
+              import * as HttpServerRequest from "effect/http/HttpServerRequest";
               import { runEdge } from "./src/runtime/run.js";
-              const route = createRouteDispatcher(() => Effect.succeed(null), () => Effect.succeed(null), async () => new Response("ok"));
+              let failure, calls = 0;
+              const route = createRouteDispatcher(() => { calls++; return failure ? Effect.fail(failure) : Effect.succeed(null); }, () => Effect.succeed(null), async () => new Response("ok"));
               export async function probe(path) {
                 const request = new Request("https://test.invalid" + path);
                 try { return (await runEdge(route({ request, url: new URL(request.url), path, baseUrl: "https://test.invalid", opts: { config: {} } }))).status; }
                 catch { return "unhandled"; }
+              }
+              export async function applicationErrorCalls() {
+                const request = new Request("https://test.invalid/mcp");
+                failure = new HttpServerError.HttpServerError({ reason: new HttpServerError.RouteNotFound({ request: HttpServerRequest.fromWeb(request) }) });
+                calls = 0;
+                try { await runEdge(route({ request, url: new URL(request.url), path: "/mcp", baseUrl: "https://test.invalid", opts: { config: {} } })); } catch {}
+                return calls;
               }`,
             resolveDir: process.cwd(),
             loader: "ts",
@@ -82,7 +92,10 @@ describe("production router proof enforcement", () => {
                   if (mutation !== "none") {
                     const before = mutation === "selection" ? '"/health",' : "!current.entered &&";
                     expect(contents.split(before)).toHaveLength(2);
-                    contents = contents.replace(before, mutation === "selection" ? '"/removed-health",' : "false &&");
+                    contents = contents.replace(
+                      before,
+                      mutation === "selection" ? '"/removed-health",' : mutation === "reentry" ? "" : "false &&",
+                    );
                   }
                   return { contents, loader: "ts" };
                 });
@@ -92,13 +105,14 @@ describe("production router proof enforcement", () => {
         });
         const file = join(directory, `${mutation}.mjs`);
         await writeFile(file, result.outputFiles[0]!.contents);
-        const { probe } = await import(pathToFileURL(file).href);
-        statuses.push([await probe("/health"), await probe("/missing")]);
+        const { probe, applicationErrorCalls } = await import(pathToFileURL(file).href);
+        statuses.push([await probe("/health"), await probe("/missing"), await applicationErrorCalls()]);
       }
       expect(statuses).toEqual([
-        [200, 404],
-        [404, 404],
-        [200, "unhandled"],
+        [200, 404, 1],
+        [404, 404, 1],
+        [200, "unhandled", 1],
+        [200, 404, 2],
       ]);
     } finally {
       await rm(directory, { recursive: true, force: true });
