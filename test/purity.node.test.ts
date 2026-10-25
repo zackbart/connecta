@@ -316,12 +316,19 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     }
   });
 
-  it("lets the root entry reach only Effect's stable core", () => {
+  it("confines root Effect HTTP imports to the private dispatcher", () => {
     const graph = importGraph(ENTRY);
     for (const file of graph) {
       for (const spec of allSpecifiers(sourceOf(file))) {
         if (!isEffectSpecifier(spec)) continue;
-        expect(ROOT_EFFECT_ALLOWED.has(spec), `${file} is reachable from index.ts and imports ${spec}`).toBe(true);
+        expect(
+          ROOT_EFFECT_ALLOWED.has(spec) ||
+            (file === join(SRC, "routes", "dispatch.ts") &&
+              ["HttpRouter", "HttpServerError", "HttpServerRequest", "HttpServerResponse"].some(
+                (name) => spec === `effect/http/${name}`,
+              )),
+          `${file} is reachable from index.ts and imports ${spec}`,
+        ).toBe(true);
       }
     }
   });
@@ -340,6 +347,7 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     const allowed = new Set([
       ...["client.ts", "oauth.ts", "vendor.ts"].map((name) => join(SRC, "http", name)),
       join(SRC, "storage", "sql-driver.ts"),
+      join(SRC, "routes", "dispatch.ts"),
     ]);
     for (const file of everySource) {
       for (const spec of allSpecifiers(sourceOf(file))) {

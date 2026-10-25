@@ -22,6 +22,7 @@ const WORKERS_SUITES = [
   "test/catalog-cache.test.ts",
   "test/clerk-organization-workerd.test.ts",
   "test/codemode-compat.test.ts",
+  "test/executor-native.test.ts",
   "test/guest-api-contract.test.ts",
   "test/kv-to-d1.test.ts",
   "test/usage-guide.test.ts",

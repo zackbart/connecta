@@ -349,6 +349,7 @@ export class OAuthRefreshCoordinator {
     requestSignal?: AbortSignal,
     defer?: ConnectorContext["defer"],
     resourceFetch: FetchLike = baseFetch,
+    prepareCredentialRequest?: () => void,
   ): FetchLike {
     return async (input, init) => {
       // Freeze the form before any await: classification and the spent digest
@@ -356,6 +357,10 @@ export class OAuthRefreshCoordinator {
       init = init
         ? { ...init, ...(init.body instanceof URLSearchParams ? { body: new URLSearchParams(init.body) } : {}) }
         : undefined;
+      // Production adapters resolve the required host policy before a code or
+      // refresh claim can consume its single-use credential. Custom SDK leaves
+      // may supply their own policy; this hook performs no I/O and owns no data.
+      if (isOAuthCredentialRequest(init)) prepareCredentialRequest?.();
       if (isRefreshTokenRequest(init)) {
         const signal =
           requestSignal && init?.signal

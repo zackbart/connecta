@@ -1,3 +1,11 @@
+import { beforeEach as beforeTransportTest } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+
+// Stand in for the Node host while preserving this suite's fetch leaves.
+beforeTransportTest(() => {
+  installOwnedTransport();
+});
+
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
