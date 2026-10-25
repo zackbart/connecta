@@ -469,9 +469,11 @@ agent. Human endpoints refuse Vercel workload credentials without consulting
 human adapters. Removing the agent stops both credential paths.
 
 The [operator agent view](./operator-ui.md#operator-data-contract) lists each
-declared agent's supported credential kinds and latest successful pool admission.
-Last seen is payload-free admission evidence, independent of completed-call
-history; a refused credential or pool does not update it.
+declared agent's supported credential kinds and latest sampled successful pool
+admission. Last seen is payload-free admission evidence sampled within a minute,
+independent of completed-call history; a refused credential or pool does not
+update it. Recording is best effort within 500 ms or the shorter configured probe
+deadline; failure loses a sample and a later eligible admission can try again.
 
 ## Agent tokens and upgrading from earlier tokens
 

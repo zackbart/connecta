@@ -242,7 +242,9 @@ describe("operator agent admission observations", () => {
     expect(await storage.get(agentObservationKeys.agent("assistant"))).toBe(LATER);
     expect(compare).toHaveBeenCalledTimes(2);
     compare.mockResolvedValue(false);
-    await runEdge(observeAgentAdmission(storage, "assistant", "2026-10-25T12:00:02.000Z", 1000));
+    // Explicitly pass the one-minute sample window so this still exercises
+    // two CAS attempts under contention, rather than a fresh-sample no-op.
+    await runEdge(observeAgentAdmission(storage, "assistant", "2026-10-25T12:01:01.000Z", 1000));
     expect(compare).toHaveBeenCalledTimes(4);
     expect(await storage.get(agentObservationKeys.agent("assistant"))).toBe(LATER);
   });
@@ -441,3 +443,178 @@ describe("operator agent admission observations", () => {
     }
   });
 });
+
+describe("review 981: bounded sampled admission observations", () => {
+  it.each([true, false])(
+    "INV-7 INV-9: stalled observation=%s leaves the shared request permit available before the queue deadline",
+    async (stalled) => {
+      const storage = memoryStorage();
+      const originalGet = storage.get.bind(storage);
+      const entered = deferred<void>();
+      const get = vi.spyOn(storage, "get").mockImplementation((key) => {
+        if (key !== agentObservationKeys.agent("assistant")) return originalGet(key);
+        entered.resolve();
+        return stalled ? new Promise(() => {}) : originalGet(key);
+      });
+      mockKeys();
+      const dispatch = vi.fn(async () => ({ ok: true }));
+      const app = deployment({
+        storage,
+        connectors: [
+          {
+            id: "crm",
+            staticTools: [{ name: "send", annotations: { readOnlyHint: false } }],
+            listTools: async () => [],
+            callTool: dispatch,
+          },
+        ],
+        pools: { team: { surface: "native", tools: ["crm"], members: ["agent:assistant"] } },
+        discovery: { probeTimeoutMs: 2500 },
+        admission: { requests: { concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 1000 } },
+      });
+      try {
+        const bearer = await workload.token();
+        const started = Date.now();
+        const agent = app
+          .fetch(
+            new Request(request(bearer), {
+              method: "POST",
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "tools/call",
+                params: { name: "crm__send", arguments: {} },
+              }),
+            }),
+          )
+          .then(async (response) => {
+            await response.text();
+            return { status: response.status, elapsedMs: Date.now() - started };
+          });
+        await entered.promise;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const human = await app.fetch(request("clerk-operator", "/mcp"));
+        const humanStatus = human.status;
+        await human.text();
+        const agentResponse = await agent;
+        console.info(
+          JSON.stringify({
+            stalled,
+            humanStatus,
+            agentStatus: agentResponse.status,
+            agentElapsedMs: agentResponse.elapsedMs,
+          }),
+        );
+        expect(humanStatus).toBe(200);
+        expect(agentResponse.status).toBe(200);
+        expect(agentResponse.elapsedMs).toBeLessThan(1000);
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(get).toHaveBeenCalledWith(agentObservationKeys.agent("assistant"));
+        if (stalled) expect(await originalGet(agentObservationKeys.agent("assistant"))).toBeNull();
+        else expect(await originalGet(agentObservationKeys.agent("assistant"))).toMatch(/^\d{4}-/);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it.each(["vercel_oidc", "access_token"] as const)(
+    "INV-4 INV-6 INV-10: repeated successful %s admissions sample storage once per minute, refreshing at and after 60 seconds",
+    async (kind) => {
+      // Only wall time is faked: the production request and cancellation timers
+      // keep running, while timestamp precision has explicit boundary steps.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(NOW));
+      const storage = memoryStorage();
+      mockKeys();
+      const app = deployment({
+        storage,
+        ...(kind === "access_token" ? { agents: ["assistant"], accessTokens: accessTokens(storage) } : {}),
+      });
+      try {
+        const bearer = kind === "vercel_oidc" ? await workload.token() : await issueAgentToken(storage, "assistant");
+        const compare = vi.spyOn(storage, "compareAndSet");
+        const observations = () =>
+          compare.mock.calls.filter(([key]) => key === agentObservationKeys.agent("assistant"));
+        const admit = async (offset: number) => {
+          vi.setSystemTime(new Date(Date.parse(NOW) + offset));
+          const response = await app.fetch(request(bearer));
+          expect(response.status).toBe(200);
+          await response.text();
+        };
+        await admit(0);
+        expect(observations()).toHaveLength(1);
+        for (const offset of [1, 1000, 30_000, 59_999]) await admit(offset);
+        expect(observations()).toHaveLength(1);
+        expect(await storage.get(agentObservationKeys.agent("assistant"))).toBe(NOW);
+        expect((await contract(app)).agents[0]?.lastSeenAt).toBe(NOW);
+        await admit(60_000);
+        expect(observations()).toHaveLength(2);
+        const minute = new Date(Date.parse(NOW) + 60_000).toISOString();
+        expect(await storage.get(agentObservationKeys.agent("assistant"))).toBe(minute);
+        await admit(119_999);
+        expect(observations()).toHaveLength(2);
+        await admit(120_001);
+        expect(observations()).toHaveLength(3);
+        const latest = new Date(Date.parse(NOW) + 120_001).toISOString();
+        expect(await storage.get(agentObservationKeys.agent("assistant"))).toBe(latest);
+        await runEdge(observeAgentAdmission(storage, "assistant", NOW, 2500));
+        expect(observations()).toHaveLength(3);
+        expect(await storage.get(agentObservationKeys.agent("assistant"))).toBe(latest);
+        expect(JSON.stringify(observations())).not.toContain(bearer);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+});
+
+it.each([2500, 125])(
+  "INV-7: observation timeout %i uses the smaller of the probe deadline and 500 ms with native cleanup",
+  async (probeMs) => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    let entered = false;
+    let closed = false;
+    let settled = false;
+    registerNativeStorage(storage, {
+      get: () =>
+        Effect.sync(() => {
+          entered = true;
+        }).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              closed = true;
+            }),
+          ),
+        ),
+      set: () => Effect.void,
+      delete: () => Effect.void,
+      list: () => Effect.succeed([]),
+      compareAndSet: () => Effect.succeed(true),
+    });
+    const caller = new AbortController();
+    const pending = runEdge(observeAgentAdmission(storage, "assistant", NOW, probeMs), { signal: caller.signal }).then(
+      () => {
+        settled = true;
+      },
+    );
+    const outcome = pending.catch(() => {});
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(entered).toBe(true);
+      const budget = Math.min(probeMs, 500);
+      await vi.advanceTimersByTimeAsync(budget - 1);
+      expect(settled).toBe(false);
+      expect(closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(closed).toBe(true);
+      expect(settled).toBe(true);
+      await pending;
+    } finally {
+      caller.abort(new Error("test request complete"));
+      await outcome;
+    }
+  },
+);

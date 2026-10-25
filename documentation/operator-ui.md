@@ -419,15 +419,20 @@ The maintainer view carries:
   otherwise its slot (`state`, `issuedAt`, `revokedAt`, `revision`) is exactly
   what `GET /ui/access-tokens` lists, including an unissued `state: "none"`.
   A failed or incomplete slot read answers 503 rather than drop agents.
-  `lastSeenAt` is the newest successful agent-endpoint admission or visible
-  historical activity timestamp, or `null` when unknown or withheld.
+  `lastSeenAt` is the newest sampled successful agent-endpoint admission or
+  visible historical activity timestamp, or `null` when unknown or withheld.
   Admission means credential verification and membership in that declared pool
   succeeded; it does not promise a completed call. Invalid credentials,
   refused/undeclared pools and human routes record nothing. The observation
   stores only the declared name and timestamp, independently of activity.
-  It uses at most two atomic storage attempts under the existing probe deadline
-  and request lifetime; failure or contention can lose an observation, never
-  refuse admission, replay work or move the timestamp backwards.
+  Admission observations sample at most once per minute: a valid stored time
+  less than 60 seconds behind the candidate skips the write, and an older
+  candidate never moves the time backwards. This is minute-level admission
+  evidence, not an exact timestamp for every request. Each observation uses at
+  most two atomic storage attempts under the smaller of the configured probe
+  deadline and 500 ms, within the request lifetime. Failure, timeout or
+  contention can lose a sample; a later eligible admission can try again.
+  Observation never refuses admission or retries MCP or tool work.
 - `matrix`: a cell per connector for plain `/mcp` (`pool: null`) and for each
   pool that serves it, with that endpoint's tool names or `"all"` and
   `runsAs`. A Workspace connector with a subject mapping is
