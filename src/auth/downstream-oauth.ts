@@ -385,7 +385,7 @@ export class OAuthRefreshCoordinator {
     resourceFetch: FetchLike = baseFetch,
     prepareCredentialRequest?: () => void,
   ): FetchLike {
-    return authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) => {
+    return authMethod((input: string | URL, init: RequestInit | undefined) => {
       return authFlow<Response>(
         function* (this: OAuthRefreshCoordinator) {
           init = init
@@ -2166,11 +2166,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
               try {
                 written = (yield authInvoke(this, "wait", [
                   authMethod(() => {
-                    return authFlow<boolean>(
-                      function* (this: KvOAuthProvider) {
-                        options.beforeWrite?.();
-                        return (yield authStorage(this.storage, "compareAndSet", [GRANT, raw, encoded])) as boolean;
-                      }.bind(this),
+                    return authStorage<boolean>(
+                      this.storage,
+                      "compareAndSet",
+                      [GRANT, raw, encoded],
+                      options.beforeWrite && (() => options.beforeWrite?.()),
                     );
                   }),
                   signal,
@@ -3232,11 +3232,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
                     if (
                       (yield authCall(wait, [
                         authMethod(() => {
-                          return authFlow<boolean>(
-                            function* (this: KvOAuthProvider) {
-                              waiting.transfer();
-                              return (yield authStorage(this.storage, "compareAndSet", [key, raw, refused])) as boolean;
-                            }.bind(this),
+                          return authStorage<boolean>(this.storage, "compareAndSet", [key, raw, refused], () =>
+                            waiting.transfer(),
                           );
                         }),
                       ])) as boolean
@@ -3298,15 +3295,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
                       ) {
                         (yield authCall(wait, [
                           authMethod(() => {
-                            return authFlow<boolean>(
-                              function* (this: KvOAuthProvider) {
-                                waiting.transfer();
-                                return (yield authStorage(this.storage, "compareAndSet", [
-                                  spentKey,
-                                  spentExpected,
-                                  JSON.stringify({ ...spent, state: "ambiguous" }),
-                                ])) as boolean;
-                              }.bind(this),
+                            return authStorage<boolean>(
+                              this.storage,
+                              "compareAndSet",
+                              [spentKey, spentExpected, JSON.stringify({ ...spent, state: "ambiguous" })],
+                              () => waiting.transfer(),
                             );
                           }),
                         ])) as boolean;
@@ -3341,11 +3334,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
                     try {
                       won = (yield authCall(wait, [
                         authMethod(() => {
-                          return authFlow<boolean>(
-                            function* (this: KvOAuthProvider) {
-                              waiting.transfer();
-                              return (yield authStorage(this.storage, "compareAndSet", [key, raw, claimed])) as boolean;
-                            }.bind(this),
+                          return authStorage<boolean>(this.storage, "compareAndSet", [key, raw, claimed], () =>
+                            waiting.transfer(),
                           );
                         }),
                       ])) as boolean;

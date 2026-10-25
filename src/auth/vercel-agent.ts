@@ -180,7 +180,7 @@ export function vercelAgentAuth(agents: readonly ResolvedAgent[], logger: Logger
     kind: "vercel_oidc",
     activityActorNamespace: AGENT_NAMESPACE,
     recognizesCredential: isVercelAgentCredential,
-    authorize: authMethod(function (request: Request<unknown, CfProperties<unknown>>) {
+    authorize: authMethod(function (request: Request) {
       return authFlow<AuthResult>(function* () {
         try {
           return (yield authCall(withAuthenticationDeadline, [

@@ -39,7 +39,7 @@ export function cloudflareAccessAuth(): InboundAuth {
     uiAuth: { kind: "cloudflare-access" },
 
     authorize: authMethod(function (
-      request: Request<unknown, CfProperties<unknown>>,
+      request: Request,
       _baseUrl: string,
       runtimeContext: InboundAuthRuntimeContext | undefined,
     ) {

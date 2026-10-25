@@ -581,7 +581,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             ...exchange,
             fetchFn: coordinatorFor(ctx).coordinatedFetch(
               provider,
-              authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) => {
+              authMethod((input: string | URL, init: RequestInit | undefined) => {
                 return authFlow<Response>(function* () {
                   if (exchange) {
                     return (yield authView(

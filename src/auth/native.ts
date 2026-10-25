@@ -1,6 +1,6 @@
 // Private auth programs. Promise methods are SDK/custom edges; owned programs
 // compose directly by function identity, including inherited implementations.
-import { Cause, Context, Effect, Exit } from "effect";
+import { Cause, Context, Effect, Exit, Scheduler } from "effect";
 import { getNativeStorage } from "../runtime/native-storage.js";
 import { causeError, detach, fromSignal, runEdge } from "../runtime/run.js";
 import type { KVStorage } from "../types.js";
@@ -116,14 +116,45 @@ export function authInvoke<A = any>(receiver: any, key: string, args: any[]): Ef
       : authValue<A>(() => Reflect.apply(method, receiver, args));
   }).pipe(Effect.catchDefect(Effect.fail));
 }
-export function authStorage<A = any>(storage: KVStorage, key: keyof KVStorage, args: any[]): Effect.Effect<A, unknown> {
+export function authStorage<A = any>(
+  storage: KVStorage,
+  key: keyof KVStorage,
+  args: any[],
+  beforeSubmit?: () => void,
+): Effect.Effect<A, unknown> {
   return Effect.suspend(() => {
     const native = getNativeStorage(storage);
-    if (!native) return authInvoke(storage, key, args);
-    const operation = authValue<A>(() => (Reflect.get(native, key) as Function).apply(native, args));
+    const operation = native
+      ? authValue<A>(() => (Reflect.get(native, key) as Function).apply(native, args))
+      : authInvoke<A>(storage, key, args);
+    // Ownership transfer and native/custom storage submission are one JS
+    // reaction, including D2's lazy typed wrapper. Actual I/O can still wait.
+    const submitted = beforeSubmit ? authSubmission(operation, beforeSubmit) : operation;
+    if (!native) return submitted;
     return Effect.flatMap(Effect.serviceOption(AuthenticationWork), (work) =>
-      work._tag === "Some" ? authDetached(operation) : operation,
+      work._tag === "Some" ? authDetached(submitted) : submitted,
     );
+  });
+}
+
+function authSubmission<A>(operation: Effect.Effect<A, unknown>, beforeSubmit: () => void): Effect.Effect<A, unknown> {
+  return Effect.flatMap(Scheduler.Scheduler, (parent) => {
+    let submitting = false;
+    const scheduler: Scheduler.Scheduler = {
+      executionMode: parent.executionMode,
+      shouldYield: (fiber) => !submitting && parent.shouldYield(fiber),
+      makeDispatcher: () => parent.makeDispatcher(),
+    };
+    return Effect.suspend(() => {
+      submitting = true;
+      // Resume ordinary scheduling before any pending I/O can continue. This
+      // gate covers only submission's current JS reaction, including throws.
+      queueMicrotask(() => {
+        submitting = false;
+      });
+      beforeSubmit();
+      return operation;
+    }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
   });
 }
 export function authThen(

@@ -1,6 +1,15 @@
-import { agentConfig, type AgentConfig } from "./agent-config.js";
-import { AGENT_NAMESPACE, agentSubjectId, isAgentName, trustAgentProvider } from "./agent-identity.js";
 import { withAuthenticationDeadline } from "./auth-admission.js";
+import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
+import type { AuthResult, IdentityReference, InboundAuth, KVStorage } from "./types.js";
+import { assertKnownOptions, ConfigError, optionsOf, readPlain } from "./config-schema.js";
+import { routeAccessTokens } from "./routes/access-tokens.js";
+import type { AccessTokensModule } from "./module-contracts.js";
+import { validIdentityReference } from "./identity.js";
+import { accessTokenKeys } from "./storage/keys.js";
+import { AGENT_NAMESPACE, agentSubjectId, isAgentName, trustAgentProvider } from "./agent-identity.js";
+import { keepErrorName } from "./redaction-identity.js";
+import { agentConfig, type AgentConfig } from "./agent-config.js";
+
 import {
   authCall,
   authCatch,
@@ -11,16 +20,7 @@ import {
   authStorage,
   registerAuthMethod,
 } from "./auth/native.js";
-import { assertKnownOptions, ConfigError, optionsOf, readPlain } from "./config-schema.js";
-import { validIdentityReference } from "./identity.js";
-import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
-import type { AccessTokensModule } from "./module-contracts.js";
-import { keepErrorName } from "./redaction-identity.js";
-import { routeAccessTokens } from "./routes/access-tokens.js";
 import { runEdge } from "./runtime/run.js";
-import { accessTokenKeys } from "./storage/keys.js";
-import type { AuthResult, IdentityReference, InboundAuth, KVStorage } from "./types.js";
-
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
 const TOKEN_VALUE_RE = /^cta_[A-Za-z0-9_-]{43}$/;

@@ -1,6 +1,6 @@
 import type { OAuthClientMetadata } from "@modelcontextprotocol/client";
-import type { SentSecrets } from "../sent-secrets.js";
 import type { Connector } from "../types.js";
+import type { SentSecrets } from "../sent-secrets.js";
 import { classifyHost } from "../url-safety.js";
 
 /** A deployment-owned identity, bound to one authorization server. */

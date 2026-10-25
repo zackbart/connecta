@@ -183,7 +183,7 @@ const authenticateNative = /* @__PURE__ */ registerAuth(
     logger: Logger,
     settle?: (pending: Promise<unknown>) => void,
   ) {
-    return Effect.suspend<Awaited<ReturnType<typeof authenticate>>, unknown>(() => {
+    return Effect.suspend<Awaited<ReturnType<typeof authenticate>>, unknown, never>(() => {
       request.signal.throwIfAborted();
       if (unreachable > 0) {
         unreachable = 0;

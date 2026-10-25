@@ -1,3 +1,4 @@
+import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
 import { Effect } from "effect";
 import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
@@ -21,7 +22,6 @@ import { decodeJwt } from "@clerk/backend/jwt";
 import { failureRecord, logFailure, type AuthDenialReason } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
-import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
 import { createByteReadingClerkClient } from "./clerk-transport.js";
 
 export type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
@@ -913,7 +913,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       ...(opts.signUpUrl ? { signUpUrl: opts.signUpUrl } : {}),
     },
 
-    handleMetadata: authMethod(function (request: Request<unknown, CfProperties<unknown>>, baseUrl: string) {
+    handleMetadata: authMethod(function (request: Request, baseUrl: string) {
       return authValue<Response | null>(() => {
         const { pathname } = new URL(request.url);
         const protectedResource =
@@ -950,7 +950,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       });
     }),
 
-    authorize: authMethod(function (request: Request<unknown, CfProperties<unknown>>, baseUrl: string) {
+    authorize: authMethod(function (request: Request, baseUrl: string) {
       return authFlow<AuthResult>(function* () {
         const credential = authorizationCredential(request);
         const tokenPresent = credential.kind !== "absent";

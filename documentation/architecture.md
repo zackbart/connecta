@@ -3482,6 +3482,16 @@ its own request. Code exchange remains request-owned and one-use. Epochs,
 permanent spent fingerprints, physical-attempt guards and pre-claim transport
 preflight are unchanged.
 
+`authStorage(storage, key, args, beforeSubmit?)` admits the ownership hook and
+native/custom storage invocation in one JavaScript reaction. Its public
+Scheduler delegation suppresses automatic yield only during that initial
+reaction; a microtask restores parent scheduling before pending I/O resumes.
+The four hook sites are `updateGrant`'s guarded write and `claimRefresh`'s
+unknown-lease refusal, ambiguous spent-token write and new claim. A forced
+scheduler regression covers both native and custom stores; real pending TCP
+I/O, pre-submission cancellation, synchronous failure and unknown CAS outcomes
+retain their distinct ownership and exactly-once settlement rules.
+
 Intentional leaves are the Clerk and MCP SDKs (including their callback methods),
 platform fetch/body readers and Web Crypto, custom identity/gate/sealer/storage
 hooks, and the reset-settlement observer required by the callback route. Native
@@ -3490,13 +3500,26 @@ signatures and published private class declarations remain unchanged; only
 `runtime/run.ts` starts fibers. SDK telemetry remains disabled, and raw SDK,
 body, storage or Cause diagnostics never reach operator records.
 
-The deliberate 2026-10-25 D3/D4 cost ruling authorizes only Worker
-`maxGzip: 785000` (previously 760000) and UI `maxGzip: 350000` (previously
-345000). On official cached Node 22.23.4 / zlib 1.3.1-e00f703, D4's fixed-input
-baseline measured 758,603 / 342,425 bytes gzip for Worker / UI; the reviewed
-native-auth candidate measured 762,729 / 348,467 (+4,126 / +6,042). An avoidable
-shared call-runtime import had already been removed from the initial 364,675-byte
-UI candidate. The Worker allowance also covers the separately measured native
-router; these measurements do not predict a combined gzip by addition. Final
-combined artifacts must be rebuilt. Historical baselines, root and D1 caps,
-other caps, dependency pins and all security/API gates remain unchanged.
+The declaration comparison retains 86 of 88 reachable files byte for byte.
+The two exact exceptions swap only adjacent `title` / `instructions` members
+in the inferred provider and Google Workspace schema declarations; both keep
+the same `Field<unknown, unknown, true>` type. Both owning source files are
+unchanged. A narrow machine check restores only those two exact adjacent
+pairs and requires byte equality, with no other type, export or reference
+change. All 88 declarations still exclude Effect and have complete references.
+
+The superseding 2026-10-25 D3/D4 cost ruling authorizes only Worker
+`maxGzip: 785000` (previously 760000) and Clerk `maxGzip: 85000` (previously
+63087). Official cached Node 22.23.4 / zlib 1.3.1-e00f703 measured Clerk at
+47,688 -> 80,961 bytes gzip (+33,273): the generated SDK is unchanged, while
+native Effect adds 91.8 KB raw plus the native helper and small auth-source
+growth. The isolated D4 candidate measured Worker at 762,666, root at 377,177
+and D1 at 88,321 bytes gzip. Optional-graph optimization brought UI to 342,955,
+so the earlier unused UI allowance is revoked and its original 345000 cap
+remains. Historical baselines, root/D1 and all other caps, dependency pins and
+security/API gates remain unchanged. These independent measurements do not
+predict a combined gzip by addition; final artifacts must be rebuilt. Native
+registration, decorated fallback and request/native-storage semantics also
+require a smoke through an actual minified production bundle. Final post-hook
+official artifacts measure root 377,290, D1 88,321, Clerk 80,959, UI 342,959
+and Worker 762,774 bytes gzip, all within those caps.

@@ -1,27 +1,28 @@
-import type { ActivityActor } from "../activity.js";
-import { assertsAgents, isAgentName } from "../agent-identity.js";
-import { authenticate } from "../auth-admission.js";
-import { authCall, authFlow, authInvoke, authProgram, registerAuth } from "../auth/native.js";
-import { isVercelAgentCredential } from "../auth/vercel-agent.js";
-import type { ResolvedConfig } from "../config.js";
-import type { DeferredWork } from "../connector-scope.js";
-import type { AdmissionController } from "../executor-admission.js";
-import { htmlSecurityHeaders } from "../html-security.js";
-import { identityStorageKey, validIdentityReference } from "../identity.js";
 import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
-import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
+import { isVercelAgentCredential } from "../auth/vercel-agent.js";
+import type { ActivityActor } from "../activity.js";
+import type { DeferredWork } from "../connector-scope.js";
+import { htmlSecurityHeaders } from "../html-security.js";
+import type { AdmissionController } from "../executor-admission.js";
 import type { Registry } from "../registry.js";
-import { runEdge } from "../runtime/run.js";
+import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
 import type {
   AuthenticatedIdentity,
-  AuthResult,
   Executor,
   IdentityReference,
   InboundAuth,
   InboundAuthRuntimeContext,
-  Logger,
 } from "../types.js";
+import { identityStorageKey, validIdentityReference } from "../identity.js";
+import { assertsAgents, isAgentName } from "../agent-identity.js";
+import { authenticate } from "../auth-admission.js";
+import type { Logger } from "../types.js";
+import type { ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
+
+import { authCall, authFlow, authInvoke, authProgram, registerAuth } from "../auth/native.js";
+import { runEdge } from "../runtime/run.js";
+import type { AuthResult } from "../types.js";
 
 export interface ServerOptions {
   /**
