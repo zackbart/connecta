@@ -1,7 +1,9 @@
+import { Effect } from "effect";
 import { withAuthenticationDeadline } from "../auth-admission.js";
-import { authorizationCredential } from "../inbound-credential.js";
-import type { AuthResult, InboundAuth } from "../types.js";
 import { validIdentityReference } from "../identity.js";
+import { authorizationCredential } from "../inbound-credential.js";
+import type { AuthResult, InboundAuth, InboundAuthRuntimeContext } from "../types.js";
+import { authCall, authFlow, authInvoke, authMethod } from "./native.js";
 
 function identityString(identity: Record<string, unknown>, field: string): string | undefined {
   const value = identity[field];
@@ -36,52 +38,62 @@ export function cloudflareAccessAuth(): InboundAuth {
     activityActorNamespace: "cloudflare-access",
     uiAuth: { kind: "cloudflare-access" },
 
-    async authorize(request, _baseUrl, runtimeContext): Promise<AuthResult> {
-      if (authorizationCredential(request).kind !== "absent") return unauthorized();
-      const access = runtimeContext?.access;
-      if (!access || typeof access.aud !== "string" || !/^[\x21-\x7e]{1,256}$/.test(access.aud)) return unauthorized();
-
-      let identity: Record<string, unknown> | undefined;
-      try {
-        identity = await withAuthenticationDeadline(request, () => access.getIdentity());
-      } catch {
-        return {
+    authorize: authMethod(function (
+      request: Request<unknown, CfProperties<unknown>>,
+      _baseUrl: string,
+      runtimeContext: InboundAuthRuntimeContext | undefined,
+    ) {
+      return authFlow<AuthResult>(function* () {
+        if (authorizationCredential(request).kind !== "absent") return unauthorized();
+        const access = runtimeContext?.access;
+        if (!access || typeof access.aud !== "string" || !/^[\x21-\x7e]{1,256}$/.test(access.aud))
+          return unauthorized();
+        let identity: Record<string, unknown> | undefined;
+        try {
+          identity = (yield authCall(withAuthenticationDeadline, [
+            request,
+            authMethod(() => {
+              return authInvoke(access, "getIdentity", []) as Effect.Effect<
+                Record<string, unknown> | undefined,
+                unknown
+              >;
+            }),
+          ])) as Record<string, unknown> | undefined;
+        } catch {
+          return {
+            ok: false,
+            response: Response.json(
+              { error: "Cloudflare Access identity unavailable", problem: "identity_unavailable" },
+              { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "1" } },
+            ),
+          };
+        }
+        const forbidden = (): AuthResult => ({
           ok: false,
           response: Response.json(
-            { error: "Cloudflare Access identity unavailable", problem: "identity_unavailable" },
-            { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "1" } },
-          ),
-        };
-      }
-      // Access binds ctx.access.aud to its Worker application at the edge.
-      // Service credentials can pass that edge, but connecta machines must
-      // present a cta_ token to the machine provider instead.
-      const forbidden = (): AuthResult => ({
-        ok: false,
-        response: Response.json(
-          { error: "Cloudflare Access human identity required" },
-          { status: 403, headers: { "Cache-Control": "no-store" } },
-        ),
-      });
-      if (!identity || typeof identity !== "object" || Array.isArray(identity)) return forbidden();
-      const userId = identityString(identity, "user_uuid") ?? identityString(identity, "email");
-      if (
-        identity.service_token_status === true ||
-        identityString(identity, "service_token_id") ||
-        identityString(identity, "common_name")
-      )
-        return forbidden();
-
-      if (!userId) {
-        return {
-          ok: false,
-          response: Response.json(
-            { error: "Cloudflare Access user identity required" },
+            { error: "Cloudflare Access human identity required" },
             { status: 403, headers: { "Cache-Control": "no-store" } },
           ),
-        };
-      }
-      return { ok: true, userId, subjectId: userId };
-    },
+        });
+        if (!identity || typeof identity !== "object" || Array.isArray(identity)) return forbidden();
+        const userId = identityString(identity, "user_uuid") ?? identityString(identity, "email");
+        if (
+          identity.service_token_status === true ||
+          identityString(identity, "service_token_id") ||
+          identityString(identity, "common_name")
+        )
+          return forbidden();
+        if (!userId) {
+          return {
+            ok: false,
+            response: Response.json(
+              { error: "Cloudflare Access user identity required" },
+              { status: 403, headers: { "Cache-Control": "no-store" } },
+            ),
+          };
+        }
+        return { ok: true, userId, subjectId: userId };
+      });
+    }),
   };
 }

@@ -1,5 +1,7 @@
+import { Effect } from "effect";
+import { authCall, AuthenticationWork, authProgram, authValue, hasAuthProgram, registerAuth } from "./auth/native.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { withDeadline } from "./timeout.js";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import type { AuthResult, InboundAuth, InboundAuthRuntimeContext, Logger } from "./types.js";
 
 // Shared by human and agent routes, even across deployments constructed in the
@@ -107,18 +109,26 @@ export function withAuthenticationDeadline<T>(
   request: Request,
   operation: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  const lifetime = lifetimes.get(request)?.deref();
-  lifetime?.deadline(NATIVE_DEADLINE_MS);
-  return withDeadline(
-    (signal) => {
-      signal.throwIfAborted();
-      const pending = operation(signal);
-      lifetime?.track(pending);
-      return pending;
-    },
-    { timeoutMs: NATIVE_DEADLINE_MS, signal: request.signal, timeoutError: new Error("Authentication timed out") },
-  );
+  return runEdge(authProgram<T>(withAuthenticationDeadlineNative, [request, operation]));
 }
+const withAuthenticationDeadlineNative = /* @__PURE__ */ registerAuth(withAuthenticationDeadline, function <
+  T,
+>(request: Request, operation: (signal: AbortSignal) => Promise<T>) {
+  return Effect.suspend(() => {
+    const lifetime = lifetimes.get(request)?.deref();
+    lifetime?.deadline(NATIVE_DEADLINE_MS);
+    const bounded = withDeadlineEffect(
+      (signal) => {
+        signal.throwIfAborted();
+        return authCall<T>(operation, [signal]);
+      },
+      { timeoutMs: NATIVE_DEADLINE_MS, signal: request.signal, timeoutError: new Error("Authentication timed out") },
+    );
+    // A custom decorator may call the saved Promise shell. Reuse this exact
+    // request's charge even when native consumer dispatch cannot select it.
+    return lifetime ? bounded.pipe(Effect.provideService(AuthenticationWork, lifetime)) : bounded;
+  });
+});
 
 /** Shared capacity refusal: one checked log and retryable HTTP contract. */
 export function authenticationBusyResponse(
@@ -133,81 +143,114 @@ export function authenticationBusyResponse(
 }
 
 /** The sole route boundary for invoking an inbound adapter, including its SDK. */
-export async function authenticate(
+export function authenticate(
   provider: InboundAuth,
   request: Request,
   baseUrl: string,
   runtimeContext: InboundAuthRuntimeContext | undefined,
   logger: Logger,
   settle?: (pending: Promise<unknown>) => void,
-): Promise<{ admitted: true; result: AuthResult } | { admitted: false; response: Response }> {
-  request.signal.throwIfAborted();
-  if (unreachable > 0) {
-    unreachable = 0;
-    logFailure(
-      logger,
-      "Authentication released after its pending work became unreachable",
-      failureRecord({ reason: "authentication_unreachable" }),
-    );
-  }
-  if (active >= AUTHENTICATION_CONCURRENCY || abandoned >= ABANDONED_ALLOWANCE) {
-    // Callers see one retryable contract; the log and health tell an
-    // operator whether stalled bindings, not load, are refusing.
-    const reason = abandoned >= ABANDONED_ALLOWANCE ? "authentication_abandoned_saturated" : "authentication_busy";
-    return {
-      admitted: false,
-      response: authenticationBusyResponse(logger, reason),
-    };
-  }
-  active++;
-  const charge: Charge = { state: "active" };
-  // Held only by this scope's closures (see `collector`); the registry keeps
-  // the record, and the token, as its own unregister key, only weakly.
-  const token = {};
-  collector?.register(token, charge, token);
-  // The adapter's own promise plus each tracked native operation.
-  let remaining = 1;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let complete!: () => void;
-  const done = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  const finish = () => {
-    if (--remaining !== 0) return;
-    clearTimeout(timer);
-    collector?.unregister(token);
-    if (lifetimes.get(request)?.deref() === lifetime) lifetimes.delete(request);
-    release(charge);
-    complete();
-  };
-  const lifetime: Lifetime = {
-    deadline(ms) {
-      clearTimeout(timer);
-      timer = setTimeout(() => abandon(charge), ms + SETTLEMENT_GRACE_MS);
-    },
-    track(pending) {
-      remaining++;
-      void pending.then(finish, finish);
-    },
-  };
-  lifetime.deadline(DEFAULT_DEADLINE_MS);
-  lifetimes.set(request, weakly(lifetime));
-  let asynchronous = false;
-  try {
-    const result = provider.authorize(request, baseUrl, runtimeContext);
-    // A synchronous local/cached verdict owns no pending authentication.
-    // Release before yielding, rather than holding a slot for a microtask.
-    if ("ok" in result) return { admitted: true, result };
-    asynchronous = true;
-    const pending = result.finally(finish);
-    // Keep just this request's settlement continuation runnable when workerd
-    // drops the disconnected caller, including native work that outlived the
-    // caller-facing deadline. It neither detaches nor starts work.
-    settle?.(done);
-    return { admitted: true, result: await pending };
-  } finally {
-    // A caller leaving is not proof that its adapter or SDK has stopped.
-    // Keep capacity charged until the underlying authorization settles.
-    if (!asynchronous) finish();
-  }
+): Promise<
+  | {
+      admitted: true;
+      result: AuthResult;
+    }
+  | {
+      admitted: false;
+      response: Response;
+    }
+> {
+  return runEdge(
+    authProgram<
+      | {
+          admitted: true;
+          result: AuthResult;
+        }
+      | {
+          admitted: false;
+          response: Response;
+        }
+    >(authenticateNative, [provider, request, baseUrl, runtimeContext, logger, settle]),
+  );
 }
+const authenticateNative = /* @__PURE__ */ registerAuth(
+  authenticate,
+  function (
+    provider: InboundAuth,
+    request: Request,
+    baseUrl: string,
+    runtimeContext: InboundAuthRuntimeContext | undefined,
+    logger: Logger,
+    settle?: (pending: Promise<unknown>) => void,
+  ) {
+    return Effect.suspend<Awaited<ReturnType<typeof authenticate>>, unknown>(() => {
+      request.signal.throwIfAborted();
+      if (unreachable > 0) {
+        unreachable = 0;
+        logFailure(
+          logger,
+          "Authentication released after its pending work became unreachable",
+          failureRecord({ reason: "authentication_unreachable" }),
+        );
+      }
+      if (active >= AUTHENTICATION_CONCURRENCY || abandoned >= ABANDONED_ALLOWANCE) {
+        const reason = abandoned >= ABANDONED_ALLOWANCE ? "authentication_abandoned_saturated" : "authentication_busy";
+        return Effect.succeed({
+          admitted: false,
+          response: authenticationBusyResponse(logger, reason),
+        });
+      }
+      active++;
+      const charge: Charge = { state: "active" };
+      const token = {};
+      collector?.register(token, charge, token);
+      let remaining = 1;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let complete!: () => void;
+      const done = new Promise<void>((resolve: (value: void | PromiseLike<void>) => void) => {
+        complete = resolve;
+      });
+      const finish = () => {
+        if (--remaining !== 0) return;
+        clearTimeout(timer);
+        collector?.unregister(token);
+        if (lifetimes.get(request)?.deref() === lifetime) lifetimes.delete(request);
+        release(charge);
+        complete();
+      };
+      const lifetime: Lifetime = {
+        deadline(ms) {
+          clearTimeout(timer);
+          timer = setTimeout(() => abandon(charge), ms + SETTLEMENT_GRACE_MS);
+        },
+        track(pending) {
+          remaining++;
+          void pending.then(finish, finish);
+        },
+      };
+      lifetime.deadline(DEFAULT_DEADLINE_MS);
+      lifetimes.set(request, weakly(lifetime));
+      // Native verification composes in this request and accounts for the
+      // real settlement of every uncancellable SDK/platform leaf.
+      if (hasAuthProgram(provider.authorize)) {
+        settle?.(done);
+        return authCall<AuthResult>(provider.authorize, [request, baseUrl, runtimeContext], provider).pipe(
+          Effect.provideService(AuthenticationWork, lifetime),
+          Effect.ensuring(Effect.sync(finish)),
+          Effect.map((result) => ({ admitted: true as const, result })),
+        );
+      }
+      let asynchronous = false;
+      try {
+        const result = provider.authorize(request, baseUrl, runtimeContext);
+        if ("ok" in result) return Effect.succeed({ admitted: true as const, result });
+        asynchronous = true;
+        const pending = result.finally(finish);
+        settle?.(done);
+        return authValue<AuthResult>(() => pending).pipe(Effect.map((result) => ({ admitted: true as const, result })));
+      } finally {
+        if (!asynchronous) finish();
+      }
+    });
+  },
+);

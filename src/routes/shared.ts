@@ -1,23 +1,26 @@
-import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
-import { isVercelAgentCredential } from "../auth/vercel-agent.js";
 import type { ActivityActor } from "../activity.js";
+import { assertsAgents, isAgentName } from "../agent-identity.js";
+import { authenticate } from "../auth-admission.js";
+import { authCall, authFlow, authInvoke, authProgram, registerAuth } from "../auth/native.js";
+import { isVercelAgentCredential } from "../auth/vercel-agent.js";
+import type { ResolvedConfig } from "../config.js";
 import type { DeferredWork } from "../connector-scope.js";
-import { htmlSecurityHeaders } from "../html-security.js";
 import type { AdmissionController } from "../executor-admission.js";
-import type { Registry } from "../registry.js";
+import { htmlSecurityHeaders } from "../html-security.js";
+import { identityStorageKey, validIdentityReference } from "../identity.js";
+import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
 import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
+import type { Registry } from "../registry.js";
+import { runEdge } from "../runtime/run.js";
 import type {
   AuthenticatedIdentity,
+  AuthResult,
   Executor,
   IdentityReference,
   InboundAuth,
   InboundAuthRuntimeContext,
+  Logger,
 } from "../types.js";
-import { identityStorageKey, validIdentityReference } from "../identity.js";
-import { assertsAgents, isAgentName } from "../agent-identity.js";
-import { authenticate } from "../auth-admission.js";
-import type { Logger } from "../types.js";
-import type { ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
 
 export interface ServerOptions {
@@ -137,42 +140,58 @@ export async function authMetadata(
   return null;
 }
 
-async function providerChallenge(
+function providerChallenge(
   response: Response,
   request: Request,
   baseUrl: string,
   auth: readonly InboundAuth[],
   refusingProvider?: InboundAuth,
 ): Promise<Response> {
-  const privateHeaders = new Headers(response.headers);
-  privateHeaders.set("Cache-Control", "no-store");
-  response = new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: privateHeaders,
-  });
-  if (response.status !== 401) return response;
-  if (!response.headers.has("WWW-Authenticate")) {
-    const headers = new Headers(response.headers);
-    headers.set("WWW-Authenticate", refusingProvider?.challenge?.(request, baseUrl) ?? "Bearer");
-    response = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-  }
-  const path = new URL(request.url).pathname;
-  const pool = /^\/mcp\/([a-z0-9_-]+)$/.exec(path)?.[1];
-  const metadataRequest = new Request(
-    new URL(`/.well-known/oauth-protected-resource${pool ? `/mcp/${pool}` : ""}`, baseUrl),
-    { signal: request.signal },
-  );
-  const owner = await authMetadata(metadataRequest, baseUrl, auth);
-  if (!owner) return response;
-  // Metadata is an ordinary bounded response, never retained across requests.
-  await owner.response.body?.cancel();
-  const challenge = owner.provider.challenge?.(request, baseUrl);
-  if (!challenge) return response;
-  const headers = new Headers(response.headers);
-  headers.set("WWW-Authenticate", challenge);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return runEdge(authProgram<Response>(providerChallengeNative, [response, request, baseUrl, auth, refusingProvider]));
 }
+const providerChallengeNative = /* @__PURE__ */ registerAuth(
+  providerChallenge,
+  function (
+    response: Response,
+    request: Request,
+    baseUrl: string,
+    auth: readonly InboundAuth[],
+    refusingProvider?: InboundAuth,
+  ) {
+    return authFlow<Response>(function* () {
+      const privateHeaders = new Headers(response.headers);
+      privateHeaders.set("Cache-Control", "no-store");
+      response = new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: privateHeaders,
+      });
+      if (response.status !== 401) return response;
+      if (!response.headers.has("WWW-Authenticate")) {
+        const headers = new Headers(response.headers);
+        headers.set("WWW-Authenticate", refusingProvider?.challenge?.(request, baseUrl) ?? "Bearer");
+        response = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      }
+      const path = new URL(request.url).pathname;
+      const pool = /^\/mcp\/([a-z0-9_-]+)$/.exec(path)?.[1];
+      const metadataRequest = new Request(
+        new URL(`/.well-known/oauth-protected-resource${pool ? `/mcp/${pool}` : ""}`, baseUrl),
+        { signal: request.signal },
+      );
+      const owner = (yield authCall(authMetadata, [metadataRequest, baseUrl, auth])) as {
+        provider: InboundAuth;
+        response: Response;
+      } | null;
+      if (!owner) return response;
+      (yield authInvoke(owner.response.body, "cancel", [])) as void | undefined;
+      const challenge = owner.provider.challenge?.(request, baseUrl);
+      if (!challenge) return response;
+      const headers = new Headers(response.headers);
+      headers.set("WWW-Authenticate", challenge);
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    });
+  },
+);
 
 function recognizedProvider(
   request: Request,
@@ -193,7 +212,7 @@ function recognizedProvider(
   return undefined;
 }
 
-export async function authorize(
+export function authorize(
   request: Request,
   baseUrl: string,
   auth: readonly InboundAuth[],
@@ -210,162 +229,212 @@ export async function authorize(
       subjectKey?: string;
       principalKey?: string;
     }
-  | { ok: false; response: Response }
-> {
-  const credential = authorizationCredential(request);
-  const explicit = credential.kind !== "absent";
-  if (credential.kind === "invalid") {
-    const challenge = auth.find((provider) => !assertsAgents(provider))?.challenge?.(request, baseUrl) ?? "Bearer";
-    return {
-      ok: false,
-      response: await providerChallenge(
-        privateJson(
-          { error: "unauthorized" },
-          {
-            status: 401,
-            headers: { "WWW-Authenticate": challenge },
-          },
-        ),
-        request,
-        baseUrl,
-        auth,
-      ),
-    };
-  }
-  request = authorizationRequest(request);
-  if (explicit && runtimeContext) runtimeContext = { waitUntil: runtimeContext.waitUntil.bind(runtimeContext) };
-  const machineCredential = isMachineCredential(request) || isVercelAgentCredential(request);
-  if (interactiveOnly && machineCredential) {
-    return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
-  }
-  // Every caller of this function is a human route. Agents reach pools only at
-  // `/agent/<pool>` (#837), so a workload or `cta_` credential refuses here
-  // without verification, and never falls back to a cookie, session or Access context.
-  if (machineCredential) {
-    return {
-      ok: false,
-      response: await providerChallenge(
-        privateJson(
-          { error: "unauthorized" },
-          {
-            status: 401,
-            headers: { "WWW-Authenticate": "Bearer" },
-          },
-        ),
-        request,
-        baseUrl,
-        auth,
-      ),
-    };
-  }
-  if (auth.length === 0 && !interactiveOnly && !explicit) {
-    const actor = { kind: "anonymous" } as const;
-    const identity: AuthenticatedIdentity = { actor, interactive: false };
-    return { ok: true, actor, identity };
-  }
-  // The built-in agent adapter answers only agent endpoints. A deployment
-  // whose only provider is that adapter still refuses here, never opens.
-  const humanAuth = auth.filter((provider) => !assertsAgents(provider));
-  let recognized: InboundAuth | undefined;
-  try {
-    recognized = recognizedProvider(request, humanAuth, runtimeContext);
-  } catch {
-    return { ok: false, response: privateJson({ error: "credential recognition failed" }, { status: 403 }) };
-  }
-  if (interactiveOnly && recognized && !recognized.interactiveOperator) {
-    return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
-  }
-  let lastResponse: Response | null = null;
-  const eligible = humanAuth.filter(
-    (provider) =>
-      (!interactiveOnly || provider.interactiveOperator) &&
-      (!explicit || provider.kind !== "access_token" || !provider.recognizesCredential),
-  );
-  // A header owns one verdict even for adapters without a recognition hook.
-  const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
-  for (const provider of candidates) {
-    const admission = await authenticate(
-      provider,
-      request,
-      baseUrl,
-      runtimeContext,
-      logger,
-      runtimeContext?.waitUntil.bind(runtimeContext),
-    );
-    if (!admission.admitted) return { ok: false, response: admission.response };
-    const result = admission.result;
-    // Only built-in agent credential adapters assert an agent, and they never
-    // answers here. Any `agent` claim refuses like an unknown token.
-    const agent = result.ok ? result.agent : undefined;
-    if (result.ok && agent !== undefined) {
-      lastResponse = privateJson(
-        { error: "unauthorized" },
-        {
-          status: 401,
-          headers: { "WWW-Authenticate": "Bearer" },
-        },
-      );
-      break;
+  | {
+      ok: false;
+      response: Response;
     }
-    if (result.ok) {
-      if (interactiveOnly && !result.userId) {
+> {
+  return runEdge(
+    authProgram<
+      | {
+          ok: true;
+          actor: ActivityActor;
+          identity: AuthenticatedIdentity;
+          sessionCookies?: readonly string[];
+          subjectKey?: string;
+          principalKey?: string;
+        }
+      | {
+          ok: false;
+          response: Response;
+        }
+    >(authorizeNative, [request, baseUrl, auth, runtimeContext, partitionIdentity, interactiveOnly, logger]),
+  );
+}
+const authorizeNative = /* @__PURE__ */ registerAuth(
+  authorize,
+  function (
+    request: Request,
+    baseUrl: string,
+    auth: readonly InboundAuth[],
+    runtimeContext?: RuntimeExecutionContext,
+    partitionIdentity: boolean = true,
+    interactiveOnly: boolean = false,
+    logger: Logger = console,
+  ) {
+    return authFlow<
+      | {
+          ok: true;
+          actor: ActivityActor;
+          identity: AuthenticatedIdentity;
+          sessionCookies?: readonly string[];
+          subjectKey?: string;
+          principalKey?: string;
+        }
+      | {
+          ok: false;
+          response: Response;
+        }
+    >(function* () {
+      const credential = authorizationCredential(request);
+      const explicit = credential.kind !== "absent";
+      if (credential.kind === "invalid") {
+        const challenge =
+          auth.find((provider: InboundAuth) => !assertsAgents(provider))?.challenge?.(request, baseUrl) ?? "Bearer";
+        return {
+          ok: false,
+          response: (yield authCall(providerChallenge, [
+            privateJson(
+              { error: "unauthorized" },
+              {
+                status: 401,
+                headers: { "WWW-Authenticate": challenge },
+              },
+            ),
+            request,
+            baseUrl,
+            auth,
+          ])) as Response,
+        };
+      }
+      request = authorizationRequest(request);
+      if (explicit && runtimeContext) runtimeContext = { waitUntil: runtimeContext.waitUntil.bind(runtimeContext) };
+      const machineCredential = isMachineCredential(request) || isVercelAgentCredential(request);
+      if (interactiveOnly && machineCredential) {
         return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
       }
-      const subjectId = result.subjectId ?? result.userId;
-      const actorNamespace = activityActorNamespace(provider);
-      const derivedPrincipal =
-        result.userId && actorNamespace ? { namespace: actorNamespace, id: result.userId } : undefined;
-      const principal = validIdentityReference(result.principal) ? result.principal : derivedPrincipal;
-      const subject = subjectId
-        ? { namespace: actorNamespace ?? `connecta:auth:${provider.kind}`, id: subjectId }
-        : principal;
-      const interactive = Boolean(result.userId && provider.interactiveOperator);
-      // Principal-only API callers still need a stable typed actor for history
-      // ownership. Never collapse distinct personal partitions into { kind }.
-      const actorId = agent ?? subjectId ?? principal?.id;
-      const recordNamespace = actorNamespace ?? (subjectId === undefined ? principal?.namespace : undefined);
-      const actor: ActivityActor = {
-        kind: provider.kind,
-        ...(actorId ? { id: actorId } : {}),
-        ...(actorId && recordNamespace ? { namespace: recordNamespace } : {}),
-      };
-      const identity: AuthenticatedIdentity = {
-        actor,
-        ...(subject ? { subject } : {}),
-        ...(principal ? { principal } : {}),
-        ...(agent !== undefined ? { agent } : {}),
-        interactive,
-      };
+      if (machineCredential) {
+        return {
+          ok: false,
+          response: (yield authCall(providerChallenge, [
+            privateJson(
+              { error: "unauthorized" },
+              {
+                status: 401,
+                headers: { "WWW-Authenticate": "Bearer" },
+              },
+            ),
+            request,
+            baseUrl,
+            auth,
+          ])) as Response,
+        };
+      }
+      if (auth.length === 0 && !interactiveOnly && !explicit) {
+        const actor = { kind: "anonymous" } as const;
+        const identity: AuthenticatedIdentity = { actor, interactive: false };
+        return { ok: true, actor, identity };
+      }
+      const humanAuth = auth.filter((provider: InboundAuth) => !assertsAgents(provider));
+      let recognized: InboundAuth | undefined;
+      try {
+        recognized = recognizedProvider(request, humanAuth, runtimeContext);
+      } catch {
+        return { ok: false, response: privateJson({ error: "credential recognition failed" }, { status: 403 }) };
+      }
+      if (interactiveOnly && recognized && !recognized.interactiveOperator) {
+        return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
+      }
+      let lastResponse: Response | null = null;
+      const eligible = humanAuth.filter(
+        (provider: InboundAuth) =>
+          (!interactiveOnly || provider.interactiveOperator) &&
+          (!explicit || provider.kind !== "access_token" || !provider.recognizesCredential),
+      );
+      const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
+      for (const provider of candidates) {
+        const admission = (yield authCall(authenticate, [
+          provider,
+          request,
+          baseUrl,
+          runtimeContext,
+          logger,
+          runtimeContext?.waitUntil.bind(runtimeContext),
+        ])) as
+          | {
+              admitted: true;
+              result: AuthResult;
+            }
+          | {
+              admitted: false;
+              response: Response;
+            };
+        if (!admission.admitted) return { ok: false, response: admission.response };
+        const result = admission.result;
+        const agent = result.ok ? result.agent : undefined;
+        if (result.ok && agent !== undefined) {
+          lastResponse = privateJson(
+            { error: "unauthorized" },
+            {
+              status: 401,
+              headers: { "WWW-Authenticate": "Bearer" },
+            },
+          );
+          break;
+        }
+        if (result.ok) {
+          if (interactiveOnly && !result.userId) {
+            return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
+          }
+          const subjectId = result.subjectId ?? result.userId;
+          const actorNamespace = activityActorNamespace(provider);
+          const derivedPrincipal =
+            result.userId && actorNamespace ? { namespace: actorNamespace, id: result.userId } : undefined;
+          const principal = validIdentityReference(result.principal) ? result.principal : derivedPrincipal;
+          const subject = subjectId
+            ? { namespace: actorNamespace ?? `connecta:auth:${provider.kind}`, id: subjectId }
+            : principal;
+          const interactive = Boolean(result.userId && provider.interactiveOperator);
+          const actorId = agent ?? subjectId ?? principal?.id;
+          const recordNamespace = actorNamespace ?? (subjectId === undefined ? principal?.namespace : undefined);
+          const actor: ActivityActor = {
+            kind: provider.kind,
+            ...(actorId ? { id: actorId } : {}),
+            ...(actorId && recordNamespace ? { namespace: recordNamespace } : {}),
+          };
+          const identity: AuthenticatedIdentity = {
+            actor,
+            ...(subject ? { subject } : {}),
+            ...(principal ? { principal } : {}),
+            ...(agent !== undefined ? { agent } : {}),
+            interactive,
+          };
+          return {
+            ok: true,
+            actor,
+            identity,
+            ...(result.sessionCookies?.length ? { sessionCookies: result.sessionCookies } : {}),
+            ...(subject && partitionIdentity
+              ? { subjectKey: (yield authCall(identityStorageKey, [subject])) as string }
+              : {}),
+            ...(principal && partitionIdentity
+              ? { principalKey: (yield authCall(identityStorageKey, [principal])) as string }
+              : {}),
+          };
+        }
+        lastResponse = result.response;
+        if (recognized || result.response.status !== 401) break;
+      }
       return {
-        ok: true,
-        actor,
-        identity,
-        ...(result.sessionCookies?.length ? { sessionCookies: result.sessionCookies } : {}),
-        ...(subject && partitionIdentity ? { subjectKey: await identityStorageKey(subject) } : {}),
-        ...(principal && partitionIdentity ? { principalKey: await identityStorageKey(principal) } : {}),
+        ok: false,
+        response: (yield authCall(providerChallenge, [
+          lastResponse ??
+            privateJson(
+              { error: "unauthorized" },
+              {
+                status: 401,
+                headers: { "WWW-Authenticate": "Bearer" },
+              },
+            ),
+          request,
+          baseUrl,
+          auth,
+          explicit ? candidates[0] : undefined,
+        ])) as Response,
       };
-    }
-    lastResponse = result.response;
-    if (recognized || result.response.status !== 401) break;
-  }
-  return {
-    ok: false,
-    response: await providerChallenge(
-      lastResponse ??
-        privateJson(
-          { error: "unauthorized" },
-          {
-            status: 401,
-            headers: { "WWW-Authenticate": "Bearer" },
-          },
-        ),
-      request,
-      baseUrl,
-      auth,
-      explicit ? candidates[0] : undefined,
-    ),
-  };
-}
+    });
+  },
+);
 
 /** The machine-only challenge: Bearer, with no authorization server to discover. */
 function agentChallenge(): { ok: false; response: Response } {
@@ -382,45 +451,102 @@ function agentChallenge(): { ok: false; response: Response } {
  * Access's `ctx.access` even on a bypassed path, is never passed. Anything but
  * an admitted declared agent gets the machine-only challenge.
  */
-export async function authorizeAgent(
+export function authorizeAgent(
   request: Request,
   baseUrl: string,
   auth: readonly InboundAuth[],
   logger: Logger = console,
   settle?: (pending: Promise<unknown>) => void,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
-  const provider = auth.find(
-    (candidate) => assertsAgents(candidate) && candidate.recognizesCredential?.(request) === true,
+  return runEdge(
+    authProgram<
+      | {
+          ok: true;
+          actor: ActivityActor;
+          identity: AuthenticatedIdentity;
+          sessionCookies?: readonly string[];
+          subjectKey?: string;
+          principalKey?: string;
+        }
+      | {
+          ok: false;
+          response: Response;
+        }
+    >(authorizeAgentNative, [request, baseUrl, auth, logger, settle]),
   );
-  if (!provider) return agentChallenge();
-  let result: Awaited<ReturnType<InboundAuth["authorize"]>>;
-  try {
-    const admission = await authenticate(provider, authorizationRequest(request), baseUrl, undefined, logger, settle);
-    if (!admission.admitted) return { ok: false, response: admission.response };
-    result = admission.result;
-  } catch {
-    return agentChallenge();
-  }
-  if (!result.ok) {
-    if (result.response.status === 503) return result;
-    void result.response.body?.cancel().catch(() => {});
-    return agentChallenge();
-  }
-  const { agent } = result;
-  if (!isAgentName(agent) || result.userId !== undefined || result.principal !== undefined) return agentChallenge();
-  const namespace = activityActorNamespace(provider);
-  const subject = { namespace: namespace ?? `connecta:auth:${provider.kind}`, id: result.subjectId ?? agent };
-  const actor: ActivityActor = { kind: provider.kind, id: agent, ...(namespace ? { namespace } : {}) };
-  return {
-    ok: true,
-    actor,
-    identity: { actor, subject, agent, interactive: false },
-    subjectKey: await identityStorageKey(subject),
-  };
 }
+const authorizeAgentNative = /* @__PURE__ */ registerAuth(
+  authorizeAgent,
+  function (
+    request: Request,
+    baseUrl: string,
+    auth: readonly InboundAuth[],
+    logger: Logger = console,
+    settle?: (pending: Promise<unknown>) => void,
+  ) {
+    return authFlow<
+      | {
+          ok: true;
+          actor: ActivityActor;
+          identity: AuthenticatedIdentity;
+          sessionCookies?: readonly string[];
+          subjectKey?: string;
+          principalKey?: string;
+        }
+      | {
+          ok: false;
+          response: Response;
+        }
+    >(function* () {
+      const provider = auth.find(
+        (candidate: InboundAuth) => assertsAgents(candidate) && candidate.recognizesCredential?.(request) === true,
+      );
+      if (!provider) return agentChallenge();
+      let result: Awaited<ReturnType<InboundAuth["authorize"]>>;
+      try {
+        const admission = (yield authCall(authenticate, [
+          provider,
+          authorizationRequest(request),
+          baseUrl,
+          undefined,
+          logger,
+          settle,
+        ])) as
+          | {
+              admitted: true;
+              result: AuthResult;
+            }
+          | {
+              admitted: false;
+              response: Response;
+            };
+        if (!admission.admitted) return { ok: false, response: admission.response };
+        result = admission.result;
+      } catch {
+        return agentChallenge();
+      }
+      if (!result.ok) {
+        if (result.response.status === 503) return result;
+        void result.response.body?.cancel().catch(() => {});
+        return agentChallenge();
+      }
+      const { agent } = result;
+      if (!isAgentName(agent) || result.userId !== undefined || result.principal !== undefined) return agentChallenge();
+      const namespace = activityActorNamespace(provider);
+      const subject = { namespace: namespace ?? `connecta:auth:${provider.kind}`, id: result.subjectId ?? agent };
+      const actor: ActivityActor = { kind: provider.kind, id: agent, ...(namespace ? { namespace } : {}) };
+      return {
+        ok: true,
+        actor,
+        identity: { actor, subject, agent, interactive: false },
+        subjectKey: (yield authCall(identityStorageKey, [subject])) as string,
+      };
+    });
+  },
+);
 
 /** Human routes reject machine credentials before any verification or storage I/O. */
-export async function authorizeUiIdentity(
+export function authorizeUiIdentity(
   request: Request,
   baseUrl: string,
   auth: readonly InboundAuth[],
@@ -428,14 +554,69 @@ export async function authorizeUiIdentity(
   runtimeContext?: RuntimeExecutionContext,
   logger: Logger = console,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
-  if (!auth.some((provider) => provider.interactiveOperator)) {
-    return {
-      ok: false,
-      response: privateJson({ error: `${purpose} requires interactive user authentication` }, { status: 403 }),
-    };
-  }
-  return authorize(request, baseUrl, auth, runtimeContext, true, true, logger);
+  return runEdge(
+    authProgram<
+      | {
+          ok: true;
+          actor: ActivityActor;
+          identity: AuthenticatedIdentity;
+          sessionCookies?: readonly string[];
+          subjectKey?: string;
+          principalKey?: string;
+        }
+      | {
+          ok: false;
+          response: Response;
+        }
+    >(authorizeUiIdentityNative, [request, baseUrl, auth, purpose, runtimeContext, logger]),
+  );
 }
+const authorizeUiIdentityNative = /* @__PURE__ */ registerAuth(
+  authorizeUiIdentity,
+  function (
+    request: Request,
+    baseUrl: string,
+    auth: readonly InboundAuth[],
+    purpose: string,
+    runtimeContext?: RuntimeExecutionContext,
+    logger: Logger = console,
+  ) {
+    return authFlow<
+      | {
+          ok: true;
+          actor: ActivityActor;
+          identity: AuthenticatedIdentity;
+          sessionCookies?: readonly string[];
+          subjectKey?: string;
+          principalKey?: string;
+        }
+      | {
+          ok: false;
+          response: Response;
+        }
+    >(function* () {
+      if (!auth.some((provider: InboundAuth) => provider.interactiveOperator)) {
+        return {
+          ok: false,
+          response: privateJson({ error: `${purpose} requires interactive user authentication` }, { status: 403 }),
+        };
+      }
+      return (yield authCall(authorize, [request, baseUrl, auth, runtimeContext, true, true, logger])) as
+        | {
+            ok: true;
+            actor: ActivityActor;
+            identity: AuthenticatedIdentity;
+            sessionCookies?: readonly string[];
+            subjectKey?: string;
+            principalKey?: string;
+          }
+        | {
+            ok: false;
+            response: Response;
+          };
+    });
+  },
+);
 
 export function isSameOrigin(request: Request, baseUrl: string): boolean {
   const origin = request.headers.get("origin");
