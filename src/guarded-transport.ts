@@ -3,7 +3,9 @@
 import { ConnectorCallError } from "./errors.js";
 
 export interface GuardedTransport {
-  readonly send: (url: URL, init: RequestInit) => Promise<Response>;
+  readonly send: (url: URL, init: RequestInit, beforeDispatch?: () => void) => Promise<Response>;
+  /** The owned sender invokes beforeDispatch at its last safe pre-send boundary. */
+  readonly delaysDispatch?: true;
 }
 
 let owned: GuardedTransport | undefined;
@@ -31,4 +33,16 @@ export function guardedTransport(write: boolean): GuardedTransport {
   // workerd supplies its native network implementation, with manual redirects.
   // Node reads can use native fetch without claiming a single physical attempt.
   return { send: (url, init) => globalThis.fetch(url, init) };
+}
+
+/** Legacy/fake senders dispatch immediately; the owned sender may first establish a tunnel. */
+export function sendGuarded(
+  transport: GuardedTransport,
+  url: URL,
+  init: RequestInit,
+  beforeDispatch: () => void,
+): Promise<Response> {
+  if (transport.delaysDispatch) return transport.send(url, init, beforeDispatch);
+  beforeDispatch();
+  return transport.send(url, init);
 }

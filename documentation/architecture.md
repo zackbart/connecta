@@ -3399,3 +3399,16 @@ Native pools resolve names through a shared claimant index for listing and
 calling, then use the existing invocation routes. Native recovery adapts only
 Connecta error envelopes in `src/native-recovery.ts`; provider dispatch and
 continuation enforcement stay in their existing owners.
+
+### Contributor reference: owned Node transport dispatch
+
+`src/guarded-transport.ts` is the platform-neutral runtime slot. `sendGuarded`
+invokes a dispatch callback before legacy/fake sends; a transport declaring
+`delaysDispatch` must invoke it exactly once at its last safe pre-send boundary.
+The Node sender does this before a direct send or after CONNECT/TLS establishment,
+before exposing the socket to undici's destination Client. A refusal there must
+never reach the destination or acquire dispatch provenance. Each send owns its
+Client/ProxyAgent and response lifetime, with HTTP/1.1, non-idempotent dispatch,
+no interceptors and no redirects. No dispatcher, response, callback or signal is
+cached across requests. This seam is transport policy; SDK protocol, auth and
+request/coordinator ownership remain with their existing adapters.
