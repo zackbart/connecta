@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { authCall } from "./auth/native.js";
 import { requestOwner } from "./runtime/request-scope.js";
 import { cloneTool, sourceClassification } from "./tool-safety.js";
 import type { Connector, ConnectorContext, ToolDef } from "./types.js";
@@ -28,9 +29,7 @@ export function resolveInvocationAuthEffect(
 ): Effect.Effect<void, unknown> {
   return Effect.suspend(() => {
     const entry = checks.get(connector);
-    return entry?.callTool === callTool
-      ? Effect.tryPromise({ try: () => entry.check(ctx), catch: (error) => error })
-      : Effect.void;
+    return entry?.callTool === callTool ? authCall<void>(entry.check, [ctx]) : Effect.void;
   });
 }
 
