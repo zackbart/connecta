@@ -15,7 +15,8 @@
             "method": "GET",
             "path": "/search/issues",
             "operationId": "search/issues-and-pull-requests",
-            "summary": "Refused: Use search_scoped for installation-confined literal-term data search.",
+            "summary": "Search issues and pull requests",
+            "refusal": "Use search_scoped for installation-confined literal-term data search.",
             "named": "search_scoped"
           },
           {
@@ -57,7 +58,7 @@
         "revision": "755ee33b4a81d51f6f07a902cce26cbec3b822f2",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiMDNjOWIyY2QzMWFkZjAxMmNlZWRmZTcwNDUxZGNkNGYiLCJjIjoiNiIsIm0iOiJLNms5SHZ2Tl9uUnRSeHBzQTB1clNrZVRKQUozZ2FrUXJIWks3YTM4SnVrIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYzc4N2UxOTAwOTc1ZDgyZGU1NjUxNDkwODIxYWVjOTEiLCJjIjoiNiIsIm0iOiI4bUI3YXh4aTNIMDR4a2pBU1E0QUhBNjNvZnRmRm5XWWdJTU5mT1BReFVvIn0"
         }
       }
     }
