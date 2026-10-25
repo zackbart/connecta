@@ -1,3 +1,11 @@
+import { beforeEach as beforeTransportTest } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+
+// Stand in for the Node host while preserving this suite's fetch leaves.
+beforeTransportTest(() => {
+  installOwnedTransport();
+});
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMcp, type RemoteMcpAuth } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";

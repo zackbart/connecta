@@ -1,6 +1,11 @@
-import { afterEach, describe, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { ENTRIES } from "./helpers/promise-boundary/entries.js";
 import { exercise } from "./helpers/promise-boundary/harness.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

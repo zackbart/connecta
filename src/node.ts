@@ -6,13 +6,15 @@ import { pipeline } from "node:stream/promises";
 import type { Connecta } from "./index.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { configureGuardedTransport } from "./guarded-transport.js";
-import { nodeGuardedTransport } from "./http/node-transport.js";
+import { createNodeGuardedTransport } from "./http/node-transport.js";
 
 /** 10 MiB. Tool arguments are JSON; nothing legitimate approaches this. */
 const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 export interface ListenOptions {
   port: number;
+  /** Explicit HTTP(S) CONNECT proxy for owned outbound sends. Never read from the environment. */
+  proxy?: string;
   /** Interface to bind. Defaults to Node's own (all interfaces). */
   host?: string;
   /** Reject request bodies larger than this with 413. Default 10 MiB. */
@@ -83,12 +85,11 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
 /**
  * Serve a Connecta over node:http. Thin adapter: IncomingMessage → Request,
  * Response → ServerResponse, plus the process-level concerns a long-running
- * container needs (body cap, response streaming, graceful shutdown). No
- * outbound HTTP uses an owned undici dispatcher configured here.
+ * container needs (body cap, response streaming, graceful shutdown). Outbound HTTP uses an owned undici dispatcher configured here.
  */
 export function listen(connecta: Connecta, portOrOptions: number | ListenOptions): Server {
-  configureGuardedTransport(nodeGuardedTransport);
   const opts: ListenOptions = typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
+  configureGuardedTransport(createNodeGuardedTransport(opts.proxy));
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
   // Node has no ExecutionContext, so deferred work (activity sinks) would
@@ -103,8 +104,28 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
   };
 
   const awaitingRequest = new Set<Socket>();
+  const activeResponses = new Map<Socket, number>();
+  let shuttingDown = false;
   const server = createServer((req, res) => {
     awaitingRequest.delete(req.socket);
+    const socket = req.socket;
+    activeResponses.set(socket, (activeResponses.get(socket) ?? 0) + 1);
+    const finished = () => {
+      res.removeListener("finish", finished);
+      res.removeListener("close", finished);
+      const remaining = (activeResponses.get(socket) ?? 1) - 1;
+      if (remaining > 0) activeResponses.set(socket, remaining);
+      else {
+        activeResponses.delete(socket);
+        // finish means the response was handed to the socket; destroySoon
+        // flushes its queued bytes before closing, including an SSE trailer.
+        // Count pipelined responses so an earlier finish cannot cut a later
+        // admitted response off. Before shutdown Node's keepalive is unchanged.
+        if (shuttingDown) socket.destroySoon();
+      }
+    };
+    res.once("finish", finished);
+    res.once("close", finished);
     void (async () => {
       const controller = new AbortController();
       const abortRequest = () => {
@@ -162,7 +183,6 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
 
   if (opts.gracefulShutdown !== false) {
     const timeoutMs = opts.shutdownTimeoutMs ?? 10_000;
-    let shuttingDown = false;
     // closeIdleConnections() only knows sockets that have served a request.
     // A client's spare connection (or incomplete first headers) must not hold
     // shutdown open without ever having been admitted to the application.

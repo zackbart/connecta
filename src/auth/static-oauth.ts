@@ -1,3 +1,4 @@
+import { guardedTransport, sendCredentialPost } from "../guarded-transport.js";
 import {
   assertProviderCallOpen,
   bindProviderResponse,
@@ -434,7 +435,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   };
 
   /**
-   * The global `fetch`, read per request, with the configured token-request
+   * The owned credential transport, with the configured token-request
    * headers laid over the SDK's own. With discovery and registration answered
    * from configuration the token endpoint is the only URL the SDK fetches here;
    * the check keeps the headers on it even if that ever changes.
@@ -459,9 +460,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       provider: id,
       method: request.method ?? "GET",
     };
-    dispatchProviderRequest(undefined, dispatch, request.headers);
     secrets.request(input, request);
-    const response = await fetch(input, request);
+    const response = await sendCredentialPost(input, request, () =>
+      dispatchProviderRequest(undefined, dispatch, request.headers),
+    );
     recordProviderResponse(dispatch, response.status);
     return byteReadResponse(response);
   };
@@ -515,6 +517,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         },
         viewSignal(ctx, requestOwned || exchange !== undefined),
         ctx.defer,
+        undefined,
+        () => {
+          guardedTransport(true);
+        },
       ),
     });
   };

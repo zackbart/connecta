@@ -1,6 +1,6 @@
 // Node-only: process-global undici dispatcher and the owned Node socket sender.
-import { Agent, RetryAgent, fetch as dispatcherFetch, getGlobalDispatcher, setGlobalDispatcher } from "undici";
-import { expect, inject, it, onTestFinished, vi } from "vitest";
+import { installHostRetries } from "./fixtures/host-retries.js";
+import { expect, inject, it, onTestFinished } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { nodeGuardedTransport } from "../src/http/node-transport.js";
@@ -11,37 +11,6 @@ import { seedGrant } from "./fixtures/oauth.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { probeRemoteAttempt } from "./fixtures/remote-mcp-attempts.js";
 import { makeRegistry } from "./helpers.js";
-
-/** A host interceptor makes fetch's streamed JSON body replayable by RetryAgent. */
-function installHostRetries() {
-  const previous = getGlobalDispatcher();
-  const retry = new RetryAgent(new Agent(), {
-    methods: ["POST"],
-    statusCodes: [503],
-    maxRetries: 1,
-    minTimeout: 1,
-    maxTimeout: 1,
-  });
-  setGlobalDispatcher(
-    retry.compose((dispatch) => (options, handler) => {
-      void (async () => {
-        const chunks: Buffer[] = [];
-        if (options.body)
-          for await (const chunk of options.body as AsyncIterable<Uint8Array>) chunks.push(Buffer.from(chunk));
-        dispatch({ ...options, body: Buffer.concat(chunks) }, handler);
-      })().catch((error: Error) => handler.onError?.(error));
-      return true;
-    }),
-  );
-  // Node 26's bundled undici uses dispatcher protocol v2. Exercise the pinned
-  // v1 fetch there; on supported Node 22 this uses native fetch unchanged.
-  if (Number(process.versions.undici?.split(".")[0]) >= 8) vi.stubGlobal("fetch", dispatcherFetch);
-  onTestFinished(async () => {
-    vi.unstubAllGlobals();
-    setGlobalDispatcher(previous);
-    await retry.close();
-  });
-}
 
 for (const challenge of ["421-closed", "421-open", "reset", "retry-reset", "retry-503"])
   it(`INV-1 INV-9: the owned remote MCP write sends once after ${challenge}`, { timeout: 30_000 }, async () => {
