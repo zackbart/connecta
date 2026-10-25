@@ -1,3 +1,11 @@
+import { beforeEach as beforeTransportTest } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+
+// Stand in for the Node host while preserving this suite's fetch leaves.
+beforeTransportTest(() => {
+  installOwnedTransport();
+});
+
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { oauthStateDigest } from "../src/auth/downstream-oauth.js";

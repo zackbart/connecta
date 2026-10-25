@@ -8,6 +8,8 @@ let entrypointsDisposed = 0;
 let pending = 0;
 let calls = 0;
 let executor: AdmittingExecutor;
+let direct: AdmittingExecutor;
+let queuedHostCalls = 0;
 let app: ReturnType<typeof createConnecta>;
 
 export default {
@@ -46,6 +48,9 @@ export default {
           };
         },
       });
+      direct = workerExecutor({ loader, timeout: 5_000, admission: {
+        concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 5_000,
+      } });
       const inner = workerExecutor({ loader, timeout: 800, admission: {
         concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000,
       } });
@@ -74,9 +79,22 @@ export default {
         }],
       });
     }
-    if (new URL(request.url).pathname === "/status") return Response.json({
+    const url = new URL(request.url);
+    if (url.pathname === "/queued") {
+      const result = await direct.execute("async () => await host.read()", [{
+        name: "host", fns: { read: async () => {
+          queuedHostCalls++;
+          const delay = Number(url.searchParams.get("wait") ?? 0);
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+          return request.text();
+        } },
+      }]);
+      return Response.json(result);
+    }
+    if (url.pathname === "/status") return Response.json({
       loaded, workersDisposed, entrypointsDisposed, pending, calls,
       admission: executor.admissionSnapshot?.(),
+      directAdmission: direct.admissionSnapshot?.(), queuedHostCalls,
     });
     return app.fetch(request);
   },
