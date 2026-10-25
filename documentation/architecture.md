@@ -1985,7 +1985,9 @@ credential readiness, and result stashing have private Effect programs in
 `src/runtime/registry.ts`. Static class blocks install those programs while
 preserving the published Registry declaration, including its private member
 names. `registryProgram(view, method, ...args)` checks the installed method's
-identity; a custom or replaced method remains a Promise leaf. Catalog search,
+identity; a custom or replaced method remains a Promise leaf. A Promise shell
+selects its original class implementation through `registryEdgeProgram`, so a
+wrapper can call the original without redispatching to itself. Catalog search,
 describe, resolution, and listing compose these programs directly. The shared
 listing is a native child of its request's Scope, started through
 `forkRequest` in the edge runner; an individual reader cannot terminate a read

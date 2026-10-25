@@ -50,6 +50,7 @@ import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { makeRegistry, required } from "./helpers.js";
 import type { ConnectorContext } from "../src/types.js";
+import type { RegistryView } from "../src/registry.js";
 
 const BASE = "https://connecta.example";
 afterEach(() => vi.unstubAllGlobals());
@@ -583,4 +584,26 @@ describe("native registry and request entry (D.1)", () => {
     ]);
     expect(replacement).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["root", "scoped"] as const)(
+    "INV-4 INV-8: a wrapped %s Promise method can delegate to its original during native discovery",
+    WORKERS,
+    async (kind) => {
+      const registry = makeRegistry([fixture(async () => ({}))]);
+      const view = kind === "root" ? registry : registry.scoped({ connectorIds: ["crm"] });
+      const original = view.getTools.bind(view);
+      const wrapped = vi
+        .spyOn(view, "getTools")
+        .mockImplementation((...args: Parameters<RegistryView["getTools"]>) => original(...args));
+      const scope = {};
+      try {
+        const tools = await runEdge(registryProgram(view, "getTools", "crm", BASE, scope));
+        expect(tools.map((tool) => tool.name)).toEqual(["run"]);
+        expect(wrapped).toHaveBeenCalledOnce();
+      } finally {
+        wrapped.mockRestore();
+        openRequest(scope).close();
+      }
+    },
+  );
 });

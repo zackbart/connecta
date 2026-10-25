@@ -22,6 +22,20 @@ export function provideRegistryPrograms<T extends RegistryView>(prototype: T, en
     ),
   );
 }
+/** A Promise method runs its own implementation, even when a wrapper calls the original. */
+export function registryEdgeProgram<K extends AsyncKey<Registry>>(
+  prototype: Pick<Registry, K>,
+  view: Pick<Registry, K>,
+  key: K,
+  ...args: Parameters<Registry[K]>
+): Effect.Effect<Awaited<ReturnType<Registry[K]>>, unknown> {
+  return Effect.suspend(() =>
+    programs
+      .get(prototype)!
+      .get(key)!
+      .run(view, ...args),
+  ).pipe(Effect.catchDefect((error) => Effect.fail(error)));
+}
 /** Custom registry methods are real Promise leaves; registered methods compose directly. */
 export function registryProgram<K extends AsyncKey<Registry>>(
   view: Pick<Registry, K>,

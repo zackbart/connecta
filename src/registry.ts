@@ -38,7 +38,7 @@ import {
   duringViewEffect,
 } from "./runtime/call.js";
 import { getNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
-import { provideRegistryPrograms, registryProgram } from "./runtime/registry.js";
+import { provideRegistryPrograms, registryEdgeProgram, registryProgram } from "./runtime/registry.js";
 import { causeError, runEdge } from "./runtime/run.js";
 import { Storage } from "./runtime/services.js";
 import { SharedRead } from "./runtime/shared-read.js";
@@ -598,7 +598,9 @@ export class Registry implements RegistryView {
   }
 
   storeOAuthHandoff(connectorId: string, state: string, principalKey: string): Promise<void> {
-    return runEdge(registryProgram(this, "storeOAuthHandoff", connectorId, state, principalKey));
+    return runEdge(
+      registryEdgeProgram(Registry.prototype, this, "storeOAuthHandoff", connectorId, state, principalKey),
+    );
   }
 
   oauthCallbackView(
@@ -608,11 +610,13 @@ export class Registry implements RegistryView {
     registry: RegistryView;
     principalKey?: string;
   } | null> {
-    return runEdge(registryProgram(this, "oauthCallbackView", connectorId, state));
+    return runEdge(registryEdgeProgram(Registry.prototype, this, "oauthCallbackView", connectorId, state));
   }
 
   consumeOAuthHandoff(connectorId: string, state: string | null, principalKey: string): Promise<boolean> {
-    return runEdge(registryProgram(this, "consumeOAuthHandoff", connectorId, state, principalKey));
+    return runEdge(
+      registryEdgeProgram(Registry.prototype, this, "consumeOAuthHandoff", connectorId, state, principalKey),
+    );
   }
 
   /**
@@ -852,7 +856,10 @@ export class Registry implements RegistryView {
     ttlSeconds: number,
     partition: string = scopes.results,
   ): Promise<boolean> {
-    return runOnPartition(registryProgram(this, "stashResult", id, chunks, ttlSeconds, partition), this.opts);
+    return runOnPartition(
+      registryEdgeProgram(Registry.prototype, this, "stashResult", id, chunks, ttlSeconds, partition),
+      this.opts,
+    );
   }
 
   /**
@@ -880,7 +887,9 @@ export class Registry implements RegistryView {
   }
 
   bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
-    return runEdge(registryProgram(this, "bindOAuthHandoff", id, authorizationUrl, principalKey));
+    return runEdge(
+      registryEdgeProgram(Registry.prototype, this, "bindOAuthHandoff", id, authorizationUrl, principalKey),
+    );
   }
 
   observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined {
@@ -1086,11 +1095,13 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): Promise<ToolDef[]> {
-    return runEdge(registryProgram(this, "getTools", id, baseUrl, requestScope, callOptions, scope));
+    return runEdge(
+      registryEdgeProgram(Registry.prototype, this, "getTools", id, baseUrl, requestScope, callOptions, scope),
+    );
   }
 
   credentialDriftFor(id: string): Promise<string | undefined> {
-    return runEdge(registryProgram(this, "credentialDriftFor", id));
+    return runEdge(registryEdgeProgram(Registry.prototype, this, "credentialDriftFor", id));
   }
 
   /** Age of a complete cache entry; reads never refresh it. */
@@ -1122,7 +1133,9 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): Promise<ConnectorStatus> {
-    return runEdge(registryProgram(this, "statusFor", id, baseUrl, requestScope, callOptions, scope));
+    return runEdge(
+      registryEdgeProgram(Registry.prototype, this, "statusFor", id, baseUrl, requestScope, callOptions, scope),
+    );
   }
 
   /** Rotate the storage generation; in-flight old readers cannot republish it. */
@@ -1131,7 +1144,7 @@ export class Registry implements RegistryView {
   }
 
   invalidateStored(id: string): Promise<void> {
-    return runEdge(registryProgram(this, "invalidateStored", id));
+    return runEdge(registryEdgeProgram(Registry.prototype, this, "invalidateStored", id));
   }
 
   static {
@@ -1434,7 +1447,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   getTools(...args: Parameters<RegistryView["getTools"]>): Promise<ToolDef[]> {
-    return runEdge(registryProgram(this, "getTools", ...args));
+    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "getTools", ...args));
   }
 
   contextFor(...args: Parameters<RegistryView["contextFor"]>): ConnectorContext {
@@ -1482,7 +1495,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   credentialDriftFor(id: string): Promise<string | undefined> {
-    return runEdge(registryProgram(this, "credentialDriftFor", id));
+    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "credentialDriftFor", id));
   }
 
   observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined {
@@ -1498,7 +1511,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   statusFor(...args: Parameters<RegistryView["statusFor"]>): Promise<ConnectorStatus> {
-    return runEdge(registryProgram(this, "statusFor", ...args));
+    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "statusFor", ...args));
   }
 
   withCatalogObservations(id: string, baseUrl: string, status: ConnectorStatus): ConnectorStatus {
@@ -1509,7 +1522,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   invalidateStored(id: string): Promise<void> {
-    return runEdge(registryProgram(this, "invalidateStored", id));
+    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "invalidateStored", id));
   }
 
   credentialUiAvailable(): boolean {
@@ -1517,7 +1530,9 @@ class ScopedRegistryView implements RegistryView {
   }
 
   async bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
-    return runEdge(registryProgram(this, "bindOAuthHandoff", id, authorizationUrl, principalKey));
+    return runEdge(
+      registryEdgeProgram(ScopedRegistryView.prototype, this, "bindOAuthHandoff", id, authorizationUrl, principalKey),
+    );
   }
   static {
     provideRegistryPrograms(ScopedRegistryView.prototype, {

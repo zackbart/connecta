@@ -46,10 +46,16 @@ export class RequestOwner {
       try {
         step();
       } catch (failure) {
-        failures.push(...(failure instanceof AggregateError ? failure.errors : [failure]));
+        failures.push(failure);
       }
     };
-    for (const call of this.calls) attempt(call.close);
+    for (const call of this.calls) {
+      try {
+        call.close();
+      } catch (failure) {
+        failures.push(...(failure instanceof AggregateError ? failure.errors : [failure]));
+      }
+    }
     this.calls.clear();
     this.entries.clear();
     attempt(() => this.controller.abort(new Error("The request ended.")));
