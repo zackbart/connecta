@@ -142,7 +142,7 @@ interface Caller {
 }
 
 function tokenWorks(agent: OperatorAgent | null): boolean {
-  return agent?.token.state === "issued";
+  return agent?.credentialTypes.includes("vercel_oidc") === true || agent?.token?.state === "issued";
 }
 
 /**
@@ -219,13 +219,14 @@ function callerSummary(caller: Caller): string {
     ? `${name} reaches ${plural(served.connectors.size, "connector")} through ${through}: ${toolsPhrase(served.tools, served.write)}.`
     : `${name} uses ${through}, which serves no connectors.`;
   if (caller.kind !== "agent" || tokenWorks(caller.agent)) return reach;
-  const state = caller.agent?.token.state;
+  const state = caller.agent?.token?.state;
   return `${reach} ${state === "revoked" ? "Its token is revoked" : "It has no token"}, so it can't connect.`;
 }
 
 function callerDetail(caller: Caller, maintainers: ReadonlySet<string>): string {
   if (caller.kind === "person") return maintainers.has(caller.id) ? "maintainer" : "member";
-  const state = caller.agent?.token.state;
+  if (caller.agent?.credentialTypes.includes("vercel_oidc")) return "agent · Vercel OIDC";
+  const state = caller.agent?.token?.state;
   return state === "issued"
     ? "agent · token issued"
     : state === "revoked"

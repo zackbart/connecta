@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   accessTokenKeys,
+  agentObservationKeys,
   catalogKeys,
   continuationKeys,
   responseCacheKeys,
@@ -92,6 +93,7 @@ describe("storage key families", () => {
       [accessTokenKeys.lookup("hash"), "access-token"],
       [accessTokenKeys.agent("simon"), "access-token"],
       [accessTokenKeys.active, "access-token"],
+      [agentObservationKeys.agent("assistant"), "agent-observation"],
       [credentialKeys.credential("svc"), "credential"],
       [credentialKeys.credential("svc", "ab12"), "credential"],
       [connector(inputRetryKeys.used("nonce")), "downstream-input-retry"],

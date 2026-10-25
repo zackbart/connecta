@@ -97,11 +97,20 @@ function SlotConfirm({ name, action }: { name: string; action: "rotate" | "revok
 function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
   const badge = slotBadge(row.slot);
   return (
-    <tr data-agent={row.name} className={row.slot.state === "revoked" ? "revoked" : undefined}>
+    <tr data-agent={row.name} className={row.slot?.state === "revoked" ? "revoked" : undefined}>
       <th scope="row">
         <span className="agent-name">
           <AgentMark />
-          <span>{row.name}</span>
+          <span
+            title={row.credentialTypes
+              .map((kind) => (kind === "vercel_oidc" ? "Vercel OIDC" : "Agent token"))
+              .join(" · ")}
+          >
+            {row.name}
+          </span>
+          {row.credentialTypes.includes("vercel_oidc") ? (
+            <span className="meta">{row.credentialTypes.length > 1 ? "OIDC · Token" : "OIDC"}</span>
+          ) : null}
         </span>
       </th>
       <td>
@@ -194,7 +203,7 @@ export function TokensPage({ state }: { state: OperatorState }) {
         ) : null}
       </div>
       <NoticeLine id="tokenNotice" notice={state.tokenNotice} />
-      {!available ? (
+      {!available && rows.length === 0 ? (
         <Unavailable>{accessTokenUnavailableCopy(state.data?.accessTokenManagement)}</Unavailable>
       ) : (
         <div id="tokenList" aria-busy={state.tokenPhase === "loading" ? "true" : "false"}>

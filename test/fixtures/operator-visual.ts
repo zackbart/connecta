@@ -134,7 +134,7 @@ export async function createOperatorVisualFixture(): Promise<OperatorVisualFixtu
       slots = ((await listed.json()) as { agents: AgentSlot[] }).agents.map((slot) => fixedTime(slot.name, slot));
       contract.agents = contract.agents.map((agent) => ({
         ...agent,
-        token: fixedTime(agent.name, agent.token),
+        token: agent.token ? fixedTime(agent.name, agent.token) : null,
         lastSeenAt: SLOT_TIMES[agent.name]?.lastSeenAt ?? null,
       }));
     }

@@ -102,17 +102,20 @@ export type OperatorMemberManage =
 export interface OperatorAgent {
   name: string;
   pools: string[];
+  /** Supported credential kinds from this agent's deployment declaration. */
+  credentialTypes: Array<"access_token" | "vercel_oidc">;
   /**
-   * The agent's token slot. `revision` is the same opaque value GET
+   * The agent's token slot. Null when the managed token module is absent. `revision` is the same opaque value GET
    * /ui/access-tokens lists for the slot, on every state including "none":
    * it changes on every commit to the slot, and a token mutation sends it as
    * `expect`, so one decided from a stale view refuses with 409 `slot_changed`.
    */
   token:
+    | null
     | { state: "none"; revision: string }
     | { state: "issued"; issuedAt: string; revision: string }
     | { state: "revoked"; revokedAt: string; revision: string };
-  /** Latest activity row for this agent, null when activity is off or none is visible. */
+  /** Latest successful endpoint admission or visible historical activity; null when unknown or withheld. */
   lastSeenAt: string | null;
 }
 

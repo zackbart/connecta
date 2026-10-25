@@ -7,6 +7,9 @@ import { Storage } from "./runtime/services.js";
 import { storageCompareAndSet, storageGet } from "./runtime/storage.js";
 import type { KVStorage } from "./types.js";
 
+const OBSERVATION_TIMEOUT_MS = 500;
+const OBSERVATION_FRESHNESS_MS = 60_000;
+
 function timestamp(raw: string | null): string | null {
   if (!raw || raw.length !== 24) return null;
   const value = Date.parse(raw);
@@ -20,7 +23,8 @@ export function readAgentAdmission(storage: KVStorage, name: string): Effect.Eff
   );
 }
 
-/** Best effort, at most two CAS attempts, with the existing probe deadline.
+/** Best effort, at most two CAS attempts, at most once per minute.
+ * The smaller of the probe deadline and 500 ms bounds this observation.
  * Typed storage failures/timeouts are observations lost, not auth
  * refusals. Interruption remains interruption, including its original reason.
  */
@@ -36,14 +40,15 @@ export function observeAgentAdmission(
     for (let attempt = 0; attempt < 2; attempt++) {
       const previous = yield* storageGet(key);
       const seen = timestamp(previous);
-      if (seen && seen >= at) return;
+      // Future and recently sampled observations both need no write.
+      if (seen && Date.parse(at) - Date.parse(seen) < OBSERVATION_FRESHNESS_MS) return;
       if (yield* storageCompareAndSet(key, previous, at)) return;
     }
   }).pipe(
     Effect.provideService(Storage, storage),
     Effect.catchDefect((error) => Effect.fail(error)),
     Effect.catch(() => Effect.void),
-    Effect.timeoutOption(Duration.millis(timeoutMs)),
+    Effect.timeoutOption(Duration.millis(Math.min(timeoutMs, OBSERVATION_TIMEOUT_MS))),
     Effect.asVoid,
   );
 }
