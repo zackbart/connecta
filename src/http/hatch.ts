@@ -10,6 +10,7 @@
 // listing them in `truncated`; a required parameter or body field is never cut.
 import { Effect, Schema } from "effect";
 import { lexicalSearchContent } from "../catalog.js";
+import { registerOperationVocabulary } from "../operation-vocabulary.js";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import { keyResendAdvice } from "../errors.js";
@@ -1500,5 +1501,15 @@ export function hatch(
       }),
     );
   }
+  registerOperationVocabulary(tools[0]!, function* () {
+    for (const op of index.ops) {
+      const verdict = verdictOf(op);
+      yield {
+        text: `${op.path.slice(0, 384)} ${op.operationId.slice(0, 128)} ${op.summary.slice(0, 384)} ${op.tag.slice(0, 128)}`,
+        route: verdict === "refuse" ? searchTool : route(op).tool,
+        write: verdict !== "read",
+      };
+    }
+  });
   return tools;
 }

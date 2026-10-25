@@ -26,6 +26,7 @@ import {
 import { boundCursor } from "../src/http/paging.js";
 import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
 import { Registry } from "../src/registry.js";
+import { CatalogService } from "../src/catalog-service.js";
 import { runEdge } from "../src/runtime/run.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { Integer } from "../src/http/json-schema.js";
@@ -231,6 +232,22 @@ function setup(
     connector.callTool(`items_api_${kind}`, args, options.context ?? connectorContext(storage));
   return { index, tools, connection, call, sendPath, authenticate, admit, context };
 }
+
+it(
+  "INV-2 INV-4 INV-10: discovers hatch vocabulary through the native catalog without authenticating or sending",
+  NATIVE,
+  async () => {
+    const { tools, authenticate, sendPath } = setup();
+    const connector = apiConnector("crm", { tools });
+    const registry = new Registry([connector], { storage, logger: { info() {}, warn() {}, error() {} } });
+    const catalog = new CatalogService(registry, "https://connecta.test");
+    const page = await catalog.search({ query: "touch item", safety: "approvalRequired" });
+    expect(page.entries.map((entry) => entry.tool.name)).toContain("items_api_search");
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(sendPath).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  },
+);
 
 it(
   "INV-3 INV-5 INV-11: opts reviewed hatches into optional safe totals and construction-owned named suggestions",

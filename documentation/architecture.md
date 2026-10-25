@@ -3824,3 +3824,18 @@ returned the public Worker entry from 198,744 to 77,426 bytes; live minified
 Context, inherited-method, decorator and restoration proofs retain native
 composition. Root, example Worker, public Worker, D1 and Clerk caps remain
 unchanged. This cost decision grants no later request-body-limit allowance.
+
+### Catalog operation vocabulary (contributor)
+
+The standard hatch privately registers bounded vendor operation text against its
+ApiTool identity; `apiConnector` transfers those facts to the constructed
+connector. `operation-vocabulary.ts` contains only pure lexical/cache logic and
+types. Catalog discovery consumes those facts after loading and classifying a
+complete visible catalog. It never imports a provider or an operation index,
+parses operation contracts, invokes a handler, or authenticates. Matching requires
+all terms in a single operation and a visible destination hatch. Endpoint,
+connector and tool grants are checked on every query, outside the request-free
+cache. Exact authored names and complete authored matches precede API pointers;
+ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
+The published discovery contract states compilation, query and cache bounds.
+No request identity, signal, credential or promise enters a vocabulary cache.
