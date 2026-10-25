@@ -1,6 +1,6 @@
 // Node-only: runs real HTTP requests through Wrangler/workerd to verify Worker cleanup after the response ends.
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { unstable_dev, type Unstable_DevWorker } from "wrangler";
 
 let worker: Unstable_DevWorker;
@@ -81,4 +81,19 @@ describe("Worker budget exhaustion across a completed HTTP response", () => {
       calls: 21,
     });
   }, 15_000);
+  it("INV-7: queued native Worker setup and RPC resume in the waiting HTTP request", async () => {
+    const first = worker.fetch("/queued?wait=1000", { method: "POST", body: "alice request" });
+    await vi.waitFor(
+      async () => {
+        expect(await (await worker.fetch("/status")).json()).toMatchObject({ queuedHostCalls: 1 });
+      },
+      { timeout: 10_000 },
+    );
+    const second = worker.fetch("/queued", { method: "POST", body: "bob request" });
+    await vi.waitFor(async () => {
+      expect(await (await worker.fetch("/status")).json()).toMatchObject({ directAdmission: { queued: 1 } });
+    });
+    expect(await (await first).json()).toMatchObject({ result: "alice request" });
+    expect(await (await second).json()).toMatchObject({ result: "bob request" });
+  }, 20_000);
 });

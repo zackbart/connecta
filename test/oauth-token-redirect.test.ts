@@ -1,3 +1,14 @@
+import { credentialAttempt } from "./fixtures/oauth-credential-attempts.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { onTestFinished } from "vitest";
+import { beforeEach as beforeTransportTest } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+
+// Stand in for the Node host while preserving this suite's fetch leaves.
+beforeTransportTest(() => {
+  installOwnedTransport();
+});
+
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
@@ -131,3 +142,35 @@ it.each([307])(
     }
   },
 );
+
+// The matching Node suite installs the real owned sender. Here these cases
+// run only with workerd's production native network leaf, without a fake slot.
+if (typeof WebSocketPair !== "undefined") {
+  for (const kind of ["remoteMcp", "api"] as const)
+    for (const operation of [
+      "refresh",
+      "code",
+      ...(kind === "remoteMcp" ? (["register", "revoke"] as const) : []),
+    ] as const)
+      for (const challenge of ["421", "reset", "503"] as const)
+        it(
+          `INV-5 INV-9: workerd ${kind} ${operation} sends one physical body after ${challenge}`,
+          WORKERS,
+          async () => {
+            const previous = configureGuardedTransport(undefined);
+            onTestFinished(() => {
+              configureGuardedTransport(previous);
+            });
+            await credentialAttempt(kind, operation, challenge);
+          },
+        );
+}
+
+if (typeof WebSocketPair !== "undefined")
+  it("INV-5 INV-9: workerd SDK registration refuses a 307 without repeating the JSON body", WORKERS, async () => {
+    const previous = configureGuardedTransport(undefined);
+    onTestFinished(() => {
+      configureGuardedTransport(previous);
+    });
+    await credentialAttempt("remoteMcp", "register", "307");
+  });

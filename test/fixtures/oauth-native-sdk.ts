@@ -57,6 +57,7 @@ export async function nativeOAuthServer(mode: string) {
     success: async () => { await fetch(`${issuer}/mode`, { method: "POST", body: "sdk-success" }); },
     finish,
     sent: async () => (await (await fetch(issuer)).json() as { requests: Array<{ path: string; grant: string | null; credential: string | null }> }).requests,
+    posts: async () => (await (await fetch(issuer)).json() as { posts: Record<string, number> }).posts,
     redeemed: async () => (await (await fetch(issuer)).json() as { redeemed: string[] }).redeemed,
   };
 }

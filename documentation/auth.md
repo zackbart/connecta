@@ -2306,6 +2306,25 @@ and Origin checks. Vaults without sealing keep ordinary handoffs and cannot
 serve URL elicitation. See [authorization recovery](./meta-tools.md#authorization-recovery)
 for capability gating, retry termination, and dispatch restrictions.
 
+Downstream OAuth credential POSTs (code exchange, refresh, dynamic client
+registration and revocation) use a transport that sends each request at most
+once and never follows redirects. On Node, serve with `listen` from
+`@zackbart/connecta/node` and retain the `undici` peer; custom root-only Node
+hosts refuse these POSTs before dispatch. Node's explicit `listen({ proxy })`
+option applies to them. Discovery GETs keep native fetch and its host proxy
+policy. Workers use their native fetch transport. See [Node transport setup](./deploying.md#start-on-node).
+
+A refresh without a confirmed usable answer may have rotated the refresh token.
+Connecta blocks its fingerprint and requires a fresh authorization flow, without
+replaying that token or claiming the server did not receive it. Authorization
+can still be restarted; an unresolved fingerprint cannot become redeemable again
+by writing the same token into an old grant. Registration failure can leave a
+client at the provider; check the provider's client administration before
+starting another registration if its reply was lost. Disconnect removes the
+local grant before attempting revocation, and an unconfirmed revocation asks the
+operator to revoke it at the provider. No token forms or provider error prose
+are included in diagnostics.
+
 A verified `/connect` visit gives downstream OAuth work and its state handoff 30 seconds. The request signal
 and deadline reach discovery, registration, and other downstream fetches; expiry returns `504 OAuth
 authorization start timed out`. A restart's grant write, catalog invalidation, and scope close drain before
