@@ -1242,6 +1242,52 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
 });
 
 describe("paging (decision 0010, B.4)", () => {
+  it(
+    "INV-5: binds an optional deployment policy separately from list filters without changing undefined cursors",
+    WORKERS,
+    async () => {
+      let pages = 0;
+      const make = (scope?: Readonly<Record<string, unknown>>) =>
+        apiConnector("policy", {
+          tools: [
+            list(acme(), {
+              name: "list_items",
+              description: "Items",
+              filters: { deploymentPolicy: Schema.String },
+              row: Schema.Struct({ id: Schema.String }),
+              limit: { default: 2, max: 10, description: "Items per page" },
+              cursor: "bound",
+              ...(scope === undefined ? {} : { cursorScope: scope }),
+              page: () => {
+                pages++;
+                return Effect.succeed({ rows: [{ id: "item" }], page: { hasMore: true, nextCursor: "next" } });
+              },
+            }),
+          ],
+        });
+      const ctx = context(),
+        args = { deploymentPolicy: "caller-controlled", limit: 2 };
+      const plain = make(),
+        alice = make(Object.freeze({ team: "alice" })),
+        bob = make(Object.freeze({ team: "bob" }));
+      const first = (await alice.callTool("list_items", args, ctx)) as any;
+      const normal = (await plain.callTool("list_items", args, ctx)) as any;
+      const undefinedScope = (await make(undefined).callTool("list_items", args, ctx)) as any;
+      expect(undefinedScope.page.nextCursor).toBe(normal.page.nextCursor);
+      const before = pages;
+      for (const [connector, cursor] of [
+        [plain, first.page.nextCursor],
+        [alice, normal.page.nextCursor],
+        [bob, first.page.nextCursor],
+      ] as const)
+        await expect(connector.callTool("list_items", { ...args, cursor }, ctx)).rejects.toMatchObject({
+          code: "invalid_args",
+        });
+      expect(pages).toBe(before);
+      await alice.callTool("list_items", { ...args, limit: 3, cursor: first.page.nextCursor }, ctx);
+      expect(pages).toBe(before + 1);
+    },
+  );
   it("authenticates cursor payloads across storage clients and binds the tool and arguments", WORKERS, async () => {
     const storage = memoryStorage();
     const args = { organizationId: "org_1", order: "asc", limit: 5 };

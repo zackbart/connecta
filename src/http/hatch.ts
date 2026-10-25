@@ -67,6 +67,8 @@ function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
+  /** Immutable deployment policy included in continuation MACs, independently of agent arguments. */
+  readonly cursorScope?: Readonly<Record<string, unknown>>;
   /** Optional construction-time identity binding for a reviewed operation index. */
   readonly index?: OperationIndex;
   /** Resolve configured query routing before validation and cursor binding. */
@@ -846,6 +848,7 @@ export function hatch(
       run: (args) =>
         Effect.gen(function* () {
           const scope = {
+            ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             query: args.query,
             ...(args.method ? { method: args.method } : {}),
@@ -1007,6 +1010,7 @@ export function hatch(
           // Bounded pages: every parameter and body property arrives whole on some page, and a
           // piece too large for one page arrives as consecutive chunks of its JSON. Nothing is dropped.
           const scope = {
+            ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             method: args.method,
             path: args.path,
@@ -1214,6 +1218,7 @@ export function hatch(
         );
       const scope = adapter
         ? {
+            ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             method,
             path,

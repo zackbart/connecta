@@ -17,10 +17,20 @@ filter requires the observed `prj_` id. Resolve the name before listing its
 deployments; an empty result for a guessed name does not prove absence.
 Complete each identifier lookup before starting the reads that depend on it.
 
+<!-- when: unpinned -->
 The configured team is a routing default, not a restriction. Explicit teamId
 or slug selects another team the token can reach; teamId: null selects personal
 scope. Vercel token permissions determine access. Prefer an explicit team when
 joining resources across several calls.
+<!-- end -->
+
+<!-- when: pinned -->
+The deployment confines this connection to one team. A supplied team slug must
+belong to that team; personal scope and foreign teams are refused. Project and
+deployment references require ownership reads. Global/account and transfer
+operations without a verifiable team boundary remain unavailable. A team list
+returns only the pinned team.
+<!-- end -->
 
 Read deployment state before its build events. Runtime logs diagnose requests
 after a deployment built; build logs explain a failed build. Narrow time windows

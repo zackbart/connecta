@@ -229,6 +229,8 @@ interface StandardListSpec<F extends Schema.Struct.Fields, Row extends Schema.To
     readonly values?: readonly number[];
   };
   readonly cursor?: "plain" | "bound";
+  /** Immutable deployment policy in a separate continuation namespace. Absent preserves existing MACs. */
+  readonly cursorScope?: Readonly<Record<string, unknown>>;
   /** Expose only an exact count supplied by the vendor, never an estimate from observed rows. */
   readonly total?: true;
   readonly page: (
@@ -334,9 +336,16 @@ function standardList(
           yield* checkFields(args.fields, names, "an item");
           // A cursor stays valid when only the projection changes between pages.
           const { fields, cursor: supplied, ...rest } = args;
+          const scope =
+            spec.cursorScope === undefined
+              ? rest
+              : {
+                  arguments: Object.fromEntries(Object.entries(rest).filter(([key]) => key !== "limit")),
+                  deploymentPolicy: spec.cursorScope,
+                };
           const bound = spec.cursor === "bound";
           const cursor =
-            typeof supplied === "string" && bound ? yield* boundCursor.decode(spec.name, rest, supplied) : supplied;
+            typeof supplied === "string" && bound ? yield* boundCursor.decode(spec.name, scope, supplied) : supplied;
           const result = yield* spec.page(
             { ...rest, limit: typeof rest["limit"] === "number" ? rest["limit"] : size },
             cursor as string | undefined,
@@ -364,7 +373,7 @@ function standardList(
               }),
             );
           const nextCursor = bound
-            ? yield* boundCursor.encode(spec.name, rest, result.page.nextCursor)
+            ? yield* boundCursor.encode(spec.name, scope, result.page.nextCursor)
             : result.page.nextCursor;
           return { items, page: { hasMore: true, nextCursor, ...count } };
         }),
