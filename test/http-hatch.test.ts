@@ -239,7 +239,7 @@ it(
   async () => {
     const { tools, authenticate, sendPath } = setup();
     const connector = apiConnector("crm", { tools });
-    const registry = new Registry([connector], { storage, logger: { info() {}, warn() {}, error() {} } });
+    const registry = new Registry([connector], { storage, logger: { debug() {}, info() {}, warn() {}, error() {} } });
     const catalog = new CatalogService(registry, "https://connecta.test");
     const page = await catalog.search({ query: "touch item", safety: "approvalRequired" });
     expect(page.entries.map((entry) => entry.tool.name)).toContain("items_api_search");
