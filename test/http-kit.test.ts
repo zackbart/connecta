@@ -1706,6 +1706,75 @@ describe("kit construction (decision 0010, B.4)", () => {
 const keys = get("listKeys", "/keys");
 const ACME_API = vendor("Acme", keys);
 
+it("INV-5 INV-6 INV-9: keeps streamed response boundaries private without repeating a dispatch", WORKERS, async () => {
+  const reviewed = valueSafety({ title: "Acme", operations: {}, embeddedUrls: {} }, () => ({}) as never);
+  const errors: VendorErrors = {
+    ...VENDOR,
+    detail: ({ body, withheld }) => (withheld ? "Withheld." : JSON.stringify(body)),
+  };
+  const connection = connect(ACME_API, guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }), {
+    errors,
+    safety: resultSafety({
+      reviewed: {
+        redact: (data, op) => reviewed.redact(data, op.method, op.template),
+        withholdsErrors: () => true,
+      },
+      sensitiveFields: { names: [], choice: "drop" },
+    }),
+  });
+  for (const name of ["X&#45;Amz&#45;Signature", "X-Goog-Credenti&#97;l", "X&amp;#45;Amz-Security-Token"])
+    for (const pin of [undefined, "unrelated-private", name.slice(3, 15)])
+      for (const code of [200, 400]) {
+        const secrets = new SentSecrets();
+        if (pin)
+          secrets.arguments({ pin }, { type: "object", properties: { pin: { type: "string", writeOnly: true } } });
+        const ordinary = "Keep Q&A and https://public.example/a?width=400&name=alice now.";
+        const body = JSON.stringify({
+          note: `diagnostic ${name}=PRIVATE_VALUE_27abc&name=alice now`,
+          reference: `diagnostic ${name}=&quot;PRIVATE_VALUE_27abc&name=alice now`,
+          ordinary,
+        });
+        sent = [];
+        answers.push(
+          () =>
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  for (const byte of new TextEncoder().encode(body)) controller.enqueue(new Uint8Array([byte]));
+                  controller.close();
+                },
+              }),
+              { status: code, headers: { "content-type": "application/json" } },
+            ),
+        );
+        const dispatches: Dispatch[] = [];
+        const result = await runEdge(
+          Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services("write", secrets, dispatches))),
+        );
+        if (code === 200) {
+          expect(JSON.stringify(result)).not.toContain("PRIVATE_VALUE");
+          expect(result).toMatchObject({ _tag: "Success", success: { data: { ordinary } } });
+        } else {
+          expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: { _tag: "StatusFailure", status: 400 },
+          });
+          if (result._tag === "Failure") {
+            const mapped = toConnectorCallError(result.failure, errors, {
+              classification: "write",
+              dispatches,
+              withholds: () => true,
+            });
+            expect(mapped).toMatchObject({ code: "invalid_args", message: "Withheld." });
+            expect(JSON.stringify(mapped)).not.toContain("PRIVATE_VALUE");
+            expect(JSON.stringify(failureRecord({}, mapped))).not.toContain("PRIVATE_VALUE");
+          }
+        }
+        expect(sent).toHaveLength(1);
+        expect(dispatches).toHaveLength(1);
+      }
+});
+
 it(
   "INV-5 INV-6: reviewed media bodies keep bounded text and bytes; declared token and numeric facts preserve classification with redacted display",
   WORKERS,

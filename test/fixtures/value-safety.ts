@@ -630,6 +630,20 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       const references = table.embeddedUrls
         ? {
             ordinary,
+            representations: [
+              "X&#45;Amz&#45;Signature",
+              "X-Goog-Credenti&#97;l",
+              encode("X-Amz-Security-Token", (code) => `&#x${code.toString(16)};`),
+              encode("X-Goog-Signature", (code) => `%${code.toString(16)}`),
+              "X&hyphen;Amz&hyphen;Credential",
+              "X&amp;#45;Goog&amp;#45;Security-Token",
+              "X&dash;Amz&dash;Signature",
+            ].map((spelling) => ({
+              note: `diagnostic ${spelling}=VENDOR_HELD_REPRESENTATION&name=alice now`,
+              nested: `diagnostic ${spelling}&amp;#61;&#86;ENDOR_HELD_REPRESENTATION&name=alice now`,
+              reference: `diagnostic ${spelling}=&quot;VENDOR_HELD_REPRESENTATION&name=alice now`,
+              link: `see https://files.example/a?${spelling}=VENDOR_HELD_REPRESENTATION&name=alice now`,
+            })),
             diagnostics: [
               encode("VENDOR_HELD_DECIMAL", (code) => `&#${code};`),
               encode("VENDOR_HELD_HEX", (code) => `&#x${code.toString(16)};`),

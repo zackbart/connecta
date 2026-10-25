@@ -1441,7 +1441,7 @@ every vendor ships one reviewed table through one mechanism
    reviews the pinned spec's free-text fields for embedded vendor-minted links
    and records its verdict and source limitations beside its value-safety table.
    Stripe, Vercel, and Cloudflare use **reviewed paths plus global signing
-   parameters**. Literal AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
+   parameters**. Known AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
    Credential and Security-Token values are withheld across all decoded string
    values, including values written with decimal, hexadecimal or named HTML
    character references. References are read whole as value data; decoding
@@ -1451,7 +1451,8 @@ every vendor ships one reviewed table through one mechanism
    length. Numeric references also accept an omitted semicolon, and `amp`
    may omit its semicolon immediately before `#`. Signing separators accept
    nested ampersand references around decimal, hexadecimal or named `=`
-   references.
+   references. Recognized name representations retain their source spelling
+   and use the same fixed signing-name vocabulary and value boundaries.
    A literal query separator such as `&name=alice` still ends the signing
    value. Ordinary query strings and prose retain their original spelling.
    Generic credential names (`code`, `key`, `token`, `signature`, `sig`, etc.)
@@ -1520,8 +1521,8 @@ every vendor ships one reviewed table through one mechanism
    line ending before the destination are recognized. This scanner treats a marker
    after the close as ordinary text; kit admission applies the whole-value and
    path/query rules described above. This boundary is independent of redaction's fail-closed
-   span. Each string is scanned alone; split rich-text runs and encoded
-   signing parameter names are outside this scan's threat model.
+   span. Each string is scanned alone; split rich-text runs are outside this
+   scan's threat model.
    Sent-secret redaction runs before this step, in the provider kit's parse
    pass, so a rule that decides on a value can read the `[redacted]`
    placeholder where the vendor wrote what the rule matches. Every such
