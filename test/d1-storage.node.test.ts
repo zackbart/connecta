@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { getPlatformProxy } from "wrangler";
 import { d1ActivityStore, d1Storage } from "../src/d1.js";
 import type { ToolCallActivityEvent } from "../src/index.js";
+import { activityFixtureTime } from "./fixtures/activity-time.js";
 
 // Every case here is real I/O against a local workerd that wrangler spawns,
 // wall-clock nothing here can fake: on a loaded host the slower contract cases
@@ -119,7 +120,7 @@ function event(index: number, overrides: Partial<ToolCallActivityEvent> = {}): T
   return {
     schemaVersion: 1,
     id: id(index),
-    occurredAt: new Date(Date.parse("2026-07-27T12:00:00.000Z") + index * 1_000).toISOString(),
+    occurredAt: activityFixtureTime(index),
     requestId: `request-${index}`,
     actor: { kind: "bearer", id: "operator" },
     connectorId: "notes",
