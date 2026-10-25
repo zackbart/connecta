@@ -92,6 +92,8 @@ export interface HatchBinding {
   readonly searchNoun?: (term: string) => boolean;
   /** Static operation refusal, also shown by search and details without request validation. */
   readonly refusal?: (operation: Operation) => string | undefined;
+  /** Pure construction-owned discovery restriction; never dispatch authority. Snapshotted once per operation. */
+  readonly discoveryRefusal?: (operation: Operation) => string | undefined;
   readonly refuse?: (call: RestCall) => string | undefined;
   readonly send: (
     call: RestCall,
@@ -338,10 +340,19 @@ export function hatch(
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
   const refusalOf = (op: Operation) =>
     connection.safety.refusal?.({ method: op.method, template: op.path }) ?? options.binding?.refusal?.(op);
+  const discoveryRefusals = new Map<string, string>();
+  if (options.binding?.discoveryRefusal)
+    for (const op of index.ops) {
+      const reason = options.binding.discoveryRefusal(op);
+      if (reason !== undefined) discoveryRefusals.set(`${op.method} ${op.path}`, reason);
+    }
+  const discoveryVerdictOf = (op: Operation): Verdict =>
+    discoveryRefusals.has(`${op.method} ${op.path}`) ? "refuse" : verdictOf(op);
   const discoveryRefusal = (op: Operation) =>
-    verdictOf(op) === "refuse"
+    discoveryRefusals.get(`${op.method} ${op.path}`) ??
+    (verdictOf(op) === "refuse"
       ? (refusalOf(op) ?? `Connecta refuses ${op.method} ${op.path}: it has no admitted hatch verdict.`)
-      : undefined;
+      : undefined);
   const pages = new Map(
     Object.entries(options.pages ?? {}).map(([key, declared]) => {
       const adapters: readonly HatchPageAdapter[] = Array.isArray(declared) ? declared : [declared as HatchPageAdapter];
@@ -418,7 +429,7 @@ export function hatch(
     : callEnvelope;
   const tool = (kind: string) => `${name}_api_${kind}`;
   const route = (op: Operation) => {
-    const verdict = verdictOf(op);
+    const verdict = discoveryVerdictOf(op);
     const authored = named.get(`${op.method} ${op.path}`);
     return {
       ...(verdict === "refuse" || (verdict !== "read" && options.writeEnabled === false)
@@ -672,7 +683,9 @@ export function hatch(
         .filter(
           ({ op, verbMatch }) =>
             verbMatch &&
-            (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))),
+            (intent === "read"
+              ? discoveryVerdictOf(op) === "read"
+              : ["write", "destructive"].includes(discoveryVerdictOf(op))),
         )
         .map(({ covered }) => covered),
     );
@@ -698,8 +711,10 @@ export function hatch(
         position,
         intent: Number(
           intent === undefined ||
-            (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))) ||
-            (verdictOf(op) === "refuse" && verbMatch && covered > admittedCoverage),
+            (intent === "read"
+              ? discoveryVerdictOf(op) === "read"
+              : ["write", "destructive"].includes(discoveryVerdictOf(op))) ||
+            (discoveryVerdictOf(op) === "refuse" && verbMatch && covered > admittedCoverage),
         ),
         verbMatch: Number(verbMatch),
         covered,
@@ -1053,7 +1068,7 @@ export function hatch(
             const refusal = discoveryRefusal(op);
             return { op, contract: { ...index.contract(op, args.param), ...(refusal ? { refusal } : {}) } };
           });
-          const tail = { verdict: verdictOf(op), ...route(op), revision: index.revision };
+          const tail = { verdict: discoveryVerdictOf(op), ...route(op), revision: index.revision };
           const whole = { ...contract, ...tail };
           if (args.cursor === undefined && bytes(whole) <= DETAILS_BUDGET_BYTES) return whole;
           // Bounded pages: every parameter and body property arrives whole on some page, and a
