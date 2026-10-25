@@ -28,6 +28,7 @@ class ScriptedChild extends EventEmitter {
   unref = vi.fn();
   readonly kills: Array<NodeJS.Signals | undefined> = [];
   runs = 0;
+  readonly sent: unknown[] = [];
   private gone = false;
 
   constructor(
@@ -38,6 +39,7 @@ class ScriptedChild extends EventEmitter {
   }
 
   send(message: unknown, callback?: (error: Error | null) => void): boolean {
+    this.sent.push(message);
     callback?.(null);
     const run = message as { type: string; payloadJson: string };
     if (run.type !== "run") return true;
@@ -166,6 +168,62 @@ describe("QuickJS pool startup watchdog", () => {
 });
 
 describe("QuickJS pool child retirement", () => {
+  it("INV-7: release during readiness cannot dispatch the old run into a successor's slot", async () => {
+    scriptChildren({ ready: false });
+    const executor = quickJsExecutor();
+    const lease = await executor.acquire();
+    const running = lease.execute("async () => 1", []).catch((error: unknown) => error);
+    await settle();
+    lease.release();
+    expect(await running).toMatchObject({ message: "Executor lease was released during execution." });
+    const next = executor.execute("async () => 2", []);
+    await settle();
+    expect(children).toHaveLength(1);
+    children[0]!.emit("message", { type: "ready" });
+    await expect(next).resolves.toMatchObject({ result: expect.any(Number) });
+    expect(children[0]!.runs).toBe(1);
+    await executor.close?.();
+  });
+
+  it("INV-7: malformed IPC and late host failures cannot send into a successor run", async () => {
+    scriptChildren();
+    behaviour = "hang";
+    const executor = quickJsExecutor();
+    let reject!: (reason: unknown) => void;
+    const host = vi.fn(
+      () =>
+        new Promise<never>((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    const lease = await executor.acquire();
+    const running = lease.execute("async () => 1", [{ name: "host", fns: { wait: host } }]).catch(() => {});
+    await settle();
+    const child = children[0]!;
+    const run = child.sent[0] as { payloadJson: string };
+    const { id } = JSON.parse(run.payloadJson);
+    for (const message of [null, 42, "invalid", {}, { type: "host-call", jobId: id, payloadJson: null }]) {
+      child.emit("message", message);
+    }
+    child.emit("message", {
+      type: "host-call",
+      jobId: id,
+      callId: 1,
+      payloadJson: JSON.stringify({ namespace: "host", functionName: "wait", args: [] }),
+    });
+    await settle();
+    expect(host).toHaveBeenCalledOnce();
+    lease.release();
+    await running;
+    behaviour = "succeed";
+    await expect(executor.execute("async () => 2", [])).resolves.toMatchObject({ result: expect.any(Number) });
+    reject(new Error("late host failure"));
+    await settle();
+    expect(child.sent).toHaveLength(1);
+    expect(children[1]!.sent).toHaveLength(1);
+    await executor.close?.();
+  });
+
   it("recycles a running child when its lease is released, without backoff", async () => {
     scriptChildren();
     const executor = quickJsExecutor();

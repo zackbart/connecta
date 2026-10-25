@@ -1970,7 +1970,7 @@ storage is the root's namespaced to its principal.
 | Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, when its admitted-request lifetime ends in that request, or at once if the handler fails first. If workerd runs none of those callbacks, the next request reclaims only the expired admission record; it cannot close another request's Scope. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment. |
 | Admission (`executor-admission.ts`, `call-admission.ts`)               | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires.                                                                                                                                                                                                                                                                                                                                    |
 | One tool call (`invocation.ts`)                                        | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`.                                                                                                                                                                                                                                                                                                     |
-| `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own.                                                                                                                                                                                                                                                                      |
+| `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. Public executor methods stay Promise-shaped; registered built-in execution composes directly as an Effect under the signal and `execute.watchdogMs`. Queued acquisition retains its Promise request handoff. Each guest host call is a fiber of its own.                                                                                                                                                                     |
 | Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency.                                                                                                                                                                                    |
 | Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
 | Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
@@ -2029,6 +2029,55 @@ results strip only their own prefix. Custom stores keep the Promise fallback.
 These adapters add no retry, transaction, or storage encoding and preserve
 D1's single atomic batch and SQLite's native transaction. Native activity
 lookup remains available to the route and activity consumers.
+
+### Native executor hosts (contributor)
+
+`src/runtime/executor.ts` registers private execution programs by executor or
+lease identity and the original `execute` method. `executorProgram` composes a
+registered implementation directly; custom or replaced methods remain Promise
+leaves. Public shells call their own implementation directly, allowing wrappers
+to delegate to a saved original without recursion. Native interruption retains
+the QuickJS log prefix; Promise leaves are observed even when a terminal budget
+race wins before their settlement. Redaction and write settlement remain in the
+existing execute pipeline, using its request identity and call capabilities.
+The executor seam creates no second request or call owner.
+
+Both built-ins acquire their permits through native admission and return
+execute-once leases with synchronous, idempotent release. A queued standalone
+execution crosses `awaitExecutorLease`'s Promise handoff before host setup, so
+workerd resumes in the waiting request. `execute_code` retains its public
+`acquire()` handoff for that same reason. A cancelled queued handoff withdraws
+its waiter, and a late custom acquisition releases its abandoned lease.
+
+The Worker SDK prepares source and dispatchers against an inert loader. The
+native host then acquires the actual Loader handle and RPC entrypoint with
+`Effect.acquireRelease`, awaits the native RPC Promise, and races the run with
+its lease's cancellation Deferred. A resource Scope owns entrypoint-before-
+Loader disposal on every exit, including never-settling evaluation. Release
+closes that Scope synchronously before returning the permit; a failed disposer
+cannot skip the next one. Forwarders lose their providers and pending waits at
+run end. Only native RPC output and the run's private host-failure map can
+supply failure provenance. Guest source isolation, intrinsic capture, import
+routing, codecs and the SDK's source-generation checks remain ordinary leaves.
+
+QuickJS owns host-call fibers in each active run's Scope. Completion,
+interruption, cancellation, recycling and shutdown revoke provider lookup and
+interrupt those fibers; late SDK results and stale IPC cannot reply to another
+run. Releasing a lease during readiness or crash backoff also cancels the old
+run before its slot is handed back. Child retirement closes its resource Scope,
+sends SIGTERM, and escalates to SIGKILL after one second. Shutdown joins native
+completion Deferreds for all retirement tails. Crash backoff remains a Schedule.
+`forkOwned` in `src/runtime/run.ts` starts the host and startup-watchdog children;
+no executor starts a fiber directly. Child process events, IPC encoding and
+bounds, QuickJS VM/job pumping and guest code remain platform or pure leaves.
+
+`test/executor-native.test.ts` exercises native dispatch and Worker disposal,
+never-settling evaluation/host calls, late rejection, execute-once ownership and
+original acquisition errors in workerd. `test/quickjs-pool.node.test.ts` covers
+readiness release, stale/malformed IPC, late host failures, backoff and bounded
+kill. Real Worker and QuickJS guest contracts, the HTTP Worker budget/queued
+request fixture and native-output suites supply runtime parity evidence;
+provider goldens do not execute a sandbox.
 
 ### Native SQL storage (contributor)
 

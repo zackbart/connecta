@@ -21,7 +21,9 @@ import { msg } from "../errors.js";
 import { InvocationFailure } from "../invocation.js";
 import { brandExecutor } from "../executor-contract.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
-import { detach, fromSignal, runEdge } from "../runtime/run.js";
+import { admit } from "../runtime/admission.js";
+import { awaitExecutorLease, executorProgram, provideExecutorProgram } from "../runtime/executor.js";
+import { detach, forkOwned, fromSignal, runEdge } from "../runtime/run.js";
 import type { AdmittingExecutor, AdmissionSnapshot, ExecuteResult, ExecutorLease, ExecutorProvider } from "../types.js";
 import {
   hostCallLabel,
@@ -76,6 +78,7 @@ interface ActiveRun {
   resultBytes: number;
   providers: Map<string, ExecutorProvider>;
   outcome: Deferred.Deferred<ExecuteResult, Error>;
+  readonly hosts: Scope.Closeable;
 }
 
 // One forked child process and the Scope that owns it.
@@ -222,6 +225,8 @@ function terminate(child: Child): Effect.Effect<void> {
   });
 }
 
+let providePoolProgram: (pool: QuickJsChildPool) => void;
+
 class QuickJsChildPool implements AdmittingExecutor {
   /** What `/health` and `connecta doctor` call this sandbox (#368). */
   readonly name = "QuickJS";
@@ -231,7 +236,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   private readonly runtimeOptions: QuickJsRuntimeOptions;
   // Scope closes still in flight, so close() can wait out every child rather
   // than only the ones it retired itself.
-  private readonly retiring = new Set<Promise<void>>();
+  private readonly retiring = new Set<Deferred.Deferred<void>>();
   private closed = false;
   private nextJobId = 1;
 
@@ -257,57 +262,96 @@ class QuickJsChildPool implements AdmittingExecutor {
     this.available = [...this.slots];
   }
 
-  async acquire(options: { signal?: AbortSignal; wait?: boolean } = {}): Promise<ExecutorLease> {
-    const admission = await this.admission.acquire(options);
-    const slot = this.available.shift();
-    if (!slot) {
-      admission.release();
-      throw new Error("Executor admission invariant failed: no child slot.");
-    }
-    let released = false;
-    let executed = false;
-    return {
-      waitMs: admission.waitMs,
-      execute: async (code, providers) => {
-        if (released) throw new Error("Executor lease was already released.");
-        if (executed) throw new Error("Executor lease may execute only once.");
-        executed = true;
-        return runEdge(this.run(slot, code, providers, options.signal));
-      },
-      release: () => {
-        if (released) return;
-        released = true;
-        // A lease let go mid-run takes its child with it: the program is
-        // abandoned, and the next lease must not inherit its leftovers.
-        if (slot.active) {
-          this.rejectActive(slot, new Error("Executor lease was released during execution."));
-          this.recycle(slot);
-        }
-        this.available.push(slot);
+  acquire(options: { signal?: AbortSignal; wait?: boolean } = {}): Promise<ExecutorLease> {
+    return runEdge(this.acquireProgram(options));
+  }
+
+  private acquireProgram(
+    options: { signal?: AbortSignal; wait?: boolean } = {},
+  ): Effect.Effect<ExecutorLease, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const admission = yield* admit(this.admission, options);
+      const slot = this.available.shift();
+      if (!slot) {
         admission.release();
-      },
-    };
+        return yield* Effect.fail(new Error("Executor admission invariant failed: no child slot."));
+      }
+      let released = false;
+      let executed = false;
+      const logs: string[] = [];
+      const stopped = Deferred.makeUnsafe<never, Error>();
+      const execute = (code: string, providers: ExecutorProvider[]) =>
+        Effect.suspend(() => {
+          if (released) return Effect.fail(new Error("Executor lease was already released."));
+          if (executed) return Effect.fail(new Error("Executor lease may execute only once."));
+          executed = true;
+          return Effect.raceFirst(this.run(slot, code, providers, options.signal, logs), Deferred.await(stopped));
+        });
+      const lease: ExecutorLease = {
+        waitMs: admission.waitMs,
+        execute: (code, providers) => runEdge(execute(code, providers)),
+        release: () => {
+          if (released) return;
+          released = true;
+          // Revoke ownership before a successor can see the slot. A release
+          // during readiness/backoff also interrupts the old run, even though
+          // slot.active does not exist yet; the warm child may keep starting.
+          if (slot.active) {
+            this.rejectActive(slot, new Error("Executor lease was released during execution."));
+            this.recycle(slot);
+          }
+          Deferred.doneUnsafe(stopped, Exit.fail(new Error("Executor lease was released during execution.")));
+          this.available.push(slot);
+          admission.release();
+        },
+      };
+      provideExecutorProgram(lease, execute, () => logs);
+      return lease;
+    });
   }
 
   admissionSnapshot(): AdmissionSnapshot {
     return this.admission.snapshot();
   }
 
-  async execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult> {
-    const lease = await this.acquire();
-    try {
-      return await lease.execute(code, providers);
-    } finally {
-      lease.release();
-    }
+  execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult> {
+    return runEdge(this.executeProgram(code, providers));
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-    this.admission.close();
-    for (const slot of this.slots) this.stopSlot(slot);
-    await Promise.allSettled(this.retiring);
+  private executeProgram(code: string, providers: ExecutorProvider[]): Effect.Effect<ExecuteResult, unknown> {
+    return Effect.scoped(
+      Effect.gen({ self: this }, function* () {
+        const lease = yield* Effect.acquireRelease(
+          Effect.suspend(() =>
+            this.acquire !== QuickJsChildPool.prototype.acquire ||
+            this.admission.activeCount >= this.admission.concurrency
+              ? awaitExecutorLease((signal) => this.acquire({ signal }))
+              : this.acquireProgram(),
+          ),
+          (lease) => Effect.sync(() => lease.release()),
+          { interruptible: true },
+        );
+        return yield* executorProgram(lease, code, providers);
+      }),
+    );
+  }
+
+  close(): Promise<void> {
+    return runEdge(
+      Effect.gen({ self: this }, function* () {
+        if (this.closed) return;
+        this.closed = true;
+        this.admission.close();
+        for (const slot of this.slots) this.stopSlot(slot);
+        yield* Effect.forEach([...this.retiring], (finished) => Deferred.await(finished), { discard: true });
+      }),
+    );
+  }
+
+  static {
+    // Register each instance without publishing native methods or Effect types.
+    providePoolProgram = (pool) =>
+      provideExecutorProgram(pool, (code, providers) => pool.executeProgram(code, providers));
   }
 
   // One execution on a leased slot: a ready child, the run message, then the
@@ -319,6 +363,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     code: string,
     providers: ExecutorProvider[],
     signal?: AbortSignal,
+    logs: string[] = [],
   ): Effect.Effect<ExecuteResult, Error> {
     return Effect.gen({ self: this }, function* () {
       if (signal?.aborted) {
@@ -359,12 +404,13 @@ class QuickJsChildPool implements AdmittingExecutor {
       child.channel?.ref();
       const active: ActiveRun = {
         id,
-        logs: [],
+        logs,
         logChars: 0,
         resultChunks: [],
         resultBytes: 0,
         providers: providerMap,
         outcome: Deferred.makeUnsafe(),
+        hosts: Scope.makeUnsafe(),
       };
       slot.active = active;
       try {
@@ -410,7 +456,15 @@ class QuickJsChildPool implements AdmittingExecutor {
       if (signal) {
         contenders.push(fromSignal(signal).pipe(Effect.catch(() => endWith(cancelled("Execution was cancelled.")))));
       }
-      return yield* Effect.raceAllFirst(contenders);
+      return yield* Effect.raceAllFirst(contenders).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            if (slot.active !== active) return;
+            this.rejectActive(slot, new Error("Executor execution was interrupted."));
+            this.recycle(slot);
+          }),
+        ),
+      );
     });
   }
 
@@ -478,7 +532,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       const scope = Scope.makeUnsafe();
       return Effect.acquireRelease(
         Effect.sync(() => this.forkChild(slot, scope, childPath, sourceMode)).pipe(
-          Effect.tap((child) => Effect.forkIn(this.startupWatchdog(slot, child), scope)),
+          Effect.tap((child) => forkOwned(this.startupWatchdog(slot, child), scope)),
         ),
         terminate,
       ).pipe(Scope.provide(scope));
@@ -530,7 +584,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     (subprocess.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null)?.unref?.();
     slot.child = child;
     subprocess.on("message", (message: ChildToParentMessage) => {
-      void this.onMessage(slot, child, message);
+      this.onMessage(slot, child, message);
     });
     subprocess.on("error", (error) => {
       if (slot.child !== child) return;
@@ -568,7 +622,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     return child;
   }
 
-  private async onMessage(slot: ChildSlot, child: Child, message: ChildToParentMessage): Promise<void> {
+  private onMessage(slot: ChildSlot, child: Child, message: ChildToParentMessage): void {
     // A compromised child is exactly the adversary this process boundary
     // contains, and this handler's rejection would crash the serving process.
     // Refuse malformed intake before touching any field.
@@ -602,7 +656,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     }
     if (message.type === "host-call") {
       if (message.jobId !== active.id) return;
-      await this.handleHostCall(slot, child.process, active, message);
+      void detach(forkOwned(this.handleHostCall(slot, child.process, active, message), active.hosts));
       return;
     }
     if ((message.type !== "result" && message.type !== "result-chunk") || message.jobId !== active.id) return;
@@ -646,73 +700,86 @@ class QuickJsChildPool implements AdmittingExecutor {
     }
   }
 
-  private async handleHostCall(
+  private handleHostCall(
     slot: ChildSlot,
     child: ChildProcess,
     active: ActiveRun,
     message: Extract<ChildToParentMessage, { type: "host-call" }>,
-  ): Promise<void> {
-    let payloadJson: string;
-    try {
-      if (serializedBytes(message.payloadJson) > MAX_QUICKJS_HOST_RPC_BYTES) {
-        // Refused before parsing, so there is no address to name here: parsing
-        // an over-limit payload to improve its error message would spend the
-        // work the limit exists to refuse.
-        throw new RangeError("Host call arguments exceeded the IPC limit.");
-      }
-      const payload = JSON.parse(message.payloadJson) as HostCallPayload;
-      const provider = active.providers.get(payload.namespace);
-      const fn =
-        provider && Object.hasOwn(provider.fns, payload.functionName) ? provider.fns[payload.functionName] : undefined;
-      if (!fn) {
-        throw new Error(`Unknown function ${payload.namespace}.${payload.functionName}`);
-      }
-      const value = await fn(...payload.args);
+  ): Effect.Effect<void> {
+    return Effect.gen({ self: this }, function* () {
+      let payloadJson: string;
       try {
-        payloadJson = stringifyBounded(
-          { ok: true, value } satisfies HostResultPayload,
-          `Host result from ${hostCallLabel(payload)}`,
-          MAX_QUICKJS_HOST_RPC_BYTES,
+        if (serializedBytes(message.payloadJson) > MAX_QUICKJS_HOST_RPC_BYTES) {
+          // Refused before parsing, so there is no address to name here: parsing
+          // an over-limit payload to improve its error message would spend the
+          // work the limit exists to refuse.
+          throw new RangeError("Host call arguments exceeded the IPC limit.");
+        }
+        const payload = JSON.parse(message.payloadJson) as HostCallPayload;
+        const provider = active.providers.get(payload.namespace);
+        const fn =
+          provider && Object.hasOwn(provider.fns, payload.functionName)
+            ? provider.fns[payload.functionName]
+            : undefined;
+        if (!fn) {
+          throw new Error(`Unknown function ${payload.namespace}.${payload.functionName}`);
+        }
+        // The provider is an ordinary Promise leaf. Its host fiber belongs to
+        // this run and is interrupted when the child settles or is recycled.
+        const result = yield* Effect.result(
+          Effect.tryPromise({ try: () => fn(...payload.args), catch: (error) => error }),
         );
+        if (result._tag === "Failure") {
+          payloadJson = errorPayload(result.failure);
+        } else {
+          const value = result.success;
+          try {
+            payloadJson = stringifyBounded(
+              { ok: true, value } satisfies HostResultPayload,
+              `Host result from ${hostCallLabel(payload)}`,
+              MAX_QUICKJS_HOST_RPC_BYTES,
+            );
+          } catch (err) {
+            // The guest reads this text, so it names the address the program called
+            // rather than only the generic connecta.call bridge function.
+            const label = hostCallLabel(payload);
+            const detail =
+              err instanceof RangeError
+                ? `Host result from ${label} exceeds the ${MAX_QUICKJS_HOST_RPC_BYTES}-byte serialized bridge limit.`
+                : `Host result from ${label} could not be serialized: ${msg(err)}`;
+            payloadJson = errorPayload(detail);
+          }
+        }
       } catch (err) {
-        // The guest reads this text, so it names the address the program called
-        // rather than only the generic connecta.call bridge function.
-        const label = hostCallLabel(payload);
-        const detail =
-          err instanceof RangeError
-            ? `Host result from ${label} exceeds the ${MAX_QUICKJS_HOST_RPC_BYTES}-byte serialized bridge limit.`
-            : `Host result from ${label} could not be serialized: ${msg(err)}`;
-        payloadJson = errorPayload(detail);
+        payloadJson = errorPayload(err);
       }
-    } catch (err) {
-      payloadJson = errorPayload(err);
-    }
-    if (!child.connected || slot.active !== active) return;
-    const response = {
-      type: "host-result",
-      jobId: message.jobId,
-      callId: message.callId,
-      payloadJson,
-    } satisfies ParentToChildMessage;
-    try {
-      stringifyBounded(response, "QuickJS host-result IPC envelope");
-    } catch {
-      // L6/X10: settle the rejected call even if the outer encoding overflows.
-      response.payloadJson = errorPayload(
-        `QuickJS host-result IPC envelope could not be serialized within the ${MAX_QUICKJS_IPC_BYTES}-byte IPC limit.`,
-      );
-    }
-    const failedSend = (error: Error | null) => {
-      if (!error || slot.active !== active) return;
-      this.rejectActive(slot, error);
-      this.recycle(slot);
-    };
-    try {
-      stringifyBounded(response, "QuickJS host-result IPC envelope");
-      child.send(response, failedSend);
-    } catch (err) {
-      failedSend(err instanceof Error ? err : new Error(msg(err)));
-    }
+      if (!child.connected || slot.active !== active) return;
+      const response = {
+        type: "host-result",
+        jobId: message.jobId,
+        callId: message.callId,
+        payloadJson,
+      } satisfies ParentToChildMessage;
+      try {
+        stringifyBounded(response, "QuickJS host-result IPC envelope");
+      } catch {
+        // L6/X10: settle the rejected call even if the outer encoding overflows.
+        response.payloadJson = errorPayload(
+          `QuickJS host-result IPC envelope could not be serialized within the ${MAX_QUICKJS_IPC_BYTES}-byte IPC limit.`,
+        );
+      }
+      const failedSend = (error: Error | null) => {
+        if (!error || slot.active !== active) return;
+        this.rejectActive(slot, error);
+        this.recycle(slot);
+      };
+      try {
+        stringifyBounded(response, "QuickJS host-result IPC envelope");
+        child.send(response, failedSend);
+      } catch (err) {
+        failedSend(err instanceof Error ? err : new Error(msg(err)));
+      }
+    }).pipe(Effect.catchDefect(() => Effect.void));
   }
 
   private resolveActive(slot: ChildSlot, outcome: ExecuteResult): void {
@@ -734,7 +801,10 @@ class QuickJsChildPool implements AdmittingExecutor {
   }
 
   private clearActive(slot: ChildSlot): void {
+    const active = slot.active;
     slot.active = undefined;
+    active?.providers.clear();
+    if (active) void detach(Scope.close(active.hosts, Exit.void));
     slot.child?.process.unref();
     slot.child?.process.channel?.unref();
   }
@@ -772,9 +842,18 @@ class QuickJsChildPool implements AdmittingExecutor {
     if (slot.child === child) slot.child = undefined;
     if (!child.retired) {
       child.retired = true;
-      const closing = detach(Scope.close(child.scope, Exit.void));
-      this.retiring.add(closing);
-      void closing.then(() => this.retiring.delete(closing));
+      const finished = Deferred.makeUnsafe<void>();
+      this.retiring.add(finished);
+      void detach(
+        Scope.close(child.scope, Exit.void).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              this.retiring.delete(finished);
+              Deferred.doneUnsafe(finished, Exit.void);
+            }),
+          ),
+        ),
+      );
     }
     if (readyError) Deferred.doneUnsafe(child.ready, Exit.fail(readyError));
   }
@@ -786,5 +865,7 @@ class QuickJsChildPool implements AdmittingExecutor {
  * double-acquire deadlock at concurrency 1.
  */
 export function quickJsExecutor(options: QuickJsExecutorOptions = {}): AdmittingExecutor {
-  return brandExecutor(new QuickJsChildPool(options), "leased");
+  const pool = new QuickJsChildPool(options);
+  providePoolProgram(pool);
+  return brandExecutor(pool, "leased");
 }

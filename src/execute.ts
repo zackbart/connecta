@@ -46,6 +46,7 @@ import type { RegistryView } from "./registry.js";
 import { normalizeTimeoutMs, underAnySignal } from "./timeout.js";
 import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
+import { executorProgram } from "./runtime/executor.js";
 import {
   connectorGuide,
   connectorGuideRequired,
@@ -1195,7 +1196,7 @@ function sandboxProvider(
  * — this only decides when to stop waiting for one.
  */
 function awaitExecutor<A>(
-  start: () => A | Promise<A>,
+  start: (() => A | Promise<A>) | Effect.Effect<A, unknown>,
   signal: AbortSignal,
   options: {
     late?: (value: A) => void;
@@ -1205,23 +1206,25 @@ function awaitExecutor<A>(
 ): Effect.Effect<A, unknown> {
   const started = Date.now();
   const contenders: Array<Effect.Effect<A, unknown>> = [
-    Effect.suspend(() => {
-      let pending: Promise<A> | undefined;
-      const settling = Effect.tryPromise({
-        try: () => (pending = Promise.resolve(start())),
-        catch: (err) => err,
-      });
-      const { late } = options;
-      return late
-        ? settling.pipe(
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                pending?.then(late, () => {});
-              }),
-            ),
-          )
-        : settling;
-    }),
+    typeof start !== "function"
+      ? start
+      : Effect.suspend(() => {
+          let pending: Promise<A> | undefined;
+          const settling = Effect.tryPromise({
+            try: () => (pending = Promise.resolve(start())),
+            catch: (err) => err,
+          });
+          const { late } = options;
+          return late
+            ? settling.pipe(
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    pending?.then(late, () => {});
+                  }),
+                ),
+              )
+            : settling;
+        }),
     // An executor that honors the signal rejects in the abort event itself,
     // with the logs it captured attached, and that report beats ours by one
     // timer turn. (A 1ms sleep, not 0: Effect.sleep(0) waits a microtask,
@@ -1443,22 +1446,21 @@ export function createExecuteTool(
             if (diagnostics) diagnostics.executorWallMs = elapsed;
           },
           awaitExecutor(
-            () =>
-              (admitted
-                ? admitted.execute(wrapGuestProgram(program), [provider])
-                : executor.execute(wrapGuestProgram(program), [provider])
-              ).then(
-                (outcome) => {
-                  executorLogs = sentSecrets.redact(outcome?.logs);
-                  return sentSecrets.redact(outcome);
-                },
-                (err: unknown) => {
-                  if (err !== null && typeof err === "object" && "logs" in err) {
-                    executorLogs = sentSecrets.redact(err.logs);
-                  }
-                  throw sentSecrets.redact(err);
-                },
-              ),
+            executorProgram(admitted ?? executor, wrapGuestProgram(program), [provider], {
+              result: (outcome) => {
+                executorLogs = sentSecrets.redact(outcome?.logs);
+              },
+              error: (err) => {
+                if (err !== null && typeof err === "object" && "logs" in err)
+                  executorLogs = sentSecrets.redact(err.logs);
+              },
+              interrupted: (logs) => {
+                executorLogs = sentSecrets.redact(logs);
+              },
+            }).pipe(
+              Effect.map((outcome) => sentSecrets.redact(outcome)),
+              Effect.mapError((error) => sentSecrets.redact(error)),
+            ),
             signal,
             { watchdog, terminal: Deferred.await(terminal) },
           ).pipe(
