@@ -110,6 +110,33 @@ describe("guest API contract (executor-independent)", () => {
 });
 
 describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)", () => {
+  it.each(["value", "promise", "throw", "rejection"] as const)(
+    "INV-7: direct Worker execution preserves provider %s behavior at the native leaf",
+    async (mode) => {
+      const failure = new InvocationFailure({
+        code: "invalid_args",
+        message: "Direct host refusal.",
+        retryable: false,
+      });
+      const answer = () => {
+        if (mode === "throw") throw failure;
+        if (mode === "rejection") return Promise.reject(failure);
+        return mode === "promise" ? Promise.resolve(42) : 42;
+      };
+      const outcome = await required(workerExecutor).execute("async () => await host.answer()", [
+        {
+          name: "host",
+          // Direct JavaScript callers historically work with plain values too.
+          fns: { answer: answer as unknown as () => Promise<unknown> },
+        },
+      ]);
+      if (mode === "value" || mode === "promise") expect(outcome).toMatchObject({ result: 42 });
+      else {
+        expect(outcome.error).toBe(failure.message);
+        expect(outcome.failure?.call).toBe(failure.details);
+      }
+    },
+  );
   it("INV-4 INV-5 INV-7: program error data carries a reusable handoff that completes OAuth", async () => {
     // The deployment fixture owns its executor and closes it with the app.
     await checkAuthHandoffProgram(required(await loadWorkerExecutor()));

@@ -934,6 +934,9 @@ export class AccessTokenManager {
                     ) {
                       return unauthorized();
                     }
+                    // The slot is the authority: a surviving lookup or record it does not
+                    // name is inert. Human-bound and unbound records, and agents no longer in
+                    // code, refuse exactly as an unknown token does.
                     if (record.principal || record.agent === undefined || !this.agents.has(record.agent))
                       return unauthorized();
                     const slotRaw = (yield authStorage<string | null>(this.storage, "get", [slotKey(record.agent)])) as

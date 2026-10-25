@@ -384,6 +384,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       StaticOAuthProvider.prototype,
       "saveClientInformation",
       function (this: StaticOAuthProvider) {
+        // Nothing to save: the SDK only saves a client it registered or stamped.
         return Effect.void;
       },
       StaticOAuthProvider.prototype.saveClientInformation,
@@ -415,6 +416,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       StaticOAuthProvider.prototype,
       "saveDiscoveryState",
       function (this: StaticOAuthProvider) {
+        // Configuration is the discovery; there is nothing to remember.
         return Effect.void;
       },
       StaticOAuthProvider.prototype.saveDiscoveryState,
@@ -487,6 +489,7 @@ const readChallengeNative = /* @__PURE__ */ registerAuth(
           try {
             chunk = (yield authInvoke(reader, "read", [])) as ReadableStreamReadResult<any>;
           } catch {
+            // Like the guarded client, a broken challenge body cannot replace its 401.
             break;
           }
           if (signal.aborted) throw signal.reason;
@@ -539,6 +542,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         request.headers = headers;
       }
       trackRemoteClientRequest(secrets, input, request);
+      // The coordinator or code-exchange wrapper authorizes this send. Refresh
+      // claim submission may outlive the caller; this transport uses no
+      // request-owned capability and changes no closed resource-call ledger.
       const dispatch: ProviderRequest = {
         dispatched: false,
         auxiliary: true,
@@ -584,6 +590,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               authMethod((input: string | URL, init: RequestInit | undefined) => {
                 return authFlow<Response>(function* () {
                   if (exchange) {
+                    // A code exchange has no submitted refresh claim transferring
+                    // ownership. Only explicit scope revocation stops a callback:
+                    // the production callback route remains uninterruptible and
+                    // does not revoke its own scope while exchanging a code.
                     return (yield authView(
                       ctx,
                       authMethod((signal: AbortSignal) => {
@@ -597,10 +607,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                               signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
                             },
                           ])) as Response;
+                          // An override can ignore abort. Never hand its late tokens
+                          // to the SDK, which would otherwise persist both credentials.
                           if (signal.aborted) {
                             void response.body?.cancel().catch(() => {});
                             throw signal.reason;
                           }
+                          // The SDK clones and reads this body after fetch resolves.
+                          // Revocation must cancel that read even for a custom fetch.
                           return codeExchangeResponse(response, signal);
                         });
                       }),
@@ -639,6 +653,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const renewedToken = authMethod(
     (provider: StaticOAuthProvider, ctx: ConnectorContext, spent: string, requestOwned: boolean = false) => {
       return authFlow<string>(function* () {
+        // Only renewal whose claim CAS was submitted may survive this call.
+        // Race each preparation read too, and never resume SDK work or consume a
+        // rotated token after closure, even if a storage promise completes late.
         const live = authMethod(<A>(work: () => Promise<A>) => {
           return authFlow<A>(function* () {
             if (ctx.signal?.aborted) throw ctx.signal.reason;
@@ -822,10 +839,13 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     return authFlow<Response>(function* () {
       let prepared = takeProviderHandoff(init);
       const auxiliary = prepared?.auxiliary === true;
+      // Own the complete token preparation and fetch helper. The coordinator
+      // still owns a submitted refresh claim independently of this wait.
       return (yield authView(
         ctx,
         authMethod((owned: AbortSignal) => {
           return authFlow<Response>(function* () {
+            // A call that already ended reads no token and sends nothing more.
             assertProviderCallOpen(ctx, id, auxiliary);
             const owner = prepared;
             const url = new URL(input);
@@ -864,6 +884,11 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 sentSecretsFor(ctx).add(accessToken);
                 const sent = new Headers(headers);
                 sent.set("Authorization", `Bearer ${accessToken}`);
+                // The token rides to a declared origin and no further: a redirect is
+                // handed back to the handler unfollowed rather than re-sent anywhere.
+                // The handler reads the answer with `.json()` or `.text()`, which read
+                // bytes here: workerd quotes a text read's non-text Content-Type in
+                // its own log, out of the handler's reach.
                 const request: RequestInit = {
                   ...init,
                   headers: sent,
@@ -879,6 +904,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 const pending = sentSecretsFetch(ctx)(url, request).then((response) => {
                   recordProviderResponse(dispatch, response.status);
                   if (response.status === 401) {
+                    // Closure can settle the handler before renewal's catch maps
+                    // this answer. Preserve its OAuth verdict in the ledger first;
+                    // only the final write decider reports it. A live renewal keeps
+                    // its own precise verdict and never replays a write.
                     const abandoned = () => {
                       vendorRefusal(
                         unsentAfterUnauthorized(`Connector "${id}"'s API`, signal.reason, "downstream_oauth_required"),
@@ -891,6 +920,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                       detachAnswers.push(() => signal.removeEventListener("abort", abandoned));
                     }
                   }
+                  // A custom fetch may answer after revocation. Its physical status
+                  // remains a fact, but its body belongs to no live helper or handler.
                   if (signal.aborted) void response.body?.cancel().catch(() => {});
                   return response;
                 });
@@ -928,6 +959,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 try {
                   const fresh = (yield authInvoke(grant, "refresh", [stale])) as string;
                   if (signal?.aborted) throw signal.reason;
+                  // The call's ledger keeps this 401's verdict, or that renewal
+                  // replaced the token this request sent (Q8). The same token back
+                  // renewed nothing.
                   renewedAfterUnauthorized(dispatch, stale, fresh);
                   if (fresh === stale) renewal = authRequiredError();
                 } catch (error) {
@@ -950,6 +984,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               void second.body?.cancel().catch(() => {});
               return (yield authInvoke(grant, "rejected", [])) as never;
             } catch (error) {
+              // The SDK can replace cancellation with its passive-consent refusal,
+              // and write recovery normally replaces errors with a 401 verdict. A
+              // closed capability must still fail promptly with its own close reason;
+              // the invocation's ledger retains the write's uncertainty and handoff.
               if (signal?.aborted) throw signal.reason;
               if (error instanceof UnauthorizedError) {
                 rejectedScopes.add(scopeOf(ctx));
@@ -975,6 +1013,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           message: "Authorization required \u2014 the downstream rejected this connector's OAuth grant.",
         };
       }
+      // A status read never starts authorization: this provider cannot, and
+      // nothing here calls the SDK. A stored grant for the configured token
+      // endpoint is healthy until a call says otherwise — the downstream is
+      // asked nothing.
       const provider = providerFor(ctx);
       if ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean) {
         return { state: "auth_required", message: disconnectedMessage };
@@ -1014,6 +1056,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           (yield authInvoke(provider, "resetAuthorization", [])) as void;
           rejectedScopes.delete(scopeOf(original));
         } else {
+          // Hand back a recent consent URL rather than overwrite the verifier
+          // the operator may be mid-consent on.
           const pending = (yield authInvoke(provider, "reusablePendingAuthorizationUrl", [])) as string | undefined;
           if (pending) {
             return {
@@ -1026,6 +1070,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         }
         if (ctx.signal?.aborted) throw ctx.signal.reason;
         try {
+          // A grant from a since-repointed token endpoint reads as absent here,
+          // and the consent this start begins replaces it.
           (yield authInvoke(provider, "beginFlow", [])) as string;
           if (
             (yield authInvoke(provider, "tokens", [issuerContext])) as
@@ -1055,6 +1101,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           if (error instanceof UnauthorizedError) {
             return { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
           }
+          // Reaches the agent through authorize_connector. Text already in
+          // connecta's words passes with its advice to try again, since this is
+          // no write's failure (token responses are rebuilt before the SDK reads
+          // them); anything else is told from its record.
           return {
             state: "error",
             message:
@@ -1076,6 +1126,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
 
   const verifyState = authMethod((state: string | null, ctx: ConnectorContext) => {
     return authFlow<boolean>(function* () {
+      // The provider that verified the state captured its flow's epoch, and the
+      // exchange must write under exactly that one.
       const provider = providerFor(ctx);
       callbackProviders.set(scopeOf(ctx), provider);
       return (yield authInvoke(provider, "verifyState", [state])) as boolean;
@@ -1091,6 +1143,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           callbackProviders.delete(scopeOf(ctx));
           const authorizationCode = callbackParams?.get("code") ?? code;
           const iss = callbackParams?.get("iss") ?? undefined;
+          // Every exchange names and claims its own consent, including without PKCE.
           const consent = callbackParams?.get("state") ?? null;
           if (!consent || !((yield authInvoke(provider, "verifyCallbackState", [consent])) as boolean)) {
             throw new ConnectorCallError(

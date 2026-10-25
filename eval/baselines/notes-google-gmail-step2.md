@@ -1,5 +1,9 @@
 # Google Gmail step 2 evaluation (#703)
 
+A later [disclosed offline grader correction](./notes-google-grader-followups.md)
+regrades every saved arm, including Gmail's separate refresh. The original
+results and frozen-protocol statements below remain unchanged.
+
 Seven fake-only workflows compare main's original Gmail surface with the standardized indexed surface. All seven are existing capabilities, including G4's legacy raw-message read. The [summary JSON](./google-gmail-step2.json) records all 56 trials, original artifact SHA-256 hashes, source/CLI/protocol metadata, checks, final answers, tool attempts, request counts, discovery bytes and usage. Complete unmodified transcripts and saved worlds remain under `/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/`.
 
 ## Frozen protocol and reference-only change

@@ -68,6 +68,9 @@ export function cloudflareAccessAuth(): InboundAuth {
             ),
           };
         }
+        // Access binds ctx.access.aud to its Worker application at the edge.
+        // Service credentials can pass that edge, but connecta machines must
+        // present a cta_ token to the machine provider instead.
         const forbidden = (): AuthResult => ({
           ok: false,
           response: Response.json(

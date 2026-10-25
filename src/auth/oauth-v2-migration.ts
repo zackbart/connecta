@@ -92,6 +92,7 @@ const readV2GrantNative = /* @__PURE__ */ registerAuth(
       const generation = ((yield authStorage(storage, "get", [oauthV2Keys.generation])) as string | null) ?? "legacy";
       if (generation.startsWith("disconnected:")) return { disconnected: true, body: {} };
       if (!generation.startsWith("v2:") && generation !== "legacy") {
+        // An unfinished reset, or a numeric generation from before epochs.
         return { disconnected: false, body: {} };
       }
       const epoch = generation === "legacy" ? null : generation;
@@ -123,6 +124,7 @@ const readV2GrantNative = /* @__PURE__ */ registerAuth(
               ...(parsed.carried === true ? { carried: true as const } : {}),
             };
           }
+          // Layout 2 wrote discovery bare under the legacy generation.
           return field === oauthV2Keys.field.discovery && epoch === null && discoveryIssuer(parsed)
             ? { value: parsed }
             : undefined;

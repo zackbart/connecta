@@ -194,6 +194,8 @@ const authenticateNative = /* @__PURE__ */ registerAuth(
         );
       }
       if (active >= AUTHENTICATION_CONCURRENCY || abandoned >= ABANDONED_ALLOWANCE) {
+        // Callers see one retryable contract; the log and health tell an
+        // operator whether stalled bindings, not load, are refusing.
         const reason = abandoned >= ABANDONED_ALLOWANCE ? "authentication_abandoned_saturated" : "authentication_busy";
         return Effect.succeed({
           admitted: false,
@@ -202,8 +204,11 @@ const authenticateNative = /* @__PURE__ */ registerAuth(
       }
       active++;
       const charge: Charge = { state: "active" };
+      // Held only by this scope's closures (see `collector`); the registry keeps
+      // the record, and the token, as its own unregister key, only weakly.
       const token = {};
       collector?.register(token, charge, token);
+      // The adapter's own program or Promise plus each tracked native operation.
       let remaining = 1;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let complete!: () => void;
@@ -243,12 +248,19 @@ const authenticateNative = /* @__PURE__ */ registerAuth(
       let asynchronous = false;
       try {
         const result = provider.authorize(request, baseUrl, runtimeContext);
+        // A synchronous local/cached verdict owns no pending authentication.
+        // Release before yielding, rather than holding a slot for a microtask.
         if ("ok" in result) return Effect.succeed({ admitted: true as const, result });
         asynchronous = true;
         const pending = result.finally(finish);
+        // Keep just this request's settlement continuation runnable when workerd
+        // drops the disconnected caller, including native work that outlived the
+        // caller-facing deadline. It neither detaches nor starts work.
         settle?.(done);
         return authValue<AuthResult>(() => pending).pipe(Effect.map((result) => ({ admitted: true as const, result })));
       } finally {
+        // A caller leaving is not proof that its adapter or SDK has stopped.
+        // Keep capacity charged until the underlying authorization settles.
         if (!asynchronous) finish();
       }
     });

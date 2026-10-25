@@ -1,5 +1,9 @@
 # Google Sheets step 2 evaluation (#703)
 
+A later [disclosed offline grader correction](./notes-google-grader-followups.md)
+regrades every saved arm, including Gmail's separate refresh. The original
+results and frozen-protocol statements below remain unchanged.
+
 Seven fake-only workflows compare main's nine named tools with the nine retained
 workflows plus four `sheets_api_*` tools. The [JSON summary](./google-sheets-step2.json)
 retains all 56 trials, checks, final answers, requested/served models, CLI metadata,
