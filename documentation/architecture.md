@@ -3523,3 +3523,76 @@ registration, decorated fallback and request/native-storage semantics also
 require a smoke through an actual minified production bundle. Final post-hook
 official artifacts measure root 377,290, D1 88,321, Clerk 80,959, UI 342,959
 and Worker 762,774 bytes gzip, all within those caps.
+
+### Native remote MCP programs (contributor)
+
+Remote MCP connection joins, credential and epoch checks, catalog intake,
+negotiation, calls, resources, Skills, auth and status compose native programs in
+`connectors/remote-mcp.ts`. `catalog-cache.ts` owns native SDK cache reads,
+chunked publication, generation fencing, complete refresh acceptance and listing
+serialization; `connectors/negotiation-cache.ts` owns native negotiation storage.
+The published connector, cache and SDK callback methods remain Promise shells.
+Native consumers select those programs through `authCall` / `authInvoke` by
+current function identity. Each original shell enters its own immutable program,
+so a decorator or inherited delegate can call a saved original without recursion.
+`invocation-auth.ts` follows that same identity dispatch for local credential
+checks. The remote call registers its final original function with
+`runtime/call-entry.ts`, preserving invocation validation, policy and call services.
+A replaced function cannot inherit that native call proof.
+
+Connector and cache state use the canonical `RequestScope` from the existing
+view services. The shared connection provides only that request owner, never the
+first waiter's call services, credentials or budget. SDK cache callback edges
+restore that same owner. Every operation captures its own generation, credential
+identity and listing binding before waiting; a later listing cannot adopt an
+abandoned publication. Request closure revokes the connector and cache scopes.
+No client, transport, response, signal, promise or live request Context is shared
+across inbound requests. D4's bounded refresh coordinator retains its separate
+ownership, synchronous submission gate and waiting-request handoff.
+
+Two deliberate Promise waits remain: a connect waiter receives the Deferred's
+answer in its own workerd request continuation, and a serialized listing waits
+for a Promise turn before running its native program. Cancelling a queued
+listing releases its turn only after its predecessor, so it cannot unlock a
+listing still using the SDK cache binding. Cancellation after entry ends that
+listing's publication without starving a live sibling. Teardown starts native
+finalizers before checking caller ownership and joins their bounded independent
+settlement. Only `runtime/run.ts` starts fibers.
+
+Physical sender Promise observers retain response status, write refusal and
+redirect facts even when a native waiter closes first. The call's abort path
+yields one scheduler reaction before settling those facts, including when the
+SDK rejects synchronously from the abort event. These observations grant no live
+authority: a closed caller cannot renew, send, publish a cache result or consume
+late output. Source/effective write classification, one physical attempt,
+withheld transport text, explicit downstream tool errors, input suspension,
+final output validation and original abort/error identity remain enforced.
+
+Intentional leaves are the pinned MCP SDK's actual client/transport operations
+and schema validators, the owned one-attempt sender and platform fetch,
+Web Crypto fingerprints, bounded byte/SSE stream readers and body cancellation,
+and unregistered custom token, credential, storage, sealer or observation hooks.
+SDK `ResponseCacheStore` is the callback contract, not a replacement client or
+protocol implementation. Its storage and refresh algorithms are native programs;
+its Promise shells are required SDK edges. The connector keeps modern/legacy
+negotiation, header mirroring, cache partitions and TTL semantics. No SDK/Effect
+pin or supported protocol surface changes.
+
+Native storage and activity selection in `runtime/native-storage.ts` checks the
+current methods against their original registered identity, and selected programs
+check again when executed. A replacement or decorator owns the Promise fallback;
+restoring originals restores native composition. Registry storage namespaces
+select the underlying current methods at dispatch, including namespaces created
+while a source method is decorated. Original SQL shells call their own native
+program directly. Tests cover current and previously selected programs, own and
+inherited saved-original delegates, get/set/CAS and activity record/list,
+restoration, typed failures and interruption. The D4 native proof fixtures install
+their intentional throwing Promise shells before registration, so they establish
+native composition without authorizing bypass of later replacements.
+
+`remote-mcp-native.test.ts` runs native SDK/cache/request-boundary cases on Node
+and workerd. `remote-mcp-native-bundle.node.test.ts` additionally loads an actual
+minified production bundle to verify call/cache registration, request Context,
+native storage, saved-original delegates, custom replacements and closed-owner
+refusal. Existing wire, physical-attempt, cache and OAuth lifetime suites remain
+the compatibility evidence; provider golden observations remain unchanged.

@@ -41,6 +41,8 @@ const WORKERS_SUITES = [
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
+  "test/remote-mcp-native.test.ts",
+  "test/remote-mcp-skills.test.ts",
   "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
   "test/native-tools.test.ts",
