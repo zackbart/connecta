@@ -56,6 +56,11 @@ Retain the Node template's `undici` dependency and serve with `listen` from
 `@zackbart/connecta/node`. `listen()` installs the owned sender for every
 maintained-provider request, reads included, remote MCP writes, and downstream
 OAuth token exchange/refresh, dynamic registration and revocation POSTs.
+Its separate pre-auth request buffer defaults to 4 MiB, matching core's
+authenticated `admission.requests.maxBodyBytes` default. To accept larger MCP
+bodies, configure both core and `listen(..., { maxBodyBytes })`; a smaller
+platform, proxy or adapter cap still wins. See
+[request body limits](./architecture.md#admission-in-two-places).
 A Node host serving `connecta.fetch` without `listen()` has no owned sender:
 every maintained-provider write, every reviewed POST read and every remote MCP
 write is refused before sending. Downstream OAuth credential POSTs also require
