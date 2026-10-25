@@ -294,16 +294,18 @@ it(
   },
 );
 
-it(
-  "INV-1 INV-7 INV-10: keeps vendor summaries separate from bounded refusals and reconstructs complete reasons",
+it.each([false, true])(
+  "INV-1 INV-7 INV-10: keeps vendor summaries separate from bounded refusals and reconstructs complete reasons (overlay: %s)",
   NATIVE,
-  async () => {
+  async (overlay) => {
     const reason = `${"😀".repeat(1000)} ${"Reviewed policy. ".repeat(2500)} Use the named safe alternative.`;
+    const dispatchReason = overlay ? "Static refusal stays authoritative at dispatch." : reason;
     const { call, authenticate, sendPath } = setup({
       verdicts: { "GET /items": "refuse" },
       binding: {
         review: "Static refusal pagination fixture.",
-        refusal: () => reason,
+        refusal: () => dispatchReason,
+        ...(overlay ? { discoveryRefusal: () => reason } : {}),
         send: () => Effect.die("Must not send"),
       },
     });
@@ -324,7 +326,10 @@ it(
       cursor = page.page?.nextCursor;
     } while (cursor);
     expect(JSON.parse(chunks.join(""))).toBe(reason);
-    await expect(call("read", { path: "/items" })).rejects.toMatchObject({ code: "invalid_args", message: reason });
+    await expect(call("read", { path: "/items" })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: dispatchReason,
+    });
     expect(authenticate).not.toHaveBeenCalled();
     expect(sendPath).not.toHaveBeenCalled();
     expect(sent).toEqual([]);

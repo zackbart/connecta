@@ -724,7 +724,7 @@ export function hatch(
         resourceHead: Number(
           terminal || (terminalExists && authored && authoredCoverage === nouns.length && readDescription),
         ),
-        readable: Number(verdictOf(op) === "read"),
+        readable: Number(discoveryVerdictOf(op) === "read"),
         focused: Number(
           (intent !== undefined || resourceOnly) &&
             focus !== undefined &&
@@ -1564,7 +1564,7 @@ export function hatch(
   }
   registerOperationVocabulary(tools[0]!, function* () {
     for (const op of index.ops) {
-      const verdict = verdictOf(op);
+      const verdict = discoveryVerdictOf(op);
       yield {
         text: `${op.path.slice(0, 384)} ${op.operationId.slice(0, 128)} ${op.summary.slice(0, 384)} ${op.tag.slice(0, 128)}`,
         route: verdict === "refuse" ? searchTool : route(op).tool,

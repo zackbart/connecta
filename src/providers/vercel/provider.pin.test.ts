@@ -12,6 +12,7 @@ import type { RestCall } from "../_shared/rest/tools.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { SkillsRegistry } from "../../skills.js";
+import { CatalogService, flatSearchResult } from "../../catalog-service.js";
 
 const OPTIONS = { purpose: "Team applications", auth: { type: "token" }, teamId: "team_alice" } as const;
 
@@ -73,12 +74,12 @@ describe("Vercel deployment team pin", () => {
       expect(details.verdict).toBe("refuse");
       expect(details).not.toHaveProperty("tool");
       expect(hit).not.toHaveProperty("tool");
-      // Pin-only refusals retain the vendor's reviewed summary; the generic
-      // refusal renderer owns the pre-existing static refusal summaries.
-      if (VERCEL_VERDICTS[`${op.method} ${op.path}`] !== "refuse") {
-        expect(details.summary).toBe(op.summary);
-        expect(hit.summary).toBe(op.summary.length > 300 ? `${op.summary.slice(0, 299)}…` : op.summary);
-      }
+      expect(details.summary).toBe(op.summary);
+      expect(hit.summary).toBe(op.summary.length > 300 ? `${op.summary.slice(0, 299)}…` : op.summary);
+      // Includes all nine overlaps with the static refusal table: the pin's
+      // construction reason wins without replacing the vendor's summary.
+      expect(details.refusal).toBe("This operation has no reviewed deployment-team confinement.");
+      expect(hit.refusal).toBe(details.refusal);
       expect(credentials).not.toHaveBeenCalled();
       expect(sent).toEqual([]);
       expect(() =>
@@ -108,6 +109,60 @@ describe("Vercel deployment team pin", () => {
       expect(sent).toEqual([]);
     },
   );
+
+  it("INV-2 INV-4 INV-10: composes pinned vocabulary with grants, safety and read-only policy without handlers", async () => {
+    const pinned = connector();
+    const unpinned = vercel("other-hosting", OPTIONS);
+    const readOnly = vercel("read-only-hosting", { ...OPTIONS, pin: { teamId: "team_alice" }, readOnly: true });
+    const handlers = [pinned, unpinned, readOnly].map((client) => vi.spyOn(client, "callTool"));
+    const registry = makeRegistry([pinned, unpinned, readOnly]);
+    const search = async (
+      client: typeof pinned,
+      options: { safety?: "readOnly" | "approvalRequired"; endpointReadOnly?: boolean; grants?: string[] } = {},
+    ) => {
+      const scope = registry.scoped({
+        connectorIds: [client.id],
+        ...(options.grants ? { toolAccess: new Map([[client.id, new Set(options.grants)]]) } : {}),
+      });
+      const catalog = new CatalogService(scope, "https://connecta.example", {
+        readOnly: options.endpointReadOnly ?? false,
+      });
+      const result = flatSearchResult(
+        await catalog.search({ query: "getAuthUser", ...(options.safety ? { safety: options.safety } : {}) }),
+      );
+      return result.tools.some((tool) => tool.address === `${client.id}.vercel_api_search`);
+    };
+    // Repeat after cache population under different policy; caches convey no grants.
+    for (const _round of [0, 1]) {
+      expect(await search(unpinned)).toBe(true);
+      expect(await search(pinned)).toBe(true);
+      expect(await search(unpinned, { grants: ["vercel_api_search"] })).toBe(false);
+      expect(await search(pinned, { grants: ["vercel_api_search"] })).toBe(true);
+      expect(await search(pinned, { grants: ["vercel_api_read"] })).toBe(false);
+      expect(await search(unpinned, { safety: "readOnly" })).toBe(true);
+      expect(await search(pinned, { safety: "readOnly" })).toBe(false);
+      expect(await search(unpinned, { safety: "approvalRequired" })).toBe(false);
+      expect(await search(pinned, { safety: "approvalRequired" })).toBe(true);
+      expect(await search(unpinned, { endpointReadOnly: true })).toBe(true);
+      expect(await search(pinned, { endpointReadOnly: true })).toBe(false);
+      expect(await search(readOnly)).toBe(false);
+    }
+    const hidden = makeRegistry([pinned], { classification: { hosting: { vercel_api_search: "hidden" } } });
+    expect(
+      flatSearchResult(
+        await new CatalogService(hidden, "https://connecta.example").search({ query: "getAuthUser" }),
+      ).tools.map((tool) => tool.address),
+    ).not.toContain("hosting.vercel_api_search");
+    for (const handler of handlers) expect(handler).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+    const ctx = context();
+    const credentials = vi.spyOn(ctx.credential, "getAll");
+    await expect(pinned.callTool("vercel_api_read", { path: "/v2/user" }, ctx)).rejects.toMatchObject({
+      code: "provider_permission_denied",
+    });
+    expect(credentials).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
 
   it("INV-4 INV-10: isolates pinned and unpinned discovery and derives the actual guide refusal count", async () => {
     const pinned = connector();
@@ -180,6 +235,10 @@ describe("Vercel deployment team pin", () => {
       ),
     });
     expect(changed.content).toContain(suffix);
+    expect(changed.content).toContain("inspect the original operation summary and its separate refusal.");
+    expect(changed.content).toContain(
+      "Use details for refused methods outside the read/write call schemas; those methods remain unavailable.",
+    );
     const pinned = { ...OPTIONS, pin: { teamId: "team_alice" } };
     expect(() => transformGuide({ ...guide, content: "Missing Hatch sentence." }, pinned)).toThrow(/exactly one/);
     const hatchLine = content.split("\n").find((line) => line.startsWith("- **Hatch:**"))!;
