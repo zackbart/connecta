@@ -28,6 +28,37 @@ describe("Node listen adapter", () => {
     }
   }, 65_000);
 
+  it.each([
+    ["short", 1_500, 0],
+    ["long", 6_000, 0],
+    ["sse", 1_500, 0],
+    ["pipeline", 1_500, 0],
+    ["unused", 0, 0],
+    ["partial", 0, 0],
+    ["error", 1_500, 0],
+    ["deadline", 350, 1],
+  ] as const)(
+    "INV-7: drains %s with a non-closing keepalive peer in a bounded time",
+    (mode, duration, code) => {
+      const child = spawnSync(
+        process.execPath,
+        ["--import", "tsx", fileURLToPath(new URL("./fixtures/node-response-drain.ts", import.meta.url)), mode],
+        { encoding: "utf8", timeout: 20_000 },
+      );
+      expect(child.error, child.stderr).toBeUndefined();
+      expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(code);
+      expect(child.stdout).toContain(`peer verified ${mode}`);
+      const result = JSON.parse(child.stdout.split("\n").find((line) => line.startsWith('{"mode"'))!);
+      console.info("shutdown observation", result);
+      expect(result).toMatchObject({ mode, code });
+      expect(result.elapsed).toBeLessThan(duration + 1_500);
+      if (duration) expect(result.elapsed).toBeGreaterThanOrEqual(duration - 100);
+      expect(child.stderr.includes("shutdown timed out")).toBe(mode === "deadline");
+      expect(`${child.stdout}${child.stderr}`).not.toContain("PRIVATE_STREAM_FAILURE");
+    },
+    25_000,
+  );
+
   it("propagates a real MCP socket disconnect into execute_code host calls", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let markStarted!: () => void;

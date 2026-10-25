@@ -104,8 +104,28 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
   };
 
   const awaitingRequest = new Set<Socket>();
+  const activeResponses = new Map<Socket, number>();
+  let shuttingDown = false;
   const server = createServer((req, res) => {
     awaitingRequest.delete(req.socket);
+    const socket = req.socket;
+    activeResponses.set(socket, (activeResponses.get(socket) ?? 0) + 1);
+    const finished = () => {
+      res.removeListener("finish", finished);
+      res.removeListener("close", finished);
+      const remaining = (activeResponses.get(socket) ?? 1) - 1;
+      if (remaining > 0) activeResponses.set(socket, remaining);
+      else {
+        activeResponses.delete(socket);
+        // finish means the response was handed to the socket; destroySoon
+        // flushes its queued bytes before closing, including an SSE trailer.
+        // Count pipelined responses so an earlier finish cannot cut a later
+        // admitted response off. Before shutdown Node's keepalive is unchanged.
+        if (shuttingDown) socket.destroySoon();
+      }
+    };
+    res.once("finish", finished);
+    res.once("close", finished);
     void (async () => {
       const controller = new AbortController();
       const abortRequest = () => {
@@ -163,7 +183,6 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
 
   if (opts.gracefulShutdown !== false) {
     const timeoutMs = opts.shutdownTimeoutMs ?? 10_000;
-    let shuttingDown = false;
     // closeIdleConnections() only knows sockets that have served a request.
     // A client's spare connection (or incomplete first headers) must not hold
     // shutdown open without ever having been admitted to the application.

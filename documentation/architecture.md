@@ -3433,3 +3433,13 @@ spent-token algorithm intentionally remains conservative after a submitted claim
 even if a later CONNECT fails before destination dispatch. D6 must preserve the
 SDK JSON-RPC envelope distinction at the leaf: protocol POSTs are not credential
 POSTs; forms and registration JSON are. Discovery GETs remain native fetch.
+
+### Contributor reference: Node response drain
+
+The Node listener counts active ServerResponses per socket. Once shutdown starts,
+each finish/close removes its response; the last completion calls `destroySoon`
+to flush queued bytes and close the connection. This also covers SSE whose
+headers were sent before shutdown and pipelined responses waiting behind an
+inflight response. Normal keepalive remains Node-owned until shutdown. Idle and
+never-admitted sockets retain their separate close paths, and the configured
+shutdown deadline still forces exit 1 for work that never completes.
