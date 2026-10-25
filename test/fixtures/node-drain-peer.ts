@@ -7,6 +7,7 @@ const socket = createConnection({ host: "127.0.0.1", port: Number(process.argv[2
 let output = "";
 let requested = false;
 const send = (path: string) => socket.write(`GET /${path} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n`);
+process.on("message", (message) => { if (message === "queue-after") send("after"); });
 socket.on("connect", () => {
   if (mode === "unused") process.send!("ready");
   else if (mode === "partial") {
@@ -20,7 +21,6 @@ socket.on("data", (chunk) => {
     requested = true;
     assert.match(output, /Connection: keep-alive/i, "normal keepalive is preserved");
     send("slow");
-    if (mode === "pipeline") send("after");
     if (mode !== "sse" && mode !== "error") process.send!("ready");
   }
   if ((mode === "sse" || mode === "error") && output.includes("data: opened")) {

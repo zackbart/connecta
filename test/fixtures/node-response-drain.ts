@@ -10,6 +10,8 @@ const mode = process.argv[2]!;
 const duration = mode === "long" ? 6_000 : mode === "deadline" ? 60_000 : 1_500;
 let started!: () => void;
 const handling = new Promise<void>((resolve) => { started = resolve; });
+let queued!: () => void;
+const pipelineHandling = new Promise<void>((resolve) => { queued = resolve; });
 let finishResponse!: () => void;
 const release = new Promise<void>((resolve) => { finishResponse = resolve; });
 let requests = 0;
@@ -17,7 +19,10 @@ const app = {
   async fetch(request: Request) {
     requests++;
     if (new URL(request.url).pathname === "/warm") return new Response("warm");
-    if (new URL(request.url).pathname === "/after") return new Response("after-pipeline");
+    if (new URL(request.url).pathname === "/after") {
+      queued();
+      return new Response("after-pipeline");
+    }
     if (mode === "sse" || mode === "error") {
       return new Response(new ReadableStream({
         start(controller) {
@@ -48,6 +53,12 @@ const peer = fork(fileURLToPath(new URL("./node-drain-peer.ts", import.meta.url)
 await new Promise<void>((resolve) => { peer.on("message", (message) => { if (message === "ready") resolve(); }); });
 if (mode !== "unused" && mode !== "partial") {
   await handling;
+  if (mode === "pipeline") {
+    // Force separate delivery after the slow handler starts, then wait until
+    // both pipelined requests are admitted before initiating shutdown.
+    peer.send("queue-after");
+    await pipelineHandling;
+  }
   assert.equal(requests, mode === "pipeline" ? 3 : 2, "the same keepalive connection must serve every request");
 }
 const before = performance.now();
