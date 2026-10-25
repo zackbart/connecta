@@ -33,6 +33,15 @@ describe("bounded operation vocabulary", () => {
     for (const query of ["Tap devices", "webhook subscriptions", "edit donor account"]) {
       expect((await search(query)).tools[0]?.address).toBe("crm.crm_api_search");
     }
+    expect((await search("crm Tap devices")).tools[0]?.address).toBe("crm.crm_api_search");
+    expect(
+      flatSearchResult(
+        await new CatalogService(registry, "https://connecta.test").search({
+          connector: "crm",
+          query: "crm Tap devices",
+        }),
+      ).tools[0]?.address,
+    ).toBe("crm.crm_api_search");
     expect((await search("donor devices")).tools).toEqual([]);
     expect((await search("donor account", "readOnly")).tools).toEqual([]);
     expect((await search("Tap devices", "approvalRequired")).tools).toEqual([]);

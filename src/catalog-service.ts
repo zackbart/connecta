@@ -1122,14 +1122,15 @@ export class CatalogService {
                     )
                     .join(" ")
                 : retrievalQuery;
-            const toolTermCount = lexicalQueryTerms(toolQuery).length;
+            const toolTerms = lexicalQueryTerms(toolQuery);
+            const toolTermCount = toolTerms.length;
             const rankedTools = rankTools(catalog.success, toolQuery, mode, statistics, query);
             const original = catalogs[connectorIndex]!;
             if (!isBrowse && query.length <= 200 && queryTerms.length <= 8 && Result.isSuccess(original)) {
               for (const tool of operationVocabularyMatches(
                 connector,
                 original.success,
-                toolQuery,
+                toolTerms.filter((term) => !connectorTerms.has(term)).join(" "),
                 safety,
                 this.readOnly,
               )) {
