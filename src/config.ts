@@ -196,6 +196,8 @@ const codeAdmission = admissionPool(D.admission.code);
 
 const requestAdmission = {
   ...admissionPool(D.admission.requests),
+  /** Authenticated MCP body limit in bytes, checked while reading. Default 4 MiB. */
+  maxBodyBytes: whole({ min: 1, default: D.admission.requests.maxBodyBytes }),
   /** Hard lifetime of an admitted /mcp request. Default 300,000 ms. */
   maxDurationMs: whole({
     min: 1,
