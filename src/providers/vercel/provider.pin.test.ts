@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -6,11 +6,12 @@ import { vercel, type VercelTokenOptions } from "./index.js";
 import { Effect } from "effect";
 import { ConnectorCallError } from "../../errors.js";
 import { Budget, ContinuationBinding, setViewService } from "../../runtime/call.js";
-import { vercelIndex } from "./api.js";
+import { vercelIndex, VERCEL_VERDICTS, transformGuide } from "./api.js";
 import { MAX_PIN_LOOKUPS, pinQuery, pinRoute } from "./lib/pin.js";
 import type { RestCall } from "../_shared/rest/tools.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { createMetaTools } from "../../meta-tools.js";
+import { SkillsRegistry } from "../../skills.js";
 
 const OPTIONS = { purpose: "Team applications", auth: { type: "token" }, teamId: "team_alice" } as const;
 
@@ -51,6 +52,142 @@ describe("Vercel deployment team pin", () => {
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  const denied = vercelIndex.ops.filter((op) => pinRoute(vercelIndex, op) === "denied");
+  it.each(denied)(
+    "INV-2 INV-10: pinned discovery truthfully refuses $method $path without account work",
+    async (op) => {
+      const client = connector();
+      const ctx = context();
+      const credentials = vi.spyOn(ctx.credential, "getAll");
+      const path = op.path.replace(/\{[^}]+\}/g, "sample");
+      const details = (await client.callTool("vercel_api_details", { method: op.method, path: op.path }, ctx)) as any;
+      const search = (await client.callTool(
+        "vercel_api_search",
+        { query: op.path.endsWith("/") ? op.operationId : path, method: op.method, limit: 8 },
+        ctx,
+      )) as any;
+      const hit = search.operations.find((entry: any) => entry.path === op.path && entry.method === op.method);
+      expect(hit, `${op.method} ${op.path}`).toBeDefined();
+      expect(details.verdict).toBe("refuse");
+      expect(details).not.toHaveProperty("tool");
+      expect(hit).not.toHaveProperty("tool");
+      // Pin-only refusals retain the vendor's reviewed summary; the generic
+      // refusal renderer owns the pre-existing static refusal summaries.
+      if (VERCEL_VERDICTS[`${op.method} ${op.path}`] !== "refuse") {
+        expect(details.summary).toBe(op.summary);
+        expect(hit.summary).toBe(op.summary.length > 300 ? `${op.summary.slice(0, 299)}…` : op.summary);
+      }
+      expect(credentials).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+      expect(() =>
+        pinQuery(
+          vercelIndex,
+          {
+            method: op.method,
+            op,
+            path,
+            params: {},
+            query: {},
+            body: undefined,
+          },
+          { teamId: "team_alice" },
+        ),
+      ).toThrow(/no reviewed team confinement/i);
+      // Query admission runs before argument validation: even a body-less
+      // write proves the actual unchanged route policy refuses this operation.
+      await expect(
+        client.callTool(
+          VERCEL_VERDICTS[`${op.method} ${op.path}`] === "read" ? "vercel_api_read" : "vercel_api_write",
+          { method: op.method, path },
+          ctx,
+        ),
+      ).rejects.toMatchObject({ code: expect.stringMatching(/^(provider_permission_denied|invalid_args)$/) });
+      expect(credentials).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+    },
+  );
+
+  it("INV-4 INV-10: isolates pinned and unpinned discovery and derives the actual guide refusal count", async () => {
+    const pinned = connector();
+    const unpinned = vercel("other-hosting", OPTIONS);
+    const ctx = context();
+    const credentials = vi.spyOn(ctx.credential, "getAll");
+    const count = vercelIndex.ops.filter(
+      (op) => pinRoute(vercelIndex, op) === "denied" || VERCEL_VERDICTS[`${op.method} ${op.path}`] === "refuse",
+    ).length;
+    const guideText = (client: typeof pinned) => {
+      const guide = client.usageGuide!;
+      return typeof guide === "string" ? guide : guide.content;
+    };
+    const originalGuide = guideText(unpinned);
+    expect(guideText(pinned)).toContain(`${count} operations are refused by design`);
+    expect(originalGuide).toContain(
+      `${Object.values(VERCEL_VERDICTS).filter((v) => v === "refuse").length} operations are refused by design`,
+    );
+    for (const client of [unpinned, pinned, unpinned, pinned]) {
+      const details = (await client.callTool("vercel_api_details", { method: "GET", path: "/v2/user" }, ctx)) as any;
+      expect(details.verdict).toBe(client === pinned ? "refuse" : "read");
+      expect(details.tool).toBe(client === pinned ? undefined : "vercel_api_read");
+      const result = (await client.callTool("vercel_api_search", { query: "current user", limit: 8 }, ctx)) as any;
+      const user = result.operations.find((entry: any) => entry.method === "GET" && entry.path === "/v2/user");
+      expect(user).toBeDefined();
+      expect(user.tool).toBe(client === pinned ? undefined : "vercel_api_read");
+      const allowed = (await client.callTool(
+        "vercel_api_details",
+        { method: "GET", path: "/v10/projects" },
+        ctx,
+      )) as any;
+      expect(allowed).toMatchObject({ verdict: "read", tool: "vercel_api_read" });
+    }
+    expect(guideText(unpinned)).toBe(originalGuide);
+    const registry = makeRegistry([pinned, unpinned]);
+    const skills = new SkillsRegistry(registry, "https://connecta.example");
+    const resources = await skills.resources();
+    for (const client of [pinned, unpinned]) {
+      const resource = resources.resources.find((entry) => entry.uri.includes(`/connectors/${client.id}/`))!;
+      expect(resource).toBeDefined();
+      const read = await skills.read(resource.uri);
+      expect(read.contents[0]!.text).toContain(guideText(client));
+      const meta = createMetaTools(registry, "https://connecta.example");
+      const shown = await meta.skills({ name: `connector:${client.id}` });
+      expect(shown.structuredContent).toMatchObject({ text: expect.stringContaining(guideText(client)) });
+    }
+    expect(credentials).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+
+  it("INV-10 INV-11: changes only the precisely identified generated Hatch count and preserves later guidance", () => {
+    const baseGuide = unpinnedGuide();
+    const suffix = " Separate refusal guidance. Schema-first guidance remains verbatim.";
+    const content = baseGuide.content
+      .split("\n")
+      .map((line) => (line.startsWith("- **Hatch:** `vercel_api_search` ") ? `${line}${suffix}` : line))
+      .join("\n");
+    const guide = { ...baseGuide, content };
+    expect(transformGuide(guide, OPTIONS)).toBe(guide);
+    const changed = transformGuide(guide, { ...OPTIONS, pin: { teamId: "team_alice" } });
+    const baseCount = Object.values(VERCEL_VERDICTS).filter((v) => v === "refuse").length;
+    const total = vercelIndex.ops.filter(
+      (op) => pinRoute(vercelIndex, op) === "denied" || VERCEL_VERDICTS[`${op.method} ${op.path}`] === "refuse",
+    ).length;
+    expect(changed).toEqual({
+      ...guide,
+      content: content.replace(
+        `${baseCount} operations are refused by design`,
+        `${total} operations are refused by design`,
+      ),
+    });
+    expect(changed.content).toContain(suffix);
+    const pinned = { ...OPTIONS, pin: { teamId: "team_alice" } };
+    expect(() => transformGuide({ ...guide, content: "Missing Hatch sentence." }, pinned)).toThrow(/exactly one/);
+    const hatchLine = content.split("\n").find((line) => line.startsWith("- **Hatch:**"))!;
+    expect(() => transformGuide({ ...guide, content: `${content}\n${hatchLine}` }, pinned)).toThrow(/exactly one/);
+    function unpinnedGuide() {
+      const guide = vercel("other_hosting", OPTIONS).usageGuide!;
+      return typeof guide === "string" ? { content: guide } : guide;
+    }
   });
 
   it("INV-11: validates an explicit ID-only pin and a compatible routing default", () => {
