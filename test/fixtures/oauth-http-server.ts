@@ -10,6 +10,7 @@ declare module "vitest" {
 
 interface Session {
   mode: string;
+  posts: Record<string, number>;
   redeemed: string[];
   requests: Array<{ path: string; grant: string | null; credential: string | null }>;
   refreshStarted: Promise<void>;
@@ -31,7 +32,7 @@ export default async function setup(project: TestProject) {
         const released = new Promise<void>((resolve) => { release = resolve; });
         let startRefresh!: () => void;
         const refreshStarted = new Promise<void>((resolve) => { startRefresh = resolve; });
-        sessions.set(id, { mode: body, redeemed: [], requests: [], refreshStarted, startRefresh, released, release });
+        sessions.set(id, { mode: body, posts: {}, redeemed: [], requests: [], refreshStarted, startRefresh, released, release });
         response.end(JSON.stringify({ id }));
         return;
       }
@@ -64,18 +65,33 @@ export default async function setup(project: TestProject) {
       if (session.mode.startsWith("sdk-")) {
         const origin = `http://${request.headers.host}`;
         const issuer = `${origin}/session/${id}`;
+        if (request.method === "POST" && operation && ["token", "register", "revoke", "register-final"].includes(operation)) {
+          session.posts[operation] = (session.posts[operation] ?? 0) + 1;
+          const prefix = `sdk-attempt-${operation}-`;
+          if (session.mode.startsWith(prefix) && session.posts[operation] === 1) {
+            if (operation === "token") {
+              const form = new URLSearchParams(body);
+              session.requests.push({ path: operation, grant: form.get("grant_type"), credential: form.get("refresh_token") ?? form.get("code") });
+              if (form.get("grant_type") === "refresh_token") session.startRefresh();
+            }
+            const challenge = session.mode.slice(prefix.length);
+            if (challenge === "reset") request.socket.destroy();
+            else response.writeHead(Number(challenge), { "content-type": "application/json", location: `${issuer}/${operation}-final` }).end(JSON.stringify({ error: "server_error", error_description: "CREDENTIAL_RESPONSE_SENTINEL" }));
+            return;
+          }
+        }
         const json = (value: unknown, status = 200, headers = {}) => {
           response.writeHead(status, { "content-type": "application/json", ...headers });
           response.end(JSON.stringify(value));
         };
         if (url.pathname.includes("/.well-known/oauth-authorization-server/")) {
-          json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, registration_endpoint: `${issuer}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"], ...(session.mode.startsWith("sdk-revoke-") ? { revocation_endpoint: `${issuer}/revoke` } : {}) });
+          json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, registration_endpoint: `${issuer}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"], ...((session.mode.startsWith("sdk-revoke-") || session.mode.startsWith("sdk-attempt-revoke-")) ? { revocation_endpoint: `${issuer}/revoke` } : {}) });
           return;
         }
         if (operation === "revoke" || operation === "revoke-final") {
           const form = new URLSearchParams(body);
           session.requests.push({ path: operation, grant: null, credential: form.get("token") });
-          if (operation === "revoke" && session.mode !== "sdk-revoke-200") {
+          if (operation === "revoke" && session.mode.startsWith("sdk-revoke-") && session.mode !== "sdk-revoke-200") {
             json({ error_description: "REVOCATION_BODY_SENTINEL" }, Number(session.mode.slice("sdk-revoke-".length)), { location: `${issuer}/revoke-final` });
           } else {
             json({});
@@ -125,7 +141,7 @@ export default async function setup(project: TestProject) {
         }
       }
       if (operation !== "token") {
-        response.end(JSON.stringify({ redeemed: session.redeemed, requests: session.requests }));
+        response.end(JSON.stringify({ redeemed: session.redeemed, requests: session.requests, posts: session.posts }));
         return;
       }
       if (request.method !== "POST") { response.writeHead(405).end(); return; }

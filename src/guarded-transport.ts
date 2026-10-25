@@ -46,3 +46,28 @@ export function sendGuarded(
   beforeDispatch();
   return transport.send(url, init);
 }
+
+/** SDK-authenticated token/registration/revocation POST, with no physical replay or redirect. */
+export async function sendCredentialPost(
+  input: string | URL,
+  init: RequestInit,
+  beforeDispatch: () => void = () => {},
+): Promise<Response> {
+  const transport = guardedTransport(true);
+  try {
+    if ((init.method ?? "GET").toUpperCase() !== "POST") throw new Error("Expected credential POST.");
+    return await sendGuarded(transport, new URL(input), { ...init, redirect: "manual" }, beforeDispatch);
+  } catch (error) {
+    if (init.signal?.aborted) throw init.signal.reason;
+    if (error instanceof ConnectorCallError) throw error;
+    // SDKs may log transport errors. No native exception/cause can quote a form,
+    // client secret, grant, request header or credential-bearing endpoint here.
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      "OAuth credential request did not return a confirmed response.",
+      {
+        retryable: false,
+      },
+    );
+  }
+}
