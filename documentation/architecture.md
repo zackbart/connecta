@@ -2376,11 +2376,19 @@ retrieval.
 Reviewed intent, the requested verb/synonym in summary/id/path, and resource
 focus sort first. A refused operation with a matching verb shares the intent
 tier only when its noun coverage exceeds every admitted operation matching that
-verb and intent. Search and details render the same reviewed reason used at
-call time in the refused operation's summary, without feeding that reason
-into ranking. Search caps long summaries and details pages their complete
-text. REST safety tables supply the reason through `restSafety`; reviewed
-bindings declare static operation refusals separately from argument validation.
+verb and intent. Search and details retain the original indexed summary and expose the reviewed
+reason in a separate optional `refusal` field. Ranking uses the original indexed
+text, never the newly attached reason. Search caps refusal text at 512 UTF-16
+code units without splitting a surrogate pair, independently of its 300-unit
+summary cap. A cut reason names `operations[i].refusal` in `truncated`; details
+returns the complete reason within its 32 KiB envelope or reconstructible
+`of: "refusal"` text chunks. The five long Cloudflare reasons fit whole in the
+search refusal budget, including their named alternatives. REST safety tables
+supply the reason through `restSafety`; reviewed bindings declare static operation
+refusals separately from argument validation. Discovery cursors additionally bind
+the summary/refusal representation format, so an old piece offset cannot skip a
+required parameter after this representation changes. The binding's deployment
+`cursorScope`, named suggestions and paging totals retain their existing seams.
 An unreviewed operation reports the missing hatch verdict. A refused hit has
 no read/write hatch pointer; a reviewed named alternative can still be shown.
 
@@ -2410,6 +2418,15 @@ roots share the collection keys. Sort keys are computed once per operation
 per query; lexical relevance and index order resolve remaining ties.
 Operations found only through a request or response field follow primary
 matches, and search names an authored tool whenever one serves an operation.
+A refused method outside a read/write tool's input schema is inspected through
+`_api_details` with its indexed method and path. Call validation remains closed:
+Gmail's 49 non-GET refusals do not add a method field or a write hatch, and Forms'
+refused DELETE remains outside its write enum. GitHub's refused raw PUT merge
+is likewise outside its write enum; its named guarded alternative is unaffected.
+These 51 schema refusals happen
+before authentication or I/O; details exposes the same reviewed reason as search.
+Every schema-reachable refused operation still fails with that reason before
+authentication or dispatch. This is policy inspection, never execution admission.
 `_api_read` omits
 `method` only when GET is its one reviewed read method.
 A standard list can declare `limit.values` for a vendor's discrete page sizes.
