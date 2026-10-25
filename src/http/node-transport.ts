@@ -1,5 +1,6 @@
 // Node-only: owned undici dispatcher and Node stream adapters, reached via /node.
 import { Readable } from "node:stream";
+import { isIP } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Client, ProxyAgent, type Dispatcher, type buildConnector } from "undici";
 import { ConnectorCallError } from "../errors.js";
@@ -53,7 +54,23 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
             ...clientOptions,
             interceptors: { Agent: [], Client: [] },
             // Neither side of CONNECT uses a Pool, interceptor or global dispatcher.
-            clientFactory: (origin, options) => (tunnelClient = new Client(origin, { ...options, ...clientOptions })),
+            clientFactory: (origin, options) => {
+              const connect = (options as { connect: buildConnector.connector }).connect;
+              return (tunnelClient = new Client(origin, {
+                ...options,
+                ...clientOptions,
+                connect: (parameters, callback) => {
+                  const name = parameters.servername;
+                  // ProxyAgent 6 explicitly sets SNI to the proxy hostname.
+                  // Node 26 rejects IP SNI. Omit it for literal IPs; tls.connect
+                  // still checks the certificate against its connection host.
+                  connect(
+                    { ...parameters, ...(name && isIP(name.replace(/^\[|\]$/g, "")) ? { servername: "" } : {}) },
+                    callback,
+                  );
+                },
+              }));
+            },
             factory: (origin, options) => {
               const connect = (options as { connect: buildConnector.connector }).connect;
               return new Client(origin, {
