@@ -1,3 +1,10 @@
+import { beforeEach as beforeTransportTest } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+
+beforeTransportTest(() => {
+  installOwnedTransport();
+});
+
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/client";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { trackRemoteClientRequest } from "../src/auth/downstream-client-metadata.js";

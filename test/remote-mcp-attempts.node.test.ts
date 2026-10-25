@@ -1,5 +1,5 @@
-import { installHostRetries } from "./fixtures/host-retries.js";
 // Node-only: process-global undici dispatcher and the owned Node socket sender.
+import { installHostRetries } from "./fixtures/host-retries.js";
 import { expect, inject, it, onTestFinished } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
