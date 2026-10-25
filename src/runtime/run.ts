@@ -181,5 +181,10 @@ export function detach(effect: Effect.Effect<unknown, unknown>, ctx?: DetachCont
 
 /** Native children of one request, independent of any individual waiter. */
 export function forkRequest<A, E>(effect: Effect.Effect<A, E>, scope: Scope.Scope): Effect.Effect<Fiber.Fiber<A, E>> {
+  return forkOwned(effect, scope);
+}
+
+/** A native host child owned by an explicit run or process Scope. */
+export function forkOwned<A, E>(effect: Effect.Effect<A, E>, scope: Scope.Scope): Effect.Effect<Fiber.Fiber<A, E>> {
   return Effect.forkIn(effect, scope, { startImmediately: true });
 }

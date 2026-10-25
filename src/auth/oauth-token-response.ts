@@ -1,4 +1,6 @@
 import type { OAuthTokens } from "@modelcontextprotocol/client";
+import { runEdge } from "../runtime/run.js";
+import { authCall, authFlow, authInvoke, authProgram, registerAuth } from "./native.js";
 
 // The token endpoint's answers as downstream OAuth classifies them and the SDK
 // gets to parse them: a refresh's re-consent verdict, and every failure
@@ -57,43 +59,52 @@ class OversizedRefreshResponse extends Error {
   }
 }
 
-async function readRefreshResponse(response: Response, signal?: AbortSignal, clone = true): Promise<unknown> {
-  if (Number(response.headers.get("content-length")) > MAX_REFRESH_RESPONSE_BYTES) {
-    void response.body?.cancel().catch(() => {});
-    throw new OversizedRefreshResponse();
-  }
-  const reader = (clone ? response.clone() : response).body?.getReader();
-  if (!reader) return undefined;
-  void reader.closed.catch(() => {});
-  const cancel = () => {
-    void reader.cancel().catch(() => {});
-    void response.body?.cancel().catch(() => {});
-  };
-  signal?.addEventListener("abort", cancel, { once: true });
-  if (signal?.aborted) cancel();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_REFRESH_RESPONSE_BYTES) {
-        // A cloned body's cancellation can await its sibling. Cancel both,
-        // without making the refusal wait for the provider to finish sending.
-        void reader.cancel().catch(() => {});
+function readRefreshResponse(response: Response, signal?: AbortSignal, clone = true): Promise<unknown> {
+  return runEdge(authProgram<unknown>(readRefreshResponseNative, [response, signal, clone]));
+}
+const readRefreshResponseNative = /* @__PURE__ */ registerAuth(
+  readRefreshResponse,
+  function (response: Response, signal?: AbortSignal, clone: boolean = true) {
+    return authFlow<unknown>(function* () {
+      if (Number(response.headers.get("content-length")) > MAX_REFRESH_RESPONSE_BYTES) {
         void response.body?.cancel().catch(() => {});
         throw new OversizedRefreshResponse();
       }
-      text += decoder.decode(value, { stream: true });
-    }
-    return JSON.parse(text + decoder.decode());
-  } finally {
-    signal?.removeEventListener("abort", cancel);
-    reader.releaseLock();
-  }
-}
+      const reader = (clone ? response.clone() : response).body?.getReader();
+      if (!reader) return undefined;
+      void reader.closed.catch(() => {});
+      const cancel = () => {
+        void reader.cancel().catch(() => {});
+        void response.body?.cancel().catch(() => {});
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
+      const decoder = new TextDecoder();
+      let size = 0;
+      let text = "";
+      try {
+        while (true) {
+          const { done, value } = (yield authInvoke(reader, "read", [])) as ReadableStreamReadResult<any>;
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_REFRESH_RESPONSE_BYTES) {
+            // A cloned body's cancellation can await its sibling. Cancel both,
+            // without making the refusal wait for the provider to finish sending.
+            void reader.cancel().catch(() => {});
+            void response.body?.cancel().catch(() => {});
+            throw new OversizedRefreshResponse();
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+        return JSON.parse(text + decoder.decode());
+      } finally {
+        if (signal?.aborted) cancel();
+        signal?.removeEventListener("abort", cancel);
+        reader.releaseLock();
+      }
+    });
+  },
+);
 
 /** A dispatched fingerprint has only a committed outcome or a re-consent verdict. */
 export type RefreshFailure =
@@ -158,26 +169,34 @@ function sdkTokenFailure(original: Response, code: string, status = original.sta
  * the registered set becomes `invalid_request`, and a body without a string
  * code becomes `server_error`, the classes the SDK already gave them.
  */
-export async function sdkSafeTokenResponse(
+export function sdkSafeTokenResponse(
   response: Response,
   accept?: (tokens: OAuthTokens) => Promise<void>,
 ): Promise<Response> {
-  if (response.status >= 300 && response.status < 400) {
-    return sdkTokenFailure(response, "invalid_request", 400);
-  }
-  let parsed: unknown;
-  try {
-    parsed = await readRefreshResponse(response);
-  } catch {
-    // Not JSON, or too large to be a token response: only the status is left.
-    return sdkTokenFailure(response, "server_error");
-  }
-  if (response.ok && sdkAcceptsOAuthTokens(parsed)) {
-    await accept?.(parsed as OAuthTokens);
-    return response;
-  }
-  return sdkTokenFailure(response, oauthErrorCode(parsed) ?? "server_error");
+  return runEdge(authProgram<Response>(sdkSafeTokenResponseNative, [response, accept]));
 }
+const sdkSafeTokenResponseNative = /* @__PURE__ */ registerAuth(
+  sdkSafeTokenResponse,
+  function (response: Response, accept?: (tokens: OAuthTokens) => Promise<void>) {
+    return authFlow<Response>(function* () {
+      if (response.status >= 300 && response.status < 400) {
+        return sdkTokenFailure(response, "invalid_request", 400);
+      }
+      let parsed: unknown;
+      try {
+        parsed = (yield authCall(readRefreshResponse, [response])) as unknown;
+      } catch {
+        // Not JSON, or too large to be a token response: only the status is left.
+        return sdkTokenFailure(response, "server_error");
+      }
+      if (response.ok && sdkAcceptsOAuthTokens(parsed)) {
+        (yield authCall(accept, [parsed as OAuthTokens])) as void | undefined;
+        return response;
+      }
+      return sdkTokenFailure(response, oauthErrorCode(parsed) ?? "server_error");
+    });
+  },
+);
 
 export type RefreshResponseOutcome =
   | {
@@ -203,57 +222,62 @@ export type RefreshResponseOutcome =
  * Provider hooks preserve the re-consent verdict for passive calls. Rebuilding
  * the response keeps provider text out of SDK output.
  */
-export async function refreshResponseOutcome(
-  response: Response,
-  signal?: AbortSignal,
-): Promise<RefreshResponseOutcome> {
-  if (response.status >= 300 && response.status < 400) {
-    return {
-      failure: new Error("OAuth token endpoint redirected; authorization required."),
-      verdict: { kind: "dead" },
-      forSdk: sdkTokenFailure(response, "invalid_grant", 400),
-    };
-  }
-  if (!response.ok) {
-    let code: string | undefined;
-    try {
-      const body = await readRefreshResponse(response, signal, false);
-      if (body && typeof body === "object" && ("access_token" in body || "refresh_token" in body)) {
-        // A provider issuing tokens while reporting failure may have rotated.
-        throw new Error("OAuth refresh failure response may contain a rotation.");
-      }
-      code = oauthErrorCode(body);
-    } catch (error) {
-      // Complete non-JSON failures still require re-consent. A lost body or
-      // evidence of issued tokens cannot prove a committed outcome.
-      if (!(error instanceof SyntaxError)) throw error;
-    }
-    const failure = new Error(`OAuth refresh failed with HTTP ${response.status}.`);
-    return {
-      failure,
-      verdict: { kind: "dead" },
-      forSdk: sdkTokenFailure(
-        response,
-        code === "invalid_client" || code === "unauthorized_client" ? code : "invalid_grant",
-        400,
-      ),
-    };
-  }
-  // A successful HTTP status may have consumed the token even when its
-  // body cannot be read or parsed. The coordinator refuses the fingerprint.
-  const parsed = await readRefreshResponse(response, signal, false);
-  if (sdkAcceptsOAuthTokens(parsed)) {
-    // An `issuer` names the server a grant is bound to, and only the client
-    // stamps it — never the server answering, as the SDK's own parse agrees.
-    const { issuer: _ignored, ...tokens } = parsed as OAuthTokens;
-    return { tokens };
-  }
-  if (oauthErrorCode(parsed) !== undefined) {
-    return {
-      failure: new Error("OAuth refresh was refused by the authorization server."),
-      verdict: { kind: "dead" },
-      forSdk: sdkTokenFailure(response, "invalid_grant", 400),
-    };
-  }
-  throw new Error("OAuth refresh response did not match the token schema.");
+export function refreshResponseOutcome(response: Response, signal?: AbortSignal): Promise<RefreshResponseOutcome> {
+  return runEdge(authProgram<RefreshResponseOutcome>(refreshResponseOutcomeNative, [response, signal]));
 }
+const refreshResponseOutcomeNative = /* @__PURE__ */ registerAuth(
+  refreshResponseOutcome,
+  function (response: Response, signal?: AbortSignal) {
+    return authFlow<RefreshResponseOutcome>(function* () {
+      if (response.status >= 300 && response.status < 400) {
+        return {
+          failure: new Error("OAuth token endpoint redirected; authorization required."),
+          verdict: { kind: "dead" },
+          forSdk: sdkTokenFailure(response, "invalid_grant", 400),
+        };
+      }
+      if (!response.ok) {
+        let code: string | undefined;
+        try {
+          const body = (yield authCall(readRefreshResponse, [response, signal, false])) as unknown;
+          if (body && typeof body === "object" && ("access_token" in body || "refresh_token" in body)) {
+            // A provider issuing tokens while reporting failure may have rotated.
+            throw new Error("OAuth refresh failure response may contain a rotation.");
+          }
+          code = oauthErrorCode(body);
+        } catch (error) {
+          // Complete non-JSON failures still require re-consent. A lost body or
+          // evidence of issued tokens cannot prove a committed outcome.
+          if (!(error instanceof SyntaxError)) throw error;
+        }
+        const failure = new Error(`OAuth refresh failed with HTTP ${response.status}.`);
+        return {
+          failure,
+          verdict: { kind: "dead" },
+          forSdk: sdkTokenFailure(
+            response,
+            code === "invalid_client" || code === "unauthorized_client" ? code : "invalid_grant",
+            400,
+          ),
+        };
+      }
+      // A successful HTTP status may have consumed the token even when its
+      // body cannot be read or parsed. The coordinator refuses the fingerprint.
+      const parsed = (yield authCall(readRefreshResponse, [response, signal, false])) as unknown;
+      if (sdkAcceptsOAuthTokens(parsed)) {
+        // An `issuer` names the server a grant is bound to, and only the client
+        // stamps it — never the server answering, as the SDK's own parse agrees.
+        const { issuer: _ignored, ...tokens } = parsed as OAuthTokens;
+        return { tokens };
+      }
+      if (oauthErrorCode(parsed) !== undefined) {
+        return {
+          failure: new Error("OAuth refresh was refused by the authorization server."),
+          verdict: { kind: "dead" },
+          forSdk: sdkTokenFailure(response, "invalid_grant", 400),
+        };
+      }
+      throw new Error("OAuth refresh response did not match the token schema.");
+    });
+  },
+);
