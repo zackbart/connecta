@@ -64,8 +64,8 @@ fetch transport.
 By default, Node's `listen()` handles SIGTERM and SIGINT: it stops accepting
 connections, closes idle connections and accepted sockets without a first HTTP
 request, closes request and code admission, reaps sandbox children, and drains
-active responses and deferred work. Its shutdown deadline is ten seconds. For
-example, retain the template's `listen(connecta, port)` when running it under
+active responses and deferred work. Its shutdown deadline defaults to ten seconds
+(`shutdownTimeoutMs`). For example, retain the template's `listen(connecta, port)` when running it under
 Docker Compose so `docker compose stop` uses this cleanup.
 
 The owned Node transport connects directly to the downstream server. Remote MCP
