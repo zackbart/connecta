@@ -1,5 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { classifyCallError } from "../src/errors.js";
@@ -8,6 +8,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 import { classifyHost, isPrivateHost, learnedUrlRefusal } from "../src/url-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { required } from "./helpers.js";
 
 afterEach(() => {
@@ -126,6 +127,10 @@ describe("learnedUrlRefusal", () => {
 // not steer a single request at a private address.
 // ---------------------------------------------------------------------------
 describe("remoteMcp() OAuth URLs the downstream advertises", () => {
+  beforeEach(() => {
+    installOwnedTransport();
+  });
+
   const REDIRECT = "https://connecta.test/oauth/callback/svc";
 
   interface Downstream {
