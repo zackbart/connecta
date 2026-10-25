@@ -28,6 +28,7 @@ const WORKERS_SUITES = [
   "test/call-services.test.ts",
   "test/guarded-transport-parity.test.ts",
   "test/oauth-grant-parity.test.ts",
+  "test/auth-native.test.ts",
   "test/call-revocation.test.ts",
   "test/call-auxiliary-lifetime.test.ts",
   "test/call-renewal-lifetime.test.ts",
