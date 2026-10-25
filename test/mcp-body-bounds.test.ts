@@ -225,6 +225,24 @@ function listRequest(
 describe("authenticated MCP body limits", () => {
   const cap = 128 * 1024;
   for (const modern of [true, false]) {
+    it(
+      `INV-7 INV-11: honors a configured fetch-native cap above the SDK default (${modern ? "modern" : "fresh legacy"})`,
+      WORKERS,
+      async () => {
+        const limit = 4 * 1024 * 1024 + 1;
+        const { c } = await deployment(limit);
+        try {
+          const exact = countedJson(limit, modern);
+          const response = await c.fetch(listRequest("/mcp", exact.body, "alice", modern));
+          expect(response.status).toBe(200);
+          await response.text();
+          expect(exact.pulled()).toBe(limit);
+          expect(await admittedTotal(c)).toBe(1);
+        } finally {
+          await c.close();
+        }
+      },
+    );
     it.each([
       ["/mcp", "alice"],
       ["/mcp/team", "bob"],

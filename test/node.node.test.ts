@@ -13,7 +13,8 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("Node listen adapter", () => {
   it("INV-7 INV-11: bounds the pre-auth buffer at the core's 4 MiB default over real sockets", async () => {
-    const core = createTestConnecta({ connectors: [] });
+    const core = createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: 8 * 1024 * 1024 } } });
+    expect((await core.describeConfig()).limits.requests.maxBodyBytes.value).toBe(8 * 1024 * 1024);
     const forwarded: number[] = [];
     const app = {
       ...core,
