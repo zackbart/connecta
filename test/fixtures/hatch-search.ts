@@ -13,6 +13,7 @@ export const HATCH_SEARCH_QUERIES = [
   ["planning-center", "group events", "GET", "/groups/v2/events", 2],
   ["planning-center", "calendar resources", "GET", "/calendar/v2/resources", 7],
   ["planning-center", "services songs", "GET", "/services/v2/songs", 1],
+  ["planning-center", "check-in events", "GET", "/check-ins/v2/events", 2],
   ["stripe", "invoice items", "GET", "/v1/invoiceitems", 1],
   ["github", "workflow runs", "GET", "/repos/{owner}/{repo}/actions/runs", 1],
   // Articles/new and "set up" select creation, including after conversational framing.
