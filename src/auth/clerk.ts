@@ -323,6 +323,8 @@ const organizationMemberNative = /* @__PURE__ */ registerAuth(
       if (!isRecord(list) || !Array.isArray(list.data)) {
         throw new Error("Organization membership response invalid");
       }
+      // The filter narrows the list; membership is still read exactly from each
+      // row, so an ignored or widened filter cannot admit someone else's row.
       return list.data.some(
         (membership: any) =>
           isRecord(membership) &&
@@ -353,6 +355,9 @@ const backendJsonNative = /* @__PURE__ */ registerAuth(
       const request = AbortSignal.any([signal, settled.signal, AbortSignal.timeout(BACKEND_LOOKUP_TIMEOUT_MS)]);
       let response: Response | undefined;
       try {
+        // Workers reject `redirect: "error"`; `manual` returns a redirect
+        // unfollowed, and a redirect is not an answer. Workers and Node return
+        // its 3xx; an `opaqueredirect` has status 0, which `ok` refuses.
         response = (yield authFetch(url, { ...init, redirect: "manual", signal: request })) as Response;
         if (response.status === 429) throw new BackendRateLimited(backendRetryMs(response.headers.get("Retry-After")));
         if (response.status >= 300 && response.status < 400) throw new Error("Clerk Backend API request redirected");
@@ -618,6 +623,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         if (remaining === 0) organizationLookupsByIdentity.delete(userId);
         else organizationLookupsByIdentity.set(userId, remaining);
       };
+      // workerd may discard the awaited continuation when its caller leaves.
+      // Release in that request's own abort handler too; finally is idempotent.
+      // The same caller signal cancels backendJson's request-owned upstream.
       signal.addEventListener("abort", release, { once: true });
       try {
         return (yield authCall(lookup, [])) as Awaited<T>;
@@ -651,6 +659,8 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       if (owner?.aborted) return undefined;
       const cached = readIdentityCache(activityLabelCache, userId);
       if (cached) return cached.label;
+      // Each reader owns its lookup and transport. Keep raw concurrency bounded
+      // even if a custom transport fails to settle after cancellation.
       if (inFlightActivityLabelIds.has(userId) || activeActivityLabelLookups >= ACTIVITY_LABEL_MAX_IN_FLIGHT) {
         return undefined;
       }
@@ -878,6 +888,8 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         if (domainAllowed === undefined) return false;
         signal.throwIfAborted();
         allowed = domainAllowed && (opts.gate ? ((yield authInvoke(opts, "gate", [userId, clerk])) as boolean) : true);
+        // `clerk` is bound to this signal; a gate may turn its cancelled
+        // lookup into `false`. Only a completed, uncancelled verdict is cached.
         signal.throwIfAborted();
         if (domainAllowed && !allowed) logDenial("gate_denied");
       } catch {
@@ -965,6 +977,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
           BACKEND_LOOKUP_TIMEOUT_MS,
         );
         const pending = new Set<Promise<unknown>>();
+        // SDK-created verification clients, JWKS, handshakes, domain lookups and
+        // gate calls all close over this authorization's signal, never another
+        // request's client. The long-lived client above serves display labels only.
         const clerk = createByteReadingClerkClient(opts, signal, pending);
         try {
           signal.throwIfAborted();
@@ -986,6 +1001,8 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
               toAuth(): ClerkAuth | null;
             };
             const browserOAuth = !tokenPresent && browserOAuthRoute;
+            // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
+            // handshake, which returns here with a refreshed, verified session.
             if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
               return {
                 ok: false,
@@ -1039,6 +1056,10 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
                 logDenial(rejection);
                 return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
               }
+              // The membership lookup is keyed by subject, so on a shared
+              // instance the issuer and subject must be this instance's and the
+              // SDK's. An opaque token's claims come from this instance's Backend
+              // API, which has already matched the subject and carries no issuer.
               if (
                 organizationId &&
                 !token.startsWith("oat_") &&
@@ -1052,12 +1073,14 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
                 logDenial("token_type_mismatch");
                 return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
               }
+              // Browser session origins retain their existing deployment pin.
               const azp = auth.sessionClaims?.azp;
               const origin = new URL(resolveBase(baseUrl)).origin;
               if (azp && azp !== origin) {
                 logDenial("session_origin_mismatch");
                 return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
               }
+              // The session's active organization is not read; membership is.
               if (
                 organizationId &&
                 (auth.sessionClaims.iss !== frontendApiUrl || auth.sessionClaims.sub !== auth.userId)

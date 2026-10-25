@@ -184,7 +184,8 @@ const providerChallengeNative = /* @__PURE__ */ registerAuth(
         response: Response;
       } | null;
       if (!owner) return response;
-      (yield authInvoke(owner.response.body, "cancel", [])) as void | undefined;
+      // Metadata is an ordinary bounded response, never retained across requests.
+      if (owner.response.body) yield authInvoke(owner.response.body, "cancel", []);
       const challenge = owner.provider.challenge?.(request, baseUrl);
       if (!challenge) return response;
       const headers = new Headers(response.headers);
@@ -304,6 +305,9 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
       if (interactiveOnly && machineCredential) {
         return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
       }
+      // Every caller of this function is a human route. Agents reach pools only at
+      // `/agent/<pool>` (#837), so a workload or `cta_` credential refuses here
+      // without verification, and never falls back to a cookie, session or Access context.
       if (machineCredential) {
         return {
           ok: false,
@@ -326,6 +330,8 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
         const identity: AuthenticatedIdentity = { actor, interactive: false };
         return { ok: true, actor, identity };
       }
+      // The built-in agent adapter answers only agent endpoints. A deployment
+      // whose only provider is that adapter still refuses here, never opens.
       const humanAuth = auth.filter((provider: InboundAuth) => !assertsAgents(provider));
       let recognized: InboundAuth | undefined;
       try {
@@ -342,6 +348,7 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
           (!interactiveOnly || provider.interactiveOperator) &&
           (!explicit || provider.kind !== "access_token" || !provider.recognizesCredential),
       );
+      // A header owns one verdict even for adapters without a recognition hook.
       const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
       for (const provider of candidates) {
         const admission = (yield authCall(authenticate, [
@@ -362,6 +369,8 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
             };
         if (!admission.admitted) return { ok: false, response: admission.response };
         const result = admission.result;
+        // Only built-in agent credential adapters assert an agent, and they never
+        // answer here. Any `agent` claim refuses like an unknown token.
         const agent = result.ok ? result.agent : undefined;
         if (result.ok && agent !== undefined) {
           lastResponse = privateJson(
@@ -386,6 +395,8 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
             ? { namespace: actorNamespace ?? `connecta:auth:${provider.kind}`, id: subjectId }
             : principal;
           const interactive = Boolean(result.userId && provider.interactiveOperator);
+          // Principal-only API callers still need a stable typed actor for history
+          // ownership. Never collapse distinct personal partitions into { kind }.
           const actorId = agent ?? subjectId ?? principal?.id;
           const recordNamespace = actorNamespace ?? (subjectId === undefined ? principal?.namespace : undefined);
           const actor: ActivityActor = {

@@ -270,6 +270,58 @@ describe("native auth consumers", () => {
     }
   });
 
+  it("INV-7: parent scheduling governs a submitted native operation's continuation after I/O", async () => {
+    const storage = memoryStorage();
+    const original = { ...storage };
+    let ioDone = false;
+    let finished = false;
+    let parentQueriesAfterIo = 0;
+    const leaf = <A>(work: () => Promise<A>) => Effect.tryPromise({ try: work, catch: (error) => error });
+    registerNativeStorage(storage, {
+      get: (key) => leaf(() => original.get(key)),
+      set: (...args) => leaf(() => original.set(...args)),
+      delete: (key) => leaf(() => original.delete(key)),
+      list: (prefix) => leaf(() => original.list(prefix)),
+      compareAndSet: (...args) =>
+        leaf(async () => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          return original.compareAndSet(...args);
+        }).pipe(
+          Effect.tap(() => Effect.sync(() => (ioDone = true))),
+          Effect.andThen((won) =>
+            Effect.forEach(
+              Array.from({ length: 2000 }, (_, i) => i),
+              (i) => Effect.sync(() => i),
+            ).pipe(
+              Effect.tap(() => Effect.sync(() => (finished = true))),
+              Effect.as(won),
+            ),
+          ),
+        ),
+    });
+    const base = new Scheduler.MixedScheduler("async", (task) => {
+      let cancelled = false;
+      queueMicrotask(() => !cancelled && task());
+      return () => (cancelled = true);
+    });
+    const scheduler: Scheduler.Scheduler = {
+      executionMode: base.executionMode,
+      shouldYield: (fiber) => {
+        if (ioDone && !finished) parentQueriesAfterIo++;
+        return base.shouldYield(fiber);
+      },
+      makeDispatcher: () => base.makeDispatcher(),
+    };
+    const won = await runEdge(
+      authStorage<boolean>(storage, "compareAndSet", [oauthGrantKeys.grant, null, "submitted"], () => {}).pipe(
+        Effect.provideService(Scheduler.Scheduler, scheduler),
+      ),
+    );
+    expect(won).toBe(true);
+    expect(finished).toBe(true);
+    expect(parentQueriesAfterIo).toBeGreaterThan(0);
+  });
+
   it.each([false, true].flatMap((native) => ["before", "construction", "outcome"].map((phase) => ({ native, phase }))))(
     "INV-7 INV-9: submission/charge settle once on $phase failure (native=$native)",
     async ({ native, phase }) => {
