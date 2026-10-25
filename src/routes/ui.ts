@@ -87,7 +87,7 @@ export async function routeUi(context: RouteContext): Promise<Response | null> {
   if (
     operatorPage &&
     (operatorPage !== "activity" || opts.config.activity?.store.list) &&
-    (operatorPage !== "tokens" || opts.config.accessTokens)
+    (operatorPage !== "tokens" || opts.config.accessTokens || opts.config.agents.length > 0)
   ) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return privateJson({ error: "method not allowed" }, { status: 405 });

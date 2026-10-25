@@ -7,6 +7,7 @@ import { memoryStorage } from "../../src/storage/memory.js";
 import { operatorPageForPath, renderUiHtml, type UiData } from "../../src/ui.js";
 import { fakeClerkAuth } from "../fixtures/http.js";
 import { createTestConnecta } from "../helpers.js";
+import { workloadBinding, workloadFixture } from "../fixtures/workload.js";
 import { fixtureContract } from "./operator-fixture.js";
 
 const TOKEN = "browser-operator-token";
@@ -439,6 +440,77 @@ for (const ordering of ["late failure", "stalled detail"] as const) {
       expect(requests.filter((r) => r.method === "POST" && r.path.startsWith("/ui/oauth/"))).toHaveLength(1);
     } finally {
       release();
+    }
+  });
+}
+
+for (const kind of ["oidc-only", "token-only", "both"] as const) {
+  test(`INV-4 INV-6 INV-10: declared ${kind} agents show pools, credentials and admitted last-seen`, async ({
+    page,
+  }, testInfo) => {
+    const storage = memoryStorage();
+    const tokens = kind !== "oidc-only";
+    const workload = await workloadFixture();
+    const fetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      expect(new Request(input).url).toBe("https://oidc.vercel.com/.well-known/jwks");
+      return Response.json(workload.jwks);
+    };
+    const app = createTestConnecta({
+      logger: "silent",
+      storage,
+      auth: fakeClerkAuth(),
+      connectors: [{ id: "crm", staticTools: [], listTools: async () => [], callTool: async () => null }],
+      agents: kind === "token-only" ? ["assistant"] : [{ name: "assistant", vercel: workloadBinding }],
+      ...(tokens ? { accessTokens: accessTokens(storage) } : {}),
+      pools: { team: { tools: ["crm"], members: ["agent:assistant"] } },
+    });
+    realRoutes = { connecta: app, paths: new Set(["/ui/api/config", "/ui/data", "/ui/access-tokens"]) };
+    try {
+      // Successful admission alone, without a completed tool call or activity module.
+      const bearer =
+        kind === "token-only"
+          ? (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant", "browser-test")).token
+          : await workload.token();
+      const admitted = await app.fetch(
+        new Request(`${REAL_BASE}/agent/team`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${bearer}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+      expect(admitted.status).toBe(200);
+      await admitted.text();
+      await openAuthenticated(page);
+      await page.getByRole("link", { name: "Tokens", exact: true }).click();
+      const row = page.locator('tr[data-agent="assistant"]');
+      await expect(row).toBeVisible();
+      await expect(row.getByRole("list", { name: "assistant's pools" })).toHaveText("team");
+      await expect(row.locator(".token-date").last()).not.toHaveText("never");
+      await expect(row.locator(".agent-name > span[title]")).toHaveAttribute(
+        "title",
+        kind === "token-only" ? "Agent token" : kind === "both" ? "Agent token · Vercel OIDC" : "Vercel OIDC",
+      );
+      if (!tokens) {
+        await expect(row.locator(".badge")).toHaveText("Not configured");
+        await expect(row.getByRole("button")).toHaveCount(0);
+        expect(requests.filter((request) => request.path === "/ui/access-tokens")).toHaveLength(0);
+      } else {
+        await expect(row.locator(".badge")).toHaveText(kind === "both" ? "No token" : "Issued");
+        await expect(
+          row.getByRole("button", { name: kind === "both" ? "Issue assistant's token" : "Rotate assistant's token" }),
+        ).toBeEnabled();
+      }
+      expect(await page.content()).not.toContain(bearer);
+      await page.screenshot({ path: testInfo.outputPath(`agent-${kind}.png`) });
+    } finally {
+      globalThis.fetch = fetch;
+      realRoutes = undefined;
+      await app.close();
     }
   });
 }
