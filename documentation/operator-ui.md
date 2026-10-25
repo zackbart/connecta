@@ -532,7 +532,14 @@ duplicate summary, token, config, detail or body reads. The passive retry schedu
 stays bounded and does not reset its budget on a deadline. Retry remains available
 during recovery configuration loading and supersedes and aborts the old cycle;
 identity changes, navigation and connector-page unmount also cancel it. Navigation
-that cancels pending data schedules a bounded reread for the destination. Failed reads retry after
+that cancels pending data schedules a bounded reread for the destination. A scoped OAuth poll publishes only its connector's detail and live row. It does
+not supersede a pending full admission or catalog/auth cycle, release its
+recovery guard, or clear its deadline. That full cycle still publishes other
+connectors as they settle and decides recovery, retaining the newer polled row
+even when its summary was pending or its deadline exposed Retry. Only a newer
+full cycle, mutation, identity change, or sign-out fences older work. Owed
+publication neither spends nor resets the failed-read retry budget and adds no
+timer. Failed reads retry after
 2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
 those four automatic retries, a focus return can request one more read after
 the eight-second backoff, without replenishing the automatic budget. Retry
