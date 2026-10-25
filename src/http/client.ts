@@ -1,5 +1,5 @@
 import { confinementBase, REDIRECT_STATUSES, BODILESS_STATUSES } from "../http-policy.js";
-import { guardedTransport } from "../guarded-transport.js";
+import { guardedTransport, sendGuarded } from "../guarded-transport.js";
 // Guarded HTTP transport (decision 0010, B.2). Unreachable from src/index.ts.
 //
 // The guarded transport as an Effect `HttpClient`, with the behaviour of
@@ -332,20 +332,24 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
             // and it refuses a request whose call has already ended.
             if (facts.effect === "read" && !readRequest({ classification: "read", method: request.method }, headers))
               recordRequestField(entry, "blocksAuxiliaryProof", true);
-            core.dispatch(entry, headers, request.method);
             dispatch.state = "pending";
-            return transport.send(url, {
-              method: request.method,
-              headers,
-              ...body,
-              // A redirect re-sends the credential wherever `Location` points.
-              redirect: "manual",
-              signal: AbortSignal.any([
-                interrupted,
-                ...(callSignal ? [callSignal] : []),
-                ...(options.timeoutMs === undefined ? [] : [AbortSignal.timeout(options.timeoutMs)]),
-              ]),
-            });
+            return sendGuarded(
+              transport,
+              url,
+              {
+                method: request.method,
+                headers,
+                ...body,
+                // A redirect re-sends the credential wherever `Location` points.
+                redirect: "manual",
+                signal: AbortSignal.any([
+                  interrupted,
+                  ...(callSignal ? [callSignal] : []),
+                  ...(options.timeoutMs === undefined ? [] : [AbortSignal.timeout(options.timeoutMs)]),
+                ]),
+              },
+              () => core.dispatch(entry, headers, request.method),
+            );
           },
           catch: (failure): HttpFailure => {
             if (!entry.dispatched) {

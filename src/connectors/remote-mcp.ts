@@ -117,7 +117,7 @@ import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
-import { guardedTransport } from "../guarded-transport.js";
+import { guardedTransport, sendGuarded } from "../guarded-transport.js";
 import { sourceClassification } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
@@ -2450,7 +2450,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             );
           throw resendRefused(flight);
         }
-        flight.sent = true;
         flight.authorization = new Headers(init?.headers).get("authorization");
       }
       const request = flight?.request;
@@ -2459,19 +2458,31 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           method: init?.method ?? "GET",
         });
       const entry = request?.entry;
-      if (request && entry) {
-        if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
-        dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
-      }
+      const dispatch = () => {
+        if (flight?.write) {
+          if (flight.sent) throw resendRefused(flight);
+          flight.sent = true;
+        }
+        if (request && entry) {
+          if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
+          dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+        }
+      };
       trackSentRequest(ctx, input, init);
       const response = sender
-        ? await sender.send(new URL(input instanceof Request ? input.url : String(input)), {
-            ...init,
-            redirect: "manual",
-          })
-        : writeContinuation
-          ? await fetch(input, { ...init, redirect: "manual" })
-          : await fetch(input, init);
+        ? await sendGuarded(
+            sender,
+            new URL(input instanceof Request ? input.url : String(input)),
+            {
+              ...init,
+              redirect: "manual",
+            },
+            dispatch,
+          )
+        : await (() => {
+            dispatch();
+            return writeContinuation ? fetch(input, { ...init, redirect: "manual" }) : fetch(input, init);
+          })();
       if (entry) recordProviderResponse(entry, response.status);
       if (flight?.write) {
         if (response.status === 401) flight.unauthorized = true;
