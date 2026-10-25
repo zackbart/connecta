@@ -1,6 +1,6 @@
 // One owner per existing upstream request identity. Facts survive revocation;
 // retaining them never reconstitutes a call capability or a live operation.
-import { Context, Exit, Scope } from "effect";
+import { Context, Exit, Scope, type Effect } from "effect";
 import type { AuthorizationHandoff } from "../errors.js";
 import type { SentSecrets } from "../sent-secrets.js";
 import type { ToolDef } from "../types.js";
@@ -15,7 +15,7 @@ export interface RequestInvocations {
 export interface RequestHandoffs {
   create: (connector: string) => Promise<AuthorizationHandoff>;
   enabled: boolean;
-  handoffs: Map<string, Promise<AuthorizationHandoff>>;
+  handoffs: Map<string, Effect.Effect<AuthorizationHandoff, unknown>>;
 }
 export class RequestOwner {
   open = true;

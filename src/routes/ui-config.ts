@@ -1,3 +1,5 @@
+import { agentDescriptions } from "../agent-description.js";
+import { readAgentAdmission } from "../agent-observation.js";
 // `GET /ui/api/config`: operator contract v2 (#837, decisions/0006), the
 // operator page's only gate. A maintainer gets the unfiltered view; a human
 // pool member gets exactly their own projection; anyone else gets the private
@@ -540,15 +542,47 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
         member.kind === "agent" ? { kind: "agent", name: member.name } : human(member),
       ),
     }));
-    const agents: OperatorAgent[] = slots.map(({ name, ...token }) => ({
+    const tokenSlots = new Map(slots.map(({ name, ...token }) => [name, token]));
+    if (opts.config.accessTokens && opts.config.agents.some((name) => !tokenSlots.has(name))) {
+      return yield* refuse("agent token slots could not be read", 503);
+    }
+    const agents: OperatorAgent[] = agentDescriptions(opts.config).map(({ name, credentialTypes }) => ({
       name,
+      credentialTypes: [...credentialTypes],
       pools: [...opts.pools]
         .filter(([, pool]) => pool.members.some((member) => member.kind === "agent" && member.name === name))
         .map(([pool]) => pool),
-      token,
+      token: tokenSlots.get(name) ?? null,
       lastSeenAt: null,
     }));
     const activity = yield* scanActivity(context, authz, registry, rows, agents);
+    let admissionsVisible = readsActivity(opts, authz) && activity !== "forbidden";
+    // A configured read gate still applies when the history store has no list.
+    if (admissionsVisible && activity === "unconfigured" && opts.config.activity?.readGate) {
+      admissionsVisible = yield* bounded(
+        context,
+        () => attempt(async () => (await opts.config.activity!.readGate!(authz.actor)) === true),
+        () => Effect.succeed(false),
+      );
+    }
+    if (admissionsVisible) {
+      yield* bounded(
+        context,
+        () =>
+          Effect.forEach(
+            agents,
+            (agent) =>
+              readAgentAdmission(opts.config.storage, agent.name).pipe(
+                Effect.catch(() => Effect.succeed(null)),
+                Effect.map((at) => {
+                  if (at && (!agent.lastSeenAt || at > agent.lastSeenAt)) agent.lastSeenAt = at;
+                }),
+              ),
+            { concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency) },
+          ),
+        () => Effect.succeed(undefined),
+      );
+    }
     const matrix = yield* matrixFor(context, visible, rows, ownersVisible);
     const contract: OperatorUiContractV2 = {
       schemaVersion: 2,

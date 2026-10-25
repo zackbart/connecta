@@ -3596,3 +3596,231 @@ headers were sent before shutdown and pipelined responses waiting behind an
 inflight response. Normal keepalive remains Node-owned until shutdown. Idle and
 never-admitted sockets retain their separate close paths, and the configured
 shutdown deadline still forces exit 1 for work that never completes.
+
+### Native auth programs (contributor)
+
+Inbound verification, shared authentication admission, machine-token verification,
+static OAuth and the SDK-facing downstream OAuth provider compose private native
+programs. `auth/native.ts` selects registered implementations by the current
+function identity; an original Promise shell enters its own implementation
+without re-reading an overridden method. Class registrations retain their
+original method and prototype/key separately, so instance, inherited and
+prototype decorators can delegate to a saved original without recursion. Custom
+adapters and overridden methods retain their Promise boundary and original errors.
+
+`auth/native-call.ts` provides the canonical `RequestScope` Context from the
+existing call view. Native grant preparation and storage reads execute inside
+that Context and refuse a closed owner; no second request-identity table is
+introduced. Keeping that call-only module separate also keeps downstream call
+services out of metadata and operator UI imports. Native storage uses D2's
+registered storage programs; custom stores remain one-operation Promise leaves.
+
+`authFlow` composes yielded Effects while delivering original typed failures to
+local auth policy catches. Interruption remains interruption, runs yielded
+cleanup and never becomes a diagnostic Cause. A fetch's settlement observer
+cancels a late body. The resource sender records only retained status/refusal
+facts after cancellation; it cannot renew a call capability or send another
+request. Synchronous abort observers finish recording those facts before native
+wait cleanup removes them.
+
+Admission charges track the actual settlement of SDK, crypto, fetch and custom
+Promise leaves. Submitted native storage work has independent settlement so a
+caller-facing deadline cannot release its charge early. Isolate-wide admission
+state remains scalar charges, counters and weak reachability; no request-owned
+client, signal, body or Promise is cached across requests. Organization cache
+TTLs, lookup ordering and rate-limit backoff remain unchanged.
+
+Admission composes explicit native continuations rather than suspending a
+generator that contains its charge token. The workerd collection regression
+holds live middleware work charged, ends a different invocation, then proves
+its unreachable charges are collectable. Neither deadline nor abandonment
+releases a charge; only actual settlement or proven unreachability does.
+
+Refresh claims still transfer ownership synchronously with claim-CAS submission,
+before its answer. The bounded native coordinator starts without request/call
+Context authority and may persist a rotation after its caller closes. A closed
+caller cannot consume that result or resume sending. The cross-request refresh
+join deliberately crosses a Promise boundary so workerd resumes each waiter in
+its own request. Code exchange remains request-owned and one-use. Epochs,
+permanent spent fingerprints, physical-attempt guards and pre-claim transport
+preflight are unchanged.
+
+`authStorage(storage, key, args, beforeSubmit?)` admits the ownership hook and
+native/custom storage invocation in one JavaScript reaction. Its public
+Scheduler delegation suppresses automatic yield only during that initial
+reaction; a microtask restores parent scheduling before pending I/O resumes.
+The four hook sites are `updateGrant`'s guarded write and `claimRefresh`'s
+unknown-lease refusal, ambiguous spent-token write and new claim. A forced
+scheduler regression covers both native and custom stores; real pending TCP
+I/O, pre-submission cancellation, synchronous failure and unknown CAS outcomes
+retain their distinct ownership and exactly-once settlement rules.
+
+Intentional leaves are the Clerk and MCP SDKs (including their callback methods),
+platform fetch/body readers and Web Crypto, custom identity/gate/sealer/storage
+hooks, and the reset-settlement observer required by the callback route. Native
+programs compose around those leaves directly. Public Promise APIs, SDK method
+signatures and published private class declarations remain unchanged; only
+`runtime/run.ts` starts fibers. SDK telemetry remains disabled, and raw SDK,
+body, storage or Cause diagnostics never reach operator records.
+
+The declaration comparison retains 86 of 88 reachable files byte for byte.
+The two exact exceptions swap only adjacent `title` / `instructions` members
+in the inferred provider and Google Workspace schema declarations; both keep
+the same `Field<unknown, unknown, true>` type. Both owning source files are
+unchanged. A narrow machine check restores only those two exact adjacent
+pairs and requires byte equality, with no other type, export or reference
+change. All 88 declarations still exclude Effect and have complete references.
+
+The superseding 2026-10-25 D3/D4 cost ruling authorizes only Worker
+`maxGzip: 785000` (previously 760000) and Clerk `maxGzip: 85000` (previously
+63087). Official cached Node 22.23.4 / zlib 1.3.1-e00f703 measured Clerk at
+47,688 -> 80,961 bytes gzip (+33,273): the generated SDK is unchanged, while
+native Effect adds 91.8 KB raw plus the native helper and small auth-source
+growth. The isolated D4 candidate measured Worker at 762,666, root at 377,177
+and D1 at 88,321 bytes gzip. Optional-graph optimization brought UI to 342,955,
+so the earlier unused UI allowance is revoked and its original 345000 cap
+remains. Historical baselines, root/D1 and all other caps, dependency pins and
+security/API gates remain unchanged. These independent measurements do not
+predict a combined gzip by addition; final artifacts must be rebuilt. Native
+registration, decorated fallback and request/native-storage semantics also
+require a smoke through an actual minified production bundle. Final post-hook
+official artifacts measure root 377,290, D1 88,321, Clerk 80,959, UI 342,959
+and Worker 762,774 bytes gzip, all within those caps.
+
+### Native remote MCP programs (contributor)
+
+Remote MCP connection joins, credential and epoch checks, catalog intake,
+negotiation, calls, resources, Skills, auth and status compose native programs in
+`connectors/remote-mcp.ts`. `catalog-cache.ts` owns native SDK cache reads,
+chunked publication, generation fencing, complete refresh acceptance and listing
+serialization; `connectors/negotiation-cache.ts` owns native negotiation storage.
+The published connector, cache and SDK callback methods remain Promise shells.
+Native consumers select those programs through `authCall` / `authInvoke` by
+current function identity. Each original shell enters its own immutable program,
+so a decorator or inherited delegate can call a saved original without recursion.
+`invocation-auth.ts` follows that same identity dispatch for local credential
+checks. The remote call registers its final original function with
+`runtime/call-entry.ts`, preserving invocation validation, policy and call services.
+A replaced function cannot inherit that native call proof.
+
+Connector and cache state use the canonical `RequestScope` from the existing
+view services. The shared connection provides only that request owner, never the
+first waiter's call services, credentials or budget. SDK cache callback edges
+restore that same owner. Every operation captures its own generation, credential
+identity and listing binding before waiting; a later listing cannot adopt an
+abandoned publication. Request closure revokes the connector and cache scopes.
+No client, transport, response, signal, promise or live request Context is shared
+across inbound requests. D4's bounded refresh coordinator retains its separate
+ownership, synchronous submission gate and waiting-request handoff.
+
+Two deliberate Promise waits remain: a connect waiter receives the Deferred's
+answer in its own workerd request continuation, and a serialized listing waits
+for a Promise turn before running its native program. Cancelling a queued
+listing releases its turn only after its predecessor, so it cannot unlock a
+listing still using the SDK cache binding. Cancellation after entry ends that
+listing's publication without starving a live sibling. Teardown starts native
+finalizers before checking caller ownership and joins their bounded independent
+settlement. Only `runtime/run.ts` starts fibers.
+
+Physical sender Promise observers retain response status, write refusal and
+redirect facts even when a native waiter closes first. The call's abort path
+yields one scheduler reaction before settling those facts, including when the
+SDK rejects synchronously from the abort event. These observations grant no live
+authority: a closed caller cannot renew, send, publish a cache result or consume
+late output. Source/effective write classification, one physical attempt,
+withheld transport text, explicit downstream tool errors, input suspension,
+final output validation and original abort/error identity remain enforced.
+
+Intentional leaves are the pinned MCP SDK's actual client/transport operations
+and schema validators, the owned one-attempt sender and platform fetch,
+Web Crypto fingerprints, bounded byte/SSE stream readers and body cancellation,
+and unregistered custom token, credential, storage, sealer or observation hooks.
+SDK `ResponseCacheStore` is the callback contract, not a replacement client or
+protocol implementation. Its storage and refresh algorithms are native programs;
+its Promise shells are required SDK edges. The connector keeps modern/legacy
+negotiation, header mirroring, cache partitions and TTL semantics. No SDK/Effect
+pin or supported protocol surface changes.
+
+Native storage and activity selection in `runtime/native-storage.ts` checks the
+current methods against their original registered identity, and selected programs
+check again when executed. A replacement or decorator owns the Promise fallback;
+restoring originals restores native composition. Registry storage namespaces
+select the underlying current methods at dispatch, including namespaces created
+while a source method is decorated. Original SQL shells call their own native
+program directly. Tests cover current and previously selected programs, own and
+inherited saved-original delegates, get/set/CAS and activity record/list,
+restoration, typed failures and interruption. The D4 native proof fixtures install
+their intentional throwing Promise shells before registration, so they establish
+native composition without authorizing bypass of later replacements.
+
+`remote-mcp-native.test.ts` runs native SDK/cache/request-boundary cases on Node
+and workerd. `remote-mcp-native-bundle.node.test.ts` additionally loads an actual
+minified production bundle to verify call/cache registration, request Context,
+native storage, saved-original delegates, custom replacements and closed-owner
+refusal. Existing wire, physical-attempt, cache and OAuth lifetime suites remain
+the compatibility evidence; provider golden observations remain unchanged.
+
+### Native upward MCP orchestration (contributor)
+
+`routes/mcp.ts` composes server preparation, native catalog selection, exchange,
+output redaction and response-owned request cleanup as native programs. The
+pinned SDK's modern `createMcpHandler` and a fresh stateless legacy JSON transport
+remain the protocol implementations. Effect 4.0.5's public MCP adapters cannot
+serve the required fresh legacy contract; this implementation does not adopt
+Effect McpServer. Each inbound request constructs fresh servers and keeps its
+admission scope until its response body ends, fails, is cancelled or reaches its
+existing deadline. Authentication and endpoint admission precede body dispatch.
+The declared-agent observation stays after successful endpoint admission and
+before listen classification or body dispatch.
+
+Meta tools, native tools, Skills/resources and upward auth/input continuations
+compose registered native programs. SDK registration signatures and Promise
+shells remain unchanged. Current-method identity governs consumer dispatch;
+each original shell enters its own immutable program, so decorators, inherited
+delegates and replacements retain authority. Catalog policy failures reach
+native consumers as ordinary typed failures. Invocation still owns validation,
+classification, read-only enforcement, dispatch, write settlement and accounting.
+Its input and result callbacks select native programs while custom synchronous
+or Promise callbacks retain their original behavior.
+
+The canonical `RequestScope` travels through SDK callback edges and registry
+views. A continuation's durable nonce claim still precedes dispatch, retains its
+caller, endpoint, arguments, TTL and round bindings, and cannot authorize another
+write after an ambiguous result. Retained classification and settlement facts
+never reopen a closed request. A finished program can still shape its response
+and retained recovery facts after its connector authority closes; the inbound
+request signal still cancels that response work. Neither path grants another
+dispatch. Agent-output redaction, withheld diagnostics,
+secret registration and result bounds retain their existing pure algorithms.
+`upwardStep` is only a typed generator adapter: it lets `authFlow` deliver the
+original ordinary failure to a local catch without converting interruption.
+
+Concurrent authorization failures share one request-owned producer and Deferred
+answer per connector, including failures and the unknown-write advice variant.
+The existing `forkRequest` seam starts that producer under the request Scope;
+its Context contains only the canonical request owner and scheduler. A waiting
+call's budget, credentials and cancellation do not own the producer. Closing the
+request revokes it, and a closed request cannot consume or restart its handoff.
+Only `runtime/run.ts` starts fibers. Admission and downstream refresh/connection
+waits retain their deliberate Promise handoffs for workerd's waiting-request I/O
+context.
+
+Intentional leaves are actual pinned SDK handler/transport/server operations,
+SDK schema and request-state codecs, platform body readers and cancellation,
+Web Crypto hashes, vault owner/seal/open/sign/verify methods and unregistered custom
+identity, credential, storage, executor and tool callbacks. Connecta's OAuth-link
+binding, TTL, progress, closing and one-use claims are native orchestration around
+those leaves. The supported protocol and unsupported-feature refusals remain
+unchanged. Native consumer, failure, decorator, sharing, close and minified-bundle
+regressions live in `upward-native.test.ts` and
+`upward-native-bundle.node.test.ts`; existing wire, continuation, redaction,
+physical-attempt and body/admission suites remain compatibility evidence.
+
+The combined native/operator graph has a measured contributor bundle allowance
+in PR #1060: the UI gzip cap is 346,000 bytes, with its historical baseline
+unchanged. The official full checker measured 345,228 bytes after regenerating
+the merged UI assets. Removing unused Invocation/Catalog registration retention
+returned the public Worker entry from 198,744 to 77,426 bytes; live minified
+Context, inherited-method, decorator and restoration proofs retain native
+composition. Root, example Worker, public Worker, D1 and Clerk caps remain
+unchanged. This cost decision grants no later request-body-limit allowance.

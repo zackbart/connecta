@@ -253,6 +253,20 @@ export const accessTokenKeys = {
   active: "access-token:v1:active",
 } as const satisfies Keyed;
 
+/** Latest successful agent endpoint admission; name and timestamp only. */
+export const agentObservationKeys = {
+  family: {
+    name: "agent-observation",
+    scope: "root",
+    prefixes: ["agent-observation:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  agent: (name: string) => validateStorageKey(`agent-observation:v1:${name}`),
+} as const satisfies Keyed;
+
 /**
  * A vault credential, sealed: `credential:v1` inside its connector's
  * namespace, under the owner's principal partition when it is personal.
@@ -492,6 +506,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   responseCacheKeys.family,
   oauthHandoffKeys.family,
   accessTokenKeys.family,
+  agentObservationKeys.family,
   credentialKeys.family,
   oauthGrantKeys.family,
   oauthFlowKeys.family,

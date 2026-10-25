@@ -1,6 +1,8 @@
+import { authView } from "../auth/native-call.js";
+import { authFlow, authCall, authInvoke, authValue, authMethod, authCatch } from "../auth/native.js";
 import { isOAuthCredentialRequest } from "../auth/oauth-token-response.js";
 import { deriveContext } from "../derived-context.js";
-import { duringViewCall, operationContext, openRequest, settleOnClose, viewSignal } from "../runtime/call.js";
+import { operationContext, openRequest, viewServices, viewSignal } from "../runtime/call.js";
 import {
   assertRemoteOAuthClient,
   declareSelfHostedClient,
@@ -40,6 +42,13 @@ import {
 import type {
   FetchLike,
   JsonSchemaType,
+  CacheableRequestOptions,
+  CallToolResult,
+  JSONRPCMessage,
+  ListResourcesResult,
+  ListResourceTemplatesResult,
+  PriorDiscovery,
+  ReadResourceResult,
   ListToolsResult,
   RequestOptions,
   StandardSchemaV1,
@@ -72,6 +81,7 @@ import {
   catalogItems,
   observeCompletedCatalogRefresh,
   type CatalogMethod,
+  type CompletedCatalogRefresh,
   type CatalogResult,
   closeCatalogCacheScope,
   observeCatalogChange,
@@ -104,7 +114,10 @@ import {
 import { CONNECTA_VERSION } from "../version.js";
 import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
-import { retainingOAuthPartition } from "../oauth-partition.js";
+import { oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
+import { RequestScope } from "../runtime/request-scope.js";
+import { registerCallEntry } from "../runtime/call-entry.js";
+import { Context } from "effect";
 import { registerInvocationAuth } from "../invocation-auth.js";
 import {
   downstreamInputCapabilities,
@@ -816,7 +829,9 @@ function terminateSession(transport: Transport, logger: Logger, connectorId: str
   return Effect.raceAllFirst([
     // The SDK issues no request at all when no `mcp-session-id` was captured,
     // so a stateless downstream never sees a spurious DELETE.
-    promised(() => Promise.resolve(Reflect.apply(terminate, transport, []))).pipe(
+    promised(
+      authMethod(() => authInvoke(Reflect, "apply", [terminate, transport, []]) as Effect.Effect<void, unknown>),
+    ).pipe(
       Effect.catch((error) =>
         // The SDK's error quotes the downstream's status text, and its `data`
         // the body, so the record keeps only the status it answered with.
@@ -857,7 +872,15 @@ function terminateSession(transport: Transport, logger: Logger, connectorId: str
 function closeLocally(client: Client | null, transport: Transport | null): Effect.Effect<void> {
   if (!client && !transport) return Effect.void;
   return Effect.raceAllFirst([
-    promised(() => Promise.resolve(client ? client.close() : transport?.close())).pipe(Effect.ignore),
+    promised(
+      authMethod(
+        () =>
+          (client ? authInvoke(client, "close", []) : authValue(() => transport?.close())) as Effect.Effect<
+            void | undefined,
+            unknown
+          >,
+      ),
+    ).pipe(Effect.ignore),
     Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
   ]);
 }
@@ -869,7 +892,7 @@ function closeLocally(client: Client | null, transport: Transport | null): Effec
  * allocates no AbortController.
  */
 function promised<A>(evaluate: () => PromiseLike<A>): Effect.Effect<A, unknown> {
-  return Effect.tryPromise({ try: evaluate, catch: (error) => error });
+  return authCall(evaluate, []);
 }
 
 /** A retained cause chain must not smuggle an SDK payload past the boundary. */
@@ -884,13 +907,15 @@ function hasSdkPayload(error: unknown): boolean {
 
 /** Cancellation can bypass an inner SDK catch and return the signal's reason. */
 function payloadFree<A extends unknown[], R>(run: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
-  return async (...args) => {
-    try {
-      return await run(...args);
-    } catch (error) {
-      throw hasSdkPayload(error) ? carryFailureFacts(error, downstreamCallError(error)) : error;
-    }
-  };
+  return authMethod((...args: A) =>
+    authFlow<R>(function* () {
+      try {
+        return (yield authCall(run, [...args])) as Awaited<R>;
+      } catch (error) {
+        throw hasSdkPayload(error) ? carryFailureFacts(error, downstreamCallError(error)) : error;
+      }
+    }),
+  );
 }
 
 /** Both the SDK's auth signal and its classified form invalidate a live client. */
@@ -1105,69 +1130,71 @@ export function redirectSafeFetch(
   policy: RemoteMcpRedirectPolicy = "none",
   baseFetch: FetchLike = fetch,
 ): FetchLike {
-  return async (input, initialInit = {}) => {
-    let current = new URL(input);
-    let init = initialInit;
-    const seen = new Set<string>([current.href]);
-    let hops = 0;
-
-    while (true) {
-      let response: Response;
-      try {
-        response = await baseFetch(current, {
-          ...init,
-          redirect: "manual",
-        });
-      } catch (cause) {
-        if (cause instanceof ConnectorCallError) throw downstreamCallError(cause);
-        throw unavailableCallError(
-          cause,
-          current.href,
-          undefined,
-          hasSdkPayload(cause) ? undefined : (init.signal ?? undefined),
-        );
+  return authMethod((input: string | URL, initialInit: RequestInit | undefined = {}) =>
+    authFlow<Response>(function* () {
+      let current = new URL(input);
+      let init = initialInit;
+      const seen = new Set<string>([current.href]);
+      let hops = 0;
+      while (true) {
+        let response: Response;
+        try {
+          response = (yield authCall(baseFetch, [
+            current,
+            {
+              ...init,
+              redirect: "manual",
+            },
+          ])) as Response;
+        } catch (cause) {
+          if (cause instanceof ConnectorCallError) throw downstreamCallError(cause);
+          throw unavailableCallError(
+            cause,
+            current.href,
+            undefined,
+            hasSdkPayload(cause) ? undefined : (init.signal ?? undefined),
+          );
+        }
+        if (!REDIRECT_STATUSES.has(response.status)) return byteReadResponse(response);
+        const location = response.headers.get("location");
+        (yield authCatch(
+          authValue(() => response.body?.cancel()),
+          () => {},
+        )) as void | undefined;
+        if (!location) {
+          throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} carried no Location header`);
+        }
+        if (policy === "none") {
+          throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} redirects are disabled`);
+        }
+        if (hops >= MAX_REMOTE_REDIRECT_HOPS) {
+          throw new RemoteMcpRedirectError(connectorId, `the redirect chain exceeded ${MAX_REMOTE_REDIRECT_HOPS} hops`);
+        }
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} carried an invalid Location header`);
+        }
+        if (current.protocol === "https:" && next.protocol !== "https:") {
+          throw new RemoteMcpRedirectError(connectorId, "an HTTPS-to-HTTP downgrade is not allowed");
+        }
+        if (next.origin !== current.origin) {
+          throw new RemoteMcpRedirectError(connectorId, "a cross-origin redirect is not allowed");
+        }
+        if (next.username || next.password) {
+          throw new RemoteMcpRedirectError(connectorId, "a redirect target containing URL credentials is not allowed");
+        }
+        if (seen.has(next.href)) {
+          throw new RemoteMcpRedirectError(connectorId, "the redirect chain loops");
+        }
+        seen.add(next.href);
+        hops++;
+        init = redirectedInit(init, response.status);
+        current = next;
       }
-      // Every MCP and OAuth exchange reads its answer through here, and the
-      // SDK reads bodies with `.text()` and `.json()`: as bytes, never text.
-      if (!REDIRECT_STATUSES.has(response.status)) return byteReadResponse(response);
-
-      const location = response.headers.get("location");
-      await response.body?.cancel().catch(() => {});
-      if (!location) {
-        throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} carried no Location header`);
-      }
-      if (policy === "none") {
-        throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} redirects are disabled`);
-      }
-      if (hops >= MAX_REMOTE_REDIRECT_HOPS) {
-        throw new RemoteMcpRedirectError(connectorId, `the redirect chain exceeded ${MAX_REMOTE_REDIRECT_HOPS} hops`);
-      }
-
-      let next: URL;
-      try {
-        next = new URL(location, current);
-      } catch {
-        throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} carried an invalid Location header`);
-      }
-      if (current.protocol === "https:" && next.protocol !== "https:") {
-        throw new RemoteMcpRedirectError(connectorId, "an HTTPS-to-HTTP downgrade is not allowed");
-      }
-      if (next.origin !== current.origin) {
-        throw new RemoteMcpRedirectError(connectorId, "a cross-origin redirect is not allowed");
-      }
-      if (next.username || next.password) {
-        throw new RemoteMcpRedirectError(connectorId, "a redirect target containing URL credentials is not allowed");
-      }
-      if (seen.has(next.href)) {
-        throw new RemoteMcpRedirectError(connectorId, "the redirect chain loops");
-      }
-
-      seen.add(next.href);
-      hops++;
-      init = redirectedInit(init, response.status);
-      current = next;
-    }
-  };
+    }),
+  );
 }
 
 class RemoteMcpDestinationError extends OAuthRequestNotSentError {
@@ -1228,13 +1255,15 @@ for (const [ctor, label] of [
  * failures after an HTTP dispatch keep their permanent ambiguous verdict.
  */
 function learnedUrlSafeFetch(connectorId: string, configured: URL, baseFetch: FetchLike): FetchLike {
-  return async (input, init) => {
-    const reason = learnedUrlRefusal(configured, new URL(input));
-    if (reason !== undefined) {
-      throw new RemoteMcpDestinationError(connectorId, reason);
-    }
-    return byteReadResponse(await baseFetch(input, init));
-  };
+  return authMethod((input: string | URL, init: RequestInit | undefined) =>
+    authFlow<Response>(function* () {
+      const reason = learnedUrlRefusal(configured, new URL(input));
+      if (reason !== undefined) {
+        throw new RemoteMcpDestinationError(connectorId, reason);
+      }
+      return byteReadResponse((yield authCall(baseFetch, [input, init])) as Response);
+    }),
+  );
 }
 
 /** The JSON-RPC error answers each transport delivered, as `code\0message`. */
@@ -1403,30 +1432,33 @@ interface OAuthTrail {
  * `grant_type`), or the JSON POST of dynamic client registration.
  */
 function tracedOAuthFetch(trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike): FetchLike {
-  return async (input, init) => {
-    const url = new URL(input);
-    if (url.href === endpoint.href) {
-      trail.last = undefined;
-    } else {
-      const body = init?.body;
-      const step: OAuthStep =
-        (init?.method ?? "GET").toUpperCase() === "GET"
-          ? "discovery"
-          : body instanceof URLSearchParams || (typeof body === "string" && new URLSearchParams(body).has("grant_type"))
-            ? "token request"
-            : "client registration";
-      trail.last = { step, host: url.origin };
-      if (step === "client registration") trail.registration = url.origin;
-    }
-    const leg = trail.last;
-    const response = await baseFetch(input, init);
-    if (leg) {
-      leg.httpStatus = response.status;
-      const wait = retryAfterMs(response.headers);
-      if (wait !== undefined) leg.retryAfterMs = wait;
-    }
-    return byteReadResponse(response);
-  };
+  return authMethod((input: string | URL, init: RequestInit | undefined) =>
+    authFlow<Response>(function* () {
+      const url = new URL(input);
+      if (url.href === endpoint.href) {
+        trail.last = undefined;
+      } else {
+        const body = init?.body;
+        const step: OAuthStep =
+          (init?.method ?? "GET").toUpperCase() === "GET"
+            ? "discovery"
+            : body instanceof URLSearchParams ||
+                (typeof body === "string" && new URLSearchParams(body).has("grant_type"))
+              ? "token request"
+              : "client registration";
+        trail.last = { step, host: url.origin };
+        if (step === "client registration") trail.registration = url.origin;
+      }
+      const leg = trail.last;
+      const response = (yield authCall(baseFetch, [input, init])) as Response;
+      if (leg) {
+        leg.httpStatus = response.status;
+        const wait = retryAfterMs(response.headers);
+        if (wait !== undefined) leg.retryAfterMs = wait;
+      }
+      return byteReadResponse(response);
+    }),
+  );
 }
 
 function registrationErrorCode(body: string): string | undefined {
@@ -1746,85 +1778,88 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * Anything not already in connecta's words is withheld, including a store's
    * error while the flow saves what it discovered, which can quote it.
    */
-  const withoutAuthorizationServerText = async (
-    ctx: ConnectorContext,
-    err: unknown,
-    trail: OAuthTrail,
-    signals: readonly (AbortSignal | undefined)[],
-  ): Promise<unknown> => {
-    const safeOrigin = async (host: string | undefined): Promise<string | undefined> => {
-      if (!host || sentSecretsFor(ctx).contains(host, true)) return undefined;
-      if (host === destination.origin || (staticClient && host === new URL(staticClient.issuer).origin)) return host;
-      try {
-        return host === (await newProvider(ctx).validatedIssuerOrigin()) ? host : undefined;
-      } catch {
-        return undefined;
-      }
-    };
-    if (ownAbortReason(err, signals) && !hasSdkPayload(err)) return err;
-    if (err instanceof RegistrationRejectedError) {
-      const code = registrationErrorCode(err.body);
-      const origin = await safeOrigin(trail.registration);
-      const facts = {
-        step: "OAuth client registration" as const,
-        ...(origin ? { origin } : {}),
-        httpStatus: err.status,
-        ...(code ? { oauthError: code } : {}),
-      };
-      return attachFailureFacts(
-        carryFailureFacts(
-          err,
-          resendAdvice(
-            withheldAs(
-              `Connector "${id}" could not register an OAuth client with ` +
-                `${origin ?? "its authorization server"}: the ` +
-                `registration endpoint answered HTTP ${err.status}` +
-                `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
-                "withheld because it can quote the request or anything the server " +
-                "chose to add. Check the server's client registration policy.",
-              downstreamCallError(err, undefined, trail.last?.retryAfterMs),
+  const withoutAuthorizationServerText = authMethod(
+    (ctx: ConnectorContext, err: unknown, trail: OAuthTrail, signals: readonly (AbortSignal | undefined)[]) =>
+      authFlow<unknown>(function* () {
+        const safeOrigin = authMethod((host: string | undefined) =>
+          authFlow<string | undefined>(function* () {
+            if (!host || sentSecretsFor(ctx).contains(host, true)) return undefined;
+            if (host === destination.origin || (staticClient && host === new URL(staticClient.issuer).origin))
+              return host;
+            try {
+              return host === ((yield authInvoke(newProvider(ctx), "validatedIssuerOrigin", [])) as string | undefined)
+                ? host
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          }),
+        );
+        if (ownAbortReason(err, signals) && !hasSdkPayload(err)) return err;
+        if (err instanceof RegistrationRejectedError) {
+          const code = registrationErrorCode(err.body);
+          const origin = (yield authCall(safeOrigin, [trail.registration])) as string | undefined;
+          const facts = {
+            step: "OAuth client registration" as const,
+            ...(origin ? { origin } : {}),
+            httpStatus: err.status,
+            ...(code ? { oauthError: code } : {}),
+          };
+          return attachFailureFacts(
+            carryFailureFacts(
+              err,
+              resendAdvice(
+                withheldAs(
+                  `Connector "${id}" could not register an OAuth client with ` +
+                    `${origin ?? "its authorization server"}: the ` +
+                    `registration endpoint answered HTTP ${err.status}` +
+                    `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
+                    "withheld because it can quote the request or anything the server " +
+                    "chose to add. Check the server's client registration policy.",
+                  downstreamCallError(err, undefined, trail.last?.retryAfterMs),
+                ),
+                ", then retry authorization",
+              ),
             ),
-            ", then retry authorization",
-          ),
-        ),
-        facts,
-      );
-    }
-    const leg = trail.last;
-    const origin = await safeOrigin(leg?.host);
-    const facts = leg
-      ? {
-          step: `OAuth ${leg.step}` as const,
-          ...(origin ? { origin } : {}),
-          ...(leg.httpStatus ? { httpStatus: leg.httpStatus } : {}),
+            facts,
+          );
         }
-      : { step: "OAuth flow" as const };
-    if (err instanceof UnauthorizedError || err instanceof ConnectorCallError || err instanceof WithheldTextError) {
-      return attachFailureFacts(downstreamCallError(err), facts);
-    }
-    const classified = downstreamCallError(err, leg?.httpStatus, leg?.retryAfterMs, leg?.step);
-    if (
-      err instanceof OAuthError ||
-      (classified instanceof ConnectorCallError && classified.code === "provider_permission_denied")
-    ) {
-      return attachFailureFacts(carryFailureFacts(err, classified), facts);
-    }
-    return attachFailureFacts(
-      carryFailureFacts(
-        err,
-        resendAdvice(
-          withheldAs(
-            `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
-              `failed${errorKind(err)}. The error is withheld because its text can ` +
-              "quote what the server sent. Check the server's OAuth metadata.",
-            classified,
+        const leg = trail.last;
+        const origin = (yield authCall(safeOrigin, [leg?.host])) as string | undefined;
+        const facts = leg
+          ? {
+              step: `OAuth ${leg.step}` as const,
+              ...(origin ? { origin } : {}),
+              ...(leg.httpStatus ? { httpStatus: leg.httpStatus } : {}),
+            }
+          : { step: "OAuth flow" as const };
+        if (err instanceof UnauthorizedError || err instanceof ConnectorCallError || err instanceof WithheldTextError) {
+          return attachFailureFacts(downstreamCallError(err), facts);
+        }
+        const classified = downstreamCallError(err, leg?.httpStatus, leg?.retryAfterMs, leg?.step);
+        if (
+          err instanceof OAuthError ||
+          (classified instanceof ConnectorCallError && classified.code === "provider_permission_denied")
+        ) {
+          return attachFailureFacts(carryFailureFacts(err, classified), facts);
+        }
+        return attachFailureFacts(
+          carryFailureFacts(
+            err,
+            resendAdvice(
+              withheldAs(
+                `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
+                  `failed${errorKind(err)}. The error is withheld because its text can ` +
+                  "quote what the server sent. Check the server's OAuth metadata.",
+                classified,
+              ),
+              ", then retry authorization",
+            ),
           ),
-          ", then retry authorization",
-        ),
-      ),
-      facts,
-    );
-  };
+          facts,
+        );
+      }),
+  );
 
   const endpointOrigin = new URL(opts.url).origin;
 
@@ -1953,46 +1988,68 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           "version this release ships with.",
       );
     }
-    const flow = async <T>(
-      start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>,
-      signal?: AbortSignal,
-    ): Promise<T> => {
-      const trail: OAuthTrail = {};
-      try {
-        return await start((fetchFn) =>
-          tracedOAuthFetch(trail, endpoint, async (input, init) => {
-            trackSentRequest(ctx, input, init);
-            return await fetchFn(
-              input,
-              signal
-                ? {
-                    ...init,
-                    signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
-                  }
-                : init,
-            );
-          }),
-        );
-      } catch (err) {
-        throw await withoutAuthorizationServerText(ctx, err, trail, [...signals, signal]);
-      }
-    };
-    adapted.onUnauthorized = (ctx) =>
-      flow(
-        (trace) => Reflect.apply(onUnauthorized, adapted, [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }]),
-        renewalSignal(ctx.response),
-      );
-    internals._stepUpAuthorize = (challenge, retries) =>
-      flow((trace) => {
-        const traced = trace(internals._fetchWithInit ?? fetch);
-        // The step-up reads its fetch from `this`; everything else it reads
-        // and writes stays the transport's own.
-        const self = new Proxy(transport, {
-          get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
-          set: (target, key, value) => Reflect.set(target, key, value, target),
-        });
-        return Reflect.apply(stepUp, self, [challenge, retries]);
-      });
+    const flow = authMethod(
+      <T>(start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>, signal?: AbortSignal) =>
+        authFlow<T>(function* () {
+          const trail: OAuthTrail = {};
+          try {
+            return (yield authCall(start, [
+              (fetchFn: FetchLike) =>
+                tracedOAuthFetch(
+                  trail,
+                  endpoint,
+                  authMethod((input: string | URL, init: RequestInit | undefined) =>
+                    authFlow<Response>(function* () {
+                      trackSentRequest(ctx, input, init);
+                      return (yield authCall(fetchFn, [
+                        input,
+                        signal
+                          ? {
+                              ...init,
+                              signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+                            }
+                          : init,
+                      ])) as Response;
+                    }),
+                  ),
+                ),
+            ])) as Awaited<T>;
+          } catch (err) {
+            throw (yield authCall(withoutAuthorizationServerText, [ctx, err, trail, [...signals, signal]])) as unknown;
+          }
+        }),
+    );
+    adapted.onUnauthorized = authMethod(
+      (ctx: FlowContext) =>
+        authCall(flow, [
+          authMethod(
+            (trace: (fetchFn: FetchLike) => FetchLike) =>
+              authInvoke(Reflect, "apply", [
+                onUnauthorized,
+                adapted,
+                [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }],
+              ]) as Effect.Effect<void, unknown>,
+          ),
+          renewalSignal(ctx.response),
+        ]) as Effect.Effect<void, unknown>,
+    );
+    internals._stepUpAuthorize = authMethod(
+      (challenge: unknown, retries: number) =>
+        authCall(flow, [
+          authMethod((trace: (fetchFn: FetchLike) => FetchLike) =>
+            authFlow<unknown>(function* () {
+              const traced = trace(internals._fetchWithInit ?? fetch);
+              const self = new Proxy(transport, {
+                get: (target: StreamableHTTPClientTransport, key: string | symbol) =>
+                  key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
+                set: (target: StreamableHTTPClientTransport, key: string | symbol, value: any) =>
+                  Reflect.set(target, key, value, target),
+              });
+              return (yield authInvoke(Reflect, "apply", [stepUp, self, [challenge, retries]])) as unknown;
+            }),
+          ),
+        ]) as Effect.Effect<unknown, unknown>,
+    );
   };
 
   class OperatorDisconnectedError extends ConnectorCallError {
@@ -2023,62 +2080,57 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * trusting any cached client, so an operator's replacement is picked up
    * without a redeploy. The value stays in the caller's local scope.
    */
-  const readCredential = async (ctx: ConnectorContext): Promise<string> => {
-    if (requestAuth) {
-      let value: string;
-      try {
-        value = await requestAuth.token(ctx);
-      } catch (error) {
-        if (error instanceof ConnectorCallError) throw error;
-        throw new ConnectorCallError("auth_required", "The request token could not be resolved.");
+  const readCredential = authMethod((ctx: ConnectorContext) =>
+    authFlow<string>(function* () {
+      if (requestAuth) {
+        let value: string;
+        try {
+          value = (yield authInvoke(requestAuth, "token", [ctx])) as string;
+        } catch (error) {
+          if (error instanceof ConnectorCallError) throw error;
+          throw new ConnectorCallError("auth_required", "The request token could not be resolved.");
+        }
+        ctx.signal?.throwIfAborted();
+        if (
+          typeof value !== "string" ||
+          !value.trim() ||
+          Array.from(value).some((char: string) => {
+            const code = char.charCodeAt(0);
+            return code <= 32 || (code >= 127 && code <= 159);
+          })
+        ) {
+          throw new ConnectorCallError(
+            "auth_required",
+            "The request token is empty or cannot be sent as a Bearer header.",
+          );
+        }
+        return value;
       }
-      ctx.signal?.throwIfAborted();
-      if (
-        typeof value !== "string" ||
-        !value.trim() ||
-        Array.from(value).some((char) => {
-          const code = char.charCodeAt(0);
-          return code <= 32 || (code >= 127 && code <= 159);
-        })
-      ) {
-        throw new ConnectorCallError(
-          "auth_required",
-          "The request token is empty or cannot be sent as a Bearer header.",
+      if (!ctx.credential) {
+        throw new CredentialRequiredError(
+          `Connector "${id}" needs an operator-managed credential, but ` +
+            "credential storage is not configured. Configure vault in deployment code and redeploy. Call authorize_connector for recovery options.",
+        );
+      }
+      const value = ((yield authInvoke(ctx.credential, "get", [])) as string | null)?.trim();
+      if (!value) {
+        throw new CredentialRequiredError(
+          `Connector "${id}" has no stored credential — call ` +
+            `authorize_connector({ connector: "${id}" }) and follow the ` +
+            "operator handoff it returns.",
+        );
+      }
+      if (carriesIllegalHeaderChar(value)) {
+        throw new CredentialRequiredError(
+          `Connector "${id}"'s stored credential contains a character a header ` +
+            "cannot carry (a line break or other control character). Call " +
+            "authorize_connector for recovery options. When available, re-enter " +
+            "it in this connection in the operator UI. The value is not shown or logged.",
         );
       }
       return value;
-    }
-    if (!ctx.credential) {
-      throw new CredentialRequiredError(
-        `Connector "${id}" needs an operator-managed credential, but ` +
-          "credential storage is not configured. Configure vault in deployment code and redeploy. Call authorize_connector for recovery options.",
-      );
-    }
-    // A stored-shape mismatch already arrives as a typed auth_required from
-    // the registry's accessor; nothing to reclassify here.
-    const value = (await ctx.credential.get())?.trim();
-    if (!value) {
-      throw new CredentialRequiredError(
-        `Connector "${id}" has no stored credential — call ` +
-          `authorize_connector({ connector: "${id}" }) and follow the ` +
-          "operator handoff it returns.",
-      );
-    }
-    // Refuse a value a header cannot carry BEFORE anything frames it. A
-    // wrapped newline in a pasted key is the ordinary way this happens, and
-    // the runtime that rejects the header quotes the whole value back in its
-    // TypeError — a message that travels to status, to the activity log, and
-    // to the agent. So the check lives here, and says only what is wrong.
-    if (carriesIllegalHeaderChar(value)) {
-      throw new CredentialRequiredError(
-        `Connector "${id}"'s stored credential contains a character a header ` +
-          "cannot carry (a line break or other control character). Call " +
-          "authorize_connector for recovery options. When available, re-enter " +
-          "it in this connection in the operator UI. The value is not shown or logged.",
-      );
-    }
-    return value;
-  };
+    }),
+  );
 
   /**
    * Replace, never edit.
@@ -2147,45 +2199,124 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       );
     };
     const listTools = client.listTools.bind(client);
-    client.listTools = (params, options) =>
-      cache.withListing(listingContext(options), async () => {
-        const before = toolPages;
-        let result: ListToolsResult;
-        try {
-          result = await listTools(params, options);
-        } catch (error) {
-          const bounded = atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [
-            cache.currentContext().signal,
-          ]);
-          const transient =
-            (error instanceof SdkHttpError && [502, 503, 504].includes(error.status)) ||
-            (bounded instanceof ConnectorCallError && bounded.code === "unavailable");
-          const fallback = transient && toolPages === before ? await cache.fallbackTools() : undefined;
-          if (!fallback) throw error;
-          return fallback;
-        }
-        if (toolPages !== before && params?.cursor === undefined) {
-          const refresh = await cache.completeCatalogRefresh(result);
-          if (refresh) {
-            try {
-              await observeCompletedCatalogRefresh(cache.currentContext(), refresh);
-            } catch (error) {
-              logFailure(
-                cache.currentContext().logger,
-                "catalog refresh observation failed",
-                failureRecord({ connector: id }, error),
-              );
+    client.listTools = authMethod(
+      (
+        params:
+          | {
+              _meta?:
+                | {
+                    [x: string]: unknown;
+                    progressToken?: string | number | undefined;
+                    "io.modelcontextprotocol/related-task"?:
+                      | {
+                          taskId: string;
+                        }
+                      | undefined;
+                  }
+                | undefined;
+              cursor?: string | undefined;
             }
-          }
-        }
-        return result;
-      });
+          | undefined,
+        options: CacheableRequestOptions | undefined,
+      ) =>
+        authInvoke(cache, "withListing", [
+          listingContext(options),
+          authMethod(() =>
+            authFlow<ListToolsResult>(function* () {
+              const before = toolPages;
+              let result: ListToolsResult;
+              try {
+                result = (yield authCall(listTools, [params, options])) as ListToolsResult;
+              } catch (error) {
+                const bounded = atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [
+                  cache.currentContext().signal,
+                ]);
+                const transient =
+                  (error instanceof SdkHttpError && [502, 503, 504].includes(error.status)) ||
+                  (bounded instanceof ConnectorCallError && bounded.code === "unavailable");
+                const fallback =
+                  transient && toolPages === before
+                    ? ((yield authInvoke(cache, "fallbackTools", [])) as ListToolsResult | undefined)
+                    : undefined;
+                if (!fallback) throw error;
+                return fallback;
+              }
+              if (toolPages !== before && params?.cursor === undefined) {
+                const refresh = (yield authInvoke(cache, "completeCatalogRefresh", [result])) as
+                  | CompletedCatalogRefresh
+                  | undefined;
+                if (refresh) {
+                  try {
+                    (yield authCall(observeCompletedCatalogRefresh, [cache.currentContext(), refresh])) as void;
+                  } catch (error) {
+                    logFailure(
+                      cache.currentContext().logger,
+                      "catalog refresh observation failed",
+                      failureRecord({ connector: id }, error),
+                    );
+                  }
+                }
+              }
+              return result;
+            }),
+          ),
+        ]) as Effect.Effect<ListToolsResult, unknown>,
+    );
     const listResources = client.listResources.bind(client);
-    client.listResources = (params, options) =>
-      cache.withListing(listingContext(options), () => listResources(params, options));
+    client.listResources = authMethod(
+      (
+        params:
+          | {
+              _meta?:
+                | {
+                    [x: string]: unknown;
+                    progressToken?: string | number | undefined;
+                    "io.modelcontextprotocol/related-task"?:
+                      | {
+                          taskId: string;
+                        }
+                      | undefined;
+                  }
+                | undefined;
+              cursor?: string | undefined;
+            }
+          | undefined,
+        options: CacheableRequestOptions | undefined,
+      ) =>
+        authInvoke(cache, "withListing", [
+          listingContext(options),
+          authMethod(() => authCall(listResources, [params, options]) as Effect.Effect<ListResourcesResult, unknown>),
+        ]) as Effect.Effect<ListResourcesResult, unknown>,
+    );
     const listResourceTemplates = client.listResourceTemplates.bind(client);
-    client.listResourceTemplates = (params, options) =>
-      cache.withListing(listingContext(options), () => listResourceTemplates(params, options));
+    client.listResourceTemplates = authMethod(
+      (
+        params:
+          | {
+              _meta?:
+                | {
+                    [x: string]: unknown;
+                    progressToken?: string | number | undefined;
+                    "io.modelcontextprotocol/related-task"?:
+                      | {
+                          taskId: string;
+                        }
+                      | undefined;
+                  }
+                | undefined;
+              cursor?: string | undefined;
+            }
+          | undefined,
+        options: CacheableRequestOptions | undefined,
+      ) =>
+        authInvoke(cache, "withListing", [
+          listingContext(options),
+          authMethod(
+            () =>
+              authCall(listResourceTemplates, [params, options]) as Effect.Effect<ListResourceTemplatesResult, unknown>,
+          ),
+        ]) as Effect.Effect<ListResourceTemplatesResult, unknown>,
+    );
     const request = client.request.bind(client);
     const walks = new WeakMap<
       object,
@@ -2197,97 +2328,145 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         first?: CatalogResult & { ttlMs: number; cacheScope: "public" | "private" };
       }
     >();
-    client.request = (async (...args: unknown[]) => {
-      const message = args[0] as { method: string; params?: { cursor?: string } };
-      if (
-        message.method !== "tools/list" &&
-        message.method !== "resources/list" &&
-        message.method !== "resources/templates/list"
-      )
-        return Reflect.apply(request, client, args);
-      const method: CatalogMethod = message.method;
-      const ctx = cache.currentContext();
-      const options = (args.length === 3 ? args[2] : args[1]) as RequestOptions | undefined;
-      if (isClosed(entryFor(ctx))) throw scopeEndedError();
-      if (options?.signal?.aborted) throw options.signal.reason;
-      const key = options ?? message;
-      let walk = walks.get(key);
-      if (message.params?.cursor === undefined || !walk) {
-        walk = { names: new Set(), cursors: new Set(), barren: 0, bytes: 0 };
-        walks.set(key, walk);
-      }
-      let page: CatalogResult;
-      try {
-        page = await request(
-          message as Parameters<Client["request"]>[0],
-          method === "tools/list"
-            ? CompatibleListToolsResultSchema
-            : method === "resources/list"
-              ? specTypeSchemas.ListResourcesResult
-              : specTypeSchemas.ListResourceTemplatesResult,
-          options,
+    client.request = authMethod((...args: unknown[]) =>
+      authFlow<any>(function* () {
+        const message = args[0] as {
+          method: string;
+          params?: {
+            cursor?: string;
+          };
+        };
+        if (
+          message.method !== "tools/list" &&
+          message.method !== "resources/list" &&
+          message.method !== "resources/templates/list"
+        )
+          return yield authCall(request, args, client);
+        const method: CatalogMethod = message.method;
+        const ctx = cache.currentContext();
+        const options = (args.length === 3 ? args[2] : args[1]) as RequestOptions | undefined;
+        if (isClosed(entryFor(ctx))) throw scopeEndedError();
+        if (options?.signal?.aborted) throw options.signal.reason;
+        const key = options ?? message;
+        let walk = walks.get(key);
+        if (message.params?.cursor === undefined || !walk) {
+          walk = { names: new Set(), cursors: new Set(), barren: 0, bytes: 0 };
+          walks.set(key, walk);
+        }
+        let page: CatalogResult;
+        try {
+          page = (yield authCall(request, [
+            message as Parameters<Client["request"]>[0],
+            method === "tools/list"
+              ? CompatibleListToolsResultSchema
+              : method === "resources/list"
+                ? specTypeSchemas.ListResourcesResult
+                : specTypeSchemas.ListResourceTemplatesResult,
+            options,
+          ])) as ListToolsResult | ListResourcesResult | ListResourceTemplatesResult;
+        } catch (error) {
+          if (isCursorShapeError(error))
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              "Downstream catalog nextCursor must be a string, null, or absent.",
+              { retryable: false },
+            );
+          throw error;
+        }
+        assertDownstreamOutputSafe(ctx.requestScope ?? ctx, page);
+        const clean = cache.intake(ctx, method, page);
+        if (method === "tools/list") toolPages++;
+        if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
+        const tools = catalogItems(method, clean).filter(
+          (
+            item:
+              | Tool
+              | ListResourcesResult["resources"][number]
+              | {
+                  uriTemplate: string;
+                  name: string;
+                  description?: string | undefined;
+                  mimeType?: string | undefined;
+                  annotations?:
+                    | {
+                        audience?: ("user" | "assistant")[] | undefined;
+                        priority?: number | undefined;
+                        lastModified?: string | undefined;
+                      }
+                    | undefined;
+                  _meta?:
+                    | {
+                        [x: string]: unknown;
+                      }
+                    | undefined;
+                  icons?:
+                    | {
+                        src: string;
+                        mimeType?: string | undefined;
+                        sizes?: string[] | undefined;
+                        theme?: "light" | "dark" | undefined;
+                      }[]
+                    | undefined;
+                  title?: string | undefined;
+                },
+          ) => {
+            const name =
+              method === "tools/list"
+                ? item.name
+                : method === "resources/list"
+                  ? (
+                      item as {
+                        uri: string;
+                      }
+                    ).uri
+                  : (
+                      item as {
+                        uriTemplate: string;
+                      }
+                    ).uriTemplate;
+            if (walk.names.has(name)) return false;
+            walk.names.add(name);
+            return true;
+          },
         );
-      } catch (error) {
-        if (isCursorShapeError(error))
+        walk.bytes += new TextEncoder().encode(JSON.stringify(tools)).byteLength;
+        if (walk.names.size > MAX_CATALOG_TOOLS || walk.bytes > MAX_SERIALIZED_CATALOG_BYTES) {
           throw new ConnectorCallError(
             "connector_call_failed",
-            "Downstream catalog nextCursor must be a string, null, or absent.",
+            "Downstream catalog exceeds the complete-catalog ceiling.",
             { retryable: false },
           );
-        throw error;
-      }
-      assertDownstreamOutputSafe(ctx.requestScope ?? ctx, page);
-      const clean = cache.intake(ctx, method, page);
-      if (method === "tools/list") toolPages++;
-      if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
-      const tools = catalogItems(method, clean).filter((item) => {
-        const name =
-          method === "tools/list"
-            ? item.name
-            : method === "resources/list"
-              ? (item as { uri: string }).uri
-              : (item as { uriTemplate: string }).uriTemplate;
-        if (walk.names.has(name)) return false;
-        walk.names.add(name);
-        return true;
-      });
-      walk.bytes += new TextEncoder().encode(JSON.stringify(tools)).byteLength;
-      if (walk.names.size > MAX_CATALOG_TOOLS || walk.bytes > MAX_SERIALIZED_CATALOG_BYTES) {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "Downstream catalog exceeds the complete-catalog ceiling.",
-          { retryable: false },
-        );
-      }
-      if (clean.nextCursor !== undefined) {
-        if (walk.cursors.has(clean.nextCursor))
-          throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination chain loops.", {
-            retryable: false,
-          });
-        if (tools.length === 0 && ++walk.barren > 1)
-          throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination is not advancing.", {
-            retryable: false,
-          });
-        if (tools.length > 0) walk.barren = 0;
-        walk.cursors.add(clean.nextCursor);
-      }
-      const field = method === "tools/list" ? "tools" : method === "resources/list" ? "resources" : "resourceTemplates";
-      const result = { ...clean, [field]: tools };
-      if (!walk.first) walk.first = result;
-      else {
-        // SDK aggregation retains page-one metadata. A later page may only
-        // narrow its reuse grant, never broaden the complete catalog's scope.
-        walk.first.ttlMs = Math.min(walk.first.ttlMs, clean.ttlMs);
-        if (clean.cacheScope !== "public") walk.first.cacheScope = "private";
-      }
-      observeCatalogExpiry(ctx, method, walk.first.ttlMs);
-      return result;
-    }) as Client["request"];
+        }
+        if (clean.nextCursor !== undefined) {
+          if (walk.cursors.has(clean.nextCursor))
+            throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination chain loops.", {
+              retryable: false,
+            });
+          if (tools.length === 0 && ++walk.barren > 1)
+            throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination is not advancing.", {
+              retryable: false,
+            });
+          if (tools.length > 0) walk.barren = 0;
+          walk.cursors.add(clean.nextCursor);
+        }
+        const field =
+          method === "tools/list" ? "tools" : method === "resources/list" ? "resources" : "resourceTemplates";
+        const result = { ...clean, [field]: tools };
+        if (!walk.first) walk.first = result;
+        else {
+          walk.first.ttlMs = Math.min(walk.first.ttlMs, clean.ttlMs);
+          if (clean.cacheScope !== "public") walk.first.cacheScope = "private";
+        }
+        observeCatalogExpiry(ctx, method, walk.first.ttlMs);
+        return result;
+      }),
+    ) as Client["request"];
   };
 
   /** This request scope's entry, open or closed, created on first sight. */
   const entryFor = (ctx: ConnectorContext): ConnectionState => {
-    const key = ctx.requestScope ?? ctx;
+    const owner = Context.get(viewServices(ctx), RequestScope);
+    const key = owner;
     let state = states.get(key);
     if (!state) {
       state = {
@@ -2306,7 +2485,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       };
       states.set(key, state);
       const owned = state;
-      openRequest(key).own(() => {
+      owner.own(() => {
         const closing = Scope.closeUnsafe(owned.scope, Exit.void);
         reset(owned);
         if (closing) detach(closing);
@@ -2415,129 +2594,125 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
     // This transport's calls on the wire, by JSON-RPC id, while each is sent.
     const flights = new Map<string | number, CallDispatch>();
-    const trackedFetch: FetchLike = async (input, init) => {
-      let rpc: unknown;
-      if (typeof init?.body === "string") {
-        try {
-          rpc = JSON.parse(init.body);
-        } catch {
-          /* OAuth exchanges can send form-encoded bodies. */
+    const trackedFetch: FetchLike = authMethod((input: string | URL, init: RequestInit | undefined) =>
+      authFlow<Response>(function* () {
+        let rpc: unknown;
+        if (typeof init?.body === "string") {
+          try {
+            rpc = JSON.parse(init.body);
+          } catch {}
         }
-      }
-      const toolCall = init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call" ? rpc : undefined;
-      const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) && toolCall !== undefined;
-      // Every request a write sends passes here. The first leaves; any other
-      // stops before it does (INV-9), whatever sent it: the SDK's resend after
-      // a 401 or a step-up, which still renews the grant for a deliberate
-      // repeat, or a redirect hop.
-      const flight =
-        toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
-          ? flights.get(toolCall.id)
-          : undefined;
-      if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
-      // Native Node fetch can replay below this guard (421 or a host retry
-      // dispatcher). Resolve the owned sender before claiming dispatch, so
-      // a Node deployment without /node refuses the write while still unsent.
-      // The pinned SDK sends OAuth forms and registration JSON outside MCP's
-      // JSON-RPC envelope. All of those POSTs require the credential policy,
-      // including when their endpoint shares the MCP URL.
-      const credentialPost =
-        isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
-      const sender = flight?.write ? guardedTransport(true) : undefined;
-      if (flight?.write) {
-        if (flight.sent) {
-          // The SDK renewed the grant and tried to send again: a renewal of
-          // this request's own credential only if the token changed (Q8).
-          if (flight.request && flight.authorization)
-            renewedAfterUnauthorized(
-              flight.request.entry,
-              flight.authorization,
-              new Headers(init?.headers).get("authorization") ?? flight.authorization,
-            );
-          throw resendRefused(flight);
-        }
-        flight.authorization = new Headers(init?.headers).get("authorization");
-      }
-      const request = flight?.request;
-      if (request?.entry.dispatched)
-        request.entry = providerRequest(request.ctx, !flight?.write, request.entry.provider, {
-          method: init?.method ?? "GET",
-        });
-      const entry = request?.entry;
-      const dispatch = () => {
+        const toolCall = init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call" ? rpc : undefined;
+        const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) && toolCall !== undefined;
+        const flight =
+          toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
+            ? flights.get(toolCall.id)
+            : undefined;
+        if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
+        const credentialPost =
+          isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
+        const sender = flight?.write ? guardedTransport(true) : undefined;
         if (flight?.write) {
-          if (flight.sent) throw resendRefused(flight);
-          flight.sent = true;
+          if (flight.sent) {
+            if (flight.request && flight.authorization)
+              renewedAfterUnauthorized(
+                flight.request.entry,
+                flight.authorization,
+                new Headers(init?.headers).get("authorization") ?? flight.authorization,
+              );
+            throw resendRefused(flight);
+          }
+          flight.authorization = new Headers(init?.headers).get("authorization");
         }
-        if (request && entry) {
-          if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
-          dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+        const request = flight?.request;
+        if (request?.entry.dispatched)
+          request.entry = providerRequest(request.ctx, !flight?.write, request.entry.provider, {
+            method: init?.method ?? "GET",
+          });
+        const entry = request?.entry;
+        const dispatch = () => {
+          if (flight?.write) {
+            if (flight.sent) throw resendRefused(flight);
+            flight.sent = true;
+          }
+          if (request && entry) {
+            if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
+            dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+          }
+        };
+        trackSentRequest(ctx, input, init);
+        // Attach retained settlement facts at the physical Promise leaf.
+        // Cancellation may end the native waiter before it resumes; neither
+        // the status nor a 401 verdict may disappear with that live authority.
+        const response = (yield authValue(() => {
+          const pending = credentialPost
+            ? sendCredentialPost(input, init ?? {}, dispatch)
+            : sender
+              ? sendGuarded(
+                  sender,
+                  new URL(input instanceof Request ? input.url : String(input)),
+                  { ...init, redirect: "manual" },
+                  dispatch,
+                )
+              : (() => {
+                  dispatch();
+                  return writeContinuation ? fetch(input, { ...init, redirect: "manual" }) : fetch(input, init);
+                })();
+          return pending.then((response) => {
+            if (entry) recordProviderResponse(entry, response.status);
+            if (flight?.write) {
+              if (response.status === 401) flight.unauthorized = true;
+              else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
+            }
+            if (init?.signal?.aborted || request?.ctx.signal?.aborted) void response.body?.cancel().catch(() => {});
+            return response;
+          });
+        })) as Response;
+        if (credentialPost && !isOAuthCredentialRequest(init) && REDIRECT_STATUSES.has(response.status)) {
+          (yield authCatch(
+            authValue(() => response.body?.cancel()),
+            () => {},
+          )) as void | undefined;
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "OAuth registration endpoint redirected; the request was not repeated.",
+            { retryable: false },
+          );
         }
-      };
-      trackSentRequest(ctx, input, init);
-      const response = credentialPost
-        ? await sendCredentialPost(input, init ?? {}, dispatch)
-        : sender
-          ? await sendGuarded(
-              sender,
-              new URL(input instanceof Request ? input.url : String(input)),
-              {
-                ...init,
-                redirect: "manual",
-              },
-              dispatch,
-            )
-          : await (() => {
-              dispatch();
-              return writeContinuation ? fetch(input, { ...init, redirect: "manual" }) : fetch(input, init);
-            })();
-      if (entry) recordProviderResponse(entry, response.status);
-      // Registration goes through the SDK's resourceFetch path, whose redirect
-      // policy may otherwise follow a 307 and repeat the registration body.
-      // Token forms retain the coordinator's existing status/decoding path.
-      if (credentialPost && !isOAuthCredentialRequest(init) && REDIRECT_STATUSES.has(response.status)) {
-        await response.body?.cancel().catch(() => {});
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "OAuth registration endpoint redirected; the request was not repeated.",
-          { retryable: false },
-        );
-      }
-      if (flight?.write) {
-        if (response.status === 401) flight.unauthorized = true;
-        else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
-      }
-      if (writeContinuation && (response.status === 401 || (response.status >= 300 && response.status < 400))) {
-        await response.body?.cancel().catch(() => {});
-        // Stop before the SDK can refresh auth or follow a redirect and resend
-        // this write. The host's one-use continuation nonce remains spent.
-        if (response.status === 401) throw authRequiredError();
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "The downstream redirected a write continuation; it was not repeated.",
-          { retryable: false, writeOutcome: "unknown" },
-        );
-      }
-      if (flight?.redirected) {
-        await response.body?.cancel().catch(() => {});
-        // A 307 or 308 keeps the method and body, so following it would send
-        // the write again; the server may have acted before redirecting.
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "The downstream answered this write with a redirect; it was not sent again.",
-          { retryable: false, writeOutcome: "unknown" },
-        );
-      }
-      if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
-        return boundedSkillResponse(
-          response,
-          rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES,
-          rpc.id,
-          init?.signal,
-        );
-      }
-      return response;
-    };
+        if (writeContinuation && (response.status === 401 || (response.status >= 300 && response.status < 400))) {
+          (yield authCatch(
+            authValue(() => response.body?.cancel()),
+            () => {},
+          )) as void | undefined;
+          if (response.status === 401) throw authRequiredError();
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "The downstream redirected a write continuation; it was not repeated.",
+            { retryable: false, writeOutcome: "unknown" },
+          );
+        }
+        if (flight?.redirected) {
+          (yield authCatch(
+            authValue(() => response.body?.cancel()),
+            () => {},
+          )) as void | undefined;
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "The downstream answered this write with a redirect; it was not sent again.",
+            { retryable: false, writeOutcome: "unknown" },
+          );
+        }
+        if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
+          return (yield authCall(boundedSkillResponse, [
+            response,
+            rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES,
+            rpc.id,
+            init?.signal,
+          ])) as Response;
+        }
+        return response;
+      }),
+    );
     // A runtime refusing the assembled header quotes it, and the transport
     // error below keeps none of what the runtime said. So whether the
     // rejection quoted the credential is decided here, first, and survives
@@ -2547,13 +2722,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       opts.redirects,
       credentialFramed === null
         ? trackedFetch
-        : async (input, init) => {
-            try {
-              return await trackedFetch(input, init);
-            } catch (err) {
-              throw withoutCredential(err, credentialValue, credentialFramed);
-            }
-          },
+        : authMethod((input: string | URL, init: RequestInit | undefined) =>
+            authFlow<Response>(function* () {
+              try {
+                return (yield authCall(trackedFetch, [input, init])) as Response;
+              } catch (err) {
+                throw withoutCredential(err, credentialValue, credentialFramed);
+              }
+            }),
+          ),
     );
     if (opts.auth?.type === "oauth") {
       const oauthProvider = provider ?? newProvider(ctx, undefined, signal);
@@ -2564,31 +2741,45 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const renewalSignals = new WeakMap<Response, AbortSignal>();
       const exchangeFetch = (send: FetchLike): FetchLike =>
         exchangeOnly
-          ? (input, init) =>
-              duringViewCall(
-                ctx,
-                async (requestSignal) => {
-                  const response = await send(input, {
-                    ...init,
-                    signal: init?.signal ? AbortSignal.any([requestSignal, init.signal]) : requestSignal,
-                  });
-                  // An override may ignore abort. Cancel its late response before
-                  // the SDK can consume it, including a cloned pending body read.
-                  if (requestSignal.aborted) {
-                    void response.body?.cancel().catch(() => {});
-                    throw requestSignal.reason;
-                  }
-                  return codeExchangeResponse(response, requestSignal);
-                },
-                true,
-              )
+          ? authMethod(
+              (input: string | URL, init: RequestInit | undefined) =>
+                authView(
+                  ctx,
+                  authMethod((requestSignal: AbortSignal) =>
+                    authFlow<Response>(function* () {
+                      const response = (yield authCall(send, [
+                        input,
+                        {
+                          ...init,
+                          signal: init?.signal ? AbortSignal.any([requestSignal, init.signal]) : requestSignal,
+                        },
+                      ])) as Response;
+                      if (requestSignal.aborted) {
+                        void response.body?.cancel().catch(() => {});
+                        throw requestSignal.reason;
+                      }
+                      return codeExchangeResponse(response, requestSignal);
+                    }),
+                  ),
+                  true,
+                ) as Effect.Effect<Response, unknown>,
+            )
           : send;
       const coordinatedFetch = refreshCoordinatorFor(ctx).coordinatedFetch(
         oauthProvider,
         exchangeFetch(learnedUrlSafeFetch(id, url, trackedFetch)),
         signal,
         ctx.defer,
-        exchangeFetch(learnedUrlSafeFetch(id, url, (input, init) => guardedFetch(input, resourceInit(input, init)))),
+        exchangeFetch(
+          learnedUrlSafeFetch(
+            id,
+            url,
+            authMethod(
+              (input: string | URL, init: RequestInit | undefined) =>
+                authCall(guardedFetch, [input, resourceInit(input, init)]) as Effect.Effect<Response, unknown>,
+            ),
+          ),
+        ),
         () => {
           guardedTransport(true);
         },
@@ -2596,27 +2787,28 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
         onInsufficientScope: "throw",
-        fetch: async (input, init) => {
-          const response = await coordinatedFetch(input, init);
-          if (response.status === 401) {
-            let owner: AbortSignal | undefined;
-            if (typeof init?.body === "string") {
-              try {
-                const rpc: unknown = JSON.parse(init.body);
-                if (skillObject(rpc)) {
-                  if (rpc.method === "initialize" || rpc.method === "server/discover") owner = initiatingSignal;
-                  else if (typeof rpc.id === "string" || typeof rpc.id === "number")
-                    owner = flights.get(rpc.id)?.request?.ctx.signal;
-                }
-              } catch {
-                // OAuth forms and request-owned protocol fetches have no call id.
+        fetch: authMethod((input: string | URL, init: RequestInit | undefined) =>
+          authFlow<Response>(function* () {
+            const response = (yield authCall(coordinatedFetch, [input, init])) as Response;
+            if (response.status === 401) {
+              let owner: AbortSignal | undefined;
+              if (typeof init?.body === "string") {
+                try {
+                  const rpc: unknown = JSON.parse(init.body);
+                  if (skillObject(rpc)) {
+                    if (rpc.method === "initialize" || rpc.method === "server/discover") owner = initiatingSignal;
+                    else if (typeof rpc.id === "string" || typeof rpc.id === "number")
+                      owner = flights.get(rpc.id)?.request?.ctx.signal;
+                  }
+                } catch {}
               }
+              const ownedSignal =
+                owner && init?.signal ? AbortSignal.any([owner, init.signal]) : (owner ?? init?.signal);
+              if (ownedSignal) renewalSignals.set(response, ownedSignal);
             }
-            const ownedSignal = owner && init?.signal ? AbortSignal.any([owner, init.signal]) : (owner ?? init?.signal);
-            if (ownedSignal) renewalSignals.set(response, ownedSignal);
-          }
-          return response;
-        },
+            return response;
+          }),
+        ),
       });
       boundOAuthFlows(ctx, transport, url, [signal, ctx.signal], (response) => renewalSignals.get(response));
       return sendingEachWriteOnce(transport, flights, untrackedRead);
@@ -2630,7 +2822,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return sendingEachWriteOnce(
       new StreamableHTTPClientTransport(url, {
         ...(headers ? { requestInit: { headers } } : {}),
-        fetch: (input, init) => guardedFetch(input, resourceInit(input, init)),
+        fetch: authMethod(
+          (input: string | URL, init: RequestInit | undefined) =>
+            authCall(guardedFetch, [input, resourceInit(input, init)]) as Effect.Effect<Response, unknown>,
+        ),
       }),
       flights,
       untrackedRead,
@@ -2649,25 +2844,39 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     untrackedRead: (params: unknown) => boolean,
   ): StreamableHTTPClientTransport => {
     const send = transport.send.bind(transport);
-    transport.send = async (message, options) => {
-      const request =
-        !Array.isArray(message) && "method" in message && message.method === "tools/call" && "id" in message
-          ? message
-          : undefined;
-      if (!request) return await send(message, options);
-      const dispatch = dispatchOf(request.params);
-      if (!dispatch) {
-        if (!untrackedRead(request.params)) throw missingDispatch();
-        return await send(message, options);
-      }
-      if (dispatch.write && dispatch.sent) throw resendRefused(dispatch);
-      flights.set(request.id, dispatch);
-      try {
-        return await send(message, options);
-      } finally {
-        flights.delete(request.id);
-      }
-    };
+    transport.send = authMethod(
+      (
+        message: JSONRPCMessage | JSONRPCMessage[],
+        options:
+          | {
+              resumptionToken?: string;
+              onresumptiontoken?: (token: string) => void;
+              requestSignal?: AbortSignal;
+              onRequestStreamEnd?: () => void;
+              headers?: Readonly<Record<string, string>>;
+            }
+          | undefined,
+      ) =>
+        authFlow<void>(function* () {
+          const request =
+            !Array.isArray(message) && "method" in message && message.method === "tools/call" && "id" in message
+              ? message
+              : undefined;
+          if (!request) return (yield authCall(send, [message, options])) as void;
+          const dispatch = dispatchOf(request.params);
+          if (!dispatch) {
+            if (!untrackedRead(request.params)) throw missingDispatch();
+            return (yield authCall(send, [message, options])) as void;
+          }
+          if (dispatch.write && dispatch.sent) throw resendRefused(dispatch);
+          flights.set(request.id, dispatch);
+          try {
+            return (yield authCall(send, [message, options])) as void;
+          } finally {
+            flights.delete(request.id);
+          }
+        }),
+    );
     return transport;
   };
 
@@ -2715,113 +2924,88 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (release) detach(release);
   };
 
-  const ensureConnected = async (ctx: ConnectorContext, state: ConnectionState): Promise<Client> => {
-    let joined = state.connecting;
-    if (joined) connectingWaiters.set(joined, (connectingWaiters.get(joined) ?? 0) + 1);
-    const leave = () => {
-      if (!joined) return;
-      const remaining = (connectingWaiters.get(joined) ?? 1) - 1;
-      if (remaining > 0) connectingWaiters.set(joined, remaining);
-      else {
-        connectingWaiters.delete(joined);
-        if (ctx.signal?.aborted && state.connecting === joined) closeHalf(state);
-      }
-    };
-    try {
-      // A 401 after connect is a verdict for the whole request scope, not merely
-      // for the one call that observed it. Do not let the still-cached client make
-      // a later status or call in the same scope report healthy.
-      if (state.authRequired) {
-        throw authRequiredError();
-      }
-      // Read the OAuth epoch before trusting either a cached client or starting a
-      // transport. A disconnected epoch is a durable operator instruction, not
-      // merely the absence of credentials: passive status/tool probes must not
-      // turn it back into a pending consent flow.
-      let oauthGeneration: string | undefined;
-      if (isOauth && (state.client || state.connecting)) {
-        // Count an existing handshake waiter before subscribing its signal:
-        // cancelling a sibling must not close the handshake beneath it.
-        const provider = newProvider(ctx, state, openRequest(ctx.requestScope ?? ctx).signal);
-        // The read belongs to the request; this caller's wait still ends with
-        // its call. Closing one call must not revoke the shared provider.
-        oauthGeneration = await duringViewCall(ctx, () => provider.liveEpoch());
-        if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
-          closeHalf(state);
-          throw operatorDisconnectedError();
+  const waitForConnection = (attempt: Deferred.Deferred<Client, unknown>, signal?: AbortSignal): Promise<Client> =>
+    runEdge(Deferred.await(attempt), signal ? { signal } : {});
+
+  const ensureConnected = authMethod((ctx: ConnectorContext, state: ConnectionState) =>
+    authFlow<Client>(function* () {
+      let joined = state.connecting;
+      if (joined) connectingWaiters.set(joined, (connectingWaiters.get(joined) ?? 0) + 1);
+      const leave = () => {
+        if (!joined) return;
+        const remaining = (connectingWaiters.get(joined) ?? 1) - 1;
+        if (remaining > 0) connectingWaiters.set(joined, remaining);
+        else {
+          connectingWaiters.delete(joined);
+          if (ctx.signal?.aborted && state.connecting === joined) closeHalf(state);
         }
-      }
-      // Cross-isolate force re-auth: another isolate replaced the grant's epoch,
-      // and the grant with it. This request's cached client still speaks the old
-      // token — drop it so the next connect runs against current state.
-      if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
-        if (isClosed(state)) throw scopeEndedError();
-        if (oauthGeneration !== state.connectedGeneration) {
-          closeHalf(state);
+      };
+      try {
+        if (state.authRequired) {
+          throw authRequiredError();
         }
-      }
-      // The static-credential counterpart of the epoch read above, and
-      // deliberately beside it: the vault is read before any cached client is
-      // trusted, so an operator's rotation in the UI takes effect on the next
-      // call rather than the next deploy. Compared by digest — the
-      // plaintext lives in this function's scope and never reaches `state`.
-      let credentialValue: string | null = null;
-      let credentialFramed: string | null = null;
-      let credentialDigest: string | null = null;
-      if (credentialAuth || requestAuth) {
-        credentialValue = await readCredential(ctx);
-        credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
-        credentialDigest = await digestOf(credentialValue);
-        // Gated on a connect in flight as well as a cached client, exactly like
-        // the epoch read above: a rotation that lands while the first caller is
-        // still connecting must not let the second one ride the key the vault
-        // has already replaced.
-        if (
-          (state.client || state.connecting) &&
-          state.credentialDigest !== null &&
-          state.credentialDigest !== credentialDigest
-        ) {
-          // A slow vault/token read or digest can resume after a newer caller
-          // connected with the replacement. Never let that stale read tear down
-          // the newer connection and install the rotated-away credential.
-          const observedConnection = state.client ?? state.connecting;
-          const currentCredential = await readCredential(ctx);
-          if (isClosed(state)) throw scopeEndedError();
-          if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
-            throw resendAdvice(
-              new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
-                retryable: true,
-              }),
-              "; retry the operation",
-            );
+        let oauthGeneration: string | undefined;
+        if (isOauth && (state.client || state.connecting)) {
+          const provider = newProvider(ctx, state, openRequest(ctx.requestScope ?? ctx).signal);
+          oauthGeneration = (yield authView(
+            ctx,
+            authMethod(() => authInvoke(provider, "liveEpoch", []) as Effect.Effect<string, unknown>),
+          )) as string;
+          if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
+            closeHalf(state);
+            throw operatorDisconnectedError();
           }
-          closeHalf(state);
         }
-      }
-      // Credential preparation belongs to this caller, even when the session
-      // it may join belongs to the request. A late preparation cannot acquire
-      // or reuse a session after its operation boundary has refused the call.
-      viewSignal(ctx).throwIfAborted();
-      if (isClosed(state)) throw scopeEndedError();
-      if (state.client) return state.client;
-      const attempt = state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
-      // A Promise edge of its own, as architecture.md's "Effect inside" requires
-      // of every shared wait: whatever this caller does next with the client is
-      // its own I/O, so it resumes in its own continuation rather than inside the
-      // call that completed the attempt.
-      if (joined !== attempt) {
+        if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
+          if (isClosed(state)) throw scopeEndedError();
+          if (oauthGeneration !== state.connectedGeneration) {
+            closeHalf(state);
+          }
+        }
+        let credentialValue: string | null = null;
+        let credentialFramed: string | null = null;
+        let credentialDigest: string | null = null;
+        if (credentialAuth || requestAuth) {
+          credentialValue = (yield authCall(readCredential, [ctx])) as string;
+          credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
+          credentialDigest = (yield authCall(digestOf, [credentialValue])) as string;
+          if (
+            (state.client || state.connecting) &&
+            state.credentialDigest !== null &&
+            state.credentialDigest !== credentialDigest
+          ) {
+            const observedConnection = state.client ?? state.connecting;
+            const currentCredential = (yield authCall(readCredential, [ctx])) as string;
+            if (isClosed(state)) throw scopeEndedError();
+            if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
+              throw resendAdvice(
+                new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
+                  retryable: true,
+                }),
+                "; retry the operation",
+              );
+            }
+            closeHalf(state);
+          }
+        }
+        viewSignal(ctx).throwIfAborted();
+        if (isClosed(state)) throw scopeEndedError();
+        if (state.client) return state.client;
+        const attempt =
+          state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
+        if (joined !== attempt) {
+          leave();
+          joined = attempt;
+          connectingWaiters.set(attempt, (connectingWaiters.get(attempt) ?? 0) + 1);
+        }
+        const client = (yield authCall(waitForConnection, [attempt, ctx.signal])) as Client;
+        if (isClosed(state)) throw scopeEndedError();
+        return client;
+      } finally {
         leave();
-        joined = attempt;
-        connectingWaiters.set(attempt, (connectingWaiters.get(attempt) ?? 0) + 1);
       }
-      const client = await runEdge(Deferred.await(attempt), { signal: ctx.signal });
-      // Teardown may land before this continuation receives the client.
-      if (isClosed(state)) throw scopeEndedError();
-      return client;
-    } finally {
-      leave();
-    }
-  };
+    }),
+  );
 
   /**
    * Start this scope's connect attempt, publishing it before any of it runs.
@@ -2844,6 +3028,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     state.credentialDigest = credentialDigest;
     detach(
       connect(ctx, state, attempt, credentialValue, credentialFramed).pipe(
+        // The connection belongs to this request, without the first waiter's
+        // call/credential/budget authority. Refresh coordinators stay separate.
+        Effect.provideService(RequestScope, Context.get(viewServices(ctx), RequestScope)),
         Effect.onExit((exit) =>
           Effect.sync(() => {
             // Force reset may have abandoned this attempt and installed a new
@@ -2908,7 +3095,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // step-up — happens inside the SDK, bound to the epoch live now: a
         // reset meanwhile fails the attempt rather than handing it the next
         // epoch's grant.
-        const genAtStart = provider ? yield* promised(() => provider.beginFlow()) : "";
+        const genAtStart = provider
+          ? yield* promised(authMethod(() => authInvoke(provider, "beginFlow", []) as Effect.Effect<string, unknown>))
+          : "";
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         if (provider) state.attemptProvider = provider;
         if (provider?.isOperatorDisconnectedEpoch(genAtStart)) {
@@ -2927,54 +3116,75 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               clientName: ctx.oauthClientName,
             }
           : undefined;
-        const negotiationDigest = yield* promised(() =>
-          digestOf(
-            JSON.stringify([
-              opts.url,
-              opts.versionNegotiation ?? "auto",
-              opts.auth?.type,
-              opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
-              ...(extraHeaders ? [extraHeaders] : []),
-              credentialHeader,
-              credentialScheme,
-              opts.authScope ?? "shared",
-              opts.redirects ?? "none",
-              oauthConfig,
-              oauthScope,
-              state.credentialDigest,
-              genAtStart,
-              callerOf(ctx),
-              skillsEnabled === true,
-            ]),
+        const negotiationDigest = yield* promised(
+          authMethod(
+            () =>
+              authCall(digestOf, [
+                JSON.stringify([
+                  opts.url,
+                  opts.versionNegotiation ?? "auto",
+                  opts.auth?.type,
+                  opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+                  ...(extraHeaders ? [extraHeaders] : []),
+                  credentialHeader,
+                  credentialScheme,
+                  opts.authScope ?? "shared",
+                  opts.redirects ?? "none",
+                  oauthConfig,
+                  oauthScope,
+                  state.credentialDigest,
+                  genAtStart,
+                  callerOf(ctx),
+                  skillsEnabled === true,
+                ]),
+              ]) as Effect.Effect<string, unknown>,
           ),
         );
         const prior =
           opts.versionNegotiation === "legacy"
             ? undefined
-            : yield* promised(() => readNegotiation(ctx, negotiationDigest));
+            : yield* promised(
+                authMethod(
+                  () =>
+                    authCall(readNegotiation, [ctx, negotiationDigest]) as Effect.Effect<
+                      PriorDiscovery | undefined,
+                      unknown
+                    >,
+                ),
+              );
         if (!owned()) return yield* Effect.fail(scopeEndedError());
-        const cacheOptions = yield* promised(() =>
-          catalogClientOptions(
-            ctx,
-            id,
-            JSON.stringify({
-              url: new URL(opts.url).href,
-              auth: opts.auth?.type ?? null,
-              headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
-              ...(extraHeaders ? { extraHeaders } : {}),
-              credentialHeader,
-              credentialScheme,
-              authScope: opts.authScope ?? "shared",
-              redirects: opts.redirects ?? "none",
-              versionNegotiation: opts.versionNegotiation ?? "auto",
-              oauthConfig,
-              oauthScope,
-            }),
-            JSON.stringify([genAtStart, state.credentialDigest]),
-            connectionAbort.signal,
-            cacheOwner,
-            requestAuth || opts.authScope === "personal" ? "private" : "shared",
-            provider ? async () => digestOf(JSON.stringify(await provider.tokens())) : undefined,
+        const cacheOptions = yield* promised(
+          authMethod(
+            () =>
+              authCall(catalogClientOptions, [
+                ctx,
+                id,
+                JSON.stringify({
+                  url: new URL(opts.url).href,
+                  auth: opts.auth?.type ?? null,
+                  headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+                  ...(extraHeaders ? { extraHeaders } : {}),
+                  credentialHeader,
+                  credentialScheme,
+                  authScope: opts.authScope ?? "shared",
+                  redirects: opts.redirects ?? "none",
+                  versionNegotiation: opts.versionNegotiation ?? "auto",
+                  oauthConfig,
+                  oauthScope,
+                }),
+                JSON.stringify([genAtStart, state.credentialDigest]),
+                connectionAbort.signal,
+                cacheOwner,
+                requestAuth || opts.authScope === "personal" ? "private" : "shared",
+                provider
+                  ? authMethod(() =>
+                      authFlow<string>(function* () {
+                        const tokens = yield authInvoke(provider, "tokens", []);
+                        return yield authCall<string>(digestOf, [JSON.stringify(tokens)]);
+                      }),
+                    )
+                  : undefined,
+              ]) as Effect.Effect<Awaited<ReturnType<typeof catalogClientOptions>>, unknown>,
           ),
         );
         if (!owned()) return yield* Effect.fail(scopeEndedError());
@@ -3014,33 +3224,38 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.transport = t;
         held.transport = t;
         recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
-        yield* promised(async () => {
-          try {
-            await c.connect(t, { signal: handshakeAbort.signal, ...(prior ? { prior } : {}) });
-          } catch (error) {
-            // Some legacy servers crash on an unknown pre-initialize method.
-            // Only an auto probe's typed HTTP 5xx permits a fresh legacy
-            // handshake. An auth failure, timeout or initialize failure does not.
-            if (
-              prior ||
-              opts.versionNegotiation === "legacy" ||
-              !(error instanceof SdkHttpError) ||
-              error.code !== SdkErrorCode.EraNegotiationFailed ||
-              error.status < 500 ||
-              error.status >= 600 ||
-              !owned() ||
-              handshakeAbort.signal.aborted
-            )
-              throw error;
-            // The SDK closed the failed probe transport. Its replacement owns
-            // a new connection, with the same credential and OAuth generation.
-            c = makeClient();
-            t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
-            state.transport = held.transport = t;
-            recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
-            await c.connect(t, { signal: handshakeAbort.signal, prior: { kind: "legacy" } });
-          }
-        }).pipe(
+        yield* promised(
+          authMethod(() =>
+            authFlow<void>(function* () {
+              try {
+                (yield authInvoke(c, "connect", [
+                  t,
+                  { signal: handshakeAbort.signal, ...(prior ? { prior } : {}) },
+                ])) as void;
+              } catch (error) {
+                if (
+                  prior ||
+                  opts.versionNegotiation === "legacy" ||
+                  !(error instanceof SdkHttpError) ||
+                  error.code !== SdkErrorCode.EraNegotiationFailed ||
+                  error.status < 500 ||
+                  error.status >= 600 ||
+                  !owned() ||
+                  handshakeAbort.signal.aborted
+                )
+                  throw error;
+                c = makeClient();
+                t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
+                state.transport = held.transport = t;
+                recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
+                (yield authInvoke(c, "connect", [
+                  t,
+                  { signal: handshakeAbort.signal, prior: { kind: "legacy" } },
+                ])) as void;
+              }
+            }),
+          ),
+        ).pipe(
           Effect.mapError((err) =>
             atMcpBoundary(
               ctx,
@@ -3062,9 +3277,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // credentials this client just bound to. Discard it rather than cache
         // a stale-isolate connection.
         if (provider) {
-          const generation = yield* promised(() => provider.liveEpoch()).pipe(
-            Effect.mapError((error) => (owned() ? error : scopeEndedError())),
-          );
+          const generation = yield* promised(
+            authMethod(() => authInvoke(provider, "liveEpoch", []) as Effect.Effect<string, unknown>),
+          ).pipe(Effect.mapError((error) => (owned() ? error : scopeEndedError())));
           // closeScope can land while the epoch read is pending, after
           // connect succeeded but before this client is cached. Discard the
           // client on that side of the await too.
@@ -3080,12 +3295,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.authRequired = false;
         const discover = c.getDiscoverResult();
         if (!prior)
-          yield* promised(() =>
-            storeNegotiation(ctx, negotiationDigest, discover ? { kind: "modern", discover } : { kind: "legacy" }),
+          yield* promised(
+            authMethod(
+              () =>
+                authCall(storeNegotiation, [
+                  ctx,
+                  negotiationDigest,
+                  discover ? { kind: "modern", discover } : { kind: "legacy" },
+                ]) as Effect.Effect<void, unknown>,
+            ),
           );
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         return c;
       }).pipe(
+        Effect.catchDefect(Effect.fail),
         Effect.catch((err) => {
           // Close the failed connection through its client, without waiting.
           if (owned()) {
@@ -3117,33 +3340,36 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     });
   };
 
-  const disconnectAuthorization = async (
-    ctx: ConnectorContext,
-    state: ConnectionState,
-    operatorDisconnected = false,
-    preserveClient = false,
-  ): Promise<void> => {
-    const provider = newProvider(ctx, state);
-    // Publish the replacement epoch before waiting on or closing any
-    // request-local transport. A hung connect therefore cannot delay the
-    // fence, and every late OAuth write stays in the older namespace.
-    const reset = operatorDisconnected
-      ? provider.disconnectAuthorization(
-          learnedUrlSafeFetch(id, new URL(opts.url), async (input, init) => {
-            trackSentRequest(ctx, input, init);
-            return await sendCredentialPost(input, init ?? {});
-          }),
-        )
-      : provider.resetAuthorization(false, preserveClient);
-    try {
-      await reset;
-    } finally {
-      // Abandon any connect in flight and close whichever half of the
-      // client/transport exists. Reset is unconditional because storage may already
-      // be fenced behind a newer epoch after a cleanup error.
-      closeHalf(state);
-    }
-  };
+  const disconnectAuthorization = authMethod(
+    (
+      ctx: ConnectorContext,
+      state: ConnectionState,
+      operatorDisconnected: boolean = false,
+      preserveClient: boolean = false,
+    ) =>
+      authFlow<void>(function* () {
+        const provider = newProvider(ctx, state);
+        const reset = operatorDisconnected
+          ? authInvoke<void>(provider, "disconnectAuthorization", [
+              learnedUrlSafeFetch(
+                id,
+                new URL(opts.url),
+                authMethod((input: string | URL, init: RequestInit | undefined) =>
+                  authFlow<Response>(function* () {
+                    trackSentRequest(ctx, input, init);
+                    return (yield authCall(sendCredentialPost, [input, init ?? {}])) as Response;
+                  }),
+                ),
+              ),
+            ])
+          : authInvoke<void>(provider, "resetAuthorization", [false, preserveClient]);
+        try {
+          yield reset;
+        } finally {
+          closeHalf(state);
+        }
+      }),
+  );
 
   // Built once from construction-time values: names, framing, and public
   // URLs only. A static header's value and a stored credential never reach
@@ -3194,40 +3420,41 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (ctx.signal?.aborted) throw ctx.signal.reason instanceof Error ? ctx.signal.reason : scopeEndedError();
   };
 
-  const withSkillsClient = async <T>(
-    ctx: ConnectorContext,
-    method: "skills/list" | "resources/read",
-    run: (client: Client, state: ConnectionState) => Promise<T>,
-  ): Promise<T> => {
-    const state = stateFor(ctx);
-    const client = await ensureConnected(ctx, state);
-    try {
-      skillScopeOpen(ctx, state);
-      const capabilities = client.getServerCapabilities();
-      const extension = capabilities?.extensions?.[SKILLS_EXTENSION];
-      if (
-        client.getProtocolEra() !== "modern" ||
-        !skillObject(capabilities?.resources) ||
-        !skillObject(extension) ||
-        (extension.directoryRead !== undefined && typeof extension.directoryRead !== "boolean")
-      ) {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "The downstream did not declare a valid Skills extension and resources capability.",
-        );
-      }
-      const result = await run(client, state);
-      skillScopeOpen(ctx, state);
-      return result;
-    } catch (error) {
-      if (ownAbortReason(error, [ctx.signal]) && !hasSdkPayload(error)) throw error;
-      const classified = atMcpBoundary(ctx, error, method, client.transport, [ctx.signal]);
-      if (requiresAuthorization(classified) && state.client === client) state.authRequired = true;
-      // The SDK and downstream can quote whole manifests or bodies in errors.
-      // Keep their typed verdict and operator facts, never the quoted payload.
-      throw carryFailureFacts(classified, withheldAs(`Connector "${id}" downstream ${method} failed.`, classified));
-    }
-  };
+  const withSkillsClient = authMethod(
+    <T>(
+      ctx: ConnectorContext,
+      method: "skills/list" | "resources/read",
+      run: (client: Client, state: ConnectionState) => Promise<T>,
+    ) =>
+      authFlow<T>(function* () {
+        const state = stateFor(ctx);
+        const client = (yield authCall(ensureConnected, [ctx, state])) as Client;
+        try {
+          skillScopeOpen(ctx, state);
+          const capabilities = client.getServerCapabilities();
+          const extension = capabilities?.extensions?.[SKILLS_EXTENSION];
+          if (
+            client.getProtocolEra() !== "modern" ||
+            !skillObject(capabilities?.resources) ||
+            !skillObject(extension) ||
+            (extension.directoryRead !== undefined && typeof extension.directoryRead !== "boolean")
+          ) {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              "The downstream did not declare a valid Skills extension and resources capability.",
+            );
+          }
+          const result = (yield authCall(run, [client, state])) as Awaited<T>;
+          skillScopeOpen(ctx, state);
+          return result;
+        } catch (error) {
+          if (ownAbortReason(error, [ctx.signal]) && !hasSdkPayload(error)) throw error;
+          const classified = atMcpBoundary(ctx, error, method, client.transport, [ctx.signal]);
+          if (requiresAuthorization(classified) && state.client === client) state.authRequired = true;
+          throw carryFailureFacts(classified, withheldAs(`Connector "${id}" downstream ${method} failed.`, classified));
+        }
+      }),
+  );
 
   const connector: Connector = {
     id,
@@ -3253,62 +3480,74 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ...(skillsEnabled
       ? {
           downstreamSkills: {
-            list: (ctx: ConnectorContext) =>
-              withSkillsClient(ctx, "skills/list", async (client, state) => {
-                const listed: ConnectorSkill[] = [];
-                const uris = new Set<string>();
-                const cursors = new Set<string>();
-                let cursor: string | undefined;
-                let bytes = 0;
-                for (let page = 0; page < MAX_SKILLS; page++) {
-                  skillScopeOpen(ctx, state);
-                  const result = await client.request(
-                    { method: "skills/list", ...(cursor === undefined ? {} : { params: { cursor } }) },
-                    SkillPageSchema,
-                    requestOptions(ctx),
-                  );
-                  bytes += result.bytes;
-                  if (bytes > MAX_SERIALIZED_CATALOG_BYTES || listed.length + result.skills.length > MAX_SKILLS) {
-                    throw new ConnectorCallError(
-                      "connector_call_failed",
-                      "Downstream Skills listing exceeds the aggregate limit.",
-                    );
-                  }
-                  for (const skill of result.skills) {
-                    if (uris.has(skill.uri))
+            list: authMethod(
+              (ctx: ConnectorContext) =>
+                authCall(withSkillsClient, [
+                  ctx,
+                  "skills/list",
+                  authMethod((client: Client, state: ConnectionState) =>
+                    authFlow<ConnectorSkill[]>(function* () {
+                      const listed: ConnectorSkill[] = [];
+                      const uris = new Set<string>();
+                      const cursors = new Set<string>();
+                      let cursor: string | undefined;
+                      let bytes = 0;
+                      for (let page = 0; page < MAX_SKILLS; page++) {
+                        skillScopeOpen(ctx, state);
+                        const result = (yield authInvoke(client, "request", [
+                          { method: "skills/list", ...(cursor === undefined ? {} : { params: { cursor } }) },
+                          SkillPageSchema,
+                          requestOptions(ctx),
+                        ])) as SkillPage;
+                        bytes += result.bytes;
+                        if (bytes > MAX_SERIALIZED_CATALOG_BYTES || listed.length + result.skills.length > MAX_SKILLS) {
+                          throw new ConnectorCallError(
+                            "connector_call_failed",
+                            "Downstream Skills listing exceeds the aggregate limit.",
+                          );
+                        }
+                        for (const skill of result.skills) {
+                          if (uris.has(skill.uri))
+                            throw new ConnectorCallError(
+                              "connector_call_failed",
+                              "Downstream Skills listing contains duplicate skill URIs.",
+                            );
+                          uris.add(skill.uri);
+                          listed.push(skill);
+                        }
+                        if (result.nextCursor === undefined) return listed;
+                        if (!result.skills.length || cursors.has(result.nextCursor)) {
+                          throw new ConnectorCallError(
+                            "connector_call_failed",
+                            "Downstream Skills pagination loops or makes no progress.",
+                          );
+                        }
+                        cursors.add(result.nextCursor);
+                        cursor = result.nextCursor;
+                      }
                       throw new ConnectorCallError(
                         "connector_call_failed",
-                        "Downstream Skills listing contains duplicate skill URIs.",
+                        "Downstream Skills listing exceeds the page limit.",
                       );
-                    uris.add(skill.uri);
-                    listed.push(skill);
-                  }
-                  if (result.nextCursor === undefined) return listed;
-                  if (!result.skills.length || cursors.has(result.nextCursor)) {
-                    throw new ConnectorCallError(
-                      "connector_call_failed",
-                      "Downstream Skills pagination loops or makes no progress.",
-                    );
-                  }
-                  cursors.add(result.nextCursor);
-                  cursor = result.nextCursor;
-                }
-                throw new ConnectorCallError(
-                  "connector_call_failed",
-                  "Downstream Skills listing exceeds the page limit.",
-                );
-              }),
-            read: (uri: string, ctx: ConnectorContext) =>
-              withSkillsClient(ctx, "resources/read", async (client) => {
-                // The registry admits only advertised manifest URIs. An explicit
-                // request bypasses the SDK readResource response cache entirely and
-                // validates the raw result before its resource union drops fields.
-                return client.request(
-                  { method: "resources/read", params: { uri } },
-                  skillReadSchema(uri),
-                  requestOptions(ctx),
-                );
-              }),
+                    }),
+                  ),
+                ]) as Effect.Effect<ConnectorSkill[], unknown>,
+            ),
+            read: authMethod(
+              (uri: string, ctx: ConnectorContext) =>
+                authCall(withSkillsClient, [
+                  ctx,
+                  "resources/read",
+                  authMethod(
+                    (client: Client) =>
+                      authInvoke(client, "request", [
+                        { method: "resources/read", params: { uri } },
+                        skillReadSchema(uri),
+                        requestOptions(ctx),
+                      ]) as Effect.Effect<ConnectorSkillResourceContents[], unknown>,
+                  ),
+                ]) as Effect.Effect<ConnectorSkillResourceContents[], unknown>,
+            ),
           },
         }
       : {}),
@@ -3325,593 +3564,712 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
            * here is connecta's to verify — the credential's scope, project,
            * and mode are the provider's answer, not ours.
            */
-          testCredential: async (value: string, ctx: ConnectorContext): Promise<CredentialTestResult> => {
-            try {
-              // The connect below reads the vault itself — the header is
-              // assembled deep inside `ensureConnected`, and handing a
-              // candidate down that path would mean threading a second secret
-              // through the whole connection state. `/ui/credentials/<id>/test`
-              // reads the stored value and passes it here, so today the two are
-              // the same string. Check rather than assume: a route that later
-              // tested an unsaved candidate would otherwise silently report on
-              // the old value, which is the one answer worse than refusing.
-              const stored = (await ctx.credential?.get())?.trim();
-              if (stored !== value.trim()) {
+          testCredential: authMethod((value: string, ctx: ConnectorContext) =>
+            authFlow<CredentialTestResult>(function* () {
+              try {
+                const stored = (
+                  (yield authCall<string | null | undefined>(ctx.credential?.get, [], ctx.credential)) as
+                    | string
+                    | null
+                    | undefined
+                )?.trim();
+                if (stored !== value.trim()) {
+                  return {
+                    ok: false,
+                    message:
+                      "This connector tests the credential that is currently " +
+                      "saved. Save the value first, then test it.",
+                  };
+                }
+                const tools = (yield authInvoke(connector, "listTools", [ctx])) as ToolDef[];
                 return {
-                  ok: false,
-                  message:
-                    "This connector tests the credential that is currently " +
-                    "saved. Save the value first, then test it.",
+                  ok: true,
+                  message: `Connected — the downstream served ${tools.length} tool${tools.length === 1 ? "" : "s"}.`,
                 };
+              } catch (err) {
+                return { ok: false, message: msg(err) };
+              } finally {
+                if (!connectorScopeCleanupClaimed(ctx, id))
+                  (yield authCall<void>(connector.closeScope, [ctx], connector)) as void | undefined;
               }
-              const tools = await connector.listTools(ctx);
-              return {
-                ok: true,
-                message: `Connected — the downstream served ${tools.length} tool${tools.length === 1 ? "" : "s"}.`,
-              };
-            } catch (err) {
-              return { ok: false, message: msg(err) };
-            } finally {
-              // Standalone tests own their scope; an operator route owns
-              // bounded teardown for the context it supplied to this hook.
-              if (!connectorScopeCleanupClaimed(ctx, id)) await connector.closeScope?.(ctx);
-            }
-          },
+            }),
+          ),
         }
       : {}),
 
     // The SDK walks the whole chain and writes one complete result. Intake
     // runs on its public request seam before any page can enter that cache.
-    async listTools(ctx) {
-      const state = stateFor(ctx);
-      const client = await ensureConnected(ctx, state);
-      let clean: ListToolsResult["tools"];
-      const options = requestOptions(ctx) ?? {};
-      listingContexts.set(options, ctx);
-      try {
-        const result = await client.listTools(undefined, options);
-        clean = redactCatalog(ctx, result.tools);
-      } catch (err) {
-        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
-        const bounded = atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
-        if (requiresAuthorization(bounded)) {
-          if (state.client === client) state.authRequired = true;
-          if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError());
-        }
-        throw bounded;
-      } finally {
-        listingContexts.delete(options);
-      }
-      state.toolDefinitions = new Map(clean.map((tool) => [tool.name, tool]));
-      return clean.map((t) => ({
-        name: t.name,
-        ...(t.title !== undefined ? { title: t.title } : {}),
-        ...(t.icons !== undefined
-          ? {
-              // Inline images can consume the catalog ceiling and storage chunks.
-              // The SDK needs no icons for validation or parameter mirroring.
-              icons: t.icons.filter((icon) => !/^data:/i.test(icon.src)) as NonNullable<ToolDef["icons"]>,
-            }
-          : {}),
-        ...(t.execution !== undefined ? { execution: t.execution as NonNullable<ToolDef["execution"]> } : {}),
-        // SEP-2243 declarations live in inputSchema. SDK validation and header
-        // mirroring need no _meta keys, so arbitrary downstream metadata stays
-        // out of the persisted catalog.
-        ...(t.description !== undefined ? { description: t.description } : {}),
-        ...(t.inputSchema !== undefined
-          ? {
-              inputSchema: t.inputSchema as NonNullable<ToolDef["inputSchema"]>,
-            }
-          : {}),
-        ...(t.outputSchema !== undefined
-          ? {
-              outputSchema: t.outputSchema as NonNullable<ToolDef["outputSchema"]>,
-            }
-          : {}),
-        ...(t.annotations !== undefined
-          ? {
-              annotations: t.annotations as NonNullable<ToolDef["annotations"]>,
-            }
-          : {}),
-      }));
-    },
-
-    async callTool(name, args, ctx, options) {
-      enterProviderBoundary(ctx, connector);
-      let active: { state: ConnectionState; client: Client; dispatch: CallDispatch; write: boolean } | undefined;
-      try {
-        // Race the entire operation inside its write decider. Cancellation must
-        // retain the exact request ledger and a dispatched write's verdict.
-        return await settleOnClose(ctx, async () => {
-          const state = stateFor(ctx);
-          const client = await ensureConnected(ctx, state).catch((error: unknown) => {
-            throw knownProviderFailure(error);
-          });
-          const definition = options?.definition;
-          // The registry's verdict for this call; outside an invocation, the
-          // dispatched definition's, otherwise the server annotations.
-          const facts = definition ?? state.toolDefinitions.get(name) ?? { name };
-          const sourceFacts = definition ?? {
-            name,
-            ...(facts.annotations ? { annotations: facts.annotations as NonNullable<ToolDef["annotations"]> } : {}),
-          };
-          // Deployment overrides never enter the source class.
-          const source = sourceClassification(sourceFacts);
-          const serverWrite = source === "write";
-          const write = serverWrite || (callClassification(ctx) ?? definition?.classification ?? source) === "write";
-          const dispatch = newDispatch(write, serverWrite);
-          dispatch.request = {
-            entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
-            ctx,
-          };
-          active = { state, client, dispatch, write };
-          state.dispatches.set(dispatch, name);
-          const toolDefinition = definition
-            ? {
-                ...definition,
-                // Older stored catalogs and custom connectors may omit inputSchema.
-                inputSchema: (definition.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
-              }
-            : state.toolDefinitions.get(name);
-          if (toolDefinition?.execution?.taskSupport === "required") {
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              `Tool "${name}" requires task-based execution, which Connecta does not support.`,
-            );
-          }
-          let output: StandardSchemaV1 | undefined;
-          const outputError = (code: number, message: string): unknown =>
-            atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
-          if (toolDefinition?.outputSchema) {
-            try {
-              output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
-            } catch {
-              throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`);
-            }
-          }
-          const result = await client
-            .callTool(
-              withDispatch(
-                {
-                  name,
-                  arguments: (args ?? {}) as Record<string, unknown>,
-                  ...options?.input,
-                },
-                dispatch,
-              ),
-              {
-                ...requestOptions(ctx),
-                allowInputRequired: true,
-                // SDK 2.3.1's callTool checks outputSchema even for a suspension.
-                // Retain its header mirroring, then validate only final results.
-                // Given a definition, it never relists and sends a call again
-                // after a HeaderMismatch answer, so a write always has one.
-                ...(toolDefinition
-                  ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
-                  : write
-                    ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
-                    : {}),
-              },
-            )
-            .catch((err: unknown) => {
-              assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
-              throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
-            });
-          if (isInputRequiredResult(result)) {
-            return result;
-          }
-          assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
-          if (output && !result.isError) {
-            if (result.structuredContent === undefined)
-              throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
-            const validation = await output["~standard"].validate(result.structuredContent);
-            if (validation.issues)
-              throw outputError(
-                -32602,
-                "Structured content does not match the tool's output schema: validation failed",
-              );
-          }
-          return result;
-        });
-      } catch (err) {
-        // The boundary refuses preparation too; before a dispatch record
-        // exists, this call is still a proven unsent failure.
-        if (!active) throw knownProviderFailure(err);
-        const { state, client, dispatch, write } = active;
-        const direct = write && callClassification(ctx) === undefined;
-        // Served calls defer their abort to invocation, whose ledger retains
-        // source-write provenance even when the effective class is read.
-        const ownAbort = ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err);
-        if (ownAbort && !direct) throw err;
-        // A grant revoked after connect surfaces here, not in ensureConnected.
-        if (requiresAuthorization(err) && state.client === client) state.authRequired = true;
-        const failure = ownAbort
-          ? err
-          : err instanceof UnauthorizedError
-            ? carryFailureFacts(err, authRequiredError())
-            : downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
-        if (!write) throw failure;
-        // A write that left is never advertised as safe to repeat (INV-9):
-        // not after a 401, whatever the grant's recovery met; not after a
-        // redirect or a further send stopped here; and not after a gateway's
-        // 502 to 504, a timeout, or a connection lost once it was sent.
-        // A resend stopped after the SDK renewed the grant renewed this
-        // write's credential only when the token changed (Q8); the same token
-        // back is a grant that still needs authorization.
-        const renewal = dispatch.request?.entry.renewed
-          ? undefined
-          : dispatch.resendRefused
-            ? authRequiredError()
-            : failure;
-        const unsent = (entry: ProviderRequest | undefined) => {
-          const verdict = unsentAfterUnauthorized(
-            `Connector "${id}"'s MCP server`,
-            renewal,
-            isOauth ? "downstream_oauth_required" : "auth_required",
-          );
-          // Recorded as this request's 401 verdict, for the call that decides Q8.
-          return entry ? vendorRefusal(verdict, entry) : verdict;
-        };
-        const verdict = dispatch.unauthorized
-          ? unsent(dispatch.request?.entry)
-          : dispatch.redirected || dispatch.resendRefused
-            ? new ConnectorCallError(
-                "connector_call_failed",
-                `Connector "${id}"'s MCP server ` +
-                  (dispatch.redirected
-                    ? "answered this write with a redirect, and the write was not sent again, "
-                    : "was sent this write, and a second send of it was stopped, ") +
-                  "so whether it took effect is unknown: check the target before repeating it.",
-                { retryable: false, writeOutcome: "unknown" },
-              )
-            : failure;
-        const vendor = { title: `connector "${id}"` };
-        // Whether this call's tools/call reached fetch is the dispatch ledger;
-        // the HTTP status the endpoint answered is its served verdict. Once
-        // sent, a JSON-RPC error (-32602 included: a server can run the
-        // handler and then reject its result), an unreadable result, or a
-        // failed output validation is no refusal, direct or served.
-        const status = failureRecord({}, err).httpStatus;
-        const settled = providerCallFailure(ctx, vendor, verdict, {
-          dispatched: dispatch.sent,
-          ...(status === undefined ? {} : { status }),
-          fallback: "write",
-          request: dispatch.request?.entry,
-        });
-        throw settled === failure ? failure : carryFailureFacts(failure, settled);
-      } finally {
-        if (active) active.state.dispatches.delete(active.dispatch);
-      }
-    },
-
-    async readResource(uri, ctx) {
-      const state = stateFor(ctx);
-      const client = await ensureConnected(ctx, state);
-      try {
+    listTools: authMethod((ctx: ConnectorContext) =>
+      authFlow<ToolDef[]>(function* () {
+        const state = stateFor(ctx);
+        const client = (yield authCall(ensureConnected, [ctx, state])) as Client;
+        let clean: ListToolsResult["tools"];
         const options = requestOptions(ctx) ?? {};
         listingContexts.set(options, ctx);
         try {
-          if (!client.getServerCapabilities()?.resources) throw unadvertisedResource();
-          const resources = await client.listResources(undefined, options);
-          const templates = await client.listResourceTemplates(undefined, options);
-          const exact = resources.resources.some((resource) => resource.uri === uri);
-          if (!exact) {
-            const match = resourceUriMatchesTemplates(uri, templates.resourceTemplates, (code) =>
-              resourceTemplateRefusals.add(code),
-            );
-            if (!match.matched) {
-              if (match.refusal)
-                throw new ConnectorCallError(
-                  match.refusal,
-                  match.refusal === "resource_template_ambiguous"
-                    ? "The advertised resource templates have ambiguous expression boundaries."
-                    : "Resource template matching exceeds the read work limit.",
-                  { retryable: false },
-                );
-              throw unadvertisedResource();
-            }
-          }
+          const result = (yield authInvoke(client, "listTools", [undefined, options])) as ListToolsResult;
+          clean = redactCatalog(ctx, result.tools);
         } catch (err) {
-          throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
+          if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
+          const bounded = atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
+          if (requiresAuthorization(bounded)) {
+            if (state.client === client) state.authRequired = true;
+            if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError());
+          }
+          throw bounded;
         } finally {
           listingContexts.delete(options);
         }
-        const result = await client
-          .readResource(
-            { uri },
-            {
-              ...requestOptions(ctx),
-              cacheMode: "bypass",
-              allowInputRequired: true,
-            },
-          )
-          .catch((err: unknown) => {
-            if (err instanceof ResourceNotFoundError) {
-              throw new ConnectorCallError("not_found", "The downstream resource does not exist.");
+        state.toolDefinitions = new Map(clean.map((tool: Tool) => [tool.name, tool]));
+        return clean.map((t: Tool) => ({
+          name: t.name,
+          ...(t.title !== undefined ? { title: t.title } : {}),
+          ...(t.icons !== undefined
+            ? {
+                icons: t.icons.filter((icon) => !/^data:/i.test(icon.src)) as NonNullable<ToolDef["icons"]>,
+              }
+            : {}),
+          ...(t.execution !== undefined ? { execution: t.execution as NonNullable<ToolDef["execution"]> } : {}),
+          ...(t.description !== undefined ? { description: t.description } : {}),
+          ...(t.inputSchema !== undefined
+            ? {
+                inputSchema: t.inputSchema as NonNullable<ToolDef["inputSchema"]>,
+              }
+            : {}),
+          ...(t.outputSchema !== undefined
+            ? {
+                outputSchema: t.outputSchema as NonNullable<ToolDef["outputSchema"]>,
+              }
+            : {}),
+          ...(t.annotations !== undefined
+            ? {
+                annotations: t.annotations as NonNullable<ToolDef["annotations"]>,
+              }
+            : {}),
+        }));
+      }),
+    ),
+
+    callTool: authMethod(
+      (
+        name: string,
+        args: unknown,
+        ctx: ConnectorContext,
+        options:
+          | {
+              definition?: ToolDef;
+              input?:
+                | {
+                    requestState?: string;
+                    inputResponses: Record<string, unknown>;
+                  }
+                | undefined;
             }
+          | undefined,
+      ) =>
+        authFlow<CallToolResult>(function* () {
+          enterProviderBoundary(ctx, connector);
+          let active:
+            | {
+                state: ConnectionState;
+                client: Client;
+                dispatch: CallDispatch;
+                write: boolean;
+              }
+            | undefined;
+          try {
+            return (yield authView(
+              ctx,
+              authMethod(() =>
+                authFlow<CallToolResult>(function* () {
+                  const state = stateFor(ctx);
+                  const client = (yield authCatch(authCall(ensureConnected, [ctx, state]), (error: unknown) => {
+                    throw knownProviderFailure(error);
+                  })) as Client;
+                  const definition = options?.definition;
+                  const facts = definition ?? state.toolDefinitions.get(name) ?? { name };
+                  const sourceFacts = definition ?? {
+                    name,
+                    ...(facts.annotations
+                      ? { annotations: facts.annotations as NonNullable<ToolDef["annotations"]> }
+                      : {}),
+                  };
+                  const source = sourceClassification(sourceFacts);
+                  const serverWrite = source === "write";
+                  const write =
+                    serverWrite || (callClassification(ctx) ?? definition?.classification ?? source) === "write";
+                  const dispatch = newDispatch(write, serverWrite);
+                  dispatch.request = {
+                    entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
+                    ctx,
+                  };
+                  active = { state, client, dispatch, write };
+                  state.dispatches.set(dispatch, name);
+                  const toolDefinition = definition
+                    ? {
+                        ...definition,
+                        inputSchema: (definition.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
+                      }
+                    : state.toolDefinitions.get(name);
+                  if (toolDefinition?.execution?.taskSupport === "required") {
+                    throw new ConnectorCallError(
+                      "connector_call_failed",
+                      `Tool "${name}" requires task-based execution, which Connecta does not support.`,
+                    );
+                  }
+                  let output: StandardSchemaV1 | undefined;
+                  const outputError = (code: number, message: string): unknown =>
+                    atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
+                  if (toolDefinition?.outputSchema) {
+                    try {
+                      output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
+                    } catch {
+                      throw outputError(
+                        -32602,
+                        `Tool '${name}' has an invalid outputSchema: schema could not be compiled`,
+                      );
+                    }
+                  }
+                  const result = (yield authCatch(
+                    authInvoke(client, "callTool", [
+                      withDispatch(
+                        {
+                          name,
+                          arguments: (args ?? {}) as Record<string, unknown>,
+                          ...options?.input,
+                        },
+                        dispatch,
+                      ),
+                      {
+                        ...requestOptions(ctx),
+                        allowInputRequired: true,
+                        ...(toolDefinition
+                          ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
+                          : write
+                            ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
+                            : {}),
+                      },
+                    ]),
+                    (err: unknown) => {
+                      assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
+                      throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
+                    },
+                  )) as CallToolResult;
+                  if (isInputRequiredResult(result)) {
+                    return result;
+                  }
+                  assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
+                  if (output && !result.isError) {
+                    if (result.structuredContent === undefined)
+                      throw outputError(
+                        -32600,
+                        `Tool ${name} has an output schema but did not return structured content`,
+                      );
+                    const validation = (yield authInvoke(output["~standard"], "validate", [
+                      result.structuredContent,
+                    ])) as StandardSchemaV1.Result<unknown>;
+                    if (validation.issues)
+                      throw outputError(
+                        -32602,
+                        "Structured content does not match the tool's output schema: validation failed",
+                      );
+                  }
+                  return result;
+                }),
+              ),
+            )) as CallToolResult;
+          } catch (err) {
+            if (!active) throw knownProviderFailure(err);
+            const { state, client, dispatch, write } = active;
+            const direct = write && callClassification(ctx) === undefined;
+            const ownAbort = ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err);
+            // The SDK can reject its wait synchronously from the abort event,
+            // before the physical response's Promise observer records its facts.
+            // Yield only settlement; no closed caller regains live authority.
+            if (ownAbort) yield Effect.yieldNow;
+            if (ownAbort && !direct) throw err;
+            if (requiresAuthorization(err) && state.client === client) state.authRequired = true;
+            const failure = ownAbort
+              ? err
+              : err instanceof UnauthorizedError
+                ? carryFailureFacts(err, authRequiredError())
+                : downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
+            if (!write) throw failure;
+            const renewal = dispatch.request?.entry.renewed
+              ? undefined
+              : dispatch.resendRefused
+                ? authRequiredError()
+                : failure;
+            const unsent = (entry: ProviderRequest | undefined) => {
+              const verdict = unsentAfterUnauthorized(
+                `Connector "${id}"'s MCP server`,
+                renewal,
+                isOauth ? "downstream_oauth_required" : "auth_required",
+              );
+              return entry ? vendorRefusal(verdict, entry) : verdict;
+            };
+            const verdict = dispatch.unauthorized
+              ? unsent(dispatch.request?.entry)
+              : dispatch.redirected || dispatch.resendRefused
+                ? new ConnectorCallError(
+                    "connector_call_failed",
+                    `Connector "${id}"'s MCP server ` +
+                      (dispatch.redirected
+                        ? "answered this write with a redirect, and the write was not sent again, "
+                        : "was sent this write, and a second send of it was stopped, ") +
+                      "so whether it took effect is unknown: check the target before repeating it.",
+                    { retryable: false, writeOutcome: "unknown" },
+                  )
+                : failure;
+            const vendor = { title: `connector "${id}"` };
+            const status = failureRecord({}, err).httpStatus;
+            const settled = providerCallFailure(ctx, vendor, verdict, {
+              dispatched: dispatch.sent,
+              ...(status === undefined ? {} : { status }),
+              fallback: "write",
+              request: dispatch.request?.entry,
+            });
+            throw settled === failure ? failure : carryFailureFacts(failure, settled);
+          } finally {
+            if (active) active.state.dispatches.delete(active.dispatch);
+          }
+        }),
+    ),
+
+    readResource: authMethod((uri: string, ctx: ConnectorContext) =>
+      authFlow<ReadResourceResult>(function* () {
+        const state = stateFor(ctx);
+        const client = (yield authCall(ensureConnected, [ctx, state])) as Client;
+        try {
+          const options = requestOptions(ctx) ?? {};
+          listingContexts.set(options, ctx);
+          try {
+            if (!client.getServerCapabilities()?.resources) throw unadvertisedResource();
+            const resources = (yield authInvoke(client, "listResources", [undefined, options])) as ListResourcesResult;
+            const templates = (yield authInvoke(client, "listResourceTemplates", [
+              undefined,
+              options,
+            ])) as ListResourceTemplatesResult;
+            const exact = resources.resources.some(
+              (resource: ListResourcesResult["resources"][number]) => resource.uri === uri,
+            );
+            if (!exact) {
+              const match = resourceUriMatchesTemplates(
+                uri,
+                templates.resourceTemplates,
+                (code: ResourceTemplateRefusal) => resourceTemplateRefusals.add(code),
+              );
+              if (!match.matched) {
+                if (match.refusal)
+                  throw new ConnectorCallError(
+                    match.refusal,
+                    match.refusal === "resource_template_ambiguous"
+                      ? "The advertised resource templates have ambiguous expression boundaries."
+                      : "Resource template matching exceeds the read work limit.",
+                    { retryable: false },
+                  );
+                throw unadvertisedResource();
+              }
+            }
+          } catch (err) {
             throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
-          });
-        if (isInputRequiredResult(result)) {
-          throw new ConnectorCallError(
-            "input_required_unsupported",
-            "Resource reads inside programs cannot request mid-call input.",
-          );
-        }
-        return result;
-      } catch (err) {
-        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
-        if (requiresAuthorization(err)) {
-          if (state.client === client) state.authRequired = true;
-          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
-        }
-        throw downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
-      }
-    },
-
-    async closeScope(ctx) {
-      // A scope closed before its first use gets an entry too, closed at once,
-      // so it cannot spring into existence later.
-      const state = entryFor(ctx);
-      // Closed before any await, and before the finalizers run: every check
-      // from here on sees the scope ended. A duplicate teardown finds it
-      // closed and has nothing to run.
-      const release = Scope.closeUnsafe(state.scope, Exit.void);
-      const cacheClosing = closeCatalogCacheScope(ctx, id, cacheOwner);
-      // Storage cannot cancel an already-started write. Bound the join in
-      // parallel with transport cleanup so it adds no unbounded teardown tail.
-      const cacheClosed =
-        cacheClosing &&
-        runEdge(
-          Effect.raceAllFirst([
-            Effect.promise(() => cacheClosing),
-            Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
-          ]),
-        );
-      reset(state);
-      // Start every finalizer before checking the caller's owner. Teardown is
-      // revocation machinery and must still run for an already-ended request.
-      const closing = Promise.all([release ? runEdge(release) : undefined, cacheClosed]).then(() => {});
-      void closing.catch(() => {});
-      if (viewSignal(ctx, true).aborted) return closing;
-      return settleOnClose(ctx, () => closing, true);
-    },
-
-    async status(ctx): Promise<ConnectorStatus> {
-      const state = stateFor(ctx);
-      const report = async (status: ConnectorStatus) => {
-        const path = isOauth ? await newProvider(ctx, state).registrationPath() : undefined;
-        return ownStatus({
-          ...status,
-          ...(path ? { registrationPath: path } : {}),
-          ...(resourceTemplateRefusals.size ? { resourceTemplateRefusals: [...resourceTemplateRefusals] } : {}),
-        });
-      };
-      try {
-        await ensureConnected(ctx, state);
-        return report({ state: "ok" });
-      } catch (err) {
-        // An empty slot, or one with no vault behind it, is reported the way a
-        // missing grant is: present, unauthenticated, and repairable — never a
-        // boot failure and never a silently absent connector.
-        if (err instanceof CredentialRequiredError) {
-          return report({ state: "auth_required", message: err.message });
-        }
-        if (err instanceof OperatorDisconnectedError) {
-          return report({ state: "auth_required", message: err.message });
-        }
-        if (state.authRequired) {
-          // Only an OAuth connector has a pending consent URL to offer. A
-          // credential connector's downstream 401 is repaired in the operator
-          // UI connection, so do not reach into OAuth storage to look for one.
-          return report({
-            state: "auth_required",
-            message: credentialAuth
-              ? "Authorization required — the downstream rejected this connector's stored credential."
-              : "Authorization required — open the URL to connect.",
-          });
-        }
-        // An operator surface: the record, never the error's own text.
-        return failureStatus(id, err);
-      }
-    },
-
-    async finishAuth(code, ctx, callbackParams) {
-      return duringViewCall(
-        ctx,
-        async (signal) => {
-          const state = stateFor(ctx);
-          const provider = newProvider(ctx, state);
-          // verifyState ran on this request-scoped provider first and found the
-          // consent; a programmatic exchange names it by its callback's state.
-          const consent = callbackParams?.get("state") ?? null;
-          if (!consent || !(await provider.verifyCallbackState(consent))) {
+          } finally {
+            listingContexts.delete(options);
+          }
+          const result = (yield authCatch(
+            authInvoke(client, "readResource", [
+              { uri },
+              {
+                ...requestOptions(ctx),
+                cacheMode: "bypass",
+                allowInputRequired: true,
+              },
+            ]),
+            (err: unknown) => {
+              if (err instanceof ResourceNotFoundError) {
+                throw new ConnectorCallError("not_found", "The downstream resource does not exist.");
+              }
+              throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
+            },
+          )) as ReadResourceResult;
+          if (isInputRequiredResult(result)) {
             throw new ConnectorCallError(
-              "connector_call_failed",
-              `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+              "input_required_unsupported",
+              "Resource reads inside programs cannot request mid-call input.",
             );
           }
-          // The exchange reads and writes only the epoch its consent was written
-          // in; it decides nothing about the grant there.
-          provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
-          await provider.bindFlow();
-          signal.throwIfAborted();
-          // Always a transport of the exchange's own, over the provider that
-          // verified the state: that provider holds the consent's claim, and the
-          // fence before the token request is its to cross. A connection this
-          // scope opened earlier speaks for its connect attempt, not this callback.
-          const t = buildTransport(ctx, provider, null, signal, null, true) as StreamableHTTPClientTransport;
-          const trail: OAuthTrail = {};
-          const internals = t as unknown as { _fetchWithInit?: FetchLike };
-          const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
-          const exchange = new Proxy(t, {
-            get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
-            set: (target, key, value) => Reflect.set(target, key, value, target),
-          });
-          try {
-            await exchange.finishAuth(callbackParams);
-            // Reset so the next use reconnects with the freshly stored tokens.
-            closeHalf(state);
-          } catch (err) {
-            throw await withoutAuthorizationServerText(ctx, err, trail, [signal, ctx.signal]);
-          } finally {
-            // This exchange-only transport has no lease in the request scope.
-            detach(closeConnection(null, t, ctx.logger));
+          return result;
+        } catch (err) {
+          if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
+          if (requiresAuthorization(err)) {
+            if (state.client === client) state.authRequired = true;
+            if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
           }
-        },
-        true,
-      );
-    },
+          throw downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
+        }
+      }),
+    ),
+
+    closeScope: authMethod((ctx: ConnectorContext) =>
+      authFlow<void>(function* () {
+        // Revocation and all finalizers start before any caller guard. Cleanup
+        // retains its own bounded settlement even after the request has closed.
+        const state = entryFor(ctx);
+        const release = Scope.closeUnsafe(state.scope, Exit.void);
+        const cacheClosing = closeCatalogCacheScope(ctx, id, cacheOwner);
+        reset(state);
+        const closing = runEdge(
+          Effect.all(
+            [
+              release ?? Effect.void,
+              cacheClosing
+                ? Effect.raceAllFirst([
+                    Effect.promise(() => cacheClosing),
+                    Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
+                  ])
+                : Effect.void,
+            ],
+            { concurrency: "unbounded" },
+          ).pipe(Effect.asVoid),
+        );
+        void closing.catch(() => {});
+        if (viewSignal(ctx, true).aborted) return yield authValue(() => closing);
+        return yield authView<void>(
+          ctx,
+          authMethod(() => authValue(() => closing)),
+          true,
+        );
+      }),
+    ),
+
+    status: authMethod((ctx: ConnectorContext) =>
+      authFlow<ConnectorStatus>(function* () {
+        const state = stateFor(ctx);
+        const report = authMethod((status: ConnectorStatus) =>
+          authFlow<ConnectorStatus>(function* () {
+            const path = isOauth
+              ? ((yield authInvoke(newProvider(ctx, state), "registrationPath", [])) as
+                  | "cimd"
+                  | "dcr"
+                  | "static"
+                  | undefined)
+              : undefined;
+            return ownStatus({
+              ...status,
+              ...(path ? { registrationPath: path } : {}),
+              ...(resourceTemplateRefusals.size ? { resourceTemplateRefusals: [...resourceTemplateRefusals] } : {}),
+            });
+          }),
+        );
+        try {
+          (yield authCall(ensureConnected, [ctx, state])) as Client;
+          return (yield authCall(report, [{ state: "ok" }])) as ConnectorStatus;
+        } catch (err) {
+          if (err instanceof CredentialRequiredError) {
+            return (yield authCall(report, [{ state: "auth_required", message: err.message }])) as ConnectorStatus;
+          }
+          if (err instanceof OperatorDisconnectedError) {
+            return (yield authCall(report, [{ state: "auth_required", message: err.message }])) as ConnectorStatus;
+          }
+          if (state.authRequired) {
+            return (yield authCall(report, [
+              {
+                state: "auth_required",
+                message: credentialAuth
+                  ? "Authorization required \u2014 the downstream rejected this connector's stored credential."
+                  : "Authorization required \u2014 open the URL to connect.",
+              },
+            ])) as ConnectorStatus;
+          }
+          return failureStatus(id, err);
+        }
+      }),
+    ),
+
+    finishAuth: authMethod(
+      (code: string, ctx: ConnectorContext, callbackParams: URLSearchParams) =>
+        authView(
+          ctx,
+          authMethod((signal: AbortSignal) =>
+            authFlow<void>(function* () {
+              const state = stateFor(ctx);
+              const provider = newProvider(ctx, state);
+              const consent = callbackParams?.get("state") ?? null;
+              if (!consent || !((yield authInvoke(provider, "verifyCallbackState", [consent])) as boolean)) {
+                throw new ConnectorCallError(
+                  "connector_call_failed",
+                  `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+                );
+              }
+              provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
+              (yield authInvoke(provider, "bindFlow", [])) as void;
+              signal.throwIfAborted();
+              const t = buildTransport(ctx, provider, null, signal, null, true) as StreamableHTTPClientTransport;
+              const trail: OAuthTrail = {};
+              const internals = t as unknown as {
+                _fetchWithInit?: FetchLike;
+              };
+              const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
+              const exchange = new Proxy(t, {
+                get: (target: StreamableHTTPClientTransport, key: string | symbol) =>
+                  key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
+                set: (target: StreamableHTTPClientTransport, key: string | symbol, value: any) =>
+                  Reflect.set(target, key, value, target),
+              });
+              try {
+                (yield authInvoke(exchange, "finishAuth", [callbackParams])) as void;
+                closeHalf(state);
+              } catch (err) {
+                throw (yield authCall(withoutAuthorizationServerText, [
+                  ctx,
+                  err,
+                  trail,
+                  [signal, ctx.signal],
+                ])) as unknown;
+              } finally {
+                detach(closeConnection(null, t, ctx.logger));
+              }
+            }),
+          ),
+          true,
+        ) as Effect.Effect<void, unknown>,
+    ),
   };
 
   if (opts.auth?.type === "oauth") {
-    connector.verifyState = async (oauthState, ctx) => {
-      const state = stateFor(ctx);
-      return newProvider(ctx, state).verifyState(oauthState);
-    };
+    connector.verifyState = authMethod((oauthState: string | null, ctx: ConnectorContext) =>
+      authFlow<boolean>(function* () {
+        const state = stateFor(ctx);
+        return (yield authInvoke(newProvider(ctx, state), "verifyState", [oauthState])) as boolean;
+      }),
+    );
 
-    connector.verifyCallbackIssuer = async (issuer, ctx) => {
-      newProvider(ctx, stateFor(ctx)).validateCallbackIssuer(issuer);
-      return true;
-    };
+    connector.verifyCallbackIssuer = authMethod((issuer: string | null, ctx: ConnectorContext) =>
+      Effect.try({
+        try: () => {
+          newProvider(ctx, stateFor(ctx)).validateCallbackIssuer(issuer);
+          return true as const;
+        },
+        catch: (error) => error,
+      }),
+    );
 
-    connector.consumeAuthError = async (ctx) => {
-      await newProvider(ctx, stateFor(ctx)).consumeAuthError();
-    };
+    connector.consumeAuthError = authMethod((ctx: ConnectorContext) =>
+      authFlow<void>(function* () {
+        (yield authInvoke(newProvider(ctx, stateFor(ctx)), "consumeAuthError", [])) as void;
+      }),
+    );
 
-    connector.disconnectAuth = async (ctx) => {
-      await disconnectAuthorization(ctx, stateFor(ctx), true);
-    };
+    connector.disconnectAuth = authMethod((ctx: ConnectorContext) =>
+      authFlow<void>(function* () {
+        (yield authCall(disconnectAuthorization, [ctx, stateFor(ctx), true])) as void;
+      }),
+    );
 
-    connector.startAuth = async (ctx, startOpts) => {
-      ctx = authorizingContext(ctx);
-      const state = stateFor(ctx);
-      state.provider = null;
-      const p = newProvider(ctx, state);
-      if (ctx.signal?.aborted) throw ctx.signal.reason;
-      const disconnected = startOpts?.force ? false : await p.operatorDisconnected();
-      if (ctx.signal?.aborted) throw ctx.signal.reason;
-      if (startOpts?.force || disconnected) {
-        await disconnectAuthorization(ctx, state, false, startOpts?.force === true);
-      } else {
-        // A consent URL already outstanding? Re-issue it rather than re-running
-        // the SDK flow, which would overwrite the PKCE verifier and invalidate
-        // the URL the operator may be mid-consent on. Only a recent one: an
-        // old or untimed URL falls through to a fresh flow in this same
-        // epoch, which keeps the stored client registration and discovery.
-        const pending = await p.reusablePendingAuthorizationUrl();
-        if (pending) {
-          return {
-            state: "auth_required",
-            authorizationUrl: pending,
-            authorizationReused: true,
-            message: "Authorization required — open the URL to connect.",
-          };
-        }
-      }
-      if (ctx.signal?.aborted) throw ctx.signal.reason;
-      try {
-        await ensureConnected(ctx, state);
-        return {
-          state: "ok",
-          message: "Already authorized — connection is healthy.",
-        };
-      } catch (err) {
-        if (state.authRequired) {
-          // The consent this start's attempt stored, while its epoch is live:
-          // one a later reset published belongs to another flow, and this
-          // start fails rather than hand it out.
-          let authorizationUrl: string | undefined;
-          try {
-            authorizationUrl = await state.attemptProvider?.consentUrl(viewSignal(ctx, true));
-          } catch (readErr) {
-            return { state: "error", message: startMessage(readErr) };
+    connector.startAuth = authMethod(
+      (
+        ctx: ConnectorContext,
+        startOpts:
+          | {
+              force?: boolean;
+            }
+          | undefined,
+      ) =>
+        authFlow<ConnectorStatus>(function* () {
+          ctx = authorizingContext(ctx);
+          const state = stateFor(ctx);
+          state.provider = null;
+          const p = newProvider(ctx, state);
+          if (ctx.signal?.aborted) throw ctx.signal.reason;
+          const disconnected = startOpts?.force
+            ? false
+            : ((yield authInvoke(p, "operatorDisconnected", [])) as boolean);
+          if (ctx.signal?.aborted) throw ctx.signal.reason;
+          if (startOpts?.force || disconnected) {
+            (yield authCall(disconnectAuthorization, [ctx, state, false, startOpts?.force === true])) as void;
+          } else {
+            const pending = (yield authInvoke(p, "reusablePendingAuthorizationUrl", [])) as string | undefined;
+            if (pending) {
+              return {
+                state: "auth_required",
+                authorizationUrl: pending,
+                authorizationReused: true,
+                message: "Authorization required \u2014 open the URL to connect.",
+              };
+            }
           }
-          return {
-            state: "auth_required",
-            ...(authorizationUrl !== undefined ? { authorizationUrl } : {}),
-            message: "Authorization required — open the URL to connect.",
-          };
-        }
-        return { state: "error", message: startMessage(err) };
-      }
-    };
+          if (ctx.signal?.aborted) throw ctx.signal.reason;
+          try {
+            (yield authCall(ensureConnected, [ctx, state])) as Client;
+            return {
+              state: "ok",
+              message: "Already authorized \u2014 connection is healthy.",
+            };
+          } catch (err) {
+            if (state.authRequired) {
+              let authorizationUrl: string | undefined;
+              try {
+                authorizationUrl = (yield state.attemptProvider
+                  ? authInvoke<string | undefined>(state.attemptProvider, "consentUrl", [viewSignal(ctx, true)])
+                  : Effect.succeed(undefined)) as string | undefined;
+              } catch (readErr) {
+                return { state: "error", message: startMessage(readErr) };
+              }
+              return {
+                state: "auth_required",
+                ...(authorizationUrl !== undefined ? { authorizationUrl } : {}),
+                message: "Authorization required \u2014 open the URL to connect.",
+              };
+            }
+            return { state: "error", message: startMessage(err) };
+          }
+        }),
+    );
   }
 
-  const withActiveSecrets = async <T>(
-    ctx: ConnectorContext,
-    run: () => Promise<T>,
-    redactResult = true,
-    preserveInput = false,
-  ): Promise<T> => {
-    trackCredentialReads(ctx);
-    const secrets = sentSecretsFor(ctx);
-    if (opts.auth?.type === "headers") {
-      for (const value of Object.values(opts.auth.headers)) secrets.header(value);
-    }
-    for (const value of Object.values(extraHeaders ?? {})) secrets.header(value);
-    const state = entryFor(ctx);
-    let active = activeContexts.get(state);
-    if (!active) {
-      active = new Set();
-      activeContexts.set(state, active);
-    }
-    active.add(ctx);
-    try {
-      const result = await run();
-      // Opaque state must reach the sealing handler byte-exact. Invocation
-      // intercepts it before ordinary result processing or guest exposure.
-      if (!preserveInput || !isInputRequiredResult(result)) assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
-      return (preserveInput && isInputRequiredResult(result)) || !redactResult
-        ? result
-        : redactSentSecrets(ctx, result);
-    } catch (error) {
-      assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error);
-      // The request's whole set: an outer wrapper may still cut what passes here.
-      throw requestSentSecrets(ctx).redact(error);
-    } finally {
-      active.delete(ctx);
-    }
-  };
+  const retainOperation = <Args extends unknown[], A>(
+    operation: (...args: Args) => Promise<A>,
+    contextIndex: number,
+  ): ((...args: Args) => Promise<A>) =>
+    authMethod((...args: Args) =>
+      authFlow<A>(function* () {
+        const release = retainOAuthPartition(oauthPartitionFor(args[contextIndex] as ConnectorContext));
+        try {
+          return yield authCall<A>(operation, args);
+        } finally {
+          release();
+        }
+      }),
+    );
+
+  const withActiveSecrets = authMethod(
+    <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult: boolean = true, preserveInput: boolean = false) =>
+      authFlow<T>(function* () {
+        trackCredentialReads(ctx);
+        const secrets = sentSecretsFor(ctx);
+        if (opts.auth?.type === "headers") {
+          for (const value of Object.values(opts.auth.headers)) secrets.header(value);
+        }
+        for (const value of Object.values(extraHeaders ?? {})) secrets.header(value);
+        const state = entryFor(ctx);
+        let active = activeContexts.get(state);
+        if (!active) {
+          active = new Set();
+          activeContexts.set(state, active);
+        }
+        active.add(ctx);
+        try {
+          const result = (yield authCall(run, [])) as Awaited<T>;
+          if (!preserveInput || !isInputRequiredResult(result))
+            assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
+          return (preserveInput && isInputRequiredResult(result)) || !redactResult
+            ? result
+            : redactSentSecrets(ctx, result);
+        } catch (error) {
+          assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error);
+          throw requestSentSecrets(ctx).redact(error);
+        } finally {
+          active.delete(ctx);
+        }
+      }),
+  );
   const callTool = connector.callTool;
-  connector.callTool = (name, args, ctx, options) =>
-    withActiveSecrets(ctx, () => callTool(name, args, ctx, options), true, true);
+  connector.callTool = authMethod(
+    (
+      name: string,
+      args: unknown,
+      ctx: ConnectorContext,
+      options:
+        | {
+            definition?: ToolDef;
+            input?:
+              | {
+                  requestState?: string;
+                  inputResponses: Record<string, unknown>;
+                }
+              | undefined;
+          }
+        | undefined,
+    ) =>
+      authCall(withActiveSecrets, [
+        ctx,
+        authMethod(() => authCall(callTool, [name, args, ctx, options]) as Effect.Effect<unknown, unknown>),
+        true,
+        true,
+      ]) as Effect.Effect<unknown, unknown>,
+  );
   const listTools = connector.listTools;
-  connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
+  connector.listTools = authMethod(
+    (ctx: ConnectorContext) =>
+      authCall(withActiveSecrets, [
+        ctx,
+        authMethod(() => authCall(listTools, [ctx]) as Effect.Effect<ToolDef[], unknown>),
+      ]) as Effect.Effect<ToolDef[], unknown>,
+  );
   const readResource = connector.readResource!;
-  connector.readResource = (uri, ctx) => withActiveSecrets(ctx, () => readResource(uri, ctx));
+  connector.readResource = authMethod(
+    (uri: string, ctx: ConnectorContext) =>
+      authCall(withActiveSecrets, [
+        ctx,
+        authMethod(() => authCall(readResource, [uri, ctx]) as Effect.Effect<unknown, unknown>),
+      ]) as Effect.Effect<unknown, unknown>,
+  );
   if (connector.downstreamSkills) {
     const { list, read } = connector.downstreamSkills;
-    connector.downstreamSkills.list = (ctx) => withActiveSecrets(ctx, () => list(ctx), false);
-    connector.downstreamSkills.read = (uri, ctx) => withActiveSecrets(ctx, () => read(uri, ctx), false);
+    connector.downstreamSkills.list = authMethod(
+      (ctx: ConnectorContext) =>
+        authCall(withActiveSecrets, [
+          ctx,
+          authMethod(() => authCall(list, [ctx]) as Effect.Effect<ConnectorSkill[], unknown>),
+          false,
+        ]) as Effect.Effect<ConnectorSkill[], unknown>,
+    );
+    connector.downstreamSkills.read = authMethod(
+      (uri: string, ctx: ConnectorContext) =>
+        authCall(withActiveSecrets, [
+          ctx,
+          authMethod(() => authCall(read, [uri, ctx]) as Effect.Effect<ConnectorSkillResourceContents[], unknown>),
+          false,
+        ]) as Effect.Effect<ConnectorSkillResourceContents[], unknown>,
+    );
   }
 
   if (isOauth && !staticClient && clientMetadataUrl === undefined) declareSelfHostedClient(connector, oauthScope);
   if (isOauth) {
     const start = connector.startAuth!;
-    connector.startAuth = async (...args) => {
-      const status = await start(...args);
-      const path = await newProvider(args[0], stateFor(args[0])).registrationPath();
-      return { ...status, ...(path ? { registrationPath: path } : {}) };
-    };
+    connector.startAuth = authMethod((...args: Parameters<NonNullable<Connector["startAuth"]>>) =>
+      authFlow<ConnectorStatus>(function* () {
+        const status = (yield authCall(start, [...args])) as ConnectorStatus;
+        const path = (yield authInvoke(newProvider(args[0], stateFor(args[0])), "registrationPath", [])) as
+          | "cimd"
+          | "dcr"
+          | "static"
+          | undefined;
+        return { ...status, ...(path ? { registrationPath: path } : {}) };
+      }),
+    );
   }
   // Every published Promise operation owns its whole wait, including local
   // storage, digest, registration-path and result processing seams. callTool
   // settles inside its write decider; closeScope starts cleanup before racing
   // the join, and finishAuth already owns its request-scoped exchange boundary.
-  const settlingOperation =
-    <Args extends unknown[], Result>(
-      operation: (...args: Args) => Promise<Result>,
-      contextIndex: number,
-      requestOwned = false,
-    ): ((...args: Args) => Promise<Result>) =>
-    (...args) => {
-      const ctx = args[contextIndex] as ConnectorContext;
-      const state = states.get(ctx.requestScope ?? ctx);
-      // A connector scope already revoked by teardown keeps its established
-      // refusal, before the enclosing request's more general close boundary.
-      if (state && isClosed(state)) return Promise.reject(scopeEndedError());
-      return settleOnClose(ctx, () => operation(...args), requestOwned);
-    };
+  const settlingOperation = <Args extends unknown[], Result>(
+    operation: (...args: Args) => Promise<Result>,
+    contextIndex: number,
+    requestOwned = false,
+  ): ((...args: Args) => Promise<Result>) =>
+    authMethod((...args: Args) =>
+      authFlow<Result>(function* () {
+        const ctx = args[contextIndex] as ConnectorContext;
+        const state = states.get(Context.get(viewServices(ctx), RequestScope));
+        if (state && isClosed(state)) return (yield Effect.fail(scopeEndedError())) as Awaited<Result>;
+        return (yield authView(
+          ctx,
+          authMethod(() => authCall(operation, [...args]) as Effect.Effect<Result, unknown>),
+          requestOwned,
+        )) as Awaited<Result>;
+      }),
+    );
   connector.listTools = settlingOperation(connector.listTools, 0);
   connector.readResource = settlingOperation(connector.readResource!, 1);
   if (connector.downstreamSkills) {
@@ -3919,7 +4277,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.downstreamSkills.read = settlingOperation(connector.downstreamSkills.read, 1);
   }
   const status = connector.status!;
-  connector.status = (ctx) => settleOnClose(ctx, () => status(ctx)).catch((error) => failureStatus(id, error));
+  connector.status = authMethod(
+    (ctx: ConnectorContext) =>
+      authCatch(
+        authView(
+          ctx,
+          authMethod(() => authCall(status, [ctx]) as Effect.Effect<ConnectorStatus, unknown>),
+        ),
+        (error: any) => failureStatus(id, error),
+      ) as Effect.Effect<ConnectorStatus, unknown>,
+  );
   if (connector.testCredential) connector.testCredential = settlingOperation(connector.testCredential, 1);
   if (isOauth) {
     connector.startAuth = settlingOperation(connector.startAuth!, 0);
@@ -3929,7 +4296,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.consumeAuthError = settlingOperation(connector.consumeAuthError!, 0, true);
     // Pin before the first asynchronous storage/discovery read, not only once
     // a refresh flight exists. These operations do not take call admission.
-    const retain = retainingOAuthPartition;
+    const retain = retainOperation;
     connector.listTools = retain(connector.listTools, 0);
     connector.callTool = retain(connector.callTool, 2);
     connector.readResource = retain(connector.readResource, 1);
@@ -3958,17 +4325,36 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // published, fully wrapped function, fixed now, never what the property or
   // a copy holds by then.
   providerBoundary(connector);
+  const ownCall = connector.callTool;
+  registerCallEntry(connector, (name, args, ctx, options) => authCall(ownCall, [name, args, ctx, options]));
   if (isOauth)
     registerInvocationAuth(
       connector,
-      retainingOAuthPartition(
-        settlingOperation(async (ctx: ConnectorContext) => {
-          // Only inspect local grant state here. Discovery, refresh, and MCP
-          // transports remain inside callTool and cannot establish retry safety.
-          const provider = newProvider(ctx, stateFor(ctx));
-          if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
-          if (!(await provider.tokens())) throw authRequiredError();
-        }, 0),
+      retainOperation(
+        settlingOperation(
+          authMethod((ctx: ConnectorContext) =>
+            authFlow<void>(function* () {
+              const provider = newProvider(ctx, stateFor(ctx));
+              if ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean)
+                throw operatorDisconnectedError();
+              if (
+                !((yield authInvoke(provider, "tokens", [])) as
+                  | {
+                      access_token: string;
+                      token_type: string;
+                      id_token?: string | undefined;
+                      expires_in?: number | undefined;
+                      scope?: string | undefined;
+                      refresh_token?: string | undefined;
+                      issuer?: string | undefined;
+                    }
+                  | undefined)
+              )
+                throw authRequiredError();
+            }),
+          ),
+          0,
+        ),
         0,
       ),
     );

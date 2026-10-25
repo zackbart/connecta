@@ -1,3 +1,4 @@
+import { authCall, authInvoke } from "./auth/native.js";
 import { Clock, Duration, Effect, Random } from "effect";
 import { activityRequest } from "./activity-request.js";
 import type { CatalogDriftActivityContext } from "./activity.js";
@@ -37,12 +38,19 @@ import {
   setViewService,
   duringViewEffect,
 } from "./runtime/call.js";
-import { getNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
+import { hasNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
 import { provideRegistryPrograms, registryEdgeProgram, registryProgram } from "./runtime/registry.js";
 import { causeError, runEdge } from "./runtime/run.js";
 import { Storage } from "./runtime/services.js";
 import { SharedRead } from "./runtime/shared-read.js";
-import { runOnPartition, storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
+import {
+  runOnPartition,
+  storageCompareAndSet,
+  storageDelete,
+  storageGet,
+  storageSet,
+  storageList,
+} from "./runtime/storage.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
 import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import {
@@ -172,15 +180,22 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     list: async (keyPrefix) => (await storage.list(prefix + keyPrefix)).map((key) => key.slice(prefix.length)),
     compareAndSet: (k, expected, next, o) => storage.compareAndSet(prefix + k, expected, next, o),
   };
-  const native = getNativeStorage(storage);
-  return native
+  return hasNativeStorage(storage)
     ? registerNativeStorage(edge, {
-        get: (key) => native.get(prefix + key),
-        set: (key, value, options) => native.set(prefix + key, value, options),
-        delete: (key) => native.delete(prefix + key),
+        // Select against the underlying current methods at dispatch. A
+        // namespace created during a decoration regains the native path when
+        // that decoration is restored, without capturing stale capabilities.
+        get: (key) => storageGet(prefix + key).pipe(Effect.provideService(Storage, storage)),
+        set: (key, value, options) =>
+          storageSet(prefix + key, value, options).pipe(Effect.provideService(Storage, storage)),
+        delete: (key) => storageDelete(prefix + key).pipe(Effect.provideService(Storage, storage)),
         list: (keyPrefix) =>
-          native.list(prefix + keyPrefix).pipe(Effect.map((keys) => keys.map((key) => key.slice(prefix.length)))),
-        compareAndSet: (key, expected, next, options) => native.compareAndSet(prefix + key, expected, next, options),
+          storageList(prefix + keyPrefix).pipe(
+            Effect.provideService(Storage, storage),
+            Effect.map((keys) => keys.map((key) => key.slice(prefix.length))),
+          ),
+        compareAndSet: (key, expected, next, options) =>
+          storageCompareAndSet(prefix + key, expected, next, options).pipe(Effect.provideService(Storage, storage)),
       })
     : edge;
 }
@@ -947,15 +962,14 @@ export class Registry implements RegistryView {
       if (!connector) throw new Error(`Unknown connector "${id}"`);
       if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
       const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
-      const listed = yield* Effect.tryPromise({ try: () => connector.listTools(ctx), catch: (error) => error }).pipe(
+      const listed = yield* authInvoke<ToolDef[]>(connector, "listTools", [ctx]).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
             const fallback =
               error instanceof ConnectorCallError && error.code === "unavailable"
-                ? yield* Effect.tryPromise({
-                    try: () => customCatalogFallback(ctx, id),
-                    catch: (failure) => failure,
-                  }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+                ? yield* authCall<ToolDef[] | undefined>(customCatalogFallback, [ctx, id]).pipe(
+                    Effect.catch(() => Effect.succeed(undefined)),
+                  )
                 : undefined;
             return fallback
               ? fallback
@@ -978,7 +992,7 @@ export class Registry implements RegistryView {
       const accepted = this.acceptToolNames(facts);
       if (catalogFetchedAt(ctx) === undefined) {
         for (const observe of [storeCustomCatalogFallback, observeUncachedCatalogRefresh]) {
-          yield* Effect.tryPromise({ try: () => observe(ctx, id, facts), catch: (error) => error }).pipe(
+          yield* authCall<void>(observe, [ctx, id, facts]).pipe(
             Effect.catch((error) =>
               Effect.sync(() =>
                 logFailure(
@@ -1352,9 +1366,7 @@ export class Registry implements RegistryView {
                 if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
               }
               if (connector.status)
-                return withObservations(
-                  yield* Effect.tryPromise({ try: () => connector.status!(ctx), catch: (error) => error }),
-                );
+                return withObservations(yield* authInvoke<ConnectorStatus>(connector, "status", [ctx]));
               yield* registryProgram(self, "getTools", id, baseUrl, requestScope, callOptions, scope);
               return withObservations({ state: "ok" });
             }),
