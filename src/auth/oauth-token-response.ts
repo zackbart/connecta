@@ -88,6 +88,8 @@ const readRefreshResponseNative = /* @__PURE__ */ registerAuth(
           if (done) break;
           size += value.byteLength;
           if (size > MAX_REFRESH_RESPONSE_BYTES) {
+            // A cloned body's cancellation can await its sibling. Cancel both,
+            // without making the refusal wait for the provider to finish sending.
             void reader.cancel().catch(() => {});
             void response.body?.cancel().catch(() => {});
             throw new OversizedRefreshResponse();
@@ -184,6 +186,7 @@ const sdkSafeTokenResponseNative = /* @__PURE__ */ registerAuth(
       try {
         parsed = (yield authCall(readRefreshResponse, [response])) as unknown;
       } catch {
+        // Not JSON, or too large to be a token response: only the status is left.
         return sdkTokenFailure(response, "server_error");
       }
       if (response.ok && sdkAcceptsOAuthTokens(parsed)) {
@@ -238,10 +241,13 @@ const refreshResponseOutcomeNative = /* @__PURE__ */ registerAuth(
         try {
           const body = (yield authCall(readRefreshResponse, [response, signal, false])) as unknown;
           if (body && typeof body === "object" && ("access_token" in body || "refresh_token" in body)) {
+            // A provider issuing tokens while reporting failure may have rotated.
             throw new Error("OAuth refresh failure response may contain a rotation.");
           }
           code = oauthErrorCode(body);
         } catch (error) {
+          // Complete non-JSON failures still require re-consent. A lost body or
+          // evidence of issued tokens cannot prove a committed outcome.
           if (!(error instanceof SyntaxError)) throw error;
         }
         const failure = new Error(`OAuth refresh failed with HTTP ${response.status}.`);
@@ -255,8 +261,12 @@ const refreshResponseOutcomeNative = /* @__PURE__ */ registerAuth(
           ),
         };
       }
+      // A successful HTTP status may have consumed the token even when its
+      // body cannot be read or parsed. The coordinator refuses the fingerprint.
       const parsed = (yield authCall(readRefreshResponse, [response, signal, false])) as unknown;
       if (sdkAcceptsOAuthTokens(parsed)) {
+        // An `issuer` names the server a grant is bound to, and only the client
+        // stamps it — never the server answering, as the SDK's own parse agrees.
         const { issuer: _ignored, ...tokens } = parsed as OAuthTokens;
         return { tokens };
       }

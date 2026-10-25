@@ -252,6 +252,8 @@ function refreshWait(signal?: AbortSignal): RefreshWait {
     },
     run: authMethod(<T>(operation: () => Promise<T>) => {
       return authFlow<T | T>(function* () {
+        // A race's losing operation may still start. Check before constructing it,
+        // then again before handing a late result back to preparation.
         if (deadline.signal.aborted) return (yield Effect.fail(aborted(deadline.signal))) as Awaited<T>;
         return (yield authThen(
           Effect.raceAllFirst<Effect.Effect<T, unknown>>([fromSignal(deadline.signal), authCall<T>(operation, [])]),
@@ -388,9 +390,14 @@ export class OAuthRefreshCoordinator {
     return authMethod((input: string | URL, init: RequestInit | undefined) => {
       return authFlow<Response>(
         function* (this: OAuthRefreshCoordinator) {
+          // Freeze the form before any await: classification and the spent digest
+          // must describe the exact token sent, even if its caller mutates a form.
           init = init
             ? { ...init, ...(init.body instanceof URLSearchParams ? { body: new URLSearchParams(init.body) } : {}) }
             : undefined;
+          // Production adapters resolve the required host policy before a code or
+          // refresh claim can consume its single-use credential. Custom SDK leaves
+          // may supply their own policy; this hook performs no I/O and owns no data.
           if (isOAuthCredentialRequest(init)) prepareCredentialRequest?.();
           if (isRefreshTokenRequest(init)) {
             const signal =
@@ -415,16 +422,21 @@ export class OAuthRefreshCoordinator {
                     ? AbortSignal.any([requestSignal, init.signal])
                     : requestSignal
                   : init?.signal;
+                // Credential-bearing OAuth requests use the raw send path. A redirect
+                // is a dispatched failure, never authority to send the form again.
                 return (yield tokenRequest
                   ? authCall(baseFetch, [input, { ...init, redirect: "manual", ...(signal ? { signal } : {}) }])
                   : authCall(resourceFetch, [input, { ...init, ...(signal ? { signal } : {}) }])) as Response;
               }.bind(this),
             );
           });
+          // Await the composed fetch here so workerd associates a rejection with
+          // the fetch the SDK is already awaiting.
           const response = (yield exchange
             ? authInvoke(provider, "dispatchCodeExchange", [dispatch, input])
             : authCall(dispatch, [])) as Response;
           if (!tokenRequest) return response;
+          // A code exchange's failure is the SDK's to log as well.
           const forSdk = (yield authCall(sdkSafeTokenResponse, [
             response,
             exchange
@@ -509,6 +521,7 @@ export class OAuthRefreshCoordinator {
             const waiting = refreshWait(signal);
             let redeeming = false;
             try {
+              // A verdict belongs to one refresh; never let an older one decide this.
               provider.recordRefreshFailure(undefined);
               const epoch = (yield authInvoke(waiting, "run", [
                 authMethod(() => {
@@ -533,6 +546,7 @@ export class OAuthRefreshCoordinator {
                   if (outcome.status === "refreshed") return provider.adoptRefresh(outcome.tokens);
                   continue;
                 }
+                // Preparation reads share the same bound as later claim waits.
                 const current = (yield authInvoke(waiting, "run", [
                   authMethod(() => {
                     return authInvoke(provider, "storedTokens", [waiting.signal]) as Effect.Effect<
@@ -575,8 +589,10 @@ export class OAuthRefreshCoordinator {
                   );
                 }
                 redeeming = true;
-                // Claim submission transfers to a bounded native coordinator;
-                // its runner receives no request/call Context authority.
+                // Claim submission transfers renewal, including preparation, token
+                // request and commit, to a bounded native coordinator. Only
+                // this caller's wait races its signal; the coordinator receives
+                // no request/call Context authority or caller-owned deadline.
                 const redemption = authDetached(
                   authInvoke<Response>(this, "redeem", [
                     provider,
@@ -621,16 +637,19 @@ export class OAuthRefreshCoordinator {
           function* (this: OAuthRefreshCoordinator) {
             const flight: RefreshFlight = { outcome: Deferred.makeUnsafe() };
             this.flights.set(epoch, flight);
+            // Pin the owner partition until the flight settles, whoever is waiting.
             const release = this.retainPartition();
             const settle = (outcome: RefreshFlightOutcome) => {
               if (this.flights.get(epoch) === flight) this.flights.delete(epoch);
               release();
+              // Last, because joined fibers resume inside this call.
               Deferred.doneUnsafe(flight.outcome, Effect.succeed(outcome));
             };
             const fail = (error: unknown, verdict?: RefreshFailure) => {
               if (verdict) provider.recordRefreshFailure(verdict);
               settle({ status: "failed", error, ...(verdict ? { verdict } : {}) });
             };
+            // The authorization server this redemption answers to, fixed now.
             const issuer = provider.refreshIssuer(epoch);
             let lease: RefreshLease;
             try {
@@ -716,6 +735,8 @@ export class OAuthRefreshCoordinator {
               if (deadline.aborted) throw aborted(deadline);
             } catch (error) {
               if (!dispatched) {
+                // Only the coordinator's own preparation deadline can interrupt a
+                // submitted claim. Caller cancellation no longer reaches this work.
                 if (!waiting.signal.aborted) {
                   (yield authCatch(
                     authInvoke(waiting, "run", [
@@ -743,6 +764,9 @@ export class OAuthRefreshCoordinator {
                 fail(failure, provider.refreshVerdict());
                 throw failure;
               }
+              // A sent request without a definitive answer may have rotated the token.
+              // Persist the refusal before dropping tokens, so interrupted cleanup or a
+              // later write of the same fingerprint cannot make it redeemable again.
               const failure = new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
               (yield authCall(releaseLease, [{ kind: "dead" }])) as void;
               (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
@@ -751,12 +775,17 @@ export class OAuthRefreshCoordinator {
             } finally {
               waiting.close();
             }
+            // An answer exists from here on, and is committed whatever the owner does.
             if (outcome.failure) {
+              // Drop a refused grant while the flight still stands: a caller arriving
+              // meanwhile joins it instead of redeeming the dead token again.
               (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
               (yield authCall(releaseLease, [outcome.verdict, "resolved"])) as void;
               fail(outcome.failure, outcome.verdict);
               return outcome.forSdk;
             }
+            // The server consumed the old refresh token; the SDK merges it back the
+            // same way when a rotation omits one.
             const accepted: OAuthTokens = {
               ...outcome.tokens,
               ...(outcome.tokens.refresh_token === undefined && requested !== null ? { refresh_token: requested } : {}),
@@ -782,6 +811,7 @@ export class OAuthRefreshCoordinator {
               throw failure;
             }
             if (!committed) {
+              // Restart, Disconnect, or another consent decides the newer grant.
               (yield authCall(releaseLease, [{ kind: "dead" }, "resolved"])) as void;
               const failure = new UnauthorizedError("OAuth refresh grant is no longer active.");
               fail(failure, { kind: "dead" });
@@ -2095,6 +2125,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
               ])) as string | null;
             } catch {
               if (signal?.aborted) throw aborted(signal);
+              // The durable marker survives both deletion and marker-clear failures.
               return raw;
             }
           }.bind(this),
@@ -2157,6 +2188,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 if (options.quiet || !this.bound) return false;
                 throw this.flowSuperseded();
               }
+              // A disconnect's epoch holds nothing until an explicit start replaces it.
               if (isDisconnectedEpoch(epoch)) return false;
               const next = change(grant);
               if (next === undefined) return true;
@@ -2177,6 +2209,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 ])) as boolean;
               } catch {
                 if (signal?.aborted) throw aborted(signal);
+                // A store's own error can quote the value it refused.
                 throw this.credentialWriteError();
               }
               if (written) {
@@ -2215,6 +2248,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 return this.withIssuer(grant, body);
               },
             ])) as boolean;
+            // A flow may invalidate what it wrote itself.
             this.seen[field] = fingerprint(
               field === "client" ? (value as NonNullable<GrantBody["client"]>).value : value,
             );
@@ -2656,6 +2690,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
           function* (this: KvOAuthProvider) {
             if (this.signal?.aborted) throw aborted(this.signal);
             if (this.refreshFailure?.kind === "dead") throw this.authorizationRefused();
+            // The coordinator stored this refresh already, or handed on another's.
             if (this.storedRefresh !== undefined && tokens.access_token === this.storedRefresh) return;
             const refreshConsent =
               this.exchangeConsent &&
@@ -2739,6 +2774,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
             const configured = this.configuredAuthorizationBinding();
             if (configured?.issuer !== undefined) {
               const issuer = configured.issuer;
+              // Static adapters do not save discovery or client configuration. Publish
+              // their server identity before consent so a changed endpoint fences the
+              // old grant before any code exchange can leave.
               (yield authInvoke(this, "updateGrant", [
                 (grant: Grant) => (grant.body.issuer === issuer ? undefined : this.withIssuer(grant, { issuer })),
               ])) as boolean;
@@ -3030,6 +3068,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
             if (endpoint !== undefined && this.callback?.flow.binding?.tokenEndpoint !== String(endpoint)) {
               throw this.flowSuperseded();
             }
+            // Opening ciphertext may yield. Re-read the exact record after opening,
+            // then check and send in the same reaction, without another await.
             return (yield authInvoke(this, "wait", [
               authMethod(() => {
                 return authThen(
@@ -3076,6 +3116,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 }),
               ])) as string | null;
               const spent = storedRefreshSpent(resolution);
+              // Observing the exact resolved storage write before consent completion
+              // proves their order without comparing isolate clocks. A consent that
+              // saw outstanding/ambiguous cannot become eligible on a delayed save.
               if (spent?.state === "resolved") this.exchangeConsent = { digest, resolution: resolution! };
             } catch {
               if (this.signal?.aborted) throw aborted(this.signal);
@@ -3117,6 +3160,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 { quiet: true },
               ])) as boolean;
             }
+            // The SDK invalidates after a refused refresh and then starts over, which
+            // on `invalid_client` means registering a new client. A passive request
+            // must not begin authorization, so it ends here, as auth_required.
             if (!this.allowAuthorization && this.refreshFailure?.kind === "dead") {
               throw this.authorizationRefused();
             }
@@ -3216,6 +3262,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
                   throw new UnauthorizedError("OAuth refresh grant is no longer active.");
                 }
                 if (plainObject(stored) && stored.state !== "claimed") {
+                  // Never compare another isolate's clock for a sent request. The
+                  // durable record survives expiry of this storage-owned liveness key.
                   const active =
                     typeof stored.activeKey === "string"
                       ? ((yield authCall(wait, [
@@ -3282,6 +3330,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
                       consent?.digest !== digest ||
                       consent.resolution !== spentExpected
                     ) {
+                      // Reset can sweep the old lease while its request remains live.
+                      // Only storage-owned expiry can make an outstanding send ambiguous.
                       if (
                         spent?.state === "outstanding" &&
                         ((yield authCall(wait, [
@@ -3324,6 +3374,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                       typeof stored.expiresAt === "number" &&
                       stored.expiresAt <= this.refreshNow())
                   ) {
+                    // Clock skew can replace an unsent claim; its dispatch CAS then loses.
                     const claimed = JSON.stringify({
                       connectaOAuthRefresh: 1,
                       holder: crypto.randomUUID(),
@@ -3448,6 +3499,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
             if (!won) throw this.refreshContended();
             lease.raw = dispatched;
             if (waiting.signal.aborted) throw aborted(waiting.signal);
+            // One CAS owns the fingerprint across every epoch. Only a later consent
+            // that observed a resolved write may replace it. No TTL or deletion path.
             lease.spentRaw = JSON.stringify({
               connectaOAuthRefreshSpent: 1,
               epoch,
@@ -3475,6 +3528,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
               throw new UnauthorizedError("OAuth refresh token was already spent; authorization required.");
             }
             // Final owner check and physical submission share one reaction.
+            // Submission already transferred ownership to the coordinator. Only
+            // its own deadline can stop this send; the departed caller cannot.
             if (waiting.signal.aborted) throw aborted(waiting.signal);
             return (yield authCall<Response>(send, [])) as Response;
           }.bind(this),
@@ -3495,6 +3550,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
         return authFlow<void>(
           function* (this: KvOAuthProvider) {
             const stored = parsed(lease.raw) as StoredRefreshLease;
+            // Only an unsent claim may be removed. Dispatched outcomes never reopen it.
             const next =
               stored.state === "claimed"
                 ? null
@@ -3507,6 +3563,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                         }
                       : { verdict: { kind: "dead" } }),
                   } satisfies StoredRefreshLease);
+            // Verdicts contain fixed typed facts; no downstream causes or text.
             if (verdict) this.recordRefreshFailure(verdict);
             (yield authInvoke(this, "resolveRefreshSpent", [lease, resolution])) as void;
             const released = (yield authCatch(
@@ -3532,6 +3589,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
               const spent = storedRefreshSpent(raw);
               const holder = (parsed(lease.raw) as StoredRefreshLease).holder;
               if (spent?.state !== "outstanding" || spent.holder !== holder) return;
+              // The timestamp belongs to this resolution write, never to dispatch.
+              // Consent copies the exact stored receipt, so wall clocks grant no sends.
               (yield authStorage(this.storage, "compareAndSet", [
                 lease.spentKey,
                 raw,
@@ -3541,7 +3600,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
                   ...(state === "resolved" ? { resolvedAt: Date.now() } : {}),
                 }),
               ])) as boolean;
-            } catch {}
+            } catch {
+              // A lost resolution answer leaves outstanding or the durable outcome;
+              // either blocks replay until a later consent observes a resolved write.
+            }
           }.bind(this),
         );
       },
@@ -3608,7 +3670,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 ])) as string;
                 if ((yield authStorage(this.storage, "compareAndSet", [GRANT, raw, encoded])) as boolean)
                   return committed;
-              } catch {}
+              } catch {
+                // A failed or lost CAS answer may still have committed. Re-read the
+                // epoch and retry these in-memory tokens without another HTTP request.
+              }
             }
             throw this.credentialWriteError();
           }.bind(this),
@@ -3643,7 +3708,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
                   ...(signal ? { signal } : {}),
                 },
               ])) as boolean;
-            } catch {}
+            } catch {
+              // See above: a refusal that could not be recorded recurs, it does not hide.
+            }
           }.bind(this),
         );
       },
@@ -3741,7 +3808,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 if (plainObject(flow) && flow.epoch === live) continue;
                 (yield authStorage(this.storage, "compareAndSet", [key, raw, null])) as boolean;
               }
-            } catch {}
+            } catch {
+              // Hygiene only: the epoch, not this, fences a stale consent.
+            }
           }.bind(this),
         );
       },
@@ -3755,6 +3824,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
           function* (this: KvOAuthProvider) {
             try {
               const records: Array<[string, string]> = [];
+              // A reset may sweep an old lease while its HTTP request is still live.
+              // Keep holder liveness until completion or its storage-owned TTL: spent
+              // records in later epochs still use it to distinguish live from crashed.
               for (const key of (yield authStorage(this.storage, "list", [oauthRefreshKeys.prefix])) as string[]) {
                 const raw = (yield authStorage(this.storage, "get", [key])) as string | null;
                 if (raw !== null) records.push([key, raw]);
@@ -3765,7 +3837,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
                   (yield authStorage(this.storage, "compareAndSet", [key, raw, null])) as boolean;
                 }
               }
-            } catch {}
+            } catch {
+              // Stale dispatch records cannot grant credentials: epochs never recur.
+            }
           }.bind(this),
         );
       },

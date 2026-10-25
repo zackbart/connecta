@@ -56,6 +56,9 @@ const revokeDownstreamGrantNative = /* @__PURE__ */ registerAuth(
         )
           throw new OAuthRevocationError();
         const target = new URL(endpoint);
+        // An operator-trusted HTTP MCP origin does not authorize plaintext
+        // credential endpoints. Only the existing loopback development exception
+        // is eligible; the connector's destination guard still checks that scope.
         if (
           (target.protocol !== "https:" &&
             !(target.protocol === "http:" && classifyHost(target.hostname) === "loopback")) ||
@@ -120,11 +123,13 @@ const revokeDownstreamGrantNative = /* @__PURE__ */ registerAuth(
               target,
               { method: "POST", headers, body: params, redirect: "manual", signal: deadline.signal },
             ])) as Response;
+            // RFC 7009's success is HTTP 200. Bodies and headers never explain a failure.
             void response.body?.cancel().catch(() => {});
             if (response.status !== 200) throw new OAuthRevocationError();
           }),
         ])) as void;
       } catch {
+        // No provider text, credential-bearing URL, original exception, or cause survives.
         throw new OAuthRevocationError();
       } finally {
         clearTimeout(timer);
