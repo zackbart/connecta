@@ -1,9 +1,9 @@
-// Native SQL execution, private to the /d1 and /sqlite import graphs.
-// The D1 Connection deliberately uses the public binding's run/batch metadata:
-// @effect/sql-d1 4.0.5 discards batch meta.changes and requires a wider binding.
-// Keeping a small Connection here preserves both exact counts and structural
-// compatibility without RETURNING payloads, extra statements, or a new peer.
-import { Effect } from "effect";
+// Native SQL service, private to the /d1 and /sqlite import graphs.
+// SqlClient services and Statement operations execute reads and writes. Atomic
+// batches retain the public platform metadata and structural D1 compatibility.
+import { Effect, Stream } from "effect";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Reactivity from "effect/reactivity/Reactivity";
 import type { Connection } from "effect/sql/SqlConnection";
 import { SqlError, UnknownError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
@@ -37,11 +37,10 @@ export function sqlPromise<A>(operation: () => Promise<A>): Effect.Effect<A, Sql
 }
 
 /**
- * effect/sql owns statement compilation and connection execution. Native batch
- * is a separate driver capability: D1 cannot use withTransaction; SQLite must
- * keep BEGIN IMMEDIATE through COMMIT synchronous on the shared DatabaseSync.
- * Compilation and execution happen inside the operation. Only Node's
- * prepared-statement cache and the deployment database outlive a call.
+ * A request-local public SqlClient service executes actual Statement Effects.
+ * Native batches are deliberately separate: D1 cannot use withTransaction and
+ * SQLite must not yield between BEGIN IMMEDIATE and COMMIT. The deployment
+ * owns the database; the service owns no platform connection or cached I/O.
  */
 export function effectSqlDriver(leaves: {
   all(statement: SqlStatement): Effect.Effect<unknown[], SqlError>;
@@ -52,42 +51,46 @@ export function effectSqlDriver(leaves: {
     sql,
     params: params as SqlStatement["params"],
   });
-  // Fixed statements return raw rows; no caller requests row transformation.
-  const connection = {
-    execute: (sql: string, params: readonly unknown[]) => leaves.all(input(sql, params)),
-    executeRaw: (sql: string, params: readonly unknown[]) => leaves.run(input(sql, params)),
-  } satisfies Pick<Connection, "execute" | "executeRaw">;
-  // These programs need fixed SQL, row reads, exact write metadata and atomic
-  // batches. Use the public compiler/Connection execution API directly rather
-  // than adding SqlClient's reactive queries, streams or transaction scopes.
-  const compiler = Statement.makeCompilerSqlite();
-  const compile = (statement: SqlStatement): SqlStatement => {
-    const [sql, params] = compiler.compile(
-      Statement.fragment([Statement.literal(statement.sql, statement.params)]),
-      false,
-    );
-    return input(sql, params);
+  const execute: Connection["execute"] = (sql, params, transform) =>
+    leaves.all(input(sql, params)).pipe(Effect.map((rows) => (transform ? transform(rows as object[]) : rows)));
+  const values: Connection["executeValues"] = (sql, params) =>
+    leaves.all(input(sql, params)).pipe(Effect.map((rows) => rows.map((row) => Object.values(row as object))));
+  const connection: Connection = {
+    execute,
+    executeRaw: (sql, params) => leaves.run(input(sql, params)),
+    executeUnprepared: execute,
+    executeValues: values,
+    executeValuesUnprepared: values,
+    executeStream: () => Stream.fail(sqlError(new Error("SQL streaming is not supported"))),
   };
+  // This Effect constructs a fresh client and its services inside every
+  // operation. No request-owned object, scope or promise is memoized here.
+  const client = SqlClient.make({
+    acquirer: Effect.succeed(connection),
+    borrower: (use) => use(connection),
+    transactionAcquirer: Effect.fail(sqlError(new Error("Use an atomic SQL batch"))),
+    compiler: Statement.makeCompilerSqlite(),
+    spanAttributes: [],
+  }).pipe(Effect.provideServiceEffect(Reactivity.Reactivity, Reactivity.make));
   const protect = <A>(effect: Effect.Effect<A, SqlError>): Effect.Effect<A, unknown> =>
-    // Let the Promise edge install its abort listener before a synchronous
-    // SQLite leaf can commit. This boundary stays outside the atomic batch.
-    Effect.andThen(Effect.yieldNow, effect).pipe(Effect.mapError(original), Effect.withTracerEnabled(false));
+    // The yield precedes physical execution, never an atomic transaction.
+    // Statement execution creates SQL spans; disable tracing before it starts,
+    // and unwrap only after the private SQL operation has completed.
+    Effect.andThen(Effect.yieldNow, effect).pipe(
+      Effect.withTracerEnabled(false),
+      Effect.mapError(original),
+      Effect.catchDefect((error) => Effect.fail(error)),
+    );
+  const operation = <A>(use: (sql: SqlClient.SqlClient) => Effect.Effect<A, SqlError>) =>
+    protect(SqlClient.SqlClient.use(use).pipe(Effect.provideServiceEffect(SqlClient.SqlClient, client)));
   return {
     all: <Row>(statement: SqlStatement) =>
-      protect(
-        Effect.suspend(() => {
-          const { sql, params } = compile(statement);
-          return connection.execute(sql, params) as Effect.Effect<Row[], SqlError>;
-        }),
-      ),
+      operation((sql) => Effect.map(sql.unsafe(statement.sql, statement.params), (rows) => rows as Row[])),
     run: (statement) =>
-      protect(
-        Effect.suspend(() => {
-          const { sql, params } = compile(statement);
-          return connection.executeRaw(sql, params);
-        }),
-      ),
-    batch: (statements) => protect(Effect.suspend(() => leaves.batch(statements.map(compile)))),
+      operation((sql) => sql.unsafe(statement.sql, statement.params).raw as Effect.Effect<number, SqlError>),
+    // One native transaction returns exact per-statement metadata. This
+    // capability is not SqlClient.withTransaction, which D1 does not support.
+    batch: (statements) => protect(Effect.suspend(() => leaves.batch(statements))),
   };
 }
 
