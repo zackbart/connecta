@@ -696,8 +696,9 @@ A deployment has one store. On Workers it is one D1 database
 (`d1Storage(env.CONNECTA_DB)` from `@zackbart/connecta/d1`); on Node it is one
 SQLite file (`sqliteStorage(path)` from `@zackbart/connecta/sqlite`, over the
 built-in `node:sqlite`). Both are the same SQL key-value store
-(`src/storage/sql.ts`) over a three-method driver, so every statement runs
-unchanged on each, and the same module carries the activity table beside it.
+(`src/storage/sql-native.ts`) over a native Effect SQL execution service, so
+every statement runs unchanged on each, and the same module carries the
+activity table beside it. `src/storage/sql.ts` owns the Promise edges.
 Each store creates its tables on first use. `memoryStorage()` is the default
 and the test double. Workers KV and the 0.28 JSON file store are gone: KV is
 eventually consistent and cannot compare-and-set, and the file store rewrote
@@ -2009,6 +2010,56 @@ settlement. Custom connector hooks, vault and cache adapters, Web Crypto,
 downstream OAuth, and the remote SDK retain their existing Promise boundaries.
 Cross-request call admission deliberately remains a Promise handoff so workerd
 resumes queued work in the request waiting for the permit.
+
+### Native SQL storage (contributor)
+
+`src/storage/sql-native.ts` composes KV, activity schema upgrades, retention,
+and bounded SQL copies as Effects. `src/storage/d1-copy.ts` composes the
+Workers KV copy, source-bound resume claims, verification, cutover guard, and
+recovery. Public factories and copy functions retain their Promise contracts;
+custom Promise SQL drivers retain the fallback lift.
+
+`src/storage/sql-driver.ts` implements Effect 4.0.5's public SQL `Connection`
+and statement-compiler APIs. Fixed SQL uses the SQLite compiler, row execution,
+and raw affected-row execution. Atomic batches use one native database call:
+D1's public `batch`, or SQLite's synchronous `BEGIN IMMEDIATE` through
+`COMMIT`, with rollback on failure. Neither path retries a dispatched write.
+The D1 binding's `meta.changes` is retained for each statement, including zero;
+no `RETURNING` rows, extra metadata statements, or D1 transactions are needed.
+The dependency is the existing exact `effect` pin. Connecta does not adopt
+`@effect/sql-d1`: its 4.0.5 batch API drops metadata and its binding contract
+is wider than Connecta's published structural interface.
+
+SQL fragments are compiled and executed inside the operation. The shared
+compiler and connection capability contain no request state. D1 prepares in the current request and retains no
+prepared handles or promises across requests. SQLite retains only the existing
+connection-owned prepared-statement cache; externally supplied databases remain
+caller-owned. Schema readiness is a boolean, never an in-flight promise.
+A microtask boundary precedes physical execution so cancellation already
+pending at the Promise edge can stop dispatch; an atomic SQLite batch never
+yields between transaction controls. Cancellation cannot roll back a D1 write
+already submitted, and never causes replay.
+
+SQL tracing is disabled at the execution boundary. Private `SqlError` values
+contain fixed wording with no driver cause or parameters; an operation-local
+failure maps back to the original thrown object for existing error handling.
+No new logs or SQL diagnostics reach operator sinks. Existing import errors
+and copy errors keep their fixed, payload-free wording.
+
+`src/runtime/native-storage.ts` supplies optional `getNativeStorage` and
+`getNativeActivity` lookups. An internal consumer may compose their Effects
+without starting another fiber; an absent lookup requires the existing custom
+Promise-store fallback. The lookup module imports no SQL or platform
+implementation and does not change the published storage interfaces.
+
+The synchronous state-file parser, validation, file read, and one atomic
+SQLite import remain native synchronous leaves because `importStateFile` is a
+published synchronous API. `openSqlite` retains file modes, WAL, busy timeout,
+and database ownership. `test/sql-effect-contract.ts` runs native-path,
+affected-row, 50-claim, cancellation, and tracing checks on SQLite and native
+D1. `test/kv-to-d1.test.ts` also reuses stores across separate workerd requests;
+the existing SQL contracts prove rollback, database-clock TTL, encodings,
+activity upgrades, and copy recovery.
 
 ### Internal provider HTTP failures (contributor)
 

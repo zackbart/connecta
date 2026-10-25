@@ -119,7 +119,7 @@ function event(index: number, overrides: Partial<ToolCallActivityEvent> = {}): T
   return {
     schemaVersion: 1,
     id: id(index),
-    occurredAt: new Date(Date.parse("2026-07-27T12:00:00.000Z") + index * 1_000).toISOString(),
+    occurredAt: new Date(Math.trunc(Date.now() / 1000) * 1000 + index * 1_000).toISOString(),
     requestId: `request-${index}`,
     actor: { kind: "bearer", id: "operator" },
     connectorId: "notes",

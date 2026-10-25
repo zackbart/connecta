@@ -1,3 +1,4 @@
+import { sqlEffectContract } from "./sql-effect-contract.js";
 import { INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ActivityStore, KVStorage, ToolCallActivityEvent } from "../src/index.js";
@@ -5,6 +6,7 @@ import { agentFrictionForCode } from "../src/activity-friction.js";
 import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 import { stashChargeContract } from "./stash-charge-contract.js";
 import { compareAndSetContract } from "./storage-contract.js";
+import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import * as sqlStores from "../src/storage/sql.js";
 
 /** Failure injection shared by Node SQLite, proxied D1, and native Workers D1. */
@@ -155,12 +157,13 @@ export function sqlActivityRollbackContract(open: () => Promise<SqlFixture>): vo
         } finally {
           factory.mockRestore();
         }
-        const batch = driver.batch.bind(driver);
+        const native = nativeSqlDriver(driver);
+        const batch = native.batch.bind(native);
         // Keep the actual schema statements and real adapter transaction. The
         // inserted statement prepares successfully, then fails during execution
         // after CREATE TABLE but before CREATE INDEX, on every driver.
         const injection = vi
-          .spyOn(driver, "batch")
+          .spyOn(native, "batch")
           .mockImplementationOnce((statements) =>
             batch([
               statements[0]!,
@@ -236,6 +239,7 @@ export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | 
 export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   sqlBatchRollbackContract(open);
   sqlActivityRollbackContract(open);
+  sqlEffectContract(open);
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -586,7 +590,7 @@ function event(index: number, overrides: Partial<ToolCallActivityEvent> = {}): T
   return {
     schemaVersion: 1,
     id: id(index),
-    occurredAt: new Date(Date.parse("2026-07-27T12:00:00.000Z") + index * 1_000).toISOString(),
+    occurredAt: new Date(Math.trunc(Date.now() / 1000) * 1000 + index * 1_000).toISOString(),
     requestId: `request-${index}`,
     actor: { kind: "bearer", id: "operator" },
     connectorId: "notes",
