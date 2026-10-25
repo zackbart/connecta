@@ -268,6 +268,7 @@ export default defineConfig({
               d1Databases: ["KV_COPY_TARGET"],
               serviceBindings: {
                 CLERK_ORGANIZATION: "clerk-organization",
+                SQL_LIFETIMES: "sql-lifetimes",
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
                 ...Object.fromEntries(
@@ -279,6 +280,14 @@ export default defineConfig({
                 ),
               },
               workers: await Promise.all([
+                {
+                  name: "sql-lifetimes",
+                  modules: true,
+                  script: await fixtureBundle("./test/fixtures/d1-native-worker.ts"),
+                  compatibilityDate: "2025-01-01",
+                  compatibilityFlags: ["nodejs_compat"],
+                  d1Databases: { DB: "sql-lifetimes" },
+                },
                 clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
