@@ -54,6 +54,8 @@ const WORKERS_SUITES = [
   // Native response reads can print sensitive downstream text below JS sinks.
   // workerd-native-output.node.test.ts also invokes these three by filename.
   "test/operator-sinks.test.ts",
+  // Browser store fetch/body ordering and recovery deadlines on native timers.
+  "test/operator-store.test.ts",
   "test/clerk-operator-output.test.ts",
   "test/byte-read-response.test.ts",
   "test/write-evidence.test.ts",
