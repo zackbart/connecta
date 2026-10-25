@@ -1,6 +1,0 @@
----
-type: changed
-breaking: true
----
-
-Standardize Tithe.ly's agent surface for 0.35.0 (decision 0011 step 2). `tithely_api_get` becomes `tithely_api_read` and `tithely_api_mutate` becomes `tithely_api_write`: `query` and `form` name/value lists become `query` and `body` objects, the reply `{ result }` becomes `{ status, data }`, and each call is checked against Tithe.ly's documented operations before it is sent. New `tithely_api_search` and `tithely_api_details` find operations and their parameters without reading account data. `get_organization` and `get_account` are removed: use `list_organizations`/`list_accounts` rows or `tithely_api_read`. `raw` is removed from every named read, and `sensitiveFields: "return"` now widens only the hatch. Lists return `{ items, page }` (the `organizations`, `accounts`, `charges`, `recurringCharges` and `paymentMethods` keys are gone), `page.nextCursor` is omitted on the last page, `list_payment_methods` pages with `limit` and `cursor`, every named read takes `fields`, and organization rows now include `widgetId`. 429 and 5xx answers use the kit's standard wording. The guide's paging, hatch, write and error conventions are generated, and operator setup moves to the maintained provider setup page.
