@@ -28,19 +28,19 @@
           },
           {
             "method": "GET",
-            "path": "/people/v2/people",
-            "operationId": "",
-            "summary": "Find and search People profiles: a person, contact details, active or inactive members, name, email or phone. (List Person)",
-            "tool": "pco_api_read",
-            "named": "search_people"
-          },
-          {
-            "method": "GET",
             "path": "/people/v2/me",
             "operationId": "",
             "summary": "List Person — Planning Center People",
             "tool": "pco_api_read",
             "named": "get_me"
+          },
+          {
+            "method": "GET",
+            "path": "/people/v2/people",
+            "operationId": "",
+            "summary": "Find and search People profiles: a person, contact details, active or inactive members, name, email or phone. (List Person)",
+            "tool": "pco_api_read",
+            "named": "search_people"
           },
           {
             "method": "GET",
