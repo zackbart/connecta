@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-25
 issues: [703]
 supersedes: []
@@ -8,17 +8,25 @@ supersedes: []
 # Effect 4.0.5 routing and upward MCP compatibility proof
 
 Contributor evidence for D.3/D.7 under [0009](./0009-effect-native-rewrite.md)
-and [#703](https://github.com/zackbart/connecta/issues/703). This record does
-not replace an operator contract or claim either production implementation
-has changed. The owner authorized the full rewrite on
-`t3/effect-core-rewrite`; historical release deferrals do not govern this work.
+and [#703](https://github.com/zackbart/connecta/issues/703). This record preserves
+the reviewed historical prefix spike and D7 protocol fallback. Production D3
+now implements the once-per-handler public router plan below; its owning current
+contract is the contributor HTTP dispatch section in
+[architecture](../documentation/architecture.md#production-http-dispatch-contributor-reference).
+No D3 budget acceptance follows from the earlier spike's approval.
 
-The reference is release commit `a471a2a6`, Effect **4.0.5**, and MCP SDK
-**2.3.1**. No dependency is upgraded, no provider fixture is regenerated, and
-no production file is edited by this proof. The runner compiles the actual
-source twice: unchanged dispatcher and HttpRouter candidate. It fails if its
-source-transform seam disappears. It uses real public Effect APIs rather than
-patching the library or substituting a protocol stack.
+The proof runner now compares the actual production dispatcher with a hash-pinned
+test-only snapshot of `src/server.ts` at `ac511e6b` (the reviewed pre-D3 dispatcher,
+unchanged from `a471a2a6`). Both graphs use the current lower native core and
+identical fixtures. Only the legacy baseline is substituted; the production
+candidate's source is unchanged apart from a test-only runtime marker. Exactly
+one server module must be visited per graph, and baseline drift, missed graphs,
+removed real route selection and broken unmatched fallthrough are mutation-tested.
+The obsolete prefix-layer transform/fixture are retired in the production
+PR (the workerd config now runs unmodified production), so intentional server changes cannot silently compare baseline to baseline.
+Effect remains **4.0.5**, SDK **2.3.1**. D7 evidence and its approved SDK protocol
+leaves remain intact. The historical sections below describe the spike rather
+than current production routing.
 
 ## Separate verdicts
 
@@ -72,7 +80,7 @@ semantics, outside a small compatibility adapter and this proof's scope.
 ## Existing proof seam and required production D.3 design
 
 The reusable candidate lives in
-[`test/fixtures/effect-proof/router.ts`](../test/fixtures/effect-proof/router.ts):
+[historical `router.ts`](https://github.com/zackbart/connecta/blob/ac511e6b033511229540481e70d33f6f14a7dc84/test/fixtures/effect-proof/router.ts):
 
 - `matchModule(context, paths, handle)` returns an Effect of `Response | null`.
   Build a route-registration layer and use `HttpRouter.toHttpEffect` inside
@@ -121,9 +129,9 @@ baseline build with a missed esbuild filter, and missing Vitest transforms in
 both actual runtimes. These checks prevent vacuous baseline-versus-baseline
 comparisons if a filename/filter stops matching.
 
-### Once-per-handler authoritative dispatch plan (separate implementation)
+### Once-per-handler authoritative dispatch plan (implemented by production D3)
 
-`createFetchHandler` should own two immutable HttpRouter dispatchers, human
+`createFetchHandler` owns two immutable HttpRouter dispatchers, human
 and agent, with request-free route programs compiled once per handler. The
 existing origin/HTTPS and raw `isAgentPath` ingress guards still run before
 dispatch. The agent guard selects the agent dispatcher, whose wildcard handler
@@ -174,7 +182,7 @@ acceptance; this proof implements no production dispatcher or cap change.
 followed by response-body cancellation. A proof-only build-counter transform
 is omitted from deployment-size bundles. This is a local diagnostic, with no
 CI latency threshold; load, order and a 1 ms native clock resolution limit
-comparisons. The baseline builds zero HttpRouters. The current candidate
+comparisons. The baseline builds zero HttpRouters. The historical prefix candidate
 builds one per CIMD request and **six per health/missing/MCP request**, with
 zero at construction, confirming the review's rebuild concern.
 
@@ -224,7 +232,7 @@ exchange. It never imports Effect internals.
 | Public registration and Eve                    | Existing SDK-typed registration declarations stay unchanged. An Effect service is not a drop-in SDK McpServer class. No ambient stubs or public signature changes are proposed. An integrated Effect replacement has no Eve/packed-consumer equivalence claim.                                    |
 | Request isolation                              | Modern layers are disposed per exchange and run in actual workerd; route queues/body lifetimes are proven separately. Full Effect native/auth partition, cancellation, abandonment and capability-isolation parity is unproved and cannot inherit D.3's verdict.                                  |
 
-The smallest safe D.7 implementation is to retain **both SDK protocol leaves**:
+The approved D.7 implementation retains **both SDK protocol leaves**:
 fresh `createMcpHandler` modern exchange and fresh JSON-enabled stateless legacy
 transport, with public SDK registration signatures unchanged. Move registration
 preparation, catalog/native selection, auth-elicitation policy, invocation and
@@ -260,8 +268,8 @@ incremental alongside the retained SDK, not a replacement/savings estimate;
 the machine report contains its exact current values. Only one resolved
 Effect copy is present. Neither candidate adds a `node:` import to neutral
 entries; the Worker retains its existing optional codemode external. Adoption
-needs a named purity allowance for `effect/http` or `effect/ai`; this proof
-changes none. Published source/declarations are untouched, and existing purity,
+needs a named purity allowance for `effect/http` or `effect/ai`; the historical spike changed none. Production D3 confines four public
+HTTP module imports to `src/routes/dispatch.ts`. Published source/declarations are untouched, and existing purity,
 package-surface and declaration checks remain required.
 
 For continuity, the original Homebrew Node22.23.3 + LD_PRELOAD observations
@@ -281,8 +289,8 @@ After `pnpm install`, run `pnpm run build:operator-ui` and
 VITEST_MAX_WORKERS=2 pnpm run test:node test/effect-core-proof.node.test.ts
 node scripts/probes/effect-core-compatibility.mjs /absolute/proof-report.json /absolute/bundles
 VITEST_MAX_WORKERS=2 pnpm run test:node test/effect-router-transform.node.test.ts
-VITEST_MAX_WORKERS=2 pnpm exec vitest run --config scripts/probes/effect-router.vitest.config.mjs --project node test/downstream-auth-best-practice.test.ts test/server-route-contracts.test.ts test/request-pipeline.test.ts test/oauth-callback-fencing.test.ts
-VITEST_MAX_WORKERS=2 pnpm exec vitest run --config scripts/probes/effect-router.vitest.config.mjs --project workers test/downstream-auth-best-practice.test.ts test/request-pipeline.test.ts test/request-admission.test.ts test/auth-elicitation.test.ts
+VITEST_MAX_WORKERS=2 pnpm run test:node test/downstream-auth-best-practice.test.ts test/server-route-contracts.test.ts test/request-pipeline.test.ts test/oauth-callback-fencing.test.ts
+VITEST_MAX_WORKERS=2 pnpm run test:workers test/request-pipeline.test.ts test/request-admission.test.ts test/auth-elicitation.test.ts
 ```
 
 On Homebrew Linux prepend `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libz.so.1` to

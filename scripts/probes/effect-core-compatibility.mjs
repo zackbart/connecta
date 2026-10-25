@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
-import { routerCandidate } from "./effect-router-transform.mjs";
+import { baselineCommit, routerCandidate } from "./effect-router-transform.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const fixture = join(root, "test/fixtures/effect-proof");
@@ -39,12 +39,12 @@ const edgeCounter = {
 const routerBuildCounter = {
   name: "proof-router-build-counter",
   setup(bundle) {
-    bundle.onLoad({ filter: /\/test\/fixtures\/effect-proof\/router\.ts$/ }, async ({ path }) => ({
-      loader: "ts",
+    bundle.onLoad({ filter: /\/effect\/dist\/http\/HttpRouter\.js$/ }, async ({ path }) => ({
+      loader: "js",
       contents: replaceOnce(
         await readFile(path, "utf8"),
-        "      const route = yield* HttpRouter.toHttpEffect(app)",
-        "      globalThis.__proofRouterBuilds = (globalThis.__proofRouterBuilds ?? 0) + 1;\n      const route = yield* HttpRouter.toHttpEffect(app)",
+        "export const make = /*#__PURE__*/Effect.gen(function* () {",
+        "export const make = /*#__PURE__*/Effect.gen(function* () {\n globalThis.__proofRouterBuilds = (globalThis.__proofRouterBuilds ?? 0) + 1;",
       ),
     }));
   },
@@ -137,7 +137,7 @@ async function measure(candidatePlugin, bundleDirectory) {
         ...baseBuild,
         entryPoints: [entry],
         minify: true,
-        plugins: [self, ...(candidate ? [candidatePlugin(`${name}-size`)] : [])],
+        plugins: [self, candidate ? candidatePlugin(`${name}-size`) : routerCandidate({ legacy: true })],
       });
       if (bundleDirectory)
         await writeFile(
@@ -218,7 +218,11 @@ export async function runProof({ bundleDirectory } = {}) {
         const bundle = await build({
           ...baseBuild,
           entryPoints: [join(fixture, "observations.ts")],
-          plugins: [...(candidate ? [candidatePlugin("node")] : []), edgeCounter, routerBuildCounter],
+          plugins: [
+            candidate ? candidatePlugin("node") : routerCandidate({ legacy: true }),
+            edgeCounter,
+            routerBuildCounter,
+          ],
         });
         const path = join(work, candidate ? "candidate.mjs" : "baseline.mjs");
         await writeFile(path, bundle.outputFiles[0].contents);
@@ -231,6 +235,7 @@ export async function runProof({ bundleDirectory } = {}) {
         const agents = await api.runAgentNamespaces();
         node.push({
           routes,
+          edges: await api.runRoutingEdges(),
           routeEdges,
           agents,
           lifetimes: await api.runLifetimes(),
@@ -241,6 +246,7 @@ export async function runProof({ bundleDirectory } = {}) {
       const tools = JSON.parse(node[0].routes.find((r) => r.label === "modern /mcp list").response.body).result.tools;
       node[1].mcp = await node[1].api.runMcp(tools);
       node[1].seam = await node[1].api.runRouterSeam();
+      node[1].isolation = await node[1].api.runRouterIsolation();
     } finally {
       for (const level of ["log", "warn", "error", "info", "debug"]) console[level] = savedConsole[level];
     }
@@ -250,7 +256,7 @@ export async function runProof({ bundleDirectory } = {}) {
       const bundle = await build({
         ...baseBuild,
         entryPoints: [join(fixture, "worker.ts")],
-        plugins: [...(candidate ? [candidatePlugin("workerd")] : []), routerBuildCounter],
+        plugins: [candidate ? candidatePlugin("workerd") : routerCandidate({ legacy: true }), routerBuildCounter],
       });
       const worker = new Miniflare({
         modules: true,
@@ -270,17 +276,27 @@ export async function runProof({ bundleDirectory } = {}) {
       if (marker.applied !== candidate) throw new Error("Proof workerd transform marker mismatch");
       native.push({
         routes: await workerRequest(worker, "/proof/routes"),
+        edges: await workerRequest(worker, "/proof/edges"),
         agents: await workerRequest(worker, "/proof/agents"),
         seam: await workerRequest(worker, "/proof/seam"),
+        isolation: await workerRequest(worker, "/proof/isolation"),
         mcp: await workerRequest(worker, "/proof/mcp", tools),
         queue: await queueProof(worker),
         lifetimes: await workerRequest(worker, "/proof/lifetimes"),
         latency: await timedWorkerLatency(worker),
       });
     }
+    // Repeat in reverse order, with identical warmups/batches, to expose order
+    // and host-load bias instead of presenting one timing as a speed threshold.
+    const reverseNode = [];
+    const reverseWorkers = [];
+    for (const index of [1, 0]) {
+      reverseNode[index] = await node[index].api.runDispatchLatency();
+      reverseWorkers[index] = await timedWorkerLatency(workers[index]);
+    }
     return {
       sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
-      baseline: "a471a2a6",
+      baseline: baselineCommit,
       node: process.version,
       zlib: process.versions.zlib,
       effect,
@@ -288,14 +304,17 @@ export async function runProof({ bundleDirectory } = {}) {
       router: {
         node: compare(node[0].routes, node[1].routes),
         workers: compare(native[0].routes, native[1].routes),
+        edges: { node: compare(node[0].edges, node[1].edges), workers: compare(native[0].edges, native[1].edges) },
         nodeAgents: compare(node[0].agents, node[1].agents),
         workersAgents: compare(native[0].agents, native[1].agents),
         runners: { importEdges, baseline: node[0].routeEdges, candidate: node[1].routeEdges },
         seam: { node: node[1].seam, workers: native[1].seam },
+        isolation: { node: node[1].isolation, workers: native[1].isolation },
         queue: native.map((n) => n.queue),
         logs,
         transforms,
         latency: { node: node.map((n) => n.latency), workers: native.map((n) => n.latency) },
+        latencyReverse: { node: reverseNode, workers: reverseWorkers },
         cimd: {
           node: node.map((n) => n.routes.filter((r) => r.label.startsWith("CIMD "))),
           workers: native.map((n) => n.routes.filter((r) => r.label.startsWith("CIMD "))),

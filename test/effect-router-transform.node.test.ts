@@ -1,71 +1,107 @@
-// Node-only: mutation tests run esbuild and a nested Vitest against actual source.
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
+// Node-only: mutation probes compile the real production and frozen legacy graphs.
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 
 const moduleUrl = new URL("../scripts/probes/effect-router-transform.mjs", import.meta.url).href;
-const { candidateSource, routerCandidate } = (await import(moduleUrl)) as {
+const { baselineSource, candidateSource, routerCandidate } = (await import(moduleUrl)) as {
+  baselineSource(source: string): string;
   candidateSource(source: string): string;
-  routerCandidate(options?: { filter?: RegExp }): import("esbuild").Plugin;
+  routerCandidate(options?: { legacy?: boolean; filter?: RegExp }): import("esbuild").Plugin;
 };
 
-describe("proof router transform enforcement", () => {
-  it("rejects a valid compiled baseline when the esbuild filter misses server.ts", async () => {
-    const options = {
-      entryPoints: ["src/server.ts"],
-      bundle: true,
-      format: "esm" as const,
-      platform: "neutral" as const,
-      conditions: ["workerd", "worker", "browser", "import"],
-      external: ["node:*"],
-      write: false,
-      logLevel: "silent" as const,
-    };
-    await build(options);
-    await expect(build({ ...options, plugins: [routerCandidate({ filter: /never-match-server/ })] })).rejects.toThrow(
-      "Proof router transform count 0; expected exactly 1",
-    );
-  });
+describe("production router proof enforcement", () => {
+  for (const legacy of [true, false])
+    it(`rejects a missed ${legacy ? "legacy" : "production"} graph even when compilation succeeds`, async () => {
+      const options = {
+        entryPoints: ["src/server.ts"],
+        bundle: true,
+        format: "esm" as const,
+        platform: "neutral" as const,
+        conditions: ["workerd", "worker", "browser", "import"],
+        external: ["node:*"],
+        write: false,
+        logLevel: "silent" as const,
+      };
+      await build(options);
+      await expect(
+        build({ ...options, plugins: [routerCandidate({ legacy, filter: /never-match-server/ })] }),
+      ).rejects.toThrow("Proof router transform count 0; expected exactly 1");
+    });
 
-  it("rejects structural drift and repeated transforms, and emits a runtime marker for a real match", async () => {
+  it("pins the frozen dispatcher and rejects a candidate that bypasses production dispatch", async () => {
+    const legacy = await readFile(new URL("./fixtures/effect-proof/legacy-server.ts.txt", import.meta.url), "utf8");
+    expect(baselineSource(legacy)).toBe(legacy);
+    expect(() => baselineSource(legacy.replace("const route =", "const routeRenamed ="))).toThrow(
+      "Frozen legacy dispatcher changed",
+    );
     const source = await readFile(new URL("../src/server.ts", import.meta.url), "utf8");
-    const transformed = candidateSource(source);
-    expect(transformed).toContain("export const CONNECTA_PROOF_ROUTER_TRANSFORM = true");
-    expect(() => candidateSource(source.replace("const route =", "const routeRenamed ="))).toThrow(
-      "Proof route transform drift",
-    );
-    expect(() => candidateSource(transformed)).toThrow("Proof route transform drift");
+    const candidate = candidateSource(source);
+    expect(candidate.startsWith(source)).toBe(true);
+    expect(() =>
+      candidateSource(source.replace("const route = createRouteDispatcher", "const route = bypass")),
+    ).toThrow("Production router proof drift");
+    expect(() => candidateSource(candidate)).toThrow("Production router proof drift");
   });
 
-  for (const project of ["node", "workers"])
-    it(`rejects a missing Vitest transform in the actual ${project} runtime`, async () => {
-      let failure: { code?: number; stdout?: string; stderr?: string } | undefined;
-      try {
-        await promisify(execFile)(
-          process.execPath,
-          [
-            "node_modules/vitest/vitest.mjs",
-            "run",
-            "--config",
-            "scripts/probes/effect-router.vitest.config.mjs",
-            "--project",
-            project,
-            "test/downstream-auth-best-practice.test.ts",
-          ],
-          {
-            env: { ...process.env, CONNECTA_PROOF_MUTATION: "miss-server", VITEST_MAX_WORKERS: "2" },
-            timeout: 90_000,
-            maxBuffer: 2_000_000,
+  it("detects removal of actual route selection and unmatched fallthrough", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-router-mutation-"));
+    try {
+      const statuses: unknown[] = [];
+      for (const mutation of ["none", "selection", "unmatched"]) {
+        const result = await build({
+          stdin: {
+            contents: `import { createRouteDispatcher } from "./src/routes/dispatch.js";
+              import { Effect } from "effect";
+              import { runEdge } from "./src/runtime/run.js";
+              const route = createRouteDispatcher(() => Effect.succeed(null), () => Effect.succeed(null), async () => new Response("ok"));
+              export async function probe(path) {
+                const request = new Request("https://test.invalid" + path);
+                try { return (await runEdge(route({ request, url: new URL(request.url), path, baseUrl: "https://test.invalid", opts: { config: {} } }))).status; }
+                catch { return "unhandled"; }
+              }`,
+            resolveDir: process.cwd(),
+            loader: "ts",
           },
-        );
-      } catch (error) {
-        failure = error as typeof failure;
+          bundle: true,
+          format: "esm",
+          platform: "neutral",
+          conditions: ["workerd", "worker", "browser", "import"],
+          external: ["node:*"],
+          write: false,
+          logLevel: "silent",
+          plugins: [
+            {
+              name: "mutation",
+              setup(bundle) {
+                bundle.onLoad({ filter: /\/src\/routes\/dispatch\.ts$/ }, async ({ path }) => {
+                  let contents = await readFile(path, "utf8");
+                  if (mutation !== "none") {
+                    const before = mutation === "selection" ? '"/health",' : "!current.entered &&";
+                    expect(contents.split(before)).toHaveLength(2);
+                    contents = contents.replace(before, mutation === "selection" ? '"/removed-health",' : "false &&");
+                  }
+                  return { contents, loader: "ts" };
+                });
+              },
+            },
+          ],
+        });
+        const file = join(directory, `${mutation}.mjs`);
+        await writeFile(file, result.outputFiles[0]!.contents);
+        const { probe } = await import(pathToFileURL(file).href);
+        statuses.push([await probe("/health"), await probe("/missing")]);
       }
-      expect(failure?.code).toBe(1);
-      expect((failure?.stdout ?? "") + (failure?.stderr ?? "")).toContain(
-        "Proof router candidate transform was not applied in this Vitest runtime",
-      );
-    }, 100_000);
+      expect(statuses).toEqual([
+        [200, 404],
+        [404, 404],
+        [200, "unhandled"],
+      ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
