@@ -1,7 +1,19 @@
 import type { OAuthClientInformationMixed, OAuthDiscoveryState, OAuthTokens } from "@modelcontextprotocol/client";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
+import { runEdge } from "../runtime/run.js";
 import { oauthV2Keys, type OAuthV2ValueKey } from "../storage/keys.js";
 import type { KVStorage } from "../types.js";
+import {
+  authAll,
+  authCall,
+  authFlow,
+  authInvoke,
+  authMap,
+  authMethod,
+  authProgram,
+  authStorage,
+  registerAuth,
+} from "./native.js";
 
 // The one-shot reader of layout 2 (0.22 through 0.28), kept only until every
 // deployment has opened its grants once under layout 3. A grant is read here
@@ -65,92 +77,121 @@ export function discoveryIssuer(state: unknown): string | undefined {
  * discovery names, if any; otherwise it migrates empty and needs consent.
  * One-shot consent state (pending URL, verifier, state) is not carried.
  */
-export async function readV2Grant(
+export function readV2Grant(
   storage: KVStorage,
   sealer: OAuthStateSealer | undefined,
 ): Promise<MigratedGrant | undefined> {
-  const keys = await listV2Keys(storage);
-  if (keys.length === 0) return undefined;
-  const generation = (await storage.get(oauthV2Keys.generation)) ?? "legacy";
-  if (generation.startsWith("disconnected:")) return { disconnected: true, body: {} };
-  if (!generation.startsWith("v2:") && generation !== "legacy") {
-    // An unfinished reset, or a numeric generation from before epochs.
-    return { disconnected: false, body: {} };
-  }
-  const epoch = generation === "legacy" ? null : generation;
-  const read = async (field: OAuthV2ValueKey): Promise<V2Value | undefined> => {
-    const physicalKey = oauthV2Keys.value(field, epoch);
-    const raw = await storage.get(physicalKey);
-    if (raw === null) return undefined;
-    let parsed = parse(raw);
-    if (plainObject(parsed) && parsed.connectaOAuthSealed === 1 && typeof parsed.sealed === "string") {
-      if (!sealer) return undefined;
-      try {
-        parsed = parse(await sealer.open(physicalKey, parsed.sealed));
-      } catch {
-        return undefined;
-      }
-    }
-    if (
-      plainObject(parsed) &&
-      parsed.connectaOAuthVersion === 2 &&
-      parsed.generation === generation &&
-      (parsed.issuer === undefined || typeof parsed.issuer === "string") &&
-      (parsed.binding === undefined || typeof parsed.binding === "string")
-    ) {
-      return {
-        value: parsed.value,
-        ...(parsed.issuer !== undefined ? { issuer: parsed.issuer as string } : {}),
-        ...(parsed.binding !== undefined ? { binding: parsed.binding as string } : {}),
-        ...(parsed.carried === true ? { carried: true as const } : {}),
-      };
-    }
-    // Layout 2 wrote discovery bare under the legacy generation.
-    return field === oauthV2Keys.field.discovery && epoch === null && discoveryIssuer(parsed)
-      ? { value: parsed }
-      : undefined;
-  };
-  const [client, tokens, discovery] = await Promise.all([
-    read(oauthV2Keys.field.client),
-    read(oauthV2Keys.field.tokens),
-    read(oauthV2Keys.field.discovery),
-  ]);
-  const named = discovery ? discoveryIssuer(discovery.value) : undefined;
-  const credentials = [client, tokens].filter((value) => value !== undefined);
-  const issuer = credentials[0]?.issuer ?? named;
-  const consistent =
-    credentials.every((value) => value.issuer !== undefined && value.issuer === issuer && plainObject(value.value)) &&
-    (named === undefined || named === issuer);
-  if (!consistent || issuer === undefined) return { disconnected: false, body: {} };
-  return {
-    disconnected: false,
-    body: {
-      issuer,
-      ...(client
-        ? {
-            client: {
-              value: client.value as OAuthClientInformationMixed,
-              ...(client.binding !== undefined ? { binding: client.binding } : {}),
-              ...(client.carried ? { carried: true as const } : {}),
-            },
-          }
-        : {}),
-      ...(tokens ? { tokens: tokens.value as OAuthTokens } : {}),
-      ...(discovery && named !== undefined ? { discovery: discovery.value as OAuthDiscoveryState } : {}),
-    },
-  };
+  return runEdge(authProgram<MigratedGrant | undefined>(readV2GrantNative, [storage, sealer]));
 }
+const readV2GrantNative = /* @__PURE__ */ registerAuth(
+  readV2Grant,
+  function (storage: KVStorage, sealer: OAuthStateSealer | undefined) {
+    return authFlow<MigratedGrant | undefined>(function* () {
+      const keys = (yield authCall(listV2Keys, [storage])) as string[];
+      if (keys.length === 0) return undefined;
+      const generation = ((yield authStorage(storage, "get", [oauthV2Keys.generation])) as string | null) ?? "legacy";
+      if (generation.startsWith("disconnected:")) return { disconnected: true, body: {} };
+      if (!generation.startsWith("v2:") && generation !== "legacy") {
+        // An unfinished reset, or a numeric generation from before epochs.
+        return { disconnected: false, body: {} };
+      }
+      const epoch = generation === "legacy" ? null : generation;
+      const read = authMethod((field: OAuthV2ValueKey) => {
+        return authFlow<V2Value | undefined>(function* () {
+          const physicalKey = oauthV2Keys.value(field, epoch);
+          const raw = (yield authStorage(storage, "get", [physicalKey])) as string | null;
+          if (raw === null) return undefined;
+          let parsed = parse(raw);
+          if (plainObject(parsed) && parsed.connectaOAuthSealed === 1 && typeof parsed.sealed === "string") {
+            if (!sealer) return undefined;
+            try {
+              parsed = parse((yield authInvoke(sealer, "open", [physicalKey, parsed.sealed])) as string);
+            } catch {
+              return undefined;
+            }
+          }
+          if (
+            plainObject(parsed) &&
+            parsed.connectaOAuthVersion === 2 &&
+            parsed.generation === generation &&
+            (parsed.issuer === undefined || typeof parsed.issuer === "string") &&
+            (parsed.binding === undefined || typeof parsed.binding === "string")
+          ) {
+            return {
+              value: parsed.value,
+              ...(parsed.issuer !== undefined ? { issuer: parsed.issuer as string } : {}),
+              ...(parsed.binding !== undefined ? { binding: parsed.binding as string } : {}),
+              ...(parsed.carried === true ? { carried: true as const } : {}),
+            };
+          }
+          // Layout 2 wrote discovery bare under the legacy generation.
+          return field === oauthV2Keys.field.discovery && epoch === null && discoveryIssuer(parsed)
+            ? { value: parsed }
+            : undefined;
+        });
+      });
+      const [client, tokens, discovery] = (yield authAll(
+        [
+          authCall(read, [oauthV2Keys.field.client]),
+          authCall(read, [oauthV2Keys.field.tokens]),
+          authCall(read, [oauthV2Keys.field.discovery]),
+        ],
+        false,
+      )) as [V2Value | undefined, V2Value | undefined, V2Value | undefined];
+      const named = discovery ? discoveryIssuer(discovery.value) : undefined;
+      const credentials = [client, tokens].filter((value: V2Value | undefined) => value !== undefined);
+      const issuer = credentials[0]?.issuer ?? named;
+      const consistent =
+        credentials.every(
+          (value: V2Value) => value.issuer !== undefined && value.issuer === issuer && plainObject(value.value),
+        ) &&
+        (named === undefined || named === issuer);
+      if (!consistent || issuer === undefined) return { disconnected: false, body: {} };
+      return {
+        disconnected: false,
+        body: {
+          issuer,
+          ...(client
+            ? {
+                client: {
+                  value: client.value as OAuthClientInformationMixed,
+                  ...(client.binding !== undefined ? { binding: client.binding } : {}),
+                  ...(client.carried ? { carried: true as const } : {}),
+                },
+              }
+            : {}),
+          ...(tokens ? { tokens: tokens.value as OAuthTokens } : {}),
+          ...(discovery && named !== undefined ? { discovery: discovery.value as OAuthDiscoveryState } : {}),
+        },
+      };
+    });
+  },
+);
 
 /** Only historical families are removed, never grants, flows, or leases. */
-async function listV2Keys(storage: KVStorage): Promise<string[]> {
-  return (await storage.list(oauthV2Keys.scan)).filter((key) =>
-    oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)),
-  );
+function listV2Keys(storage: KVStorage): Promise<string[]> {
+  return runEdge(authProgram<string[]>(listV2KeysNative, [storage]));
 }
+const listV2KeysNative = /* @__PURE__ */ registerAuth(listV2Keys, function (storage: KVStorage) {
+  return authFlow<string[]>(function* () {
+    return ((yield authStorage(storage, "list", [oauthV2Keys.scan])) as string[]).filter((key: string) =>
+      oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)),
+    );
+  });
+});
 
 /** Return true only when every historical key was deleted. */
-export async function deleteV2Keys(storage: KVStorage): Promise<boolean> {
-  const keys = await listV2Keys(storage);
-  const results = await Promise.allSettled(keys.map((key) => storage.delete(key)));
-  return results.every((result) => result.status === "fulfilled");
+export function deleteV2Keys(storage: KVStorage): Promise<boolean> {
+  return runEdge(authProgram<boolean>(deleteV2KeysNative, [storage]));
 }
+const deleteV2KeysNative = /* @__PURE__ */ registerAuth(deleteV2Keys, function (storage: KVStorage) {
+  return authFlow<boolean>(function* () {
+    const keys = (yield authCall(listV2Keys, [storage])) as string[];
+    const results = (yield authMap(
+      keys,
+      (key: string) => authStorage(storage, "delete", [key]),
+      true,
+    )) as PromiseSettledResult<void>[];
+    return results.every((result: PromiseSettledResult<void>) => result.status === "fulfilled");
+  });
+});

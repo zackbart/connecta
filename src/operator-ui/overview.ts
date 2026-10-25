@@ -117,13 +117,19 @@ export function attentionItems(
     }
   }
   const agents: AttentionItem[] = contract.agents
-    .filter((agent) => agent.pools.length && agent.token.state !== "issued")
+    .filter(
+      (agent) =>
+        agent.pools.length &&
+        !agent.credentialTypes.includes("vercel_oidc") &&
+        agent.token &&
+        agent.token.state !== "issued",
+    )
     .map((agent) => {
       // An agent connects only at a pool's agent URL.
       const paths = agent.pools.map(
         (name) => contract.pools.find((pool) => pool.name === name)?.agentPath ?? `/agent/${name}`,
       );
-      const revoked = agent.token.state === "revoked";
+      const revoked = agent.token?.state === "revoked";
       return {
         key: `agent:${agent.name}`,
         kind: "agent",

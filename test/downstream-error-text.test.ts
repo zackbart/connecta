@@ -1025,7 +1025,8 @@ describe("ProtocolError payloads at every SDK exit", () => {
 
   it.each(["initialize", "tools/list"] as const)("INV-6: removes allowed wire data at %s", async (method) => {
     const base = downstream({ live: true });
-    vi.stubGlobal("fetch", (input: string | URL, init: RequestInit = {}) => {
+    // A platform fetch always returns a Promise, including JSON-RPC error responses.
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
       const request = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
       return request?.method === method
         ? Response.json({

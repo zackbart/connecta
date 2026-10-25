@@ -7,6 +7,7 @@ import { memoryStorage } from "../../src/storage/memory.js";
 import { operatorPageForPath, renderUiHtml, type UiData } from "../../src/ui.js";
 import { fakeClerkAuth } from "../fixtures/http.js";
 import { createTestConnecta } from "../helpers.js";
+import { workloadBinding, workloadFixture } from "../fixtures/workload.js";
 import { fixtureContract } from "./operator-fixture.js";
 
 const TOKEN = "browser-operator-token";
@@ -339,3 +340,177 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     await connecta.close();
   }
 });
+
+for (const ordering of ["late failure", "stalled detail"] as const) {
+  test(`INV-4 INV-10: OAuth poll preserves unrelated ${ordering} and bounded recovery`, async ({ page }) => {
+    const initial: UiData = {
+      ...data(),
+      connectors: [
+        ...data().connectors,
+        ...["tickets", "notes"].map((id) => ({
+          id,
+          title: id,
+          status: "ok" as const,
+          toolCount: 0,
+          tools: [],
+          oauth: false,
+        })),
+      ],
+    };
+    const contract = await fixtureContract(initial);
+    let active = false;
+    let polled = false;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let notesReads = 0;
+    let fullReads = 0;
+    let summaryReads = 0;
+    await page.clock.install();
+    await page.route("**/ui/api/config*", async (route) => {
+      const scoped = new URL(route.request().url()).searchParams.has("connector");
+      if (scoped) polled = true;
+      else if (active) fullReads++;
+      await route.fulfill({
+        json: {
+          ...contract,
+          live: {
+            ...contract.live,
+            connectors: contract.live.connectors
+              .filter((row) => !scoped || row.id === "oauth")
+              .map((row) => (row.id === "oauth" && polled ? { ...row, status: "ok", problem: undefined } : row)),
+          },
+        },
+      });
+    });
+    await page.route("**/ui/data", async (route) => {
+      if (active) summaryReads++;
+      await route.fulfill({ json: initial });
+    });
+    await page.route("**/ui/connectors/*", async (route) => {
+      const id = new URL(route.request().url()).pathname.split("/").at(-1)!;
+      if (active && id === "notes" && ++notesReads === 1) await pending;
+      if (active && (id === "tickets" || id === "notes")) {
+        await route.fulfill({ status: 503, json: { error: "unavailable" } });
+      } else {
+        const row = initial.connectors.find((row) => row.id === id)!;
+        await route.fulfill({ json: id === "oauth" && polled ? { ...row, status: "ok" } : row });
+      }
+    });
+    try {
+      await openAuthenticated(page, "/connectors/oauth#connection");
+      await expect(page.getByRole("button", { name: "Connect CRM" })).toBeVisible();
+      active = true;
+      const popup = page.waitForEvent("popup");
+      await page.getByRole("button", { name: "Connect CRM" }).click();
+      await (await popup).close();
+      await expect.poll(() => notesReads).toBe(1);
+      await page.clock.runFor(2000);
+      await expect(page.locator("#connectorView .conn-head")).toContainText("Connected");
+      if (ordering === "stalled detail") {
+        await page.clock.runFor(13_000);
+        await expect(page.locator("#recoveryBanner")).toBeVisible();
+        await expect(page.locator("#recoveryRetry")).toHaveText("Retry");
+        await page.clock.runFor(60_000);
+        expect(fullReads).toBe(1);
+        expect(summaryReads).toBe(0);
+      } else {
+        const settled = page.waitForResponse((response) => response.url().endsWith("/ui/connectors/notes"));
+        release();
+        await (await settled).finished();
+        await page.title();
+        for (const [index, delay] of [2000, 2000, 4000, 8000].entries()) {
+          const next = page.waitForResponse((response) => response.url().endsWith("/ui/connectors/notes"));
+          await page.clock.runFor(delay);
+          await expect.poll(() => summaryReads).toBe(index + 1);
+          await (await next).finished();
+          await page.title();
+        }
+        await page.clock.runFor(60_000);
+        expect(summaryReads).toBe(4);
+        expect(fullReads).toBe(5);
+        await page.getByRole("link", { name: "Connectors", exact: true }).click();
+        for (const id of ["tickets", "notes"]) {
+          await expect(
+            page.locator(`.connector-card`).filter({ has: page.getByRole("link", { name: id, exact: true }) }),
+          ).toContainText("Unavailable");
+        }
+      }
+      expect(requests.filter((r) => r.method === "POST" && r.path.startsWith("/ui/oauth/"))).toHaveLength(1);
+    } finally {
+      release();
+    }
+  });
+}
+
+for (const kind of ["oidc-only", "token-only", "both"] as const) {
+  test(`INV-4 INV-6 INV-10: declared ${kind} agents show pools, credentials and admitted last-seen`, async ({
+    page,
+  }, testInfo) => {
+    const storage = memoryStorage();
+    const tokens = kind !== "oidc-only";
+    const workload = await workloadFixture();
+    const fetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      expect(new Request(input).url).toBe("https://oidc.vercel.com/.well-known/jwks");
+      return Response.json(workload.jwks);
+    };
+    const app = createTestConnecta({
+      logger: "silent",
+      storage,
+      auth: fakeClerkAuth(),
+      connectors: [{ id: "crm", staticTools: [], listTools: async () => [], callTool: async () => null }],
+      agents: kind === "token-only" ? ["assistant"] : [{ name: "assistant", vercel: workloadBinding }],
+      ...(tokens ? { accessTokens: accessTokens(storage) } : {}),
+      pools: { team: { tools: ["crm"], members: ["agent:assistant"] } },
+    });
+    realRoutes = { connecta: app, paths: new Set(["/ui/api/config", "/ui/data", "/ui/access-tokens"]) };
+    try {
+      // Successful admission alone, without a completed tool call or activity module.
+      const bearer =
+        kind === "token-only"
+          ? (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant", "browser-test")).token
+          : await workload.token();
+      const admitted = await app.fetch(
+        new Request(`${REAL_BASE}/agent/team`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${bearer}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+      expect(admitted.status).toBe(200);
+      await admitted.text();
+      await openAuthenticated(page);
+      await page.getByRole("link", { name: "Tokens", exact: true }).click();
+      const row = page.locator('tr[data-agent="assistant"]');
+      await expect(row).toBeVisible();
+      await expect(row.getByRole("list", { name: "assistant's pools" })).toHaveText("team");
+      await expect(row.locator(".token-date").last()).not.toHaveText("never");
+      await expect(row.locator(".agent-name > span[title]")).toHaveAttribute(
+        "title",
+        kind === "token-only" ? "Agent token" : kind === "both" ? "Agent token · Vercel OIDC" : "Vercel OIDC",
+      );
+      if (!tokens) {
+        await expect(row.locator(".badge")).toHaveText("Not configured");
+        await expect(row.getByRole("button")).toHaveCount(0);
+        expect(requests.filter((request) => request.path === "/ui/access-tokens")).toHaveLength(0);
+      } else {
+        await expect(row.locator(".badge")).toHaveText(kind === "both" ? "No token" : "Issued");
+        await expect(
+          row.getByRole("button", { name: kind === "both" ? "Issue assistant's token" : "Rotate assistant's token" }),
+        ).toBeEnabled();
+      }
+      expect(await page.content()).not.toContain(bearer);
+      await page.screenshot({ path: testInfo.outputPath(`agent-${kind}.png`) });
+    } finally {
+      globalThis.fetch = fetch;
+      realRoutes = undefined;
+      await app.close();
+    }
+  });
+}
