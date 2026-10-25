@@ -2413,11 +2413,22 @@ bindings declare static operation refusals separately from argument validation.
 An unreviewed operation reports the missing hatch verdict. A refused hit has
 no read/write hatch pointer; a reviewed named alternative can still be shown.
 
-Verb-less noun phrases then sort by noun coverage, an exact summary phrase prefix,
-then path depth with a one-segment preference for authored tools, exact
-resource-noun coverage, and authored-tool preference. A pointer to another
-hatch receives no authored-tool preference. Exact resource nouns
-exclude a namespace before a version segment. For a single noun, and for
+Verb-less noun phrases first sort by noun coverage and an exact summary phrase
+prefix, then by an exact terminal resource: the last literal non-version segment must contain the last query noun
+or the concatenated noun phrase (`invoiceitems` for `invoice items`). An authored
+read whose vendor summary/id covers every noun shares that terminal-resource
+tier only when a real terminal-resource match exists and its description
+begins with a read action; the action word itself
+does not supply noun coverage. This preserves aggregate
+authored entry points without treating a verification action as a token list. When both candidates match the terminal resource,
+a reviewed read precedes writes and refusals. Depth with a one-segment authored
+tool preference, exact resource-noun coverage, and authored-tool preference
+break remaining ties. A pointer to another hatch receives no authored preference.
+Exact resource nouns include literal namespaces on either side of a version
+segment; parameters and version markers supply no resource coverage. This
+prefers `members` over summary-only membership matches and `tokens` over a
+verification action, while direct versioned collections retain their depth
+advantage over nested collections. For a single noun, and for
 leading `list` queries with one exact resource noun plus modifiers, collection
 ties sort by exact root, fewer nested resources, matching namespace, shallow
 depth and authored tool. Other leading `list` queries prefer authored tools

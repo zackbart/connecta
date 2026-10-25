@@ -28,10 +28,18 @@ declared field names. Verb-less noun phrases keep their broader rule: any noun
 in the path/id, or every noun in the text. Framing-only queries return no matches.
 
 A noun phrase first prefers fuller noun coverage and an exact summary phrase
-prefix, then path depth with a one-segment preference for authored tools, exact
-resource nouns and authored tools. A pointer to another hatch receives no
-authored-tool preference. A namespace before a version segment does
-not count as an exact resource noun in that tie. A single noun, or a leading
+prefix, then an exact terminal
+resource (its last literal segment matches the last noun or the complete
+compound phrase). An authored read whose
+summary/id covers every noun shares the terminal-resource tier when an exact
+terminal resource exists and its
+description begins with a read action; the action word does not supply resource
+noun coverage. When both terminal
+resources match, reviewed reads precede writes and refusals. Path depth with a
+one-segment authored-tool preference, exact resource nouns and authored tools
+break remaining ties. A pointer to another hatch receives no authored preference.
+Literal namespaces on either side of a version segment count as resource nouns;
+version markers and parameters do not. A single noun, or a leading
 `list` with only one exact resource noun plus modifiers, prefers the root
 collection before nested routes. Other `list` phrases prefer an authored tool
 whose summary/id covers every noun. Lexical relevance and stable index order

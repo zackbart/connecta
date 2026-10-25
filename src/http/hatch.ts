@@ -549,6 +549,7 @@ export function hatch(
   };
   const queryTerms = (query: string) => {
     const terms = queryWords(query).filter((term) => !functionWords.has(term));
+    const resourcePhrase = queryWords(query.split(/(?:^|\s)(?:for|of|in|on|by|with)(?=\s|$)/i)[0]!).filter(isNoun);
     const lookup = terms.find((term) => readActions.has(term));
     const first = terms[0];
     // issue/process remain nouns unless a leading verb has another noun to act on.
@@ -566,6 +567,7 @@ export function hatch(
       const nouns = object.slice(1).filter(isNoun);
       return {
         terms,
+        resourcePhrase,
         nouns,
         suppliedValue: object.length > 1 && !nouns.length,
         verbWords:
@@ -579,6 +581,7 @@ export function hatch(
     const verb = lookup ?? (leadingVerb ? first : undefined);
     return {
       terms,
+      resourcePhrase,
       suppliedValue: false,
       nouns: terms.filter(
         (term, position) =>
@@ -611,6 +614,7 @@ export function hatch(
   const rank = (found: readonly Operation[], query: ReturnType<typeof queryTerms>, pathQuery: boolean): Operation[] => {
     if (pathQuery) return [...found];
     const { nouns, intent, verbWords } = query;
+    const headNouns = query.resourcePhrase.length ? query.resourcePhrase : nouns;
     const phrase = intent === undefined && nouns.length > 1;
     // Modifiers may precede the resource in action/read queries. Noun phrases
     // retain their broader resource match without the half-coverage threshold.
@@ -624,11 +628,7 @@ export function hatch(
         const description = words(`${op.summary} ${op.operationId}`);
         const verbal = [...description, ...words(op.path)];
         const text = [...verbal, ...words(op.tag)];
-        const version = parts.findIndex((part) => /^v\d+$/.test(part));
-        const resources = parts
-          .slice(version + 1)
-          .filter((part) => !part.startsWith("{"))
-          .flatMap(words);
+        const resources = parts.filter((part) => !part.startsWith("{") && !/^v\d+$/.test(part)).flatMap(words);
         const authored = named.get(`${op.method} ${op.path}`);
         const summary = phrase ? queryWords(op.summary) : [];
         return {
@@ -640,6 +640,16 @@ export function hatch(
           parameter,
           text,
           resources,
+          terminal: parts
+            .filter((part) => !part.startsWith("{") && !/^v\d+$/.test(part))
+            .slice(-1)
+            .some((part) =>
+              words(part).some((word) => sameNoun(word, headNouns.at(-1) ?? "") || sameNoun(word, headNouns.join(""))),
+            ),
+          readDescription: readActions.has(description[0] ?? ""),
+          authoredCoverage: nouns.filter((term) =>
+            description.slice(1).some((word) => !readActions.has(word) && matches(word, term)),
+          ).length,
           authored: Number(authored !== undefined && !authored.startsWith(`${name}_api_`)),
           phrasePrefix: Number(nouns.every((term, position) => summary[position] === term)),
           identity: [...literal, ...words(op.operationId)],
@@ -656,6 +666,7 @@ export function hatch(
             nouns.some((term) => identity.some((word) => matches(word, term))))
         );
       });
+    const terminalExists = features.some((feature) => feature.terminal);
     const focus = nouns.find((term) => features.some(({ literal }) => literal.some((word) => sameNoun(word, term))));
     const resourceNouns = nouns.filter((term) =>
       features.some(({ literal }) => literal.some((word) => sameNoun(word, term))),
@@ -685,6 +696,9 @@ export function hatch(
         covered,
         descriptive,
         resources,
+        terminal,
+        readDescription,
+        authoredCoverage,
         authored,
         phrasePrefix,
       }) => ({
@@ -702,6 +716,10 @@ export function hatch(
         phrasePrefix,
         completeAuthored: Number(authored && descriptive === nouns.length),
         phraseCoverage: nouns.filter((term) => resources.some((word) => sameNoun(word, term))).length,
+        resourceHead: Number(
+          terminal || (terminalExists && authored && authoredCoverage === nouns.length && readDescription),
+        ),
+        readable: Number(verdictOf(op) === "read"),
         focused: Number(
           (intent !== undefined || resourceOnly) &&
             focus !== undefined &&
@@ -723,6 +741,8 @@ export function hatch(
           (phrase
             ? b.covered - a.covered ||
               b.phrasePrefix - a.phrasePrefix ||
+              b.resourceHead - a.resourceHead ||
+              (a.resourceHead && b.resourceHead ? b.readable - a.readable : 0) ||
               a.depth - a.authored - (b.depth - b.authored) ||
               b.phraseCoverage - a.phraseCoverage ||
               b.authored - a.authored
