@@ -1,5 +1,7 @@
 // Node-only: physical HTTP bodies through an owned undici CONNECT proxy.
 import { createServer } from "node:http";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { gzipSync } from "node:zlib";
 import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
@@ -155,3 +157,19 @@ it("INV-9: a refused CONNECT leaves the real SDK write undispatched", async () =
   expect(probe.error).toMatchObject({ retryable: false });
   expect(probe.error).not.toHaveProperty("writeOutcome", "unknown");
 });
+
+it(
+  "INV-5 INV-9: HTTPS CONNECT to HTTPS preserves one attempt and certificate hostname checks",
+  { timeout: 30_000 },
+  () => {
+    const child = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("./fixtures/node-proxy-tls.mjs", import.meta.url))],
+      { encoding: "utf8", timeout: 25_000 },
+    );
+    expect(child.error, child.stderr).toBeUndefined();
+    expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(0);
+    expect(child.stdout).toContain('"bodyCount":3');
+    expect(child.stdout).toContain("certificate hostname verification preserved");
+  },
+);
