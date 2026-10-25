@@ -22,22 +22,34 @@ patching the library or substituting a protocol stack.
 
 ## Separate verdicts
 
-**D.3 behavior:** the public adapter passes the measured route, ordering,
+**D.3 measured behavior, not production-design acceptance:** the corrected proof
+adapter passes the measured route, ordering,
 body-lifetime and request-ownership cases on Node and workerd. The initial
 candidate incorrectly served `/%68ealth` as health: FindMyWay decodes
 unreserved escapes even with strict slash and case configuration. A raw-path
 ownership guard corrects that while retaining the existing agent-bypass guard.
-The corrected candidate matches all **175 exchanges per runtime**, including
-headers and exact serialized bodies. Four additional agent-token list
+Independent review then found that the original 175-case matrix omitted the
+actual `/oauth/client-metadata/<id>` route and its candidate prefix was wrong.
+That earlier blanket verdict is withdrawn. The corrected candidate mounts
+`/oauth/client-metadata/*` first after the agent guard. A real `remoteMcp()`
+OAuth connector and a static-client negative fixture now exercise GET, HEAD,
+POST, OPTIONS and DELETE across 14 exact/encoded/double-slash/agent paths.
+The expanded candidate matches **245 exchanges per runtime**, including 70
+CIMD cases, headers, exact serialized bodies, auth/UI/storage traces,
+unconsumed request bodies, zero outbound I/O and zero CIMD admission charges.
+Four additional agent-token list
 exchanges per runtime cover both namespaces and protocol eras. An identical
 fixed `Date.now` makes application duration fields deterministic in this wire
 comparison; real timers remain enabled. Lifetime tests use the real clock.
 
 The candidate also passes the existing Node route/admission/operator/callback/
-identity suites and existing workerd boundary suites through the supplied
+identity suites, the 16-case downstream OAuth best-practice suite on both
+runtimes, and existing workerd boundary suites through the supplied
 Vitest transform. These tests execute actual application programs, not a
 synthetic router list demo. This establishes the adapter seam, not acceptance
 of an integrated D.3 implementation; refresh the matrix after lower rewrites.
+The parent rejected this prefix-only, per-request-layer candidate as the final
+D.3 design. Its measured behavior does not close the production dispatch item.
 
 **D.3 cost:** measured separately below. No cap is changed or approved here.
 The parent owns the budget decision, including later index compaction work.
@@ -57,7 +69,7 @@ layer for every exchange; keeping a server alive is not a stateless fix.
 Changing a legacy adapter's runtime descriptor would mean authoring protocol
 semantics, outside a small compatibility adapter and this proof's scope.
 
-## Public D.3 adapter proposal
+## Existing proof seam and required production D.3 design
 
 The reusable candidate lives in
 [`test/fixtures/effect-proof/router.ts`](../test/fixtures/effect-proof/router.ts):
@@ -78,14 +90,16 @@ The reusable candidate lives in
   bodies into Effect streams and changes the ownership problem.
 - `routeWithHttpRouter(context, mcp, metadata, health)` composes the existing
   programs in current ingress order. Optional modules preserve null
-  fallthrough; only the explicit unowned sentinel and router RouteNotFound
-  fall through. Other failures retain their original identity.
+  fallthrough. Only the explicit unowned sentinel or a public
+  `HttpServerError`/`RouteNotFound` raised before entering a matched handler
+  falls through. Structural lookalikes and even genuine router-error objects
+  raised by an application handler retain their original identity.
 - Matchers have a short construction Scope. Existing MCP programs continue
   to own their resources through their response body. A new route acquiring
   resources into the matcher Scope would need an explicit body-owner design;
   this is not a general replacement for `scopedToBody`.
 
-The Node instrumentation observes **380 edge entries for both dispatchers**,
+The Node instrumentation observes **520 edge entries for both dispatchers**,
 zero edge entries at import, and no console output during malformed requests,
 handler errors, cancellation or normal exchanges. The matcher adds no runner.
 Raw response identity, explicit null fallthrough, original error identity and
@@ -96,6 +110,88 @@ caller abort reason survives. Health and closed-deployment MCP responses
 retain their existing behavior. A second native workerd request waits for
 the first response, then reads its own request body and performs native fetch
 in its own request context.
+
+The proof transform is now a separate module. Every esbuild candidate graph
+must apply it exactly once, including the root and Worker size graphs; a
+filter miss fails in `onEnd` even if the baseline builds successfully. Node
+and native workerd additionally assert the transformed server's runtime
+marker. Every test under the candidate Vitest config imports that marker in
+setup. Mutation tests verify structural drift, duplicate transforms, a valid
+baseline build with a missed esbuild filter, and missing Vitest transforms in
+both actual runtimes. These checks prevent vacuous baseline-versus-baseline
+comparisons if a filename/filter stops matching.
+
+### Once-per-handler authoritative dispatch plan (separate implementation)
+
+`createFetchHandler` should own two immutable HttpRouter dispatchers, human
+and agent, with request-free route programs compiled once per handler. The
+existing origin/HTTPS and raw `isAgentPath` ingress guards still run before
+dispatch. The agent guard selects the agent dispatcher, whose wildcard handler
+executes the existing agent endpoint admission/refusal program; it cannot
+reach human routes. The human dispatcher selects CIMD, connect, callback,
+well-known metadata, health, MCP, or final fallthrough directly. Core route
+selection must no longer call six independent prefix matchers per request.
+
+Use public `HttpRouter.make`, `router.addAll` and `router.asHttpEffect` to
+compile the route tables. Route effects read a private current-`RouteContext`
+service at execution time; they capture only deployment configuration and
+module functions. Never cache a request, signal, Scope, client, fiber, body,
+in-flight promise, layer memo map or request services. Keep method handling
+inside the selected program with wildcard registrations, so explicit JSON
+405/Allow, HEAD and private OPTIONS semantics survive. Leaf programs retain
+their defensive raw-path ownership checks because the matcher decodes escapes.
+A normalized false match goes to the unchanged UI/OPTIONS/unowned fallback,
+not to the canonical endpoint. The CIMD program remains ahead of the UI;
+other human leaf programs run optional UI fallthrough before their selected
+core action, preserving current module precedence without scanning all core
+routes. Well-known metadata keeps MCP metadata before auth metadata.
+
+The synchronous public deployment constructor cannot await a new router
+runtime. Initialize the fixed, validated tables lazily in the first existing
+edge fiber, as a **bounded, entirely synchronous** registration program with
+`Effect.uninterruptible` and public `Scheduler.PreventSchedulerYield: true`
+only around make/addAll/cache publication. This avoids a cross-request
+initialization promise and duplicate first-request builds; restore the normal
+edge scheduler context before request execution. Do not use Layer acquisition
+or SDK/custom callbacks in that critical section. Cache only the resulting
+request-free handler effects. Structural configuration still validates
+synchronously before serving; route patterns are fixed internal constants.
+If registration ever acquires an asynchronous dependency, this design must be
+revisited rather than sharing the first request's promise. No extra runner,
+toWebHandler or module-scope fiber is needed.
+
+The production PR must prove two total builds per handler across concurrent
+first requests and later calls, genuine core selection, no request-context
+capture, exact ingress/refusal behavior, body-owned Scope preservation,
+silence/purity, and the full candidate matrix. The short routing Scope must
+not take ownership away from MCP's body Scope. The parent still owns cost
+acceptance; this proof implements no production dispatcher or cap change.
+
+### Bounded latency and build-count observations
+
+`runDispatchLatency` measures one constructed handler per variant, four paths,
+10 warmups per path, then five batches of 50 requests per path. Each fetch is
+followed by response-body cancellation. A proof-only build-counter transform
+is omitted from deployment-size bundles. This is a local diagnostic, with no
+CI latency threshold; load, order and a 1 ms native clock resolution limit
+comparisons. The baseline builds zero HttpRouters. The current candidate
+builds one per CIMD request and **six per health/missing/MCP request**, with
+zero at construction, confirming the review's rebuild concern.
+
+The saved fix-round `latency-sample.json` snapshot's median batch microseconds
+per request are:
+
+| Path        | Node baseline | Node candidate | workerd baseline | workerd candidate |
+| ----------- | ------------: | -------------: | ---------------: | ----------------: |
+| CIMD        |        415.75 |         869.16 |              280 |               860 |
+| Health      |        479.83 |       3,916.48 |              240 |             2,860 |
+| Missing     |        385.93 |       3,879.24 |              220 |             2,700 |
+| MCP refusal |      1,629.74 |       5,077.34 |            1,080 |             3,560 |
+
+Native host wall time for the whole benchmark is 489.84 / 2,629.75 ms for
+baseline/candidate. Raw five-batch samples and exact counts are in the report.
+These numbers describe the rejected proof design, not the planned once-built
+dispatcher's performance. That design requires its own measurement.
 
 ## D.7 observations and safe implementation alternative
 
@@ -136,21 +232,29 @@ request/call ownership into native Effect programs using D.1 services. Convert
 only at real SDK callback/transport leaves. Keep request Scope and finalizers
 around those leaves; retain the serialization redaction boundary, bounded
 classification and signed `AuthElicitation.verify` hook. This can complete
-native orchestration without claiming Effect McpServer adoption. Parent ruling
-and a separate implementation PR determine that scope.
+native orchestration without claiming Effect McpServer adoption. The parent
+explicitly approved this SDK protocol-leaf fallback on 2026-10-25 after the
+independent review. Full D.7 native orchestration remains required in its own
+PR, with the complete modern/legacy/native/meta/code-on/off/readOnly/hidden/
+collision/cap/schema/continuation/auth-before-body/resource/skill/lifetime/Eve
+and packed-consumer matrix. The unproved rows above concern the rejected
+replacement; they do not waive any fallback implementation requirement.
 
 ## Deployment cost, imports and declarations
 
-Node **22.23.3**, esbuild **0.28.1**, minified neutral Worker conditions,
-gzip level 9, system zlib via `LD_PRELOAD`. These are exact reference-source
-observations; they do not predict the final integrated branch after #1038.
+Esbuild **0.28.1**, minified neutral Worker conditions, gzip level 9.
+Retained raw bundles are recompressed offline with cached official
+`node:22-slim`, Node **22.23.4**, bundled zlib **1.3.1-e00f703**. The Docker
+image is not pulled, network is disabled and mounts/root filesystem are read
+only. These are exact reference-source observations, not predictions for the
+final integrated branch after #1038.
 
 | Entry          |   Current | Router candidate |     Delta | Existing cap |
 | -------------- | --------: | ---------------: | --------: | -----------: |
-| Root           | 370,646 B |        420,931 B | +50,285 B |    402,000 B |
-| Worker example | 709,390 B |        759,463 B | +50,073 B |    743,000 B |
+| Root           | 371,616 B |        422,290 B | +50,674 B |    402,000 B |
+| Worker example | 711,248 B |        762,313 B | +51,065 B |    743,000 B |
 
-The router candidate is **18,931 / 16,463 B above** those caps. Behavior passes
+The corrected router candidate is **20,290 / 19,313 B above** those caps. Behavior passes
 are independent of this budget report. The Effect MCP measurement is
 incremental alongside the retained SDK, not a replacement/savings estimate;
 the machine report contains its exact current values. Only one resolved
@@ -160,6 +264,14 @@ needs a named purity allowance for `effect/http` or `effect/ai`; this proof
 changes none. Published source/declarations are untouched, and existing purity,
 package-surface and declaration checks remain required.
 
+For continuity, the original Homebrew Node22.23.3 + LD_PRELOAD observations
+before this fix were root370,646 →420,931 and Worker709,390 →759,463 bytes.
+With the corrected prefix/error seam they are root370,646 →421,058 and
+Worker709,390 →759,551. These separate compressor observations are retained;
+they are not substituted for the official-Node table above. Official
+incremental Effect MCP measurements, retaining SDK, are 470,931 / 809,676 B;
+they remain informational because that replacement was rejected.
+
 ## Reproduction and evidence boundaries
 
 After `pnpm install`, run `pnpm run build:operator-ui` and
@@ -167,9 +279,10 @@ After `pnpm install`, run `pnpm run build:operator-ui` and
 
 ```sh
 VITEST_MAX_WORKERS=2 pnpm run test:node test/effect-core-proof.node.test.ts
-node scripts/probes/effect-core-compatibility.mjs /absolute/proof-report.json
-VITEST_MAX_WORKERS=2 pnpm exec vitest run --config scripts/probes/effect-router.vitest.config.mjs --project node test/server-route-contracts.test.ts test/request-pipeline.test.ts test/oauth-callback-fencing.test.ts test/operator-routes.test.ts test/identity-scope.test.ts
-VITEST_MAX_WORKERS=2 pnpm exec vitest run --config scripts/probes/effect-router.vitest.config.mjs --project workers test/request-pipeline.test.ts test/request-admission.test.ts test/native-tools.test.ts test/auth-elicitation.test.ts
+node scripts/probes/effect-core-compatibility.mjs /absolute/proof-report.json /absolute/bundles
+VITEST_MAX_WORKERS=2 pnpm run test:node test/effect-router-transform.node.test.ts
+VITEST_MAX_WORKERS=2 pnpm exec vitest run --config scripts/probes/effect-router.vitest.config.mjs --project node test/downstream-auth-best-practice.test.ts test/server-route-contracts.test.ts test/request-pipeline.test.ts test/oauth-callback-fencing.test.ts
+VITEST_MAX_WORKERS=2 pnpm exec vitest run --config scripts/probes/effect-router.vitest.config.mjs --project workers test/downstream-auth-best-practice.test.ts test/request-pipeline.test.ts test/request-admission.test.ts test/auth-elicitation.test.ts
 ```
 
 On Homebrew Linux prepend `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libz.so.1` to

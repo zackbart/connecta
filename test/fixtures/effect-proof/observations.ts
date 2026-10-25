@@ -2,9 +2,11 @@
 import { Context, Effect, Layer, Scope } from "effect";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { McpProtocol, McpSchema, McpServer } from "effect/ai";
-import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpEffect, HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { api } from "../../../src/connectors/api.js";
+import { remoteMcp } from "../../../src/connectors/remote-mcp.js";
+import * as serverModule from "../../../src/server.js";
 import { memoryStorage } from "../../../src/storage/memory.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { operatorUi } from "../../../src/ui.js";
@@ -17,6 +19,8 @@ import type { KVStorage } from "../../../src/types.js";
 const BASE = "https://proof.test";
 const principal = { namespace: "proof", id: "alice" };
 const executor = () => customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
+
+export function transformed() { return Reflect.get(serverModule, "CONNECTA_PROOF_ROUTER_TRANSFORM") === true; }
 
 export function rpcRequest(method: string, params: Record<string, unknown> = {}, modern = true, path = "/mcp", extra: Record<string, string> = {}) {
   const headers = new Headers({ "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer proof", ...extra });
@@ -138,8 +142,86 @@ export async function runRoutes() {
     await deployment.close();
     await observe("health after close", new Request(BASE + "/health"));
     await observe("mcp after close", rpcRequest("tools/list"));
-    return observations;
+    return [...observations, ...await runCimd()];
   } finally { await deployment.close(); Date.now = realNow; }
+}
+
+/** Actual public self-hosted OAuth declaration; no discovery or auth is needed. */
+function oauthFixture() {
+  return remoteMcp("oauth", { url: "https://remote.proof.test/mcp", versionNegotiation: "legacy", auth: { type: "oauth", scope: "read" } });
+}
+
+async function runCimd() {
+  const traces: string[] = [];
+  const backend = memoryStorage();
+  const storage: KVStorage = {
+    ...backend,
+    get: (...args) => { traces.push("storage.get"); return backend.get(...args); },
+    set: (...args) => { traces.push("storage.set"); return backend.set(...args); },
+    delete: (...args) => { traces.push("storage.delete"); return backend.delete(...args); },
+    list: (...args) => { traces.push("storage.list"); return backend.list(...args); },
+    compareAndSet: (...args) => { traces.push("storage.cas"); return backend.compareAndSet(...args); },
+  };
+  const ui = operatorUi();
+  const deployment = createConnecta({
+    readOnly: false, executor: executor(), publicUrl: BASE, logger: "silent", storage,
+    connectors: [oauthFixture(), remoteMcp("static", { url: "https://remote.proof.test/mcp", auth: { type: "oauth", client: { issuer: "https://issuer.proof.test", clientId: "public-client" } } })],
+    maintainers: [principal], auth: { kind: "proof", authorize(request) { traces.push("auth"); if (request.bodyUsed) traces.push("auth-after-body"); return { ok: false, response: new Response(null, { status: 401 }) }; } },
+    ui: { ...ui, handle(context) { traces.push("ui"); return ui.handle(context); } },
+  });
+  const paths = [
+    "/oauth/client-metadata/oauth", "/oauth/client-metadata/unknown", "/oauth/client-metadata/static",
+    "/oauth/client-metadata/%6fauth", "/oauth/%63lient-metadata/oauth", "//oauth/client-metadata/oauth",
+    "/oauth//client-metadata/oauth", "/oauth/client-metadata//oauth", "/oauth/client-metadata/oauth/",
+    "/oauth/client-metadata", "/OAUTH/client-metadata/oauth", "/agent/oauth/client-metadata/oauth",
+    "/%61gent/oauth/client-metadata/oauth", "//agent/oauth/client-metadata/oauth",
+  ];
+  const observations = [];
+  const originalFetch = globalThis.fetch;
+  let outbound = 0;
+  globalThis.fetch = async () => { outbound++; throw new Error("CIMD must not perform outbound I/O"); };
+  try {
+    for (const path of paths) for (const method of ["GET", "HEAD", "POST", "OPTIONS", "DELETE"]) {
+      traces.length = 0;
+      const request = new Request(BASE + path, { method, ...(method === "POST" ? { body: "not JSON; never parse CIMD" } : {}) });
+      const response = await shape(await deployment.fetch(request));
+      const trace = [...traces];
+      const health = await (await deployment.fetch(new Request(BASE + "/health"))).json() as { admission: { requests: { active: number; queued: number; totals: { admitted: number } } } };
+      observations.push({ label: `CIMD ${method} ${path}`, response, trace, bodyUsed: request.bodyUsed, outbound,
+        admission: { active: health.admission.requests.active, queued: health.admission.requests.queued, admitted: health.admission.requests.totals.admitted } });
+    }
+    return observations;
+  } finally { globalThis.fetch = originalFetch; await deployment.close(); }
+}
+
+/** Bounded diagnostic measurement, never a CI timing threshold. No network. */
+export async function runDispatchLatency() {
+  const before = Number(Reflect.get(globalThis, "__proofRouterBuilds") ?? 0);
+  const deployment = createConnecta({ readOnly: false, executor: executor(), connectors: [oauthFixture()],
+    publicUrl: BASE, logger: "silent", maintainers: [principal], ui: operatorUi(),
+    auth: { kind: "proof", authorize: () => ({ ok: false, response: new Response(null, { status: 401 }) }) },
+  });
+  const constructionBuilds = Number(Reflect.get(globalThis, "__proofRouterBuilds") ?? 0) - before;
+  const rows = [];
+  const warmup = 10, batches = 5, batchSize = 50;
+  try {
+    for (const path of ["/oauth/client-metadata/oauth", "/health", "/missing", "/mcp"]) {
+      const dispatch = async () => { const response = await deployment.fetch(new Request(BASE + path)); await response.body?.cancel(); };
+      for (let i = 0; i < warmup; i++) await dispatch();
+      const startBuilds = Number(Reflect.get(globalThis, "__proofRouterBuilds") ?? 0);
+      const samplesMs = [];
+      for (let batch = 0; batch < batches; batch++) {
+        const started = performance.now();
+        for (let i = 0; i < batchSize; i++) await dispatch();
+        samplesMs.push(performance.now() - started);
+      }
+      const requests = batches * batchSize;
+      const builds = Number(Reflect.get(globalThis, "__proofRouterBuilds") ?? 0) - startBuilds;
+      rows.push({ path, requests, builds, buildsPerRequest: builds / requests, samplesMs,
+        microsecondsPerRequest: samplesMs.map((ms) => ms * 1000 / batchSize) });
+    }
+    return { warmup, batches, batchSize, constructionBuilds, rows };
+  } finally { await deployment.close(); }
 }
 
 /** Real Effect schemas/codec/transport, with captured current tool descriptors.
@@ -249,13 +331,20 @@ export async function runRouterSeam() {
   const reason = new Error("payload-shaped-private-error");
   let sameError = false;
   try { await runEdge(matchModule(context, ["/owned"], Effect.fail(reason))); } catch (error) { sameError = error === reason; }
+  const shaped = { reason: { _tag: "RouteNotFound" } };
+  const typed = new HttpServerError.HttpServerError({ reason: new HttpServerError.RouteNotFound({ request: HttpServerRequest.fromWeb(request) }) });
+  const retained = [];
+  for (const applicationError of [shaped, typed]) {
+    try { await runEdge(matchModule(context, ["/owned"], Effect.fail(applicationError))); retained.push(false); }
+    catch (error) { retained.push(error === applicationError); }
+  }
   let finalized = 0;
   await runEdge(Effect.scoped(Effect.gen(function* () {
     yield* Effect.addFinalizer(() => Effect.sync(() => { finalized++; }));
     yield* matchModule(context, ["/owned"], Effect.succeed(new Response(null, { status: 204 })));
     yield* Scope.Scope;
   })));
-  return { identity: actual === response, missing, unowned, sameError, finalized, response: await shape(response) };
+  return { identity: actual === response, missing, unowned, sameError, sameShapedError: retained[0], sameTypedRouteError: retained[1], finalized, response: await shape(response) };
 }
 
 /** Exercise actual body-held request permits through the compiled dispatcher. */

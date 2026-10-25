@@ -8,6 +8,21 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 type Wire = { status: number; headers: Record<string, string>; body: string };
 type Comparison = { cases: number; equal: boolean; differences: unknown[] };
+type Cimd = {
+  label: string;
+  response: Wire;
+  trace: string[];
+  bodyUsed: boolean;
+  outbound: number;
+  admission: { active: number; queued: number; admitted: number };
+};
+type Latency = {
+  constructionBuilds: number;
+  warmup: number;
+  batches: number;
+  batchSize: number;
+  rows: Array<{ path: string; requests: number; builds: number; buildsPerRequest: number; samplesMs: number[] }>;
+};
 type Lifetimes = {
   sameReason: boolean;
   rows: Array<{
@@ -30,9 +45,21 @@ type Report = {
     workersAgents: Comparison;
     runners: { importEdges: number; baseline: number; candidate: number };
     logs: unknown[];
+    transforms: Array<{ graph: string; count: number }>;
+    cimd: Record<string, [Cimd[], Cimd[]]>;
+    latency: Record<string, [Latency, Latency]>;
     seam: Record<
       string,
-      { identity: boolean; missing: null; unowned: null; sameError: boolean; finalized: number; response: Wire }
+      {
+        identity: boolean;
+        missing: null;
+        unowned: null;
+        sameError: boolean;
+        sameShapedError: boolean;
+        sameTypedRouteError: boolean;
+        finalized: number;
+        response: Wire;
+      }
     >;
     lifetimes: Record<string, Lifetimes[]>;
     queue: Array<{
@@ -80,6 +107,9 @@ describe("Effect 4.0.5 compatibility proof", () => {
     expect(report.router.runners.importEdges).toBe(0);
     expect(report.router.runners.candidate).toBe(report.router.runners.baseline);
     expect(report.router.logs).toEqual([]);
+    expect(report.router.transforms).toEqual(
+      ["node", "workerd", "root-size", "worker-size"].map((graph) => ({ graph, count: 1 })),
+    );
     for (const row of report.sizes) {
       expect(row.imports.filter((path) => path.startsWith("node:"))).toEqual([]);
       if (row.effectCopies) expect(row.effectCopies).toHaveLength(1);
@@ -89,7 +119,7 @@ describe("Effect 4.0.5 compatibility proof", () => {
   for (const runtime of ["node", "workers"] as const)
     describe(runtime, () => {
       it("matches exact route bytes, raw paths, ingress order, and both agent presentations (INV-4)", () => {
-        expect(report.router[runtime].cases).toBeGreaterThanOrEqual(175);
+        expect(report.router[runtime].cases).toBe(245);
         expect(report.router[runtime].differences).toEqual([]);
         expect(report.router[runtime].equal).toBe(true);
         expect(report.router[runtime === "node" ? "nodeAgents" : "workersAgents"]).toEqual({
@@ -101,12 +131,63 @@ describe("Effect 4.0.5 compatibility proof", () => {
 
       it("preserves optional fallthrough, Response identity/headers and original handler errors", () => {
         const seam = report.router.seam[runtime]!;
-        expect(seam).toMatchObject({ identity: true, missing: null, unowned: null, sameError: true, finalized: 1 });
+        expect(seam).toMatchObject({
+          identity: true,
+          missing: null,
+          unowned: null,
+          sameError: true,
+          sameShapedError: true,
+          sameTypedRouteError: true,
+          finalized: 1,
+        });
         expect(seam.response).toEqual({
           status: 405,
           headers: { allow: "PUT", "content-type": "application/json", "set-cookie": "a=1; Path=/" },
           body: "owned",
         });
+      });
+
+      it("serves real configured CIMD before auth/UI/body/admission with exact encoded-path and method refusals (INV-4 INV-10)", () => {
+        const [baseline, candidate] = report.router.cimd[runtime]!;
+        expect(candidate).toEqual(baseline);
+        expect(candidate).toHaveLength(70);
+        for (const row of candidate) {
+          expect(row).toMatchObject({ bodyUsed: false, outbound: 0, admission: { active: 0, queued: 0, admitted: 0 } });
+          expect(row.trace).not.toContain("auth");
+          expect(row.trace.filter((entry) => entry.startsWith("storage."))).toEqual([]);
+          if (row.label.endsWith(" /oauth/client-metadata/oauth")) {
+            expect(row.trace).toEqual([]);
+            if (row.label.startsWith("CIMD GET ")) {
+              expect(row.response.status).toBe(200);
+              expect(row.response.headers["cache-control"]).toBe("public, max-age=300");
+              expect(JSON.parse(row.response.body)).toEqual({
+                client_id: "https://proof.test/oauth/client-metadata/oauth",
+                client_name: "connecta",
+                application_type: "web",
+                redirect_uris: ["https://proof.test/oauth/callback/oauth"],
+                grant_types: ["authorization_code", "refresh_token"],
+                response_types: ["code"],
+                token_endpoint_auth_method: "none",
+                scope: "read",
+              });
+            } else {
+              expect(row.response).toMatchObject({ status: 405, body: "", headers: { allow: "GET" } });
+            }
+          }
+        }
+      });
+
+      it("records bounded dispatch timings and the current per-request layer rebuilds without a timing threshold", () => {
+        const [baseline, candidate] = report.router.latency[runtime]!;
+        expect([baseline.constructionBuilds, candidate.constructionBuilds]).toEqual([0, 0]);
+        for (const row of baseline.rows) expect(row.builds).toBe(0);
+        expect(candidate.rows).toHaveLength(4);
+        for (const row of candidate.rows) {
+          expect(row.requests).toBe(250);
+          expect(row.samplesMs).toHaveLength(5);
+          expect(row.buildsPerRequest).toBe(row.path === "/oauth/client-metadata/oauth" ? 1 : 6);
+          expect(row.builds).toBe(row.requests * row.buildsPerRequest);
+        }
       });
 
       it("retains body permits and closes exactly once on end/failure/cancel/abort/abandonment (INV-7)", () => {

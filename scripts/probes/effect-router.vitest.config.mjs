@@ -2,7 +2,7 @@
 // pnpm exec vitest run --config scripts/probes/effect-router.vitest.config.mjs --project node <files>
 import { defineConfig } from "vitest/config";
 import base from "../../vitest.config.ts";
-import { candidateSource } from "./effect-core-compatibility.mjs";
+import { vitestCandidate } from "./effect-router-transform.mjs";
 
 export default defineConfig({
   ...base,
@@ -10,15 +10,17 @@ export default defineConfig({
     ...base.test,
     projects: base.test.projects.map((project) => ({
       ...project,
+      test: {
+        ...project.test,
+        setupFiles: [...project.test.setupFiles, "./test/fixtures/effect-proof/require-transform.ts"],
+        ...(project.test.name === "workers"
+          ? { include: [...project.test.include, "test/downstream-auth-best-practice.test.ts"] }
+          : {}),
+      },
       plugins: [
         ...(project.plugins ?? []),
-        {
-          name: "effect-router-proof",
-          enforce: "pre",
-          transform(source, id) {
-            if (id.split("?")[0].endsWith("/src/server.ts")) return candidateSource(source);
-          },
-        },
+        // Deliberate filter-miss mutation must fail in require-transform setup.
+        vitestCandidate({ miss: process.env.CONNECTA_PROOF_MUTATION === "miss-server" }),
       ],
     })),
   },

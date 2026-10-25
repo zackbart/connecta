@@ -1,6 +1,6 @@
 // Compatibility candidate only. Never imported by production or published.
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { notFoundResponse } from "../../../src/branding.js";
 import { isAgentPath } from "../../../src/routes/agent-path.js";
 import { MCP_CORS_HEADERS } from "../../../src/routes/mcp.js";
@@ -25,9 +25,13 @@ export function matchModule(
 ): Effect.Effect<Response | null, unknown> {
   return Effect.scoped(
     Effect.gen(function* () {
-      const handler = Effect.flatMap(handle, (response) =>
+      let entered = false;
+      const handler = Effect.suspend(() => {
+        entered = true;
+        return Effect.flatMap(handle, (response) =>
         response === null ? Effect.fail(new Unowned()) : Effect.succeed(HttpServerResponse.raw(response)),
-      );
+        );
+      });
       const app = Layer.effectDiscard(Effect.gen(function* () {
         const router = yield* HttpRouter.HttpRouter;
         for (const path of paths) yield* router.add("*", path, handler);
@@ -42,11 +46,7 @@ export function matchModule(
         Effect.map((response) => HttpServerResponse.toWeb(response)),
         Effect.catch((error) => {
           if (error instanceof Unowned) return Effect.succeed(null);
-          if (
-            typeof error === "object" && error !== null && "reason" in error &&
-            typeof error.reason === "object" && error.reason !== null && "_tag" in error.reason &&
-            error.reason._tag === "RouteNotFound"
-          ) return Effect.succeed(null);
+          if (!entered && HttpServerError.isHttpServerError(error) && error.reason instanceof HttpServerError.RouteNotFound) return Effect.succeed(null);
           return Effect.fail(error);
         }),
       );
@@ -66,7 +66,7 @@ export function routeWithHttpRouter(
     const missing = () => notFoundResponse(request, opts.config);
     // Access bypass equivalence deliberately precedes every router matcher.
     if (isAgentPath(path)) return (yield* mcp(context)) ?? missing();
-    const client = yield* matchModule(context, ["/.well-known/*"], Effect.sync(() => routeOAuthClientMetadata(context)));
+    const client = yield* matchModule(context, ["/oauth/client-metadata/*"], Effect.sync(() => routeOAuthClientMetadata(context)));
     if (client) return client;
     // An optional module owns its paths. A wildcard preserves its null fallthrough
     // without importing the optional implementation into the root graph.

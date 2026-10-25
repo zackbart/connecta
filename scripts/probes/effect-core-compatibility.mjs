@@ -1,6 +1,6 @@
 // Exact-version offline compatibility proof. No production source is written.
 // Node 22: node scripts/probes/effect-core-compatibility.mjs /absolute/report.json
-import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
+import { routerCandidate } from "./effect-router-transform.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const fixture = join(root, "test/fixtures/effect-proof");
@@ -20,29 +21,6 @@ function replaceOnce(source, before, after) {
   return source.replace(before, after);
 }
 
-/** Only the local compiled candidate changes; source checkout is untouched. */
-export function candidateSource(source) {
-  const start = source.indexOf("  const route = (context: RouteContext)");
-  const end = source.indexOf("  const serve = (", start);
-  if (start < 0 || end < 0) throw new Error("Proof route transform drift");
-  source =
-    source.slice(0, start) +
-    "  const route = (context: RouteContext) => routeWithHttpRouter(context, routeMcp.handle, metadata, health);\n\n" +
-    source.slice(end);
-  return `import { routeWithHttpRouter } from ${JSON.stringify(join(fixture, "router.ts"))};\n` + source;
-}
-
-export function routerCandidate() {
-  return {
-    name: "proof-router-candidate",
-    setup(bundle) {
-      bundle.onLoad({ filter: /\/src\/server\.ts$/ }, async ({ path }) => {
-        return { contents: candidateSource(await readFile(path, "utf8")), loader: "ts" };
-      });
-    },
-  };
-}
-
 const edgeCounter = {
   name: "proof-edge-counter",
   setup(bundle) {
@@ -52,6 +30,21 @@ const edgeCounter = {
         await readFile(path, "utf8"),
         "  const exit = await runExit(effect, options.signal ? { signal: options.signal } : undefined);",
         "  globalThis.__proofEdges = (globalThis.__proofEdges ?? 0) + 1;\n  const exit = await runExit(effect, options.signal ? { signal: options.signal } : undefined);",
+      ),
+    }));
+  },
+};
+
+// Instrument proof execution only. Deployment-size builds omit this plugin.
+const routerBuildCounter = {
+  name: "proof-router-build-counter",
+  setup(bundle) {
+    bundle.onLoad({ filter: /\/test\/fixtures\/effect-proof\/router\.ts$/ }, async ({ path }) => ({
+      loader: "ts",
+      contents: replaceOnce(
+        await readFile(path, "utf8"),
+        "      const route = yield* HttpRouter.toHttpEffect(app)",
+        "      globalThis.__proofRouterBuilds = (globalThis.__proofRouterBuilds ?? 0) + 1;\n      const route = yield* HttpRouter.toHttpEffect(app)",
       ),
     }));
   },
@@ -89,6 +82,12 @@ async function workerRequest(worker, path, body) {
   return response.json();
 }
 
+async function timedWorkerLatency(worker) {
+  const started = performance.now();
+  const result = await workerRequest(worker, "/proof/latency");
+  return { ...result, hostWallMs: performance.now() - started };
+}
+
 async function queueProof(worker) {
   const held = await worker.dispatchFetch("https://proof.test/mcp");
   let settled = false;
@@ -115,7 +114,8 @@ async function queueProof(worker) {
   return { pending, first, result, state: await workerRequest(worker, "/queue-state") };
 }
 
-async function measure() {
+async function measure(candidatePlugin, bundleDirectory) {
+  if (bundleDirectory) await mkdir(bundleDirectory, { recursive: true });
   const entries = [
     ["root", join(root, "src/index.ts")],
     ["worker", join(root, "examples/worker/src/index.ts")],
@@ -137,8 +137,13 @@ async function measure() {
         ...baseBuild,
         entryPoints: [entry],
         minify: true,
-        plugins: [self, ...(candidate ? [routerCandidate()] : [])],
+        plugins: [self, ...(candidate ? [candidatePlugin(`${name}-size`)] : [])],
       });
+      if (bundleDirectory)
+        await writeFile(
+          join(bundleDirectory, `${name}-${candidate ? "candidate" : "baseline"}.mjs`),
+          result.outputFiles[0].contents,
+        );
       rows.push({
         name,
         candidate,
@@ -177,6 +182,8 @@ async function measure() {
       minify: true,
       plugins: [self],
     });
+    if (bundleDirectory)
+      await writeFile(join(bundleDirectory, `${name}-effect-mcp-incremental.mjs`), result.outputFiles[0].contents);
     rows.push({
       name,
       candidate: "effect-mcp-incremental",
@@ -190,13 +197,15 @@ async function measure() {
   return rows;
 }
 
-export async function runProof() {
+export async function runProof({ bundleDirectory } = {}) {
   const effect = JSON.parse(await readFile(join(root, "node_modules/effect/package.json"))).version;
   const sdk = JSON.parse(await readFile(join(root, "node_modules/@modelcontextprotocol/server/package.json"))).version;
   if (effect !== "4.0.5" || sdk !== "2.3.1")
     throw new Error(`Proof requires Effect4.0.5/SDK2.3.1, got ${effect}/${sdk}`);
   const work = await mkdtemp(join(tmpdir(), "connecta-effect-proof-"));
   const workers = [];
+  const transforms = [];
+  const candidatePlugin = (graph) => routerCandidate({ onApplied: (count) => transforms.push({ graph, count }) });
   try {
     const node = [];
     let importEdges = 0;
@@ -209,17 +218,25 @@ export async function runProof() {
         const bundle = await build({
           ...baseBuild,
           entryPoints: [join(fixture, "observations.ts")],
-          plugins: [...(candidate ? [routerCandidate()] : []), edgeCounter],
+          plugins: [...(candidate ? [candidatePlugin("node")] : []), edgeCounter, routerBuildCounter],
         });
         const path = join(work, candidate ? "candidate.mjs" : "baseline.mjs");
         await writeFile(path, bundle.outputFiles[0].contents);
         globalThis.__proofEdges = 0;
         const api = await import(pathToFileURL(path).href);
+        if (api.transformed() !== candidate) throw new Error("Proof router runtime transform marker mismatch");
         importEdges += globalThis.__proofEdges;
         const routes = await api.runRoutes();
         const routeEdges = globalThis.__proofEdges;
         const agents = await api.runAgentNamespaces();
-        node.push({ routes, routeEdges, agents, lifetimes: await api.runLifetimes(), api });
+        node.push({
+          routes,
+          routeEdges,
+          agents,
+          lifetimes: await api.runLifetimes(),
+          latency: await api.runDispatchLatency(),
+          api,
+        });
       }
       const tools = JSON.parse(node[0].routes.find((r) => r.label === "modern /mcp list").response.body).result.tools;
       node[1].mcp = await node[1].api.runMcp(tools);
@@ -233,7 +250,7 @@ export async function runProof() {
       const bundle = await build({
         ...baseBuild,
         entryPoints: [join(fixture, "worker.ts")],
-        plugins: candidate ? [routerCandidate()] : [],
+        plugins: [...(candidate ? [candidatePlugin("workerd")] : []), routerBuildCounter],
       });
       const worker = new Miniflare({
         modules: true,
@@ -249,6 +266,8 @@ export async function runProof() {
         outboundService: (request) => new Response("native:" + new URL(request.url).pathname),
       });
       workers.push(worker);
+      const marker = await workerRequest(worker, "/proof/transform");
+      if (marker.applied !== candidate) throw new Error("Proof workerd transform marker mismatch");
       native.push({
         routes: await workerRequest(worker, "/proof/routes"),
         agents: await workerRequest(worker, "/proof/agents"),
@@ -256,6 +275,7 @@ export async function runProof() {
         mcp: await workerRequest(worker, "/proof/mcp", tools),
         queue: await queueProof(worker),
         lifetimes: await workerRequest(worker, "/proof/lifetimes"),
+        latency: await timedWorkerLatency(worker),
       });
     }
     return {
@@ -274,6 +294,12 @@ export async function runProof() {
         seam: { node: node[1].seam, workers: native[1].seam },
         queue: native.map((n) => n.queue),
         logs,
+        transforms,
+        latency: { node: node.map((n) => n.latency), workers: native.map((n) => n.latency) },
+        cimd: {
+          node: node.map((n) => n.routes.filter((r) => r.label.startsWith("CIMD "))),
+          workers: native.map((n) => n.routes.filter((r) => r.label.startsWith("CIMD "))),
+        },
         lifetimes: { node: node.map((n) => n.lifetimes), workers: native.map((n) => n.lifetimes) },
         oracle: node[0].routes.filter((r) =>
           /origin-first|upgrade |auth-before|unread|close|OPTIONS \/ui\/(credentials|oauth)/.test(r.label),
@@ -289,7 +315,7 @@ export async function runProof() {
         node: node[1].mcp,
         workers: native[1].mcp,
       },
-      sizes: await measure(),
+      sizes: await measure(candidatePlugin, bundleDirectory),
     };
   } finally {
     for (const worker of workers) await worker.dispose();
@@ -298,7 +324,7 @@ export async function runProof() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const report = await runProof();
+  const report = await runProof({ bundleDirectory: process.argv[3] ? resolve(process.argv[3]) : undefined });
   const serialized = JSON.stringify(report, null, 2) + "\n";
   if (process.argv[2]) {
     await writeFile(resolve(process.argv[2]), serialized);
