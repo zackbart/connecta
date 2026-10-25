@@ -1314,3 +1314,77 @@ describe("token confirmations live in the row", () => {
     expect(store.getState().createdToken).toBeNull();
   });
 });
+
+// Independent review regression: the scoped contract and detail begin before
+// the full cycle's deadline, but the detail settles after it cleared the contract.
+describe("review 894: poll after deadline", () => {
+  const ids = ["crm", "tickets", "notes"];
+  const row = (id: string, status = "ok") => ({ id, status, oauth: id === "crm", tools: [], toolCount: 0 });
+  it("INV-4 INV-10: keeps the newer polled live row when the poll lands after the deadline", async () => {
+    const loaded = await loadStore({ id: "a", getToken: async () => "a" });
+    const { store, configMock, fetchMock, declare } = loaded;
+    declare(ids);
+    let consented = false;
+    let waiting = false;
+    const notes = deferred<Response>();
+    const pollDetail = deferred<Response>();
+    let crmWait = false;
+    const crm = () => (consented ? "ok" : "auth_required");
+    configMock.mockImplementation(async (path: string) => {
+      const scoped = path.includes("?connector=crm");
+      return Response.json(
+        v2(
+          ids.map((id) => ({ id })),
+          (scoped ? ["crm"] : ids).map((id) => row(id, id === "crm" ? crm() : "ok")),
+        ),
+      );
+    });
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/ui/oauth/"))
+        return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
+      if (path === "/ui/data")
+        return Response.json({
+          ...uiData("operator"),
+          connectors: ids.map((id) => row(id, id === "crm" ? crm() : "ok")),
+        });
+      if (waiting && path === "/ui/connectors/notes") return notes.promise;
+      if (crmWait && path === "/ui/connectors/crm") return pollDetail.promise;
+      const id = path.split("/").at(-1)!;
+      return Response.json(row(id, id === "crm" ? crm() : "ok"));
+    });
+    await store.boot();
+    vi.useFakeTimers();
+    waiting = true;
+    await store.startOAuth("crm", "continue");
+    await vi.advanceTimersByTimeAsync(13_900);
+    consented = true;
+    crmWait = true;
+    // The 14s poll reads its scoped contract and starts its detail read.
+    await vi.advanceTimersByTimeAsync(200);
+    expect(store.getState().contract).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.getState()).toMatchObject({ contract: null, contractPhase: "error" });
+    pollDetail.resolve(Response.json(row("crm", "ok")));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().data?.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
+    waiting = false;
+    notes.resolve(Response.json(row("notes")));
+    await vi.advanceTimersByTimeAsync(0);
+    const published = () => {
+      expect(store.getState().contractPhase).toBe("ready");
+      for (const id of ids) {
+        expect(store.getState().data?.connectors.find((r) => r.id === id)?.status).toBe("ok");
+        expect(store.getState().contract?.live.connectors.find((r) => r.id === id)?.status).toBe("ok");
+      }
+    };
+    published();
+    expect(loaded.paths.filter((path) => path === CONFIG)).toHaveLength(2);
+    expect(loaded.paths.filter((path) => path.startsWith(CONFIG + "?"))).toHaveLength(7);
+    expect(loaded.paths.filter((path) => path.startsWith("/ui/connectors/"))).toHaveLength(13);
+    expect(loaded.paths.filter((path) => path === "/ui/data")).toHaveLength(1);
+    const reads = [...loaded.paths];
+    await vi.advanceTimersByTimeAsync(60_000);
+    published();
+    expect(loaded.paths).toEqual(reads);
+  });
+});
