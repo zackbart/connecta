@@ -2889,9 +2889,11 @@ Direct public module imports avoid the area's barrel cost. The local D3
 measurement over the reviewed D1/D2 stack is root 373,435 to 393,470 bytes gzip
 and Worker 758,274 to 774,384 (official Node 22.23.4/zlib 1.3.1-e00f703, identical
 repository bundle options). The barrel alternative measures 423,348/787,614.
-The Worker exceeds its 760,000 cap; cost acceptance remains a separate parent
-ruling, with historical baselines and caps unchanged here. Later combined
-changes require their own final measurement.
+The parent accepted this measured native-routing cost with a Worker cap of
+785,000 bytes, including room for separately measured native-auth and reviewed
+host/transport additions. Root and all other caps and historical baselines are
+unchanged by D3. Separate-input costs are not a combined gzip measurement;
+the integrated deployment must be measured again.
 
 `test/effect-core-proof.node.test.ts` compares production against the hash-pinned
 legacy dispatcher in a test-only fixture, on Node and real workerd. It retains

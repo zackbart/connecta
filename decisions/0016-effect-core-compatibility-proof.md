@@ -59,8 +59,8 @@ of an integrated D.3 implementation; refresh the matrix after lower rewrites.
 The parent rejected this prefix-only, per-request-layer candidate as the final
 D.3 design. Its measured behavior does not close the production dispatch item.
 
-**D.3 cost:** measured separately below. No cap is changed or approved here.
-The parent owns the budget decision, including later index compaction work.
+**Historical spike cost:** measured separately below; it did not approve a cap.
+The production D3 ruling below supersedes the spike's pending budget decision.
 
 **D.7 Effect McpServer replacement:** fails the required legacy stateless
 contract independently of cost. `layerHttpRequestScoped` has a useful modern
@@ -300,3 +300,21 @@ stubs outbound service I/O, and disposes every worker. It requires no external
 services. No deployments, release actions, human live-host OAuth acceptance,
 protocol feature expansion or cap changes are included. Focused runs do not
 replace the parent's unconditional full checks or integrated matrix refresh.
+
+## Production D3 cost acceptance
+
+The production adapter uses two request-free public routers per handler and
+direct public `effect/http/*` imports. Official Node22.23.4/zlib1.3.1-e00f703
+measures root373435 to393470 bytes and Worker758274 to774384. The barrel
+alternative measures423348/787614, so direct imports save29878/13230 bytes.
+The685-exchange matrix per runtime, native lifetime/request-isolation proof
+and unchanged deterministic goldens establish compatibility independently of
+size. Local forward/reverse latency diagnostics show path-dependent overhead
+and variation; no latency improvement is claimed.
+
+The parent accepts Worker maxGzip785000 for this genuine routing cost and
+separately measured native-auth/host/transport additions. D3 changes no other
+cap or historical baseline. These separate-input measurements are not an
+additive final gzip claim; final integration must rebuild and remeasure.
+Independent review and combined validation remain required. The D7 protocol
+leaf fallback and exclusion of new protocol features remain unchanged.
