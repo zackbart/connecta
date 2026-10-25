@@ -334,10 +334,13 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     for (const file of importGraph(ENTRY)) expect(file.startsWith(kit), `index.ts reaches ${file}`).toBe(false);
   });
 
-  it("confines Effect's unstable area modules to the kit's transport and vendor modules", () => {
-    // effect/http and effect/http-api can change within 4.x; an upgrade that
-    // moves them should touch these three files and nothing else.
-    const allowed = new Set(["client.ts", "oauth.ts", "vendor.ts"].map((name) => join(SRC, "http", name)));
+  it("confines Effect's unstable area modules to transport, vendor, and SQL execution modules", () => {
+    // Unstable HTTP and SQL APIs are confined to their implementation modules;
+    // upgrading the exact Effect pin requires deliberately checking these seams.
+    const allowed = new Set([
+      ...["client.ts", "oauth.ts", "vendor.ts"].map((name) => join(SRC, "http", name)),
+      join(SRC, "storage", "sql-driver.ts"),
+    ]);
     for (const file of everySource) {
       for (const spec of allSpecifiers(sourceOf(file))) {
         if (!spec.startsWith("effect/")) continue;

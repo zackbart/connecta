@@ -1,3 +1,4 @@
+import { sqlEffectContract } from "./sql-effect-contract.js";
 import {
   sqlActivityRollbackContract,
   sqlBatchRollbackContract,
@@ -42,9 +43,11 @@ const bindings = await (async () => {
   try {
     const testModule = "cloudflare:test";
     const { env } = (await import(/* @vite-ignore */ testModule)) as {
-      env: { KV_COPY_SOURCE?: KVNamespace; KV_COPY_TARGET?: D1Database };
+      env: { KV_COPY_SOURCE?: KVNamespace; KV_COPY_TARGET?: D1Database; SQL_LIFETIMES: Fetcher };
     };
-    return env.KV_COPY_SOURCE && env.KV_COPY_TARGET ? { kv: env.KV_COPY_SOURCE, db: env.KV_COPY_TARGET } : undefined;
+    return env.KV_COPY_SOURCE && env.KV_COPY_TARGET
+      ? { kv: env.KV_COPY_SOURCE, db: env.KV_COPY_TARGET, worker: env.SQL_LIFETIMES }
+      : undefined;
   } catch {
     return undefined;
   }
@@ -129,6 +132,7 @@ describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {
   }
   sqlBatchRollbackContract(open);
   sqlActivityRollbackContract(open);
+  sqlEffectContract(open);
 });
 
 describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
@@ -614,6 +618,31 @@ describe.skipIf(!bindings)("stash capacity over native Workers D1", () => {
             .all<Row>()
         ).results;
       },
+    });
+  });
+});
+
+describe.skipIf(!bindings)("native SQL service request ownership", () => {
+  it("INV-7: reuses stores across real workerd requests without sharing clients, promises, or prepared handles", async () => {
+    const worker = bindings!.worker;
+    const key = crypto.randomUUID();
+    const fetch = async (path: string) => {
+      const response = await worker.fetch(`https://sql.test${path}`);
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const claims = await Promise.all(
+      Array.from({ length: 50 }, (_, index) => fetch(`/claim?key=${key}&owner=owner-${index}`)),
+    );
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await fetch(`/get?key=${key}`)).toBe(`owner-${claims.indexOf(true)}`);
+    for (let index = 0; index < 3; index++) await fetch(`/activity?owner=request-${index}`);
+    expect(await fetch("/list")).toMatchObject({
+      events: expect.arrayContaining([
+        expect.objectContaining({ requestId: "request-0" }),
+        expect.objectContaining({ requestId: "request-1" }),
+        expect.objectContaining({ requestId: "request-2" }),
+      ]),
     });
   });
 });

@@ -1,3 +1,6 @@
+import { Effect } from "effect";
+import { runEdge } from "./runtime/run.js";
+import { requestOwner, type RequestHandoffs } from "./runtime/request-scope.js";
 import type { AuthorizationHandoff, CallErrorDetails } from "./errors.js";
 import { boundedEchoText } from "./errors.js";
 import type { RegistryView } from "./registry.js";
@@ -142,42 +145,50 @@ export async function authorizeConnector(
   return handoff;
 }
 
-interface RequestHandoffs {
-  create: (connector: string) => Promise<AuthorizationHandoff>;
-  enabled: boolean;
-  handoffs: Map<string, Promise<AuthorizationHandoff>>;
-}
-const requests = new WeakMap<object, RequestHandoffs>();
-
 /** Retain the admitted route's factory when program utilities share its scope. */
 export function bindAuthorizationHandoffs(scope: object, create: RequestHandoffs["create"]): void {
-  if (!requests.has(scope)) requests.set(scope, { create, enabled: true, handoffs: new Map() });
+  const retained = requestOwner(scope).retained;
+  retained.handoffs ??= { create, enabled: true, handoffs: new Map() };
 }
 
 export function enableAuthorizationHandoffs(scope: object, enabled: boolean): void {
-  const request = requests.get(scope);
+  const request = requestOwner(scope).retained.handoffs;
   if (request) request.enabled = enabled;
 }
 
 /** One promise per connector also bounds concurrent errors in a program. */
-export async function withAuthorizationHandoff<T extends CallErrorDetails>(scope: object, error: T): Promise<T> {
-  const request = requests.get(scope);
-  if (!request || !error.nextAction || !("tool" in error.nextAction) || error.nextAction.tool !== "authorize_connector")
-    return error;
-  const connector = error.nextAction.arguments.connector;
-  if (!request.enabled) return error;
-  let handoff = request.handoffs.get(connector);
-  if (!handoff) {
-    handoff = request.create(connector);
-    request.handoffs.set(connector, handoff);
-  }
-  try {
-    const shared = await handoff;
-    const value = (error.writeOutcome === "unknown" && afterUnknownWrite.get(shared)) || shared;
-    return { ...error, ...value, message: error.message, ...(value.message ? { instructions: value.message } : {}) };
-  } catch {
-    // A signing/configuration failure cannot replace the original call failure
-    // or leak an arbitrary vault exception into the recovery envelope.
-    return error;
-  }
+export function withAuthorizationHandoff<T extends CallErrorDetails>(scope: object, error: T): Promise<T> {
+  return runEdge(withAuthorizationHandoffEffect(scope, error));
+}
+export function withAuthorizationHandoffEffect<T extends CallErrorDetails>(scope: object, error: T): Effect.Effect<T> {
+  return Effect.suspend(() => {
+    const request = requestOwner(scope).retained.handoffs;
+    if (
+      !request ||
+      !error.nextAction ||
+      !("tool" in error.nextAction) ||
+      error.nextAction.tool !== "authorize_connector" ||
+      !request.enabled
+    )
+      return Effect.succeed(error);
+    const connector = error.nextAction.arguments.connector;
+    let handoff = request.handoffs.get(connector);
+    if (!handoff) {
+      handoff = request.create(connector);
+      request.handoffs.set(connector, handoff);
+    }
+    return Effect.tryPromise({ try: () => handoff, catch: (failure) => failure }).pipe(
+      Effect.map((shared) => {
+        const value = (error.writeOutcome === "unknown" && afterUnknownWrite.get(shared)) || shared;
+        return {
+          ...error,
+          ...value,
+          message: error.message,
+          ...(value.message ? { instructions: value.message } : {}),
+        };
+      }),
+      // A signing/configuration failure cannot replace the original failure.
+      Effect.catch(() => Effect.succeed(error)),
+    );
+  });
 }

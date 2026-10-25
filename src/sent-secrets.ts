@@ -2,6 +2,7 @@
 // only; never part of a context's public shape, a failure record, storage, or a log. Web APIs only.
 import { classificationCode, ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
+import { requestOwner } from "./runtime/request-scope.js";
 import { viewSecrets, wrapViewCredentials } from "./runtime/call.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
@@ -9,7 +10,7 @@ import { REDACTED } from "./redaction-marker.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const encoder = new TextEncoder();
-const requests = new WeakMap<object, SentSecrets>();
+
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
 const explicitSecretName = /secret|password/i;
 const identifierName = /(?:id|user(?:name)?|login|email)$|^public/i;
@@ -2351,13 +2352,9 @@ export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
 
 /** One identity per upstream request, including all discovery and call work. */
 export function sentSecretsForRequest(scope: object, secrets?: SentSecrets): SentSecrets {
-  let request = requests.get(scope);
-  if (!request) {
-    request = secrets ?? new SentSecrets();
-    requests.set(scope, request);
-  } else if (secrets) {
-    request.include(secrets);
-  }
+  const retained = requestOwner(scope).retained;
+  const request = (retained.secrets ??= secrets ?? new SentSecrets());
+  if (secrets) request.include(secrets);
   return request;
 }
 
