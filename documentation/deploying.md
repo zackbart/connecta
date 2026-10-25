@@ -69,7 +69,10 @@ fetch transport.
 By default, Node's `listen()` handles SIGTERM and SIGINT: it stops accepting
 connections, closes idle connections and accepted sockets without a first HTTP
 request, closes request and code admission, reaps sandbox children, and drains
-active responses and deferred work. Its shutdown deadline defaults to ten seconds
+active responses and deferred work. A connection serving an active response
+closes as soon as all its admitted responses finish, including SSE, without
+waiting for the normal keepalive timeout or for the client to close. Normal
+keepalive before shutdown is unchanged. Its shutdown deadline defaults to ten seconds
 (`shutdownTimeoutMs`). For example, retain the template's `listen(connecta, port)` when running it under
 Docker Compose so `docker compose stop` uses this cleanup.
 
