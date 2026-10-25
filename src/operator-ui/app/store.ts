@@ -131,6 +131,7 @@ export function navHint(): { activity: boolean } {
 function gate(notice: Notice | null = null, session: OperatorState["session"] = "gated"): void {
   cancelRecoveryRead();
   queryClient.clear();
+  connectorPublications.clear();
   forgetNav();
   stopOAuthPolling();
   clearTimeout(returnTimer);
@@ -453,6 +454,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
   const identityCurrent = fence();
   const revision = ++dataRevision;
   ++snapshotRevision;
+  const publication = ++snapshotReadRevision;
   const current = () => identityCurrent() && revision === dataRevision && !signal.aborted;
   // The contract is what this read is waiting on first.
   set({
@@ -491,7 +493,12 @@ async function loadData(signal: AbortSignal): Promise<void> {
     return resetRecovery(false);
   }
   // A maintainer's page waits for `/ui/data` too.
-  set({ ...contractSlotsRefreshed(contract), contract, role: "maintainer", contractPhase: "loading" });
+  set({
+    ...contractSlotsRefreshed(contract),
+    contract: preservePolledRows(contract, publication),
+    role: "maintainer",
+    contractPhase: "loading",
+  });
   // Withheld: the role became unknown or changed; its own state says so.
   const sent = send("/ui/data", { signal, headers: requestHeaders(token), credentials: "same-origin" });
   if (!sent) return;
@@ -516,7 +523,14 @@ async function loadData(signal: AbortSignal): Promise<void> {
   if (!data || !Array.isArray(data.connectors)) return unreachable("server");
   rememberNav(data);
   set({
-    data,
+    data: {
+      ...data,
+      connectors: data.connectors.map((row) =>
+        (connectorPublications.get(row.id)?.revision ?? 0) > publication
+          ? (state.data?.connectors.find((previous) => previous.id === row.id) ?? row)
+          : row,
+      ),
+    },
     session: "ready",
     gate: null,
     refreshing: false,
@@ -524,7 +538,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
   });
   // A passive recovery owns the whole matching catalog/auth cycle. Releasing
   // its in-flight guard at the summary would let focus supersede slow reads.
-  await refreshSnapshot(false, undefined, signal, contract);
+  await refreshSnapshot(false, undefined, signal, contract, publication);
 }
 
 /* Member actions, validated at dispatch ------------------------------------- */
@@ -653,6 +667,27 @@ function memberAuthorizationPending(): boolean {
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
 let snapshotRevision = 0;
+// Full cycles own admission/recovery. Polls only supersede one connector's
+// publication, including a summary or detail that was already in flight.
+let snapshotReadRevision = 0;
+const connectorPublications = new Map<
+  string,
+  { revision: number; live: OperatorUiContractV2["live"]["connectors"][number] | undefined }
+>();
+
+function preservePolledRows(contract: OperatorUiContractV2, publication: number): OperatorUiContractV2 {
+  return {
+    ...contract,
+    live: {
+      ...contract.live,
+      connectors: contract.live.connectors.map((row) =>
+        (connectorPublications.get(row.id)?.revision ?? 0) > publication
+          ? (connectorPublications.get(row.id)?.live ?? row)
+          : row,
+      ),
+    },
+  };
+}
 /**
  * Refresh the catalog and auth controls. A viewer never confirmed as a
  * maintainer, or with no maintainer data yet, has nothing maintainer-only to
@@ -675,15 +710,16 @@ async function refreshSnapshot(
   connectorId?: string,
   pollSignal?: AbortSignal,
   preloaded?: OperatorUiContractV2,
+  publication = ++snapshotReadRevision,
 ): Promise<void> {
   if (signedOut || state.role !== "maintainer") return;
-  // A scoped OAuth cycle supersedes general publication without cancelling
-  // the older transport or letting its deadline overwrite the newer state.
-  if (recoveryRead && recoveryRead.controller.signal !== pollSignal) releaseRecoveryRead();
-  // A new catalog cycle also supersedes any summary that has not landed yet.
-  ++dataRevision;
+  if (!connectorId && !preloaded) {
+    if (recoveryRead && recoveryRead.controller.signal !== pollSignal) releaseRecoveryRead();
+    ++dataRevision;
+    ++snapshotRevision;
+  }
   const identityCurrent = fence();
-  const revision = ++snapshotRevision;
+  const revision = snapshotRevision;
   const current = () => identityCurrent() && revision === snapshotRevision && !pollSignal?.aborted;
   const data = state.data;
   if (!data) return;
@@ -705,15 +741,23 @@ async function refreshSnapshot(
     if (connectorId && loadedContract && !outcomes.has(connectorId)) return;
     // Publish each completed connector with its matching catalog facts. A slow
     // provider leaves other rows usable; pending rows retain their last pair.
-    const refreshed =
-      loadedContract && connectorId ? mergeConnectorContract(loadedContract, connectorId) : loadedContract;
+    const publishable = new Map(
+      [...outcomes].filter(([id]) => (connectorPublications.get(id)?.revision ?? 0) <= publication),
+    );
+    const refreshed = connectorId
+      ? loadedContract
+        ? mergeConnectorContract(loadedContract, connectorId)
+        : state.contract
+      : loadedContract
+        ? preservePolledRows(loadedContract, publication)
+        : null;
     const contract = refreshed
       ? {
           ...refreshed,
           live: {
             ...refreshed.live,
             connectors: refreshed.live.connectors.map((live) =>
-              outcomes.has(live.id)
+              publishable.has(live.id)
                 ? live
                 : (state.contract?.live.connectors.find((previous) => previous.id === live.id) ?? live),
             ),
@@ -721,11 +765,15 @@ async function refreshSnapshot(
         }
       : null;
     set({
-      ...detailsPatch(outcomes, quiet && !connectorId, contract),
+      ...detailsPatch(publishable, quiet && !connectorId, contract),
       contract,
       contractPhase: contract ? "ready" : "error",
     });
     if (connectorId) {
+      connectorPublications.set(connectorId, {
+        revision: publication,
+        live: state.contract?.live.connectors.find((row) => row.id === connectorId),
+      });
       const outcome = outcomes.get(connectorId);
       if (
         !contract ||
@@ -741,7 +789,7 @@ async function refreshSnapshot(
   const worker = async () => {
     while (next < connectors.length && current()) {
       const connector = connectors[next++]!;
-      const outcome = await readConnector(connector.id, token, revision, pollSignal);
+      const outcome = await readConnector(connector.id, token, publication, pollSignal);
       if (current()) {
         outcomes.set(connector.id, outcome);
         publish();
@@ -752,7 +800,7 @@ async function refreshSnapshot(
     ? Promise.resolve(publish())
     : queryClient
         .fetchQuery({
-          queryKey: ["operator-config", state.generation, revision],
+          queryKey: ["operator-config", state.generation, publication],
           queryFn: ({ signal }) =>
             fetchContract(
               connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
@@ -788,8 +836,10 @@ async function refreshSnapshot(
   const needsRecovery =
     !loadedContract ||
     Object.keys(state.connectorFailures).length > 0 ||
-    [...outcomes.values()].some(
-      (outcome) => outcome.kind !== "detail" || outcome.detail.credential?.problem === "credential_unreadable",
+    [...outcomes].some(
+      ([id, outcome]) =>
+        (connectorPublications.get(id)?.revision ?? 0) <= publication &&
+        (outcome.kind !== "detail" || outcome.detail.credential?.problem === "credential_unreadable"),
     );
   if (needsRecovery) scheduleRecovery();
   else resetRecovery(false);

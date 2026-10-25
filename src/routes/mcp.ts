@@ -1,3 +1,4 @@
+import { observeAgentAdmission } from "../agent-observation.js";
 import { bindActivityRequest } from "../activity-request.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
@@ -885,6 +886,16 @@ export function createMcpRoute(opts: ServerOptions): {
             return notFound();
           }
           const { access, readOnly, poolOwner } = scope;
+          // Admission, not completed-call activity. This fact carries no live
+          // identity or credential and never changes the admission verdict.
+          if (agentEndpoint && authz.identity.agent && opts.config.agents.includes(authz.identity.agent)) {
+            yield* observeAgentAdmission(
+              opts.config.storage,
+              authz.identity.agent,
+              new Date().toISOString(),
+              opts.config.discovery.probeTimeoutMs,
+            );
+          }
           if (listenHeader) {
             const verdict = yield* Effect.promise(() => classifyListen(localRequest, localAbort.signal));
             // The deadline timer aborts a stalled read; its body is already cancelled.

@@ -701,6 +701,169 @@ describe("operator recovery bounds and snapshot ordering", () => {
   });
 });
 
+describe("scoped OAuth publication preserves full-cycle ownership", () => {
+  const ids = ["crm", "tickets", "notes"];
+  const row = (id: string, status = "ok") => ({ id, status, oauth: id === "crm", tools: [], toolCount: 0 });
+
+  async function overlap(exhausted = false) {
+    const loaded = await loadStore({ id: "a", getToken: async () => "a" });
+    const { store, configMock, fetchMock, declare } = loaded;
+    declare(ids);
+    let active = false;
+    let waiting = false;
+    let polled = false;
+    const notes = deferred<Response>();
+    configMock.mockImplementation(async (path: string) => {
+      const scoped = path.includes("?connector=crm");
+      if (scoped) polled = true;
+      return Response.json(
+        v2(
+          ids.map((id) => ({ id })),
+          (scoped ? ["crm"] : ids).map((id) => row(id, id === "crm" && !polled ? "auth_required" : "ok")),
+        ),
+      );
+    });
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/ui/oauth/"))
+        return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
+      if (path === "/ui/data")
+        return Response.json({
+          ...uiData("operator"),
+          connectors: ids.map((id) => row(id, id === "crm" && !polled ? "auth_required" : "ok")),
+        });
+      if (active && path === "/ui/connectors/tickets") return new Response(null, { status: 503 });
+      if (waiting && path === "/ui/connectors/notes") return notes.promise;
+      return Response.json(row(path.split("/").at(-1)!, path.endsWith("/crm") && !polled ? "auth_required" : "ok"));
+    });
+    await store.boot();
+    vi.useFakeTimers();
+    active = true;
+    if (exhausted) {
+      await store.loadOperatorContract();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(loaded.paths.filter((p) => p === "/ui/data")).toHaveLength(5);
+    }
+    waiting = true;
+    loaded.paths.length = 0;
+    await store.startOAuth("crm", "continue");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.getState().data?.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
+    expect(store.getState().contract?.live.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
+    return {
+      ...loaded,
+      notes,
+      finish() {
+        waiting = false;
+      },
+    };
+  }
+
+  it.each(["late failure", "late success", "stalled detail", "exhausted budget"] as const)(
+    "INV-4 INV-10: a poll preserves %s, both live rows and the 60-second read budget",
+    async (ordering) => {
+      const exhausted = ordering === "exhausted budget";
+      const { store, notes, finish, paths } = await overlap(exhausted);
+      if (ordering === "stalled detail") {
+        await vi.advanceTimersByTimeAsync(12_999);
+        expect(store.getState().contractPhase).toBe("ready");
+        await vi.advanceTimersByTimeAsync(1);
+        expect(store.getState()).toMatchObject({ contractPhase: "error", recoveryPending: false });
+        expect(store.getState().data?.connectors.find((r) => r.id === "tickets")?.status).toBe("error");
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(paths.filter((p) => p === CONFIG)).toHaveLength(1);
+        expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(4);
+        expect(paths.filter((p) => p === "/ui/data")).toHaveLength(0);
+        // A late result still publishes, retaining the newer poll after Retry appeared.
+        finish();
+        notes.resolve(Response.json(row("notes")));
+        await vi.advanceTimersByTimeAsync(0);
+      } else {
+        finish();
+        notes.resolve(ordering === "late success" ? Response.json(row("notes")) : new Response(null, { status: 503 }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(store.getState().data?.connectors.find((r) => r.id === "notes")?.status).toBe(
+          ordering === "late success" ? "ok" : "error",
+        );
+        expect(store.getState().contract?.live.connectors.find((r) => r.id === "notes")?.status).toBe(
+          ordering === "late success" ? "ok" : "error",
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(paths.filter((p) => p === "/ui/data")).toHaveLength(exhausted ? 0 : 4);
+        expect(paths.filter((p) => p === CONFIG)).toHaveLength(exhausted ? 1 : 5);
+        expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(exhausted ? 4 : 16);
+      }
+      expect(store.getState().data?.connectors.find((r) => r.id === "tickets")?.status).toBe("error");
+      expect(store.getState().contract?.live.connectors.find((r) => r.id === "tickets")?.status).toBe("error");
+      expect(store.getState().data?.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
+      expect(store.getState().contract?.live.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
+      if (ordering === "stalled detail") {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(paths.filter((p) => p === "/ui/data")).toHaveLength(3);
+        expect(paths.filter((p) => p === CONFIG)).toHaveLength(4);
+        expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(13);
+      }
+      const counts = paths.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(paths).toHaveLength(counts);
+    },
+  );
+
+  it.each(["full refresh", "mutation", "identity", "sign-out"] as const)(
+    "INV-4: %s still fences the older full cycle after a successful poll",
+    async (superseder) => {
+      const { store, notes, finish, changeSession } = await overlap();
+      finish();
+      if (superseder === "full refresh") await store.loadOperatorContract();
+      else if (superseder === "mutation") {
+        await store.startOAuth("crm", "continue");
+        await vi.advanceTimersByTimeAsync(0);
+      } else if (superseder === "identity") {
+        changeSession({ id: "b", getToken: async () => "b" });
+        await vi.advanceTimersByTimeAsync(0);
+      } else store.signOut();
+      notes.resolve(new Response(null, { status: 503 }));
+      await vi.advanceTimersByTimeAsync(0);
+      if (superseder === "sign-out") expect(store.getState().data).toBeNull();
+      else {
+        expect(store.getState().data?.connectors.find((r) => r.id === "notes")?.status).toBe("ok");
+        expect(store.getState().contract?.live.connectors.find((r) => r.id === "notes")?.status).toBe("ok");
+      }
+    },
+  );
+
+  it("INV-4 INV-10: an admission summary pending at poll success cannot roll back that row", async () => {
+    const { store, fetchMock, configMock, declare } = await loadStore({ id: "a", getToken: async () => "a" });
+    declare(["crm"]);
+    let polled = false;
+    const summary = () => ({ ...uiData("operator"), connectors: [row("crm", "auth_required")] });
+    configMock.mockImplementation(async (path: string) => {
+      if (path.includes("?connector=")) polled = true;
+      return Response.json(v2([{ id: "crm" }], [row("crm", polled ? "ok" : "auth_required")]));
+    });
+    const pending = deferred<Response>();
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(path === "/ui/data" ? summary() : row("crm", "auth_required")),
+    );
+    await store.boot();
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/ui/oauth/"))
+        return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
+      if (path === "/ui/data") return pending.promise;
+      return Response.json(row("crm", polled ? "ok" : "auth_required"));
+    });
+    await store.startOAuth("crm", "continue");
+    await vi.advanceTimersByTimeAsync(0);
+    const admission = store.retryLoad();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+    pending.resolve(Response.json(summary()));
+    await admission;
+    expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+    expect(store.getState().contract?.live.connectors[0]?.status).toBe("ok");
+  });
+});
+
 describe("operator role changes", () => {
   const PRIVILEGED = ["/ui/data", "/ui/connectors/", "/ui/api/activity", "/ui/access-tokens"];
   const privileged = (paths: string[]) => paths.filter((path) => PRIVILEGED.some((prefix) => path.startsWith(prefix)));
