@@ -15,7 +15,8 @@
             "method": "POST",
             "path": "/drafts",
             "operationId": "gmail.users.drafts.create",
-            "summary": "Refused: Draft writes are available only through create_draft, which builds guarded reply MIME.",
+            "summary": "Refused: reply to email or save a draft via the hatch; use create_draft or update_draft.",
+            "refusal": "Draft writes are available only through create_draft, which builds guarded reply MIME.",
             "named": "create_draft"
           },
           {
@@ -38,26 +39,29 @@
             "method": "PUT",
             "path": "/drafts/{id}",
             "operationId": "gmail.users.drafts.update",
-            "summary": "Refused: Draft writes are available only through update_draft, which preserves headers and refuses attachments.",
+            "summary": "Refused: edit a draft via the hatch; use update_draft or create_draft.",
+            "refusal": "Draft writes are available only through update_draft, which preserves headers and refuses attachments.",
             "named": "update_draft"
           },
           {
             "method": "DELETE",
             "path": "/drafts/{id}",
             "operationId": "gmail.users.drafts.delete",
-            "summary": "Refused: This operation is outside the reviewed read allowlist; use create_draft or update_draft for draft writes. Sending is never available."
+            "summary": "Refused: delete drafts; use create_draft or update_draft only for drafts.",
+            "refusal": "This operation is outside the reviewed read allowlist; use create_draft or update_draft for draft writes. Sending is never available."
           },
           {
             "method": "POST",
             "path": "/drafts/send",
             "operationId": "gmail.users.drafts.send",
-            "summary": "Refused: Sending is never available; use create_draft or update_draft to save a draft for review in Gmail."
+            "summary": "Refused: send mail; sending is never available; use create_draft or update_draft to save for review.",
+            "refusal": "Sending is never available; use create_draft or update_draft to save a draft for review in Gmail."
           }
         ],
         "revision": "20261019",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiMjkwOWQ0MmJjYjNjMDYzN2YxYjQ5OGNkODIyYWE4YzMiLCJjIjoiNiIsIm0iOiJkZS1WU19kOWhldzFVMnVHVE5McVY2TGFJZDlNUzhNQXlsOENSTXNpZTlRIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYjViNTc1YTY5ZWIzMzA0ZWIzMmU2Zjc0Y2VhOGRmOWQiLCJjIjoiNiIsIm0iOiJnOUV6U2JmQVNoNGlrOXU0UzU1dEdIM1hoUXdxXzVxMGVPbE5UbVo5TVFFIn0"
         }
       }
     }

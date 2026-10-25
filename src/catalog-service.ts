@@ -30,6 +30,7 @@ import { duringViewEffect } from "./runtime/call.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 import type { Connector, JsonSchema, ToolDef } from "./types.js";
 import { keepErrorName } from "./redaction-identity.js";
+import { operationVocabularyMatches } from "./operation-vocabulary.js";
 
 export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
@@ -1082,6 +1083,7 @@ export class CatalogService {
       const displayTerm = (term: string) => boundedQueryTerm(term).text;
       const queryMetadataTruncated =
         analysisTerms.length > analyzedTerms.length || analyzedTerms.some((term) => boundedQueryTerm(term).truncated);
+      const vocabularyTools = new Set<ToolDef>();
       const collectMatches = (mode: "all" | "partial") => {
         const collected: typeof matches = [];
         let orderBase = 0;
@@ -1120,20 +1122,42 @@ export class CatalogService {
                     )
                     .join(" ")
                 : retrievalQuery;
-            const toolTermCount = lexicalQueryTerms(toolQuery).length;
-            for (const ranked of rankTools(catalog.success, toolQuery, mode, statistics, query)) {
+            const toolTerms = lexicalQueryTerms(toolQuery);
+            const toolTermCount = toolTerms.length;
+            const rankedTools = rankTools(catalog.success, toolQuery, mode, statistics, query);
+            const original = catalogs[connectorIndex]!;
+            if (!isBrowse && query.length <= 200 && queryTerms.length <= 8 && Result.isSuccess(original)) {
+              for (const tool of operationVocabularyMatches(
+                connector,
+                original.success,
+                toolTerms.filter((term) => !connectorTerms.has(term)).join(" "),
+                safety,
+                this.readOnly,
+              )) {
+                vocabularyTools.add(tool);
+                if (!rankedTools.some((match) => match.tool === tool))
+                  rankedTools.push({
+                    tool,
+                    score: 0,
+                    order: original.success.indexOf(tool),
+                    exactName: false,
+                    matchedTermCount: toolTermCount,
+                  });
+              }
+            }
+            for (const ranked of rankedTools) {
               collected.push({
                 connector,
                 tool: ranked.tool,
-                score: ranked.score,
+                score: vocabularyTools.has(ranked.tool) && !ranked.exactName ? 0 : ranked.score,
                 order: orderBase + ranked.order,
                 exactName: ranked.exactName,
                 exactLookup:
                   rawPhrase === lexicalQueryTerms(ranked.tool.name).join(" ") ||
                   rawPhrase === lexicalQueryTerms(`${connector.id}.${ranked.tool.name}`).join(" "),
                 connectorRank,
-                matchedTermCount: ranked.matchedTermCount,
-                complete: isBrowse || ranked.matchedTermCount === toolTermCount,
+                matchedTermCount: vocabularyTools.has(ranked.tool) ? toolTermCount : ranked.matchedTermCount,
+                complete: isBrowse || vocabularyTools.has(ranked.tool) || ranked.matchedTermCount === toolTermCount,
               });
             }
           }
@@ -1253,7 +1277,11 @@ export class CatalogService {
       const nextOffset = offset + entries.length < matches.length ? offset + entries.length : undefined;
       const pageTools = new Set(pageMatches.map((match) => match.tool));
       const matchingTools = (term: string) =>
-        new Set([...(statistics.nameMatches.get(term) ?? []), ...(statistics.descriptionMatches.get(term) ?? [])]);
+        new Set([
+          ...(statistics.nameMatches.get(term) ?? []),
+          ...(statistics.descriptionMatches.get(term) ?? []),
+          ...vocabularyTools,
+        ]);
       const representedTerms: string[] = [];
       const otherResultTerms: string[] = [];
       const unmatchedTerms: string[] = [];
@@ -1337,8 +1365,8 @@ export class CatalogService {
             } ${namedIdentityConnectors}${
               unnamedIdentityConnectors > 0 ? ` and ${unnamedIdentityConnectors} more` : ""
             }. Scope by connector and browse with an empty query to list the tools there.`;
-      // Catalog matching cannot search operations that exist only in an API
-      // index. Point at already-loaded visible tools, in stable connector order.
+      // Bounded vocabulary is not an exhaustive operation search. Keep the
+      // fallback to already-loaded visible tools, in stable connector order.
       // The caller's safety filter is not a visibility boundary: a read search
       // tool is also how one discovers indexed writes for approvalRequired.
       const apiSearchPointers =
@@ -1356,7 +1384,7 @@ export class CatalogService {
       const apiSearchGuidance =
         apiSearchPointers.length === 0
           ? undefined
-          : "No catalog tool matched this query. API operation indexes have not been searched." +
+          : "No catalog tool matched this query. Bounded API operation vocabulary was consulted; full API operation indexes have not been searched." +
             (namedApiSearchPointers.length
               ? ` Search operations with ${namedApiSearchPointers.map(({ connector, tool }) => `\`${connector}.${tool}\``).join(", ")}.`
               : "") +

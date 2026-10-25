@@ -1,4 +1,5 @@
 import { Effect, Exit } from "effect";
+import { registerConnectorVocabulary } from "../operation-vocabulary.js";
 import { causeError, runEdge } from "../runtime/run.js";
 import { credentialProbe } from "../runtime/credential-probe.js";
 import { ContinuationBinding, serviceFor, setViewService, settleOnClose, duringViewEffect } from "../runtime/call.js";
@@ -550,5 +551,6 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         );
       }
     });
+  registerConnectorVocabulary(connector, opts.tools);
   return connector;
 }

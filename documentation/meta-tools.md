@@ -161,9 +161,25 @@ discovery. Both take the same arguments.
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
 
-When a non-empty query matches no catalog tool, visible standard API hatches
-may still cover it. `queryAnalysis.guidance` names up to three qualified API
-search tools in connector order and reports the omitted count; indexes have
+Main search also consults a standard hatch's construction-authored operation
+vocabulary (path, operation id, vendor summary and tag), without calling a tool
+or reading account data. A match returns the owning `_api_search` tool; call it
+with the original query to retrieve operations. Exact tool/address and complete
+authored-tool matches retain precedence. A vocabulary match requires every term
+in one operation, and the operation's hatch route must be visible and match the
+read/write filter. On `approvalRequired` searches the returned discovery tool
+is still a read. Hidden tools, missing grants and read-only restrictions remain
+in force. Browsing does not consult operation vocabulary.
+
+Vocabulary is bounded: queries at most 200 characters and eight terms; each
+hatch caches at most 8,192 rows and 2,097,152 characters, with at most 1,024
+characters per row and 128 query intersections. Longer queries and vocabulary
+outside these bounds remain available through the hatch's own search. These
+bounds never claim an exhaustive operation search.
+
+When a non-empty query matches no catalog tool or bounded operation vocabulary,
+visible standard API hatches may still cover it. `queryAnalysis.guidance` names up to three qualified API
+search tools in connector order and reports the omitted count; full indexes have
 not been searched. For example, call `crm.crm_api_search` with the original
 query before concluding that the operation is unavailable. Browse with an
 empty query and follow every page, or search for `_api_search`, to list all API

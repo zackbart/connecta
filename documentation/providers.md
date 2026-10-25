@@ -16,8 +16,22 @@ including after refund/charge/issue/process. The requested verb or a synonym in
 an operation's summary, id or path sorts next, followed by resource focus.
 A refused operation with a matching verb shares the intent tier when it covers
 more query nouns than any admitted operation matching that verb and intent.
-Its summary explains the refusal and omits the read/write hatch pointer; an
-available named alternative can still be shown.
+Its original indexed `summary` stays separate from the reviewed `refusal`, and
+it omits the read/write hatch pointer; a named alternative can still be shown.
+Search keeps up to 512 UTF-16 units of refusal text and marks any cut reason as
+`operations[i].refusal` in `truncated`. Details supplies complete refusal text,
+in 32 KiB pages/chunks when necessary. The summary has its separate 300-unit
+search budget; ranking uses the indexed language, not attached refusal prose.
+
+Use `_api_details` with the indexed method and path when a refused method lies
+outside the call tool's schema. For example, `gmail_api_details` with
+`method: "POST", path: "/messages/send"` explains the sending refusal; Gmail's
+read hatch still has no method argument and there is no Gmail write hatch.
+`forms_api_details` likewise explains `DELETE /forms/{formId}/watches/{watchId}`
+even though DELETE remains absent from the Forms write schema. GitHub
+`PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` also remains outside its raw
+write schema; inspect its refusal and named alternative through details. All such calls
+remain refused before authentication or downstream I/O.
 
 Partial lexical matches are included even when other operations match every
 term. Short function words and id-shaped tokens do not count toward noun
@@ -28,10 +42,18 @@ declared field names. Verb-less noun phrases keep their broader rule: any noun
 in the path/id, or every noun in the text. Framing-only queries return no matches.
 
 A noun phrase first prefers fuller noun coverage and an exact summary phrase
-prefix, then path depth with a one-segment preference for authored tools, exact
-resource nouns and authored tools. A pointer to another hatch receives no
-authored-tool preference. A namespace before a version segment does
-not count as an exact resource noun in that tie. A single noun, or a leading
+prefix, then an exact terminal
+resource (its last literal segment matches the last noun or the complete
+compound phrase). An authored read whose
+summary/id covers every noun shares the terminal-resource tier when an exact
+terminal resource exists and its
+description begins with a read action; the action word does not supply resource
+noun coverage. When both terminal
+resources match, reviewed reads precede writes and refusals. Path depth with a
+one-segment authored-tool preference, exact resource nouns and authored tools
+break remaining ties. A pointer to another hatch receives no authored preference.
+Literal namespaces on either side of a version segment count as resource nouns;
+version markers and parameters do not. A single noun, or a leading
 `list` with only one exact resource noun plus modifiers, prefers the root
 collection before nested routes. Other `list` phrases prefer an authored tool
 whose summary/id covers every noun. Lexical relevance and stable index order

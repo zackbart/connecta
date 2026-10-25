@@ -1884,13 +1884,15 @@
             "method": "PATCH",
             "path": "/files/{fileId}/revisions/{revisionId}",
             "operationId": "drive.revisions.update",
-            "summary": "Refused: Revision mutations can remove retained content or change publication; only revision metadata reads are admitted."
+            "summary": "Refused: Update edit modify revisions; only revision metadata reads are admitted.",
+            "refusal": "Revision mutations can remove retained content or change publication; only revision metadata reads are admitted."
           },
           {
             "method": "DELETE",
             "path": "/files/{fileId}/revisions/{revisionId}",
             "operationId": "drive.revisions.delete",
-            "summary": "Refused: Revision mutations can remove retained content or change publication; only revision metadata reads are admitted."
+            "summary": "Refused: Delete remove revisions; only revision metadata reads are admitted.",
+            "refusal": "Revision mutations can remove retained content or change publication; only revision metadata reads are admitted."
           },
           {
             "method": "GET",
@@ -1912,7 +1914,7 @@
         "revision": "20261020",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiOWMzYzcxZmQ0Y2UwZTUxMmVhYmVhZDczYWIzNTBhZDMiLCJjIjoiNiIsIm0iOiJldDR5T3pXMGV0MEpqdkZwSlM4UGRuUlptb25WMm5DUVlkS1VQdWRWUXk4In0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiODU5NTIzNTFmZmRmN2RmNjdjMWExMmI3MDUyYjUwZTMiLCJjIjoiNiIsIm0iOiJkQjBzRG5IUDJXOS1jWWhtTWk4eGhNOFJLbFo4dDIxMWlpZGQtenAtVThRIn0"
         }
       }
     }

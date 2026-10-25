@@ -2405,19 +2405,38 @@ retrieval.
 Reviewed intent, the requested verb/synonym in summary/id/path, and resource
 focus sort first. A refused operation with a matching verb shares the intent
 tier only when its noun coverage exceeds every admitted operation matching that
-verb and intent. Search and details render the same reviewed reason used at
-call time in the refused operation's summary, without feeding that reason
-into ranking. Search caps long summaries and details pages their complete
-text. REST safety tables supply the reason through `restSafety`; reviewed
-bindings declare static operation refusals separately from argument validation.
+verb and intent. Search and details retain the original indexed summary and expose the reviewed
+reason in a separate optional `refusal` field. Ranking uses the original indexed
+text, never the newly attached reason. Search caps refusal text at 512 UTF-16
+code units without splitting a surrogate pair, independently of its 300-unit
+summary cap. A cut reason names `operations[i].refusal` in `truncated`; details
+returns the complete reason within its 32 KiB envelope or reconstructible
+`of: "refusal"` text chunks. The five long Cloudflare reasons fit whole in the
+search refusal budget, including their named alternatives. REST safety tables
+supply the reason through `restSafety`; reviewed bindings declare static operation
+refusals separately from argument validation. Discovery cursors additionally bind
+the summary/refusal representation format, so an old piece offset cannot skip a
+required parameter after this representation changes. The binding's deployment
+`cursorScope`, named suggestions and paging totals retain their existing seams.
 An unreviewed operation reports the missing hatch verdict. A refused hit has
 no read/write hatch pointer; a reviewed named alternative can still be shown.
 
-Verb-less noun phrases then sort by noun coverage, an exact summary phrase prefix,
-then path depth with a one-segment preference for authored tools, exact
-resource-noun coverage, and authored-tool preference. A pointer to another
-hatch receives no authored-tool preference. Exact resource nouns
-exclude a namespace before a version segment. For a single noun, and for
+Verb-less noun phrases first sort by noun coverage and an exact summary phrase
+prefix, then by an exact terminal resource: the last literal non-version segment must contain the last query noun
+or the concatenated noun phrase (`invoiceitems` for `invoice items`). An authored
+read whose vendor summary/id covers every noun shares that terminal-resource
+tier only when a real terminal-resource match exists and its description
+begins with a read action; the action word itself
+does not supply noun coverage. This preserves aggregate
+authored entry points without treating a verification action as a token list. When both candidates match the terminal resource,
+a reviewed read precedes writes and refusals. Depth with a one-segment authored
+tool preference, exact resource-noun coverage, and authored-tool preference
+break remaining ties. A pointer to another hatch receives no authored preference.
+Exact resource nouns include literal namespaces on either side of a version
+segment; parameters and version markers supply no resource coverage. This
+prefers `members` over summary-only membership matches and `tokens` over a
+verification action, while direct versioned collections retain their depth
+advantage over nested collections. For a single noun, and for
 leading `list` queries with one exact resource noun plus modifiers, collection
 ties sort by exact root, fewer nested resources, matching namespace, shallow
 depth and authored tool. Other leading `list` queries prefer authored tools
@@ -2428,6 +2447,15 @@ roots share the collection keys. Sort keys are computed once per operation
 per query; lexical relevance and index order resolve remaining ties.
 Operations found only through a request or response field follow primary
 matches, and search names an authored tool whenever one serves an operation.
+A refused method outside a read/write tool's input schema is inspected through
+`_api_details` with its indexed method and path. Call validation remains closed:
+Gmail's 49 non-GET refusals do not add a method field or a write hatch, and Forms'
+refused DELETE remains outside its write enum. GitHub's refused raw PUT merge
+is likewise outside its write enum; its named guarded alternative is unaffected.
+These 51 schema refusals happen
+before authentication or I/O; details exposes the same reviewed reason as search.
+Every schema-reachable refused operation still fails with that reason before
+authentication or dispatch. This is policy inspection, never execution admission.
 `_api_read` omits
 `method` only when GET is its one reviewed read method.
 A standard list can declare `limit.values` for a vendor's discrete page sizes.
@@ -3853,6 +3881,21 @@ returned the public Worker entry from 198,744 to 77,426 bytes; live minified
 Context, inherited-method, decorator and restoration proofs retain native
 composition. Root, example Worker, public Worker, D1 and Clerk caps remain
 unchanged. This cost decision grants no later request-body-limit allowance.
+
+### Catalog operation vocabulary (contributor)
+
+The standard hatch privately registers bounded vendor operation text against its
+ApiTool identity; `apiConnector` transfers those facts to the constructed
+connector. `operation-vocabulary.ts` contains only pure lexical/cache logic and
+types. Catalog discovery consumes those facts after loading and classifying a
+complete visible catalog. It never imports a provider or an operation index,
+parses operation contracts, invokes a handler, or authenticates. Matching requires
+all terms in a single operation and a visible destination hatch. Endpoint,
+connector and tool grants are checked on every query, outside the request-free
+cache. Exact authored names and complete authored matches precede API pointers;
+ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
+The published discovery contract states compilation, query and cache bounds.
+No request identity, signal, credential or promise enters a vocabulary cache.
 
 ### Authenticated body-bound cost (contributor)
 

@@ -1058,6 +1058,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
 
         expect(addresses(await rpc(assistant, group, "search_tools", { query: "labels" }))).toEqual([
           "shared_mail.list_labels",
+          "shared_mail.gmail_api_search",
         ]);
         const called = await rpc(assistant, group, "call_tool", { address: "mail.list_labels", args: {} });
         const ghost = await rpc(assistant, group, "call_tool", { address: "ghost.list_labels", args: {} });
@@ -1095,7 +1096,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         );
         const program = (await rpc(assistant, group, "execute_code", { code: "async () => null" })).structuredContent
           .result;
-        expect(program.search).toEqual(["shared_mail.list_labels"]);
+        expect(program.search).toEqual(["shared_mail.list_labels", "shared_mail.gmail_api_search"]);
         // Byte-for-byte what a connector that never existed gets, name aside.
         const asGhost = (value: unknown) => JSON.stringify(value).replaceAll('"mail.', '"ghost.');
         expect(asGhost(program.describe)).toBe(JSON.stringify(program.describeGhost));
@@ -1105,10 +1106,12 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" }))).toEqual([
           "mail.list_labels",
           "shared_mail.list_labels",
+          "mail.gmail_api_search",
+          "shared_mail.gmail_api_search",
         ]);
         expect(
           addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
-        ).toEqual(["mail.list_labels"]);
+        ).toEqual(["mail.list_labels", "mail.gmail_api_search"]);
         expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "form" }))).toContain(
           "forms.get_form",
         );
@@ -1142,7 +1145,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       {
         name: "off-page aggregate counts",
         args: { query: "labels", offset: 10_000 },
-        expected: { tools: [], total: 2, hasMore: false },
+        expected: { tools: [], total: 4, hasMore: false },
       },
       {
         name: "fixed-subject guide control",
@@ -1221,7 +1224,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
               mcpRpc("tools/call", { name: "search_tools", arguments: args }, { token: assistant, agentPool: "group" }),
             ),
           );
-          expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 1, hasMore: false });
+          expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 2, hasMore: false });
         }
         const page = await run(ownerless);
         if (name === "fixed-subject guide control") {

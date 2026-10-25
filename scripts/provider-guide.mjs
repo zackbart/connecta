@@ -69,7 +69,7 @@ function hatchLine(name, hatch) {
       : "") +
     " An operation without a reviewed verdict is refused." +
     (refused
-      ? ` ${refused} ${refused === 1 ? "operation is" : "operations are"} refused by design; use ${tool("details")} with the method and path to inspect an operation's contract and refusal.`
+      ? ` ${refused} ${refused === 1 ? "operation is" : "operations are"} refused by design; use ${tool("details")} with the method and path to inspect the original operation summary and its separate refusal. Use details for refused methods outside the read/write call schemas; those methods remain unavailable.`
       : "")
   );
 }

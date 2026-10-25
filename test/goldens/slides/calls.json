@@ -47,7 +47,8 @@
             "method": "GET",
             "path": "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
             "operationId": "slides.presentations.pages.getThumbnail",
-            "summary": "Refused: Generic Slides thumbnail/preview links are refused; use get_slide_thumbnail for the reviewed short-lived link.",
+            "summary": "Refused: get slide thumbnail preview link grants temporary access; use get_slide_thumbnail.",
+            "refusal": "Generic Slides thumbnail/preview links are refused; use get_slide_thumbnail for the reviewed short-lived link.",
             "named": "get_slide_thumbnail"
           }
         ],
