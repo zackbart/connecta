@@ -2,6 +2,19 @@
 // original rows retain or tighten their measured rank. Previously passing
 // rows from #996's independent and adversarial corpora join the same table.
 export const HATCH_SEARCH_QUERIES = [
+  // Exact resources, namespace/version counterparts, and the original counterexamples (#1030).
+  ["cloudflare", "account members", "GET", "/accounts/{account_id}/members", 1],
+  ["cloudflare", "user tokens", "GET", "/user/tokens", 1],
+  ["vercel", "team members", "GET", "/v3/teams/{teamId}/members", 1],
+  ["vercel", "project members", "GET", "/v1/projects/{idOrName}/members", 1],
+  ["vercel", "deployment files", "GET", "/v6/deployments/{id}/files", 1],
+  ["planning-center", "people lists", "GET", "/people/v2/lists", 3],
+  ["planning-center", "person emails", "GET", "/people/v2/people/{person_id}/emails", 7],
+  ["planning-center", "group events", "GET", "/groups/v2/events", 2],
+  ["planning-center", "calendar resources", "GET", "/calendar/v2/resources", 7],
+  ["planning-center", "services songs", "GET", "/services/v2/songs", 1],
+  ["stripe", "invoice items", "GET", "/v1/invoiceitems", 1],
+  ["github", "workflow runs", "GET", "/repos/{owner}/{repo}/actions/runs", 1],
   // Articles/new and "set up" select creation, including after conversational framing.
   ["cloudflare", "please make a dns record", "POST", "/zones/{zone_id}/dns_records", 1],
   ["stripe", "please set up a subscription", "POST", "/v1/subscriptions", 1],

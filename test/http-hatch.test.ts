@@ -391,7 +391,8 @@ it(
       const prefix = provider === "planning-center" ? "pco" : provider;
       const args = { query, limit: 8 };
       const searchContext = connectorContext();
-      const found = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as {
+      const reply = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as any;
+      const found = (reply.structuredContent ?? reply) as {
         operations: Array<{ method: string; path: string; summary: string; tool?: string; named?: string }>;
         page: { hasMore: boolean; nextCursor?: string };
       };
@@ -418,7 +419,8 @@ it(
       }
       expect(found.operations.length).toBeLessThanOrEqual(8);
       expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
-      expect(await connector.callTool(`${prefix}_api_search`, args, searchContext)).toEqual(found);
+      const repeated = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as any;
+      expect(repeated.structuredContent ?? repeated).toEqual(found);
     }
     for (const [provider, query] of [
       ["planning-center", "rename to bob"],
