@@ -409,6 +409,25 @@ describe("decision 0011 guides and drift records", () => {
     expect(run(root, true).status).toBe(1);
   });
 
+  it.each([{ unknown: "services" }, { get_item: "unknown" }, { get_item: ["services", "groups"] }])(
+    "refuses invalid convention tool ownership %j before writing",
+    (toolBlocks) => {
+      const root = repository();
+      standardProvider(root, "alpha");
+      const fixture = read(root, "src/providers/alpha/fixtures.ts");
+      write(
+        root,
+        "src/providers/alpha/fixtures.ts",
+        fixture + `\nexport const conventionToolBlocks=${JSON.stringify(toolBlocks)};\n`,
+      );
+      const before = snapshot(root),
+        result = run(root);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("conventionToolBlocks");
+      expect(snapshot(root)).toEqual(before);
+    },
+  );
+
   it("generates an endpoint row awaiting its contract, which providers:check --record then writes", async () => {
     const { driftViolations } = await import("./provider-standard.js");
     const root = repository();
@@ -491,6 +510,27 @@ export const createAuthored = () => ({ staticTools: [
       idempotencyKey: false,
       errors: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] },
     };
+    const pagingTools = ["list_common", "list_services"].map((name) => ({
+      name,
+      inputSchema: { properties: { cursor: { type: "string" } } },
+      outputSchema: { properties: { page: { properties: { hasMore: { type: "boolean" } } } } },
+    }));
+    const ordinary = { name: "alpha", kind: "api", kit, tools: pagingTools };
+    expect(renderConventions({ ...ordinary, toolBlocks: undefined })).toBe(renderConventions(ordinary));
+    const conditional = renderConventions({
+      ...ordinary,
+      keys: ["services"],
+      toolBlocks: { list_services: "services" },
+    });
+    expect(conditional).toContain("<!-- when: services -->\n- **Paging:** For `list_services`");
+    expect(conditional).toContain("For `list_common`, pass it as the top-level `cursor`");
+    for (const toolBlocks of [
+      { unknown: "services" },
+      { list_services: "unknown" },
+      { list_services: ["services", "groups"] },
+      [],
+    ])
+      expect(() => renderConventions({ ...ordinary, keys: ["services"], toolBlocks })).toThrow(/conventionToolBlocks/);
     for (const count of [0, 1, 70, 10000]) {
       const rendered = renderConventions({
         name: "alpha",

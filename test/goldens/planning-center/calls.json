@@ -264,6 +264,7 @@
         },
         "page": {
           "hasMore": false,
+          "total": 1,
           "param": "offset",
           "in": "query"
         }
@@ -313,6 +314,7 @@
         },
         "page": {
           "hasMore": false,
+          "total": 1,
           "param": "offset",
           "in": "query"
         }
@@ -491,7 +493,8 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiNTA2MjA5YjU3MjNiYTY1NjgwMjM4NDRkYWNkNmQzMWIiLCJjIjoiMSIsIm0iOiIyR3hTQ2FLNTdkbGZEbXU3cGdIYXBtcHlZRVg4T2hhd2M1NzZMUXVVODlJIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiNTA2MjA5YjU3MjNiYTY1NjgwMjM4NDRkYWNkNmQzMWIiLCJjIjoiMSIsIm0iOiIyR3hTQ2FLNTdkbGZEbXU3cGdIYXBtcHlZRVg4T2hhd2M1NzZMUXVVODlJIn0",
+          "total": 2
         }
       }
     }
@@ -744,7 +747,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -793,7 +797,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -960,7 +965,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1051,7 +1057,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1089,7 +1096,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1133,7 +1141,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1285,7 +1294,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1329,7 +1339,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1427,7 +1438,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1469,7 +1481,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1576,7 +1589,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1631,7 +1645,8 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiYmE5NWRiOGJlMDQ2ZmVjNjFkOTI4Nzg3ODI0MDA1ZTMiLCJjIjoiMiIsIm0iOiJub0dhNUNmOEMwUEN0Q3lVaUdqdlFvVXBVSDZ6U2Q0bjBGM09Zby1jQUZvIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYmE5NWRiOGJlMDQ2ZmVjNjFkOTI4Nzg3ODI0MDA1ZTMiLCJjIjoiMiIsIm0iOiJub0dhNUNmOEMwUEN0Q3lVaUdqdlFvVXBVSDZ6U2Q0bjBGM09Zby1jQUZvIn0",
+          "total": 3
         }
       }
     }
@@ -1670,7 +1685,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }

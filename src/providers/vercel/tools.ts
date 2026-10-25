@@ -33,6 +33,7 @@ import {
   type JsonRecord,
 } from "./api.js";
 import type { VercelTokenOptions } from "./index.js";
+import { pinOptions, readPinnedTeam, PIN_WRITE_STEPS } from "./lib/pin.js";
 const MAX_LOG_BYTES = 1024 * 1024;
 const MAX_LOG_TEXT = 4_000;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -151,9 +152,10 @@ export function vercelTools({
   connection: Connection;
   options: Readonly<VercelTokenOptions>;
 }): ApiTool[] {
+  options = pinOptions(options);
   const teamId = defaultTeam(options);
   const makeCall = (method: RestMethod, path: string, input: Parameters<typeof restCall>[2] = {}) =>
-    restCall(method, path, input, teamId);
+    restCall(method, path, input, teamId, options.pin);
   const send = (method: RestMethod, path: string, input: Parameters<typeof restCall>[2] = {}) =>
     checked(() => makeCall(method, path, input)).pipe(
       Effect.flatMap((call) => {
@@ -161,7 +163,7 @@ export function vercelTools({
           (op) => op.method === call.method && op.path.replace(/:([^/]+)/g, "{$1}") === call.op.path,
         );
         if (!operation) throw new Error("A named Vercel call has no declared operation.");
-        return admit(call).pipe(
+        return admit(call, connection, options).pipe(
           Effect.flatMap(() =>
             connection.send(operation, {
               params: typedParams(call.params),
@@ -179,18 +181,26 @@ export function vercelTools({
     const operation = named.find(
       (op) => op.method === call.method && op.path.replace(/:([^/]+)/g, "{$1}") === call.op.path,
     )!;
-    return connection
-      .send(
-        operation,
-        { params: typedParams(call.params), query: queryOf(call), payload: undefined },
-        { flags: { log: true }, prefix: { maxBytes: MAX_LOG_BYTES, timeoutMs: limits.waitMs, stop: rowStop(limits) } },
-      )
-      .pipe(
-        Effect.map((answer) => ({
-          rows: Array.isArray(answer.data) ? answer.data : [],
-          stopped: answer.prefix?.stopped === "stop" ? ("rows" as const) : (answer.prefix?.stopped ?? ("end" as const)),
-        })),
-      );
+    return admit(call, connection, options).pipe(
+      Effect.flatMap(() =>
+        connection
+          .send(
+            operation,
+            { params: typedParams(call.params), query: queryOf(call), payload: undefined },
+            {
+              flags: { log: true },
+              prefix: { maxBytes: MAX_LOG_BYTES, timeoutMs: limits.waitMs, stop: rowStop(limits) },
+            },
+          )
+          .pipe(
+            Effect.map((answer) => ({
+              rows: Array.isArray(answer.data) ? answer.data : [],
+              stopped:
+                answer.prefix?.stopped === "stop" ? ("rows" as const) : (answer.prefix?.stopped ?? ("end" as const)),
+            })),
+          ),
+      ),
+    );
   };
   const declarations = [
     {
@@ -654,7 +664,7 @@ export function vercelTools({
           const refusal = refuse(call);
           if (refusal) invalid(refusal);
           const bytes = decodeUpload(args);
-          yield* admit(call);
+          yield* admit(call, connection, options);
           yield* promise(() => refuseWithheldUpload(bytes, "Vercel"));
           vercelIndex.check(call.op, call.query, String(args["base64Body"] ?? args["textBody"]));
           const digest = call.op.path === "/v2/files" ? yield* promise(() => sha1(bytes)) : undefined;
@@ -681,8 +691,9 @@ export function vercelTools({
   return [
     list(connection, {
       name: "list_teams",
-      description:
-        "List the teams this token can reach, with ids/slugs for project joins. A configured team is a routing default, not a restriction.",
+      description: options.pin
+        ? "Read the deployment's pinned team with its id and slug; returns one terminal item."
+        : "List the teams this token can reach, with ids/slugs for project joins. A configured team is a routing default, not a restriction.",
       filters: {},
       row: Schema.Struct({
         id: Schema.String,
@@ -692,8 +703,26 @@ export function vercelTools({
       }),
       limit: { default: 20, max: 100, description: "Teams per page, default 20, maximum 100." },
       cursor: "bound",
+      ...(options.pin ? { cursorScope: Object.freeze({ vercelTeamPin: options.pin.teamId }) } : {}),
       page: (_args, cursor) =>
         Effect.gen(function* () {
+          if (options.pin) {
+            if (cursor) invalid("A pinned team list is terminal; omit cursor.");
+            const team = yield* readPinnedTeam(connection, options.pin);
+            return {
+              rows: [
+                {
+                  id: options.pin.teamId,
+                  slug: team["slug"] as string,
+                  name: text(team["name"]) ?? null,
+                  ...(text(record(team["membership"])["role"])
+                    ? { role: text(record(team["membership"])["role"])! }
+                    : {}),
+                },
+              ],
+              page: { hasMore: false, nextCursor: null },
+            };
+          }
           const result = yield* send("GET", "/v2/teams", {
             query: { limit: _args.limit, ...(cursor ? { until: JSON.parse(cursor) as unknown } : {}) },
           });
@@ -719,6 +748,7 @@ export function vercelTools({
     }),
     ...declarations.map((declaration) => {
       const spec = {
+        writeSteps: PIN_WRITE_STEPS,
         name: declaration.name,
         description: declaration.description,
         input: schema(declaration.inputSchema),

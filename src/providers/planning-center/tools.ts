@@ -362,6 +362,7 @@ function listTool(connection: Connection, call: Call, defaultPageSize: number, s
     row: spec.item,
     limit: { default: defaultPageSize, max: MAX_PAGE_SIZE, description: "Rows per page, at most 100." },
     cursor: "bound",
+    total: true,
     page: (args: JsonRecord, cursor) =>
       Effect.gen(function* () {
         const offset = cursor === undefined ? 0 : Number(cursor);
@@ -395,6 +396,7 @@ function listTool(connection: Connection, call: Call, defaultPageSize: number, s
           page: {
             hasMore: page.hasMore,
             nextCursor: page.nextOffset === null ? null : String(page.nextOffset),
+            ...(page.totalCount === null ? {} : { total: page.totalCount }),
           },
         };
       }),

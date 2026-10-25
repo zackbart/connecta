@@ -122,7 +122,7 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   },
   guide: (options) => ({
     heading: "Planning Center usage",
-    summary: "People ids join products; Groups leaders, Services plans and schedules, local dates, seconds and cents.",
+    summary: "People ids join reachable products; use their local dates, units, roles and documented status values.",
     required: true,
     context: [
       `Purpose: ${options.purpose.trim()}`,
@@ -148,7 +148,17 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
     verdicts: PCO_VERDICTS,
     named: PCO_NAMED,
     pages: PCO_PAGES,
-    binding: pcoBinding,
+    binding: (kit) => {
+      const available = new Set(
+        planningCenterTools({ ...kit, pageSize: kit.options.defaultPageSize ?? DEFAULT_PAGE_SIZE }).map(
+          (tool) => tool.name,
+        ),
+      );
+      return pcoBinding({
+        ...kit,
+        named: Object.fromEntries(Object.entries(PCO_NAMED).filter(([, tool]) => available.has(tool))),
+      });
+    },
     pathExample: "/people/v2/people/123",
     notes: () => ({
       read: "JSON:API records retain data, included and meta; named reads resolve common joins.",

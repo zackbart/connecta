@@ -130,6 +130,23 @@ Named lists use signed cursors over the vendor offset; paged hatch reads return
 `page.nextCursor` for the `offset` query parameter. Keep the other query and
 field arguments unchanged when continuing a hatch read.
 
+Named lists and paged hatch reads expose `page.total` only when Planning Center
+supplies a nonnegative safe integer in `meta.total_count`. This is the vendor's
+count for the requested collection and vendor filters, across all pages;
+`meta.count` describes one vendor page. For example, a filtered collection can
+report `page.total: 57` while this reply emits two items. Local filtering,
+projection and size truncation can reduce the items shown without changing the
+vendor total. Missing, malformed or oversized optional totals are omitted.
+`page.hasMore` and signed continuation still follow `meta.next.offset`, never
+the total, item count, offset or limit.
+
+Excluded products' unavailable named tools are omitted from authored and
+generated guide sections and from hatch search/details suggestions. For example,
+excluding Services removes `list_plans` suggestions while retaining People
+identity tools. The indexed vendor contract remains inspectable; exclusion
+still refuses those operations before dispatch. Changing the credential owner
+or original filters invalidates a continuation; totals add no new cursor scope.
+
 ## Stripe
 
 `stripe()` connects one Stripe account in one mode through the pinned REST API.
@@ -359,7 +376,7 @@ stored encrypted; it is sent only to api.vercel.com, or a configured baseUrl pro
 The legacy hosted selector is unsupported; connect hosted MCP with generic
 `remoteMcp()` as described in [Hosted MCP migration](./hosted-mcp-migration.md).
 
-`teamId` is a routing default, not a tenant restriction. On operations accepting
+Without `pin`, `teamId` is a routing default, not a tenant restriction. On operations accepting
 team selectors, an explicit `teamId` or `slug` overrides it. `teamId: null` omits
 the default for personal-account calls. All named tools, hatch calls and uploads
 use the same routing. For example, a `hosting` call with
@@ -368,6 +385,28 @@ Vercel token permissions enforce access. Set a suitably scoped token when access
 must be restricted. Signed paging binds the resolved selectors, so reuse the
 same team, path, filters and fields when passing `page.nextCursor` in
 `query[page.param]`. Team path ids remain vendor identifiers, not a deployment pin.
+
+Set `pin: { teamId: "team_example" }` to confine this connection to one Vercel
+team independently of the token's permissions. If `teamId` is also configured,
+it must match the pin. The pin requires a canonical `team_…` id, not a slug.
+It applies to named tools, bounded logs, uploads and all hatch requests. Explicit
+foreign ids, personal/null scope, duplicate/ambiguous selectors and encoded path
+spellings are refused. A supplied `slug` is checked against the pinned team's
+current id and slug; ordinary project, environment and flag slugs keep their
+documented meaning. Token permissions can restrict access further.
+
+Pinned calls make at most eight additional sequential ownership reads, charged
+to the same call-admission budget before each request. No ownership result is
+cached between calls or credential owners. Project and deployment references,
+including every target in supported multi-project inputs, must prove ownership;
+missing or malformed ownership refuses the affected request. For example, a
+domain move to another project checks both projects before sending the write.
+Unprovable global/account operations, organizations, cross-team grants and project
+transfers are unavailable. The pinned `list_teams` returns one terminal item,
+and the credential probe reads that team. No user/account read is an exception.
+Signed continuations bind the pin policy as well as the credential owner and
+existing call scope; changing the pin or adding/removing it requires a new first
+page. Writes still have one physical attempt after successful preflights.
 
 `readOnly: true` refuses every write. `baseUrl` is only for an explicitly trusted
 proxy or test double. Set `callAdmission` for downstream endpoint limits and

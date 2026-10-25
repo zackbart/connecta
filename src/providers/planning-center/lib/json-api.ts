@@ -98,10 +98,7 @@ export function pageOf(document: JsonRecord, offset = 0): Page {
   const meta = asRecord(document["meta"]);
   const next = asRecord(meta["next"])["offset"];
   const total = meta["total_count"];
-  if (
-    (meta["next"] != null && (next === undefined || !Number.isSafeInteger(next) || next <= offset)) ||
-    (total !== undefined && (!Number.isSafeInteger(total) || total < 0))
-  ) {
+  if (meta["next"] != null && (next === undefined || !Number.isSafeInteger(next) || next <= offset)) {
     throw new ConnectorCallError("connector_call_failed", "Planning Center returned invalid paging metadata.", {
       retryable: false,
     });
@@ -110,6 +107,6 @@ export function pageOf(document: JsonRecord, offset = 0): Page {
   return {
     hasMore: nextOffset !== null,
     nextOffset,
-    totalCount: total === undefined ? null : (total as number),
+    totalCount: typeof total === "number" && Number.isSafeInteger(total) && total >= 0 ? total : null,
   };
 }

@@ -223,3 +223,43 @@ runtime/type smoke. The full local unfiltered Node suite is not claimed.
 The final PCO bundle is 638,120 B gzip, +288,567 B from the recorded pre-step-2
 entry and +94 B from R1. No case, deadline or cap increases; complete details
 and raw logs are referenced from the eval notes.
+
+## Totals and exclusion-aware discovery (#1039)
+
+The retained ten product documents' collection envelopes declare integer
+`meta.total_count`, separately from `meta.count`, and `meta.next.offset`.
+The official [Planning Center Ruby client](https://github.com/planningcenter/pco_api_ruby)
+illustrates409 total records with25 records on one page and a next offset25.
+These contracts establish a vendor collection count rather than an emitted-row
+count. People, Groups, Services and Giving fixtures exercise the same envelope;
+no product pin or generated index moved.
+
+Every named paginated list opts into the existing `total: true` extension.
+Reviewed offset hatch adapters additionally opt into an internal exact-count
+callback. Both read the safe vendor response before field projection; missing,
+noninteger, negative, nonfinite or unsafe counts are omitted. An invalid
+optional total no longer refuses an otherwise valid page. Invalid continuation
+metadata still refuses as before. A count never drives hasMore or offsets.
+Resource filtering, projection, output truncation and local filters can change
+emitted items without changing this vendor count; no count is inferred from
+items, meta.count, offset or limit. No total is added to single-record reads or
+get_plan's composed sections. Other adapters retain their exact schemas/results.
+
+PCO's hatch named map is filtered against the actual configured authored tool
+catalog. This affects suggestions only: index and exclusion/refusal authority
+remain unchanged. Empty binding maps are honored; absent bindings retain
+existing validation and bytes. Guide generation takes optional fixture-owned
+conventionToolBlocks, derived from full versus each single-app-excluded catalog,
+with no duplicate tool inventory. Unknown tools, unknown keys and ambiguous
+ownership fail generation. Existing unnested app when-blocks remove conditional
+paging-tool names from the actual rendered guide. Common tools remain
+unconditional. Fixtures are generation/test-only; no public option is added.
+
+Regression evidence covers first/middle/terminal and zero/missing/malformed
+counts, malformed resource filtering, projections, delegated credential owners,
+changed filters, each application exclusion, representative combinations and
+all excludable applications. Shared native tests exercise optional count
+validation, empty named-map override and unchanged adapter-absent schemas.
+Only Planning Center catalog/guide/result golden rows are deliberately updated;
+all other provider golden bytes remain fixed. Exact changed rows and execution
+results are recorded in the task handoff evidence.
