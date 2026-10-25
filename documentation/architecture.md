@@ -1986,38 +1986,58 @@ Workers KV copy, source-bound resume claims, verification, cutover guard, and
 recovery. Public factories and copy functions retain their Promise contracts;
 custom Promise SQL drivers retain the fallback lift.
 
-`src/storage/sql-driver.ts` implements Effect 4.0.5's public SQL `Connection`
-and statement-compiler APIs. Fixed SQL uses the SQLite compiler, row execution,
-and raw affected-row execution. Atomic batches use one native database call:
-D1's public `batch`, or SQLite's synchronous `BEGIN IMMEDIATE` through
-`COMMIT`, with rollback on failure. Neither path retries a dispatched write.
-The D1 binding's `meta.changes` is retained for each statement, including zero;
-no `RETURNING` rows, extra metadata statements, or D1 transactions are needed.
-The dependency is the existing exact `effect` pin. Connecta does not adopt
-`@effect/sql-d1`: its 4.0.5 batch API drops metadata and its binding contract
-is wider than Connecta's published structural interface.
+`src/storage/sql-driver.ts` constructs a public Effect 4.0.5 `SqlClient`
+service inside each operation. Reads execute SQL `Statement` Effects and writes
+execute their raw operations through that service, including its connection
+borrowing, statement-transformer context, and tracing semantics. Internal
+statement transformers see the current service; no client, statement, or
+Reactivity state is cached across operations or requests.
 
-SQL fragments are compiled and executed inside the operation. The shared
-compiler and connection capability contain no request state. D1 prepares in the current request and retains no
-prepared handles or promises across requests. SQLite retains only the existing
-connection-owned prepared-statement cache; externally supplied databases remain
-caller-owned. Schema readiness is a boolean, never an in-flight promise.
-A microtask boundary precedes physical execution so cancellation already
-pending at the Promise edge can stop dispatch; an atomic SQLite batch never
-yields between transaction controls. Cancellation cannot roll back a D1 write
-already submitted, and never causes replay.
+Atomic batches remain one native database operation: D1's public `batch`, or
+SQLite's synchronous `BEGIN IMMEDIATE` through `COMMIT`, with rollback on
+failure. Neither path retries a dispatched write. The D1 binding's
+`meta.changes` is retained for every statement, including zero; no `RETURNING`
+payload, extra metadata statement, or D1 transaction is needed. The dependency
+is the existing exact `effect` pin. Connecta does not adopt `@effect/sql-d1`:
+its 4.0.5 batch API drops metadata and its binding contract is wider than
+Connecta's published structural interface.
 
-SQL tracing is disabled at the execution boundary. Private `SqlError` values
-contain fixed wording with no driver cause or parameters; an operation-local
-failure maps back to the original thrown object for existing error handling.
-No new logs or SQL diagnostics reach operator sinks. Existing import errors
-and copy errors keep their fixed, payload-free wording.
+The D.2 architecture allowance was measured against `0e314247` using cached
+official `node:22-slim` (Node 22.23.4, zlib 1.3.1-e00f703), no network, and
+read-only bundle artifacts: `/d1` grew from 62,516 to 88,305 bytes gzip
+(+25,789); the Worker example grew from 729,847 to 756,375 (+26,528).
+Final typed-driver failure normalization measures 88,319 and 756,377 bytes
+on that same official runtime. Executing real services and statement operations requires those runtime
+semantics; the earlier identity-compiler facade did not provide them. The
+explicit allowance changes only `/d1`'s cap from 62,542 to 90,000 bytes and
+the Worker example's cap from 743,000 to 760,000. Historical baselines and
+all other caps stay fixed. Final integration must remeasure the combined
+implementation and satisfy the same compatibility and privacy contracts.
+
+The platform connection capability contains no request state. D1 prepares in
+the current request and retains no prepared handles or promises. SQLite keeps
+its existing connection-owned prepared-statement cache; externally supplied
+databases remain caller-owned. Schema readiness is a boolean. A microtask
+boundary precedes dispatch so pending cancellation can stop physical execution;
+a SQLite batch never yields between transaction controls. Cancellation cannot
+undo an already-submitted D1 write and never causes replay.
+
+Public SQL Statement operations create spans, so SQL tracing is disabled
+before executing them. Private `SqlError` values contain fixed wording with
+no driver cause or parameters; the original thrown value is restored only
+at the private SQL boundary. Operator sinks receive no new SQL diagnostics.
+The tracing contract is checked with a recording tracer and a mutation that
+removes the guard, which must fail. Existing import and copy errors retain
+their fixed, payload-free wording.
 
 `src/runtime/native-storage.ts` supplies optional `getNativeStorage` and
 `getNativeActivity` lookups. An internal consumer may compose their Effects
 without starting another fiber; an absent lookup requires the existing custom
-Promise-store fallback. The lookup module imports no SQL or platform
-implementation and does not change the published storage interfaces.
+Promise-store fallback. Registration normalizes operation-construction,
+validation, and decoding throws into typed failures with the original thrown
+value, matching that fallback. Interruption remains interruption. The lookup
+module imports no SQL or platform implementation and does not change the
+published storage interfaces.
 
 The synchronous state-file parser, validation, file read, and one atomic
 SQLite import remain native synchronous leaves because `importStateFile` is a

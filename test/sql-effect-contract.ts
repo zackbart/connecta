@@ -1,10 +1,14 @@
 // Native SQL characterization, run against DatabaseSync and workerd D1.
-import { Effect, Tracer } from "effect";
+import { Cause, Effect, Exit, Tracer } from "effect";
 import { expect, it, vi } from "vitest";
 import { getNativeActivity, getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
 import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import * as sqlStores from "../src/storage/sql.js";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
+import { InvalidActivityCursorError } from "../src/activity.js";
+import { deferred } from "./fixtures/misc.js";
 import type { SqlFixture } from "./sql-storage-contract.js";
 
 export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
@@ -67,6 +71,111 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
       }),
     );
     expect((await runEdge(program.list({ limit: 1 }))).events).toHaveLength(1);
+  });
+
+  it("INV-13: real SQL Statement operations use the operation's public SqlClient service and transformer", async () => {
+    const { native } = await setup();
+    await runEdge(native.set("service", "stored"));
+    const clients: SqlClient.SqlClient[] = [];
+    const transform: Statement.Transformer = (statement, constructor) =>
+      Effect.gen(function* () {
+        const current = yield* Effect.serviceOption(SqlClient.SqlClient);
+        expect(current._tag).toBe("Some");
+        if (current._tag !== "Some") throw new Error("SQL statement has no client service");
+        expect(current.value).toBe(constructor);
+        clients.push(current.value);
+        expect(statement.compile()[1]).toEqual(["service"]);
+        return constructor.unsafe("SELECT ? AS value, NULL AS value_bytes", ["transformed"]);
+      });
+    for (let i = 0; i < 2; i++) {
+      expect(
+        await runEdge(native.get("service").pipe(Effect.provideService(Statement.CurrentTransformer, transform))),
+      ).toBe("transformed");
+    }
+    expect(clients).toHaveLength(2);
+    expect(clients[0]).not.toBe(clients[1]);
+    expect(await runEdge(native.get("service"))).toBe("stored");
+  });
+
+  it("INV-13: native validation, decoding and activity cursors are recoverable typed failures", async () => {
+    const { db, native } = await setup();
+    const failed = async (operation: Effect.Effect<unknown, unknown>) => {
+      const result = await runEdge(Effect.result(operation));
+      expect(result._tag).toBe("Failure");
+      if (result._tag !== "Failure") throw new Error("Expected a typed storage failure");
+      return result.failure;
+    };
+    for (const operation of [
+      native.get("bad\0key"),
+      native.set("bad\0key", "value"),
+      native.delete("bad\0key"),
+      native.list("bad\0key"),
+      native.compareAndSet("bad\0key", null, "value"),
+    ])
+      expect(await failed(operation)).toBeInstanceOf(TypeError);
+    expect(await failed(native.set("valid", "value", { ttlSeconds: Infinity }))).toBeInstanceOf(RangeError);
+    expect(await failed(native.compareAndSet("valid", null, "value", { expiresAtMs: NaN }))).toBeInstanceOf(RangeError);
+    await runEdge(native.set("utf8", "value"));
+    await db.exec("UPDATE connecta_kv SET value = CAST(x'610080' AS TEXT) WHERE key = ?", "utf8");
+    const decoded = await runEdge(native.get("utf8").pipe(Effect.catch((error) => Effect.succeed(error))));
+    expect(decoded).toBeInstanceOf(TypeError);
+    expect((decoded as Error).message).toContain("not valid UTF-8");
+    const activity = getNativeActivity(db.activity())!;
+    expect(await failed(activity.list({ limit: 1, cursor: "!!" }))).toBeInstanceOf(InvalidActivityCursorError);
+    for (const sentinel of [new TypeError("sentinel"), { private: "sentinel" }, "sentinel", undefined]) {
+      const options = {
+        get ttlSeconds(): number {
+          throw sentinel;
+        },
+      };
+      expect(await failed(native.set("valid", "value", options))).toBe(sentinel);
+      const page = {
+        get limit(): number {
+          throw sentinel;
+        },
+      };
+      expect(await failed(activity.list(page))).toBe(sentinel);
+      const event = {
+        get occurredAt(): string {
+          throw sentinel;
+        },
+      } as Parameters<typeof activity.record>[0];
+      expect(await failed(activity.record(event))).toBe(sentinel);
+    }
+  });
+
+  it("INV-7 INV-13: typed-failure normalization preserves interruption and its exact abort reason", async () => {
+    const { sql, native } = await setup();
+    await runEdge(native.get("warm"));
+    const started = deferred<void>();
+    const pending = vi.spyOn(sql, "all").mockImplementation(() =>
+      Effect.andThen(
+        Effect.sync(() => started.resolve()),
+        Effect.never,
+      ),
+    );
+    const controller = new AbortController();
+    const reason = { caller: "left" };
+    try {
+      const exits: Exit.Exit<unknown, unknown>[] = [];
+      const outcome = runEdge(
+        Effect.result(native.get("wait")).pipe(Effect.onExit((exit) => Effect.sync(() => exits.push(exit)))),
+        { signal: controller.signal },
+      );
+      await started.promise;
+      controller.abort(reason);
+      await expect(outcome).rejects.toBe(reason);
+      expect(exits).toHaveLength(1);
+      const exit = exits[0]!;
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.reasons.some(Cause.isInterruptReason)).toBe(true);
+        expect(exit.cause.reasons.some(Cause.isFailReason)).toBe(false);
+      }
+      await expect(runEdge(native.get("wait"), { signal: controller.signal })).rejects.toBe(reason);
+    } finally {
+      pending.mockRestore();
+    }
   });
 
   it("INV-9: preserves zero changes, multiple changed rows, and single-statement CAS under 50 native claims", async () => {
