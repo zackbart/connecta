@@ -772,7 +772,9 @@ async function refreshSnapshot(
     if (connectorId) {
       connectorPublications.set(connectorId, {
         revision: publication,
-        live: state.contract?.live.connectors.find((row) => row.id === connectorId),
+        live:
+          loadedContract?.live.connectors.find((row) => row.id === connectorId) ??
+          state.contract?.live.connectors.find((row) => row.id === connectorId),
       });
       const outcome = outcomes.get(connectorId);
       if (
