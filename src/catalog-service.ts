@@ -730,10 +730,12 @@ export class CatalogService {
   }
 
   loadConnectorEffect(id: string, callOptions: ConnectorOperationOptions = {}): Effect.Effect<ToolDef[], unknown> {
-    return duringViewEffect(
-      { requestScope: this.requestScope, signal: callOptions.signal ?? this.requestSignal },
-      (signal) => this.catalog(id, { ...callOptions, signal }),
-    );
+    return Effect.suspend(() =>
+      duringViewEffect(
+        { requestScope: this.requestScope, signal: callOptions.signal ?? this.requestSignal },
+        (signal) => this.catalog(id, { ...callOptions, signal }),
+      ),
+    ).pipe(Effect.catchDefect((error) => Effect.fail(error)));
   }
 
   // One connector's catalog from the request-scoped cache, reading it through
@@ -819,23 +821,26 @@ export class CatalogService {
     return runEdge(this.listCatalogsEffect(includeWrites, connectors));
   }
 
-  listCatalogsEffect(includeWrites = false, connectors = this.registry.listConnectors()) {
+  listCatalogsEffect(includeWrites = false, connectors?: Connector[]) {
     return duringViewEffect({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
-      Effect.map(
-        this.discoveryCatalogs(
-          connectors.map((connector) => connector.id),
-          "tools/list",
-          includeWrites,
-        ),
-        (results) =>
-          results.map((result, index) => {
-            const connector = connectors[index]!;
-            return Result.isSuccess(result)
-              ? { connector, tools: result.success }
-              : { connector, error: result.failure };
-          }),
-      ),
-    );
+      Effect.suspend(() => {
+        const visible = connectors ?? this.registry.listConnectors();
+        return Effect.map(
+          this.discoveryCatalogs(
+            visible.map((connector) => connector.id),
+            "tools/list",
+            includeWrites,
+          ),
+          (results) =>
+            results.map((result, index) => {
+              const connector = visible[index]!;
+              return Result.isSuccess(result)
+                ? { connector, tools: result.success }
+                : { connector, error: result.failure };
+            }),
+        );
+      }),
+    ).pipe(Effect.catchDefect((error) => Effect.fail(error)));
   }
 
   private outputSchema(connectorId: string, tool: ToolDef): OutputSchemaResolution {
@@ -987,7 +992,7 @@ export class CatalogService {
   ): Effect.Effect<CatalogSearchPage, unknown> {
     return duringViewEffect({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
       this.searchPage(args, onCatalogReference),
-    );
+    ).pipe(Effect.catchDefect((error) => Effect.fail(error)));
   }
 
   private searchPage(
@@ -1495,7 +1500,7 @@ export class CatalogService {
   describeEffect(args: CatalogDescribeArgs): Effect.Effect<CatalogDescription[], unknown> {
     return duringViewEffect({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
       this.describePage(args),
-    );
+    ).pipe(Effect.catchDefect((error) => Effect.fail(error)));
   }
 
   private describePage(args: CatalogDescribeArgs): Effect.Effect<CatalogDescription[], unknown> {

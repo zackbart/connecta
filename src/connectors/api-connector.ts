@@ -534,7 +534,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       const unknown = providerCallResult(handlerCtx, write ? "write" : "read");
       if (unknown) throw redactSentSecrets(ctx, unknown);
       return redactSentSecrets(ctx, handled.value);
-    });
+    }).pipe(Effect.catchDefect((error) => Effect.fail(error)));
   // This boundary's identity in a logical call, fixed now: this object with
   // this function, never whatever the property or a copy holds by then.
   providerBoundary(connector);
