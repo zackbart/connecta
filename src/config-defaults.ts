@@ -36,6 +36,7 @@ export const CONFIG_DEFAULTS = {
       queueTimeoutMs: 5_000,
       retryAfterMs: 1_000,
       maxDurationMs: 300_000,
+      maxBodyBytes: 4 * 1024 * 1024,
     },
     code: {
       concurrency: 2,

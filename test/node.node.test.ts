@@ -12,6 +12,77 @@ import { createTestConnecta, required } from "./helpers.js";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Node listen adapter", () => {
+  it("INV-7 INV-11: bounds the pre-auth buffer at the core's 4 MiB default over real sockets", async () => {
+    const core = createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: 8 * 1024 * 1024 } } });
+    expect((await core.describeConfig()).limits.requests.maxBodyBytes.value).toBe(8 * 1024 * 1024);
+    const forwarded: number[] = [];
+    const app = {
+      ...core,
+      fetch: async (request: Request) => {
+        forwarded.push((await request.arrayBuffer()).byteLength);
+        return new Response("forwarded");
+      },
+    };
+    const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    try {
+      for (const [size, status] of [
+        [4 * 1024 * 1024, 200],
+        [4 * 1024 * 1024 + 1, 413],
+      ]) {
+        const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+          method: "POST",
+          body: " ".repeat(size!),
+        });
+        expect(response.status).toBe(status);
+        await response.text();
+      }
+      expect(forwarded).toEqual([4 * 1024 * 1024]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await core.close();
+    }
+  });
+
+  it.each([undefined, 256])(
+    "INV-7: preserves the lower of core and Node adapter body bounds (%s)",
+    async (maxBodyBytes) => {
+      const core = createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: 512 } } });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        ...(maxBodyBytes !== undefined ? { maxBodyBytes } : {}),
+      });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      try {
+        const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + " ".repeat(512),
+        });
+        expect(response.status).toBe(413);
+        if (maxBodyBytes === undefined) {
+          expect(await response.json()).toEqual({
+            jsonrpc: "2.0",
+            error: { code: -33006, message: "MCP request body too large." },
+          });
+        } else expect(await response.text()).toBe("Payload Too Large");
+        const health = (await (await core.fetch(new Request("http://127.0.0.1/health"))).json()) as {
+          admission: { requests: { active: number } };
+        };
+        expect(health.admission.requests.active).toBe(0);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    },
+  );
+
   it("shuts down after auth, adoption, rotation and doctor with an unused socket and live sandbox (INV-7)", () => {
     const child = spawnSync(
       process.execPath,
