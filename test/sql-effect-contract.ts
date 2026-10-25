@@ -2,6 +2,7 @@
 import { Cause, Effect, Exit, Random, Tracer } from "effect";
 import { expect, it, vi } from "vitest";
 import { getNativeActivity, getNativeStorage } from "../src/runtime/native-storage.js";
+import * as nativeStores from "../src/runtime/native-storage.js";
 import { Registry } from "../src/registry.js";
 import { registryProgram } from "../src/runtime/registry.js";
 import { Storage } from "../src/runtime/services.js";
@@ -20,25 +21,36 @@ import type { SqlFixture } from "./sql-storage-contract.js";
 import type { KVStorage } from "../src/types.js";
 
 export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
-  async function setup() {
+  async function setup(beforeRegister?: (storage: KVStorage) => void) {
     const db = await open();
     const factory = vi.spyOn(sqlStores, "sqlStorage");
+    const registerStorage = nativeStores.registerNativeStorage;
+    // Proof sentinels belong to the original registered edge. Replacing a
+    // method after registration intentionally selects the Promise override.
+    const registration = beforeRegister
+      ? vi.spyOn(nativeStores, "registerNativeStorage").mockImplementation((edge, native) => {
+          beforeRegister(edge);
+          return registerStorage(edge, native);
+        })
+      : undefined;
     try {
       const storage = db.storage();
       const driver = factory.mock.calls[0]![0];
       return { db, storage, driver, sql: nativeSqlDriver(driver), native: getNativeStorage(storage)! };
     } finally {
+      registration?.mockRestore();
       factory.mockRestore();
     }
   }
 
   it("INV-13: composes SQL KV and activity through native Effects without Promise adapter re-entry", async () => {
-    const { db, storage, driver, native } = await setup();
-    for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
-      vi.spyOn(storage, method).mockImplementation(() => {
-        throw new Error("Promise store re-entry");
-      });
-    }
+    const { db, driver, native } = await setup((storage) => {
+      for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
+        vi.spyOn(storage, method).mockImplementation(() => {
+          throw new Error("Promise store re-entry");
+        });
+      }
+    });
     for (const method of ["all", "run", "batch"] as const) {
       vi.spyOn(driver, method).mockImplementation(() => {
         throw new Error("Promise driver re-entry");
@@ -55,11 +67,19 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
         expect(yield* native.get("native:é😀")).toBeNull();
       }),
     );
-    const activity = db.activity();
-    const program = getNativeActivity(activity)!;
-    vi.spyOn(activity, "record").mockImplementation(() => {
-      throw new Error("Promise activity re-entry");
+    const registerActivity = nativeStores.registerNativeActivity;
+    const registration = vi.spyOn(nativeStores, "registerNativeActivity").mockImplementation((edge, native) => {
+      vi.spyOn(edge, "record").mockImplementation(() => {
+        throw new Error("Promise activity re-entry");
+      });
+      return registerActivity(edge, native);
     });
+    let program: NonNullable<ReturnType<typeof getNativeActivity>>;
+    try {
+      program = getNativeActivity(db.activity())!;
+    } finally {
+      registration.mockRestore();
+    }
     await runEdge(
       program.record({
         schemaVersion: 1,
@@ -82,7 +102,13 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
   });
 
   it("INV-4 INV-9 INV-13: registry namespaces and programs compose native SQL without Promise store re-entry", async () => {
-    const { storage, native } = await setup();
+    const { storage, native } = await setup((storage) => {
+      for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
+        vi.spyOn(storage, method).mockImplementation(() => {
+          throw new Error("Promise registry store re-entry");
+        });
+      }
+    });
     const registry = new Registry(
       [
         {
@@ -96,11 +122,6 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
       ],
       { storage, logger: silentLogger },
     );
-    for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
-      vi.spyOn(storage, method).mockImplementation(() => {
-        throw new Error("Promise registry store re-entry");
-      });
-    }
     const scoped = registry.scoped({ connectorIds: ["notes"], principalKey: "alice", subjectKey: "alice-request" });
     const ctx = scoped.contextFor("notes", "https://connecta.test", {});
     expect(getNativeStorage(ctx.storage)).toBeDefined();
@@ -248,12 +269,19 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
   });
 
   it("INV-6 INV-13: an undecodable stash ledger gracefully refuses native and Promise storage without writing chunks", async () => {
-    const { db, storage } = await setup();
+    let originalGet!: KVStorage["get"];
+    const get = vi.fn<KVStorage["get"]>(() => {
+      throw new Error("Promise store re-entry");
+    });
+    const { db, storage } = await setup((edge) => {
+      originalGet = edge.get.bind(edge);
+      edge.get = get;
+    });
     await storage.set(stashLedgerKeys.ledger, "placeholder");
     await db.exec("UPDATE connecta_kv SET value = CAST(x'ff00' AS TEXT) WHERE key = ?", stashLedgerKeys.ledger);
     const lifted: KVStorage = {
       capabilities: storage.capabilities,
-      get: (key) => storage.get(key),
+      get: originalGet,
       set: (key, value, options) => storage.set(key, value, options),
       delete: (key) => storage.delete(key),
       list: (prefix) => storage.list(prefix),
@@ -273,15 +301,8 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
       expect(await new Registry([], { storage: lifted, logger }).stashResult("lifted", ["private-result"], 120)).toBe(
         false,
       );
-      const get = vi.spyOn(storage, "get").mockImplementation(() => {
-        throw new Error("Promise store re-entry");
-      });
-      try {
-        expect(await new Registry([], { storage, logger }).stashResult("native", ["private-result"], 120)).toBe(false);
-        expect(get).not.toHaveBeenCalled();
-      } finally {
-        get.mockRestore();
-      }
+      expect(await new Registry([], { storage, logger }).stashResult("native", ["private-result"], 120)).toBe(false);
+      expect(get).not.toHaveBeenCalled();
       expect(await db.rows("SELECT key, hex(value) AS value FROM connecta_kv")).toEqual([
         { key: stashLedgerKeys.ledger, value: "FF00" },
       ]);
@@ -289,6 +310,7 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
       expect(logger.error).not.toHaveBeenCalled();
     } finally {
       runner.mockRestore();
+      storage.get = originalGet;
     }
   });
 
