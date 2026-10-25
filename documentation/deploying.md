@@ -54,10 +54,13 @@ backups, Docker provisioning, secrets, and optional modules. Run the deployment'
 
 Retain the Node template's `undici` dependency and serve with `listen` from
 `@zackbart/connecta/node`. `listen()` installs the owned sender for every
-maintained-provider request, reads included, and for remote MCP writes.
+maintained-provider request, reads included, remote MCP writes, and downstream
+OAuth token exchange/refresh, dynamic registration and revocation POSTs.
 A Node host serving `connecta.fetch` without `listen()` has no owned sender:
 every maintained-provider write, every reviewed POST read and every remote MCP
-write is refused before sending. Each worked in 0.34.1. For example, an `assistant` using
+write is refused before sending. Downstream OAuth credential POSTs also require
+that sender; discovery GETs retain native fetch. Resource writes worked in 0.34.1;
+credential POSTs used native fetch through 0.35.0. For example, an `assistant` using
 `vercel_api_read` to POST `/v1/registrar/domains/availability` needs that
 transport even on a read-only endpoint. A Node deployment using only the root
 entry refuses those requests before sending them. Workers use their native
@@ -71,7 +74,7 @@ active responses and deferred work. Its shutdown deadline defaults to ten second
 Docker Compose so `docker compose stop` uses this cleanup.
 
 The owned Node sender connects directly by default. To send maintained-provider
-requests (including reads) and remote MCP writes through an HTTP(S) CONNECT
+requests (including reads), remote MCP writes and OAuth credential POSTs through an HTTP(S) CONNECT
 proxy, set `proxy` explicitly on `listen`:
 
 ```ts
@@ -92,7 +95,14 @@ explicit `proxy` option controls only owned sends. Set the host's native-fetch
 proxy policy too if the remote server requires proxy egress for discovery and
 reads. CONNECT failure before destination dispatch is a known unsent failure;
 a connection failure after a write dispatch is unknown and non-retryable.
-Neither case automatically repeats the write.
+Neither case automatically repeats the write. A credential POST is never
+replayed by the sender, including after HTTP 421, a reset or a 503. An uncertain
+refresh requires authorization again; Connecta blocks the spent refresh
+fingerprint rather than redeeming it twice. Once a refresh claim has been
+submitted, that protection remains conservative even if proxy setup later fails.
+Use a fresh authorization flow to reconcile. OAuth discovery remains on native
+fetch and needs its own host proxy policy. These credential POST requirements
+change the native-fetch behavior of 0.35.0.
 
 ## Start on Workers
 

@@ -1,3 +1,11 @@
+import { beforeEach as beforeTransportTest } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+
+// Stand in for the Node host while preserving this suite's fetch leaves.
+beforeTransportTest(() => {
+  installOwnedTransport();
+});
+
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
