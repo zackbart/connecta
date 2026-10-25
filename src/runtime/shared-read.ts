@@ -15,32 +15,58 @@
 // readers is enough and no edge is needed between them.
 
 import { Deferred, Effect, Exit } from "effect";
+import { forkRequest } from "./run.js";
+import { requestOwner } from "./request-scope.js";
 
 export class SharedRead<A> {
   private readonly controller = new AbortController();
   private readonly outcome = Deferred.makeUnsafe<A, unknown>();
   private readers = 0;
   private ended = false;
+  private started = false;
+  private releaseRequest: (() => void) | undefined;
 
   /**
-   * Start `read` at once, under a signal the read owns. `onEnd` runs once:
+   * The first join starts `read` under a signal the read owns. `onEnd` runs once:
    * when the read settles, with whether it succeeded, or when it is cancelled
    * first, with `false`. It runs before any reader hears the outcome, so an
    * owner that evicts the read there sends a reader who retries on hearing of
    * a failure to a fresh read, never back to this one.
    */
   constructor(
-    read: (signal: AbortSignal) => PromiseLike<A>,
+    private readonly read: (signal: AbortSignal) => Effect.Effect<A, unknown>,
     private readonly onEnd: (succeeded: boolean) => void = () => {},
-  ) {
-    // The executor turns a synchronous throw from `read` into a rejection.
-    new Promise<A>((resolve) => resolve(read(this.controller.signal))).then(
-      (value) => this.settle(Exit.succeed(value)),
-      (cause: unknown) => this.settle(Exit.fail(cause)),
-    );
+    private readonly request: object = {},
+  ) {}
+
+  private start(): Effect.Effect<void> {
+    return Effect.gen({ self: this }, function* () {
+      if (this.started) return;
+      this.started = true;
+      const owner = requestOwner(this.request);
+      if (!owner.open) {
+        this.cancel(owner.controller.signal.reason);
+        this.settle(Exit.fail(owner.controller.signal.reason));
+        return;
+      }
+      const close = () => this.cancel(owner.controller.signal.reason);
+      owner.own(close);
+      this.releaseRequest = () => {
+        const index = owner.finalizers.indexOf(close);
+        if (index !== -1) owner.finalizers.splice(index, 1);
+      };
+      yield* forkRequest(
+        Effect.suspend(() => this.read(this.controller.signal)).pipe(
+          Effect.onExit((exit) => Effect.sync(() => this.settle(exit))),
+        ),
+        owner.scope,
+      );
+    });
   }
 
   private settle(exit: Exit.Exit<A, unknown>): void {
+    this.releaseRequest?.();
+    this.releaseRequest = undefined;
     this.end(Exit.isSuccess(exit));
     Deferred.doneUnsafe(this.outcome, exit);
   }
@@ -81,7 +107,7 @@ export class SharedRead<A> {
         this.readers--;
         if (this.readers === 0) this.cancel(signal?.reason);
       });
-      const answer = Deferred.await(this.outcome);
+      const answer = this.start().pipe(Effect.andThen(Deferred.await(this.outcome)));
       const own = signal ? Effect.raceFirst(answer, this.leftBy(signal)) : answer;
       return Effect.ensuring(own, leave);
     });

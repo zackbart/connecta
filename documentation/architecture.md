@@ -696,8 +696,9 @@ A deployment has one store. On Workers it is one D1 database
 (`d1Storage(env.CONNECTA_DB)` from `@zackbart/connecta/d1`); on Node it is one
 SQLite file (`sqliteStorage(path)` from `@zackbart/connecta/sqlite`, over the
 built-in `node:sqlite`). Both are the same SQL key-value store
-(`src/storage/sql.ts`) over a three-method driver, so every statement runs
-unchanged on each, and the same module carries the activity table beside it.
+(`src/storage/sql-native.ts`) over a native Effect SQL execution service, so
+every statement runs unchanged on each, and the same module carries the
+activity table beside it. `src/storage/sql.ts` owns the Promise edges.
 Each store creates its tables on first use. `memoryStorage()` is the default
 and the test double. Workers KV and the 0.28 JSON file store are gone: KV is
 eventually consistent and cannot compare-and-set, and the file store rewrote
@@ -1976,6 +1977,128 @@ storage is the root's namespaced to its principal.
 | Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+### Native registry and request services (contributor)
+
+Registry catalog loading, classification, OAuth handoffs, status, invalidation,
+credential readiness, and result stashing have private Effect programs in
+`src/runtime/registry.ts`. Static class blocks install those programs while
+preserving the published Registry declaration, including its private member
+names. `registryProgram(view, method, ...args)` checks the installed method's
+identity; a custom or replaced method remains a Promise leaf. A Promise shell
+selects its original class implementation through `registryEdgeProgram`, so a
+wrapper can call the original without redispatching to itself. Catalog search,
+describe, resolution, and listing compose these programs directly. The shared
+listing is a native child of its request's Scope, started through
+`forkRequest` in the edge runner; an individual reader cannot terminate a read
+another reader still needs. Closing the request aborts and closes those children.
+Settled reads remove their request-close finalizer; active reads retain it,
+including in long-lived caller-supplied scopes.
+
+Native catalog and maintained API entry points report policy, validation, and
+operation-construction throws as typed failures with the original thrown value,
+matching the Promise boundary. Native consumers can use `Effect.catch` and
+`Effect.result` without losing refusals to the defect channel. Interruption
+remains interruption. Normalization belongs at these program boundaries;
+pure catalog algorithms and core validation retain their existing behavior.
+
+`RequestScope` in `src/runtime/request-scope.ts` represents the existing request
+identity. It owns call revocation, teardown, operation signals, the complete
+sent-secret set, and invocation/auth recovery facts. `openRequest` preserves
+its synchronous revocation bridge. Live context access refuses after closure;
+`recordedService` and the owner's `retained` facts remain available for
+settlement and redaction. Sharing a request identity grants no call authority
+to a spread copy of a context. Call deadlines, request lifetime, and the OAuth
+refresh coordinator remain distinct owners.
+
+Maintained API programs register their original tool-handler identity through
+`src/runtime/call-entry.ts`. Invocation enters the native API validation and
+settlement pipeline, which composes a registered tool program directly; the
+Promise handler is its public shell. Replacement and custom handlers stay
+Promise leaves. Both paths retain argument validation, generic withheld
+handler diagnostics, secret redaction, call revocation, and core write-outcome
+settlement. Custom connector hooks, vault and cache adapters, Web Crypto,
+downstream OAuth, and the remote SDK retain their existing Promise boundaries.
+Cross-request call admission deliberately remains a Promise handoff so workerd
+resumes queued work in the request waiting for the permit.
+
+The `Storage` service composes built-in `getNativeStorage` operations directly.
+Registry wrappers propagate that optional capability through principal,
+connector, subject, and result prefixes, including nested namespaces; list
+results strip only their own prefix. Custom stores keep the Promise fallback.
+These adapters add no retry, transaction, or storage encoding and preserve
+D1's single atomic batch and SQLite's native transaction. Native activity
+lookup remains available to the route and activity consumers.
+
+### Native SQL storage (contributor)
+
+`src/storage/sql-native.ts` composes KV, activity schema upgrades, retention,
+and bounded SQL copies as Effects. `src/storage/d1-copy.ts` composes the
+Workers KV copy, source-bound resume claims, verification, cutover guard, and
+recovery. Public factories and copy functions retain their Promise contracts;
+custom Promise SQL drivers retain the fallback lift.
+
+`src/storage/sql-driver.ts` constructs a public Effect 4.0.5 `SqlClient`
+service inside each operation. Reads execute SQL `Statement` Effects and writes
+execute their raw operations through that service, including its connection
+borrowing, statement-transformer context, and tracing semantics. Internal
+statement transformers see the current service; no client, statement, or
+Reactivity state is cached across operations or requests.
+
+Atomic batches remain one native database operation: D1's public `batch`, or
+SQLite's synchronous `BEGIN IMMEDIATE` through `COMMIT`, with rollback on
+failure. Neither path retries a dispatched write. The D1 binding's
+`meta.changes` is retained for every statement, including zero; no `RETURNING`
+payload, extra metadata statement, or D1 transaction is needed. The dependency
+is the existing exact `effect` pin. Connecta does not adopt `@effect/sql-d1`:
+its 4.0.5 batch API drops metadata and its binding contract is wider than
+Connecta's published structural interface.
+
+The D.2 architecture allowance was measured against `0e314247` using cached
+official `node:22-slim` (Node 22.23.4, zlib 1.3.1-e00f703), no network, and
+read-only bundle artifacts: `/d1` grew from 62,516 to 88,305 bytes gzip
+(+25,789); the Worker example grew from 729,847 to 756,375 (+26,528).
+Final typed-driver failure normalization measures 88,319 and 756,377 bytes
+on that same official runtime. Executing real services and statement operations requires those runtime
+semantics; the earlier identity-compiler facade did not provide them. The
+explicit allowance changes only `/d1`'s cap from 62,542 to 90,000 bytes and
+the Worker example's cap from 743,000 to 760,000. Historical baselines and
+all other caps stay fixed. Final integration must remeasure the combined
+implementation and satisfy the same compatibility and privacy contracts.
+
+The platform connection capability contains no request state. D1 prepares in
+the current request and retains no prepared handles or promises. SQLite keeps
+its existing connection-owned prepared-statement cache; externally supplied
+databases remain caller-owned. Schema readiness is a boolean. A microtask
+boundary precedes dispatch so pending cancellation can stop physical execution;
+a SQLite batch never yields between transaction controls. Cancellation cannot
+undo an already-submitted D1 write and never causes replay.
+
+Public SQL Statement operations create spans, so SQL tracing is disabled
+before executing them. Private `SqlError` values contain fixed wording with
+no driver cause or parameters; the original thrown value is restored only
+at the private SQL boundary. Operator sinks receive no new SQL diagnostics.
+The tracing contract is checked with a recording tracer and a mutation that
+removes the guard, which must fail. Existing import and copy errors retain
+their fixed, payload-free wording.
+
+`src/runtime/native-storage.ts` supplies optional `getNativeStorage` and
+`getNativeActivity` lookups. An internal consumer may compose their Effects
+without starting another fiber; an absent lookup requires the existing custom
+Promise-store fallback. Registration normalizes operation-construction,
+validation, and decoding throws into typed failures with the original thrown
+value, matching that fallback. Interruption remains interruption. The lookup
+module imports no SQL or platform implementation and does not change the
+published storage interfaces.
+
+The synchronous state-file parser, validation, file read, and one atomic
+SQLite import remain native synchronous leaves because `importStateFile` is a
+published synchronous API. `openSqlite` retains file modes, WAL, busy timeout,
+and database ownership. `test/sql-effect-contract.ts` runs native-path,
+affected-row, 50-claim, cancellation, and tracing checks on SQLite and native
+D1. `test/kv-to-d1.test.ts` also reuses stores across separate workerd requests;
+the existing SQL contracts prove rollback, database-clock TTL, encodings,
+activity upgrades, and copy recovery.
 
 ### Internal provider HTTP failures (contributor)
 

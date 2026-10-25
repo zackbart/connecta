@@ -11,6 +11,7 @@ const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktr
 // workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
 // Pure logic runs only on Node; never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
+  "test/storage-sql-d1.test.ts",
   // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
   // service-bound Workers. These skip or fail outside workerd.
   "test/auth-admission-binding.test.ts",
@@ -268,6 +269,7 @@ export default defineConfig({
               d1Databases: ["KV_COPY_TARGET"],
               serviceBindings: {
                 CLERK_ORGANIZATION: "clerk-organization",
+                SQL_LIFETIMES: "sql-lifetimes",
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
                 ...Object.fromEntries(
@@ -279,6 +281,14 @@ export default defineConfig({
                 ),
               },
               workers: await Promise.all([
+                {
+                  name: "sql-lifetimes",
+                  modules: true,
+                  script: await fixtureBundle("./test/fixtures/d1-native-worker.ts"),
+                  compatibilityDate: "2025-01-01",
+                  compatibilityFlags: ["nodejs_compat"],
+                  d1Databases: { DB: "sql-lifetimes" },
+                },
                 clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
