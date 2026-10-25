@@ -1,4 +1,4 @@
-import { Context } from "effect";
+import { Cause, Context, Effect, Exit, Schema } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { chargeConnectorCall } from "../src/call-admission-context.js";
@@ -29,15 +29,37 @@ import {
   viewServices,
   type CallLease,
 } from "../src/runtime/call.js";
+import { CatalogService, DiscoveryPolicyError } from "../src/catalog-service.js";
+import { InvocationService } from "../src/invocation.js";
+import { read } from "../src/http/tools.js";
+import { resultSafety } from "../src/http/safety.js";
+import { errors as tithelyErrors } from "../src/providers/tithely/api.js";
+import { RequestScope, requestOwner } from "../src/runtime/request-scope.js";
+import { getNativeStorage } from "../src/runtime/native-storage.js";
+import { Storage } from "../src/runtime/services.js";
+import { storageGet, storageSet, storageDelete, storageList, storageCompareAndSet } from "../src/runtime/storage.js";
+import { registryProgram } from "../src/runtime/registry.js";
+import { SharedRead } from "../src/runtime/shared-read.js";
+import { authRecoveryFacts, recordAuthFailure, recordCallEntry } from "../src/invocation-auth.js";
+import { recordedService } from "../src/runtime/call.js";
+import { sentSecretsForRequest } from "../src/sent-secrets.js";
+import * as runner from "../src/runtime/run.js";
 import { callEntry } from "../src/runtime/call-entry.js";
 import { runEdge } from "../src/runtime/run.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { makeRegistry, required } from "./helpers.js";
 import type { ConnectorContext } from "../src/types.js";
+import type { RegistryView } from "../src/registry.js";
 
 const BASE = "https://connecta.example";
 afterEach(() => vi.unstubAllGlobals());
+async function nativeFailure(effect: Effect.Effect<unknown, unknown>): Promise<unknown> {
+  const result = await runEdge(Effect.result(effect));
+  expect(result._tag).toBe("Failure");
+  if (result._tag !== "Failure") throw new Error("Expected a typed native failure");
+  return result.failure;
+}
 function fixture(handler: (ctx: ConnectorContext) => Promise<unknown>, credential = false) {
   return api("crm", {
     ...(credential ? { credential: { label: "Token" } } : {}),
@@ -388,6 +410,450 @@ describe("live call services (B.1)", () => {
       release();
       await Promise.resolve();
       expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("native registry and request entry (D.1)", () => {
+  it.each(["root", "scoped"] as const)(
+    "INV-4 INV-8: inherited and decorated %s methods reach original shells and retain downstream error identity",
+    WORKERS,
+    async (kind) => {
+      const connector = fixture(async () => ({}));
+      delete connector.staticTools;
+      const reason = new Error("catalog fixture unavailable");
+      let unavailable = false;
+      connector.listTools = async () => {
+        if (unavailable) throw reason;
+        return [{ name: "run", annotations: { readOnlyHint: true } }];
+      };
+      const registry = makeRegistry([connector]);
+      const view: RegistryView = kind === "root" ? registry : registry.scoped({ connectorIds: ["crm"] });
+      const original = view.getTools;
+      const inherited = Object.create(view) as RegistryView;
+      const scopes = [{}, {}, {}, {}];
+      try {
+        expect(await runEdge(registryProgram(inherited, "getTools", "crm", BASE, scopes[0]))).toMatchObject([
+          { name: "run", classification: "read" },
+        ]);
+        const decorated = vi.fn(function (this: RegistryView, ...args: Parameters<RegistryView["getTools"]>) {
+          return original.apply(this, args);
+        });
+        view.getTools = decorated;
+        for (const [index, receiver] of [view, inherited].entries()) {
+          expect(await runEdge(registryProgram(receiver, "getTools", "crm", BASE, scopes[index + 1]))).toMatchObject([
+            { name: "run", classification: "read" },
+          ]);
+        }
+        expect(decorated).toHaveBeenCalledTimes(2);
+        unavailable = true;
+        expect(await nativeFailure(registryProgram(inherited, "getTools", "crm", BASE, scopes[3]))).toBe(reason);
+        expect(decorated).toHaveBeenCalledTimes(3);
+      } finally {
+        view.getTools = original;
+        for (const scope of scopes) openRequest(scope).close();
+      }
+    },
+  );
+
+  it("INV-4 INV-8: native catalog policy refusals are recoverable typed failures", WORKERS, async () => {
+    const service = new CatalogService(makeRegistry([fixture(async () => ({}))]), BASE);
+    try {
+      expect(await nativeFailure(service.loadConnectorEffect("missing"))).toMatchObject({
+        message: 'Unknown connector "missing"',
+      });
+      for (const operation of [
+        service.searchEffect({ limit: 0 }),
+        service.describeEffect({ addresses: Array(101).fill("crm.run") }),
+      ]) {
+        const error = await nativeFailure(operation);
+        expect(error).toBeInstanceOf(DiscoveryPolicyError);
+        expect(error).toMatchObject({ code: "invalid_args" });
+      }
+      expect(
+        await runEdge(service.searchEffect({ limit: 0 }).pipe(Effect.catch((error) => Effect.succeed(error)))),
+      ).toBeInstanceOf(DiscoveryPolicyError);
+    } finally {
+      openRequest(service.requestScope).close();
+    }
+  });
+
+  it(
+    "INV-13: every native catalog entry preserves an original thrown sentinel for Effect.result",
+    WORKERS,
+    async () => {
+      const sentinel = { source: "catalog fixture" };
+      const throws = () => {
+        throw sentinel;
+      };
+      const registry = makeRegistry([fixture(async () => ({}))]);
+      const tool = Object.defineProperty({ name: "run" }, "description", { enumerable: true, get: throws });
+      const get = vi.spyOn(registry, "getTools").mockResolvedValue([tool]);
+      const service = new CatalogService(registry, BASE);
+      try {
+        expect(await nativeFailure(service.loadConnectorEffect("crm"))).toBe(sentinel);
+        expect(
+          await nativeFailure(service.loadConnectorEffect("crm", Object.defineProperty({}, "signal", { get: throws }))),
+        ).toBe(sentinel);
+        expect(await nativeFailure(service.searchEffect(Object.defineProperty({}, "query", { get: throws })))).toBe(
+          sentinel,
+        );
+        expect(await nativeFailure(service.describeEffect(Object.defineProperty({}, "address", { get: throws })))).toBe(
+          sentinel,
+        );
+        const list = vi.spyOn(registry, "listConnectors").mockImplementation(throws);
+        try {
+          const program = service.listCatalogsEffect();
+          expect(await nativeFailure(program)).toBe(sentinel);
+        } finally {
+          list.mockRestore();
+        }
+      } finally {
+        get.mockRestore();
+        openRequest(service.requestScope).close();
+      }
+    },
+  );
+
+  it(
+    "INV-9 INV-13: native API validation failures keep their original identity and dispatch nothing",
+    WORKERS,
+    async () => {
+      const handler = vi.fn(async () => true);
+      const tool = {
+        name: "run",
+        description: "Read a fixture.",
+        annotations: { readOnlyHint: true },
+        inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+        handler,
+      };
+      const connector = api("crm", { tools: [tool] });
+      const registry = makeRegistry([connector]);
+      const scope = {};
+      const operation = registry.contextFor("crm", BASE, scope);
+      const lease = callFromContext(operation, "read", { admitted: true });
+      const view = contextView(lease, operation);
+      const entry = callEntry(connector, connector.callTool)!;
+      const run = (name: string, args: {}) =>
+        entry(name, args, undefined).pipe(Effect.provideContext(viewServices(view)));
+      try {
+        expect(await nativeFailure(run("missing", {}))).toMatchObject({
+          message: 'Unknown tool "missing" on connector "crm"',
+        });
+        expect(await nativeFailure(run("run", {}))).toMatchObject({ code: "invalid_args" });
+        const sentinel = new ConnectorCallError("invalid_args", "Fixture schema evaluation failed");
+        Object.defineProperty(tool, "inputSchema", {
+          get: () => {
+            throw sentinel;
+          },
+        });
+        expect(await nativeFailure(run("run", {}))).toBe(sentinel);
+        await expect(connector.callTool("run", {}, view)).rejects.toBe(sentinel);
+        expect(handler).not.toHaveBeenCalled();
+      } finally {
+        lease.close();
+        openRequest(scope).close();
+      }
+    },
+  );
+
+  it("INV-7 INV-13: native API failure normalization leaves runner interruption intact", WORKERS, async () => {
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const connector = fixture(() => {
+      entered();
+      return new Promise<never>(() => {});
+    });
+    const registry = makeRegistry([connector]);
+    const scope = {};
+    const operation = registry.contextFor("crm", BASE, scope);
+    const lease = callFromContext(operation, "read", { admitted: true });
+    const view = contextView(lease, operation);
+    const interrupt = new AbortController();
+    const exits: Exit.Exit<unknown, unknown>[] = [];
+    const pending = runEdge(
+      callEntry(connector, connector.callTool)!("run", {}, undefined).pipe(
+        Effect.provideContext(viewServices(view)),
+        Effect.result,
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            exits.push(exit);
+          }),
+        ),
+      ),
+      { signal: interrupt.signal },
+    );
+    try {
+      await ready;
+      const reason = { source: "caller interrupt" };
+      interrupt.abort(reason);
+      await expect(pending).rejects.toBe(reason);
+      expect(exits).toHaveLength(1);
+      const exit = exits[0]!;
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.reasons.some(Cause.isInterruptReason)).toBe(true);
+        expect(exit.cause.reasons.some(Cause.isFailReason)).toBe(false);
+      }
+    } finally {
+      lease.close();
+      openRequest(scope).close();
+    }
+  });
+
+  it(
+    "INV-7: completed native reads release request finalizers while active reads retain close ownership",
+    WORKERS,
+    async () => {
+      const scope = {};
+      const owner = requestOwner(scope);
+      const order: string[] = [];
+      owner.own(() => {
+        order.push("first");
+      });
+      for (let index = 0; index < 40; index++) {
+        const end = vi.fn();
+        expect(await runEdge(new SharedRead(() => Effect.succeed(index), end, scope).join())).toBe(index);
+        expect(end).toHaveBeenCalledExactlyOnceWith(true);
+        expect(owner.finalizers).toHaveLength(1);
+      }
+      owner.retained.invocations.authFailures.set("crm", true);
+      owner.own(() => {
+        order.push("last");
+      });
+      let entered!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let cleaned = 0;
+      const end = vi.fn(() => {
+        order.push("active");
+      });
+      const read = new SharedRead(
+        () =>
+          Effect.callback<never>(() => {
+            entered();
+            return Effect.sync(() => {
+              cleaned++;
+            });
+          }),
+        end,
+        scope,
+      );
+      const pending = runEdge(read.join()).catch((error: unknown) => error);
+      await ready;
+      expect(owner.finalizers).toHaveLength(3);
+      owner.own(() => {
+        order.push("tail");
+      });
+      owner.close();
+      await pending;
+      owner.close();
+      expect(order).toEqual(["tail", "active", "last", "first"]);
+      expect(cleaned).toBe(1);
+      expect(end).toHaveBeenCalledExactlyOnceWith(false);
+      expect(owner.finalizers).toHaveLength(0);
+      expect(owner.retained.invocations.authFailures.get("crm")).toBe(true);
+    },
+  );
+
+  it(
+    "INV-7 INV-13: a maintained program shares one request owner and one Promise edge through invocation",
+    WORKERS,
+    async () => {
+      const scope = {};
+      let owner: ReturnType<typeof requestOwner> | undefined;
+      const tool = read(
+        {
+          errors: tithelyErrors,
+          safety: resultSafety({
+            review: "Fixture returns only an authored boolean.",
+            sensitiveFields: { names: [], choice: "drop" },
+          }),
+        },
+        {
+          name: "native",
+          description: "Read a fixture.",
+          input: Schema.Struct({}),
+          output: Schema.Boolean,
+          run: () =>
+            Effect.gen(function* () {
+              owner = yield* RequestScope;
+              const credentials = yield* (yield* Credentials).values.pipe(Effect.orDie);
+              expect(credentials).toEqual({ value: "native-secret-123456" });
+              return true;
+            }),
+        },
+      );
+      const connector = api("crm", { credential: { label: "Token" }, tools: [tool] });
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+      await vault.set("crm", "native-secret-123456", "alice");
+      const registry = makeRegistry([connector], { storage, credentialVault: vault });
+      const catalog = new CatalogService(registry, BASE, { requestScope: scope });
+      const edge = vi.spyOn(runner, "runEdge");
+      try {
+        const outcome = await new InvocationService(registry, catalog).invoke(
+          "crm.native",
+          {},
+          { source: "call_tool" },
+        );
+        expect(outcome).toMatchObject({ ok: true, value: true });
+        expect(owner).toBe(requestOwner(scope));
+        expect(edge).toHaveBeenCalledTimes(1);
+      } finally {
+        edge.mockRestore();
+        openRequest(scope).close();
+      }
+    },
+  );
+
+  it(
+    "INV-4 INV-7: request revocation retains redaction and auth facts without restoring live context authority",
+    WORKERS,
+    async () => {
+      const scope = {};
+      const registry = makeRegistry([fixture(async () => ({}))]);
+      const operation = registry.contextFor("crm", BASE, scope);
+      const lease = callFromContext(operation, "read", { admitted: true });
+      const view = contextView(lease, operation);
+      const owner = recordedService(view, RequestScope)!;
+      sentSecretsForRequest(scope).secret("retained-secret-123456");
+      recordCallEntry(
+        scope,
+        { address: "crm.run", classification: "read", fresh: true },
+        { name: "run", classification: "read" },
+      );
+      recordAuthFailure(scope, "crm", true);
+      openRequest(scope).close();
+      expect(serviceFor(view, RequestScope)).toBeUndefined();
+      expect(recordedService(view, RequestScope)).toBe(owner);
+      expect(owner.retained.secrets!.redact("retained-secret-123456")).not.toContain("retained-secret");
+      expect(await authRecoveryFacts(scope, "crm")).toMatchObject({
+        writeEntered: false,
+        unsafeEntered: false,
+        eligible: true,
+        reads: [{ address: "crm.run" }],
+      });
+      expect(await authRecoveryFacts({}, "crm")).toMatchObject({ eligible: false, reads: [] });
+      expect(() => callFromContext({ ...view }, "read")).toThrow(/ended/);
+    },
+  );
+
+  it("INV-7 INV-8: a native shared listing survives its first reader and ends with the request", WORKERS, async () => {
+    const scope = {};
+    const first = new AbortController();
+    let signal!: AbortSignal;
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const read = new SharedRead(
+      (owned) =>
+        Effect.tryPromise({
+          try: () => {
+            signal = owned;
+            entered();
+            return new Promise<never>((_, reject) =>
+              owned.addEventListener("abort", () => reject(owned.reason), { once: true }),
+            );
+          },
+          catch: (error) => error,
+        }),
+      () => {},
+      scope,
+    );
+    const one = runEdge(read.join(first.signal)).catch((error: unknown) => error);
+    const two = runEdge(read.join()).catch((error: unknown) => error);
+    await ready;
+    const reason = new Error("first reader left");
+    first.abort(reason);
+    expect(await one).toBe(reason);
+    expect(signal.aborted).toBe(false);
+    openRequest(scope).close();
+    expect(await two).toBeInstanceOf(Error);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("INV-5 INV-6: native credential checks retain the Promise boundary's withheld read failure", async () => {
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    const malformed = Object.defineProperty({}, "value", {
+      enumerable: true,
+      get: () => {
+        throw new Error("private-vault-read-text");
+      },
+    });
+    vi.spyOn(vault, "getAll").mockResolvedValue(malformed);
+    const registry = makeRegistry([fixture(async () => ({}), true)], { storage, credentialVault: vault });
+    expect(await registry.credentialDriftFor("crm")).toBeUndefined();
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "crm.run",
+      {},
+      { source: "call_tool" },
+    );
+    expect(outcome).toMatchObject({ ok: false, error: { code: "auth_required" }, dispatched: false });
+    expect(JSON.stringify(outcome)).not.toContain("private-vault-read-text");
+  });
+
+  it("INV-4 INV-13: custom Promise stores keep their fallback across nested registry namespaces", async () => {
+    const storage = memoryStorage();
+    const methods = ["get", "set", "delete", "list", "compareAndSet"] as const;
+    const calls = methods.map((method) => vi.spyOn(storage, method));
+    const connector = { ...fixture(async () => ({})), authScope: "personal" as const };
+    const registry = makeRegistry([connector], { storage });
+    const view = registry.scoped({ connectorIds: ["crm"], principalKey: "alice" }).contextFor("crm", BASE);
+    expect(getNativeStorage(view.storage)).toBeUndefined();
+    await runEdge(
+      Effect.gen(function* () {
+        yield* storageSet("data:key", "first");
+        expect(yield* storageGet("data:key")).toBe("first");
+        expect(yield* storageCompareAndSet("data:key", "first", "next")).toBe(true);
+        expect(yield* storageList("data:")).toEqual(["data:key"]);
+        yield* storageDelete("data:key");
+      }).pipe(Effect.provideService(Storage, view.storage)),
+    );
+    for (const call of calls) expect(call).toHaveBeenCalledTimes(1);
+    const reason = new Error("custom store failure");
+    calls[0]!.mockImplementation(() => {
+      throw reason;
+    });
+    await expect(runEdge(storageGet("data:key").pipe(Effect.provideService(Storage, view.storage)))).rejects.toBe(
+      reason,
+    );
+  });
+
+  it("INV-4: native registry access honors a replaced Promise method", async () => {
+    const registry = makeRegistry([fixture(async () => ({}))]);
+    const replacement = vi.fn(async () => [{ name: "replacement", classification: "read" as const }]);
+    registry.getTools = replacement;
+    expect(await runEdge(registryProgram(registry, "getTools", "crm", BASE))).toEqual([
+      { name: "replacement", classification: "read" },
+    ]);
+    expect(replacement).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["root", "scoped"] as const)(
+    "INV-4 INV-8: a wrapped %s Promise method can delegate to its original during native discovery",
+    WORKERS,
+    async (kind) => {
+      const registry = makeRegistry([fixture(async () => ({}))]);
+      const view = kind === "root" ? registry : registry.scoped({ connectorIds: ["crm"] });
+      const original = view.getTools.bind(view);
+      const wrapped = vi
+        .spyOn(view, "getTools")
+        .mockImplementation((...args: Parameters<RegistryView["getTools"]>) => original(...args));
+      const scope = {};
+      try {
+        const tools = await runEdge(registryProgram(view, "getTools", "crm", BASE, scope));
+        expect(tools.map((tool) => tool.name)).toEqual(["run"]);
+        expect(wrapped).toHaveBeenCalledOnce();
+      } finally {
+        wrapped.mockRestore();
+        openRequest(scope).close();
+      }
     },
   );
 });

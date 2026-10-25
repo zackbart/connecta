@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { requestOwner } from "./runtime/request-scope.js";
 import { cloneTool, sourceClassification } from "./tool-safety.js";
 import type { Connector, ConnectorContext, ToolDef } from "./types.js";
 
@@ -19,20 +21,19 @@ export function registerInvocationAuth(connector: Connector, check: (ctx: Connec
  * Local credential resolution only, before entering any connector call.
  * `callTool` is the function the invocation will invoke, read once.
  */
-export async function resolveInvocationAuth(
+export function resolveInvocationAuthEffect(
   connector: Connector,
   callTool: Connector["callTool"],
   ctx: ConnectorContext,
-): Promise<void> {
-  const entry = checks.get(connector);
-  if (entry?.callTool === callTool) await entry.check(ctx);
+): Effect.Effect<void, unknown> {
+  return Effect.suspend(() => {
+    const entry = checks.get(connector);
+    return entry?.callTool === callTool
+      ? Effect.tryPromise({ try: () => entry.check(ctx), catch: (error) => error })
+      : Effect.void;
+  });
 }
 
-interface RequestInvocations {
-  entered: EnteredCall[];
-  authFailures: Map<string, boolean>;
-  retryReads: Map<string, string>;
-}
 export interface ReplayRead {
   address: string;
   digest: string;
@@ -43,15 +44,8 @@ interface EnteredCall {
   fresh: boolean;
   definition: ToolDef;
 }
-const requests = new WeakMap<object, RequestInvocations>();
-
-function requestFor(scope: object): RequestInvocations {
-  let facts = requests.get(scope);
-  if (!facts) {
-    facts = { entered: [], authFailures: new Map(), retryReads: new Map() };
-    requests.set(scope, facts);
-  }
-  return facts;
+function requestFor(scope: object) {
+  return requestOwner(scope).retained.invocations;
 }
 
 /** Bind the verdict, annotation facts and schemas used for this call. */
