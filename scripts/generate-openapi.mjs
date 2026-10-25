@@ -1,4 +1,5 @@
 import { normalizeDiscovery, GOOGLE_DISCOVERY_FORMAT } from "./google-discovery.mjs";
+import { compactIndex } from "./compact-index.mjs";
 // Maintainer tooling, network-only: compile a provider's pinned OpenAPI
 // document into the compact operation index its REST connector ships.
 //
@@ -53,7 +54,7 @@ import { supplementalDocument, validSupplementalPin, validOpenApiComposition } f
 
 /** Bump when the required generated shape changes, so every output reads as stale.
  * Response fields are optional additive metadata; existing v4 indexes remain valid. */
-export const OPENAPI_FORMAT = 4;
+export const OPENAPI_FORMAT = 5;
 const OUTPUT = "openapi.generated.ts";
 const STANDARD = {
   pin: "evidence/openapi.json",
@@ -851,8 +852,9 @@ export function renderOpenApiModule(data, source, pin = LEGACY.pin, document) {
   const rows = data.ops.map((row) => `    ${JSON.stringify(row)},`).join("\n");
   return `${header}
 import type { OpenApiData } from "../_shared/rest/operation-index.js";
+import { compactOpenApi } from "../_shared/rest/compact-index.js";
 
-export const openapi: OpenApiData = {
+export const openapi: OpenApiData = compactOpenApi({
   source: ${JSON.stringify(data.source)},
   revision: ${JSON.stringify(data.revision)},
   digest: ${JSON.stringify(data.digest)},
@@ -862,8 +864,8 @@ export const openapi: OpenApiData = {
   ops: [
 ${rows}
   ],
-  details: ${JSON.stringify(data.details)},${data.fields === undefined ? "" : `\n  fields: ${JSON.stringify(data.fields)},`}${data.requestSchemas === undefined ? "" : `\n  requestSchemas: ${JSON.stringify(data.requestSchemas)},`}
-};
+${data.fields === undefined ? "" : `  fields: ${JSON.stringify(data.fields)},\n`}${data.requestSchemas === undefined ? "" : `  requestSchemas: ${JSON.stringify(data.requestSchemas)},\n`}
+}, ${JSON.stringify(compactIndex(data))});
 `;
 }
 
