@@ -1338,7 +1338,7 @@ roots (including root-array items) also leave fields absent. Empty,
 schemaless and non-JSON responses declare no fields. Request shrinking and
 endpoint contract digests do not depend on this metadata. Legacy REST tools
 retain their catalog and discovery behavior until each provider's step 2.
-Fields are optional additive metadata in format 4, so a previously compiled
+Fields remain optional additive metadata, so a previously compiled
 index without the source bytes remains usable without inventing a response
 contract. Vercel's step-2 pin review restores response metadata from the reviewed public
 document; operations without declared response properties still refuse fields. Breeze's pin declares no response
@@ -1348,6 +1348,39 @@ offline; `providers:check` reports a pin that differs from the live document.
 No maintained provider selects an implementation with `surface` any more. See
 the
 [provider auth migration](./provider-auth-migration.md).
+
+#### Generated index storage (contributor contract)
+
+Generated format 5 stores the same logical `OpenApiData` as earlier formats.
+The shared renderer interns complete parameter rows by their exact JSON text,
+including descriptions, required flags and compact schema references. Each
+operation records parameter-row ids and its unchanged serialized body. Shared
+schema definitions, response fields, lossless request graphs, operation order,
+pins and all compiler shrink options retain their existing meaning. The two
+indexes derived directly from kit declarations continue using their plain
+logical representation.
+
+`compactOpenApi` exposes the exact original `details` string through an
+enumerable, replaceable property. `OperationIndex` parses definitions once per
+instance and decodes each operation row on first use. Each row occurrence gets
+its own parsed parameters; dictionary sharing introduces no new mutable object
+sharing between operations or instances. Existing shared schema references and
+their mutation behaviour remain intact. Ordinary logical indexes still use
+`JSON.parse`. Construction neither expands the complete details string nor
+computes an identity hash. Cursor binding continues hashing the same canonical
+logical data and policy, with no encoding metadata in its preimage, preserving
+existing cursor bytes for unchanged content.
+
+The runtime codec uses no platform-specific imports, recursive references or
+compression dependency. Parameter ids must be nonnegative safe integers naming
+existing strings. Reconstructing a row or full details text is bounded to 64 Mi
+UTF-16 code units; full reconstruction must match its recorded exact length.
+These physical decode checks do not change request validation, schema traversal,
+search, refusal, result or discovery budgets. Generation and offline roundtrip
+tests must preserve every pinned logical contract; storage changes never accept
+new upstream evidence or golden bytes. The compaction suites cover exact strings,
+native Web Crypto identity, malformed references, lazy decoding, mutation
+semantics and every maintained provider.
 
 #### Value safety for REST vendors
 
