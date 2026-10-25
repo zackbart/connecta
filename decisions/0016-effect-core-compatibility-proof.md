@@ -85,7 +85,7 @@ The reusable candidate lives in
   resources into the matcher Scope would need an explicit body-owner design;
   this is not a general replacement for `scopedToBody`.
 
-The Node instrumentation observes **377 edge entries for both dispatchers**,
+The Node instrumentation observes **380 edge entries for both dispatchers**,
 zero edge entries at import, and no console output during malformed requests,
 handler errors, cancellation or normal exchanges. The matcher adds no runner.
 Raw response identity, explicit null fallthrough, original error identity and
