@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Connecta } from "./index.js";
@@ -101,7 +102,9 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
     },
   };
 
+  const awaitingRequest = new Set<Socket>();
   const server = createServer((req, res) => {
+    awaitingRequest.delete(req.socket);
     void (async () => {
       const controller = new AbortController();
       const abortRequest = () => {
@@ -160,6 +163,17 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
   if (opts.gracefulShutdown !== false) {
     const timeoutMs = opts.shutdownTimeoutMs ?? 10_000;
     let shuttingDown = false;
+    // closeIdleConnections() only knows sockets that have served a request.
+    // A client's spare connection (or incomplete first headers) must not hold
+    // shutdown open without ever having been admitted to the application.
+    server.on("connection", (socket) => {
+      if (shuttingDown) {
+        socket.destroy();
+        return;
+      }
+      awaitingRequest.add(socket);
+      socket.once("close", () => awaitingRequest.delete(socket));
+    });
     const shutdown = (signal: string): void => {
       if (shuttingDown) return;
       shuttingDown = true;
@@ -172,15 +186,14 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
       // Stop queued/running sandbox work now, not after server.close has
       // waited for the very requests those children are holding open.
       const executorClose = connecta.close();
-      // close() alone waits on idle keep-alive sockets, so a single browser
-      // tab would stall every shutdown until the force-exit deadline.
-      server.closeIdleConnections();
       server.close(() => {
         void Promise.allSettled([...pending, executorClose]).then(() => {
           clearTimeout(forced);
           process.exit(0);
         });
       });
+      server.closeIdleConnections();
+      for (const socket of awaitingRequest) socket.destroy();
     };
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));

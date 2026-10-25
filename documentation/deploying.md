@@ -61,6 +61,13 @@ transport even on a read-only endpoint. A Node deployment using only the root
 entry refuses those requests before sending them. Workers use their native
 fetch transport.
 
+By default, Node's `listen()` handles SIGTERM and SIGINT: it stops accepting
+connections, closes idle connections and accepted sockets without a first HTTP
+request, closes request and code admission, reaps sandbox children, and drains
+active responses and deferred work. Its shutdown deadline is ten seconds. For
+example, retain the template's `listen(connecta, port)` when running it under
+Docker Compose so `docker compose stop` uses this cleanup.
+
 The owned Node transport connects directly to the downstream server. Remote MCP
 writes and kit writes ignore `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`,
 and any host proxy dispatcher; remote MCP reads keep native fetch and its proxy
