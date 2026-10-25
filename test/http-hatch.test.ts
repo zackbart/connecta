@@ -231,6 +231,43 @@ function setup(
 }
 
 it(
+  "INV-1 INV-10: snapshots discovery-only refusals without changing dispatch verdicts or schema",
+  WORKERS,
+  async () => {
+    const base = setup();
+    let enabled = true;
+    const discoveryRefusal = vi.fn(() => (enabled ? "Construction-only discovery restriction." : undefined));
+    const restricted = setup({
+      binding: {
+        review: "Fixture discovery policy is separate from the reviewed dispatch table.",
+        discoveryRefusal,
+        send: (call) => base.connection.sendPath({ method: call.method, path: call.path, template: call.op.path }),
+      },
+    });
+    expect(discoveryRefusal).toHaveBeenCalledTimes(restricted.index.ops.length);
+    enabled = false;
+    const details = (await restricted.call("details", { method: "GET", path: "/items" })) as any;
+    expect(details).toMatchObject({ verdict: "refuse", summary: "List items" });
+    expect(details).not.toHaveProperty("tool");
+    const refused = (await restricted.call("details", { method: "GET", path: "/blocked" })) as any;
+    expect(refused.refusal ?? refused.summary).toContain("Construction-only discovery restriction.");
+    const search = (await restricted.call("search", { query: "/items" })) as any;
+    expect(search.operations.every((op: any) => op.tool === undefined)).toBe(true);
+    expect(discoveryRefusal).toHaveBeenCalledTimes(restricted.index.ops.length);
+    expect(base.authenticate).not.toHaveBeenCalled();
+    expect(restricted.authenticate).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+    const dispatch = (tools: typeof base.tools) => tools.filter((tool) => /_api_(read|write)$/.test(tool.name));
+    expect(dispatch(restricted.tools).map(({ inputSchema, outputSchema }) => ({ inputSchema, outputSchema }))).toEqual(
+      dispatch(base.tools).map(({ inputSchema, outputSchema }) => ({ inputSchema, outputSchema })),
+    );
+    expect(await restricted.call("read", { path: "/items" })).toMatchObject({ status: 200, data: { id: "i1" } });
+    await expect(restricted.call("read", { path: "/blocked" })).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(1);
+  },
+);
+
+it(
   "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
   { ...NODE, timeout: 120_000 },
   async () => {

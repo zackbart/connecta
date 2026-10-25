@@ -1,6 +1,7 @@
 // Vercel's pinned contract, authentication, failures and value-safety boundary.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
+import type { ConnectorUsageGuide } from "../../types.js";
 import { Refusal, StatusFailure, UnreadableBody, type VendorErrors } from "../../http/errors.js";
 import { restSafety } from "../../http/safety.js";
 import { Credentials, RequestSecrets } from "../../http/services.js";
@@ -21,6 +22,7 @@ import type { HatchBinding, HatchDeclaration } from "../../http/hatch.js";
 import { vercelPage as timestampPage, type HatchPageAdapter } from "../../http/hatch-paging.js";
 import { completeRows } from "./lib/logs.js";
 import type { VercelTokenOptions } from "./index.js";
+import { pinAdmission, pinOptions, pinQuery, pinRoute, readPinnedTeam, type VercelTeamPin } from "./lib/pin.js";
 export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const READ_CAP_MS = 60_000;
 /** POSTs that only read, admitted by `vercel_api_read`. */
@@ -349,7 +351,8 @@ export const refuse = (call: RestCall): string | undefined => {
   return undefined;
 };
 
-export function scope(call: RestCall, teamId: string | undefined): RestCall {
+export function scope(call: RestCall, teamId: string | undefined, pin?: VercelTeamPin): RestCall {
+  if (pin) return { ...call, query: pinQuery(vercelIndex, call, pin) };
   const query: JsonRecord = { ...call.query };
   if (query["teamId"] === null) {
     delete query["teamId"];
@@ -369,16 +372,17 @@ export function restCall(
   path: string,
   input: { query?: Readonly<JsonRecord>; body?: unknown } = {},
   teamId?: string,
+  pin?: VercelTeamPin,
 ): RestCall {
   const { op, params } = vercelIndex.resolve(method, path);
-  return scope({ method, path, op, params, query: { ...input.query }, body: input.body }, teamId);
+  return scope({ method, path, op, params, query: { ...input.query }, body: input.body }, teamId, pin);
 }
 export function checkServer(server: string | undefined): string | undefined {
   return server === undefined
     ? undefined
     : `This operation is served from ${server}, which this connector does not reach.`;
 }
-export function admit(call: RestCall) {
+export function admit(call: RestCall, connection: Connection, options: Readonly<VercelTokenOptions>) {
   return Effect.tryPromise({
     try: async () => {
       if (
@@ -425,6 +429,7 @@ export function admit(call: RestCall) {
     Effect.catch((error) =>
       error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
     ),
+    Effect.flatMap(() => pinAdmission(connection, vercelIndex, call, options.pin)),
   );
 }
 export function queryOf(call: RestCall): Record<string, string | string[]> {
@@ -447,6 +452,7 @@ export function queryPairs(call: RestCall): [string, string][] {
 export function sendVercel(
   connection: Connection,
   call: RestCall,
+  options: Readonly<VercelTokenOptions>,
   sendOptions?: SendOptions,
 ): ReturnType<Connection["sendPath"]> {
   return checked(() => {
@@ -455,7 +461,7 @@ export function sendVercel(
     return queryOf(call);
   }).pipe(
     Effect.flatMap((query) =>
-      admit(call).pipe(
+      admit(call, connection, options).pipe(
         Effect.flatMap(() =>
           connection.sendPath(
             {
@@ -475,9 +481,15 @@ export function sendVercel(
   );
 }
 export const probe = {
-  operation: currentUser,
-  request: {},
-  describe: (data: unknown) => {
+  run: (connection: Connection, options: Readonly<VercelTokenOptions>) => {
+    const pin = pinOptions(options).pin;
+    return pin
+      ? readPinnedTeam(connection, pin)
+      : connection.send(currentUser, {}).pipe(Effect.map((answer) => answer.data));
+  },
+  describe: (data: unknown, options: Readonly<VercelTokenOptions>) => {
+    const pin = pinOptions(options).pin;
+    if (pin) return `Authenticated for pinned team ${pin.teamId}.`;
     const payload = record(data);
     const user = record(payload["user"] ?? payload);
     const identity = text(user["username"]) ?? text(user["email"]) ?? text(user["name"]) ?? text(user["id"]);
@@ -496,13 +508,16 @@ export const probe = {
   }),
 };
 export function usageGuide(options: Readonly<VercelTokenOptions>) {
+  options = pinOptions(options);
   const team = defaultTeam(options);
   return {
     context: [
       `Vercel REST access token is already configured. Account purpose: ${options.purpose}`,
-      team
-        ? `Routing defaults to team ${team}. This is not a restriction or tenant pin: an explicit teamId or slug overrides it, and teamId: null selects personal scope. The token's Vercel permissions enforce access.`
-        : "Routing defaults to the token owner's personal account. Explicit teamId or slug selects a team within the token's permissions.",
+      options.pin
+        ? `Deployment team pin: ${options.pin.teamId}. Every call stays within this team; foreign or personal selectors and unprovable global routes are refused. Team/project/deployment checks may spend additional reads. Token permissions still apply.`
+        : team
+          ? `Routing defaults to team ${team}. This is not a restriction or tenant pin: an explicit teamId or slug overrides it, and teamId: null selects personal scope. The token's Vercel permissions enforce access.`
+          : "Routing defaults to the token owner's personal account. Explicit teamId or slug selects a team within the token's permissions.",
       ...(options.readOnly ? ["This connection is read-only."] : []),
     ],
     required: true,
@@ -533,6 +548,36 @@ export const VERCEL_VERDICTS: HatchDeclaration["verdicts"] = Object.fromEntries(
         : "destructive",
   ]),
 );
+const PIN_DISCOVERY_REFUSALS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    vercelIndex.ops
+      .filter((op) => pinRoute(vercelIndex, op) === "denied")
+      .map((op) => [`${op.method} ${op.path}`, "This operation has no reviewed deployment-team confinement."]),
+  ),
+);
+
+/** Change only the generated Hatch count, after the shared guide renderer selects deployment blocks. */
+export function transformGuide(guide: ConnectorUsageGuide, options: Readonly<VercelTokenOptions>): ConnectorUsageGuide {
+  if (!pinOptions(options).pin) return guide;
+  const base = Object.values(VERCEL_VERDICTS).filter((verdict) => verdict === "refuse").length;
+  const total = vercelIndex.ops.filter(
+    (op) =>
+      VERCEL_VERDICTS[`${op.method} ${op.path}`] === "refuse" ||
+      PIN_DISCOVERY_REFUSALS[`${op.method} ${op.path}`] !== undefined,
+  ).length;
+  const sentence = `${base} operations are refused by design; use \`vercel_api_details\` with the method and path to inspect an operation's contract and refusal.`;
+  const lines = guide.content.split("\n");
+  const targets = lines.flatMap((line, position) =>
+    line.startsWith("- **Hatch:** `vercel_api_search` ") && line.includes(sentence) ? [position] : [],
+  );
+  const position = targets[0];
+  const line = position === undefined ? undefined : lines[position];
+  if (targets.length !== 1 || line === undefined || line.indexOf(sentence) !== line.lastIndexOf(sentence))
+    throw new Error("Vercel's generated guide needs exactly one Hatch refusal-count sentence.");
+  const at = line.indexOf(sentence);
+  lines[position!] = `${line.slice(0, at)}${total}${line.slice(at + String(base).length)}`;
+  return { ...guide, content: lines.join("\n") };
+}
 const cursorInputMessage =
   "Pass the signed page.nextCursor unchanged; omit it for the first page (numeric until may anchor its time window).";
 const continuation = (next: unknown, call: Parameters<HatchPageAdapter["next"]>[1]) =>
@@ -601,12 +646,19 @@ export function vercelBinding({
   connection: Connection;
   options: Readonly<VercelTokenOptions>;
 }): HatchBinding {
+  options = pinOptions(options);
   return {
+    ...(options.pin ? { cursorScope: Object.freeze({ vercelTeamPin: options.pin.teamId }) } : {}),
+    ...(options.pin ? { discoveryRefusal: (op: Operation) => PIN_DISCOVERY_REFUSALS[`${op.method} ${op.path}`] } : {}),
     review:
       "The same teamId/slug/null routing used by named tools and uploads, resolved before request validation and signed cursor binding. Token permissions remain the boundary. JSON framing through the existing connection.",
-    query: (call) => scope(call, defaultTeam(options)).query,
-    refusal: operationRefusal,
+    query: (call) => scope(call, defaultTeam(options), options.pin).query,
+    refusal: (op) =>
+      operationRefusal(op) ??
+      (options.pin && pinRoute(vercelIndex, op) === "denied"
+        ? "This operation has no reviewed deployment-team confinement."
+        : undefined),
     refuse: (call) => operationRefusal(call.op) ?? refuse(call),
-    send: (call, sendOptions) => sendVercel(connection, call, sendOptions),
+    send: (call, sendOptions) => sendVercel(connection, call, options, sendOptions),
   };
 }
