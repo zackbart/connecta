@@ -20,8 +20,11 @@ npm start
 
 Keep the template's pinned `undici` dependency and its `listen` import from
 `@zackbart/connecta/node`. `listen` installs the owned HTTP transport used by
-guarded provider writes; a Node deployment using only the root entry refuses
-those writes before dispatch.
+every maintained-provider request, reads included, and remote MCP writes.
+Without `listen()`, maintained-provider writes, reviewed POST reads and remote
+MCP writes are refused before sending. The owned sender ignores outbound proxy
+settings; confirm approved direct egress before upgrading, or use the Workers
+shape. See [Node transport requirements](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md#start-on-node).
 
 The manifest approves only `esbuild@0.28.2` to run its install script. `tsx`
 uses esbuild to run this TypeScript source, so that script is part of the

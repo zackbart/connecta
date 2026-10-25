@@ -53,9 +53,11 @@ backups, Docker provisioning, secrets, and optional modules. Run the deployment'
 `npm run typecheck` after configuration changes.
 
 Retain the Node template's `undici` dependency and serve with `listen` from
-`@zackbart/connecta/node`. That entry configures the owned transport for
-remote MCP writes and for API/provider requests that are writes or use a physical
-HTTP method other than GET or HEAD, including reviewed read-only POSTs. For example, an `assistant` using
+`@zackbart/connecta/node`. `listen()` installs the owned sender for every
+maintained-provider request, reads included, and for remote MCP writes.
+A Node host serving `connecta.fetch` without `listen()` has no owned sender:
+every maintained-provider write, every reviewed POST read and every remote MCP
+write is refused before sending. Each worked in 0.34.1. For example, an `assistant` using
 `vercel_api_read` to POST `/v1/registrar/domains/availability` needs that
 transport even on a read-only endpoint. A Node deployment using only the root
 entry refuses those requests before sending them. Workers use their native
@@ -64,17 +66,19 @@ fetch transport.
 By default, Node's `listen()` handles SIGTERM and SIGINT: it stops accepting
 connections, closes idle connections and accepted sockets without a first HTTP
 request, closes request and code admission, reaps sandbox children, and drains
-active responses and deferred work. Its shutdown deadline is ten seconds. For
-example, retain the template's `listen(connecta, port)` when running it under
+active responses and deferred work. Its shutdown deadline defaults to ten seconds
+(`shutdownTimeoutMs`). For example, retain the template's `listen(connecta, port)` when running it under
 Docker Compose so `docker compose stop` uses this cleanup.
 
-The owned Node transport connects directly to the downstream server. Remote MCP
-writes and kit writes ignore `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`,
-and any host proxy dispatcher; remote MCP reads keep native fetch and its proxy
-configuration. There is no supported explicit-proxy setting for the owned sender.
-If your network requires an outbound proxy, move writes to a deployment with
-approved direct egress, or an approved Workers deployment. Until then, configure
-those connectors as `readOnly`. A connection failure after dispatch is unknown
+The owned Node sender connects directly for every maintained-provider request,
+including GET reads, and for remote MCP writes. It ignores `NODE_USE_ENV_PROXY`,
+`HTTP_PROXY`, `HTTPS_PROXY` and any host proxy dispatcher. Only remote MCP reads
+retain native fetch and its proxy settings. There is no supported explicit proxy
+configuration for the owned sender in 0.35.0; support is follow-up work.
+Before upgrading a deployment that needs a proxy for maintained providers or
+remote MCP, arrange approved direct egress or use the Workers shape. `readOnly`
+is a stopgap only for remote MCP connectors; it does not change the sender for
+maintained-provider reads. A connection failure after a write dispatch is unknown
 and non-retryable.
 
 ## Start on Workers
@@ -283,7 +287,32 @@ For an existing Node deployment, add the Node entry's pinned optional peer
 before starting the upgraded package: `npm install --save-exact undici@6.29.1`.
 The current Node template already declares this dependency.
 
-- [Provider migration for 0.35](./provider-migration-0.35.md) collects provider upgrade actions for the pending consolidated release, including removal of Infisical, Notion, and Mixpanel factories.
+For 0.35.0, serve Node with `listen` from `@zackbart/connecta/node`, as the
+current template does. Without `listen()`, a host serving `connecta.fetch` has
+no owned sender: every maintained-provider write, every reviewed POST read and
+every remote MCP write is refused before sending, although each worked in 0.34.1.
+With `listen()`, every maintained-provider request, reads included, and remote
+MCP writes use the direct sender, ignoring `NODE_USE_ENV_PROXY`, `HTTP_PROXY`,
+`HTTPS_PROXY` and host proxy dispatchers. Only remote MCP reads keep native
+fetch and its proxy settings. A deployment needing a proxy for maintained
+providers or remote MCP needs approved direct egress or the Workers shape
+before upgrading. Explicit proxy support is follow-up work. See [Start on Node](#start-on-node).
+
+After a dispatched write reports an unknown outcome, read the target before
+making another write. Programs retain that outcome even when guest code catches
+the error; see [Writes](./code-mode.md#writes). Provider
+continuations now bind their connection, credential owner and read arguments;
+connections with caller-dependent downstream identities also bind the admitted
+caller and pool owner. Follow each provider's migration rules for old cursors.
+No database conversion or agent-token rotation is required solely for 0.35.0.
+
+Native pools and code-off result paging are optional; existing pools keep the
+meta-tool surface. See [Native tool surface](./meta-tools.md#native-tool-surface).
+Vercel workload admission and the separate Eve helper are also opt-in; existing
+agent tokens keep working. See [Vercel workload credentials](./auth.md#vercel-workload-credentials)
+and [Eve agents](./meta-tools.md#eve-agents).
+
+- [Provider migration for 0.35](./provider-migration-0.35.md) collects provider upgrade actions for 0.35.0, including removal of Infisical, Notion, and Mixpanel factories.
 - [Migration to 0.34](./migration-0.34.md) covers the Overview landing page, Endpoints at `/endpoints`, default browser titles, and Workspace discovery in owner-less agent pools. No storage migration or token rotation is needed from 0.33.
 - [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2 with its operator route changes, and the pre-auth listen fix.
 - [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Pool members name `"agent:<name>"` instead of matching token record ids.

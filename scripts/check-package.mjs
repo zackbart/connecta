@@ -16,6 +16,80 @@ const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const templateManifest = JSON.parse(await readFile(join(root, "templates", "node", "package.json"), "utf8"));
 
+/** Run inside the generated image, using only installed public entrypoints. */
+async function checkContainerTransport() {
+  const assert = (await import("node:assert/strict")).default;
+  const { createServer } = await import("node:http");
+  const { createConnecta, customExecutor, remoteMcp } = await import("@zackbart/connecta");
+  const { listen } = await import("@zackbart/connecta/node");
+  const { createRequire } = await import("node:module");
+  assert.equal(createRequire(import.meta.url)("undici/package.json").version, "6.29.1");
+  for (const challenge of [421, 503, "reset"]) {
+    let sends = 0;
+    const downstream = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const rpc = body ? JSON.parse(body) : {};
+      if (rpc.method === "tools/call") {
+        sends++;
+        if (challenge === "reset") response.destroy();
+        else response.writeHead(challenge, { "content-type": "application/json" }).end("{}");
+        return;
+      }
+      const result =
+        rpc.method === "initialize"
+          ? {
+              protocolVersion: "2025-03-26",
+              capabilities: { tools: {} },
+              serverInfo: { name: "fixture", version: "1" },
+            }
+          : {
+              tools: [
+                {
+                  name: "create_item",
+                  inputSchema: { type: "object", properties: {} },
+                  annotations: { readOnlyHint: false },
+                },
+              ],
+            };
+      if (rpc.id === undefined) response.writeHead(202).end();
+      else
+        response
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+    });
+    await new Promise((resolve) => downstream.listen(0, "127.0.0.1", resolve));
+    const remote = remoteMcp("remote", {
+      url: `http://127.0.0.1:${downstream.address().port}/mcp`,
+      versionNegotiation: "legacy",
+    });
+    const app = createConnecta({
+      readOnly: false,
+      connectors: [remote],
+      executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
+    });
+    const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+    const ctx = app.registry.contextFor("remote", "http://127.0.0.1", undefined, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    try {
+      await remote.listTools(ctx);
+      await assert.rejects(remote.callTool("create_item", {}, ctx), (error) => {
+        assert.equal(error.retryable, false);
+        return true;
+      });
+      assert.equal(sends, 1, `remote write sends once after ${challenge}`);
+    } finally {
+      await remote.closeScope?.(ctx);
+      await app.close();
+      server.closeAllConnections();
+      downstream.closeAllConnections();
+      await Promise.all([server, downstream].map((socket) => new Promise((resolve) => socket.close(resolve))));
+    }
+  }
+  console.log("container owned transport: undici 6.29.1; one physical write after 421, 503 and reset");
+}
+
 /** Exercise the packed adapters, including absolute CAS insert and update. */
 async function checkAbsoluteExpiry(storage) {
   if (storage.capabilities?.absoluteExpiry !== true) throw new Error("missing absoluteExpiry capability");
@@ -960,7 +1034,7 @@ try {
   // prerequisite for running a release check on a laptop, but CI has it and
   // must not quietly skip the shape it is verifying.
   if (!dockerReady()) {
-    if (process.env.CI) {
+    if (process.env.CI || process.env.CONNECTA_REQUIRE_DOCKER === "1") {
       throw new Error(
         "Docker is unavailable, so the generated container went untested. " +
           "CI must exercise `connecta init` + `docker compose up`.",
@@ -968,6 +1042,16 @@ try {
     }
     console.log("package smoke: Docker unavailable — skipped the generated-container check");
   } else {
+    await writeFile(
+      join(generatedRoot, "src", "transport-smoke.mjs"),
+      `await (${checkContainerTransport.toString()})();\n`,
+    );
+    await writeFile(
+      join(generatedRoot, "src", "seed-legacy.mjs"),
+      `import { openSqlite, sqliteStorage } from "@zackbart/connecta/sqlite";\n` +
+        `const storage = sqliteStorage(openSqlite(process.env.CONNECTA_DATABASE));\n` +
+        `for (const [key, value] of Object.entries(${JSON.stringify(legacyTokens.records)})) await storage.set(key, value);\n`,
+    );
     await copyFile(archive, join(generatedRoot, packed.filename));
     generatedPackage.dependencies["@zackbart/connecta"] = `file:./${packed.filename}`;
     await writeFile(join(generatedRoot, "package.json"), JSON.stringify(generatedPackage, null, 2) + "\n");
@@ -1020,10 +1104,58 @@ try {
       });
       return `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
     };
+    const containerDoctor = (token) =>
+      spawnSync(
+        join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
+        ["doctor", "--url", `http://127.0.0.1:${containerPort}`, "--pool", "local-machine"],
+        { cwd: generatedRoot, encoding: "utf8", timeout: 30_000, env: { ...process.env, CONNECTA_TOKEN: token } },
+      );
+    const assertContainerDoctor = (token) => {
+      const result = containerDoctor(token);
+      if (result.status !== 0 || !result.stdout.includes("QuickJS executed")) {
+        throw new Error(`Container doctor did not prove execution: ${result.stdout}${result.stderr}`);
+      }
+    };
     try {
       run("docker", [...compose, "up", "-d", "--build"], generatedRoot, composeEnv);
       await waitForContainerHealth(`http://127.0.0.1:${containerPort}/health`, 120_000, composeLogs);
       await assertClosed(`http://127.0.0.1:${containerPort}`);
+      run(
+        "docker",
+        [
+          ...compose,
+          "exec",
+          "-T",
+          "connecta",
+          "node",
+          "-e",
+          "if (process.getuid() === 0) throw new Error('Container runs as root')",
+        ],
+        generatedRoot,
+        composeEnv,
+      );
+      run("docker", [...compose, "exec", "-T", "connecta", "node", "src/seed-legacy.mjs"], generatedRoot, composeEnv);
+      if (containerDoctor(legacyTokens.unbound.token).status === 0)
+        throw new Error("Container admitted an unadopted token");
+      run(
+        "docker",
+        [
+          ...compose,
+          "exec",
+          "-T",
+          "connecta",
+          "npm",
+          "run",
+          "--silent",
+          "adopt-token",
+          "--",
+          legacyTokens.unbound.accessToken.id,
+          "local-machine",
+        ],
+        generatedRoot,
+        composeEnv,
+      );
+      assertContainerDoctor(legacyTokens.unbound.token);
       // A trusted one-shot container, using the installed package API and the
       // service's named volume, exactly as the template documents.
       const containerToken = provisionedToken(
@@ -1047,18 +1179,107 @@ try {
           composeEnv,
         ),
       );
+      if (containerDoctor(legacyTokens.unbound.token).status === 0)
+        throw new Error("Container rotation did not revoke the old secret");
+      assertContainerDoctor(containerToken);
       run("docker", [...compose, "restart", "connecta"], generatedRoot, composeEnv);
       await waitForContainerHealth(`http://127.0.0.1:${containerPort}/health`, 120_000, composeLogs);
       await assertClosed(`http://127.0.0.1:${containerPort}`);
-      const containerDoctor = run(
-        join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-        ["doctor", "--url", `http://127.0.0.1:${containerPort}`, "--pool", "local-machine"],
-        generatedRoot,
-        { CONNECTA_TOKEN: containerToken },
-      );
-      if (!containerDoctor.includes("QuickJS executed")) {
-        throw new Error(`Containerized deployment did not prove execution: ${containerDoctor}`);
+      assertContainerDoctor(containerToken);
+      if (containerDoctor(legacyTokens.unbound.token).status === 0)
+        throw new Error("Restart restored a rotated secret");
+      const health = await (await fetch(`http://127.0.0.1:${containerPort}/health`)).json();
+      if (
+        health.status !== "ok" ||
+        Object.keys(health).some((key) => !["status", "connectors", "server", "executor", "admission"].includes(key)) ||
+        /cta_|package-smoke-static-token/.test(JSON.stringify(health))
+      ) {
+        throw new Error("Container health exposed unexpected data");
       }
+      const containerId = run("docker", [...compose, "ps", "-q", "connecta"], generatedRoot, composeEnv).trim();
+      const healthCommand = JSON.parse(
+        run("docker", ["inspect", "--format", "{{json .Config.Healthcheck.Test}}", containerId], generatedRoot),
+      );
+      if (
+        !healthCommand.join(" ").includes("http://127.0.0.1:") ||
+        /TOKEN|Authorization|Bearer|cta_/.test(healthCommand.join(" "))
+      ) {
+        throw new Error("Container healthcheck is not loopback and credential-free");
+      }
+      console.log(
+        run(
+          "docker",
+          [...compose, "exec", "-T", "connecta", "node", "src/transport-smoke.mjs"],
+          generatedRoot,
+          composeEnv,
+        ).trim(),
+      );
+
+      // Stop with an admitted, running sandbox rather than only an idle pool.
+      const activeProgram = fetch(`http://127.0.0.1:${containerPort}/agent/local-machine`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${containerToken}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2025-03-26",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "execute_code", arguments: { code: "async () => { while (true) {} }" } },
+        }),
+        signal: AbortSignal.timeout(20_000),
+      })
+        .then((response) => response.text())
+        .catch(() => "disconnected");
+      const activeDeadline = Date.now() + 5_000;
+      let active = false;
+      while (Date.now() < activeDeadline) {
+        const status = await (await fetch(`http://127.0.0.1:${containerPort}/health`)).json();
+        if (status.admission.code.active > 0) {
+          active = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if (!active) throw new Error("Shutdown smoke did not admit its QuickJS program");
+      run(
+        "docker",
+        [
+          ...compose,
+          "exec",
+          "-T",
+          "connecta",
+          "node",
+          "-e",
+          "const fs = require('node:fs'); if (!fs.readdirSync('/proc').some(pid => { try { return fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\\0').some(arg => arg.endsWith('/quickjs-child.js')); } catch { return false; } })) throw new Error('No live QuickJS child at shutdown');",
+        ],
+        generatedRoot,
+        composeEnv,
+      );
+      const stopped = spawn("docker", [...compose, "stop", "-t", "15", "connecta"], {
+        cwd: generatedRoot,
+        env: { ...process.env, ...composeEnv },
+        stdio: "ignore",
+      });
+      const [stopCode] = await once(stopped, "exit");
+      await activeProgram;
+      const state = JSON.parse(run("docker", ["inspect", "--format", "{{json .State}}", containerId], generatedRoot));
+      if (stopCode !== 0 || state.Running || state.ExitCode !== 0 || state.OOMKilled)
+        throw new Error("Container did not stop cleanly with active QuickJS work");
+      try {
+        await fetch(`http://127.0.0.1:${containerPort}/agent/local-machine`, { signal: AbortSignal.timeout(1_000) });
+        throw new Error("Stopped container still accepts requests");
+      } catch (error) {
+        if (error.message === "Stopped container still accepts requests") throw error;
+      }
+      if (composeLogs().includes("shutdown timed out"))
+        throw new Error("Container forced shutdown instead of draining children");
+      console.log(
+        "container smoke: non-root SQLite adoption/rotation/restart, QuickJS, secret-free loopback health and active-child shutdown passed",
+      );
     } finally {
       spawnSync("docker", [...compose, "down", "-v", "--remove-orphans"], {
         cwd: generatedRoot,

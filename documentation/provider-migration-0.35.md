@@ -1,9 +1,36 @@
 # Provider migration for 0.35
 
-This guide collects provider upgrade actions for the pending consolidated
-0.35.0 release. Each breaking provider change will add its own section here.
+This guide collects provider upgrade actions for 0.35.0. Update saved programs,
+pool grants, classification entries and deployment instructions using the exact
+tool and argument mappings below. Restart pre-upgrade provider continuations
+where the provider section requires a new first page.
+
+For Node transport requirements, write-outcome recovery, native pools, Vercel
+workload credentials and the Eve helper, follow
+[Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment).
 
 For hosted MCP removals, follow [Migrate hosted MCP presets](./hosted-mcp-migration.md).
+
+## Node transport and egress
+
+On Node, serve with `listen()` from `@zackbart/connecta/node` and install the
+exact `undici@6.29.1` peer. `listen()` installs the owned sender for every
+maintained-provider request, including reads, and for remote MCP writes.
+It connects directly, ignoring `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`
+and host proxy dispatchers. Only remote MCP reads retain native fetch and its
+proxy settings.
+
+A Node host serving `connecta.fetch` without `listen()` has no owned sender.
+Every maintained-provider write, every reviewed POST read and every remote MCP
+write is refused before sending; each worked in 0.34.1. For example, the reviewed
+`vercel_api_read` POST to `/v1/registrar/domains/availability` requires `listen()`
+even on a read-only endpoint.
+
+Before upgrading a deployment that needs a proxy for maintained providers or
+remote MCP, arrange approved direct egress or use the Workers shape. Setting
+`readOnly` is a stopgap only for remote MCP connectors, not maintained providers.
+Explicit proxy configuration for the owned sender is follow-up work, not support
+shipped in 0.35.0. Follow [Node startup](./deploying.md#start-on-node) for setup.
 
 ## Provider response media and path hardening
 
@@ -23,8 +50,10 @@ them. Number parameters also accept decimal fractions with trailing zeros. Cloud
 require at least 1. String ids retain their pinned contracts. Compound telemetry
 segments remain callable when the index cannot extract their individual values.
 
-Vercel environment `value` inputs are writeOnly on the named upsert/update tools;
+Vercel environment `value` inputs are `writeOnly` on the named upsert/update tools;
 the raw project/shared-env writes register the same private values before sending.
+Hosts and generated clients must treat these inputs as private write arguments;
+they cannot be recovered from a read or a write reply.
 Echoes in ids, keys, codes and successful metadata are withheld. Project-env POST
 and shared-env POST, PATCH and DELETE withhold failed[].error.message before
 fields selection. Named partial-write reports retain safe created ids/keys and
