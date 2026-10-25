@@ -727,7 +727,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         // The provider is an ordinary Promise leaf. Its host fiber belongs to
         // this run and is interrupted when the child settles or is recycled.
         const result = yield* Effect.result(
-          Effect.tryPromise({ try: () => fn(...payload.args), catch: (error) => error }),
+          Effect.tryPromise({ try: () => Promise.resolve(fn(...payload.args)), catch: (error) => error }),
         );
         if (result._tag === "Failure") {
           payloadJson = errorPayload(result.failure);

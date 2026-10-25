@@ -2059,6 +2059,9 @@ cannot skip the next one. Forwarders lose their providers and pending waits at
 run end. Only native RPC output and the run's private host-failure map can
 supply failure provenance. Guest source isolation, intrinsic capture, import
 routing, codecs and the SDK's source-generation checks remain ordinary leaves.
+Both built-ins normalize provider leaf returns with `Promise.resolve`, retaining
+direct JavaScript callers' synchronous value tolerance and original host
+rejections. The published provider-function signature remains Promise-shaped.
 
 QuickJS owns host-call fibers in each active run's Scope. Completion,
 interruption, cancellation, recycling and shutdown revoke provider lookup and

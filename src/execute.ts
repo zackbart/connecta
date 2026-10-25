@@ -1176,7 +1176,7 @@ function sandboxProvider(
 }
 
 /**
- * Await an executor's promise without trusting it to settle.
+ * Await executor work without trusting it to settle.
  *
  * An executor's deadline is its own business, and the Dynamic Worker's lives
  * inside the sandbox: a wedged isolate never fires it, so the call never
@@ -1189,11 +1189,14 @@ function sandboxProvider(
  * a ceiling of its own. Cancellation settles as the same `executor_cancelled`
  * the QuickJS pool reports, unless the executor reports its own first; the
  * ceiling as an untyped executor failure naming the key that sets it. Either
- * way the handler returns and releases the lease, and the abandoned call
- * keeps whatever it was doing: the QuickJS lease release recycles its child,
- * the Worker adapter disposes its handles without waiting for the guest. A
- * lease granted after its request gave up goes to `late`. The result contract is untouched
- * — this only decides when to stop waiting for one.
+ * way the handler releases the lease. Losing native programs are interrupted
+ * and their finalizers awaited, so native interruption cleanup must remain
+ * synchronous or bounded to avoid delaying the watchdog or terminal response.
+ * Custom Promise leaves may continue, with late settlements still observed;
+ * lease release recycles the QuickJS child or disposes Worker handles without
+ * waiting for the guest. A lease granted after its request gave up goes to
+ * `late`. The result contract is untouched — this only decides when to stop
+ * waiting for one.
  */
 function awaitExecutor<A>(
   start: (() => A | Promise<A>) | Effect.Effect<A, unknown>,

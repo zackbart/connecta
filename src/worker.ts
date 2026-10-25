@@ -85,7 +85,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
                 try: () => {
                   const fn = hostProviders?.[index]?.fns[name];
                   if (!fn || released || runEnded) throw new Error("The Worker run ended.");
-                  return fn(...args);
+                  return Promise.resolve(fn(...args));
                 },
                 catch: (error) => error,
               }),

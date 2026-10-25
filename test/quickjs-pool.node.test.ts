@@ -112,6 +112,45 @@ afterEach(() => {
 });
 
 describe("QuickJS pool crash backoff", () => {
+  it("INV-7: a lease released during backoff cannot dispatch its old run into the successor's slot", async () => {
+    scriptChildren();
+    const executor = quickJsExecutor();
+    behaviour = "crash";
+    await expect(executor.execute("async () => 1", [])).rejects.toThrow("exited unexpectedly");
+    behaviour = "succeed";
+    const lease = await executor.acquire();
+    const old = lease.execute("async () => 'old'", []).then(
+      (value) => ({ settled: "resolved", value }),
+      (error: Error) => ({ settled: "rejected", message: error.message }),
+    );
+    await settle();
+    expect(children).toHaveLength(1);
+    lease.release();
+    const next = executor.execute("async () => 'new'", []);
+    await settle();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(next).resolves.toMatchObject({ result: expect.any(Number) });
+    expect(await old).toMatchObject({ settled: "rejected", message: "Executor lease was released during execution." });
+    expect(children.map((child) => child.runs)).toEqual([1, 1]);
+    await executor.close?.();
+  });
+
+  it("INV-7: an abandoned run released during backoff never spawns a replacement on its own", async () => {
+    scriptChildren();
+    const executor = quickJsExecutor();
+    behaviour = "crash";
+    await expect(executor.execute("async () => 1", [])).rejects.toThrow("exited unexpectedly");
+    behaviour = "succeed";
+    const lease = await executor.acquire();
+    const old = lease.execute("async () => 'old'", []).catch((error: Error) => error);
+    await settle();
+    lease.release();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await old).toMatchObject({ message: "Executor lease was released during execution." });
+    expect(children.map((child) => child.runs)).toEqual([1]);
+    await executor.close?.();
+  });
+
   it("INV-7: cancels a caller waiting out the backoff without spawning", async () => {
     scriptChildren();
     const executor = quickJsExecutor();
