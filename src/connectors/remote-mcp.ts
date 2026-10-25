@@ -1130,7 +1130,7 @@ export function redirectSafeFetch(
   policy: RemoteMcpRedirectPolicy = "none",
   baseFetch: FetchLike = fetch,
 ): FetchLike {
-  return authMethod((input: string | URL, initialInit: RequestInit<CfProperties<unknown>> | undefined = {}) =>
+  return authMethod((input: string | URL, initialInit: RequestInit | undefined = {}) =>
     authFlow<Response>(function* () {
       let current = new URL(input);
       let init = initialInit;
@@ -1255,7 +1255,7 @@ for (const [ctor, label] of [
  * failures after an HTTP dispatch keep their permanent ambiguous verdict.
  */
 function learnedUrlSafeFetch(connectorId: string, configured: URL, baseFetch: FetchLike): FetchLike {
-  return authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+  return authMethod((input: string | URL, init: RequestInit | undefined) =>
     authFlow<Response>(function* () {
       const reason = learnedUrlRefusal(configured, new URL(input));
       if (reason !== undefined) {
@@ -1432,7 +1432,7 @@ interface OAuthTrail {
  * `grant_type`), or the JSON POST of dynamic client registration.
  */
 function tracedOAuthFetch(trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike): FetchLike {
-  return authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+  return authMethod((input: string | URL, init: RequestInit | undefined) =>
     authFlow<Response>(function* () {
       const url = new URL(input);
       if (url.href === endpoint.href) {
@@ -1998,7 +1998,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                 tracedOAuthFetch(
                   trail,
                   endpoint,
-                  authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+                  authMethod((input: string | URL, init: RequestInit | undefined) =>
                     authFlow<Response>(function* () {
                       trackSentRequest(ctx, input, init);
                       return (yield authCall(fetchFn, [
@@ -2594,125 +2594,124 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
     // This transport's calls on the wire, by JSON-RPC id, while each is sent.
     const flights = new Map<string | number, CallDispatch>();
-    const trackedFetch: FetchLike = authMethod(
-      (input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
-        authFlow<Response>(function* () {
-          let rpc: unknown;
-          if (typeof init?.body === "string") {
-            try {
-              rpc = JSON.parse(init.body);
-            } catch {}
+    const trackedFetch: FetchLike = authMethod((input: string | URL, init: RequestInit | undefined) =>
+      authFlow<Response>(function* () {
+        let rpc: unknown;
+        if (typeof init?.body === "string") {
+          try {
+            rpc = JSON.parse(init.body);
+          } catch {}
+        }
+        const toolCall = init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call" ? rpc : undefined;
+        const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) && toolCall !== undefined;
+        const flight =
+          toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
+            ? flights.get(toolCall.id)
+            : undefined;
+        if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
+        const credentialPost =
+          isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
+        const sender = flight?.write ? guardedTransport(true) : undefined;
+        if (flight?.write) {
+          if (flight.sent) {
+            if (flight.request && flight.authorization)
+              renewedAfterUnauthorized(
+                flight.request.entry,
+                flight.authorization,
+                new Headers(init?.headers).get("authorization") ?? flight.authorization,
+              );
+            throw resendRefused(flight);
           }
-          const toolCall = init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call" ? rpc : undefined;
-          const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) && toolCall !== undefined;
-          const flight =
-            toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
-              ? flights.get(toolCall.id)
-              : undefined;
-          if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
-          const credentialPost =
-            isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
-          const sender = flight?.write ? guardedTransport(true) : undefined;
+          flight.authorization = new Headers(init?.headers).get("authorization");
+        }
+        const request = flight?.request;
+        if (request?.entry.dispatched)
+          request.entry = providerRequest(request.ctx, !flight?.write, request.entry.provider, {
+            method: init?.method ?? "GET",
+          });
+        const entry = request?.entry;
+        const dispatch = () => {
           if (flight?.write) {
-            if (flight.sent) {
-              if (flight.request && flight.authorization)
-                renewedAfterUnauthorized(
-                  flight.request.entry,
-                  flight.authorization,
-                  new Headers(init?.headers).get("authorization") ?? flight.authorization,
-                );
-              throw resendRefused(flight);
-            }
-            flight.authorization = new Headers(init?.headers).get("authorization");
+            if (flight.sent) throw resendRefused(flight);
+            flight.sent = true;
           }
-          const request = flight?.request;
-          if (request?.entry.dispatched)
-            request.entry = providerRequest(request.ctx, !flight?.write, request.entry.provider, {
-              method: init?.method ?? "GET",
-            });
-          const entry = request?.entry;
-          const dispatch = () => {
+          if (request && entry) {
+            if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
+            dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+          }
+        };
+        trackSentRequest(ctx, input, init);
+        // Attach retained settlement facts at the physical Promise leaf.
+        // Cancellation may end the native waiter before it resumes; neither
+        // the status nor a 401 verdict may disappear with that live authority.
+        const response = (yield authValue(() => {
+          const pending = credentialPost
+            ? sendCredentialPost(input, init ?? {}, dispatch)
+            : sender
+              ? sendGuarded(
+                  sender,
+                  new URL(input instanceof Request ? input.url : String(input)),
+                  { ...init, redirect: "manual" },
+                  dispatch,
+                )
+              : (() => {
+                  dispatch();
+                  return writeContinuation ? fetch(input, { ...init, redirect: "manual" }) : fetch(input, init);
+                })();
+          return pending.then((response) => {
+            if (entry) recordProviderResponse(entry, response.status);
             if (flight?.write) {
-              if (flight.sent) throw resendRefused(flight);
-              flight.sent = true;
+              if (response.status === 401) flight.unauthorized = true;
+              else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
             }
-            if (request && entry) {
-              if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
-              dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
-            }
-          };
-          trackSentRequest(ctx, input, init);
-          // Attach retained settlement facts at the physical Promise leaf.
-          // Cancellation may end the native waiter before it resumes; neither
-          // the status nor a 401 verdict may disappear with that live authority.
-          const response = (yield authValue(() => {
-            const pending = credentialPost
-              ? sendCredentialPost(input, init ?? {}, dispatch)
-              : sender
-                ? sendGuarded(
-                    sender,
-                    new URL(input instanceof Request ? input.url : String(input)),
-                    { ...init, redirect: "manual" },
-                    dispatch,
-                  )
-                : (() => {
-                    dispatch();
-                    return writeContinuation ? fetch(input, { ...init, redirect: "manual" }) : fetch(input, init);
-                  })();
-            return pending.then((response) => {
-              if (entry) recordProviderResponse(entry, response.status);
-              if (flight?.write) {
-                if (response.status === 401) flight.unauthorized = true;
-                else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
-              }
-              if (init?.signal?.aborted || request?.ctx.signal?.aborted) void response.body?.cancel().catch(() => {});
-              return response;
-            });
-          })) as Response;
-          if (credentialPost && !isOAuthCredentialRequest(init) && REDIRECT_STATUSES.has(response.status)) {
-            (yield authCatch(
-              authValue(() => response.body?.cancel()),
-              () => {},
-            )) as void | undefined;
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              "OAuth registration endpoint redirected; the request was not repeated.",
-              { retryable: false },
-            );
-          }
-          if (writeContinuation && (response.status === 401 || (response.status >= 300 && response.status < 400))) {
-            (yield authCatch(
-              authValue(() => response.body?.cancel()),
-              () => {},
-            )) as void | undefined;
-            if (response.status === 401) throw authRequiredError();
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              "The downstream redirected a write continuation; it was not repeated.",
-              { retryable: false, writeOutcome: "unknown" },
-            );
-          }
-          if (flight?.redirected) {
-            (yield authCatch(
-              authValue(() => response.body?.cancel()),
-              () => {},
-            )) as void | undefined;
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              "The downstream answered this write with a redirect; it was not sent again.",
-              { retryable: false, writeOutcome: "unknown" },
-            );
-          }
-          if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
-            return (yield authCall(boundedSkillResponse, [
-              response,
-              rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES,
-              rpc.id,
-              init?.signal,
-            ])) as Response;
-          }
-          return response;
-        }),
+            if (init?.signal?.aborted || request?.ctx.signal?.aborted) void response.body?.cancel().catch(() => {});
+            return response;
+          });
+        })) as Response;
+        if (credentialPost && !isOAuthCredentialRequest(init) && REDIRECT_STATUSES.has(response.status)) {
+          (yield authCatch(
+            authValue(() => response.body?.cancel()),
+            () => {},
+          )) as void | undefined;
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "OAuth registration endpoint redirected; the request was not repeated.",
+            { retryable: false },
+          );
+        }
+        if (writeContinuation && (response.status === 401 || (response.status >= 300 && response.status < 400))) {
+          (yield authCatch(
+            authValue(() => response.body?.cancel()),
+            () => {},
+          )) as void | undefined;
+          if (response.status === 401) throw authRequiredError();
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "The downstream redirected a write continuation; it was not repeated.",
+            { retryable: false, writeOutcome: "unknown" },
+          );
+        }
+        if (flight?.redirected) {
+          (yield authCatch(
+            authValue(() => response.body?.cancel()),
+            () => {},
+          )) as void | undefined;
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "The downstream answered this write with a redirect; it was not sent again.",
+            { retryable: false, writeOutcome: "unknown" },
+          );
+        }
+        if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
+          return (yield authCall(boundedSkillResponse, [
+            response,
+            rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES,
+            rpc.id,
+            init?.signal,
+          ])) as Response;
+        }
+        return response;
+      }),
     );
     // A runtime refusing the assembled header quotes it, and the transport
     // error below keeps none of what the runtime said. So whether the
@@ -2723,7 +2722,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       opts.redirects,
       credentialFramed === null
         ? trackedFetch
-        : authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+        : authMethod((input: string | URL, init: RequestInit | undefined) =>
             authFlow<Response>(function* () {
               try {
                 return (yield authCall(trackedFetch, [input, init])) as Response;
@@ -2743,7 +2742,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const exchangeFetch = (send: FetchLike): FetchLike =>
         exchangeOnly
           ? authMethod(
-              (input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+              (input: string | URL, init: RequestInit | undefined) =>
                 authView(
                   ctx,
                   authMethod((requestSignal: AbortSignal) =>
@@ -2776,7 +2775,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             id,
             url,
             authMethod(
-              (input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+              (input: string | URL, init: RequestInit | undefined) =>
                 authCall(guardedFetch, [input, resourceInit(input, init)]) as Effect.Effect<Response, unknown>,
             ),
           ),
@@ -2788,7 +2787,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
         onInsufficientScope: "throw",
-        fetch: authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+        fetch: authMethod((input: string | URL, init: RequestInit | undefined) =>
           authFlow<Response>(function* () {
             const response = (yield authCall(coordinatedFetch, [input, init])) as Response;
             if (response.status === 401) {
@@ -2824,7 +2823,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       new StreamableHTTPClientTransport(url, {
         ...(headers ? { requestInit: { headers } } : {}),
         fetch: authMethod(
-          (input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+          (input: string | URL, init: RequestInit | undefined) =>
             authCall(guardedFetch, [input, resourceInit(input, init)]) as Effect.Effect<Response, unknown>,
         ),
       }),
@@ -3355,7 +3354,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               learnedUrlSafeFetch(
                 id,
                 new URL(opts.url),
-                authMethod((input: string | URL, init: RequestInit<CfProperties<unknown>> | undefined) =>
+                authMethod((input: string | URL, init: RequestInit | undefined) =>
                   authFlow<Response>(function* () {
                     trackSentRequest(ctx, input, init);
                     return (yield authCall(sendCredentialPost, [input, init ?? {}])) as Response;
