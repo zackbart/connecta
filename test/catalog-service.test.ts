@@ -4,6 +4,10 @@
 // guards ownership of catalog snapshots across consumers.
 import { describe, expect, it } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
+import { MAX_CATALOG_TOOLS } from "../src/catalog-limits.js";
+import { Effect } from "effect";
+import { runEdge } from "../src/runtime/run.js";
+import { openRequest } from "../src/runtime/call.js";
 import type { ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeRegistry } from "./helpers.js";
@@ -11,6 +15,22 @@ import { makeRegistry } from "./helpers.js";
 const BASE = "https://connecta.test";
 
 describe("request-scoped catalog cache", () => {
+  it("INV-8: a native complete-catalog ceiling failure reaches Effect.result without a partial catalog", async () => {
+    const connector = connectorWith({ id: "large", tools: Array(MAX_CATALOG_TOOLS + 1).fill({ name: "read" }) });
+    const service = new CatalogService(makeRegistry([connector]), BASE);
+    try {
+      const result = await runEdge(Effect.result(service.loadConnectorEffect("large")));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure")
+        expect(result.failure).toMatchObject({ message: expect.stringContaining("complete-catalog ceiling") });
+      const catalogs = await runEdge(service.listCatalogsEffect());
+      expect(catalogs).toEqual([
+        { connector, error: expect.objectContaining({ message: expect.stringContaining("complete-catalog ceiling") }) },
+      ]);
+    } finally {
+      openRequest(service.requestScope).close();
+    }
+  });
   it("INV-1 INV-3: owns its snapshot and never shares definitions with discovery or invocation consumers", async () => {
     const original: ToolDef = {
       name: "read",

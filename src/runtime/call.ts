@@ -13,6 +13,7 @@ import { SentSecrets, sentSecretsForRequest, registerCredentialValues } from "..
 import type { ConnectorContext, ConnectorCredentialValues, KVStorage } from "../types.js";
 import { recordRecovery } from "../call-recovery.js";
 import { fromSignal, runEdge } from "./run.js";
+import { RequestScope, requestOwner as requestOf } from "./request-scope.js";
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/call/Caller") {}
 
@@ -32,6 +33,11 @@ export class Credentials extends Context.Service<
   Credentials,
   { readonly values: Effect.Effect<ConnectorCredentialValues | null, ConnectorCallError> }
 >()("connecta/call/Credentials") {}
+
+/** Native operation credential access; custom contexts retain their Promise leaf. */
+export const OperationCredentials = Context.Reference<
+  Effect.Effect<ConnectorCredentialValues | null, unknown> | undefined
+>("connecta/operation/Credentials", { defaultValue: () => undefined });
 
 /** The call's sent-secret set; every credential header and query value is registered here. */
 export class Secrets extends Context.Service<Secrets, SentSecrets>()("connecta/call/Secrets") {}
@@ -137,7 +143,7 @@ export function callMemo<A>(view: ConnectorContext, key: object, create: () => A
   if (!memo.has(key)) memo.set(key, create());
   return memo.get(key) as A;
 }
-type OperationServices = Caller | Secrets | RequestSecrets;
+type OperationServices = Caller | Secrets | RequestSecrets | RequestScope;
 export class Operation extends Context.Service<Operation, ConnectorContext | undefined>()("connecta/call/Operation") {}
 export class ActiveCall extends Context.Service<ActiveCall, CallLease>()("connecta/call/ActiveCall") {}
 export type CallServices = OperationServices | Credentials | Budget | Recovery | Signal | Classification | Ledger;
@@ -164,6 +170,8 @@ export interface CallInputs {
   readonly served?: "read" | "write" | undefined;
   readonly credentials: (signal: AbortSignal) => Promise<ConnectorCredentialValues | null>;
   readonly charge: (signal: AbortSignal) => Promise<void>;
+  readonly chargeEffect?: ((signal: AbortSignal) => Effect.Effect<void, unknown>) | undefined;
+  readonly credentialsEffect?: Effect.Effect<ConnectorCredentialValues | null, unknown> | undefined;
   readonly chargeClosed?: () => unknown;
   readonly record: (facts: Readonly<Record<string, string>>) => void;
   readonly secrets: SentSecrets;
@@ -219,18 +227,18 @@ export function openCall(inputs: CallInputs): CallLease {
   }
   // Closure settles the Effect immediately and interrupts its Promise bridge.
   // Inputs receive that cancellation too, so their owned I/O can be aborted.
-  const live = <A>(
-    work: (signal: AbortSignal) => Promise<A>,
+  const live = <A, E>(
+    work: (signal: AbortSignal) => Effect.Effect<A, E>,
     fail: (error: unknown) => unknown,
     closed: () => unknown = ended,
   ) =>
     Effect.suspend(() =>
       open && !controller.signal.aborted
         ? Effect.raceFirst(
-            Effect.tryPromise({
-              try: (interrupted) => work(AbortSignal.any([interrupted, controller.signal])),
-              catch: fail,
-            }),
+            Effect.suspend(() => work(controller.signal)).pipe(
+              Effect.mapError(fail),
+              Effect.catchDefect((error) => Effect.fail(fail(error))),
+            ),
             fromSignal(controller.signal).pipe(Effect.mapError(closed)),
           ).pipe(
             Effect.flatMap((value) =>
@@ -239,14 +247,24 @@ export function openCall(inputs: CallInputs): CallLease {
           )
         : Effect.fail(closed()),
     );
-  const services = Context.make(Caller, inputs.caller).pipe(
+  const owner = requestOf(
+    inputs.operation
+      ? (views.get(inputs.operation)?.request ?? inputs.operation.requestScope ?? inputs.operation)
+      : inputs,
+  );
+  sentSecretsForRequest(owner.identity, inputs.requestSecrets ?? inputs.secrets);
+  const services = Context.make(RequestScope, owner).pipe(
+    Context.add(Caller, inputs.caller),
     Context.add(Credentials, {
       values: live(
-        async (signal) => {
-          const values = await inputs.credentials(signal);
-          registerCredentialValues(inputs.secrets, values);
-          return values;
-        },
+        (signal) =>
+          (
+            inputs.credentialsEffect ??
+            Effect.tryPromise({
+              try: (interrupted) => inputs.credentials(AbortSignal.any([signal, interrupted])),
+              catch: (error) => error,
+            })
+          ).pipe(Effect.tap((values) => Effect.sync(() => registerCredentialValues(inputs.secrets, values)))),
         (error) =>
           open
             ? error instanceof ConnectorCallError
@@ -259,7 +277,18 @@ export function openCall(inputs: CallInputs): CallLease {
     }),
     Context.add(Secrets, inputs.secrets),
     Context.add(RequestSecrets, inputs.requestSecrets ?? inputs.secrets),
-    Context.add(Budget, { charge: live(inputs.charge, (error) => error, inputs.chargeClosed) }),
+    Context.add(Budget, {
+      charge: live(
+        (signal) =>
+          inputs.chargeEffect?.(signal) ??
+          Effect.tryPromise({
+            try: (interrupted) => inputs.charge(AbortSignal.any([signal, interrupted])),
+            catch: (error) => error,
+          }),
+        (error) => error,
+        inputs.chargeClosed,
+      ),
+    }),
     Context.add(Recovery, {
       // Late facts are dropped: invocation has already read the record.
       record: (facts) => Effect.sync(() => (open && !controller.signal.aborted ? inputs.record(facts) : undefined)),
@@ -314,32 +343,6 @@ interface Entry {
   scopeBound?: boolean;
 }
 const views = new WeakMap<object, Entry>();
-interface RequestState {
-  open: boolean;
-  admitted: boolean;
-  readonly controller: AbortController;
-  readonly finalizers: Array<() => void>;
-  readonly entries: Set<Entry>;
-  readonly calls: Set<CallLease>;
-  readonly signals: WeakMap<AbortSignal, { readonly signal: AbortSignal; readonly refresh: () => void }>;
-}
-const requests = new WeakMap<object, RequestState>();
-function requestOf(scope: object): RequestState {
-  let state = requests.get(scope);
-  if (!state) {
-    state = {
-      open: true,
-      admitted: false,
-      controller: new AbortController(),
-      finalizers: [],
-      entries: new Set(),
-      calls: new Set(),
-      signals: new WeakMap(),
-    };
-    requests.set(scope, state);
-  }
-  return state;
-}
 function entryOf(view: object): Entry | undefined {
   const entry = views.get(view);
   return entry && requestOf(entry.request).open ? entry : undefined;
@@ -360,7 +363,7 @@ export function viewClosed(view: ConnectorContext): boolean {
 /** Request revocation is independent of call authority, including on an unregistered copy. */
 export function requestClosed(view: ConnectorContext): boolean {
   const scope = views.get(view)?.request ?? view.requestScope ?? view;
-  return requests.get(scope)?.open === false;
+  return !requestOf(scope).open;
 }
 export function setViewService<I, S>(view: ConnectorContext, key: Context.Key<I, S>, value: S): void {
   const entry = ensureOperation(view);
@@ -384,7 +387,11 @@ function ensureOperation(base: ConnectorContext, explicitOperation = false): Ent
       existing.request = base.requestScope;
       const all = sentSecretsForRequest(existing.request);
       all.include(Context.get(existing.services, Secrets));
-      existing.services = Context.add(existing.services, RequestSecrets, all);
+      existing.services = Context.add(
+        Context.add(existing.services, RequestSecrets, all),
+        RequestScope,
+        requestOf(existing.request),
+      );
       requestOf(existing.request).entries.add(existing);
     }
     return existing;
@@ -398,7 +405,11 @@ function ensureOperation(base: ConnectorContext, explicitOperation = false): Ent
   const all = sentSecretsForRequest(request);
   all.include(secrets);
   const entry: Entry = {
-    services: Context.make(Caller, undefined).pipe(Context.add(Secrets, secrets), Context.add(RequestSecrets, all)),
+    services: Context.make(Caller, undefined).pipe(
+      Context.add(Secrets, secrets),
+      Context.add(RequestSecrets, all),
+      Context.add(RequestScope, requestOf(request)),
+    ),
     request,
     base,
   };
@@ -475,7 +486,7 @@ export function chargeView(view: ConnectorContext): Promise<void> {
 }
 /** Admission is sticky until request close; ending a call never makes its copies standalone. */
 export function callScopeKnown(view: ConnectorContext): boolean {
-  const scope = requests.get(views.get(view)?.request ?? view.requestScope ?? view);
+  const scope = requestOf(views.get(view)?.request ?? view.requestScope ?? view);
   return scope !== undefined && (!scope.open || scope.admitted);
 }
 export function viewSecrets(view: ConnectorContext): SentSecrets {
@@ -521,38 +532,7 @@ export function openRequest(scope: object): {
   readonly close: () => void;
 } {
   const state = requestOf(scope);
-  return {
-    signal: state.controller.signal,
-    own: (finalizer) => {
-      if (state.open) state.finalizers.push(finalizer);
-      else finalizer();
-    },
-    close: () => {
-      if (!state.open) return;
-      state.open = false;
-      const failures: unknown[] = [];
-      const attempt = (step: () => void) => {
-        try {
-          step();
-        } catch (failure) {
-          failures.push(failure);
-        }
-      };
-      for (const call of state.calls) {
-        try {
-          call.close();
-        } catch (failure) {
-          failures.push(...(failure instanceof AggregateError ? failure.errors : [failure]));
-        }
-      }
-      state.calls.clear();
-      state.entries.clear();
-      attempt(() => state.controller.abort(new Error("The request ended.")));
-      for (const finalizer of state.finalizers.splice(0).reverse()) attempt(finalizer);
-      if (failures.length)
-        throw new AggregateError(failures, `Closing the request: ${failures.length} cleanup step(s) failed.`);
-    },
-  };
+  return { signal: state.controller.signal, own: (finalizer) => state.own(finalizer), close: () => state.close() };
 }
 /** Open a child lease from operation services, never read security side tables. */
 export function callFromContext(
@@ -587,7 +567,15 @@ export function callFromContext(
     classification,
     served: serviceFor(ctx, ServedClassification),
     credentials: async () => (credential ? credential.getAll() : null),
+    credentialsEffect: Object.hasOwn(callOverrides, "credentials")
+      ? undefined
+      : entry.call
+        ? recordedService(ctx, Credentials)?.values
+        : serviceFor(ctx, OperationCredentials),
     charge: () => (serviceFor(ctx, Budget) ? chargeView(ctx) : Promise.resolve()),
+    chargeEffect: Object.hasOwn(callOverrides, "charge")
+      ? undefined
+      : () => serviceFor(ctx, Budget)?.charge ?? Effect.void,
     record: (facts) => recordRecovery(ctx, facts),
     secrets,
     requestSecrets: serviceFor(ctx, RequestSecrets)!,
@@ -670,6 +658,29 @@ export function viewSignal(ctx: CloseOwner, requestOwned = false): AbortSignal {
   // event. Poll it at each boundary, including after an awaited operation.
   binding.refresh();
   return owned(binding.signal);
+}
+
+/** Compose native work under the same revocation guards as the Promise view. */
+export function duringViewEffect<A, E, R>(
+  ctx: CloseOwner,
+  work: (signal: AbortSignal) => Effect.Effect<A, E, R>,
+  requestOwned = false,
+): Effect.Effect<A, E | unknown, R> {
+  return Effect.suspend(() => {
+    const lease = views.get(ctx)?.call;
+    if (!requestOwned && lease?.closed()) return Effect.fail(Context.get(lease.services, Signal)?.reason ?? ended());
+    const signal = viewSignal(ctx, requestOwned);
+    if (signal.aborted) return Effect.fail(signal.reason);
+    return Effect.raceFirst(
+      Effect.suspend(() => work(signal)),
+      fromSignal(signal),
+    ).pipe(
+      Effect.flatMap((value) => {
+        const current = viewSignal(ctx, requestOwned);
+        return current.aborted ? Effect.fail(current.reason) : Effect.succeed(value);
+      }),
+    );
+  });
 }
 
 /**

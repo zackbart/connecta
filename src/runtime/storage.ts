@@ -2,9 +2,9 @@
 //
 // KVStorage stays Promise-shaped: it is what a deployment author implements,
 // and nobody should need Effect to write a storage adapter. The operations
-// below lift one call each into an effect that reads the adapter from the
-// Storage service and fails with whatever the adapter threw, unwrapped, so a
-// warning built from it reads exactly as it did.
+// below compose a registered built-in native program, or lift one custom
+// adapter call, using the Storage service. Failures retain the original thrown
+// object so warnings keep the same checked facts.
 //
 // Which Storage a program sees is the registry's decision, not the runtime's.
 // The Connecta runtime (src/runtime/services.ts) is keyed by the root
@@ -22,17 +22,20 @@
 import { Context, Effect } from "effect";
 import type { KVStorage, Logger as LoggerShape } from "../types.js";
 import { runEdge } from "./run.js";
+import { getNativeStorage } from "./native-storage.js";
 import { Logger, Storage } from "./services.js";
 
 /** Read one key; null when absent. */
 export function storageGet(key: string): Effect.Effect<string | null, unknown, Storage> {
-  return Storage.use((storage) =>
-    Effect.tryPromise({
-      // Promise.resolve keeps an adapter that answers synchronously working,
-      // as `await` did; a synchronous throw is caught either way.
-      try: () => Promise.resolve(storage.get(key)),
-      catch: (error) => error,
-    }),
+  return Storage.use(
+    (storage) =>
+      getNativeStorage(storage)?.get(key) ??
+      Effect.tryPromise({
+        // Promise.resolve keeps an adapter that answers synchronously working,
+        // as `await` did; a synchronous throw is caught either way.
+        try: () => Promise.resolve(storage.get(key)),
+        catch: (error) => error,
+      }),
   );
 }
 
@@ -42,21 +45,25 @@ export function storageSet(
   value: string,
   options?: Parameters<KVStorage["set"]>[2],
 ): Effect.Effect<void, unknown, Storage> {
-  return Storage.use((storage) =>
-    Effect.tryPromise({
-      try: () => Promise.resolve(storage.set(key, value, options)),
-      catch: (error) => error,
-    }),
+  return Storage.use(
+    (storage) =>
+      getNativeStorage(storage)?.set(key, value, options) ??
+      Effect.tryPromise({
+        try: () => Promise.resolve(storage.set(key, value, options)),
+        catch: (error) => error,
+      }),
   );
 }
 
 /** Delete one key. */
 export function storageDelete(key: string): Effect.Effect<void, unknown, Storage> {
-  return Storage.use((storage) =>
-    Effect.tryPromise({
-      try: () => Promise.resolve(storage.delete(key)),
-      catch: (error) => error,
-    }),
+  return Storage.use(
+    (storage) =>
+      getNativeStorage(storage)?.delete(key) ??
+      Effect.tryPromise({
+        try: () => Promise.resolve(storage.delete(key)),
+        catch: (error) => error,
+      }),
   );
 }
 
@@ -67,11 +74,25 @@ export function storageCompareAndSet(
   next: string | null,
   options?: Parameters<KVStorage["set"]>[2],
 ): Effect.Effect<boolean, unknown, Storage> {
-  return Storage.use((storage) =>
-    Effect.tryPromise({
-      try: () => Promise.resolve(storage.compareAndSet(key, expected, next, options)),
-      catch: (error) => error,
-    }),
+  return Storage.use(
+    (storage) =>
+      getNativeStorage(storage)?.compareAndSet(key, expected, next, options) ??
+      Effect.tryPromise({
+        try: () => Promise.resolve(storage.compareAndSet(key, expected, next, options)),
+        catch: (error) => error,
+      }),
+  );
+}
+
+/** List keys under one literal prefix, preserving the adapter's ordering. */
+export function storageList(prefix: string): Effect.Effect<string[], unknown, Storage> {
+  return Storage.use(
+    (storage) =>
+      getNativeStorage(storage)?.list(prefix) ??
+      Effect.tryPromise({
+        try: () => Promise.resolve(storage.list(prefix)),
+        catch: (error) => error,
+      }),
   );
 }
 

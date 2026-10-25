@@ -19,7 +19,7 @@
 //   interrupted without error". Callers of withDeadline today see the abort
 //   reason the caller chose, and runEdge keeps it that way.
 
-import { Cause, Context, Duration, Effect, Exit, Scheduler } from "effect";
+import { Cause, Context, Duration, Effect, Exit, Scheduler, type Scope, type Fiber } from "effect";
 import type { DeadlineOptions } from "../timeout.js";
 
 /** Yield to the scheduler through the microtask queue, never a timer. */
@@ -50,16 +50,16 @@ function abortReason(signal: AbortSignal | undefined): unknown {
  * then the first defect — never a wrapper, because callers check `instanceof`,
  * `name`, and `message` on connecta's own error classes.
  */
-function rethrow(cause: Cause.Cause<unknown>, signal: AbortSignal | undefined): never {
+export function causeError(cause: Cause.Cause<unknown>, signal?: AbortSignal): unknown {
   const reasons = cause.reasons;
   if (signal?.aborted && reasons.some(Cause.isInterruptReason)) {
-    throw abortReason(signal);
+    return abortReason(signal);
   }
   const failure = reasons.find(Cause.isFailReason);
-  if (failure) throw failure.error;
+  if (failure) return failure.error;
   const defect = reasons.find(Cause.isDieReason);
-  if (defect) throw defect.defect;
-  throw abortReason(signal);
+  if (defect) return defect.defect;
+  return abortReason(signal);
 }
 
 export interface EdgeOptions {
@@ -78,7 +78,7 @@ export interface EdgeOptions {
 export async function runEdge<A, E>(effect: Effect.Effect<A, E>, options: EdgeOptions = {}): Promise<A> {
   const exit = await runExit(effect, options.signal ? { signal: options.signal } : undefined);
   if (Exit.isSuccess(exit)) return exit.value;
-  return rethrow(exit.cause, options.signal);
+  throw causeError(exit.cause, options.signal);
 }
 
 /**
@@ -177,4 +177,9 @@ export function detach(effect: Effect.Effect<unknown, unknown>, ctx?: DetachCont
   );
   ctx?.waitUntil?.(settled);
   return settled;
+}
+
+/** Native children of one request, independent of any individual waiter. */
+export function forkRequest<A, E>(effect: Effect.Effect<A, E>, scope: Scope.Scope): Effect.Effect<Fiber.Fiber<A, E>> {
+  return Effect.forkIn(effect, scope, { startImmediately: true });
 }

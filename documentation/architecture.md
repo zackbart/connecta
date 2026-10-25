@@ -1978,6 +1978,58 @@ storage is the root's namespaced to its principal.
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
+### Native registry and request services (contributor)
+
+Registry catalog loading, classification, OAuth handoffs, status, invalidation,
+credential readiness, and result stashing have private Effect programs in
+`src/runtime/registry.ts`. Static class blocks install those programs while
+preserving the published Registry declaration, including its private member
+names. `registryProgram(view, method, ...args)` checks the installed method's
+identity; a custom or replaced method remains a Promise leaf. A Promise shell
+selects its original class implementation through `registryEdgeProgram`, so a
+wrapper can call the original without redispatching to itself. Catalog search,
+describe, resolution, and listing compose these programs directly. The shared
+listing is a native child of its request's Scope, started through
+`forkRequest` in the edge runner; an individual reader cannot terminate a read
+another reader still needs. Closing the request aborts and closes those children.
+Settled reads remove their request-close finalizer; active reads retain it,
+including in long-lived caller-supplied scopes.
+
+Native catalog and maintained API entry points report policy, validation, and
+operation-construction throws as typed failures with the original thrown value,
+matching the Promise boundary. Native consumers can use `Effect.catch` and
+`Effect.result` without losing refusals to the defect channel. Interruption
+remains interruption. Normalization belongs at these program boundaries;
+pure catalog algorithms and core validation retain their existing behavior.
+
+`RequestScope` in `src/runtime/request-scope.ts` represents the existing request
+identity. It owns call revocation, teardown, operation signals, the complete
+sent-secret set, and invocation/auth recovery facts. `openRequest` preserves
+its synchronous revocation bridge. Live context access refuses after closure;
+`recordedService` and the owner's `retained` facts remain available for
+settlement and redaction. Sharing a request identity grants no call authority
+to a spread copy of a context. Call deadlines, request lifetime, and the OAuth
+refresh coordinator remain distinct owners.
+
+Maintained API programs register their original tool-handler identity through
+`src/runtime/call-entry.ts`. Invocation enters the native API validation and
+settlement pipeline, which composes a registered tool program directly; the
+Promise handler is its public shell. Replacement and custom handlers stay
+Promise leaves. Both paths retain argument validation, generic withheld
+handler diagnostics, secret redaction, call revocation, and core write-outcome
+settlement. Custom connector hooks, vault and cache adapters, Web Crypto,
+downstream OAuth, and the remote SDK retain their existing Promise boundaries.
+Cross-request call admission deliberately remains a Promise handoff so workerd
+resumes queued work in the request waiting for the permit.
+
+The `Storage` service composes built-in `getNativeStorage` operations directly.
+Registry wrappers propagate that optional capability through principal,
+connector, subject, and result prefixes, including nested namespaces; list
+results strip only their own prefix. Custom stores keep the Promise fallback.
+These adapters add no retry, transaction, or storage encoding and preserve
+D1's single atomic batch and SQLite's native transaction. Native activity
+lookup remains available to the route and activity consumers.
+
 ### Native SQL storage (contributor)
 
 `src/storage/sql-native.ts` composes KV, activity schema upgrades, retention,
