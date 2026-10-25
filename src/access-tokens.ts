@@ -10,6 +10,17 @@ import { AGENT_NAMESPACE, agentSubjectId, isAgentName, trustAgentProvider } from
 import { keepErrorName } from "./redaction-identity.js";
 import { agentConfig, type AgentConfig } from "./agent-config.js";
 
+import {
+  authCall,
+  authCatch,
+  authFlow,
+  authInvoke,
+  authMethod,
+  authOwnMethod,
+  authStorage,
+  registerAuthMethod,
+} from "./auth/native.js";
+import { runEdge } from "./runtime/run.js";
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
 const TOKEN_VALUE_RE = /^cta_[A-Za-z0-9_-]{43}$/;
@@ -387,7 +398,9 @@ export class AccessTokenManager {
           return undefined;
         }
       },
-      authorize: (request) => this.authorize(request).catch(() => unauthorized()),
+      authorize: authMethod((request: Request) =>
+        authCatch(authInvoke<AuthResult>(this, "authorize", [request]), unauthorized),
+      ),
     });
   }
 
@@ -878,33 +891,67 @@ export class AccessTokenManager {
       .map(({ id, name, createdAt }) => ({ id, name, createdAt }));
   }
 
-  private async authorize(request: Request): Promise<AuthResult> {
-    const credential = authorizationCredential(request);
-    const token = credential.kind === "bearer" ? credential.token : undefined;
-    if (!token || !TOKEN_VALUE_RE.test(token)) return unauthorized();
-    return withAuthenticationDeadline(request, async (signal) => {
-      signal.throwIfAborted();
-      const hash = await hashToken(token);
-      signal.throwIfAborted();
-      const lookupRaw = await this.storage.get(lookupKey(hash));
-      signal.throwIfAborted();
-      if (!lookupRaw) return unauthorized();
-      const lookup = parseLookup(lookupRaw);
-      if (!lookup) return unauthorized();
-      const record = await this.read(lookup.id);
-      signal.throwIfAborted();
-      if (!record || record.revokedAt || record.tokenHash !== hash || record.tokenPrefix !== token.slice(0, 12)) {
-        return unauthorized();
-      }
-      // The slot is the authority: a surviving lookup or record it does not
-      // name is inert. Human-bound and unbound records, and agents no longer in
-      // code, refuse exactly as an unknown token does.
-      if (record.principal || record.agent === undefined || !this.agents.has(record.agent)) return unauthorized();
-      const { slot } = await this.readSlot(record.agent);
-      signal.throwIfAborted();
-      if (slot?.state !== "issued" || slot.tokenId !== record.id) return unauthorized();
-      return { ok: true, subjectId: agentSubjectId(record.agent), agent: record.agent };
-    });
+  private authorize(request: Request): Promise<AuthResult> {
+    return runEdge(authOwnMethod<AuthResult>(AccessTokenManager.prototype, this, "authorize", [request]));
+  }
+
+  static {
+    registerAuthMethod(
+      AccessTokenManager.prototype,
+      "authorize",
+      function (this: AccessTokenManager, request: Request) {
+        return authFlow<AuthResult>(
+          function* (this: AccessTokenManager) {
+            const credential = authorizationCredential(request);
+            const token = credential.kind === "bearer" ? credential.token : undefined;
+            if (!token || !TOKEN_VALUE_RE.test(token)) return unauthorized();
+            return (yield authCall(withAuthenticationDeadline, [
+              request,
+              authMethod((signal: AbortSignal) => {
+                return authFlow<AuthResult>(
+                  function* (this: AccessTokenManager) {
+                    signal.throwIfAborted();
+                    const hash = (yield authCall(hashToken, [token])) as string;
+                    signal.throwIfAborted();
+                    const lookupRaw = (yield authStorage(this.storage, "get", [lookupKey(hash)])) as string | null;
+                    signal.throwIfAborted();
+                    if (!lookupRaw) return unauthorized();
+                    const lookup = parseLookup(lookupRaw);
+                    if (!lookup) return unauthorized();
+                    const recordRaw = ID_RE.test(lookup.id)
+                      ? ((yield authStorage<string | null>(this.storage, "get", [recordKey(lookup.id)])) as
+                          | string
+                          | null)
+                      : null;
+                    const record = recordRaw ? parseRecord(recordRaw) : null;
+                    if (record && record.id !== lookup.id) throw new Error("Stored access token id mismatch");
+                    signal.throwIfAborted();
+                    if (
+                      !record ||
+                      record.revokedAt ||
+                      record.tokenHash !== hash ||
+                      record.tokenPrefix !== token.slice(0, 12)
+                    ) {
+                      return unauthorized();
+                    }
+                    if (record.principal || record.agent === undefined || !this.agents.has(record.agent))
+                      return unauthorized();
+                    const slotRaw = (yield authStorage<string | null>(this.storage, "get", [slotKey(record.agent)])) as
+                      | string
+                      | null;
+                    const slot = slotRaw === null ? null : parseSlot(slotRaw, record.agent);
+                    signal.throwIfAborted();
+                    if (slot?.state !== "issued" || slot.tokenId !== record.id) return unauthorized();
+                    return { ok: true as const, subjectId: agentSubjectId(record.agent), agent: record.agent };
+                  }.bind(this),
+                );
+              }),
+            ])) as AuthResult;
+          }.bind(this),
+        );
+      },
+      AccessTokenManager.prototype.authorize,
+    );
   }
 }
 

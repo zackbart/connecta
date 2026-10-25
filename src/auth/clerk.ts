@@ -1,14 +1,28 @@
+import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
+import { Effect } from "effect";
 import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
+import { fromSignal, runEdge } from "../runtime/run.js";
+import {
+  authAll,
+  authCall,
+  authDetached,
+  authFetch,
+  authFlow,
+  authInvoke,
+  authMethod,
+  authProgram,
+  authValue,
+  registerAuth,
+} from "./native.js";
 // Clerk as the OAuth 2.1 authorization server; connecta is the resource server.
 // Single tenant, no tenant-tag requirement, optional organizationId,
 // allowedDomains, and gate() with ~60s identity caching.
 
-import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
-import { createByteReadingClerkClient } from "./clerk-transport.js";
 import { decodeJwt } from "@clerk/backend/jwt";
 import { failureRecord, logFailure, type AuthDenialReason } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
+import { createByteReadingClerkClient } from "./clerk-transport.js";
 
 export type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
 
@@ -287,34 +301,40 @@ function normalizeOrganizationId(value: string | undefined, allowedOAuthClientId
  * given signal and a ten-second deadline bound the call. Any response that is
  * not a clear answer throws, so the caller refuses.
  */
-async function organizationMember(
+function organizationMember(
   secretKey: string,
   organizationId: string,
   userId: string,
   signal: AbortSignal,
 ): Promise<boolean> {
-  const url = new URL(`https://api.clerk.com/v1/organizations/${encodeURIComponent(organizationId)}/memberships`);
-  url.searchParams.set("user_id", userId);
-  const list = await backendJson(
-    url,
-    { headers: { Authorization: `Bearer ${secretKey}`, "Clerk-API-Version": "2026-05-12" } },
-    signal,
-  );
-  if (!isRecord(list) || !Array.isArray(list.data)) {
-    throw new Error("Organization membership response invalid");
-  }
-  // The filter narrows the list; membership is still read exactly from each
-  // row, so an ignored or widened filter cannot admit someone else's row.
-  return list.data.some(
-    (membership) =>
-      isRecord(membership) &&
-      membership.object === "organization_membership" &&
-      isRecord(membership.organization) &&
-      membership.organization.id === organizationId &&
-      isRecord(membership.public_user_data) &&
-      membership.public_user_data.user_id === userId,
-  );
+  return runEdge(authProgram<boolean>(organizationMemberNative, [secretKey, organizationId, userId, signal]));
 }
+const organizationMemberNative = /* @__PURE__ */ registerAuth(
+  organizationMember,
+  function (secretKey: string, organizationId: string, userId: string, signal: AbortSignal) {
+    return authFlow<boolean>(function* () {
+      const url = new URL(`https://api.clerk.com/v1/organizations/${encodeURIComponent(organizationId)}/memberships`);
+      url.searchParams.set("user_id", userId);
+      const list = (yield authCall(backendJson, [
+        url,
+        { headers: { Authorization: `Bearer ${secretKey}`, "Clerk-API-Version": "2026-05-12" } },
+        signal,
+      ])) as unknown;
+      if (!isRecord(list) || !Array.isArray(list.data)) {
+        throw new Error("Organization membership response invalid");
+      }
+      return list.data.some(
+        (membership: any) =>
+          isRecord(membership) &&
+          membership.object === "organization_membership" &&
+          isRecord(membership.organization) &&
+          membership.organization.id === organizationId &&
+          isRecord(membership.public_user_data) &&
+          membership.public_user_data.user_id === userId,
+      );
+    });
+  },
+);
 
 /**
  * One Backend API request, bounded by the signal, a ten-second deadline, and
@@ -322,24 +342,29 @@ async function organizationMember(
  * body throws. Every exit aborts the request and cancels its body, so no
  * upstream outlives the caller's decision (INV-7).
  */
-async function backendJson(url: URL | string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
-  const settled = new AbortController();
-  const request = AbortSignal.any([signal, settled.signal, AbortSignal.timeout(BACKEND_LOOKUP_TIMEOUT_MS)]);
-  let response: Response | undefined;
-  try {
-    // Workers reject `redirect: "error"`; `manual` returns a redirect
-    // unfollowed, and a redirect is not an answer. Workers and Node return
-    // its 3xx; an `opaqueredirect` has status 0, which `ok` refuses.
-    response = await fetch(url, { ...init, redirect: "manual", signal: request });
-    if (response.status === 429) throw new BackendRateLimited(backendRetryMs(response.headers.get("Retry-After")));
-    if (response.status >= 300 && response.status < 400) throw new Error("Clerk Backend API request redirected");
-    if (!response.ok) throw new Error("Clerk Backend API request failed");
-    return JSON.parse(await boundedText(response, request));
-  } finally {
-    settled.abort();
-    void response?.body?.cancel().catch(() => {});
-  }
+function backendJson(url: URL | string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
+  return runEdge(authProgram<unknown>(backendJsonNative, [url, init, signal]));
 }
+const backendJsonNative = /* @__PURE__ */ registerAuth(
+  backendJson,
+  function (url: URL | string, init: RequestInit, signal: AbortSignal) {
+    return authFlow<unknown>(function* () {
+      const settled = new AbortController();
+      const request = AbortSignal.any([signal, settled.signal, AbortSignal.timeout(BACKEND_LOOKUP_TIMEOUT_MS)]);
+      let response: Response | undefined;
+      try {
+        response = (yield authFetch(url, { ...init, redirect: "manual", signal: request })) as Response;
+        if (response.status === 429) throw new BackendRateLimited(backendRetryMs(response.headers.get("Retry-After")));
+        if (response.status >= 300 && response.status < 400) throw new Error("Clerk Backend API request redirected");
+        if (!response.ok) throw new Error("Clerk Backend API request failed");
+        return JSON.parse((yield authCall(boundedText, [response, request])) as string);
+      } finally {
+        settled.abort();
+        void response?.body?.cancel().catch(() => {});
+      }
+    });
+  },
+);
 
 /** Only locally parsed, bounded timing facts leave the response's request. */
 class BackendRateLimited extends Error {
@@ -373,30 +398,35 @@ function backendRetryMs(value: string | null): number {
  * `MAX_BACKEND_RESPONSE_BYTES`. An abort cancels a read the upstream has
  * stopped feeding, so the caller's deadline holds while a body stays open.
  */
-async function boundedText(response: Response, signal: AbortSignal): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) return "";
-  void reader.closed.catch(() => {});
-  const cancel = () => void reader.cancel().catch(() => {});
-  signal.addEventListener("abort", cancel, { once: true });
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    while (true) {
-      signal.throwIfAborted();
-      const { done, value } = await reader.read();
-      signal.throwIfAborted();
-      if (done) return text + decoder.decode();
-      size += value.byteLength;
-      if (size > MAX_BACKEND_RESPONSE_BYTES) throw new Error("Clerk Backend API response too large");
-      text += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    signal.removeEventListener("abort", cancel);
-    reader.releaseLock();
-  }
+function boundedText(response: Response, signal: AbortSignal): Promise<string> {
+  return runEdge(authProgram<string>(boundedTextNative, [response, signal]));
 }
+const boundedTextNative = /* @__PURE__ */ registerAuth(boundedText, function (response: Response, signal: AbortSignal) {
+  return authFlow<string>(function* () {
+    const reader = response.body?.getReader();
+    if (!reader) return "";
+    void reader.closed.catch(() => {});
+    const cancel = () => void reader.cancel().catch(() => {});
+    signal.addEventListener("abort", cancel, { once: true });
+    const decoder = new TextDecoder();
+    let size = 0;
+    let text = "";
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        const { done, value } = (yield authInvoke(reader, "read", [])) as ReadableStreamReadResult<any>;
+        signal.throwIfAborted();
+        if (done) return text + decoder.decode();
+        size += value.byteLength;
+        if (size > MAX_BACKEND_RESPONSE_BYTES) throw new Error("Clerk Backend API response too large");
+        text += decoder.decode(value, { stream: true });
+      }
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      reader.releaseLock();
+    }
+  });
+});
 
 /**
  * A cached membership answer: when its lookup started by the wall clock, and
@@ -453,45 +483,55 @@ function oauthBindingRejection(
  * endpoint directly after SDK authentication, without a shared response cache
  * or SDK patch. Its subject/client and active verdict must still agree.
  */
-async function opaqueOAuthClaims(
+function opaqueOAuthClaims(
   token: string,
   secretKey: string,
   userId: string | null,
   clientId: string,
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const claims = await backendJson(
-    "https://api.clerk.com/v1/oauth_applications/access_tokens/verify",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secretKey}`,
-        "Content-Type": "application/json",
-        "Clerk-API-Version": "2026-05-12",
-      },
-      body: JSON.stringify({ access_token: token }),
-    },
-    signal,
+  return runEdge(
+    authProgram<Record<string, unknown>>(opaqueOAuthClaimsNative, [token, secretKey, userId, clientId, signal]),
   );
-  if (
-    !claims ||
-    typeof claims !== "object" ||
-    Array.isArray(claims) ||
-    !("object" in claims) ||
-    claims.object !== "clerk_idp_oauth_access_token" ||
-    !("subject" in claims) ||
-    claims.subject !== userId ||
-    !("client_id" in claims) ||
-    claims.client_id !== clientId ||
-    !("revoked" in claims) ||
-    claims.revoked !== false ||
-    !("expired" in claims) ||
-    claims.expired !== false
-  ) {
-    throw new Error("Opaque OAuth verification response invalid");
-  }
-  return claims as Record<string, unknown>;
 }
+const opaqueOAuthClaimsNative = /* @__PURE__ */ registerAuth(
+  opaqueOAuthClaims,
+  function (token: string, secretKey: string, userId: string | null, clientId: string, signal: AbortSignal) {
+    return authFlow<Record<string, unknown>>(function* () {
+      const claims = (yield authCall(backendJson, [
+        "https://api.clerk.com/v1/oauth_applications/access_tokens/verify",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${secretKey}`,
+            "Content-Type": "application/json",
+            "Clerk-API-Version": "2026-05-12",
+          },
+          body: JSON.stringify({ access_token: token }),
+        },
+        signal,
+      ])) as unknown;
+      if (
+        !claims ||
+        typeof claims !== "object" ||
+        Array.isArray(claims) ||
+        !("object" in claims) ||
+        claims.object !== "clerk_idp_oauth_access_token" ||
+        !("subject" in claims) ||
+        claims.subject !== userId ||
+        !("client_id" in claims) ||
+        claims.client_id !== clientId ||
+        !("revoked" in claims) ||
+        claims.revoked !== false ||
+        !("expired" in claims) ||
+        claims.expired !== false
+      ) {
+        throw new Error("Opaque OAuth verification response invalid");
+      }
+      return claims as Record<string, unknown>;
+    });
+  },
+);
 
 /**
  * The domain of an email address, lowercased for comparison, or null when the
@@ -553,47 +593,46 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   // window by the size of the step.
   let organizationRetryUntil = 0;
 
-  const organizationLookup = async <T>(userId: string, signal: AbortSignal, lookup: () => Promise<T>): Promise<T> => {
-    const now = Date.now();
-    if (now < organizationRetryUntil) {
-      throw new OrganizationLookupBusy(Math.ceil((organizationRetryUntil - now) / 1_000));
-    }
-    const activeForIdentity = organizationLookupsByIdentity.get(userId) ?? 0;
-    if (
-      activeOrganizationLookups >= ORGANIZATION_MAX_BACKEND_LOOKUPS ||
-      activeForIdentity >= ORGANIZATION_MAX_BACKEND_LOOKUPS_PER_IDENTITY
-    ) {
-      throw new OrganizationLookupBusy(1);
-    }
-    signal.throwIfAborted();
-    activeOrganizationLookups++;
-    organizationLookupsByIdentity.set(userId, activeForIdentity + 1);
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      activeOrganizationLookups--;
-      const remaining = organizationLookupsByIdentity.get(userId)! - 1;
-      if (remaining === 0) organizationLookupsByIdentity.delete(userId);
-      else organizationLookupsByIdentity.set(userId, remaining);
-    };
-    // workerd may discard the awaited continuation when its caller leaves.
-    // Release in that request's own abort handler too; finally is idempotent.
-    // The same caller signal cancels backendJson's request-owned upstream.
-    signal.addEventListener("abort", release, { once: true });
-    try {
-      return await lookup();
-    } catch (error) {
-      if (error instanceof BackendRateLimited) {
-        organizationRetryUntil = Math.max(organizationRetryUntil, Date.now() + error.retryMs);
-        throw new OrganizationLookupBusy(Math.ceil((organizationRetryUntil - Date.now()) / 1_000));
+  const organizationLookup = authMethod(<T>(userId: string, signal: AbortSignal, lookup: () => Promise<T>) => {
+    return authFlow<T>(function* () {
+      const now = Date.now();
+      if (now < organizationRetryUntil) {
+        throw new OrganizationLookupBusy(Math.ceil((organizationRetryUntil - now) / 1000));
       }
-      throw error;
-    } finally {
-      signal.removeEventListener("abort", release);
-      release();
-    }
-  };
+      const activeForIdentity = organizationLookupsByIdentity.get(userId) ?? 0;
+      if (
+        activeOrganizationLookups >= ORGANIZATION_MAX_BACKEND_LOOKUPS ||
+        activeForIdentity >= ORGANIZATION_MAX_BACKEND_LOOKUPS_PER_IDENTITY
+      ) {
+        throw new OrganizationLookupBusy(1);
+      }
+      signal.throwIfAborted();
+      activeOrganizationLookups++;
+      organizationLookupsByIdentity.set(userId, activeForIdentity + 1);
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        activeOrganizationLookups--;
+        const remaining = organizationLookupsByIdentity.get(userId)! - 1;
+        if (remaining === 0) organizationLookupsByIdentity.delete(userId);
+        else organizationLookupsByIdentity.set(userId, remaining);
+      };
+      signal.addEventListener("abort", release, { once: true });
+      try {
+        return (yield authCall(lookup, [])) as Awaited<T>;
+      } catch (error) {
+        if (error instanceof BackendRateLimited) {
+          organizationRetryUntil = Math.max(organizationRetryUntil, Date.now() + error.retryMs);
+          throw new OrganizationLookupBusy(Math.ceil((organizationRetryUntil - Date.now()) / 1000));
+        }
+        throw error;
+      } finally {
+        signal.removeEventListener("abort", release);
+        release();
+      }
+    });
+  });
   const activityLabelCache = new Map<string, { label?: string; exp: number }>();
   const inFlightActivityLabelIds = new Set<string>();
   let activeActivityLabelLookups = 0;
@@ -607,51 +646,47 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     });
   };
 
-  const resolveActivityLabel = async (userId: string, owner?: AbortSignal): Promise<string | undefined> => {
-    if (owner?.aborted) return undefined;
-    const cached = readIdentityCache(activityLabelCache, userId);
-    if (cached) return cached.label;
-    // Each reader owns its lookup and transport. Keep raw concurrency bounded
-    // even if a custom transport fails to settle after cancellation.
-    if (inFlightActivityLabelIds.has(userId) || activeActivityLabelLookups >= ACTIVITY_LABEL_MAX_IN_FLIGHT) {
-      return undefined;
-    }
-    const ended = new AbortController();
-    const signal = owner ? AbortSignal.any([owner, ended.signal]) : ended.signal;
-    activeActivityLabelLookups++;
-    inFlightActivityLabelIds.add(userId);
-    const upstream = Promise.resolve()
-      .then(() => {
-        signal.throwIfAborted();
-        return createByteReadingClerkClient(opts, signal).users.getUser(userId);
-      })
-      .then((user) => {
-        if (signal.aborted) return undefined;
-        const label = activityLabelForUser(user);
-        cacheActivityLabel(userId, label);
-        return label;
-      })
-      .catch(() => {
-        if (!signal.aborted) cacheActivityLabel(userId, undefined);
+  const resolveActivityLabel = authMethod((userId: string, owner?: AbortSignal) => {
+    return authFlow<string | undefined>(function* () {
+      if (owner?.aborted) return undefined;
+      const cached = readIdentityCache(activityLabelCache, userId);
+      if (cached) return cached.label;
+      if (inFlightActivityLabelIds.has(userId) || activeActivityLabelLookups >= ACTIVITY_LABEL_MAX_IN_FLIGHT) {
         return undefined;
-      })
-      .finally(() => {
-        activeActivityLabelLookups--;
-        inFlightActivityLabelIds.delete(userId);
+      }
+      const ended = new AbortController();
+      const signal = owner ? AbortSignal.any([owner, ended.signal]) : ended.signal;
+      activeActivityLabelLookups++;
+      inFlightActivityLabelIds.add(userId);
+      const lookup = authFlow<string | undefined>(function* () {
+        try {
+          signal.throwIfAborted();
+          const user = (yield authInvoke(createByteReadingClerkClient(opts, signal).users, "getUser", [
+            userId,
+          ])) as ClerkUser;
+          if (signal.aborted) return undefined;
+          const label = activityLabelForUser(user);
+          cacheActivityLabel(userId, label);
+          return label;
+        } catch {
+          if (!signal.aborted) cacheActivityLabel(userId, undefined);
+          return undefined;
+        } finally {
+          activeActivityLabelLookups--;
+          inFlightActivityLabelIds.delete(userId);
+        }
       });
-    return new Promise<string | undefined>((resolve) => {
-      const finish = (label?: string) => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", abort);
-        resolve(label);
-      };
-      const abort = () => finish();
       const timer = setTimeout(() => ended.abort(), ACTIVITY_LABEL_LOOKUP_TIMEOUT_MS);
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) abort();
-      void upstream.then(finish);
-    }).finally(() => ended.abort());
-  };
+      try {
+        return (yield Effect.raceFirst(authDetached(lookup), fromSignal(signal))) as string | undefined;
+      } catch {
+        return undefined;
+      } finally {
+        clearTimeout(timer);
+        ended.abort();
+      }
+    });
+  });
 
   const challenge = (request: Request, baseUrl: string): string => {
     const tokenPresent = authorizationCredential(request).kind !== "absent";
@@ -701,30 +736,40 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * not be the same answer for a membership rule. A failed or cancelled
    * lookup is `undefined`, not a verdict, so it refuses without being cached.
    */
-  const checkDomain = async (userId: string, clerk: ClerkGateClient): Promise<boolean | undefined> => {
-    if (!allowedDomains) return true;
-    let email: string | undefined;
-    try {
-      const user = await clerk.users.getUser(userId);
-      const primary = user.emailAddresses?.find((address) => address.id === user.primaryEmailAddressId);
-      if (primary?.verification?.status === "verified") {
-        email = primary.emailAddress;
+  const checkDomain = authMethod((userId: string, clerk: ClerkGateClient) => {
+    return authFlow<boolean | undefined>(function* () {
+      if (!allowedDomains) return true;
+      let email: string | undefined;
+      try {
+        const user = (yield authInvoke(clerk.users, "getUser", [userId])) as ClerkUser;
+        const primary = user.emailAddresses?.find(
+          (address: {
+            readonly id: string;
+            readonly emailAddress: string;
+            readonly verification: {
+              readonly status: string;
+            } | null;
+          }) => address.id === user.primaryEmailAddressId,
+        );
+        if (primary?.verification?.status === "verified") {
+          email = primary.emailAddress;
+        }
+      } catch (error) {
+        logDenial("email_lookup_failed", error);
+        return undefined;
       }
-    } catch (error) {
-      logDenial("email_lookup_failed", error);
-      return undefined;
-    }
-    const domain = email ? emailDomain(email) : null;
-    if (!domain) {
-      logDenial("verified_email_invalid");
-      return false;
-    }
-    if (!allowedDomains.has(domain)) {
-      logDenial("email_domain_denied");
-      return false;
-    }
-    return true;
-  };
+      const domain = email ? emailDomain(email) : null;
+      if (!domain) {
+        logDenial("verified_email_invalid");
+        return false;
+      }
+      if (!allowedDomains.has(domain)) {
+        logDenial("email_domain_denied");
+        return false;
+      }
+      return true;
+    });
+  });
 
   /** A cached answer still within its TTL, counted from its lookup's start. */
   const cachedMembership = (key: string): boolean | undefined => {
@@ -785,27 +830,36 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * its own lookup. A failed or abandoned lookup is not an answer, so it
    * refuses without being cached.
    */
-  const checkOrganization = async (userId: string, signal: AbortSignal): Promise<boolean | Response> => {
-    if (!organizationId) return true;
-    const key = `${organizationId}/${userId}`;
-    const cached = cachedMembership(key);
-    if (cached !== undefined) return cached;
-    const started = Date.now();
-    const sequence = ++membershipLookupsStarted;
-    let member: boolean;
-    try {
-      member = await organizationLookup(userId, signal, () =>
-        organizationMember(opts.secretKey, organizationId, userId, signal),
-      );
-    } catch (error) {
-      if (error instanceof OrganizationLookupBusy) return organizationBusy(error);
-      logDenial("organization_lookup_failed");
-      return false;
-    }
-    cacheMembership(key, { member, started, sequence });
-    if (!member) logDenial("organization_membership_denied");
-    return member;
-  };
+  const checkOrganization = authMethod((userId: string, signal: AbortSignal) => {
+    return authFlow<boolean | Response>(function* () {
+      if (!organizationId) return true;
+      const key = `${organizationId}/${userId}`;
+      const cached = cachedMembership(key);
+      if (cached !== undefined) return cached;
+      const started = Date.now();
+      const sequence = ++membershipLookupsStarted;
+      let member: boolean;
+      try {
+        member = (yield authCall(organizationLookup, [
+          userId,
+          signal,
+          authMethod(() => {
+            return authCall(organizationMember, [opts.secretKey, organizationId, userId, signal]) as Effect.Effect<
+              boolean,
+              unknown
+            >;
+          }),
+        ])) as boolean;
+      } catch (error) {
+        if (error instanceof OrganizationLookupBusy) return organizationBusy(error);
+        logDenial("organization_lookup_failed");
+        return false;
+      }
+      cacheMembership(key, { member, started, sequence });
+      if (!member) logDenial("organization_membership_denied");
+      return member;
+    });
+  });
 
   /**
    * Is this authenticated user admitted? The domain allowlist and `gate` both
@@ -813,30 +867,30 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * operator gate code. One cached verdict covers both, so composing them costs
    * no more Clerk calls than `gate` alone did.
    */
-  const checkGate = async (userId: string, clerk: ClerkGateClient, signal: AbortSignal): Promise<boolean> => {
-    if (!opts.gate && !allowedDomains) return true;
-    const hit = readIdentityCache(gateCache, userId);
-    if (hit) return hit.allowed;
-    let allowed: boolean;
-    try {
-      const domainAllowed = await checkDomain(userId, clerk);
-      if (domainAllowed === undefined) return false;
-      signal.throwIfAborted();
-      allowed = domainAllowed && (opts.gate ? await opts.gate(userId, clerk) : true);
-      // `clerk` is bound to this signal; a gate may turn its cancelled
-      // lookup into `false`. Only a completed, uncancelled verdict is cached.
-      signal.throwIfAborted();
-      if (domainAllowed && !allowed) logDenial("gate_denied");
-    } catch {
-      logDenial("gate_failed");
-      return false;
-    }
-    writeIdentityCache(gateCache, userId, {
-      allowed,
-      exp: Date.now() + (allowed ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
+  const checkGate = authMethod((userId: string, clerk: ClerkGateClient, signal: AbortSignal) => {
+    return authFlow<boolean>(function* () {
+      if (!opts.gate && !allowedDomains) return true;
+      const hit = readIdentityCache(gateCache, userId);
+      if (hit) return hit.allowed;
+      let allowed: boolean;
+      try {
+        const domainAllowed = (yield authCall(checkDomain, [userId, clerk])) as boolean | undefined;
+        if (domainAllowed === undefined) return false;
+        signal.throwIfAborted();
+        allowed = domainAllowed && (opts.gate ? ((yield authInvoke(opts, "gate", [userId, clerk])) as boolean) : true);
+        signal.throwIfAborted();
+        if (domainAllowed && !allowed) logDenial("gate_denied");
+      } catch {
+        logDenial("gate_failed");
+        return false;
+      }
+      writeIdentityCache(gateCache, userId, {
+        allowed,
+        exp: Date.now() + (allowed ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
+      });
+      return allowed;
     });
-    return allowed;
-  };
+  });
 
   return {
     kind: "clerk",
@@ -859,173 +913,185 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       ...(opts.signUpUrl ? { signUpUrl: opts.signUpUrl } : {}),
     },
 
-    async handleMetadata(request, baseUrl) {
-      const { pathname } = new URL(request.url);
-      const protectedResource =
-        pathname === "/.well-known/oauth-protected-resource" ||
-        pathname === "/.well-known/oauth-protected-resource/mcp" ||
-        /^\/\.well-known\/oauth-protected-resource\/mcp\/[a-z0-9_-]+$/.test(pathname);
-      if (!protectedResource) return null;
-      if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
-        return new Response(null, { status: 405, headers: { ...CORS_HEADERS, Allow: "GET, HEAD, OPTIONS" } });
-      }
+    handleMetadata: authMethod(function (request: Request, baseUrl: string) {
+      return authValue<Response | null>(() => {
+        const { pathname } = new URL(request.url);
+        const protectedResource =
+          pathname === "/.well-known/oauth-protected-resource" ||
+          pathname === "/.well-known/oauth-protected-resource/mcp" ||
+          /^\/\.well-known\/oauth-protected-resource\/mcp\/[a-z0-9_-]+$/.test(pathname);
+        if (!protectedResource) return null;
+        if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
+          return new Response(null, { status: 405, headers: { ...CORS_HEADERS, Allow: "GET, HEAD, OPTIONS" } });
+        }
+        if (request.method === "OPTIONS") {
+          return new Response(null, { status: 204, headers: CORS_HEADERS });
+        }
+        const base = resolveBase(baseUrl);
+        const pool = pathname.startsWith("/.well-known/oauth-protected-resource/mcp/")
+          ? mcpPoolSuffix(pathname.slice("/.well-known/oauth-protected-resource".length))
+          : null;
+        if (
+          pathname === "/.well-known/oauth-protected-resource" ||
+          pathname === "/.well-known/oauth-protected-resource/mcp" ||
+          pool
+        ) {
+          return Response.json(
+            {
+              resource: `${base}/mcp${pool ?? ""}`,
+              authorization_servers: [frontendApiUrl],
+              bearer_methods_supported: ["header"],
+              scopes_supported: scopes,
+            },
+            { headers: CORS_HEADERS },
+          );
+        }
+        return null;
+      });
+    }),
 
-      if (request.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: CORS_HEADERS });
-      }
-
-      const base = resolveBase(baseUrl);
-      const pool = pathname.startsWith("/.well-known/oauth-protected-resource/mcp/")
-        ? mcpPoolSuffix(pathname.slice("/.well-known/oauth-protected-resource".length))
-        : null;
-      if (
-        pathname === "/.well-known/oauth-protected-resource" ||
-        pathname === "/.well-known/oauth-protected-resource/mcp" ||
-        pool
-      ) {
-        return Response.json(
-          {
-            resource: `${base}/mcp${pool ?? ""}`,
-            authorization_servers: [frontendApiUrl],
-            bearer_methods_supported: ["header"],
-            scopes_supported: scopes,
-          },
-          { headers: CORS_HEADERS },
+    authorize: authMethod(function (request: Request, baseUrl: string) {
+      return authFlow<AuthResult>(function* () {
+        const credential = authorizationCredential(request);
+        const tokenPresent = credential.kind !== "absent";
+        if (credential.kind === "invalid" || isMachineCredential(request)) {
+          logDenial("authorization_header_invalid");
+          return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+        }
+        const finished = new AbortController();
+        const signal = AbortSignal.any([request.signal, finished.signal]);
+        const timer = setTimeout(
+          () => finished.abort(new Error("Clerk authentication timed out")),
+          BACKEND_LOOKUP_TIMEOUT_MS,
         );
-      }
-
-      return null;
-    },
-
-    async authorize(request, baseUrl): Promise<AuthResult> {
-      const credential = authorizationCredential(request);
-      const tokenPresent = credential.kind !== "absent";
-      if (credential.kind === "invalid" || isMachineCredential(request)) {
-        logDenial("authorization_header_invalid");
-        return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-      }
-      const finished = new AbortController();
-      const signal = AbortSignal.any([request.signal, finished.signal]);
-      const timer = setTimeout(
-        () => finished.abort(new Error("Clerk authentication timed out")),
-        BACKEND_LOOKUP_TIMEOUT_MS,
-      );
-      const pending = new Set<Promise<unknown>>();
-      // SDK-created verification clients, JWKS, handshakes, domain lookups and
-      // gate calls all close over this authorization's signal, never another
-      // request's client. The long-lived client above serves display labels only.
-      const clerk = createByteReadingClerkClient(opts, signal, pending);
-      try {
-        signal.throwIfAborted();
-        const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
-        let userId: string | undefined;
-        let sessionCookies: string[] | undefined;
+        const pending = new Set<Promise<unknown>>();
+        const clerk = createByteReadingClerkClient(opts, signal, pending);
         try {
-          const pathname = new URL(request.url).pathname;
-          const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
-          const state = await clerk.authenticateRequest(authorizationRequest(request), {
-            acceptsToken: isMcp ? "oauth_token" : "session_token",
-          });
-          const browserOAuth = !tokenPresent && browserOAuthRoute;
-          // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
-          // handshake, which returns here with a refreshed, verified session.
-          if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
-            return {
-              ok: false,
-              response: new Response(null, {
-                status: 307,
-                headers: state.headers,
-              }),
+          signal.throwIfAborted();
+          const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
+          let userId: string | undefined;
+          let sessionCookies: string[] | undefined;
+          try {
+            const pathname = new URL(request.url).pathname;
+            const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
+            const state = (yield authInvoke(clerk, "authenticateRequest", [
+              authorizationRequest(request),
+              {
+                acceptsToken: isMcp ? "oauth_token" : "session_token",
+              },
+            ])) as {
+              status: "signed-in" | "signed-out" | "handshake";
+              reason: string | null;
+              headers: Headers;
+              toAuth(): ClerkAuth | null;
             };
-          }
-          if (browserOAuth) sessionCookies = state.headers?.getSetCookie();
-          const auth = state.toAuth();
-          if (!auth?.isAuthenticated) {
-            logDenial("authentication_failed");
-            return {
-              ok: false,
-              response: unauthorized(baseUrl, tokenPresent, request),
-            };
-          }
-          if (isMcp) {
-            const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
-            if (auth.tokenType !== "oauth_token") {
-              logDenial("token_type_mismatch");
-              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            const browserOAuth = !tokenPresent && browserOAuthRoute;
+            if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
+              return {
+                ok: false,
+                response: new Response(null, {
+                  status: 307,
+                  headers: state.headers,
+                }),
+              };
             }
-            const token = await auth.getToken();
-            let claims: Record<string, unknown>;
-            if (token.startsWith("oat_")) {
-              try {
-                const verify = () => opaqueOAuthClaims(token, opts.secretKey, auth.userId, auth.clientId, signal);
-                claims = await (organizationId ? organizationLookup(auth.userId ?? "", signal, verify) : verify());
-              } catch (error) {
-                if (error instanceof OrganizationLookupBusy) return { ok: false, response: organizationBusy(error) };
-                logDenial("oauth_verification_failed");
+            if (browserOAuth) sessionCookies = state.headers?.getSetCookie();
+            const auth = state.toAuth();
+            if (!auth?.isAuthenticated) {
+              logDenial("authentication_failed");
+              return {
+                ok: false,
+                response: unauthorized(baseUrl, tokenPresent, request),
+              };
+            }
+            if (isMcp) {
+              const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
+              if (auth.tokenType !== "oauth_token") {
+                logDenial("token_type_mismatch");
+                return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+              }
+              const token = (yield authInvoke(auth, "getToken", [])) as string;
+              let claims: Record<string, unknown>;
+              if (token.startsWith("oat_")) {
+                try {
+                  const verify = authMethod(() => {
+                    return authCall(opaqueOAuthClaims, [
+                      token,
+                      opts.secretKey,
+                      auth.userId,
+                      auth.clientId,
+                      signal,
+                    ]) as Effect.Effect<Record<string, unknown>, unknown>;
+                  });
+                  claims = (yield organizationId
+                    ? authCall(organizationLookup, [auth.userId ?? "", signal, verify])
+                    : authCall(verify, [])) as Record<string, unknown>;
+                } catch (error) {
+                  if (error instanceof OrganizationLookupBusy) return { ok: false, response: organizationBusy(error) };
+                  logDenial("oauth_verification_failed");
+                  return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+                }
+              } else {
+                claims = decodeJwt(token).payload as Record<string, unknown>;
+              }
+              const rejection = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
+              if (rejection) {
+                logDenial(rejection);
+                return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+              }
+              if (
+                organizationId &&
+                !token.startsWith("oat_") &&
+                (claims.iss !== frontendApiUrl || claims.sub !== auth.userId)
+              ) {
+                logDenial("token_identity_mismatch");
                 return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
               }
             } else {
-              claims = decodeJwt(token).payload as Record<string, unknown>;
+              if (auth.tokenType !== "session_token") {
+                logDenial("token_type_mismatch");
+                return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+              }
+              const azp = auth.sessionClaims?.azp;
+              const origin = new URL(resolveBase(baseUrl)).origin;
+              if (azp && azp !== origin) {
+                logDenial("session_origin_mismatch");
+                return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+              }
+              if (
+                organizationId &&
+                (auth.sessionClaims.iss !== frontendApiUrl || auth.sessionClaims.sub !== auth.userId)
+              ) {
+                logDenial("token_identity_mismatch");
+                return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+              }
             }
-            const rejection = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
-            if (rejection) {
-              logDenial(rejection);
-              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-            }
-            // The membership lookup is keyed by subject, so on a shared
-            // instance the issuer and subject must be this instance's and the
-            // SDK's. An opaque token's claims come from this instance's Backend
-            // API, which has already matched the subject and carries no issuer.
-            if (
-              organizationId &&
-              !token.startsWith("oat_") &&
-              (claims.iss !== frontendApiUrl || claims.sub !== auth.userId)
-            ) {
-              logDenial("token_identity_mismatch");
-              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-            }
-          } else {
-            if (auth.tokenType !== "session_token") {
-              logDenial("token_type_mismatch");
-              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-            }
-            // Browser session origins retain their existing deployment pin.
-            const azp = auth.sessionClaims?.azp;
-            const origin = new URL(resolveBase(baseUrl)).origin;
-            if (azp && azp !== origin) {
-              logDenial("session_origin_mismatch");
-              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-            }
-            // The session's active organization is not read; membership is.
-            if (
-              organizationId &&
-              (auth.sessionClaims.iss !== frontendApiUrl || auth.sessionClaims.sub !== auth.userId)
-            ) {
-              logDenial("token_identity_mismatch");
-              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-            }
+            userId = auth.userId ?? undefined;
+          } catch {
+            logDenial("authentication_failed");
+            return { ok: false, response: unauthorized(baseUrl, true, request) };
           }
-          userId = auth.userId ?? undefined;
-        } catch {
-          logDenial("authentication_failed");
-          return { ok: false, response: unauthorized(baseUrl, true, request) };
+          if (!userId) {
+            logDenial("user_missing");
+            return { ok: false, response: unauthorized(baseUrl, true, request) };
+          }
+          const membership = (yield authCall(checkOrganization, [userId, signal])) as boolean | Response;
+          if (membership instanceof Response) return { ok: false, response: membership };
+          if (!membership || !((yield authCall(checkGate, [userId, clerk, signal])) as boolean)) {
+            return { ok: false, response: forbidden() };
+          }
+          signal.throwIfAborted();
+          return { ok: true, userId, ...(sessionCookies?.length ? { sessionCookies } : {}) };
+        } finally {
+          clearTimeout(timer);
+          finished.abort();
+          (yield authAll(pending, true)) as PromiseSettledResult<unknown>[];
         }
-        if (!userId) {
-          logDenial("user_missing");
-          return { ok: false, response: unauthorized(baseUrl, true, request) };
-        }
-        const membership = await checkOrganization(userId, signal);
-        if (membership instanceof Response) return { ok: false, response: membership };
-        if (!membership || !(await checkGate(userId, clerk, signal))) {
-          return { ok: false, response: forbidden() };
-        }
-        signal.throwIfAborted();
-        return { ok: true, userId, ...(sessionCookies?.length ? { sessionCookies } : {}) };
-      } finally {
-        clearTimeout(timer);
-        finished.abort();
-        await Promise.allSettled(pending);
-      }
-    },
+      });
+    }),
   };
 }
+
+type ClerkAuth = ReturnType<
+  Awaited<ReturnType<ReturnType<typeof createByteReadingClerkClient>["authenticateRequest"]>>["toAuth"]
+>;
