@@ -1,3 +1,12 @@
+import { upwardStep } from "./upward.js";
+import type { InputRequiredResult } from "@modelcontextprotocol/server";
+import type { InvocationOutcome } from "./invocation.js";
+import type { CatalogSearchPage, CatalogSearchResult } from "./catalog-service.js";
+import type { DownstreamInputResult } from "./downstream-input-context.js";
+import type { AuthorizeConnectorResult } from "./authorization-handoff.js";
+import { authCall, authInvoke, authFlow, authMethod, authStorage, registerAuth } from "./auth/native.js";
+import { registryProgram } from "./runtime/registry.js";
+import { runEdge } from "./runtime/run.js";
 import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
@@ -85,26 +94,28 @@ function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
   return result;
 }
 
-async function discoveryResult(operation: () => unknown | Promise<unknown>, hint: string): Promise<ToolResult> {
-  try {
-    const value = await operation();
-    const text = boundedDiscoveryText(value, hint);
-    const result = jsonResult(value, text);
-    const bytes = enc.encode(JSON.stringify(result)).length;
-    if (bytes > MAX_DISCOVERY_RESULT_BYTES) {
-      throw new DiscoveryPolicyError(
-        "result_too_large",
-        `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
-      );
+const discoveryResult = function (operation: () => unknown | Promise<unknown>, hint: string) {
+  return authFlow<ToolResult>(function* () {
+    try {
+      const value = yield* upwardStep(authCall<unknown>(operation, []));
+      const text = boundedDiscoveryText(value, hint);
+      const result = jsonResult(value, text);
+      const bytes = enc.encode(JSON.stringify(result)).length;
+      if (bytes > MAX_DISCOVERY_RESULT_BYTES) {
+        throw new DiscoveryPolicyError(
+          "result_too_large",
+          `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
+        );
+      }
+      return result;
+    } catch (err) {
+      if (err instanceof DiscoveryPolicyError) {
+        return discoveryErrorResult(err);
+      }
+      throw err;
     }
-    return result;
-  } catch (err) {
-    if (err instanceof DiscoveryPolicyError) {
-      return discoveryErrorResult(err);
-    }
-    throw err;
-  }
-}
+  });
+};
 
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
 function isContinuationByte(b: number | undefined): boolean {
@@ -320,77 +331,99 @@ function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewSh
  * documentation/meta-tools.md#result-representation). It is one compact JSON
  * line with no raw newline, so the preview starts after the first `\n`.
  */
-async function stashResult(bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
-  const totalBytes = bytes.length;
-  // Direct pages promise offsets into the original UTF-8 text. JSON-escaping
-  // raw text would change that contract; never stash the encoder's replacement
-  // characters as if they were the completed call's output.
-  if (rawText !== undefined && !isWellFormedText(rawText))
-    return {
-      truncated: true,
-      totalBytes,
-      hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text; request the value as JSON (value mode or a JSON-returning call) to recover it.`,
-    };
-  const id = crypto.randomUUID();
-  try {
-    // Base64 permits byte-range decoding, and splitting the envelope across
-    // keys keeps a page's storage read proportional to the page instead of to
-    // the whole result (issue #540). Chunk 0 carries the header; the connecta.result
-    // reader below maps a byte offset back to chunk index and base64 quad.
-    const chunkBytes = resultChunkBytes(totalBytes);
-    const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
-    const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
-    for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
-      const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
-      if (offset === 0) chunks[0] += chunk;
-      else chunks.push(chunk);
-    }
-    if (!(await results.set(id, chunks, RESULT_TTL_SECONDS))) {
-      throw new Error("Result stash capacity exhausted");
-    }
-  } catch {
-    // Paging is advisory after a completed call, including an approved write.
-    // Neither backend prose nor a retry hint belongs in this successful result.
+
+const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
+  return authFlow<
+    | {
+        truncated: boolean;
+        totalBytes: number;
+        hint: string;
+        resultId?: never;
+        nextOffset?: never;
+        nextAction?: never;
+      }
+    | {
+        truncated: boolean;
+        resultId: string;
+        totalBytes: number;
+        hint: string;
+        nextOffset: number;
+        nextAction:
+          | { tool: string; arguments: { id: string; offset: number; code?: never } }
+          | { tool: string; arguments: { code: string; id?: never; offset?: never } };
+      }
+  >(function* () {
+    const totalBytes = bytes.length;
+    // Direct pages promise offsets into the original UTF-8 text. JSON-escaping
+    // raw text would change that contract; never stash the encoder's replacement
+    // characters as if they were the completed call's output.
+    if (rawText !== undefined && !isWellFormedText(rawText))
+      return {
+        truncated: true,
+        totalBytes,
+        hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text; request the value as JSON (value mode or a JSON-returning call) to recover it.`,
+      };
+    const id = crypto.randomUUID();
     try {
-      results.warn();
+      // Base64 permits byte-range decoding, and splitting the envelope across
+      // keys keeps a page's storage read proportional to the page instead of to
+      // the whole result (issue #540). Chunk 0 carries the header; the connecta.result
+      // reader below maps a byte offset back to chunk index and base64 quad.
+      const chunkBytes = resultChunkBytes(totalBytes);
+      const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
+      const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
+      for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
+        const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
+        if (offset === 0) chunks[0] += chunk;
+        else chunks.push(chunk);
+      }
+      if (!(yield* upwardStep(authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS])))) {
+        throw new Error("Result stash capacity exhausted");
+      }
     } catch {
-      // Logging cannot change the call either.
+      // Paging is advisory after a completed call, including an approved write.
+      // Neither backend prose nor a retry hint belongs in this successful result.
+      try {
+        results.warn();
+      } catch {
+        // Logging cannot change the call either.
+      }
+      return {
+        truncated: true,
+        totalBytes,
+        hint: results.write
+          ? `Paging is unavailable. ${WRITE_ALREADY_RAN}`
+          : results.pagingTool
+            ? "Paging is unavailable."
+            : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
+      };
     }
     return {
       truncated: true,
+      resultId: id,
       totalBytes,
-      hint: results.write
-        ? `Paging is unavailable. ${WRITE_ALREADY_RAN}`
-        : results.pagingTool
-          ? "Paging is unavailable."
-          : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
-    };
-  }
-  return {
-    truncated: true,
-    resultId: id,
-    totalBytes,
-    hint: pagingHint(results, totalBytes, preview),
-    nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
-    nextAction:
-      results.pagingTool === "read_result"
-        ? {
-            tool: "read_result",
-            arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
-          }
-        : {
-            tool: "execute_code",
-            // A byte may cost six JSON characters when escaped. Leave room for the
-            // result id, page counters, and continuation metadata in the returned page.
-            arguments: {
-              code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
+      hint: pagingHint(results, totalBytes, preview),
+      nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
+      nextAction:
+        results.pagingTool === "read_result"
+          ? {
+              tool: "read_result",
+              arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
+            }
+          : {
+              tool: "execute_code",
+              // A byte may cost six JSON characters when escaped. Leave room for the
+              // result id, page counters, and continuation metadata in the returned page.
+              arguments: {
+                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
+              },
             },
-          },
-  };
-}
+    };
+  });
+};
 
 /** Program calls use the direct-call envelope, ledger, expiry and authority. */
-export async function pageProgramResult(
+export function pageProgramResult(
   registry: RegistryView,
   baseUrl: string,
   resolved: ResolvedCatalogTool,
@@ -400,49 +433,70 @@ export async function pageProgramResult(
   requestScope: object,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
-  const data = secrets.redact(value);
-  const wire = JSON.stringify({ data, format });
-  if (enc.encode(wire).length <= wireBytes) return { data, format };
-  const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
-  const bytes = enc.encode(text);
-  const write = resolved.definition.classification !== "read";
-  const notice = await stashResult(
-    bytes,
-    {
-      binding: {
-        identity: registry.resultIdentity(),
-        baseUrl,
-        connector: resolved.connector.id,
-        tool: resolved.definition.name,
-        classification: write ? "write" : "read",
-      },
-      write,
-      cap: resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes),
-      set: (id, chunks, ttl) => registry.stashResult(id, chunks, ttl),
-      warn: () =>
-        logFailure(
-          registry.contextFor(resolved.connector.id, baseUrl, requestScope).logger,
-          "result paging unavailable",
-          failureRecord({ connector: resolved.connector.id, tool: resolved.definition }),
-        ),
-    },
-    { kind: "none" },
-    format === "text" ? text : undefined,
-  );
-  return {
-    format: "paged",
-    valueFormat: format,
-    ...(notice.resultId ? { resultId: notice.resultId } : {}),
-    totalBytes: bytes.length,
-    truncated: true,
-    hint: notice.resultId
-      ? `${write ? WRITE_ALREADY_RAN + " " : ""}Page this result with connecta.result(handle); do not repeat the call for output.`
-      : notice.hint,
-  };
+  return runEdge(pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, wireBytes));
 }
+const pageProgramResultNative = /* @__PURE__ */ registerAuth(
+  pageProgramResult,
+  function (
+    registry: RegistryView,
+    baseUrl: string,
+    resolved: ResolvedCatalogTool,
+    value: unknown,
+    format: "json" | "text",
+    secrets: SentSecrets,
+    requestScope: object,
+    wireBytes: number = PROGRAM_RESULT_WIRE_BYTES,
+  ) {
+    return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
+      const data = secrets.redact(value);
+      const wire = JSON.stringify({ data, format });
+      if (enc.encode(wire).length <= wireBytes) return { data, format };
+      const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
+      const bytes = enc.encode(text);
+      const write = resolved.definition.classification !== "read";
+      const notice = yield* upwardStep(
+        stashResult(
+          bytes,
+          {
+            binding: {
+              identity: registry.resultIdentity(),
+              baseUrl,
+              connector: resolved.connector.id,
+              tool: resolved.definition.name,
+              classification: write ? "write" : "read",
+            },
+            write,
+            cap: resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes),
+            set: authMethod((id: string, chunks: string[], ttl: number) =>
+              registryProgram(registry, "stashResult", id, chunks, ttl),
+            ),
+            warn: () =>
+              logFailure(
+                registry.contextFor(resolved.connector.id, baseUrl, requestScope).logger,
+                "result paging unavailable",
+                failureRecord({ connector: resolved.connector.id, tool: resolved.definition }),
+              ),
+          },
+          { kind: "none" },
+          format === "text" ? text : undefined,
+        ),
+      );
+      return {
+        format: "paged",
+        valueFormat: format,
+        ...(notice.resultId ? { resultId: notice.resultId } : {}),
+        totalBytes: bytes.length,
+        truncated: true,
+        hint: notice.resultId
+          ? `${write ? WRITE_ALREADY_RAN + " " : ""}Page this result with connecta.result(handle); do not repeat the call for output.`
+          : notice.hint,
+      };
+    });
+  },
+);
 
 /** Program returns share the direct stash, with all host-admitted call dependencies. */
-export async function guardProgramReturn(
+export function guardProgramReturn(
   value: unknown,
   registry: RegistryView,
   baseUrl: string,
@@ -452,46 +506,67 @@ export async function guardProgramReturn(
   maxChars: number,
   completedWrite: boolean,
 ): Promise<unknown> {
-  const serialized = serializeResultText(value);
-  if (serialized.length <= maxChars) return value;
-  const text = secrets.text(serialized);
-  const bytes = enc.encode(text);
-  const write = dependencies.some((dependency) => dependency.classification === "write");
-  const cap = Math.min(
-    registry.maxResultBytes,
-    ...dependencies.map((dependency) =>
-      resolveMaxResultBytes(registry.getConnector(dependency.connector)?.maxResultBytes, registry.maxResultBytes),
-    ),
+  return runEdge(
+    guardProgramReturnNative(value, registry, baseUrl, dependencies, secrets, logger, maxChars, completedWrite),
   );
-  const results: ResultStash = {
-    secrets,
-    binding: {
-      identity: registry.resultIdentity(),
-      baseUrl,
-      classification: write ? "write" : "read",
-      program: dependencies,
-    },
-    write: completedWrite,
-    cap,
-    set: (id, chunks, ttl) => registry.stashResult(id, chunks, ttl),
-    warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
-  };
-  const notice = await stashResult(bytes, results, { kind: "none" }, text);
-  // Put the entire recovery route ahead of the preview in both response forms.
-  // A client retaining only the first 2,000 characters still sees the action.
-  if (notice.resultId) {
-    const base = { ...notice, totalChars: text.length, preview: "" };
-    const budget = Math.max(0, maxChars - JSON.stringify(base).length);
-    return { ...base, preview: escapedHeadOf(bytes, Math.min(512, budget)) };
-  }
-  const fallback = guardExecuteResultValue(secrets.redact(value), maxChars, notice.hint) as {
-    truncated: true;
-    preview: string;
-    totalChars: number;
-    hint: string;
-  };
-  return { truncated: true, totalChars: fallback.totalChars, hint: fallback.hint, preview: fallback.preview };
 }
+const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
+  guardProgramReturn,
+  function (
+    value: unknown,
+    registry: RegistryView,
+    baseUrl: string,
+    dependencies: ProgramResultDependency[],
+    secrets: SentSecrets,
+    logger: Logger,
+    maxChars: number,
+    completedWrite: boolean,
+  ) {
+    return authFlow<unknown>(function* () {
+      const serialized = serializeResultText(value);
+      if (serialized.length <= maxChars) return value;
+      const text = secrets.text(serialized);
+      const bytes = enc.encode(text);
+      const write = dependencies.some((dependency) => dependency.classification === "write");
+      const cap = Math.min(
+        registry.maxResultBytes,
+        ...dependencies.map((dependency) =>
+          resolveMaxResultBytes(registry.getConnector(dependency.connector)?.maxResultBytes, registry.maxResultBytes),
+        ),
+      );
+      const results: ResultStash = {
+        secrets,
+        binding: {
+          identity: registry.resultIdentity(),
+          baseUrl,
+          classification: write ? "write" : "read",
+          program: dependencies,
+        },
+        write: completedWrite,
+        cap,
+        set: authMethod((id: string, chunks: string[], ttl: number) =>
+          registryProgram(registry, "stashResult", id, chunks, ttl),
+        ),
+        warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
+      };
+      const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }, text));
+      // Put the entire recovery route ahead of the preview in both response forms.
+      // A client retaining only the first 2,000 characters still sees the action.
+      if (notice.resultId) {
+        const base = { ...notice, totalChars: text.length, preview: "" };
+        const budget = Math.max(0, maxChars - JSON.stringify(base).length);
+        return { ...base, preview: escapedHeadOf(bytes, Math.min(512, budget)) };
+      }
+      const fallback = guardExecuteResultValue(secrets.redact(value), maxChars, notice.hint) as {
+        truncated: true;
+        preview: string;
+        totalChars: number;
+        hint: string;
+      };
+      return { truncated: true, totalChars: fallback.totalChars, hint: fallback.hint, preview: fallback.preview };
+    });
+  },
+);
 
 interface GuardedResult<T> {
   result: T;
@@ -518,59 +593,65 @@ function noticeFirst(notice: object, preview: string): ToolResult {
  * `text` already encoded, so a caller that had to measure it to make this
  * decision doesn't encode it twice.
  */
-async function guardEncoded(
-  text: string,
-  bytes: Uint8Array,
-  results: ResultStash,
-  cap: number,
-): Promise<GuardedResult<ToolResult>> {
-  if (bytes.length <= cap) {
-    return {
-      result: { content: [{ type: "text", text }] },
-      truncated: false,
-    };
-  }
-  if (!isWellFormedText(text)) {
-    const notice = await stashResult(bytes, results, { kind: "none" }, text);
-    return { result: noticeFirst(notice, ""), truncated: true };
-  }
-  const head = headOf(bytes, cap);
-  const notice = await stashResult(bytes, results, {
-    kind: "prefix",
-    bytes: head.length,
+
+const guardEncoded = function (text: string, bytes: Uint8Array, results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<ToolResult>>(function* () {
+    if (bytes.length <= cap) {
+      return {
+        result: { content: [{ type: "text", text }] },
+        truncated: false,
+      };
+    }
+    if (!isWellFormedText(text)) {
+      const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }, text));
+      return { result: noticeFirst(notice, ""), truncated: true };
+    }
+    const head = headOf(bytes, cap);
+    const notice = yield* upwardStep(
+      stashResult(bytes, results, {
+        kind: "prefix",
+        bytes: head.length,
+      }),
+    );
+    return { result: noticeFirst(notice, dec.decode(head)), truncated: true };
   });
-  return { result: noticeFirst(notice, dec.decode(head)), truncated: true };
-}
+};
 
 /** {@link guardEncoded} over a string that has not been measured yet. */
-async function guardText(text: string, results: ResultStash, cap: number): Promise<GuardedResult<ToolResult>> {
-  // `JSON.stringify`'s type says `string` where its behavior says `string |
-  // undefined`, so TypeScript alone does not keep a non-string out of here.
-  // Normalizing at the door means the size check below always measures exactly
-  // the text that is emitted, and no future caller can launder a non-string
-  // through it the way issue #42 describes.
-  const serialized: string = typeof text === "string" ? text : serializeResultText(text);
-  const body = results.secrets?.text(serialized) ?? serialized;
-  return guardEncoded(body, enc.encode(body), results, cap);
-}
+
+const guardText = function (text: string, results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<ToolResult>>(function* () {
+    // `JSON.stringify`'s type says `string` where its behavior says `string |
+    // undefined`, so TypeScript alone does not keep a non-string out of here.
+    // Normalizing at the door means the size check below always measures exactly
+    // the text that is emitted, and no future caller can launder a non-string
+    // through it the way issue #42 describes.
+    const serialized: string = typeof text === "string" ? text : serializeResultText(text);
+    const body = results.secrets?.text(serialized) ?? serialized;
+    return yield* upwardStep(guardEncoded(body, enc.encode(body), results, cap));
+  });
+};
 
 /** Store an oversized JSON value and replace it with a page handle. */
-async function guardValue(value: unknown, results: ResultStash, cap: number): Promise<GuardedResult<unknown>> {
-  const serialized = serializeResultText(value);
-  const text = results.secrets?.text(serialized) ?? serialized;
-  const bytes = enc.encode(text);
-  if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
-  const notice = await stashResult(bytes, results, { kind: "none" });
-  return {
-    result: notice.resultId
-      ? notice
-      : {
-          ...notice,
-          preview: escapedHeadOf(bytes, cap),
-        },
-    truncated: true,
-  };
-}
+
+const guardValue = function (value: unknown, results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<unknown>>(function* () {
+    const serialized = serializeResultText(value);
+    const text = results.secrets?.text(serialized) ?? serialized;
+    const bytes = enc.encode(text);
+    if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
+    const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }));
+    return {
+      result: notice.resultId
+        ? notice
+        : {
+            ...notice,
+            preview: escapedHeadOf(bytes, cap),
+          },
+      truncated: true,
+    };
+  });
+};
 
 /**
  * The longest head of `bytes` whose JSON string form fits `cap` bytes. Value
@@ -610,50 +691,49 @@ function escapedHeadOf(bytes: Uint8Array, cap: number): string {
  * the head of a half-written base64 image is of no use to anyone. Either way
  * the full envelope is stashed and pages through `connecta.result`.
  */
-async function guardContent(
-  content: TextContent[],
-  results: ResultStash,
-  cap: number,
-): Promise<GuardedResult<ToolResult>> {
-  content = results.secrets?.redact({ content }).content ?? content;
-  const only = content.length === 1 ? content[0] : undefined;
-  if (only?.type === "text" && typeof only.text === "string") {
-    const bytes = enc.encode(only.text);
-    // Under the cap the block passes through untouched, annotations included.
-    if (bytes.length <= cap) return { result: { content }, truncated: false };
-    return guardEncoded(only.text, bytes, results, cap);
-  }
-  let text: string;
-  try {
-    const serialized = JSON.stringify(content);
-    text = results.secrets?.text(serialized) ?? serialized;
-  } catch {
-    // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
-    // be measured, stashed, or paged either — there is nothing this guard could
-    // do with it. Pass it through as the old text-only measure did, rather than
-    // turning a call that used to succeed into result_processing_failed.
-    return { result: { content }, truncated: false };
-  }
-  const bytes = enc.encode(text);
-  // Under the cap the downstream blocks pass through untouched, non-text ones
-  // included, in their original order.
-  if (bytes.length <= cap) {
-    return { result: { content }, truncated: false };
-  }
-  if (content.every((b) => b.type === "text")) {
-    const joined = enc.encode(content.map((b) => b.text).join("\n"));
-    const notice = await stashResult(bytes, results, { kind: "text-of-envelope" });
+
+const guardContent = function (content: TextContent[], results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<ToolResult>>(function* () {
+    content = results.secrets?.redact({ content }).content ?? content;
+    const only = content.length === 1 ? content[0] : undefined;
+    if (only?.type === "text" && typeof only.text === "string") {
+      const bytes = enc.encode(only.text);
+      // Under the cap the block passes through untouched, annotations included.
+      if (bytes.length <= cap) return { result: { content }, truncated: false };
+      return yield* upwardStep(guardEncoded(only.text, bytes, results, cap));
+    }
+    let text: string;
+    try {
+      const serialized = JSON.stringify(content);
+      text = results.secrets?.text(serialized) ?? serialized;
+    } catch {
+      // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
+      // be measured, stashed, or paged either — there is nothing this guard could
+      // do with it. Pass it through as the old text-only measure did, rather than
+      // turning a call that used to succeed into result_processing_failed.
+      return { result: { content }, truncated: false };
+    }
+    const bytes = enc.encode(text);
+    // Under the cap the downstream blocks pass through untouched, non-text ones
+    // included, in their original order.
+    if (bytes.length <= cap) {
+      return { result: { content }, truncated: false };
+    }
+    if (content.every((b) => b.type === "text")) {
+      const joined = enc.encode(content.map((b) => b.text).join("\n"));
+      const notice = yield* upwardStep(stashResult(bytes, results, { kind: "text-of-envelope" }));
+      return {
+        result: noticeFirst(notice, dec.decode(headOf(joined, cap))),
+        truncated: true,
+      };
+    }
+    const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }));
     return {
-      result: noticeFirst(notice, dec.decode(headOf(joined, cap))),
+      result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
       truncated: true,
     };
-  }
-  const notice = await stashResult(bytes, results, { kind: "none" });
-  return {
-    result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
-    truncated: true,
-  };
-}
+  });
+};
 
 // --- compact schema rendering (feature 3a) --------------------------------
 
@@ -769,8 +849,17 @@ function metaToolsForRequest(
   // request without leaking request-bound I/O into the next one.
   const requestScope = opts.requestScope ?? {};
   if (opts.canManageAuth || opts.oauthConnectUrl || opts.credentialHandoffUrl || opts.oauthConnectUnavailable) {
-    bindAuthorizationHandoffs(requestScope, (connector) =>
-      authorizationHandoff(registry, baseUrl, requestScope, opts, { connector }),
+    bindAuthorizationHandoffs(
+      requestScope,
+      authMethod((connector: string) =>
+        authCall<import("./errors.js").AuthorizationHandoff>(authorizationHandoff, [
+          registry,
+          baseUrl,
+          requestScope,
+          opts,
+          { connector },
+        ]),
+      ),
     );
   }
   const sentSecrets = sentSecretsForRequest(requestScope);
@@ -814,447 +903,526 @@ function metaToolsForRequest(
   }
 
   /** MCP adapter: shared invocation semantics plus MCP-only result shaping. */
-  async function runCall(call: CallArgs, source: ActivityCallSource): Promise<RunCallOutcome> {
-    const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
-    const outcome = await invocation.invoke<ProcessedCallResult>(call.address, call.args ?? {}, {
-      source,
-      activitySource: opts.activitySource,
-      sentSecrets,
-      readOnly: opts.readOnly,
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
-      unwrapResult: call.resultMode === "value",
-      ...(opts.downstreamInput
-        ? {
-            processInputRequired: async (result, resolved, secrets) => {
-              await captureDownstreamInput(
-                requestScope,
-                resolved.connector.id,
-                `${resolved.connector.id}.${resolved.toolName}`,
-                result,
-                secrets,
-                resolved.definition.classification !== "read",
-              );
-              return { toolResult: { content: [] } };
-            },
-          }
-        : {}),
-      processResult: async (result, resolved, secrets, format) => {
-        // Result-size cap for THIS call: the connector's own override wins,
-        // then the deployment-wide value, then the built-in default (already
-        // folded into `globalCap`). Resolved per call so one request can
-        // mix a tight-capped connector with siblings on the global cap. An
-        // override the registry already warned about at startup is dropped
-        // here, so the connector simply inherits `globalCap`.
-        const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, globalCap);
-        const results: ResultStash = {
-          secrets,
-          binding: {
-            identity: registry.resultIdentity(),
-            baseUrl,
-            connector: resolved.connector.id,
-            tool: resolved.definition.name,
-            classification: resolved.definition.classification === "read" ? "read" : "write",
-          },
-          write: resolved.definition.classification !== "read",
-          cap,
-          ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
-          set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
-          // The catalog entry, never `toolName`: a record names a tool
-          // only through the grammar check (src/operator-record.ts).
-          warn: () =>
-            logFailure(
-              registry.contextFor(resolved.connector.id, baseUrl, requestScope).logger,
-              "result paging unavailable",
-              failureRecord({ connector: resolved.connector.id, tool: resolved.definition }),
+  function runCall(call: CallArgs, source: ActivityCallSource): Promise<RunCallOutcome> {
+    return runEdge(runCallNative(call, source));
+  }
+  const runCallNative = /* @__PURE__ */ registerAuth(runCall, function (call: CallArgs, source: ActivityCallSource) {
+    return authFlow<RunCallOutcome>(function* () {
+      const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
+      const outcome = yield* upwardStep(
+        authInvoke<InvocationOutcome<ProcessedCallResult>>(invocation, "invoke", [
+          call.address,
+          call.args ?? {},
+          {
+            source,
+            activitySource: opts.activitySource,
+            sentSecrets,
+            readOnly: opts.readOnly,
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
+            unwrapResult: call.resultMode === "value",
+            ...(opts.downstreamInput
+              ? {
+                  processInputRequired: authMethod(
+                    (result: DownstreamInputResult, resolved: ResolvedCatalogTool, secrets: SentSecrets) =>
+                      authFlow<{ toolResult: { content: never[] } }>(function* () {
+                        yield* upwardStep(
+                          authCall<void>(captureDownstreamInput, [
+                            requestScope,
+                            resolved.connector.id,
+                            `${resolved.connector.id}.${resolved.toolName}`,
+                            result,
+                            secrets,
+                            resolved.definition.classification !== "read",
+                          ]),
+                        );
+                        return { toolResult: { content: [] } };
+                      }),
+                  ),
+                }
+              : {}),
+            processResult: authMethod(
+              (result: unknown, resolved: ResolvedCatalogTool, secrets: SentSecrets, format: "text" | "json") =>
+                authFlow<ProcessedCallResult>(function* () {
+                  // Result-size cap for THIS call: the connector's own override wins,
+                  // then the deployment-wide value, then the built-in default (already
+                  // folded into `globalCap`). Resolved per call so one request can
+                  // mix a tight-capped connector with siblings on the global cap. An
+                  // override the registry already warned about at startup is dropped
+                  // here, so the connector simply inherits `globalCap`.
+                  const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, globalCap);
+                  const results: ResultStash = {
+                    secrets,
+                    binding: {
+                      identity: registry.resultIdentity(),
+                      baseUrl,
+                      connector: resolved.connector.id,
+                      tool: resolved.definition.name,
+                      classification: resolved.definition.classification === "read" ? "read" : "write",
+                    },
+                    write: resolved.definition.classification !== "read",
+                    cap,
+                    ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
+                    set: authMethod((id: string, value: string[], ttlSeconds: number) =>
+                      registryProgram(registry, "stashResult", id, value, ttlSeconds),
+                    ),
+                    // The catalog entry, never `toolName`: a record names a tool
+                    // only through the grammar check (src/operator-record.ts).
+                    warn: () =>
+                      logFailure(
+                        registry.contextFor(resolved.connector.id, baseUrl, requestScope).logger,
+                        "result paging unavailable",
+                        failureRecord({ connector: resolved.connector.id, tool: resolved.definition }),
+                      ),
+                  };
+                  const processed = (
+                    toolResult: ToolResult,
+                    truncated: boolean,
+                    value?: { value: unknown },
+                  ): ProcessedCallResult => ({
+                    toolResult,
+                    ...value,
+                    ...(truncated ? { friction: "result_too_large" } : {}),
+                  });
+                  if (call.resultMode === "value") {
+                    let value = result;
+                    const guarded = yield* upwardStep(guardValue(value, results, cap));
+                    value = guarded.result;
+                    return processed(jsonResult({ ok: true, data: value, format }), guarded.truncated, { value });
+                  }
+                  if (resolved.connector.kind === "mcp") {
+                    const mcpResult = result as {
+                      content?: TextContent[];
+                      structuredContent?: unknown;
+                    };
+                    let content = mcpResult?.content ?? [];
+                    if (!content.some((block) => block.type === "text") && mcpResult?.structuredContent !== undefined) {
+                      content = [
+                        ...content,
+                        {
+                          type: "text",
+                          text: JSON.stringify(mcpResult.structuredContent),
+                        },
+                      ];
+                    }
+                    const guarded = yield* upwardStep(guardContent(content, results, cap));
+                    // Native blocks and bounded previews are the result. A format-only
+                    // structuredContent hides them in clients that prefer that field.
+                    guarded.result._meta = { "dev.connecta/format": format };
+                    return processed(guarded.result, guarded.truncated);
+                  }
+                  const value = result;
+                  const guarded = yield* upwardStep(guardText(serializeResultText(value), results, cap));
+                  guarded.result._meta = { "dev.connecta/format": format };
+                  return processed(guarded.result, guarded.truncated, { value });
+                }),
             ),
-        };
-        const processed = (
-          toolResult: ToolResult,
-          truncated: boolean,
-          value?: { value: unknown },
-        ): ProcessedCallResult => ({
-          toolResult,
-          ...value,
-          ...(truncated ? { friction: "result_too_large" } : {}),
-        });
-        if (call.resultMode === "value") {
-          let value = result;
-          const guarded = await guardValue(value, results, cap);
-          value = guarded.result;
-          return processed(jsonResult({ ok: true, data: value, format }), guarded.truncated, { value });
-        }
-        if (resolved.connector.kind === "mcp") {
-          const mcpResult = result as {
-            content?: TextContent[];
-            structuredContent?: unknown;
-          };
-          let content = mcpResult?.content ?? [];
-          if (!content.some((block) => block.type === "text") && mcpResult?.structuredContent !== undefined) {
-            content = [
-              ...content,
-              {
-                type: "text",
-                text: JSON.stringify(mcpResult.structuredContent),
-              },
-            ];
-          }
-          const guarded = await guardContent(content, results, cap);
-          // Native blocks and bounded previews are the result. A format-only
-          // structuredContent hides them in clients that prefer that field.
-          guarded.result._meta = { "dev.connecta/format": format };
-          return processed(guarded.result, guarded.truncated);
-        }
-        const value = result;
-        const guarded = await guardText(serializeResultText(value), results, cap);
-        guarded.result._meta = { "dev.connecta/format": format };
-        return processed(guarded.result, guarded.truncated, { value });
-      },
-      activityFriction: (processed) => processed.friction,
-    });
-    if (!outcome.ok) {
-      const structuredRecovery = outcome.error.nextAction !== undefined;
-      const recoveryRequired =
-        structuredRecovery ||
-        // Sanitized `unavailable` diagnostics ride the structured shape too;
-        // the plain-text path would drop them (#539).
-        outcome.error.details !== undefined ||
-        // So does a conflict's `current`: where things stand is the retry.
-        outcome.error.current !== undefined ||
-        ["auth_required", "invalid_args", "input_required_unsupported"].includes(outcome.error.code);
-      // Every mode carries the complete repair envelope in both MCP forms.
-      const makeFailedResult = () =>
-        jsonResult({
-          ok: false,
-          error: outcome.error,
-          durationMs: outcome.durationMs,
-          attempts: outcome.attempts,
-          ...(call.diagnostics ? { timing: outcome.timing } : {}),
-        });
-      let failedResult = makeFailedResult();
-      // Errors repeat in text and structuredContent. Account for
-      // both copies and JSON escaping when the bounded provider reason is large.
-      if (!recoveryRequired) {
-        const cap = resolveMaxResultBytes(outcome.resolved?.connector.maxResultBytes, globalCap);
-        let budget = 512;
-        while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
-          budget = Math.floor(budget / 2);
-          outcome.error.message = boundedEchoText(outcome.error.message, budget);
-          failedResult = makeFailedResult();
-        }
-      }
-      failedResult.isError = true;
-      return {
-        toolResult: failedResult,
-        durationMs: outcome.durationMs,
-        attempts: outcome.attempts,
-        timing: outcome.timing,
-        error: outcome.error,
-      };
-    }
-    const valueModeResult =
-      call.resultMode === "value"
-        ? jsonResult({
-            ok: true,
-            data: outcome.value.value,
-            format: outcome.format,
+            activityFriction: (processed: ProcessedCallResult) => processed.friction,
+          },
+        ]),
+      );
+      if (!outcome.ok) {
+        const structuredRecovery = outcome.error.nextAction !== undefined;
+        const recoveryRequired =
+          structuredRecovery ||
+          // Sanitized `unavailable` diagnostics ride the structured shape too;
+          // the plain-text path would drop them (#539).
+          outcome.error.details !== undefined ||
+          // So does a conflict's `current`: where things stand is the retry.
+          outcome.error.current !== undefined ||
+          ["auth_required", "invalid_args", "input_required_unsupported"].includes(outcome.error.code);
+        // Every mode carries the complete repair envelope in both MCP forms.
+        const makeFailedResult = () =>
+          jsonResult({
+            ok: false,
+            error: outcome.error,
             durationMs: outcome.durationMs,
             attempts: outcome.attempts,
             ...(call.diagnostics ? { timing: outcome.timing } : {}),
-          })
-        : outcome.value.toolResult;
-    return {
-      toolResult: valueModeResult,
-      durationMs: outcome.durationMs,
-      attempts: outcome.attempts,
-      timing: outcome.timing,
-      ...(Object.prototype.hasOwnProperty.call(outcome.value, "value") ? { value: outcome.value.value } : {}),
-    };
-  }
+          });
+        let failedResult = makeFailedResult();
+        // Errors repeat in text and structuredContent. Account for
+        // both copies and JSON escaping when the bounded provider reason is large.
+        if (!recoveryRequired) {
+          const cap = resolveMaxResultBytes(outcome.resolved?.connector.maxResultBytes, globalCap);
+          let budget = 512;
+          while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
+            budget = Math.floor(budget / 2);
+            outcome.error.message = boundedEchoText(outcome.error.message, budget);
+            failedResult = makeFailedResult();
+          }
+        }
+        failedResult.isError = true;
+        return {
+          toolResult: failedResult,
+          durationMs: outcome.durationMs,
+          attempts: outcome.attempts,
+          timing: outcome.timing,
+          error: outcome.error,
+        };
+      }
+      const valueModeResult =
+        call.resultMode === "value"
+          ? jsonResult({
+              ok: true,
+              data: outcome.value.value,
+              format: outcome.format,
+              durationMs: outcome.durationMs,
+              attempts: outcome.attempts,
+              ...(call.diagnostics ? { timing: outcome.timing } : {}),
+            })
+          : outcome.value.toolResult;
+      return {
+        toolResult: valueModeResult,
+        durationMs: outcome.durationMs,
+        attempts: outcome.attempts,
+        timing: outcome.timing,
+        ...(Object.prototype.hasOwnProperty.call(outcome.value, "value") ? { value: outcome.value.value } : {}),
+      };
+    });
+  });
 
   return {
-    async skills(args: SkillArgs = {}): Promise<ToolResult> {
-      try {
-        if (!args.name) {
-          const listing = await skills.summaries();
-          return {
-            structuredContent: { skills: listing },
-            content: [
-              {
-                type: "text",
-                text:
-                  'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
-                  listing.map((skill) => `- \`${skill.name}\` — ${skill.description}`).join("\n"),
-              },
-            ],
-          };
-        }
-        const text = await skills.text(args.name);
-        return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
-      } catch (error) {
-        return errorResult(error instanceof ConnectorCallError ? error.message : "Skills are unavailable.");
-      }
-    },
-
-    async searchTools(args: SearchArgs): Promise<ToolResult> {
-      if (args.connector !== undefined && enc.encode(args.connector).length > 512) {
-        return discoveryErrorResult(
-          new DiscoveryPolicyError("invalid_args", "connector must be at most 512 UTF-8 bytes."),
-        );
-      }
-      return discoveryResult(
-        async () =>
-          flatSearchResult(
-            await catalog.search({
-              ...args,
-              includeSchemaKeys: args.includeSchemas !== undefined,
-            }),
-          ),
-        "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
-      );
-    },
-
-    async callTool(args: CallArgs): Promise<ToolResult> {
-      return (await runCall(args, "call_tool")).toolResult;
-    },
-
-    async callDestructiveTool(args: DestructiveCallArgs): Promise<ToolResult> {
-      // `reason` is read by the host's approval view and stops there — runCall
-      // forwards only the call arguments, so it never reaches the connector.
-      return (await runCall(args, "call_destructive_tool")).toolResult;
-    },
-
-    async readResult(
-      args: GetResultArgs,
-      options: { signal?: AbortSignal | undefined; onStage?: (stage: ResultReadStage) => void } = {},
-    ): Promise<ToolResult> {
-      // Defense for in-process callers too: guest paging validates these domains
-      // before calling here, while internal consumers may call readResult directly.
-      if (args.maxBytes !== undefined && !isValidMaxResultBytes(args.maxBytes)) {
-        return errorResult(
-          `Invalid maxBytes ${args.maxBytes}: must be a whole number of bytes ` +
-            `>= ${MIN_MAX_RESULT_BYTES}. Omit it to use the deployment default.`,
-        );
-      }
-      if (args.offset !== undefined && !isValidResultOffset(args.offset)) {
-        return errorResult(
-          `Invalid offset ${args.offset}: must be a whole number of bytes ` +
-            `>= ${MIN_RESULT_OFFSET}. Omit it to start at the beginning.`,
-        );
-      }
-      if (args.page !== undefined && (!Number.isSafeInteger(args.page) || args.page < 0 || args.offset !== undefined)) {
-        return errorResult("Use a whole page >= 0, without offset.");
-      }
-      const results = registry.resultsStorage();
-      const unavailableResult = () => ({
-        ...jsonResult({
-          error: {
-            code: "unavailable",
-            message: "Result paging storage is unavailable.",
-            retryable: true,
-          },
-        }),
-        isError: true,
-      });
-      // `false` is a storage failure — retryable, and distinct from an id that
-      // is simply gone. Every key a page touches answers the same way, so a
-      // backend that dies halfway through a multi-chunk page says so.
-      const read = async (key: string): Promise<string | null | false> => {
-        options.onStage?.("result storage");
-        options.signal?.throwIfAborted();
-        let value: string | null | false;
+    skills: authMethod((args: SkillArgs = {}) =>
+      authFlow<ToolResult>(function* () {
         try {
-          value = (await results.get(key)) ?? null;
-        } catch {
-          value = false;
-        }
-        // A storage driver may finish its pending read after cancellation. No
-        // subsequent chunk read or decode may start when that happens (INV-7).
-        options.signal?.throwIfAborted();
-        return value;
-      };
-      const stored = await read(resultKeys.chunk(args.id, 0));
-      if (stored === false) return unavailableResult();
-      if (stored === null) {
-        return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
-      }
-      const denied = () => errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
-      const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
-      if (!header) return denied();
-      let binding: ResultBinding;
-      try {
-        binding = JSON.parse(dec.decode(Uint8Array.from(atob(header[1]!), (char) => char.charCodeAt(0))));
-      } catch {
-        return denied();
-      }
-      const identity = registry.resultIdentity();
-      if (
-        !binding ||
-        binding.baseUrl !== baseUrl ||
-        !binding.identity ||
-        binding.identity.subject !== identity.subject ||
-        binding.identity.principal !== identity.principal ||
-        binding.identity.endpoint !== identity.endpoint ||
-        binding.identity.origin !== identity.origin ||
-        (binding.program === undefined
-          ? typeof binding.connector !== "string" || typeof binding.tool !== "string"
-          : !Array.isArray(binding.program) ||
-            binding.program.some(
-              (dependency) =>
-                !dependency ||
-                typeof dependency.connector !== "string" ||
-                (dependency.tool !== undefined && typeof dependency.tool !== "string") ||
-                (dependency.access !== undefined &&
-                  (dependency.access !== "catalog" || dependency.classification !== "read")) ||
-                !["read", "write"].includes(dependency.classification),
-            )) ||
-        !["read", "write"].includes(binding.classification)
-      )
-        return denied();
-      const allowed = async (): Promise<boolean> => {
-        options.onStage?.("access validation");
-        options.signal?.throwIfAborted();
-        try {
-          const dependencies = binding.program ?? [binding as ProgramResultDependency];
-          if (!(await registry.recheckResultAccess(dependencies, binding.classification, options.signal))) return false;
-          options.signal?.throwIfAborted();
-          if (binding.classification === "write" && opts.readOnly === true) return false;
-          const catalogs = new Map<string, ToolDef[]>();
-          for (const dependency of dependencies) {
-            options.signal?.throwIfAborted();
-            if (dependency.tool === undefined) {
-              if (
-                dependency.access === "catalog"
-                  ? !registry.getConnector(dependency.connector)
-                  : !registry.getResourceConnector(dependency.connector)
-              )
-                return false;
-              continue;
-            }
-            const connector = registry.getConnector(dependency.connector);
-            if (!connector) return false;
-            let tools = catalogs.get(dependency.connector);
-            if (!tools) {
-              tools = await registry.getTools(
-                dependency.connector,
-                baseUrl,
-                requestScope,
-                options.signal ? { signal: options.signal } : {},
-              );
-              catalogs.set(dependency.connector, tools);
-            }
-            options.signal?.throwIfAborted();
-            const tool = tools.find((tool) => tool.name === dependency.tool);
-            if (
-              !tool ||
-              !(
-                dependency.access === "catalog" ||
-                (dependency.classification === "read" && tool.classification === "read") ||
-                (opts.readOnly !== true && connector.readOnly !== true)
-              )
-            )
-              return false;
+          if (!args.name) {
+            const listing = yield* upwardStep(
+              authInvoke<{ name: string; uri: string; description: string }[]>(skills, "summaries", []),
+            );
+            return {
+              structuredContent: { skills: listing },
+              content: [
+                {
+                  type: "text",
+                  text:
+                    'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
+                    listing.map((skill) => `- \`${skill.name}\` — ${skill.description}`).join("\n"),
+                },
+              ],
+            };
           }
-          return true;
-        } catch {
-          options.signal?.throwIfAborted();
-          return false;
+          const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
+          return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
+        } catch (error) {
+          return errorResult(error instanceof ConnectorCallError ? error.message : "Skills are unavailable.");
         }
-      };
-      if (!(await allowed())) return denied();
-      options.onStage?.("result storage");
-      opts.onResultRead?.(binding.program ?? [binding as ProgramResultDependency]);
-      let requestedOffset = args.offset ?? 0;
-      const cap = Number(header[4]);
-      if (!isValidMaxResultBytes(cap)) return denied();
-      const maxBytes = Math.min(args.maxBytes ?? cap, cap);
-      let bytes: Uint8Array;
-      let total: number;
-      let start = 0;
-      {
-        total = Number(header[2]);
-        const chunkBytes = Number(header[3]);
-        if (
-          !Number.isSafeInteger(total) ||
-          total < 0 ||
-          !Number.isSafeInteger(chunkBytes) ||
-          chunkBytes < 3 ||
-          chunkBytes % 3 !== 0
-        )
-          return denied();
-        if (args.page !== undefined) {
-          // At least one complete UTF-8 codepoint per nominal window. Adjacent
-          // pages align both edges backwards, so no character repeats or vanishes.
-          const width = Math.max(4, maxBytes);
-          requestedOffset = Math.min(total, Math.min(args.page, Math.ceil(total / width)) * width);
+      }),
+    ),
+
+    searchTools: authMethod((args: SearchArgs) =>
+      authFlow<ToolResult>(function* () {
+        if (args.connector !== undefined && enc.encode(args.connector).length > 512) {
+          return discoveryErrorResult(
+            new DiscoveryPolicyError("invalid_args", "connector must be at most 512 UTF-8 bytes."),
+          );
         }
-        start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
-        const end = Math.min(total, requestedOffset + maxBytes + 4);
-        bytes = new Uint8Array(Math.max(0, end - start));
-        const lastChunk = Math.floor(Math.max(end - 1, start) / chunkBytes);
-        for (let index = Math.floor(start / chunkBytes); index <= lastChunk; index++) {
-          const encoded = index === 0 ? stored.slice(header[0].length) : await read(resultKeys.chunk(args.id, index));
-          if (encoded === false) return unavailableResult();
-          if (encoded === null) {
-            // A chunk expired or was evicted under its own header; the id can no
-            // longer serve this range, and inventing U+0000 filler would be worse.
+        return yield* upwardStep(
+          discoveryResult(
+            authMethod(() =>
+              authFlow<CatalogSearchResult>(function* () {
+                return yield* upwardStep(
+                  authCall<CatalogSearchResult>(flatSearchResult, [
+                    yield* upwardStep(
+                      authInvoke<CatalogSearchPage>(catalog, "search", [
+                        {
+                          ...args,
+                          includeSchemaKeys: args.includeSchemas !== undefined,
+                        },
+                      ]),
+                    ),
+                  ]),
+                );
+              }),
+            ),
+            "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+          ),
+        );
+      }),
+    ),
+
+    callTool: authMethod((args: CallArgs) =>
+      authFlow<ToolResult>(function* () {
+        return (yield* upwardStep(authCall<RunCallOutcome>(runCall, [args, "call_tool"]))).toolResult;
+      }),
+    ),
+
+    callDestructiveTool: authMethod((args: DestructiveCallArgs) =>
+      authFlow<ToolResult>(function* () {
+        // `reason` is read by the host's approval view and stops there — runCall
+        // forwards only the call arguments, so it never reaches the connector.
+        return (yield* upwardStep(authCall<RunCallOutcome>(runCall, [args, "call_destructive_tool"]))).toolResult;
+      }),
+    ),
+
+    readResult: authMethod(
+      (
+        args: GetResultArgs,
+        options: { signal?: AbortSignal | undefined; onStage?: (stage: ResultReadStage) => void } = {},
+      ) =>
+        authFlow<ToolResult>(function* () {
+          // Defense for in-process callers too: guest paging validates these domains
+          // before calling here, while internal consumers may call readResult directly.
+          if (args.maxBytes !== undefined && !isValidMaxResultBytes(args.maxBytes)) {
+            return errorResult(
+              `Invalid maxBytes ${args.maxBytes}: must be a whole number of bytes ` +
+                `>= ${MIN_MAX_RESULT_BYTES}. Omit it to use the deployment default.`,
+            );
+          }
+          if (args.offset !== undefined && !isValidResultOffset(args.offset)) {
+            return errorResult(
+              `Invalid offset ${args.offset}: must be a whole number of bytes ` +
+                `>= ${MIN_RESULT_OFFSET}. Omit it to start at the beginning.`,
+            );
+          }
+          if (
+            args.page !== undefined &&
+            (!Number.isSafeInteger(args.page) || args.page < 0 || args.offset !== undefined)
+          ) {
+            return errorResult("Use a whole page >= 0, without offset.");
+          }
+          const results = registry.resultsStorage();
+          const unavailableResult = () => ({
+            ...jsonResult({
+              error: {
+                code: "unavailable",
+                message: "Result paging storage is unavailable.",
+                retryable: true,
+              },
+            }),
+            isError: true,
+          });
+          // `false` is a storage failure — retryable, and distinct from an id that
+          // is simply gone. Every key a page touches answers the same way, so a
+          // backend that dies halfway through a multi-chunk page says so.
+          const read = authMethod((key: string) =>
+            authFlow<string | false | null>(function* () {
+              options.onStage?.("result storage");
+              options.signal?.throwIfAborted();
+              let value: string | null | false;
+              try {
+                value = (yield* upwardStep(authStorage<string | null>(results, "get", [key]))) ?? null;
+              } catch {
+                value = false;
+              }
+              // A storage driver may finish its pending read after cancellation. No
+              // subsequent chunk read or decode may start when that happens (INV-7).
+              options.signal?.throwIfAborted();
+              return value;
+            }),
+          );
+          const stored = yield* upwardStep(authCall<string | false | null>(read, [resultKeys.chunk(args.id, 0)]));
+          if (stored === false) return unavailableResult();
+          if (stored === null) {
             return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
           }
-          const chunkStart = index * chunkBytes;
-          // Both bounds are chunk-local. `from` inherits `start`'s three-byte
-          // alignment because every chunk boundary is a multiple of three.
-          const from = Math.max(start, chunkStart) - chunkStart;
-          const to = Math.min(end, chunkStart + chunkBytes, total) - chunkStart;
-          const binary = atob(encoded.slice((from / 3) * 4, Math.ceil(to / 3) * 4));
-          for (let at = from; at < to; at++) {
-            bytes[chunkStart + at - start] = binary.charCodeAt(at - from);
+          const denied = () => errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+          const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
+          if (!header) return denied();
+          let binding: ResultBinding;
+          try {
+            binding = JSON.parse(dec.decode(Uint8Array.from(atob(header[1]!), (char) => char.charCodeAt(0))));
+          } catch {
+            return denied();
           }
-        }
-      }
-      // Validated above, so no coercion is needed here — only alignment. A
-      // client that computes its own offsets can land inside a multi-byte
-      // character, which would decode as U+FFFD; the offset actually served is
-      // the boundary at or before it, and it is what the response reports back
-      // as `offset` (issue #38).
-      const offset = start + alignStartToCharBoundary(bytes, requestedOffset - start);
-      // Both sides of `maxBytes` are validated by now — the argument above, the
-      // cap at intake — so `offset + maxBytes` always reaches past `offset`.
-      // Align the slice end to a codepoint boundary so a multi-byte char is
-      // never split across pages (which would emit U+FFFD on both sides).
-      // `nextOffset` is this aligned end, so it is a valid boundary for the
-      // next call and paging reassembles the original byte-for-byte.
-      const end =
-        args.page === undefined
-          ? start + alignEndToCharBoundary(bytes, offset - start, offset - start + maxBytes, total - start)
-          : start +
-            alignStartToCharBoundary(bytes, Math.min(total - start, requestedOffset - start + Math.max(4, maxBytes)));
-      const slice = dec.decode(bytes.subarray(offset - start, end - start));
-      const hasMore = end < total;
-      // The same notice-first shape as a truncated call: one line of header,
-      // then the page as raw text. A JSON `text` field escaped every quote and
-      // newline in the page — a second layer over JSON payloads — which
-      // inflated pages past the size clients accept and made them hard to read.
-      const pageHeader = {
-        resultId: args.id,
-        offset,
-        bytes: Math.max(0, end - offset),
-        totalBytes: total,
-        hasMore,
-        ...(hasMore ? { nextOffset: end } : {}),
-      };
-      if (!(await allowed())) return denied();
-      const page = noticeFirst(pageHeader, slice);
-      page.structuredContent = { ...pageHeader, text: slice, format: "text" };
-      return page;
-    },
+          const identity = registry.resultIdentity();
+          if (
+            !binding ||
+            binding.baseUrl !== baseUrl ||
+            !binding.identity ||
+            binding.identity.subject !== identity.subject ||
+            binding.identity.principal !== identity.principal ||
+            binding.identity.endpoint !== identity.endpoint ||
+            binding.identity.origin !== identity.origin ||
+            (binding.program === undefined
+              ? typeof binding.connector !== "string" || typeof binding.tool !== "string"
+              : !Array.isArray(binding.program) ||
+                binding.program.some(
+                  (dependency) =>
+                    !dependency ||
+                    typeof dependency.connector !== "string" ||
+                    (dependency.tool !== undefined && typeof dependency.tool !== "string") ||
+                    (dependency.access !== undefined &&
+                      (dependency.access !== "catalog" || dependency.classification !== "read")) ||
+                    !["read", "write"].includes(dependency.classification),
+                )) ||
+            !["read", "write"].includes(binding.classification)
+          )
+            return denied();
+          const allowed = authMethod(() =>
+            authFlow<boolean>(function* () {
+              options.onStage?.("access validation");
+              options.signal?.throwIfAborted();
+              try {
+                const dependencies = binding.program ?? [binding as ProgramResultDependency];
+                if (
+                  !(yield* upwardStep(
+                    registryProgram(
+                      registry,
+                      "recheckResultAccess",
+                      dependencies,
+                      binding.classification,
+                      options.signal,
+                    ),
+                  ))
+                )
+                  return false;
+                options.signal?.throwIfAborted();
+                if (binding.classification === "write" && opts.readOnly === true) return false;
+                const catalogs = new Map<string, ToolDef[]>();
+                for (const dependency of dependencies) {
+                  options.signal?.throwIfAborted();
+                  if (dependency.tool === undefined) {
+                    if (
+                      dependency.access === "catalog"
+                        ? !registry.getConnector(dependency.connector)
+                        : !registry.getResourceConnector(dependency.connector)
+                    )
+                      return false;
+                    continue;
+                  }
+                  const connector = registry.getConnector(dependency.connector);
+                  if (!connector) return false;
+                  let tools = catalogs.get(dependency.connector);
+                  if (!tools) {
+                    tools = yield* upwardStep(
+                      registryProgram(
+                        registry,
+                        "getTools",
+                        dependency.connector,
+                        baseUrl,
+                        requestScope,
+                        options.signal ? { signal: options.signal } : {},
+                      ),
+                    );
+                    catalogs.set(dependency.connector, tools);
+                  }
+                  options.signal?.throwIfAborted();
+                  const tool = tools.find((tool) => tool.name === dependency.tool);
+                  if (
+                    !tool ||
+                    !(
+                      dependency.access === "catalog" ||
+                      (dependency.classification === "read" && tool.classification === "read") ||
+                      (opts.readOnly !== true && connector.readOnly !== true)
+                    )
+                  )
+                    return false;
+                }
+                return true;
+              } catch {
+                options.signal?.throwIfAborted();
+                return false;
+              }
+            }),
+          );
+          if (!(yield* upwardStep(authCall<boolean>(allowed, [])))) return denied();
+          options.onStage?.("result storage");
+          opts.onResultRead?.(binding.program ?? [binding as ProgramResultDependency]);
+          let requestedOffset = args.offset ?? 0;
+          const cap = Number(header[4]);
+          if (!isValidMaxResultBytes(cap)) return denied();
+          const maxBytes = Math.min(args.maxBytes ?? cap, cap);
+          let bytes: Uint8Array;
+          let total: number;
+          let start = 0;
+          {
+            total = Number(header[2]);
+            const chunkBytes = Number(header[3]);
+            if (
+              !Number.isSafeInteger(total) ||
+              total < 0 ||
+              !Number.isSafeInteger(chunkBytes) ||
+              chunkBytes < 3 ||
+              chunkBytes % 3 !== 0
+            )
+              return denied();
+            if (args.page !== undefined) {
+              // At least one complete UTF-8 codepoint per nominal window. Adjacent
+              // pages align both edges backwards, so no character repeats or vanishes.
+              const width = Math.max(4, maxBytes);
+              requestedOffset = Math.min(total, Math.min(args.page, Math.ceil(total / width)) * width);
+            }
+            start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
+            const end = Math.min(total, requestedOffset + maxBytes + 4);
+            bytes = new Uint8Array(Math.max(0, end - start));
+            const lastChunk = Math.floor(Math.max(end - 1, start) / chunkBytes);
+            for (let index = Math.floor(start / chunkBytes); index <= lastChunk; index++) {
+              const encoded =
+                index === 0
+                  ? stored.slice(header[0].length)
+                  : yield* upwardStep(authCall<string | false | null>(read, [resultKeys.chunk(args.id, index)]));
+              if (encoded === false) return unavailableResult();
+              if (encoded === null) {
+                // A chunk expired or was evicted under its own header; the id can no
+                // longer serve this range, and inventing U+0000 filler would be worse.
+                return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+              }
+              const chunkStart = index * chunkBytes;
+              // Both bounds are chunk-local. `from` inherits `start`'s three-byte
+              // alignment because every chunk boundary is a multiple of three.
+              const from = Math.max(start, chunkStart) - chunkStart;
+              const to = Math.min(end, chunkStart + chunkBytes, total) - chunkStart;
+              const binary = atob(encoded.slice((from / 3) * 4, Math.ceil(to / 3) * 4));
+              for (let at = from; at < to; at++) {
+                bytes[chunkStart + at - start] = binary.charCodeAt(at - from);
+              }
+            }
+          }
+          // Validated above, so no coercion is needed here — only alignment. A
+          // client that computes its own offsets can land inside a multi-byte
+          // character, which would decode as U+FFFD; the offset actually served is
+          // the boundary at or before it, and it is what the response reports back
+          // as `offset` (issue #38).
+          const offset = start + alignStartToCharBoundary(bytes, requestedOffset - start);
+          // Both sides of `maxBytes` are validated by now — the argument above, the
+          // cap at intake — so `offset + maxBytes` always reaches past `offset`.
+          // Align the slice end to a codepoint boundary so a multi-byte char is
+          // never split across pages (which would emit U+FFFD on both sides).
+          // `nextOffset` is this aligned end, so it is a valid boundary for the
+          // next call and paging reassembles the original byte-for-byte.
+          const end =
+            args.page === undefined
+              ? start + alignEndToCharBoundary(bytes, offset - start, offset - start + maxBytes, total - start)
+              : start +
+                alignStartToCharBoundary(
+                  bytes,
+                  Math.min(total - start, requestedOffset - start + Math.max(4, maxBytes)),
+                );
+          const slice = dec.decode(bytes.subarray(offset - start, end - start));
+          const hasMore = end < total;
+          // The same notice-first shape as a truncated call: one line of header,
+          // then the page as raw text. A JSON `text` field escaped every quote and
+          // newline in the page — a second layer over JSON payloads — which
+          // inflated pages past the size clients accept and made them hard to read.
+          const pageHeader = {
+            resultId: args.id,
+            offset,
+            bytes: Math.max(0, end - offset),
+            totalBytes: total,
+            hasMore,
+            ...(hasMore ? { nextOffset: end } : {}),
+          };
+          if (!(yield* upwardStep(authCall<boolean>(allowed, [])))) return denied();
+          const page = noticeFirst(pageHeader, slice);
+          page.structuredContent = { ...pageHeader, text: slice, format: "text" };
+          return page;
+        }),
+    ),
 
-    async authorizeConnector(args: AuthorizeArgs): Promise<ToolResult> {
-      try {
-        return jsonResult(await authorizeConnector(registry, baseUrl, requestScope, opts, args));
-      } catch (err) {
-        return errorResult(msg(err));
-      }
-    },
+    authorizeConnector: authMethod((args: AuthorizeArgs) =>
+      authFlow<ToolResult>(function* () {
+        try {
+          return jsonResult(
+            yield* upwardStep(
+              authCall<AuthorizeConnectorResult>(authorizeConnector, [registry, baseUrl, requestScope, opts, args]),
+            ),
+          );
+        } catch (err) {
+          return errorResult(msg(err));
+        }
+      }),
+    ),
   };
 }
 
@@ -1435,10 +1603,12 @@ export function registerMetaTools(
       outputSchema: SKILLS_OUTPUT,
       annotations: READ_ONLY_LOCAL,
     },
-    async (args, request) => {
-      bindRequest(request);
-      return mt.skills(args as SkillArgs);
-    },
+    authMethod((args: { name?: string | undefined }, request: ServerContext) =>
+      authFlow<ToolResult>(function* () {
+        bindRequest(request);
+        return yield* upwardStep(authInvoke<ToolResult>(mt, "skills", [args as SkillArgs]));
+      }),
+    ),
   );
 
   if (ctx.native) {
@@ -1446,19 +1616,31 @@ export function registerMetaTools(
       server.registerTool(
         "read_result",
         { description: READ_RESULT_DESC, inputSchema: READ_RESULT_INPUT, annotations: READ_ONLY_LOCAL },
-        async (args, request) => {
-          bindRequest(request);
-          return mt.readResult(args as GetResultArgs, { signal: request.mcpReq.signal });
-        },
+        authMethod(
+          (
+            args: { id: string; offset?: number | undefined; page?: number | undefined; maxBytes?: number | undefined },
+            request: ServerContext,
+          ) =>
+            authFlow<ToolResult>(function* () {
+              bindRequest(request);
+              return yield* upwardStep(
+                authInvoke<ToolResult>(mt, "readResult", [args as GetResultArgs, { signal: request.mcpReq.signal }]),
+              );
+            }),
+        ),
       );
     }
     // A native call is the call_tool or call_destructive_tool call it names,
     // run exactly as those two tools run it below.
-    return (route, call, request) => {
+    return authMethod((route, call, request) => {
       bindRequest(request);
-      const run = () => (route === "call_tool" ? mt.callTool(call) : mt.callDestructiveTool(call));
-      return ctx.authElicitation ? ctx.authElicitation.run(route, call, request, run) : run();
-    };
+      const run = authMethod(() =>
+        authInvoke<ToolResult>(mt, route === "call_tool" ? "callTool" : "callDestructiveTool", [call]),
+      );
+      return ctx.authElicitation
+        ? authInvoke(ctx.authElicitation, "run", [route, call, request, run])
+        : authCall(run, []);
+    });
   }
 
   server.registerTool(
@@ -1469,10 +1651,24 @@ export function registerMetaTools(
       outputSchema: SEARCH_OUTPUT,
       annotations: READ_ONLY_REMOTE,
     },
-    async (args, request) => {
-      bindRequest(request);
-      return mt.searchTools(args as SearchArgs);
-    },
+    authMethod(
+      (
+        args: {
+          query?: string | undefined;
+          connector?: string | undefined;
+          safety?: "readOnly" | "approvalRequired" | "all" | undefined;
+          limit?: number | undefined;
+          offset?: number | undefined;
+          fullDescriptions?: boolean | undefined;
+          includeSchemas?: "compact" | "json" | "typescript" | undefined;
+        },
+        request: ServerContext,
+      ) =>
+        authFlow<ToolResult>(function* () {
+          bindRequest(request);
+          return yield* upwardStep(authInvoke<ToolResult>(mt, "searchTools", [args as SearchArgs]));
+        }),
+    ),
   );
 
   server.registerTool(
@@ -1485,12 +1681,31 @@ export function registerMetaTools(
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
     },
-    async (args, request) => {
-      bindRequest(request);
-      return ctx.authElicitation
-        ? ctx.authElicitation.run("call_tool", args, request, () => mt.callTool(args as CallArgs))
-        : mt.callTool(args as CallArgs);
-    },
+    authMethod(
+      (
+        args: {
+          address: string;
+          args?: Record<string, unknown> | undefined;
+          resultMode?: "value" | "mcp" | undefined;
+          timeoutMs?: number | undefined;
+          diagnostics?: boolean | undefined;
+        },
+        request: ServerContext,
+      ) =>
+        authFlow<InputRequiredResult | ToolResult>(function* () {
+          bindRequest(request);
+          return yield* upwardStep(
+            ctx.authElicitation
+              ? authInvoke<InputRequiredResult | ToolResult>(ctx.authElicitation, "run", [
+                  "call_tool",
+                  args,
+                  request,
+                  authMethod(() => authInvoke<ToolResult>(mt, "callTool", [args as CallArgs])),
+                ])
+              : authInvoke<ToolResult>(mt, "callTool", [args as CallArgs]),
+          );
+        }),
+    ),
   );
 
   server.registerTool(
@@ -1507,18 +1722,38 @@ export function registerMetaTools(
         openWorldHint: true,
       },
     },
-    async (args, request) => {
-      bindRequest(request);
-      // `reason` is the host's to display and connecta's to keep out of the
-      // downstream call, so this destructuring is the whole of its handling:
-      // nothing below reads it. Dropping it is also what makes an empty or
-      // whitespace-only one "absent" rather than a validation failure — there
-      // is no field left for it to be absent from.
-      const { reason: _hostContext, ...call } = args as DestructiveCallArgs;
-      return ctx.authElicitation
-        ? ctx.authElicitation.run("call_destructive_tool", call, request, () => mt.callDestructiveTool(call))
-        : mt.callDestructiveTool(call);
-    },
+    authMethod(
+      (
+        args: {
+          address: string;
+          reason?: string | undefined;
+          args?: Record<string, unknown> | undefined;
+          resultMode?: "value" | "mcp" | undefined;
+          timeoutMs?: number | undefined;
+          diagnostics?: boolean | undefined;
+        },
+        request: ServerContext,
+      ) =>
+        authFlow<InputRequiredResult | ToolResult>(function* () {
+          bindRequest(request);
+          // `reason` is the host's to display and connecta's to keep out of the
+          // downstream call, so this destructuring is the whole of its handling:
+          // nothing below reads it. Dropping it is also what makes an empty or
+          // whitespace-only one "absent" rather than a validation failure — there
+          // is no field left for it to be absent from.
+          const { reason: _hostContext, ...call } = args as DestructiveCallArgs;
+          return yield* upwardStep(
+            ctx.authElicitation
+              ? authInvoke<InputRequiredResult | ToolResult>(ctx.authElicitation, "run", [
+                  "call_destructive_tool",
+                  call,
+                  request,
+                  authMethod(() => authInvoke<ToolResult>(mt, "callDestructiveTool", [call])),
+                ])
+              : authInvoke<ToolResult>(mt, "callDestructiveTool", [call]),
+          );
+        }),
+    ),
   );
 
   server.registerTool(
@@ -1535,14 +1770,22 @@ export function registerMetaTools(
         openWorldHint: true,
       },
     },
-    async (args, request) => {
-      bindRequest(request);
-      return ctx.authElicitation
-        ? ctx.authElicitation.run("authorize_connector", args, request, () =>
-            mt.authorizeConnector(args as AuthorizeArgs),
-          )
-        : mt.authorizeConnector(args as AuthorizeArgs);
-    },
+    authMethod((args: { connector: string; force?: boolean | undefined }, request: ServerContext) =>
+      authFlow<InputRequiredResult | ToolResult>(function* () {
+        bindRequest(request);
+        const run = authMethod(() => authInvoke<ToolResult>(mt, "authorizeConnector", [args as AuthorizeArgs]));
+        return yield* upwardStep(
+          ctx.authElicitation
+            ? authInvoke<InputRequiredResult | ToolResult>(ctx.authElicitation, "run", [
+                "authorize_connector",
+                args,
+                request,
+                run,
+              ])
+            : authCall(run, []),
+        );
+      }),
+    ),
   );
   return undefined;
 }

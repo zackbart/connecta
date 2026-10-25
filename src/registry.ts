@@ -1,3 +1,4 @@
+import { authCall, authInvoke } from "./auth/native.js";
 import { Clock, Duration, Effect, Random } from "effect";
 import { activityRequest } from "./activity-request.js";
 import type { CatalogDriftActivityContext } from "./activity.js";
@@ -961,15 +962,14 @@ export class Registry implements RegistryView {
       if (!connector) throw new Error(`Unknown connector "${id}"`);
       if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
       const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
-      const listed = yield* Effect.tryPromise({ try: () => connector.listTools(ctx), catch: (error) => error }).pipe(
+      const listed = yield* authInvoke<ToolDef[]>(connector, "listTools", [ctx]).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
             const fallback =
               error instanceof ConnectorCallError && error.code === "unavailable"
-                ? yield* Effect.tryPromise({
-                    try: () => customCatalogFallback(ctx, id),
-                    catch: (failure) => failure,
-                  }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+                ? yield* authCall<ToolDef[] | undefined>(customCatalogFallback, [ctx, id]).pipe(
+                    Effect.catch(() => Effect.succeed(undefined)),
+                  )
                 : undefined;
             return fallback
               ? fallback
@@ -992,7 +992,7 @@ export class Registry implements RegistryView {
       const accepted = this.acceptToolNames(facts);
       if (catalogFetchedAt(ctx) === undefined) {
         for (const observe of [storeCustomCatalogFallback, observeUncachedCatalogRefresh]) {
-          yield* Effect.tryPromise({ try: () => observe(ctx, id, facts), catch: (error) => error }).pipe(
+          yield* authCall<void>(observe, [ctx, id, facts]).pipe(
             Effect.catch((error) =>
               Effect.sync(() =>
                 logFailure(
@@ -1366,9 +1366,7 @@ export class Registry implements RegistryView {
                 if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
               }
               if (connector.status)
-                return withObservations(
-                  yield* Effect.tryPromise({ try: () => connector.status!(ctx), catch: (error) => error }),
-                );
+                return withObservations(yield* authInvoke<ConnectorStatus>(connector, "status", [ctx]));
               yield* registryProgram(self, "getTools", id, baseUrl, requestScope, callOptions, scope);
               return withObservations({ state: "ok" });
             }),

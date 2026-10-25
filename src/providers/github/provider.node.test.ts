@@ -227,40 +227,45 @@ describe("GitHub App provider", () => {
       { method: "PATCH", path: "/repos/acme/one/releases/1", body: { tag_name: "outsider:v1" } },
     ])
       await expect(connector.callTool("github_api_write", args, ctx)).rejects.toMatchObject({ code: "invalid_args" });
-    for (const [query, targetOp] of [
-      ["issues", "GET /repos/{owner}/{repo}/issues"],
-      ["list pull requests", "GET /repos/{owner}/{repo}/pulls"],
-      ["list PR", "GET /repos/{owner}/{repo}/pulls"],
-      ["pull request reviews", "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"],
-      ["commits", "GET /repos/{owner}/{repo}/commits"],
-      ["file contents", "GET /repos/{owner}/{repo}/contents/{path}"],
-      ["releases", "GET /repos/{owner}/{repo}/releases"],
-      ["latest release", "GET /repos/{owner}/{repo}/releases/latest"],
-      ["publish a release", "PATCH /repos/{owner}/{repo}/releases/{release_id}"],
-      ["workflows", "GET /repos/{owner}/{repo}/actions/workflows"],
-      ["actions runs", "GET /repos/{owner}/{repo}/actions/runs"],
-      ["labels", "GET /repos/{owner}/{repo}/labels"],
-      ["issue comments", "GET /repos/{owner}/{repo}/issues/{issue_number}/comments"],
-      ["create a draft release", "POST /repos/{owner}/{repo}/releases"],
-      ["merge a pull request", "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"],
-    ]) {
-      const result = value(await connector.callTool("github_api_search", { query, limit: 8 }, ctx));
-      const rank = result.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1;
-      expect(rank, query).toBeGreaterThan(0);
-      if (/^(create|merge|latest|publish)/.test(query!)) {
-        expect(rank, query).toBeLessThanOrEqual(2);
-        const filtered = value(
-          await connector.callTool("github_api_search", { query, method: targetOp!.split(" ")[0], limit: 8 }, ctx),
-        );
-        expect(
-          filtered.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1,
-          query,
-        ).toBeGreaterThan(0);
-        expect(
-          filtered.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1,
-          query,
-        ).toBeLessThanOrEqual(2);
-      }
+    expect(fixture.fetchStub).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["issues", "GET /repos/{owner}/{repo}/issues"],
+    ["list pull requests", "GET /repos/{owner}/{repo}/pulls"],
+    ["list PR", "GET /repos/{owner}/{repo}/pulls"],
+    ["pull request reviews", "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"],
+    ["commits", "GET /repos/{owner}/{repo}/commits"],
+    ["file contents", "GET /repos/{owner}/{repo}/contents/{path}"],
+    ["releases", "GET /repos/{owner}/{repo}/releases"],
+    ["latest release", "GET /repos/{owner}/{repo}/releases/latest"],
+    ["publish a release", "PATCH /repos/{owner}/{repo}/releases/{release_id}"],
+    ["workflows", "GET /repos/{owner}/{repo}/actions/workflows"],
+    ["actions runs", "GET /repos/{owner}/{repo}/actions/runs"],
+    ["labels", "GET /repos/{owner}/{repo}/labels"],
+    ["issue comments", "GET /repos/{owner}/{repo}/issues/{issue_number}/comments"],
+    ["create a draft release", "POST /repos/{owner}/{repo}/releases"],
+    ["merge a pull request", "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"],
+  ])("INV-4: ranks %s locally before authentication", async (query, targetOp) => {
+    const fixture = apiFixture();
+    const connector = connection(),
+      ctx = context();
+    const result = value(await connector.callTool("github_api_search", { query, limit: 8 }, ctx));
+    const rank = result.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1;
+    expect(rank, query).toBeGreaterThan(0);
+    if (/^(create|merge|latest|publish)/.test(query!)) {
+      expect(rank, query).toBeLessThanOrEqual(2);
+      const filtered = value(
+        await connector.callTool("github_api_search", { query, method: targetOp!.split(" ")[0], limit: 8 }, ctx),
+      );
+      expect(
+        filtered.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1,
+        query,
+      ).toBeGreaterThan(0);
+      expect(
+        filtered.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1,
+        query,
+      ).toBeLessThanOrEqual(2);
     }
     expect(fixture.fetchStub).not.toHaveBeenCalled();
   });

@@ -42,6 +42,8 @@ const WORKERS_SUITES = [
   "test/remote-mcp-renewal-lifetime.test.ts",
   "test/direct-write-finalizer.test.ts",
   "test/mcp-core.test.ts",
+  "test/upward-native.test.ts",
+  "test/skills-extension.test.ts",
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
