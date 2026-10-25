@@ -7,9 +7,10 @@ import type { Connecta } from "./index.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { configureGuardedTransport } from "./guarded-transport.js";
 import { createNodeGuardedTransport } from "./http/node-transport.js";
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 
-/** 10 MiB. Tool arguments are JSON; nothing legitimate approaches this. */
-const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
+/** The adapter buffers before auth, bounded by the same default as the core. */
+const DEFAULT_MAX_BODY_BYTES = CONFIG_DEFAULTS.admission.requests.maxBodyBytes;
 
 export interface ListenOptions {
   port: number;
@@ -17,7 +18,7 @@ export interface ListenOptions {
   proxy?: string;
   /** Interface to bind. Defaults to Node's own (all interfaces). */
   host?: string;
-  /** Reject request bodies larger than this with 413. Default 10 MiB. */
+  /** Pre-auth buffer cap, independent of the authenticated MCP cap. Default 4 MiB. */
   maxBodyBytes?: number;
   /**
    * Stop accepting connections on SIGTERM/SIGINT, let in-flight requests

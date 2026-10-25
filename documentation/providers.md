@@ -412,6 +412,8 @@ domain move to another project checks both projects before sending the write.
 Unprovable global/account operations, organizations, cross-team grants and project
 transfers are unavailable. The pinned `list_teams` returns one terminal item,
 and the credential probe reads that team. No user/account read is an exception.
+Pinned hatch search and details mark these unavailable operations as refused;
+the usage guide's refusal count includes the configured team boundary.
 Signed continuations bind the pin policy as well as the credential owner and
 existing call scope; changing the pin or adding/removing it requires a new first
 page. Writes still have one physical attempt after successful preflights.
