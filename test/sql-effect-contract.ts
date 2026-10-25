@@ -1,12 +1,13 @@
 // Native SQL characterization, run against DatabaseSync and workerd D1.
-import { Cause, Effect, Exit, Tracer } from "effect";
+import { Cause, Effect, Exit, Random, Tracer } from "effect";
 import { expect, it, vi } from "vitest";
 import { getNativeActivity, getNativeStorage } from "../src/runtime/native-storage.js";
 import { Registry } from "../src/registry.js";
 import { registryProgram } from "../src/runtime/registry.js";
 import { Storage } from "../src/runtime/services.js";
 import { storageGet, storageSet, storageDelete, storageList, storageCompareAndSet } from "../src/runtime/storage.js";
-import { resultKeys, scopes } from "../src/storage/keys.js";
+import { resultKeys, scopes, stashLedgerKeys } from "../src/storage/keys.js";
+import * as storageRuntime from "../src/runtime/storage.js";
 import { silentLogger } from "./helpers.js";
 import { runEdge } from "../src/runtime/run.js";
 import { nativeSqlDriver } from "../src/storage/sql-driver.js";
@@ -16,6 +17,7 @@ import * as Statement from "effect/sql/Statement";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import { deferred } from "./fixtures/misc.js";
 import type { SqlFixture } from "./sql-storage-contract.js";
+import type { KVStorage } from "../src/types.js";
 
 export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
   async function setup() {
@@ -242,6 +244,51 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
       await expect(runEdge(native.get("wait"), { signal: controller.signal })).rejects.toBe(reason);
     } finally {
       pending.mockRestore();
+    }
+  });
+
+  it("INV-6 INV-13: an undecodable stash ledger gracefully refuses native and Promise storage without writing chunks", async () => {
+    const { db, storage } = await setup();
+    await storage.set(stashLedgerKeys.ledger, "placeholder");
+    await db.exec("UPDATE connecta_kv SET value = CAST(x'ff00' AS TEXT) WHERE key = ?", stashLedgerKeys.ledger);
+    const lifted: KVStorage = {
+      capabilities: storage.capabilities,
+      get: (key) => storage.get(key),
+      set: (key, value, options) => storage.set(key, value, options),
+      delete: (key) => storage.delete(key),
+      list: (prefix) => storage.list(prefix),
+      compareAndSet: (key, expected, next, options) => storage.compareAndSet(key, expected, next, options),
+    };
+    const run = storageRuntime.runOnPartition;
+    const runner = vi
+      .spyOn(storageRuntime, "runOnPartition")
+      .mockImplementation((program, partition) =>
+        run(
+          program.pipe(Effect.provideService(Random.Random, { nextDoubleUnsafe: () => 0, nextIntUnsafe: () => 0 })),
+          partition,
+        ),
+      );
+    const logger = { ...silentLogger, warn: vi.fn(), error: vi.fn() };
+    try {
+      expect(await new Registry([], { storage: lifted, logger }).stashResult("lifted", ["private-result"], 120)).toBe(
+        false,
+      );
+      const get = vi.spyOn(storage, "get").mockImplementation(() => {
+        throw new Error("Promise store re-entry");
+      });
+      try {
+        expect(await new Registry([], { storage, logger }).stashResult("native", ["private-result"], 120)).toBe(false);
+        expect(get).not.toHaveBeenCalled();
+      } finally {
+        get.mockRestore();
+      }
+      expect(await db.rows("SELECT key, hex(value) AS value FROM connecta_kv")).toEqual([
+        { key: stashLedgerKeys.ledger, value: "FF00" },
+      ]);
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    } finally {
+      runner.mockRestore();
     }
   });
 

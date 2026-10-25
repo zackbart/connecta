@@ -1992,6 +1992,15 @@ describe, resolution, and listing compose these programs directly. The shared
 listing is a native child of its request's Scope, started through
 `forkRequest` in the edge runner; an individual reader cannot terminate a read
 another reader still needs. Closing the request aborts and closes those children.
+Settled reads remove their request-close finalizer; active reads retain it,
+including in long-lived caller-supplied scopes.
+
+Native catalog and maintained API entry points report policy, validation, and
+operation-construction throws as typed failures with the original thrown value,
+matching the Promise boundary. Native consumers can use `Effect.catch` and
+`Effect.result` without losing refusals to the defect channel. Interruption
+remains interruption. Normalization belongs at these program boundaries;
+pure catalog algorithms and core validation retain their existing behavior.
 
 `RequestScope` in `src/runtime/request-scope.ts` represents the existing request
 identity. It owns call revocation, teardown, operation signals, the complete

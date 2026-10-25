@@ -24,6 +24,7 @@ export class SharedRead<A> {
   private readers = 0;
   private ended = false;
   private started = false;
+  private releaseRequest: (() => void) | undefined;
 
   /**
    * The first join starts `read` under a signal the read owns. `onEnd` runs once:
@@ -48,7 +49,12 @@ export class SharedRead<A> {
         this.settle(Exit.fail(owner.controller.signal.reason));
         return;
       }
-      owner.own(() => this.cancel(owner.controller.signal.reason));
+      const close = () => this.cancel(owner.controller.signal.reason);
+      owner.own(close);
+      this.releaseRequest = () => {
+        const index = owner.finalizers.indexOf(close);
+        if (index !== -1) owner.finalizers.splice(index, 1);
+      };
       yield* forkRequest(
         Effect.suspend(() => this.read(this.controller.signal)).pipe(
           Effect.onExit((exit) => Effect.sync(() => this.settle(exit))),
@@ -59,6 +65,8 @@ export class SharedRead<A> {
   }
 
   private settle(exit: Exit.Exit<A, unknown>): void {
+    this.releaseRequest?.();
+    this.releaseRequest = undefined;
     this.end(Exit.isSuccess(exit));
     Deferred.doneUnsafe(this.outcome, exit);
   }
