@@ -6,6 +6,35 @@ import { Client, ProxyAgent, type Dispatcher, type buildConnector } from "undici
 import { ConnectorCallError } from "../errors.js";
 import type { GuardedTransport } from "../guarded-transport.js";
 
+/** Pull-based bridge: Node 22's Readable.toWeb can enqueue after Web cancellation. */
+function responseBody(body: Readable, signal: AbortSignal): ReadableStream<Uint8Array> {
+  const chunks = body[Symbol.asyncIterator]();
+  let closed = false;
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const chunk = await chunks.next();
+        if (closed) return;
+        if (chunk.done) {
+          closed = true;
+          controller.close();
+        } else controller.enqueue(chunk.value);
+      } catch (error) {
+        if (closed) return;
+        closed = true;
+        controller.error(signal.aborted ? signal.reason : error);
+      }
+    },
+    cancel() {
+      closed = true;
+      body.destroy();
+      // A pending next() can still settle: it checks closed before touching
+      // the canceled controller, and every iterator rejection is observed.
+      void chunks.return?.().catch(() => {});
+    },
+  });
+}
+
 /**
  * One Client per send, no shared/global dispatcher or interceptor. request()
  * avoids fetch's 421 retry; HTTP/1.1 and non-idempotent dispatch disable the
@@ -120,9 +149,11 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
           body:
             typeof init.body === "string"
               ? init.body
-              : framed.body
-                ? Readable.fromWeb(framed.body as Parameters<typeof Readable.fromWeb>[0])
-                : null,
+              : init.body instanceof URLSearchParams
+                ? init.body.toString()
+                : framed.body
+                  ? Readable.fromWeb(framed.body as Parameters<typeof Readable.fromWeb>[0])
+                  : null,
           signal: framed.signal,
           idempotent: false,
           maxRedirections: 0,
@@ -184,7 +215,7 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
           decode.once("close", () => previous.destroy());
           body = previous.pipe(decode);
         }
-        return new Response(Readable.toWeb(body) as ReadableStream<Uint8Array>, { status: answer.statusCode, headers });
+        return new Response(responseBody(body, framed.signal), { status: answer.statusCode, headers });
       } catch (error) {
         // ProxyAgent destroys its destination Agent before its CONNECT Client.
         // An unfinished CONNECT holds the former's connector open: cancel both
