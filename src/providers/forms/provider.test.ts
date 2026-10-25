@@ -326,21 +326,23 @@ describe("worst-case results fit one host result (256 KiB)", () => {
         query,
       ).toContain(path);
     }
-    for (const [query, path, reason] of [
+    for (const [query, path, reason, summary] of [
       [
         "publish form",
         "/forms/{formId}:setPublishSettings",
         "Publishing and response availability changes require separate product authorization; the owner can change them in Forms.",
+        "Refused: publish form settings and response availability require separate authorization.",
       ],
       [
         "watch form responses",
         "/forms/{formId}/watches",
         "Watch registration creates persistent Pub/Sub delivery and requires separate product authorization.",
+        "Refused: register watch form responses with persistent Pub/Sub delivery requires separate authorization.",
       ],
     ]) {
       const discovery = await call(connector, "forms_api_search", { query });
       const refused = discovery.operations.find((op: any) => op.path === path && op.method === "POST");
-      expect(refused).toMatchObject({ summary: `Refused: ${reason}` });
+      expect(refused).toMatchObject({ summary, refusal: reason });
       expect(refused.tool).toBeUndefined();
     }
     const readOnly = connection({ readOnly: true });
