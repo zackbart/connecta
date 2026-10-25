@@ -220,6 +220,7 @@ async function loadDefinition(provider, skills) {
   if (!Array.isArray(tools) || !tools.length)
     fail(provider.name, "createAuthored().staticTools must be a nonempty offline tool catalog");
   provider.tools = tools;
+  provider.conventionToolBlocks = exports.conventionToolBlocks;
   return definition;
 }
 
@@ -312,6 +313,7 @@ export async function generateProviders({ root = repositoryRoot, check = false }
         kit: definition.kit,
         tools: provider.tools,
         keys,
+        toolBlocks: provider.conventionToolBlocks,
       });
       const skill = {
         content: [provider.guide.body, conventions].filter(Boolean).join("\n\n"),

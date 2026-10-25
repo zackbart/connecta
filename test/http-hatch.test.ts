@@ -166,6 +166,7 @@ function setup(
     pages?: Parameters<typeof hatch>[0]["pages"];
     pageCursor?: "argument" | "parameter";
     binding?: Parameters<typeof hatch>[0]["binding"];
+    named?: Parameters<typeof hatch>[0]["named"];
     headers?: Parameters<typeof hatch>[0]["headers"];
     textBodies?: true;
     fieldsRoot?: string;
@@ -217,6 +218,7 @@ function setup(
     ...(options.pages ? { pages: options.pages } : {}),
     ...(options.pageCursor ? { pageCursor: options.pageCursor } : {}),
     ...(options.binding ? { binding: options.binding } : {}),
+    ...(options.named ? { named: options.named } : {}),
     ...(options.headers ? { headers: options.headers } : {}),
     ...(options.textBodies ? { textBodies: options.textBodies } : {}),
     ...(options.fieldsRoot ? { fieldsRoot: options.fieldsRoot } : {}),
@@ -229,6 +231,51 @@ function setup(
     connector.callTool(`items_api_${kind}`, args, options.context ?? connectorContext(storage));
   return { index, tools, connection, call, sendPath, authenticate, admit, context };
 }
+
+it(
+  "INV-3 INV-5 INV-11: opts reviewed hatches into optional safe totals and construction-owned named suggestions",
+  NATIVE,
+  async () => {
+    let total: unknown = 42;
+    const adapter: HatchPageAdapter = {
+      param: "limit",
+      in: "query",
+      decode: (value) => Number(value),
+      next: () => null,
+      total: () => total as number | undefined,
+    };
+    const ordinary = setup({
+      pages: { "GET /items": { param: adapter.param, in: adapter.in, decode: adapter.decode, next: adapter.next } },
+    });
+    const counted = setup({ pages: { "GET /items": adapter } });
+    const pageSchema = (tools: typeof counted.tools) =>
+      (tools.find((tool) => tool.name === "items_api_read")!.outputSchema as any).properties.page.properties;
+    expect(pageSchema(ordinary.tools)).not.toHaveProperty("total");
+    expect(pageSchema(counted.tools).total).toMatchObject({ type: "integer", minimum: 0 });
+    for (const value of [42, 0, undefined, null, "42", -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      total = value;
+      const result = (await counted.call("read", { path: "/items", fields: ["id"] })) as any;
+      expect(result.data).toEqual({ id: "i1" });
+      expect(result.page).toEqual({
+        hasMore: false,
+        param: "limit",
+        in: "query",
+        ...([42, 0].includes(value as number) ? { total: value } : {}),
+      });
+    }
+    expect(() => setup({ pages: { "GET /items": { ...adapter, total: true as never } } })).toThrow(/cursor adapter/);
+    const binding = { review: "Test fixed suggestions", send: () => Effect.succeed({ status: 200, data: {} }) };
+    const named = { "GET /items": "list_items" };
+    expect(await setup({ named, binding }).call("details", { method: "GET", path: "/items" })).toHaveProperty(
+      "named",
+      "list_items",
+    );
+    expect(
+      await setup({ named, binding: { ...binding, named: {} } }).call("details", { method: "GET", path: "/items" }),
+    ).not.toHaveProperty("named");
+    expect(() => setup({ named, binding: { ...binding, named: { "GET /missing": "bad" } } })).toThrow(/named tool/);
+  },
+);
 
 it(
   "INV-1 INV-10: snapshots discovery-only refusals without changing dispatch verdicts or schema",

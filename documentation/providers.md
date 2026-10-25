@@ -130,6 +130,23 @@ Named lists use signed cursors over the vendor offset; paged hatch reads return
 `page.nextCursor` for the `offset` query parameter. Keep the other query and
 field arguments unchanged when continuing a hatch read.
 
+Named lists and paged hatch reads expose `page.total` only when Planning Center
+supplies a nonnegative safe integer in `meta.total_count`. This is the vendor's
+count for the requested collection and vendor filters, across all pages;
+`meta.count` describes one vendor page. For example, a filtered collection can
+report `page.total: 57` while this reply emits two items. Local filtering,
+projection and size truncation can reduce the items shown without changing the
+vendor total. Missing, malformed or oversized optional totals are omitted.
+`page.hasMore` and signed continuation still follow `meta.next.offset`, never
+the total, item count, offset or limit.
+
+Excluded products' unavailable named tools are omitted from authored and
+generated guide sections and from hatch search/details suggestions. For example,
+excluding Services removes `list_plans` suggestions while retaining People
+identity tools. The indexed vendor contract remains inspectable; exclusion
+still refuses those operations before dispatch. Changing the credential owner
+or original filters invalidates a continuation; totals add no new cursor scope.
+
 ## Stripe
 
 `stripe()` connects one Stripe account in one mode through the pinned REST API.

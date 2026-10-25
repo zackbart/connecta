@@ -247,10 +247,15 @@ describe.each(providers)("$name meets the hand-written provider conventions", ({
     const guide = connector.usageGuide;
     if (paged.length && typeof guide === "object") {
       const lines = guide.content.split("\n").filter((line) => line.startsWith("- **Paging:**"));
-      expect(lines).toHaveLength(1);
-      const line = lines[0];
-      expect(line).toBeDefined();
-      for (const tool of paged) expect(line, tool.name).toContain(`\`${tool.name}\``);
+      expect(lines.length).toBeGreaterThan(0);
+      // Conditional product groups may supply separate paging lines. Each
+      // reachable paged tool still gets exactly one continuation instruction.
+      for (const tool of paged)
+        expect(
+          lines.filter((line) => line.includes(`\`${tool.name}\``)),
+          tool.name,
+        ).toHaveLength(1);
+      const line = lines.join("\n");
       for (const tool of tools.filter((tool) => (tool.outputSchema as any)?.properties?.page && !paged.includes(tool)))
         expect(line).not.toContain(`\`${tool.name}\``);
       for (const tool of paged) {
