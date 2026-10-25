@@ -84,23 +84,15 @@ function schemaOnce(
 /** Expired rows one write removes on its way. */
 const SWEEP_ROWS = 16;
 function ttlMillis(ttlSeconds?: number): number | null {
-  if (ttlSeconds !== undefined && !Number.isFinite(ttlSeconds)) {
+  if (ttlSeconds === undefined || ttlSeconds === 0) return null;
+  if (!Number.isFinite(ttlSeconds) || !Number.isFinite(ttlSeconds * 1000)) {
     throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
   }
-  if (!ttlSeconds) return null;
-  const expiry = ttlSeconds * 1000;
-  if (!Number.isFinite(expiry)) {
-    throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
-  }
-  return Math.ceil(expiry);
+  return Math.ceil(ttlSeconds * 1000);
 }
 /** `KVStorage` over one `connecta_kv` table. */
 export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
-  const ensure = schemaOnce(driver, (d) =>
-    Effect.gen(function* () {
-      yield* d.batch(KV_SCHEMA.map((statement) => sql(statement)));
-    }),
-  );
+  const ensure = schemaOnce(driver, (d) => Effect.asVoid(d.batch(KV_SCHEMA.map((statement) => sql(statement)))));
   // SQLite and D1 evaluate 'now' in the database, never in a caller isolate.
   const now = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
   const live = `(expires_at_ms IS NULL OR expires_at_ms > ${now})`;

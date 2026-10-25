@@ -52,12 +52,11 @@ export function effectSqlDriver(leaves: {
     sql,
     params: params as SqlStatement["params"],
   });
-  const execute: Connection["execute"] = (sql, params, transform) =>
-    leaves.all(input(sql, params)).pipe(Effect.map((rows) => (transform ? transform(rows as object[]) : rows)));
-  const connection: Pick<Connection, "execute" | "executeRaw"> = {
-    execute,
-    executeRaw: (sql, params) => leaves.run(input(sql, params)),
-  };
+  // Fixed statements return raw rows; no caller requests row transformation.
+  const connection = {
+    execute: (sql: string, params: readonly unknown[]) => leaves.all(input(sql, params)),
+    executeRaw: (sql: string, params: readonly unknown[]) => leaves.run(input(sql, params)),
+  } satisfies Pick<Connection, "execute" | "executeRaw">;
   // These programs need fixed SQL, row reads, exact write metadata and atomic
   // batches. Use the public compiler/Connection execution API directly rather
   // than adding SqlClient's reactive queries, streams or transaction scopes.
@@ -78,14 +77,14 @@ export function effectSqlDriver(leaves: {
       protect(
         Effect.suspend(() => {
           const { sql, params } = compile(statement);
-          return connection.execute(sql, params, undefined).pipe(Effect.map((rows) => rows as Row[]));
+          return connection.execute(sql, params) as Effect.Effect<Row[], SqlError>;
         }),
       ),
     run: (statement) =>
       protect(
         Effect.suspend(() => {
           const { sql, params } = compile(statement);
-          return connection.executeRaw(sql, params).pipe(Effect.map((changes) => changes as number));
+          return connection.executeRaw(sql, params);
         }),
       ),
     batch: (statements) => protect(Effect.suspend(() => leaves.batch(statements.map(compile)))),
