@@ -532,6 +532,116 @@ describe("reviewed text policy and global admission (#846)", () => {
     );
   });
 
+  it.each([
+    "X-Amz-Signature",
+    "X-Amz-Credential",
+    "X-Amz-Security-Token",
+    "X-Goog-Signature",
+    "X-Goog-Credential",
+    "X-Goog-Security-Token",
+  ])("INV-5: retains text spelling while maintaining signing boundaries across name representations: %s", (name) => {
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    const forms = [
+      (c: string) => `&#${c.charCodeAt(0)};`,
+      (c: string) => `&#000${c.charCodeAt(0)}`,
+      (c: string) => `&#X${c.charCodeAt(0).toString(16)};`,
+      (c: string) => `&#x00${c.charCodeAt(0).toString(16)}`,
+      (c: string) => `%${c.charCodeAt(0).toString(16)}`,
+      (c: string) => `%2525${c.charCodeAt(0).toString(16)}`,
+      (c: string) => `&amp;#${c.charCodeAt(0)};`,
+      (c: string) => `&#38;#x${c.charCodeAt(0).toString(16)};`,
+      (c: string) => `&amp#${c.charCodeAt(0)};`,
+      (c: string) => `\\u00${c.charCodeAt(0).toString(16)}`,
+      (c: string) => `\\x${c.charCodeAt(0).toString(16)}`,
+      (c: string) => (c === "-" ? "&hyphen;" : c),
+      (c: string) => (c === "-" ? "&amp;dash;" : c),
+    ];
+    for (const encode of forms) {
+      const spellings = [
+        Array.from(name, encode).join(""),
+        ...Array.from(name, (c, i) => name.slice(0, i) + encode(c) + name.slice(i + 1)),
+      ];
+      for (const spelling of spellings)
+        for (const separator of ["=", "&#61;", "&amp;#x3d;", "%253d"]) {
+          const input = `diagnostic ${spelling}${separator}PRIVATE_VALUE_27abc&name=alice now`;
+          const expected = `diagnostic ${spelling}${separator}[redacted]&name=alice now`;
+          expect(safety.redact({ description: input }, "GET", "/v1/things"), input).toEqual({
+            description: expected,
+          });
+          expect(withholdEmbeddedUrls(input), input).toBe(expected);
+          const secrets = new SentSecrets();
+          secrets.arguments(
+            { pin: spelling.slice(3, 15) },
+            {
+              type: "object",
+              properties: { pin: { type: "string", writeOnly: true } },
+            },
+          );
+          const altered = withholdEmbeddedUrls(secrets.redact(input));
+          expect(altered, input).not.toContain("PRIVATE");
+          const global = safety.redact({ description: secrets.redact(input) }, "GET", "/v1/things") as {
+            description: string;
+          };
+          expect(global.description, input).not.toContain("PRIVATE");
+          expect(global.description, input).toContain("&name=alice now");
+          const link = `see https://files.example/a?${spelling}${separator}PRIVATE_VALUE_27abc&name=alice now`;
+          expect(JSON.stringify(safety.redact({ message: link }, "GET", "/v1/things")), link).not.toContain("PRIVATE");
+        }
+    }
+    for (const text of [
+      "ordinary X&#45;Amz&#45;Algorithm=public&name=alice now",
+      "ordinary X%2DAmz%2DDate=public&name=alice now",
+      "ordinary X&unknown;Amz-Signature=public&name=alice now",
+      "ordinary X&#xZZ;Amz-Signature=public&name=alice now",
+      "ordinary X&#45Amz-Signature public&name=alice now",
+      "ordinary X&hyphen=Amz-Signature=public&name=alice now",
+      "Q&A AT&T &nbsp; ordinary text",
+    ])
+      expect(withholdEmbeddedUrls(text), text).toBe(text);
+  });
+
+  it(
+    "INV-5: scans consecutive altered name candidates within a linear work bound",
+    () => {
+      for (const group of ["[redacted]&hyphen;", "[redacted][redacted]&dash;", "[redacted]&#45;"]) {
+        const input = group.repeat(50_000) + " now";
+        const expected = group.includes("#") ? "[redacted] now" : input;
+        expect(linearWork(input, withholdEmbeddedUrls) === expected).toBe(true);
+        expect(withholdEmbeddedUrls(group + "[redacted]&hyphen;Signature\\u003dPRIVATE now")).not.toContain("PRIVATE");
+      }
+    },
+    SCAN_HANG_GUARD_MS,
+  );
+
+  it("INV-5: applies complete value boundaries after recognizing an altered name", () => {
+    const safety = engine({ operations: {}, embeddedUrls: {} });
+    const schema = { type: "object", properties: { pin: { type: "string", writeOnly: true } } } as const;
+    for (const name of [
+      "X-Amz-Signature",
+      "X&hyphen;Amz&hyphen;Signature",
+      "X&#45;Goog&#45;Credential",
+      "X%2DAmz%2DSecurity-Token",
+    ])
+      for (const value of [
+        "&quot;PRIVATE_VALUE_27abc",
+        "&amp;quot;PRIVATE_VALUE_27abc",
+        "&#32;PRIVATE_VALUE_27abc",
+        "&CounterClockwiseContourIntegral;PRIVATE_VALUE_27abc",
+        "&#50;PRIVATE_VALUE_27abc",
+      ])
+        for (const pin of [name.slice(3, 15), "Signatur", name, "Signature=", "Credential=", "Security-Token="]) {
+          const secrets = new SentSecrets();
+          secrets.arguments({ pin }, schema);
+          for (const separator of ["=", "\\u003d"]) {
+            const text = secrets.redact(`diagnostic ${name}${separator}${value}&name=alice now`);
+            const out = safety.redact({ description: text }, "GET", "/v1/things") as { description: string };
+            expect(out.description, text).not.toContain("PRIVATE_VALUE");
+            expect(out.description, text).toContain("&name=alice now");
+            expect(withholdEmbeddedUrls(text), text).not.toContain("PRIVATE_VALUE");
+          }
+        }
+  });
+
   it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
     const text = "[file](/proxy/https://files.example/a%3F%5Bredacted%5D)";
     const bytes = new Uint8Array(new TextEncoder().encode(text));
@@ -586,6 +696,7 @@ describe("reviewed text policy and global admission (#846)", () => {
   });
 
   it.each([
+    `https://files.example/a?X-Amz-Signature=PRIVATE diagnostic X&${"amp;".repeat(400_000)}#45;Amz-Signature=PRIVATE now ${"diagnostic X&#45;Goog&#45;Signature=PRIVATE&name=alice now ".repeat(20_000)} ${"diagnostic [redacted]&hyphen;Amz-Signature\\u003dPRIVATE&name=alice now ".repeat(10_000)}`,
     "[f](/proxy/https://files.example/a%3Ftoken%3DPRIVATE)".repeat(30_000),
     "https://public.example/a<br>https://files.example/a?X-Amz-Signature&#61;PRIVATE ".repeat(25_000),
     `see https://public.example/a?${"?&a&".repeat(400_000)} ${"see https://files.example/a?X-Amz-Signature=&#50;&#x61;&amp;&equals;&plus;&sol;PRIVATE&name=alice now ".repeat(

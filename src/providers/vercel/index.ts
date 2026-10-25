@@ -13,6 +13,7 @@ import {
   vercelErrors,
   VercelApi,
   usageGuide,
+  transformGuide,
   VERCEL_VERDICTS,
   VERCEL_PAGES,
   vercelBinding,
@@ -119,6 +120,7 @@ export const vercel = defineApiProvider<VercelOptions>({
   inBandRefusals: true,
   probe,
   guide: usageGuide,
+  transformGuide,
   hatch: {
     name: "vercel",
     title: "Vercel",

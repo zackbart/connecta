@@ -112,6 +112,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   );
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
+  /** Pure construction-owned adjustment after the normal guide renderer; absent preserves its exact result. */
+  readonly transformGuide?: (guide: ConnectorUsageGuide, options: Readonly<O>) => ConnectorUsageGuide;
   /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */
   readonly hatch?: Omit<HatchDeclaration, "binding" | "writeEnabled"> & {
     /** Pure deployment-config selector; absent keeps every reviewed write available. */
@@ -189,6 +191,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     inBandRefusals,
     probe,
     guide,
+    transformGuide,
     hatch: declaredHatch,
     tools,
     tagConnector,
@@ -389,6 +392,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           `${metadata.title} declares idempotencyKey: ${idempotencyKey}, but its write tools ${idempotencyKey ? "send no" : "send an"} idempotency key.`,
         );
       const usageGuide = guide(options);
+      const renderedGuide = "content" in usageGuide ? usageGuide : provider.usageGuide(usageGuide);
       const connector = tracksEveryRequest(
         api(id, {
           ...(defaultCallAdmission
@@ -401,7 +405,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           ...(authScope ? { authScope: authScope(options) } : {}),
           title: options.title ?? displayTitle?.(options) ?? metadata.title,
           ...(description ? { description: description(options) } : {}),
-          usageGuide: "content" in usageGuide ? usageGuide : provider.usageGuide(usageGuide),
+          usageGuide: transformGuide ? transformGuide(renderedGuide, options) : renderedGuide,
           ...(connectionCredential
             ? {
                 credential: connectionCredential,
