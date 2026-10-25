@@ -3587,6 +3587,16 @@ even if a later CONNECT fails before destination dispatch. D6 must preserve the
 SDK JSON-RPC envelope distinction at the leaf: protocol POSTs are not credential
 POSTs; forms and registration JSON are. Discovery GETs remain native fetch.
 
+### Contributor reference: Node response drain
+
+The Node listener counts active ServerResponses per socket. Once shutdown starts,
+each finish/close removes its response; the last completion calls `destroySoon`
+to flush queued bytes and close the connection. This also covers SSE whose
+headers were sent before shutdown and pipelined responses waiting behind an
+inflight response. Normal keepalive remains Node-owned until shutdown. Idle and
+never-admitted sockets retain their separate close paths, and the configured
+shutdown deadline still forces exit 1 for work that never completes.
+
 ### Native auth programs (contributor)
 
 Inbound verification, shared authentication admission, machine-token verification,
@@ -3750,12 +3760,67 @@ native storage, saved-original delegates, custom replacements and closed-owner
 refusal. Existing wire, physical-attempt, cache and OAuth lifetime suites remain
 the compatibility evidence; provider golden observations remain unchanged.
 
-### Contributor reference: Node response drain
+### Native upward MCP orchestration (contributor)
 
-The Node listener counts active ServerResponses per socket. Once shutdown starts,
-each finish/close removes its response; the last completion calls `destroySoon`
-to flush queued bytes and close the connection. This also covers SSE whose
-headers were sent before shutdown and pipelined responses waiting behind an
-inflight response. Normal keepalive remains Node-owned until shutdown. Idle and
-never-admitted sockets retain their separate close paths, and the configured
-shutdown deadline still forces exit 1 for work that never completes.
+`routes/mcp.ts` composes server preparation, native catalog selection, exchange,
+output redaction and response-owned request cleanup as native programs. The
+pinned SDK's modern `createMcpHandler` and a fresh stateless legacy JSON transport
+remain the protocol implementations. Effect 4.0.5's public MCP adapters cannot
+serve the required fresh legacy contract; this implementation does not adopt
+Effect McpServer. Each inbound request constructs fresh servers and keeps its
+admission scope until its response body ends, fails, is cancelled or reaches its
+existing deadline. Authentication and endpoint admission precede body dispatch.
+The declared-agent observation stays after successful endpoint admission and
+before listen classification or body dispatch.
+
+Meta tools, native tools, Skills/resources and upward auth/input continuations
+compose registered native programs. SDK registration signatures and Promise
+shells remain unchanged. Current-method identity governs consumer dispatch;
+each original shell enters its own immutable program, so decorators, inherited
+delegates and replacements retain authority. Catalog policy failures reach
+native consumers as ordinary typed failures. Invocation still owns validation,
+classification, read-only enforcement, dispatch, write settlement and accounting.
+Its input and result callbacks select native programs while custom synchronous
+or Promise callbacks retain their original behavior.
+
+The canonical `RequestScope` travels through SDK callback edges and registry
+views. A continuation's durable nonce claim still precedes dispatch, retains its
+caller, endpoint, arguments, TTL and round bindings, and cannot authorize another
+write after an ambiguous result. Retained classification and settlement facts
+never reopen a closed request. A finished program can still shape its response
+and retained recovery facts after its connector authority closes; the inbound
+request signal still cancels that response work. Neither path grants another
+dispatch. Agent-output redaction, withheld diagnostics,
+secret registration and result bounds retain their existing pure algorithms.
+`upwardStep` is only a typed generator adapter: it lets `authFlow` deliver the
+original ordinary failure to a local catch without converting interruption.
+
+Concurrent authorization failures share one request-owned producer and Deferred
+answer per connector, including failures and the unknown-write advice variant.
+The existing `forkRequest` seam starts that producer under the request Scope;
+its Context contains only the canonical request owner and scheduler. A waiting
+call's budget, credentials and cancellation do not own the producer. Closing the
+request revokes it, and a closed request cannot consume or restart its handoff.
+Only `runtime/run.ts` starts fibers. Admission and downstream refresh/connection
+waits retain their deliberate Promise handoffs for workerd's waiting-request I/O
+context.
+
+Intentional leaves are actual pinned SDK handler/transport/server operations,
+SDK schema and request-state codecs, platform body readers and cancellation,
+Web Crypto hashes, vault owner/seal/open/sign/verify methods and unregistered custom
+identity, credential, storage, executor and tool callbacks. Connecta's OAuth-link
+binding, TTL, progress, closing and one-use claims are native orchestration around
+those leaves. The supported protocol and unsupported-feature refusals remain
+unchanged. Native consumer, failure, decorator, sharing, close and minified-bundle
+regressions live in `upward-native.test.ts` and
+`upward-native-bundle.node.test.ts`; existing wire, continuation, redaction,
+physical-attempt and body/admission suites remain compatibility evidence.
+
+The combined native/operator graph has a measured contributor bundle allowance
+in PR #1060: the UI gzip cap is 346,000 bytes, with its historical baseline
+unchanged. The official full checker measured 345,228 bytes after regenerating
+the merged UI assets. Removing unused Invocation/Catalog registration retention
+returned the public Worker entry from 198,744 to 77,426 bytes; live minified
+Context, inherited-method, decorator and restoration proofs retain native
+composition. Root, example Worker, public Worker, D1 and Clerk caps remain
+unchanged. This cost decision grants no later request-body-limit allowance.

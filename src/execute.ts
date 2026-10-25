@@ -1,3 +1,4 @@
+import { authCall, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
 import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
@@ -43,7 +44,7 @@ import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
 import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
-import { normalizeTimeoutMs, underAnySignal } from "./timeout.js";
+import { normalizeTimeoutMs } from "./timeout.js";
 import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import { executorProgram } from "./runtime/executor.js";
@@ -1536,29 +1537,26 @@ export function createExecuteTool(
 
   return agentOutputOperations(
     (requestScope) => ({
-      execute: (
-        { code, diagnostics }: { code: string; diagnostics?: boolean },
-        options: { signal?: AbortSignal } = {},
-      ) => {
-        // A code-unit count above the cap is already too large in UTF-8. Check
-        // that first so a huge direct-call string is never encoded in full.
-        if (
-          code.length > EXECUTE_MAX_CODE_BYTES ||
-          new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES
-        ) {
-          const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-          const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
-          response.structuredContent = {
-            ...response.structuredContent,
-            hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
-          };
-          response.content[0]!.text = JSON.stringify(response.structuredContent);
-          return Promise.resolve(response);
-        }
-        return runEdge(
-          Effect.suspend(() => play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)),
-        );
-      },
+      execute: authMethod(
+        ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) => {
+          // A code-unit count above the cap is already too large in UTF-8. Check
+          // that first so a huge direct-call string is never encoded in full.
+          if (
+            code.length > EXECUTE_MAX_CODE_BYTES ||
+            new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES
+          ) {
+            const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+            const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
+            response.structuredContent = {
+              ...response.structuredContent,
+              hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+            };
+            response.content[0]!.text = JSON.stringify(response.structuredContent);
+            return Effect.succeed(response);
+          }
+          return Effect.suspend(() => play(normalizeProgramSource(code), diagnostics, options.signal, requestScope));
+        },
+      ),
     }),
     config.requestScope,
   ).execute;
@@ -1887,16 +1885,41 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    async (args, extra) => {
-      if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
-      const run = () =>
-        underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
-          execute(args as { code: string; diagnostics?: boolean }, {
-            signal,
+    authMethod((args, extra) =>
+      Effect.gen(function* () {
+        if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
+        const run = authMethod(() =>
+          Effect.suspend(() => {
+            const controller = new AbortController();
+            const forwarders = [extra.mcpReq.signal, ctx.requestSignal]
+              .filter((signal): signal is AbortSignal => signal !== undefined)
+              .map((signal) => {
+                const forward = () => controller.abort(signal.reason);
+                if (signal.aborted) forward();
+                else signal.addEventListener("abort", forward, { once: true });
+                return { signal, forward };
+              });
+            return authCall<ToolResult>(execute, [
+              args as { code: string; diagnostics?: boolean },
+              { signal: controller.signal },
+            ]).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  for (const { signal, forward } of forwarders) signal.removeEventListener("abort", forward);
+                }),
+              ),
+            );
           }),
         );
-      const result = await (ctx.authElicitation ? ctx.authElicitation.run("execute_code", args, extra, run) : run());
-      return ctx.native ? (nativeRecovery(result, true) as typeof result) : result;
-    },
+        const result = yield* ctx.authElicitation
+          ? authInvoke<ToolResult | import("@modelcontextprotocol/server").InputRequiredResult>(
+              ctx.authElicitation,
+              "run",
+              ["execute_code", args, extra, run],
+            )
+          : authCall(run, []);
+        return ctx.native ? (nativeRecovery(result, true) as typeof result) : result;
+      }),
+    ),
   );
 }
