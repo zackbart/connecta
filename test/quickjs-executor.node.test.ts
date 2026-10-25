@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
+import { InvocationFailure } from "../src/invocation.js";
 import type { AdmittingExecutor } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { calcConnector, makeRegistry, silentLogger } from "./helpers.js";
@@ -23,6 +24,33 @@ describe("quickJsExecutor", () => {
   afterAll(async () => {
     await Promise.all([executor.close?.(), rejectionExecutor.close?.()]);
   });
+  it.each(["value", "promise", "throw", "rejection"] as const)(
+    "INV-7: direct execution preserves provider %s behavior at the native leaf",
+    async (mode) => {
+      const failure = new InvocationFailure({
+        code: "invalid_args",
+        message: "Direct host refusal.",
+        retryable: false,
+      });
+      const answer = () => {
+        if (mode === "throw") throw failure;
+        if (mode === "rejection") return Promise.reject(failure);
+        return mode === "promise" ? Promise.resolve(42) : 42;
+      };
+      const outcome = await executor.execute("async () => await host.answer()", [
+        {
+          name: "host",
+          // Direct JavaScript callers historically work with plain values too.
+          fns: { answer: answer as unknown as () => Promise<unknown> },
+        },
+      ]);
+      if (mode === "value" || mode === "promise") expect(outcome).toEqual({ result: 42 });
+      else {
+        expect(outcome.error).toContain(failure.message);
+        expect(outcome.failure?.call).toEqual(failure.details);
+      }
+    },
+  );
   it.each([
     ["0.125 MiB", 128 * 1024, true],
     ["0.5 MiB", 512 * 1024, false],
