@@ -205,7 +205,17 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
           }),
       );
   });
-  add("answer-evidence", answer?.source === product && subset(answer, expected));
+  // "Sorted" permits either lexical or numeric message-id order. Keep exact
+  // membership, uniqueness and ordering: accepting an arbitrary set hides bugs.
+  const numericIds =
+    product === "gmail" && task === 3
+      ? { ...(expected as Row), ids: Array.from({ length: 100 }, (_, i) => `m${i + 1}`) }
+      : undefined;
+  add(
+    "answer-evidence",
+    answer?.source === product &&
+      (subset(answer, expected) || (numericIds !== undefined && subset(answer, numericIds))),
+  );
   const reads = source.filter((c) => c.kind === "read" && c.outcome === "ok");
   // Resource scope is independent of which method returned the facts: list,
   // get, batch, page and field-selected reads can establish the same outcome.
@@ -381,6 +391,11 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
       (c) =>
         c.service === product &&
         (c.args.path === expectedPath ||
+          (product === "sheets" &&
+            [5, 6].includes(task) &&
+            /^\/spreadsheets\/sheets1\/values\/'Alice''s costs'!A(?:[1-9]\d*)?:D(?:[1-9]\d*)?:append$/.test(
+              c.args.path,
+            )) ||
           (product === "docs" && [5, 7].includes(task) && c.args.path === "/documents/new-doc:batchUpdate")),
     );
     const batchKinds =
