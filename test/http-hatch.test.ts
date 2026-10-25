@@ -294,6 +294,48 @@ it(
   },
 );
 
+it.each([false, true])(
+  "INV-1 INV-7 INV-10: keeps vendor summaries separate from bounded refusals and reconstructs complete reasons (overlay: %s)",
+  NATIVE,
+  async (overlay) => {
+    const reason = `${"😀".repeat(1000)} ${"Reviewed policy. ".repeat(2500)} Use the named safe alternative.`;
+    const dispatchReason = overlay ? "Static refusal stays authoritative at dispatch." : reason;
+    const { call, authenticate, sendPath } = setup({
+      verdicts: { "GET /items": "refuse" },
+      binding: {
+        review: "Static refusal pagination fixture.",
+        refusal: () => dispatchReason,
+        ...(overlay ? { discoveryRefusal: () => reason } : {}),
+        send: () => Effect.die("Must not send"),
+      },
+    });
+    const search = (await call("search", { query: "/items", method: "GET" })) as any;
+    const hit = search.operations.find((op: any) => op.path === "/items");
+    expect(hit.summary).toBe("List items");
+    expect(hit.refusal.length).toBeLessThanOrEqual(SEARCH_BUDGET.refusalChars);
+    expect(hit.refusal).not.toMatch(/[\uD800-\uDBFF]…$/);
+    expect(search.truncated).toContain("operations[0].refusal");
+    const chunks: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = (await call("details", { method: "GET", path: "/items", ...(cursor ? { cursor } : {}) })) as any;
+      expect(page.summary).toBe("List items");
+      expect(page.truncated).toContain("refusal");
+      expect(new TextEncoder().encode(JSON.stringify(page)).length).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
+      if (page.chunk?.of === "refusal") chunks.push(page.chunk.text);
+      cursor = page.page?.nextCursor;
+    } while (cursor);
+    expect(JSON.parse(chunks.join(""))).toBe(reason);
+    await expect(call("read", { path: "/items" })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: dispatchReason,
+    });
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(sendPath).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  },
+);
+
 it(
   "INV-1 INV-10: snapshots discovery-only refusals without changing dispatch verdicts or schema",
   WORKERS,
@@ -402,16 +444,20 @@ it(
         { method, path },
         connectorContext(),
       )) as any;
-      const details = (detailsReply.structuredContent ?? detailsReply) as { summary: string; verdict: string };
+      const details = (detailsReply.structuredContent ?? detailsReply) as {
+        summary: string;
+        refusal: string;
+        verdict: string;
+      };
       expect(details.verdict).toBe("refuse");
-      expect(details.summary).toMatch(/^Refused: /);
+      expect(details.refusal).toBeTypeOf("string");
       const searchReply = (await connector.callTool(
         `${prefix}_api_search`,
         { query: path!.replace(/\{[^}]*\}/g, "fixture"), method, limit: 8 },
         connectorContext(),
       )) as any;
       const search = (searchReply.structuredContent ?? searchReply) as {
-        operations: Array<{ method: string; path: string; summary: string; tool?: string }>;
+        operations: Array<{ method: string; path: string; summary: string; refusal?: string; tool?: string }>;
       };
       const hit = search.operations.find((op) => op.method === method && op.path === path)!;
       expect(hit, `${provider}: ${method} ${path}`).toBeDefined();
@@ -420,7 +466,7 @@ it(
       const args = { path: path!.replace(/\{[^}]*\}/g, "fixture"), ...(method !== "GET" ? { method } : {}) };
       await expect(
         connector.callTool(`${prefix}_api_${method === "GET" ? "read" : "write"}`, args, connectorContext()),
-      ).rejects.toThrow(details.summary.slice("Refused: ".length));
+      ).rejects.toThrow(details.refusal);
     }
     expect(sent).toEqual([]);
     for (const [provider, query, method, path, maxRank] of HATCH_SEARCH_QUERIES) {
@@ -440,7 +486,7 @@ it(
         (provider === "drive" && query === "delete file permanently") ||
         (provider === "gmail" && query === "send an email")
       ) {
-        expect(found.operations[rank - 1]).toMatchObject({ summary: expect.stringMatching(/^Refused:/) });
+        expect(found.operations[rank - 1]).toMatchObject({ refusal: expect.any(String) });
         expect(found.operations[rank - 1]!.tool).toBeUndefined();
         expect(found.operations[rank - 1]!.named).toBeUndefined();
       }
@@ -654,10 +700,10 @@ it(
       const details = (await call("details", { method, path })) as Record<string, unknown>;
       expect(details).toMatchObject({ method, path, verdict, revision: "r1" });
       if (path === "/blocked") {
-        expect(details["summary"]).toBe(
-          "Refused: Connecta refuses GET /blocked. Item access is managed by the operator.",
-        );
+        expect(details["summary"]).toBe("Blocked item");
+        expect(details["refusal"]).toBe("Connecta refuses GET /blocked. Item access is managed by the operator.");
         expect(rows.find((row) => row["path"] === path)?.["summary"]).toBe(details["summary"]);
+        expect(rows.find((row) => row["path"] === path)?.["refusal"]).toBe(details["refusal"]);
       }
       expect(details["tool"]).toBe(tool);
       expect(rows.find((row) => row["method"] === method && row["path"] === path)?.["tool"]).toBe(tool);
@@ -877,7 +923,8 @@ it(
       const settle = () => {
         if (!pending) return;
         const value = JSON.parse(pending.text);
-        if (pending.of === "operationId" || pending.of === "summary") labels[pending.of] = value;
+        if (pending.of === "operationId" || pending.of === "summary" || pending.of === "refusal")
+          labels[pending.of] = value;
         else if (pending.of.startsWith("parameters.")) parameters.push(value);
         else if (pending.of === "body.schema") Object.assign(schema, value);
         else properties[pending.of.slice("body.schema.properties.".length)] = value;
@@ -905,6 +952,7 @@ it(
           path: first["path"],
           operationId: labels["operationId"] ?? first["operationId"],
           summary: labels["summary"] ?? first["summary"],
+          ...(first["refusal"] ? { refusal: labels["refusal"] ?? first["refusal"] } : {}),
           parameters,
           ...(body
             ? {
@@ -1026,7 +1074,7 @@ it(
     expect(framedPages.pages.some((page) => page["chunk"]?.of === "body.schema")).toBe(true);
     expect(framedPages.contract).toEqual({
       ...original(framed),
-      summary: "Refused: Connecta refuses POST /framed: it has no admitted hatch verdict.",
+      refusal: "Connecta refuses POST /framed: it has no admitted hatch verdict.",
     });
     // Search trims whole entries to its exact byte budget, page and cursor included, and continues by cursor.
     const long = new OperationIndex(
@@ -1077,7 +1125,7 @@ it(
     expect(labels.pages[0]!["truncated"]).toEqual(["operationId"]);
     expect(labels.contract).toEqual({
       ...original(label),
-      summary: "Refused: Connecta refuses GET /things: it has no admitted hatch verdict.",
+      refusal: "Connecta refuses GET /things: it has no admitted hatch verdict.",
     });
     expect(sendPath).not.toHaveBeenCalled();
     expect(authenticate).not.toHaveBeenCalled();

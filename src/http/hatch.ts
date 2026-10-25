@@ -112,7 +112,7 @@ export interface HatchBinding {
 }
 
 /** 0014's starting discovery budgets, measured as serialized JSON bytes of the tool's own result. */
-export const SEARCH_BUDGET = { hits: 6, maxHits: 8, bytes: 16 * 1024, summaryChars: 300 } as const;
+export const SEARCH_BUDGET = { hits: 6, maxHits: 8, bytes: 16 * 1024, summaryChars: 300, refusalChars: 512 } as const;
 export const DETAILS_BUDGET_BYTES = 32 * 1024;
 
 /** What a provider declares; the kit adds the connection. */
@@ -213,7 +213,12 @@ function parameters(values: Readonly<Record<string, unknown>>): Parameters {
   });
 }
 
-const cap = (text: string, chars: number) => (text.length > chars ? `${text.slice(0, chars - 1)}…` : text);
+const cap = (text: string, chars: number) => {
+  if (text.length <= chars) return text;
+  let end = chars - 1;
+  if (/[\uD800-\uDBFF]/.test(text[end - 1]!)) end--;
+  return `${text.slice(0, end)}…`;
+};
 
 /** One piece of a contract that may travel alone: a parameter, a body property, the body, or a long label. */
 type Piece =
@@ -227,7 +232,7 @@ type Piece =
       readonly required: boolean;
     }
   | { readonly kind: "body"; readonly of: string; readonly value: unknown }
-  | { readonly kind: "text"; readonly of: "operationId" | "summary"; readonly value: string };
+  | { readonly kind: "text"; readonly of: "operationId" | "summary" | "refusal"; readonly value: string };
 
 /**
  * Every piece of a contract, in order: long labels, parameters, then the body.
@@ -236,7 +241,10 @@ type Piece =
  * property, each carrying whether it is required, so pages and chunks
  * together reconstruct the whole schema. Any other body travels whole.
  */
-function piecesOf(contract: OperationContract, capped: { operationId: boolean; summary: boolean }): Piece[] {
+function piecesOf(
+  contract: OperationContract & { refusal?: string },
+  capped: { operationId: boolean; summary: boolean; refusal: boolean },
+): Piece[] {
   const schema = contract.body?.schema as Record<string, unknown> | undefined;
   const properties = schema?.["properties"];
   const required = new Set(Array.isArray(schema?.["required"]) ? (schema["required"] as string[]) : []);
@@ -247,6 +255,7 @@ function piecesOf(contract: OperationContract, capped: { operationId: boolean; s
   return [
     ...(capped.operationId ? [{ kind: "text" as const, of: "operationId" as const, value: contract.operationId }] : []),
     ...(capped.summary ? [{ kind: "text" as const, of: "summary" as const, value: contract.summary }] : []),
+    ...(capped.refusal ? [{ kind: "text" as const, of: "refusal" as const, value: contract.refusal! }] : []),
     ...contract.parameters.map((value) => ({ kind: "parameter" as const, of: `parameters.${value.name}`, value })),
     ...(contract.body === undefined
       ? []
@@ -344,10 +353,6 @@ export function hatch(
     (verdictOf(op) === "refuse"
       ? (refusalOf(op) ?? `Connecta refuses ${op.method} ${op.path}: it has no admitted hatch verdict.`)
       : undefined);
-  const summaryOf = (op: Operation) => {
-    const reason = verdictOf(op) === "refuse" ? discoveryRefusal(op) : undefined;
-    return reason ? `Refused: ${reason}` : op.summary;
-  };
   const pages = new Map(
     Object.entries(options.pages ?? {}).map(([key, declared]) => {
       const adapters: readonly HatchPageAdapter[] = Array.isArray(declared) ? declared : [declared as HatchPageAdapter];
@@ -719,7 +724,7 @@ export function hatch(
         resourceHead: Number(
           terminal || (terminalExists && authored && authoredCoverage === nouns.length && readDescription),
         ),
-        readable: Number(verdictOf(op) === "read"),
+        readable: Number(discoveryVerdictOf(op) === "read"),
         focused: Number(
           (intent !== undefined || resourceOnly) &&
             focus !== undefined &&
@@ -849,12 +854,18 @@ export function hatch(
       description: "The request or response field this operation was found by; call its tool to read the field.",
     }),
   );
+  const RefusalReason = Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Reviewed refusal reason, separate from the pinned summary. Cut text is marked in truncated; details serves the complete text, paged if needed.",
+    }),
+  );
   const searchTool = tool("search");
   const detailsTool = tool("details");
   const tools = [
     read(connection, {
       name: searchTool,
-      description: `Find ${title} API operations by keyword or path. Returns up to ${SEARCH_BUDGET.maxHits} compact matches with the tool that calls each; reads no account data.`,
+      description: `Find ${title} API operations by keyword or path. Returns up to ${SEARCH_BUDGET.maxHits} compact matches with routing and separate refusal reasons; reads no account data.`,
       input: Schema.Struct({
         query: text(1, 200).annotate({ description: "Keywords or a path, e.g. refund charge." }),
         method: Schema.optionalKey(Method.annotate({ description: "Only operations with this method." })),
@@ -875,6 +886,12 @@ export function hatch(
             path: Schema.String,
             operationId: Schema.String,
             summary: Schema.String,
+            refusal: Schema.optionalKey(
+              text(1, SEARCH_BUDGET.refusalChars).annotate({
+                description:
+                  "Reviewed refusal, capped separately from summary. A cut reason is marked in truncated; details returns it whole.",
+              }),
+            ),
             ...Routing,
             matched: Matched,
           }),
@@ -890,6 +907,7 @@ export function hatch(
       run: (args) =>
         Effect.gen(function* () {
           const scope = {
+            discoveryFormat: "summary-refusal-1",
             ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             query: args.query,
@@ -951,15 +969,17 @@ export function hatch(
             .slice(offset, offset + (args.limit ?? SEARCH_BUDGET.hits))
             .map(({ op, field }, position) => {
               const { named: authored, ...routed } = route(op);
-              const label = (key: string, text: string) => {
-                if (text.length > SEARCH_BUDGET.summaryChars) truncated.push(`operations[${position}].${key}`);
-                return cap(text, SEARCH_BUDGET.summaryChars);
+              const refusal = discoveryRefusal(op);
+              const label = (key: string, text: string, max: number = SEARCH_BUDGET.summaryChars) => {
+                if (text.length > max) truncated.push(`operations[${position}].${key}`);
+                return cap(text, max);
               };
               return {
                 method: op.method,
                 path: op.path,
                 operationId: label("operationId", op.operationId),
-                summary: label("summary", summaryOf(op)),
+                summary: label("summary", op.summary),
+                ...(refusal ? { refusal: label("refusal", refusal, SEARCH_BUDGET.refusalChars) } : {}),
                 ...routed,
                 // A named tool's projection may omit the matched field, so a field match points at the hatch only.
                 ...(field
@@ -994,7 +1014,7 @@ export function hatch(
     }),
     read(connection, {
       name: detailsTool,
-      description: `Read one ${title} API operation's request contract: path, query and body parameters with types and required names. Reads no account data.`,
+      description: `Read one ${title} API operation's request contract and refusal, including methods outside the call schemas. Reads no account data.`,
       input: Schema.Struct({
         method: Method.annotate({ description: "The operation's HTTP method." }),
         path: Path.annotate({ description: "The path template from search, or a concrete path." }),
@@ -1010,6 +1030,7 @@ export function hatch(
         path: Schema.String,
         operationId: Schema.String,
         summary: Schema.String,
+        refusal: RefusalReason,
         server: Schema.optionalKey(Schema.String),
         parameters: Schema.Array(Schema.Unknown).annotate({ description: "Path and query parameters." }),
         body: Schema.optionalKey(
@@ -1044,7 +1065,8 @@ export function hatch(
         Effect.gen(function* () {
           const { op, contract } = yield* checked(() => {
             const op = index.operation(args.method, args.path) ?? index.resolve(args.method, args.path).op;
-            return { op, contract: { ...index.contract(op, args.param), summary: summaryOf(op) } };
+            const refusal = discoveryRefusal(op);
+            return { op, contract: { ...index.contract(op, args.param), ...(refusal ? { refusal } : {}) } };
           });
           const tail = { verdict: discoveryVerdictOf(op), ...route(op), revision: index.revision };
           const whole = { ...contract, ...tail };
@@ -1052,6 +1074,7 @@ export function hatch(
           // Bounded pages: every parameter and body property arrives whole on some page, and a
           // piece too large for one page arrives as consecutive chunks of its JSON. Nothing is dropped.
           const scope = {
+            discoveryFormat: "summary-refusal-1",
             ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             method: args.method,
@@ -1070,6 +1093,7 @@ export function hatch(
           const capped = {
             operationId: contract.operationId.length > SEARCH_BUDGET.summaryChars,
             summary: contract.summary.length > SEARCH_BUDGET.summaryChars,
+            refusal: (contract.refusal?.length ?? 0) > SEARCH_BUDGET.refusalChars,
           };
           const pieces = piecesOf(contract, capped);
           if (
@@ -1095,9 +1119,10 @@ export function hatch(
             path: contract.path,
             operationId: cap(contract.operationId, SEARCH_BUDGET.summaryChars),
             summary: cap(contract.summary, SEARCH_BUDGET.summaryChars),
+            ...(contract.refusal ? { refusal: cap(contract.refusal, SEARCH_BUDGET.refusalChars) } : {}),
             ...(contract.server ? { server: contract.server } : {}),
           };
-          const truncated = (["operationId", "summary"] as const).filter((key) => capped[key]);
+          const truncated = (["operationId", "summary", "refusal"] as const).filter((key) => capped[key]);
           const parameters: unknown[] = [];
           const properties: Record<string, unknown> = {};
           const required: string[] = [];

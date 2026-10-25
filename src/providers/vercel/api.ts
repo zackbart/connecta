@@ -565,7 +565,7 @@ export function transformGuide(guide: ConnectorUsageGuide, options: Readonly<Ver
       VERCEL_VERDICTS[`${op.method} ${op.path}`] === "refuse" ||
       PIN_DISCOVERY_REFUSALS[`${op.method} ${op.path}`] !== undefined,
   ).length;
-  const sentence = `${base} operations are refused by design; use \`vercel_api_details\` with the method and path to inspect an operation's contract and refusal.`;
+  const sentence = `${base} operations are refused by design; use \`vercel_api_details\` with the method and path to inspect the original operation summary and its separate refusal.`;
   const lines = guide.content.split("\n");
   const targets = lines.flatMap((line, position) =>
     line.startsWith("- **Hatch:** `vercel_api_search` ") && line.includes(sentence) ? [position] : [],

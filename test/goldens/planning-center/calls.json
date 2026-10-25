@@ -62,7 +62,7 @@
         "revision": "people@2026-06-04,services@2018-11-01,groups@2023-07-10,check-ins@2025-05-28,calendar@2026-06-22,registrations@2025-05-01,giving@2019-10-18,publishing@2024-03-25,webhooks@2022-10-20,api@2026-09-24",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiNDEzMmE4NGE2MDdmYTY1MTlhYzI4MmYyNzMzMDhiMzQiLCJjIjoiNiIsIm0iOiI4UmFBOWFCQi1pVURzdjkxYUpNa2JUUHNSSHlJNTFiVlZZdmVGRUNQNEZjIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiZTIxNWVhMmYyYjA3NDMzN2FhMzJlY2I2ODQ1YWVjMTMiLCJjIjoiNiIsIm0iOiJIRjhOMElxZ3BILVFheV9hS0FYM19VWHgxWnFXdVFKN19hWHdhNnVQZkhnIn0"
         }
       }
     }
