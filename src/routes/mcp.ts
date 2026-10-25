@@ -53,12 +53,9 @@ import {
 } from "./shared.js";
 
 /**
- * The SDK's own bound on the body it reads. Since server 2.1.0 the SDK
- * answers anything over 4 MiB with its own 413, which would quietly shadow
- * the bound the host already enforces: `listen()`'s `maxBodyBytes` on Node,
- * the platform's request limit on Workers. The host owns that decision, as it
- * did before the SDK had an opinion, so the SDK is told to have none. Its
- * option must be finite.
+ * Core checks admission.requests.maxBodyBytes after authentication and endpoint
+ * admission, before any SDK/body-hint reader. The SDK's separate 4 MiB default
+ * must not shadow a configured larger bound. Its option must be finite.
  */
 const SDK_BODY_BOUND = { maxRequestBodySize: Number.MAX_SAFE_INTEGER };
 
@@ -73,14 +70,16 @@ const deadlineResponses = new WeakSet<Response>();
 export const MAX_LISTEN_CLASSIFICATION_BYTES = 64 * 1024;
 
 /**
- * Whether an admitted, authenticated request is a modern `subscriptions/listen`.
- * Reads at most `MAX_LISTEN_CLASSIFICATION_BYTES` of a clone, then stops and
- * cancels the body: `"too_large"` past the cap, `"aborted"` when the request
- * ended or its lifetime ran out while reading.
+ * Check an authenticated, endpoint-admitted body while streaming. The clone
+ * preserves the SDK's body and protocol validation. Only a listen candidate
+ * needs decoding/classification; other bodies retain no second text copy.
+ * Cancel both tee branches past the bound or when the request ends.
  */
-async function classifyListen(
+async function inspectRequestBody(
   request: Request,
   signal: AbortSignal,
+  maxBytes: number,
+  listen: boolean,
 ): Promise<"listen" | "other" | "too_large" | "aborted"> {
   const reader = request.clone().body?.getReader();
   if (!reader) return "other";
@@ -91,21 +90,22 @@ async function classifyListen(
   signal.addEventListener("abort", onAbort, { once: true });
   if (signal.aborted) onAbort();
   try {
-    const decoder = new TextDecoder();
+    const decoder = listen ? new TextDecoder() : undefined;
     let text = "";
     let bytes = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > MAX_LISTEN_CLASSIFICATION_BYTES) {
+      if (bytes > maxBytes) {
         void reader.cancel().catch(() => {});
         void request.body?.cancel().catch(() => {});
         return "too_large";
       }
-      text += decoder.decode(value, { stream: true });
+      if (decoder) text += decoder.decode(value, { stream: true });
     }
     if (signal.aborted) return "aborted";
+    if (!decoder) return "other";
     const protocolVersion = request.headers.get("MCP-Protocol-Version");
     const method = request.headers.get("Mcp-Method");
     const route = classifyInboundRequest({
@@ -944,8 +944,12 @@ export function createMcpRoute(opts: ServerOptions): {
               opts.config.discovery.probeTimeoutMs,
             );
           }
-          if (listenHeader) {
-            const verdict = yield* Effect.promise(() => classifyListen(localRequest, localAbort.signal));
+          {
+            const maxBodyBytes = opts.config.admission.requests.maxBodyBytes;
+            const bound = listenHeader ? Math.min(maxBodyBytes, MAX_LISTEN_CLASSIFICATION_BYTES) : maxBodyBytes;
+            const verdict = yield* Effect.promise(() =>
+              inspectRequestBody(localRequest, localAbort.signal, bound, listenHeader),
+            );
             // The deadline timer aborts a stalled read; its body is already cancelled.
             if (verdict === "aborted") {
               return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
@@ -953,7 +957,7 @@ export function createMcpRoute(opts: ServerOptions): {
             if (verdict === "too_large") {
               return cors(mcpRefusal(sentSecrets, 413, -33006, "MCP request body too large."));
             }
-            if (verdict === "other") {
+            if (listenHeader && verdict === "other") {
               const late = yield* Effect.result(admitted(opts.requestAdmission, request.signal));
               if (Result.isFailure(late)) return yield* refuseAdmission(late.failure);
             }

@@ -147,7 +147,7 @@ reordering reads like a harmless refactor.
 An admitted non-preflight `/mcp` request then takes five steps in
 `src/routes/mcp.ts`:
 
-1. **Admit.** No request body is read before auth on any endpoint. A request
+1. **Admit.** The fetch-native MCP route reads no body before auth on any endpoint. A request
    whose `Mcp-Method` header names `subscriptions/listen` takes no permit
    before auth. After auth and endpoint admission connecta reads at most
    64 KiB (`MAX_LISTEN_CLASSIFICATION_BYTES`) of it: past that it answers
@@ -345,6 +345,34 @@ stream. Expired queued waiters are pruned before any handoff; every handed-off
 permit has its own deadline even if the recipient never resumes. Lease identities
 make an old late release harmless to a newer permit. Set the bound above the
 longest admitted request the deployment expects to serve.
+
+`admission.requests.maxBodyBytes` bounds each MCP request body at `/mcp`,
+`/mcp/<pool>` and `/agent/<pool>`. It defaults to 4 MiB (4,194,304 bytes).
+This restricts bodies that previously reached the host's larger platform cap;
+deployments needing larger MCP envelopes must configure the bound explicitly.
+A configured value must be a positive safe whole number; invalid values fail
+construction with their configuration path (INV-11). After authentication and
+endpoint admission, core counts streamed bytes before any SDK or native tool
+body reader. A body exactly at the cap proceeds through normal protocol
+validation. Past the cap, core stops reading, cancels both stream branches and
+returns HTTP 413 with JSON-RPC code `-33006`, `"MCP request body too large."`.
+The response retains the request's existing admission lifetime and releases
+the permit when delivery ends. Caller cancellation and the existing request
+deadline also cancel stalled reads. `describeConfig().limits.requests.maxBodyBytes`
+reports the resolved value and its `default` or `config` source.
+
+The pre-dispatch `subscriptions/listen` classification keeps its 64 KiB ceiling;
+a smaller deployment body cap wins. Authentication failures and private endpoint
+refusals still read no body. This envelope bound does not change program size,
+tool argument validation, write accounting or result limits.
+
+The Node `listen()` adapter separately buffers requests before calling the core,
+with its own `maxBodyBytes` option. Its default is also 4 MiB. It stops at the
+first chunk crossing that bound and returns a plain HTTP 413 before auth;
+core's authenticated refusal uses the JSON-RPC envelope above. The smaller bound
+wins. To admit larger bodies on Node, raise both options deliberately. Workers
+and hosts calling `connecta.fetch` apply core's bound after authentication,
+subject to any smaller platform or proxy limit.
 
 Call admission (`src/call-admission.ts`) answers what the envelope cannot see —
 a connector's optional policy over its own `Connector.callTool` attempts,
@@ -1441,7 +1469,7 @@ every vendor ships one reviewed table through one mechanism
    reviews the pinned spec's free-text fields for embedded vendor-minted links
    and records its verdict and source limitations beside its value-safety table.
    Stripe, Vercel, and Cloudflare use **reviewed paths plus global signing
-   parameters**. Literal AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
+   parameters**. Known AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
    Credential and Security-Token values are withheld across all decoded string
    values, including values written with decimal, hexadecimal or named HTML
    character references. References are read whole as value data; decoding
@@ -1451,7 +1479,8 @@ every vendor ships one reviewed table through one mechanism
    length. Numeric references also accept an omitted semicolon, and `amp`
    may omit its semicolon immediately before `#`. Signing separators accept
    nested ampersand references around decimal, hexadecimal or named `=`
-   references.
+   references. Recognized name representations retain their source spelling
+   and use the same fixed signing-name vocabulary and value boundaries.
    A literal query separator such as `&name=alice` still ends the signing
    value. Ordinary query strings and prose retain their original spelling.
    Generic credential names (`code`, `key`, `token`, `signature`, `sig`, etc.)
@@ -1498,8 +1527,8 @@ every vendor ships one reviewed table through one mechanism
    (decoded bytes are at most three quarters of encoded characters). Cloudflare
    KV additionally enforces its documented 25 MiB decoded value limit;
    malformed base64 and values beyond that limit refuse with `invalid_args`.
-   The host's inbound request cap still applies (Node `maxBodyBytes`, or the
-   Workers platform); response and raw-upload limits do not bound JSON fields.
+   The authenticated MCP `admission.requests.maxBodyBytes` cap and any smaller
+   host cap still apply; response and raw-upload limits do not bound JSON fields.
    JSON admission iteratively checks every key and value, with no separate
    depth or node-count ceiling below the accepted request's size. Cyclic
    direct arguments refuse with `invalid_args`; repeated non-cyclic references
@@ -1520,8 +1549,8 @@ every vendor ships one reviewed table through one mechanism
    line ending before the destination are recognized. This scanner treats a marker
    after the close as ordinary text; kit admission applies the whole-value and
    path/query rules described above. This boundary is independent of redaction's fail-closed
-   span. Each string is scanned alone; split rich-text runs and encoded
-   signing parameter names are outside this scan's threat model.
+   span. Each string is scanned alone; split rich-text runs are outside this
+   scan's threat model.
    Sent-secret redaction runs before this step, in the provider kit's parse
    pass, so a rule that decides on a value can read the `[redacted]`
    placeholder where the vendor wrote what the rule matches. Every such
@@ -3839,3 +3868,13 @@ cache. Exact authored names and complete authored matches precede API pointers;
 ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
 The published discovery contract states compilation, query and cache bounds.
 No request identity, signal, credential or promise enters a vocabulary cache.
+
+### Authenticated body-bound cost (contributor)
+
+The separate #860 change has a measured allowance only for the example Worker
+gzip cap, from 785,000 to 786,000 bytes, with its historical baseline unchanged.
+The official full checker measures 785,036 bytes against D7's exact 784,948-byte
+lower graph, an actual 88-byte increase. It reuses the bounded platform body
+inspector, preserves native orchestration and avoids a new reader lifecycle.
+Root, UI, public Worker, D1, Clerk and asset caps remain fixed. The cost ruling
+does not approve protocol, cancellation or authority semantics.

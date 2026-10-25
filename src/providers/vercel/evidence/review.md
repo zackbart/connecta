@@ -740,3 +740,23 @@ D means denied with no global exception. Counts: {"query-team":368,"path-team":1
 | PATCH /v9/projects/{idOrName}/env/{id}                                                                                                                                             | Q          | destructive      |
 | DELETE /v9/projects/{idOrName}/env/{id}                                                                                                                                            | Q          | destructive      |
 | POST /web/insights/toggle                                                                                                                                                          | D          | destructive      |
+
+### Pinned discovery correction (review N1, #1003)
+
+Construction snapshots a discovery refusal for every `D` operation from the
+same route policy above. Search routing/ranking and details use that effective
+discovery verdict; dispatch verdicts, method schemas, paging admission and every
+ownership guard retain their reviewed behavior. Vendor summaries remain intact
+for the additional pin-only refusals. The generic refusal renderer is owned by
+#1033; its separate refusal field and operation vocabulary consume this policy
+when the parent integrates the stacks.
+
+The fully rendered pinned guide changes only the precisely identified generated
+Hatch sentence's count: the union of static refusals and route-policy denials,
+with duplicates counted once. The implementation derives both counts from the
+frozen operation tables and asserts exactly one sentence target. It preserves
+the rest of that line, including later schema-first/refusal guidance. Unpinned
+guides, results and schemas retain their original bytes. Discovery performs no
+credential, ownership, admission or transport work. The regression matrix checks
+every denied operation against the unchanged call policy, plus connection
+isolation, allowed routes, construction snapshots and full-renderer ordering.

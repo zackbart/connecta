@@ -266,6 +266,34 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
   ).toThrow(/Declare pageSize/);
 });
 
+it(
+  "INV-10 INV-11: transforms only fully rendered guides at construction, including complete guide inputs",
+  WORKERS,
+  () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const transformed: string[] = [];
+    const transformGuide = vi.fn((guide: { content: string }, options: Readonly<Options>) => {
+      transformed.push(guide.content);
+      return { ...guide, content: `${guide.content}Configured for ${options.purpose}.` };
+    });
+    const factory = defineApiProvider({ ...definition, transformGuide });
+    const normal = factory("tickets", { purpose: "  Support  ", instructions: "Use the observed queue." });
+    expect(transformed).toEqual([
+      "# Tickets usage\n\nSupport\n\nResolve ids before writing.\n\n## Workspace instructions\n\nUse the observed queue.\n",
+    ]);
+    expect(normal.usageGuide).toMatchObject({ content: `${transformed[0]}Configured for Support.` });
+    const complete = { content: "Complete maintained guide.\n", summary: "Account work", required: true };
+    const custom = defineApiProvider({ ...definition, guide: () => complete, transformGuide })("complete", {
+      purpose: "Triage",
+    });
+    expect(custom.usageGuide).toEqual({ ...complete, content: `${complete.content}Configured for Triage.` });
+    expect(complete.content).toBe("Complete maintained guide.\n");
+    expect(transformGuide).toHaveBeenCalledTimes(2);
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
+
 it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools through result safety", NODE, async () => {
   type Row = Pick<Parameters<typeof defineApiProvider<Options>>[0], "headers" | "admit"> & {
     name: string;

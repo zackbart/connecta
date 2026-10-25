@@ -1,6 +1,7 @@
 // Vercel's pinned contract, authentication, failures and value-safety boundary.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
+import type { ConnectorUsageGuide } from "../../types.js";
 import { Refusal, StatusFailure, UnreadableBody, type VendorErrors } from "../../http/errors.js";
 import { restSafety } from "../../http/safety.js";
 import { Credentials, RequestSecrets } from "../../http/services.js";
@@ -547,6 +548,36 @@ export const VERCEL_VERDICTS: HatchDeclaration["verdicts"] = Object.fromEntries(
         : "destructive",
   ]),
 );
+const PIN_DISCOVERY_REFUSALS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    vercelIndex.ops
+      .filter((op) => pinRoute(vercelIndex, op) === "denied")
+      .map((op) => [`${op.method} ${op.path}`, "This operation has no reviewed deployment-team confinement."]),
+  ),
+);
+
+/** Change only the generated Hatch count, after the shared guide renderer selects deployment blocks. */
+export function transformGuide(guide: ConnectorUsageGuide, options: Readonly<VercelTokenOptions>): ConnectorUsageGuide {
+  if (!pinOptions(options).pin) return guide;
+  const base = Object.values(VERCEL_VERDICTS).filter((verdict) => verdict === "refuse").length;
+  const total = vercelIndex.ops.filter(
+    (op) =>
+      VERCEL_VERDICTS[`${op.method} ${op.path}`] === "refuse" ||
+      PIN_DISCOVERY_REFUSALS[`${op.method} ${op.path}`] !== undefined,
+  ).length;
+  const sentence = `${base} operations are refused by design; use \`vercel_api_details\` with the method and path to inspect an operation's contract and refusal.`;
+  const lines = guide.content.split("\n");
+  const targets = lines.flatMap((line, position) =>
+    line.startsWith("- **Hatch:** `vercel_api_search` ") && line.includes(sentence) ? [position] : [],
+  );
+  const position = targets[0];
+  const line = position === undefined ? undefined : lines[position];
+  if (targets.length !== 1 || line === undefined || line.indexOf(sentence) !== line.lastIndexOf(sentence))
+    throw new Error("Vercel's generated guide needs exactly one Hatch refusal-count sentence.");
+  const at = line.indexOf(sentence);
+  lines[position!] = `${line.slice(0, at)}${total}${line.slice(at + String(base).length)}`;
+  return { ...guide, content: lines.join("\n") };
+}
 const cursorInputMessage =
   "Pass the signed page.nextCursor unchanged; omit it for the first page (numeric until may anchor its time window).";
 const continuation = (next: unknown, call: Parameters<HatchPageAdapter["next"]>[1]) =>
@@ -618,6 +649,7 @@ export function vercelBinding({
   options = pinOptions(options);
   return {
     ...(options.pin ? { cursorScope: Object.freeze({ vercelTeamPin: options.pin.teamId }) } : {}),
+    ...(options.pin ? { discoveryRefusal: (op: Operation) => PIN_DISCOVERY_REFUSALS[`${op.method} ${op.path}`] } : {}),
     review:
       "The same teamId/slug/null routing used by named tools and uploads, resolved before request validation and signed cursor binding. Token permissions remain the boundary. JSON framing through the existing connection.",
     query: (call) => scope(call, defaultTeam(options), options.pin).query,
