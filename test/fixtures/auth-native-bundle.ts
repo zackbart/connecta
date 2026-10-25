@@ -35,10 +35,11 @@ export async function runAuthBundleSmoke() {
     list: (prefix) => leaf(() => original.list(prefix)),
     compareAndSet: (...args) => leaf(() => original.compareAndSet(...args)),
   };
-  registerNativeStorage(storage, native);
   let promiseStorageCalls = 0;
   const poisoned = () => { promiseStorageCalls++; throw new Error("Promise storage shell reentered"); };
   Object.assign(storage, { get: poisoned, set: poisoned, delete: poisoned, list: poisoned, compareAndSet: poisoned });
+  // Register the original shells after instrumentation; later replacements remain authoritative.
+  registerNativeStorage(storage, native);
   const requestScope = {};
   const request = openRequest(requestScope);
   const owner = requestOwner(requestScope);

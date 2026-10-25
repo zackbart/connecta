@@ -42,7 +42,6 @@ describe("native auth consumers", () => {
       list: (prefix) => leaf(() => original.list(prefix)),
       compareAndSet: (...args) => leaf(() => original.compareAndSet(...args)),
     };
-    registerNativeStorage(storage, native);
     const promiseReentry = vi.fn(() => {
       throw new Error("Promise storage shell re-entered");
     });
@@ -53,6 +52,8 @@ describe("native auth consumers", () => {
       delete: promiseReentry,
       compareAndSet: promiseReentry,
     });
+    // Register the original shells after instrumentation; later replacements remain authoritative.
+    registerNativeStorage(storage, native);
     const requestScope = {};
     const ctx: ConnectorContext = { storage, logger, baseUrl: "https://connecta.example", requestScope };
     const hooks = staticOAuth("tickets", {
