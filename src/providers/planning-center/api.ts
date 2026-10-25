@@ -405,6 +405,7 @@ export const PCO_NAMED = {
 export const pcoPage: HatchPageAdapter = {
   param: "offset",
   in: "query",
+  total: (data) => pageOf(asRecord(data)).totalCount ?? undefined,
   decode: (value) => {
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
       throw new ConnectorCallError("invalid_args", "This Planning Center cursor contains no valid offset.");
@@ -523,13 +524,16 @@ export const probe = {
 export function pcoBinding({
   connection,
   options,
+  named = PCO_NAMED,
 }: {
   connection: Connection;
   options: Readonly<PlanningCenterOptions>;
+  named?: HatchBinding["named"];
 }): HatchBinding {
   const excluded = excludedApps(options.excludeApps);
   const apps = PLANNING_CENTER_APPS.filter((app) => !excluded.has(app));
   return {
+    named,
     review:
       "The ten reviewed JSON:API product pins each require their own X-PCO-API-Version header. Preserve scalar query values/repeated pairs, exact-URL exclusions and Connection.sendPath safety on every dispatch.",
     refusal: (op) => PCO_REFUSALS[`${op.method} ${op.path}`],

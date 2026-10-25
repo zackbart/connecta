@@ -69,6 +69,8 @@ export interface HatchBinding {
   readonly review: string;
   /** Immutable deployment policy included in continuation MACs, independently of agent arguments. */
   readonly cursorScope?: Readonly<Record<string, unknown>>;
+  /** Construction-owned suggestions for the configured authored catalog; never dispatch authority. */
+  readonly named?: HatchDeclaration["named"];
   /** Optional construction-time identity binding for a reviewed operation index. */
   readonly index?: OperationIndex;
   /** Resolve configured query routing before validation and cursor binding. */
@@ -319,7 +321,7 @@ export function hatch(
       throw new Error(`Hatch verdict ${key} must be read, write, destructive, or refuse.`);
     }
   }
-  const named = new Map(Object.entries(options.named ?? {}));
+  const named = new Map(Object.entries(options.binding?.named ?? options.named ?? {}));
   for (const [key, tool] of named) {
     if (!known(key) || !tool.trim()) throw new Error(`Hatch named tool for ${key} needs an indexed operation.`);
   }
@@ -346,7 +348,8 @@ export function hatch(
           !["query", "body"].includes(adapter.in) ||
           typeof adapter.next !== "function" ||
           typeof adapter.decode !== "function" ||
-          (adapter.prepareQuery !== undefined && typeof adapter.prepareQuery !== "function")
+          (adapter.prepareQuery !== undefined && typeof adapter.prepareQuery !== "function") ||
+          (adapter.total !== undefined && typeof adapter.total !== "function")
         ) {
           throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
         }
@@ -387,12 +390,14 @@ export function hatch(
         }
       : {}),
   });
+  const hasTotals = [...pages.values()].some((adapters) => adapters.some((adapter) => adapter.total !== undefined));
   const envelope = pages.size
     ? Schema.Struct({
         ...callEnvelope.fields,
         page: Schema.optionalKey(
           Schema.Struct({
             ...StandardPage.fields,
+            ...(hasTotals ? { total: Schema.optionalKey(Integer.check(Schema.isGreaterThanOrEqualTo(0))) } : {}),
             param: Schema.String.annotate({
               description:
                 options.pageCursor === "argument"
@@ -1364,6 +1369,7 @@ export function hatch(
         : undefined;
       let page;
       if (adapter && next !== undefined) {
+        const total = adapter.total ? yield* checked(() => adapter!.total!(answer.data)) : undefined;
         const secrets = yield* RequestSecrets;
         if (
           next !== null &&
@@ -1378,6 +1384,7 @@ export function hatch(
         }
         page = {
           hasMore: next !== null,
+          ...(typeof total === "number" && Number.isSafeInteger(total) && total >= 0 ? { total } : {}),
           ...(next === null || typeof next === "object"
             ? {}
             : {

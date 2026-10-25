@@ -62,6 +62,7 @@ const WORKERS_SUITES = [
   "test/goldens.test.ts",
   // Provider pin policy crosses native fetch, request budgets and Web Crypto cursors.
   "src/providers/vercel/provider.pin.test.ts",
+  "src/providers/planning-center/provider.pagination.test.ts",
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
   // Brace globs tolerate deleted files without enrolling other suites.
   "test/{http-kit,http-hatch,http-provider}.test.ts",
