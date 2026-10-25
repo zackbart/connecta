@@ -94,6 +94,7 @@ import {
 } from "../src/http/vendor.js";
 import { OperationIndex } from "../src/providers/_shared/rest/operation-index.js";
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
+import { RequestScope, requestOwner } from "../src/runtime/request-scope.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { googleErrors } from "../src/providers/_shared/google/kit.js";
@@ -155,6 +156,7 @@ function services(
     Context.add(Credentials, { values: Effect.succeed({ token: "sk_test_0123456789" }) }),
     Context.add(Secrets, secrets),
     Context.add(RequestSecrets, secrets),
+    Context.add(RequestScope, requestOwner({})),
     Context.add(Budget, { charge: Effect.void }),
     Context.add(Recovery, { record: () => Effect.void }),
     Context.add(Signal, undefined),

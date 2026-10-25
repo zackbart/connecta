@@ -1,6 +1,8 @@
+import { Effect, Exit } from "effect";
+import { causeError, runEdge } from "../runtime/run.js";
 import { credentialProbe } from "../runtime/credential-probe.js";
-import { ContinuationBinding, serviceFor, setViewService, settleOnClose } from "../runtime/call.js";
-import { registerCallEntry } from "../runtime/call-entry.js";
+import { ContinuationBinding, serviceFor, setViewService, settleOnClose, duringViewEffect } from "../runtime/call.js";
+import { registerCallEntry, toolEntry, type NativeCall } from "../runtime/call-entry.js";
 import { ConnectorCallError, networkErrorCode, unavailableCallError, WithheldTextError } from "../errors.js";
 import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
 import { compileValidator, normalizeToolInput, validateCatalogToolInput } from "../validate.js";
@@ -387,7 +389,10 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
     async listTools(ctx) {
       return settleOnClose(ctx, async () => redactCatalog(ctx, defs));
     },
-    async callTool(name, args, ctx) {
+    callTool: (name, args, ctx, options) => runEdge(core(name, args, ctx, options)),
+  };
+  const core: NativeCall = (name, args, ctx) =>
+    Effect.gen(function* () {
       trackCredentialReads(ctx);
       enterProviderBoundary(ctx, connector);
       const tool = byName.get(name);
@@ -414,33 +419,44 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         connection: serviceFor(ctx, ContinuationBinding)?.connection || id,
         principal: serviceFor(ctx, ContinuationBinding)?.principal ?? null,
       });
-      let result: unknown;
       let handlerStarted = false;
-      try {
-        const input = normalizeToolInput(args ?? {});
-        if (validateArgs && tool.inputSchema) {
-          const invalid = validateCatalogToolInput(
-            tool.inputSchema,
-            input,
-            {
-              address: `${id}.${name}`,
-              logger: ctx.logger,
-              // Always: the schema compiled at construction, so anything that
-              // fails here is a schema that cannot be enforced, and a surface we
-              // wrote ourselves does not get to admit unvalidated input quietly.
-              failClosed: true,
-            },
-            { connector: id, tool },
+      const handled = yield* Effect.exit(
+        Effect.gen(function* () {
+          const input = normalizeToolInput(args ?? {});
+          if (validateArgs && tool.inputSchema) {
+            const invalid = validateCatalogToolInput(
+              tool.inputSchema,
+              input,
+              {
+                address: `${id}.${name}`,
+                logger: ctx.logger,
+                // Always: the schema compiled at construction, so anything that
+                // fails here is a schema that cannot be enforced, and a surface we
+                // wrote ourselves does not get to admit unvalidated input quietly.
+                failClosed: true,
+              },
+              { connector: id, tool },
+            );
+            if (invalid) throw knownProviderFailure(invalid);
+          }
+          handlerStarted = true;
+          // The opaque handler may await a helper, swallow its rejection, or
+          // wait elsewhere. Its boundary remains call-owned; auxiliary helpers
+          // retain their separate request ownership. Ledger settlement below
+          // must see the close reason before this call's Promise rejects.
+          const native = toolEntry(tool);
+          return yield* duringViewEffect(callCtx, () =>
+            native
+              ? native(input, handlerCtx)
+              : Effect.tryPromise({
+                  try: () => Promise.resolve(tool.handler(input, handlerCtx)),
+                  catch: (error) => error,
+                }),
           );
-          if (invalid) throw knownProviderFailure(invalid);
-        }
-        handlerStarted = true;
-        // The opaque handler may await a helper, swallow its rejection, or
-        // wait elsewhere. Its boundary remains call-owned; auxiliary helpers
-        // retain their separate request ownership. Ledger settlement below
-        // must see the close reason before this call's Promise rejects.
-        result = await settleOnClose(callCtx, () => Promise.resolve(tool.handler(input, handlerCtx)));
-      } catch (error) {
+        }),
+      );
+      if (Exit.isFailure(handled)) {
+        const error = causeError(handled.cause, callCtx.signal);
         // Settled before anything is decided or reported: a request that has
         // not left by now (a sibling awaiting its credential) never will.
         closeProviderCall(callCtx);
@@ -517,13 +533,12 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       // A write an undeclared 401 left unknown fails however its handler returned.
       const unknown = providerCallResult(handlerCtx, write ? "write" : "read");
       if (unknown) throw redactSentSecrets(ctx, unknown);
-      return redactSentSecrets(ctx, result);
-    },
-  };
+      return redactSentSecrets(ctx, handled.value);
+    });
   // This boundary's identity in a logical call, fixed now: this object with
   // this function, never whatever the property or a copy holds by then.
   providerBoundary(connector);
-  registerCallEntry(connector, connector.callTool);
+  registerCallEntry(connector, core);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
       // The built-in static OAuth status only reads the stored grant. It never

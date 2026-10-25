@@ -15,11 +15,13 @@
 // transport records into, so a kit connector declares `tracksEveryRequest`.
 
 import { Context, Effect, Schema } from "effect";
+import { registerToolEntry } from "../runtime/call-entry.js";
+import type { ApiHandlerContext } from "../connectors/api-connector.js";
 import type { ApiTool } from "../connectors/api-connector.js";
 import type { JsonSchema } from "../types.js";
 import { ConnectorCallError } from "../errors.js";
 import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
-import { runEdge } from "../runtime/run.js";
+import { causeError, runEdge } from "../runtime/run.js";
 import {
   recordUnauthorized,
   Refusal,
@@ -541,64 +543,74 @@ function build<I extends Input, O extends Schema.Top>(
     inputSchema: catalogSchema(spec.input, "input"),
     outputSchema: rendered ?? catalogSchema(spec.output, "output"),
     annotations,
-    handler: (args, ctx) => {
+    handler: (args, ctx) => runEdge(program(args, ctx), { signal: ctx.signal }),
+  };
+  const program = (args: unknown, ctx: ApiHandlerContext, native = false) =>
+    Effect.suspend(() => {
       // The builder's verdict only stands in for a call no invocation dispatched.
       const lease = fromConnectorContext(ctx, verdict);
       const classification = Context.get(lease.services, Classification);
       const dispatches = Context.get(lease.services, Dispatches);
       const map = { classification, dispatches, withholds: connection.safety.withholdsErrors, signal: ctx.signal };
-      return runEdge(
-        Effect.try({
-          try: () => {
-            if (verdict === "write" || classification === "write") refuseWithheldValues(args, spec.name);
-          },
-          catch: (error) => error,
-        }).pipe(
-          Effect.catch((error) =>
-            error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
-          ),
-          // Its message can quote the argument; as a defect, api() withholds it.
-          Effect.flatMap(() => decode(args).pipe(Effect.orDie)),
-          Effect.map((decoded) => (spec.inputOrder === "original" ? originalOrder(decoded, args) : decoded)),
-          Effect.flatMap((decoded) =>
-            Effect.gen(function* () {
-              const key = idempotency?.key(decoded);
-              if (key !== undefined && unsendableKey(key)) {
-                return yield* Effect.fail(
-                  new RequestRefused({
-                    message: "The idempotency key is blank or holds a character an HTTP header cannot carry.",
-                  }),
-                );
-              }
-              // Recorded before anything leaves: a deadline that interrupts
-              // the call still returns the key for reconciliation.
-              if (key !== undefined) yield* (yield* Recovery).record({ idempotencyKey: key });
-              return yield* Effect.suspend(() => spec.run(decoded)).pipe(
-                Effect.provideService(ReadTool, verdict === "read" ? (review ? { review } : {}) : undefined),
-                Effect.provideService(WriteCapacity, capacity(decoded)),
-                Effect.provideService(
-                  IdempotencyKey,
-                  key === undefined ? undefined : { header: idempotency!.header, key },
-                ),
-              );
-            }),
-          ),
-          Effect.mapError((failure) => toConnectorCallError(failure, connection.errors, map)),
-          Effect.catchDefect((defect) => Effect.die(withheldDefect(defect, map))),
-          Effect.provideContext(lease.services),
-          // The call's finalizer: every capability kept from it refuses after this.
-          Effect.ensuring(Effect.sync(lease.close)),
+      return Effect.try({
+        try: () => {
+          if (verdict === "write" || classification === "write") refuseWithheldValues(args, spec.name);
+        },
+        catch: (error) => error,
+      }).pipe(
+        Effect.catch((error) =>
+          error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
         ),
-        { signal: ctx.signal },
-      ).catch((error: unknown) => {
-        // The caller left before any failure was mapped: a write's 401 still
-        // records its vendor verdict, from which the core decides (Q8).
-        if (ctx.signal?.aborted === true && error === ctx.signal.reason && map.classification === "write")
-          recordUnauthorized(connection.errors, map);
-        throw error;
-      });
-    },
-  };
+        // Its message can quote the argument; as a defect, api() withholds it.
+        Effect.flatMap(() => decode(args).pipe(Effect.orDie)),
+        Effect.map((decoded) => (spec.inputOrder === "original" ? originalOrder(decoded, args) : decoded)),
+        Effect.flatMap((decoded) =>
+          Effect.gen(function* () {
+            const key = idempotency?.key(decoded);
+            if (key !== undefined && unsendableKey(key)) {
+              return yield* Effect.fail(
+                new RequestRefused({
+                  message: "The idempotency key is blank or holds a character an HTTP header cannot carry.",
+                }),
+              );
+            }
+            // Recorded before anything leaves: a deadline that interrupts
+            // the call still returns the key for reconciliation.
+            if (key !== undefined) yield* (yield* Recovery).record({ idempotencyKey: key });
+            return yield* Effect.suspend(() => spec.run(decoded)).pipe(
+              Effect.provideService(ReadTool, verdict === "read" ? (review ? { review } : {}) : undefined),
+              Effect.provideService(WriteCapacity, capacity(decoded)),
+              Effect.provideService(
+                IdempotencyKey,
+                key === undefined ? undefined : { header: idempotency!.header, key },
+              ),
+            );
+          }),
+        ),
+        // A native served call shares its invocation's cancellation. The
+        // invocation settles that interruption from the raw ledger before
+        // any completed handler verdict exists, just as at the Promise edge.
+        Effect.mapError((failure) =>
+          native && ctx.signal?.aborted ? ctx.signal.reason : toConnectorCallError(failure, connection.errors, map),
+        ),
+        Effect.catchDefect((defect) => Effect.die(withheldDefect(defect, map))),
+        Effect.provideContext(lease.services),
+        // The call's finalizer: every capability kept from it refuses after this.
+        Effect.ensuring(Effect.sync(lease.close)),
+        Effect.onError((cause) =>
+          Effect.sync(() => {
+            if (
+              !native &&
+              ctx.signal?.aborted === true &&
+              causeError(cause, ctx.signal) === ctx.signal.reason &&
+              map.classification === "write"
+            )
+              recordUnauthorized(connection.errors, map);
+          }),
+        ),
+      );
+    });
+  registerToolEntry(tool, (args, ctx) => program(args, ctx, true));
   inputs.set(tool, spec.input);
   if (idempotency) keyed.add(tool);
   return tool;

@@ -31,15 +31,17 @@ import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } fr
 import { ObservedOutputSchemas } from "./result-shapes.js";
 import {
   ContinuationBinding,
+  OperationCredentials,
   ContinuationStorage,
   operationView,
   setViewService,
-  settleOnClose,
+  duringViewEffect,
 } from "./runtime/call.js";
-import { runEdge } from "./runtime/run.js";
-import { type Storage } from "./runtime/services.js";
+import { provideRegistryPrograms, registryProgram } from "./runtime/registry.js";
+import { causeError, runEdge } from "./runtime/run.js";
+import { Storage } from "./runtime/services.js";
 import { SharedRead } from "./runtime/shared-read.js";
-import { runOnPartition, storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
+import { storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
 import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import {
@@ -583,53 +585,22 @@ export class Registry implements RegistryView {
     );
   }
 
-  async storeOAuthHandoff(connectorId: string, state: string, principalKey: string): Promise<void> {
-    const key = oauthHandoffKeys.handoff(connectorId, await sha256Hex(state));
-    for (let attempt = 0; attempt < 32; attempt++) {
-      const existing = await this.opts.storage.get(key);
-      if (existing && existing !== principalKey) {
-        throw new Error(`Connector "${connectorId}" reused one OAuth state across principals`);
-      }
-      // Bind ownership atomically, including renewal of the same owner's
-      // handoff. Two owners reading a miss must not overwrite each other.
-      if (
-        await this.opts.storage.compareAndSet(key, existing, principalKey, {
-          ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS,
-        })
-      )
-        return;
-    }
-    throw new Error(`OAuth handoff for "${connectorId}" is busy; retry authorization`);
+  storeOAuthHandoff(connectorId: string, state: string, principalKey: string): Promise<void> {
+    return runEdge(registryProgram(this, "storeOAuthHandoff", connectorId, state, principalKey));
   }
 
-  async oauthCallbackView(
+  oauthCallbackView(
     connectorId: string,
     state: string | null,
   ): Promise<{
     registry: RegistryView;
     principalKey?: string;
   } | null> {
-    if (!state) return null;
-    const principalKey = await this.opts.storage.get(oauthHandoffKeys.handoff(connectorId, await sha256Hex(state)));
-    const connector = this.connectors.get(connectorId);
-    if (!connector || !principalKey) return null;
-    return {
-      registry:
-        connector.authScope === "personal"
-          ? this.scoped({
-              connectorIds: [connectorId],
-              subjectKey: principalKey,
-              principalKey,
-            })
-          : this,
-      principalKey,
-    };
+    return runEdge(registryProgram(this, "oauthCallbackView", connectorId, state));
   }
 
-  async consumeOAuthHandoff(connectorId: string, state: string | null, principalKey: string): Promise<boolean> {
-    if (!state) return false;
-    const key = oauthHandoffKeys.handoff(connectorId, await sha256Hex(state));
-    return this.opts.storage.compareAndSet(key, principalKey, null);
+  consumeOAuthHandoff(connectorId: string, state: string | null, principalKey: string): Promise<boolean> {
+    return runEdge(registryProgram(this, "consumeOAuthHandoff", connectorId, state, principalKey));
   }
 
   /**
@@ -709,16 +680,21 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     const credentialConfig = connector?.credential;
     let credentialAccess: ConnectorContext["credential"];
+    let credentialProgram: Effect.Effect<import("./types.js").ConnectorCredentialValues | null, unknown> | undefined;
     if (this.opts.credentialVault && credentialConfig) {
       const vault = this.opts.credentialVault;
-      const readValues = async () => {
-        const values = await vault.getAll(id, this.opts.credentialOwner);
-        const shape = storedCredentialShape(credentialConfig, values);
-        if (shape.state === "mismatch") {
-          throw new ConnectorCallError("auth_required", shape.message);
-        }
-        return values;
-      };
+      credentialProgram = Effect.tryPromise({
+        try: () => vault.getAll(id, this.opts.credentialOwner),
+        catch: (error) => error,
+      }).pipe(
+        Effect.flatMap((values) => {
+          const shape = storedCredentialShape(credentialConfig, values);
+          return shape.state === "mismatch"
+            ? Effect.fail(new ConnectorCallError("auth_required", shape.message))
+            : Effect.succeed(values);
+        }),
+      );
+      const readValues = () => runEdge(credentialProgram!);
       credentialAccess = {
         get: async (field = "value") => {
           const values = await readValues();
@@ -740,6 +716,7 @@ export class Registry implements RegistryView {
       },
       scope?.caller,
     );
+    setViewService(context, OperationCredentials, credentialProgram);
     setViewService(context, ContinuationStorage, this.opts.rootStorage ?? this.opts.storage);
     const owner = this.opts.credentialOwner ?? null;
     setViewService(context, ContinuationBinding, {
@@ -863,91 +840,7 @@ export class Registry implements RegistryView {
     ttlSeconds: number,
     partition: string = scopes.results,
   ): Promise<boolean> {
-    return runOnPartition(
-      Effect.gen({ self: this }, function* () {
-        const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
-        const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
-        // The paging envelope is ASCII, so its string length is its stored byte count.
-        const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-        if (bytes > maxBytes || maxEntries === 0) return false;
-        const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
-        // IDs belong to reservations, not reusable result IDs or subjects.
-        const charge = crypto.randomUUID();
-        const ttlMs = ttlSeconds * 1000;
-        if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) return false;
-        const booking = yield* swapStashLedger((live, now) => {
-          // A committed CAS with a lost response is already our booking, even
-          // at full capacity. Reuse its deadline instead of adding a second slot.
-          const own = live.find((entry) => entry[0] === charge);
-          if (own) return { result: own[2] };
-          const used = live.reduce((sum, entry) => sum + entry[1], 0);
-          if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
-          const deadline = now + STASH_WRITE_TIMEOUT_MS + ttlMs;
-          if (!Number.isSafeInteger(deadline)) return { result: undefined };
-          return { entries: [...live, [charge, bytes, deadline]], result: deadline };
-        });
-        if (booking.status === "exhausted" || booking.result === undefined) return false;
-        const deadline = booking.result;
-        const writeDeadline = deadline - ttlMs;
-        const chunkExpiry = deadline - STASH_WRITE_TIMEOUT_MS;
-        const owns = (entry: StashCharge) => entry[0] === charge;
-        const settle = swapStashLedger((live) =>
-          live.some((entry) => owns(entry) && entry[2] > chunkExpiry)
-            ? {
-                entries: live.map((entry) => (owns(entry) ? [charge, bytes, Math.min(entry[2], chunkExpiry)] : entry)),
-                result: undefined,
-              }
-            : { result: undefined },
-        );
-        let pendingWrite = false;
-        // A rejected or timed-out driver call may still commit after deletion.
-        // Only a confirmed write response clears pendingWrite.
-        const release = completeStash(
-          Effect.gen(function* () {
-            const deleted = yield* Effect.gen(function* () {
-              for (const key of keys) yield* storageDelete(key);
-              return true;
-            }).pipe(Effect.catch(() => Effect.succeed(false)));
-            if (pendingWrite) return;
-            if (deleted) {
-              const released = yield* swapStashLedger((live) =>
-                live.some(owns)
-                  ? { entries: live.filter((entry) => !owns(entry)), result: undefined }
-                  : { result: undefined },
-              );
-              if (released.status === "applied") return;
-            }
-            yield* settle;
-          }),
-        );
-        // Trailing chunks first, then the header. The caller receives no result
-        // ID after failure or timeout, including a late header commit.
-        const remaining = Math.max(0, writeDeadline - (yield* Clock.currentTimeMillis));
-        const written = yield* Effect.gen(function* () {
-          for (let index = keys.length - 1; index >= 0; index--) {
-            const before = yield* Clock.currentTimeMillis;
-            if (before >= writeDeadline || before >= chunkExpiry) return false;
-            pendingWrite = true;
-            yield* storageSet(keys[index]!, chunks[index]!, { expiresAtMs: chunkExpiry }).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  pendingWrite = false;
-                }),
-              ),
-            );
-            if ((yield* Clock.currentTimeMillis) >= writeDeadline) return false;
-          }
-          return true;
-        }).pipe(
-          Effect.timeoutOrElse({ duration: Duration.millis(remaining), orElse: () => Effect.succeed(false) }),
-          Effect.onError(() => release.pipe(Effect.ignore)),
-        );
-        if (!written) yield* release;
-        else yield* completeStash(settle);
-        return written;
-      }),
-      this.opts,
-    );
+    return runEdge(registryProgram(this, "stashResult", id, chunks, ttlSeconds, partition));
   }
 
   /**
@@ -974,10 +867,8 @@ export class Registry implements RegistryView {
     return Boolean(this.opts.credentialUi);
   }
 
-  async bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
-    const state = new URL(authorizationUrl).searchParams.get("state");
-    if (!state || !principalKey) throw new Error("OAuth requires state and an initiating user");
-    await this.storeOAuthHandoff(id, state, principalKey);
+  bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
+    return runEdge(registryProgram(this, "bindOAuthHandoff", id, authorizationUrl, principalKey));
   }
 
   observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined {
@@ -1023,61 +914,71 @@ export class Registry implements RegistryView {
       );
   }
 
-  private async loadDownstreamTools(
+  private loadDownstreamTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
-  ): Promise<ToolDef[]> {
-    const connector = this.connectors.get(id);
-    if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
-    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
-    let listed: ToolDef[];
-    try {
-      listed = await connector.listTools(ctx);
-    } catch (error) {
-      const fallback =
-        error instanceof ConnectorCallError && error.code === "unavailable"
-          ? await customCatalogFallback(ctx, id).catch(() => undefined)
-          : undefined;
-      if (!fallback) throw sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error);
-      listed = fallback;
-    }
-    const tools = redactCatalog(ctx, listed).map(({ classification: _ignored, ...fact }) => fact);
-    if (
-      tools.length > MAX_CATALOG_TOOLS ||
-      encoder.encode(JSON.stringify(tools)).byteLength > MAX_SERIALIZED_CATALOG_BYTES
-    ) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        "Downstream catalog exceeds the complete-catalog ceiling.",
-        { retryable: false },
+  ): Effect.Effect<ToolDef[], unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const connector = this.connectors.get(id);
+      if (!connector) throw new Error(`Unknown connector "${id}"`);
+      if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
+      const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
+      const listed = yield* Effect.tryPromise({ try: () => connector.listTools(ctx), catch: (error) => error }).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            const fallback =
+              error instanceof ConnectorCallError && error.code === "unavailable"
+                ? yield* Effect.tryPromise({
+                    try: () => customCatalogFallback(ctx, id),
+                    catch: (failure) => failure,
+                  }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+                : undefined;
+            return fallback
+              ? fallback
+              : yield* Effect.fail(sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error));
+          }),
+        ),
       );
-    }
-    const facts = frozenFacts(structuredClone(tools));
-    const accepted = this.acceptToolNames(facts);
-    if (catalogFetchedAt(ctx) === undefined) {
-      try {
-        await storeCustomCatalogFallback(ctx, id, facts);
-      } catch (error) {
-        logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error));
+      const tools = redactCatalog(ctx, listed).map(({ classification: _ignored, ...fact }) => fact);
+      if (
+        tools.length > MAX_CATALOG_TOOLS ||
+        encoder.encode(JSON.stringify(tools)).byteLength > MAX_SERIALIZED_CATALOG_BYTES
+      ) {
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "Downstream catalog exceeds the complete-catalog ceiling.",
+          { retryable: false },
+        );
       }
-      try {
-        await observeUncachedCatalogRefresh(ctx, id, facts);
-      } catch (error) {
-        logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error));
+      const facts = frozenFacts(structuredClone(tools));
+      const accepted = this.acceptToolNames(facts);
+      if (catalogFetchedAt(ctx) === undefined) {
+        for (const observe of [storeCustomCatalogFallback, observeUncachedCatalogRefresh]) {
+          yield* Effect.tryPromise({ try: () => observe(ctx, id, facts), catch: (error) => error }).pipe(
+            Effect.catch((error) =>
+              Effect.sync(() =>
+                logFailure(
+                  this.opts.logger,
+                  "catalog refresh observation failed",
+                  failureRecord({ connector: id }, error),
+                ),
+              ),
+            ),
+          );
+        }
       }
-    }
-    this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
-    const provenance = catalogExpiry(ctx);
-    const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
-    this.catalogAccess.set(id, {
-      state: freshUntil > Date.now() ? "fresh" : "stale",
-      observedAt: new Date().toISOString(),
+      this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
+      const provenance = catalogExpiry(ctx);
+      const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
+      this.catalogAccess.set(id, {
+        state: freshUntil > Date.now() ? "fresh" : "stale",
+        observedAt: new Date().toISOString(),
+      });
+      return markCatalogFreshness(accepted, freshUntil);
     });
-    return markCatalogFreshness(accepted, freshUntil);
   }
 
   /** The served catalog excludes control-character names; raw caches stay complete. */
@@ -1091,22 +992,24 @@ export class Registry implements RegistryView {
    * on every read by annotations and deployment overrides, into fresh objects.
    * No cache or caller mutation can carry a stale verdict into the next read.
    */
-  private async loadTools(
+  private loadTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
-  ): Promise<ToolDef[]> {
-    const tools = await this.loadDownstreamTools(id, baseUrl, requestScope, callOptions, scope);
-    const connector = this.connectors.get(id);
-    if (!connector) throw new Error(`Unknown connector "${id}"`);
-    const accepted = this.acceptToolNames(tools);
-    const overrides = this.classification[id];
-    this.validateClassification(id, accepted, overrides, this.catalogObservationPartition(id, baseUrl, scope, true));
-    const visible = accepted.filter((tool) => overrides?.[tool.name] !== "hidden");
-    const served = visible.map((tool) => this.publishTool(id, tool));
-    return carryCatalogFreshness(tools, served);
+  ): Effect.Effect<ToolDef[], unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const tools = yield* this.loadDownstreamTools(id, baseUrl, requestScope, callOptions, scope);
+      const connector = this.connectors.get(id);
+      if (!connector) throw new Error(`Unknown connector "${id}"`);
+      const accepted = this.acceptToolNames(tools);
+      const overrides = this.classification[id];
+      this.validateClassification(id, accepted, overrides, this.catalogObservationPartition(id, baseUrl, scope, true));
+      const visible = accepted.filter((tool) => overrides?.[tool.name] !== "hidden");
+      const served = visible.map((tool) => this.publishTool(id, tool));
+      return carryCatalogFreshness(tools, served);
+    });
   }
 
   private publishTool(id: string, tool: ToolDef): ToolDef {
@@ -1164,60 +1067,18 @@ export class Registry implements RegistryView {
     }
   }
 
-  async getTools(
+  getTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): Promise<ToolDef[]> {
-    const connector = this.connectors.get(id);
-    if (!connector) throw new Error(`Unknown connector "${id}"`);
-    const owner = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
-    return settleOnClose(owner, async (signal) => {
-      if (!requestScope) {
-        return this.loadTools(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope);
-      }
-
-      let loads = this.requestCatalogLoads.get(requestScope);
-      if (!loads) {
-        loads = new Map();
-        this.requestCatalogLoads.set(requestScope, loads);
-      }
-      const requestLoads = loads;
-      const key = JSON.stringify([id, scope?.principalKey, scope?.subjectKey, scope?.caller]);
-      let load = requestLoads.get(key);
-      if (!load) {
-        const started: SharedRead<ToolDef[]> = new SharedRead(
-          (signal) => this.loadTools(id, baseUrl, requestScope, { ...callOptions, signal }, scope),
-          // Settled or cancelled, the read leaves the map before any caller
-          // resumes, so the next one asks the caches afresh.
-          () => {
-            if (requestLoads.get(key) === started) requestLoads.delete(key);
-            if (requestLoads.size === 0) {
-              this.requestCatalogLoads.delete(requestScope);
-            }
-          },
-        );
-        requestLoads.set(key, started);
-        load = started;
-      }
-      return runEdge(load.join(signal), { signal });
-    });
+    return runEdge(registryProgram(this, "getTools", id, baseUrl, requestScope, callOptions, scope));
   }
 
-  async credentialDriftFor(id: string): Promise<string | undefined> {
-    const credential = this.connectors.get(id)?.credential;
-    const vault = this.opts.credentialVault;
-    if (!credential || !vault) return undefined;
-    try {
-      const values = await vault.getAll(id, this.opts.credentialOwner);
-      const shape = storedCredentialShape(credential, values);
-      return shape.state === "mismatch" ? shape.message : undefined;
-    } catch (error) {
-      logFailure(this.opts.logger, "credential shape read failed", failureRecord({ connector: id }, error));
-      return undefined;
-    }
+  credentialDriftFor(id: string): Promise<string | undefined> {
+    return runEdge(registryProgram(this, "credentialDriftFor", id));
   }
 
   /** Age of a complete cache entry; reads never refresh it. */
@@ -1242,52 +1103,14 @@ export class Registry implements RegistryView {
   }
 
   /** Best-effort connector status for the operator UI. */
-  async statusFor(
+  statusFor(
     id: string,
     baseUrl: string,
     requestScope: object = {},
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): Promise<ConnectorStatus> {
-    const connector = this.connectors.get(id);
-    if (!connector) return ownStatus({ state: "error", message: "Unknown connector" });
-    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
-    return settleOnClose(ctx, async () => {
-      // Whatever the state turns out to be, it carries the drift the last
-      // refresh saw. Reading it is a lookup, not a probe: a connector that has
-      // listed nothing yet reports nothing, and status never lists on its own to
-      // make the field appear.
-      // The report is rebuilt rather than spread through: what the seam returned
-      // is third-party output, and status is read by the operator UI and copied
-      // into responses.
-      const withObservations = (status: ConnectorStatus): ConnectorStatus =>
-        this.withCatalogObservations(id, baseUrl, status, scope);
-      // Credential declarations own their readiness even when a static catalog
-      // or a plugin status would otherwise report success. Never probe an empty slot.
-      if (connector.credential) {
-        try {
-          const values = (await this.opts.credentialVault?.getAll(id, this.opts.credentialOwner)) ?? null;
-          const shape = storedCredentialShape(connector.credential, values);
-          if (shape.state === "missing") return withObservations(ownStatus({ state: "credential_required" }));
-          if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
-        } catch (err) {
-          return withObservations(failureStatus(id, err));
-        }
-      }
-      if (connector.status) {
-        try {
-          return withObservations(await connector.status(ctx));
-        } catch (err) {
-          return withObservations(failureStatus(id, err));
-        }
-      }
-      try {
-        await this.getTools(id, baseUrl, requestScope, callOptions, scope);
-        return withObservations({ state: "ok" });
-      } catch (err) {
-        return withObservations(failureStatus(id, err));
-      }
-    }).catch((error) => this.withCatalogObservations(id, baseUrl, failureStatus(id, error), scope));
+    return runEdge(registryProgram(this, "statusFor", id, baseUrl, requestScope, callOptions, scope));
   }
 
   /** Rotate the storage generation; in-flight old readers cannot republish it. */
@@ -1295,13 +1118,242 @@ export class Registry implements RegistryView {
     void this.invalidateStored(id);
   }
 
-  async invalidateStored(id: string): Promise<void> {
-    this.catalogObservedAt.delete(id);
-    try {
-      await invalidateCatalogCache(this.opts.catalogStorage ?? this.opts.storage, id);
-    } catch (error) {
-      logFailure(this.opts.logger, "catalog invalidation failed", failureRecord({ connector: id }, error));
-    }
+  invalidateStored(id: string): Promise<void> {
+    return runEdge(registryProgram(this, "invalidateStored", id));
+  }
+
+  static {
+    provideRegistryPrograms(Registry.prototype, {
+      stashResult: (self, id, chunks, ttlSeconds, partition = scopes.results) =>
+        Effect.gen({ self }, function* () {
+          const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
+          const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
+          // The paging envelope is ASCII, so its string length is its stored byte count.
+          const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+          if (bytes > maxBytes || maxEntries === 0) return false;
+          const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
+          // IDs belong to reservations, not reusable result IDs or subjects.
+          const charge = crypto.randomUUID();
+          const ttlMs = ttlSeconds * 1000;
+          if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) return false;
+          const booking = yield* swapStashLedger((live, now) => {
+            // A committed CAS with a lost response is already our booking, even
+            // at full capacity. Reuse its deadline instead of adding a second slot.
+            const own = live.find((entry) => entry[0] === charge);
+            if (own) return { result: own[2] };
+            const used = live.reduce((sum, entry) => sum + entry[1], 0);
+            if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
+            const deadline = now + STASH_WRITE_TIMEOUT_MS + ttlMs;
+            if (!Number.isSafeInteger(deadline)) return { result: undefined };
+            return { entries: [...live, [charge, bytes, deadline]], result: deadline };
+          });
+          if (booking.status === "exhausted" || booking.result === undefined) return false;
+          const deadline = booking.result;
+          const writeDeadline = deadline - ttlMs;
+          const chunkExpiry = deadline - STASH_WRITE_TIMEOUT_MS;
+          const owns = (entry: StashCharge) => entry[0] === charge;
+          const settle = swapStashLedger((live) =>
+            live.some((entry) => owns(entry) && entry[2] > chunkExpiry)
+              ? {
+                  entries: live.map((entry) =>
+                    owns(entry) ? [charge, bytes, Math.min(entry[2], chunkExpiry)] : entry,
+                  ),
+                  result: undefined,
+                }
+              : { result: undefined },
+          );
+          let pendingWrite = false;
+          // A rejected or timed-out driver call may still commit after deletion.
+          // Only a confirmed write response clears pendingWrite.
+          const release = completeStash(
+            Effect.gen(function* () {
+              const deleted = yield* Effect.gen(function* () {
+                for (const key of keys) yield* storageDelete(key);
+                return true;
+              }).pipe(Effect.catch(() => Effect.succeed(false)));
+              if (pendingWrite) return;
+              if (deleted) {
+                const released = yield* swapStashLedger((live) =>
+                  live.some(owns)
+                    ? { entries: live.filter((entry) => !owns(entry)), result: undefined }
+                    : { result: undefined },
+                );
+                if (released.status === "applied") return;
+              }
+              yield* settle;
+            }),
+          );
+          // Trailing chunks first, then the header. The caller receives no result
+          // ID after failure or timeout, including a late header commit.
+          const remaining = Math.max(0, writeDeadline - (yield* Clock.currentTimeMillis));
+          const written = yield* Effect.gen(function* () {
+            for (let index = keys.length - 1; index >= 0; index--) {
+              const before = yield* Clock.currentTimeMillis;
+              if (before >= writeDeadline || before >= chunkExpiry) return false;
+              pendingWrite = true;
+              yield* storageSet(keys[index]!, chunks[index]!, { expiresAtMs: chunkExpiry }).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    pendingWrite = false;
+                  }),
+                ),
+              );
+              if ((yield* Clock.currentTimeMillis) >= writeDeadline) return false;
+            }
+            return true;
+          }).pipe(
+            Effect.timeoutOrElse({ duration: Duration.millis(remaining), orElse: () => Effect.succeed(false) }),
+            Effect.onError(() => release.pipe(Effect.ignore)),
+          );
+          if (!written) yield* release;
+          else yield* completeStash(settle);
+          return written;
+        }).pipe(Effect.provideService(Storage, self.opts.storage)),
+      recheckResultAccess: () => Effect.succeed(true),
+      storeOAuthHandoff: (self, connectorId, state, principalKey) =>
+        Effect.gen(function* () {
+          const key = oauthHandoffKeys.handoff(
+            connectorId,
+            yield* Effect.tryPromise({ try: () => sha256Hex(state), catch: (error) => error }),
+          );
+          for (let attempt = 0; attempt < 32; attempt++) {
+            const existing = yield* storageGet(key);
+            if (existing && existing !== principalKey)
+              throw new Error(`Connector "${connectorId}" reused one OAuth state across principals`);
+            if (yield* storageCompareAndSet(key, existing, principalKey, { ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS }))
+              return;
+          }
+          throw new Error(`OAuth handoff for "${connectorId}" is busy; retry authorization`);
+        }).pipe(Effect.provideService(Storage, self.opts.storage)),
+      oauthCallbackView: (self, connectorId, state) =>
+        Effect.gen(function* () {
+          if (!state) return null;
+          const digest = yield* Effect.tryPromise({ try: () => sha256Hex(state), catch: (error) => error });
+          const principalKey = yield* storageGet(oauthHandoffKeys.handoff(connectorId, digest));
+          const connector = self.connectors.get(connectorId);
+          if (!connector || !principalKey) return null;
+          return {
+            registry:
+              connector.authScope === "personal"
+                ? self.scoped({ connectorIds: [connectorId], subjectKey: principalKey, principalKey })
+                : self,
+            principalKey,
+          };
+        }).pipe(Effect.provideService(Storage, self.opts.storage)),
+      consumeOAuthHandoff: (self, connectorId, state, principalKey) =>
+        Effect.gen(function* () {
+          if (!state) return false;
+          const digest = yield* Effect.tryPromise({ try: () => sha256Hex(state), catch: (error) => error });
+          return yield* storageCompareAndSet(oauthHandoffKeys.handoff(connectorId, digest), principalKey, null);
+        }).pipe(Effect.provideService(Storage, self.opts.storage)),
+      bindOAuthHandoff: (self, id, authorizationUrl, principalKey) =>
+        Effect.gen(function* () {
+          const state = new URL(authorizationUrl).searchParams.get("state");
+          if (!state || !principalKey) throw new Error("OAuth requires state and an initiating user");
+          yield* registryProgram(self, "storeOAuthHandoff", id, state, principalKey);
+        }),
+      getTools: (self, id, baseUrl, requestScope, callOptions = {}, scope) =>
+        Effect.suspend(() => {
+          if (!self.connectors.has(id)) return Effect.fail(new Error(`Unknown connector "${id}"`));
+          const owner = self.contextFor(id, baseUrl, requestScope, callOptions, scope);
+          return duringViewEffect(owner, (signal) => {
+            if (!requestScope)
+              return self.loadTools(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope);
+            let loads = self.requestCatalogLoads.get(requestScope);
+            if (!loads) {
+              loads = new Map();
+              self.requestCatalogLoads.set(requestScope, loads);
+            }
+            const requestLoads = loads;
+            const key = JSON.stringify([id, scope?.principalKey, scope?.subjectKey, scope?.caller]);
+            let load = requestLoads.get(key);
+            if (!load) {
+              const started = new SharedRead(
+                (signal) => self.loadTools(id, baseUrl, requestScope, { ...callOptions, signal }, scope),
+                () => {
+                  if (requestLoads.get(key) === started) requestLoads.delete(key);
+                  if (requestLoads.size === 0) self.requestCatalogLoads.delete(requestScope);
+                },
+                requestScope,
+              );
+              requestLoads.set(key, started);
+              load = started;
+            }
+            return load.join(signal);
+          });
+        }),
+      credentialDriftFor: (self, id) =>
+        Effect.gen(function* () {
+          const credential = self.connectors.get(id)?.credential;
+          const vault = self.opts.credentialVault;
+          if (!credential || !vault) return undefined;
+          return yield* Effect.tryPromise({
+            try: () => vault.getAll(id, self.opts.credentialOwner),
+            catch: (error) => error,
+          }).pipe(
+            Effect.map((values) => {
+              const shape = storedCredentialShape(credential, values);
+              return shape.state === "mismatch" ? shape.message : undefined;
+            }),
+            Effect.catchCause((cause) =>
+              Effect.sync(() => {
+                logFailure(
+                  self.opts.logger,
+                  "credential shape read failed",
+                  failureRecord({ connector: id }, causeError(cause)),
+                );
+                return undefined;
+              }),
+            ),
+          );
+        }),
+      statusFor: (self, id, baseUrl, requestScope = {}, callOptions = {}, scope) =>
+        Effect.suspend(() => {
+          const connector = self.connectors.get(id);
+          if (!connector)
+            return Effect.succeed<ConnectorStatus>(ownStatus({ state: "error", message: "Unknown connector" }));
+          const ctx = self.contextFor(id, baseUrl, requestScope, callOptions, scope);
+          const withObservations = (status: ConnectorStatus) =>
+            self.withCatalogObservations(id, baseUrl, status, scope);
+          return duringViewEffect(ctx, () =>
+            Effect.gen(function* () {
+              if (connector.credential) {
+                const values = yield* Effect.tryPromise({
+                  try: () => self.opts.credentialVault?.getAll(id, self.opts.credentialOwner) ?? Promise.resolve(null),
+                  catch: (error) => error,
+                });
+                const shape = storedCredentialShape(connector.credential, values);
+                if (shape.state === "missing") return withObservations(ownStatus({ state: "credential_required" }));
+                if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
+              }
+              if (connector.status)
+                return withObservations(
+                  yield* Effect.tryPromise({ try: () => connector.status!(ctx), catch: (error) => error }),
+                );
+              yield* registryProgram(self, "getTools", id, baseUrl, requestScope, callOptions, scope);
+              return withObservations({ state: "ok" });
+            }),
+          ).pipe(
+            Effect.catchCause((cause) =>
+              Effect.succeed(withObservations(failureStatus(id, causeError(cause, ctx.signal)))),
+            ),
+          );
+        }),
+      invalidateStored: (self, id) =>
+        Effect.suspend(() => {
+          self.catalogObservedAt.delete(id);
+          return Effect.tryPromise({
+            try: () => invalidateCatalogCache(self.opts.catalogStorage ?? self.opts.storage, id),
+            catch: (error) => error,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.sync(() =>
+                logFailure(self.opts.logger, "catalog invalidation failed", failureRecord({ connector: id }, error)),
+              ),
+            ),
+          );
+        }),
+    });
   }
 }
 
@@ -1369,25 +1421,8 @@ class ScopedRegistryView implements RegistryView {
     return connector ? { connector, toolName: parsed.toolName } : null;
   }
 
-  async getTools(...args: Parameters<RegistryView["getTools"]>): Promise<ToolDef[]> {
-    const registry = this.registryFor(args[0]);
-    if (!registry) {
-      throw new Error(`Unknown connector "${args[0]}"`);
-    }
-    const tools = await registry.getTools(args[0], args[1], args[2], args[3], this.scope);
-    const granted = this.scope.toolAccess?.get(args[0]);
-    if (!granted) return tools;
-    // Every consumer — search, describe, call_tool, and a program's
-    // connecta.call — resolves through this list, so an ungranted tool is
-    // indistinguishable from one the connector never had.
-    const visible = tools.filter((tool) => granted.has(tool.name));
-    if (visible.length < granted.size) {
-      const present = new Set(tools.map((tool) => tool.name));
-      for (const name of granted) {
-        if (!present.has(name)) this.root.noteAbsentGrant(args[0], name);
-      }
-    }
-    return carryCatalogFreshness(tools, visible);
+  getTools(...args: Parameters<RegistryView["getTools"]>): Promise<ToolDef[]> {
+    return runEdge(registryProgram(this, "getTools", ...args));
   }
 
   contextFor(...args: Parameters<RegistryView["contextFor"]>): ConnectorContext {
@@ -1405,12 +1440,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
-    return this.root.stashResult(
-      id,
-      chunks,
-      ttlSeconds,
-      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
-    );
+    return runEdge(registryProgram(this, "stashResult", id, chunks, ttlSeconds));
   }
 
   resultIdentity(): ResultIdentity {
@@ -1435,8 +1465,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   credentialDriftFor(id: string): Promise<string | undefined> {
-    const registry = this.registryFor(id);
-    return registry ? registry.credentialDriftFor(id) : Promise.resolve(undefined);
+    return runEdge(registryProgram(this, "credentialDriftFor", id));
   }
 
   observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined {
@@ -1452,10 +1481,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   statusFor(...args: Parameters<RegistryView["statusFor"]>): Promise<ConnectorStatus> {
-    const registry = this.registryFor(args[0]);
-    return registry
-      ? registry.statusFor(args[0], args[1], args[2], args[3], this.scope)
-      : Promise.resolve({ state: "error", message: "Unknown connector" });
+    return runEdge(registryProgram(this, "statusFor", ...args));
   }
 
   withCatalogObservations(id: string, baseUrl: string, status: ConnectorStatus): ConnectorStatus {
@@ -1466,8 +1492,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   invalidateStored(id: string): Promise<void> {
-    const registry = this.registryFor(id);
-    return registry ? registry.invalidateStored(id) : Promise.resolve();
+    return runEdge(registryProgram(this, "invalidateStored", id));
   }
 
   credentialUiAvailable(): boolean {
@@ -1475,6 +1500,64 @@ class ScopedRegistryView implements RegistryView {
   }
 
   async bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
-    await this.root.bindOAuthHandoff(id, authorizationUrl, principalKey ?? this.scope.principalKey);
+    return runEdge(registryProgram(this, "bindOAuthHandoff", id, authorizationUrl, principalKey));
+  }
+  static {
+    provideRegistryPrograms(ScopedRegistryView.prototype, {
+      stashResult: (self, id, chunks, ttlSeconds) =>
+        registryProgram(
+          self.root,
+          "stashResult",
+          id,
+          chunks,
+          ttlSeconds,
+          self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
+        ),
+      recheckResultAccess: (self, dependencies, classification, signal) =>
+        Effect.tryPromise({
+          try: () => self.scope.currentResultAccess?.(dependencies, classification, signal) ?? Promise.resolve(true),
+          catch: (error) => error,
+        }),
+      getTools: (self, ...args) =>
+        Effect.gen(function* () {
+          const registry = self.registryFor(args[0]);
+          if (!registry) {
+            throw new Error(`Unknown connector "${args[0]}"`);
+          }
+          const tools = yield* registryProgram(registry, "getTools", args[0], args[1], args[2], args[3], self.scope);
+          const granted = self.scope.toolAccess?.get(args[0]);
+          if (!granted) return tools;
+          // Every consumer — search, describe, call_tool, and a program's
+          // connecta.call — resolves through this list, so an ungranted tool is
+          // indistinguishable from one the connector never had.
+          const visible = tools.filter((tool) => granted.has(tool.name));
+          if (visible.length < granted.size) {
+            const present = new Set(tools.map((tool) => tool.name));
+            for (const name of granted) {
+              if (!present.has(name)) self.root.noteAbsentGrant(args[0], name);
+            }
+          }
+          return carryCatalogFreshness(tools, visible);
+        }),
+      credentialDriftFor: (self, id) =>
+        Effect.suspend(() => {
+          const registry = self.registryFor(id);
+          return registry ? registryProgram(registry, "credentialDriftFor", id) : Effect.succeed(undefined);
+        }),
+      statusFor: (self, ...args) =>
+        Effect.suspend(() => {
+          const registry = self.registryFor(args[0]);
+          return registry
+            ? registryProgram(registry, "statusFor", args[0], args[1], args[2], args[3], self.scope)
+            : Effect.succeed({ state: "error", message: "Unknown connector" });
+        }),
+      invalidateStored: (self, id) =>
+        Effect.suspend(() => {
+          const registry = self.registryFor(id);
+          return registry ? registryProgram(registry, "invalidateStored", id) : Effect.succeed(undefined);
+        }),
+      bindOAuthHandoff: (self, id, authorizationUrl, principalKey) =>
+        registryProgram(self.root, "bindOAuthHandoff", id, authorizationUrl, principalKey ?? self.scope.principalKey),
+    });
   }
 }
