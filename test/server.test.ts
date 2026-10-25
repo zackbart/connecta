@@ -212,14 +212,14 @@ describe("server /mcp end-to-end", () => {
   // Two 5 MiB bodies read and parsed end to end: CPU-bound, with no timing
   // behavior, and on a loaded host past vitest's 5s default. The budget is a
   // hang guard, not a speed assertion.
-  it("leaves the inbound body bound to the host on both protocol legs", async () => {
+  it("honors the configured inbound body bound on both protocol legs", async () => {
     // @modelcontextprotocol/server 2.1.0 started refusing bodies over 4 MiB
-    // with its own 413. Connecta's bound belongs to the host — `listen()`'s
-    // `maxBodyBytes`, the Workers platform — so a body the host admitted must
-    // reach the meta-tools. JSON whitespace pads past the SDK default without
-    // changing what the request says.
+    // with its own 413. Raise Connecta's explicit fetch-native bound so a body
+    // it admits must reach the meta-tools on both SDK protocol legs. Direct
+    // fetch does not pass through listen()'s independent outer transport cap.
+    // JSON whitespace pads past the SDK default without changing the request.
     const padding = " ".repeat(5 * 1024 * 1024);
-    const c = makeDeployment();
+    const c = makeDeployment({ admission: { requests: { maxBodyBytes: 8 * 1024 * 1024 } } });
 
     const legacy = await c.fetch(
       new Request(`${BASE}/mcp`, {
