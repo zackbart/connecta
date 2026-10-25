@@ -49,7 +49,12 @@ describe("Node listen adapter", () => {
     "INV-7: preserves the lower of core and Node adapter body bounds (%s)",
     async (maxBodyBytes) => {
       const core = createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: 512 } } });
-      const server = listen(core, { port: 0, host: "127.0.0.1", gracefulShutdown: false, maxBodyBytes });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        ...(maxBodyBytes !== undefined ? { maxBodyBytes } : {}),
+      });
       await once(server, "listening");
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected TCP address");

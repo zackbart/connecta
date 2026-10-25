@@ -348,6 +348,8 @@ longest admitted request the deployment expects to serve.
 
 `admission.requests.maxBodyBytes` bounds each MCP request body at `/mcp`,
 `/mcp/<pool>` and `/agent/<pool>`. It defaults to 4 MiB (4,194,304 bytes).
+This restricts bodies that previously reached the host's larger platform cap;
+deployments needing larger MCP envelopes must configure the bound explicitly.
 A configured value must be a positive safe whole number; invalid values fail
 construction with their configuration path (INV-11). After authentication and
 endpoint admission, core counts streamed bytes before any SDK or native tool
@@ -3814,3 +3816,13 @@ returned the public Worker entry from 198,744 to 77,426 bytes; live minified
 Context, inherited-method, decorator and restoration proofs retain native
 composition. Root, example Worker, public Worker, D1 and Clerk caps remain
 unchanged. This cost decision grants no later request-body-limit allowance.
+
+### Authenticated body-bound cost (contributor)
+
+The separate #860 change has a measured allowance only for the example Worker
+gzip cap, from 785,000 to 786,000 bytes, with its historical baseline unchanged.
+The official full checker measures 785,036 bytes against D7's exact 784,948-byte
+lower graph, an actual 88-byte increase. It reuses the bounded platform body
+inspector, preserves native orchestration and avoids a new reader lifecycle.
+Root, UI, public Worker, D1, Clerk and asset caps remain fixed. The cost ruling
+does not approve protocol, cancellation or authority semantics.

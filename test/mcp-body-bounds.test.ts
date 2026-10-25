@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { accessTokens } from "../src/access-tokens.js";
 import { MAX_LISTEN_CLASSIFICATION_BYTES } from "../src/routes/mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { InboundAuth } from "../src/types.js";
+import type { Connector, InboundAuth } from "../src/types.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
@@ -72,16 +72,16 @@ function listenRequest(path: string, body: ReadableStream<Uint8Array>, token?: s
   } as RequestInit);
 }
 
-async function deployment(maxBodyBytes?: number, maxDurationMs = 5_000) {
+async function deployment(maxBodyBytes?: number, maxDurationMs = 5_000, connector: Connector = calcConnector) {
   const storage = memoryStorage();
   const c = createTestConnecta({
-    connectors: [calcConnector],
+    connectors: [connector],
     auth: people(),
     maintainers: ["alice"],
     agents: ["bot"],
     accessTokens: accessTokens(storage),
     storage,
-    pools: { team: { tools: ["calc"], members: ["bob", "agent:bot"] } },
+    pools: { team: { tools: [connector.id], members: ["bob", "agent:bot"] } },
     publicUrl: BASE,
     logger: silentLogger,
     admission: { requests: { concurrency: 4, maxQueueSize: 8, queueTimeoutMs: 1_000, maxDurationMs, maxBodyBytes } },
@@ -152,15 +152,17 @@ describe("MCP request bodies before auth", () => {
   );
 });
 
-function countedJson(total: number, modern: boolean) {
+function countedJson(total: number, modern: boolean, write = false) {
   const message = encoder.encode(
     JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
-      method: "tools/list",
+      method: write ? "tools/call" : "tools/list",
+      ...(write ? { params: { name: "call_destructive_tool", arguments: { address: "ledger.write", args: {} } } } : {}),
       ...(modern
         ? {
             params: {
+              ...(write ? { name: "call_destructive_tool", arguments: { address: "ledger.write", args: {} } } : {}),
               _meta: {
                 "io.modelcontextprotocol/protocolVersion": "2026-07-28",
                 "io.modelcontextprotocol/clientCapabilities": {},
@@ -198,6 +200,7 @@ function listRequest(
   token: string,
   modern: boolean,
   signal?: AbortSignal,
+  write = false,
 ) {
   return new Request(`${BASE}${path}`, {
     method: "POST",
@@ -206,7 +209,12 @@ function listRequest(
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
       "MCP-Protocol-Version": modern ? "2026-07-28" : "2025-06-18",
-      ...(modern ? { "Mcp-Method": "tools/list" } : {}),
+      ...(modern
+        ? {
+            "Mcp-Method": write ? "tools/call" : "tools/list",
+            ...(write ? { "Mcp-Name": "call_destructive_tool", "Mcp-Param-Address": "ledger.write" } : {}),
+          }
+        : {}),
     },
     body,
     signal,
@@ -217,6 +225,47 @@ function listRequest(
 describe("authenticated MCP body limits", () => {
   const cap = 128 * 1024;
   for (const modern of [true, false]) {
+    it.each([
+      ["/mcp", "alice"],
+      ["/mcp/team", "bob"],
+      ["/agent/team", "bot"],
+    ] as const)(
+      `INV-7 INV-9: refuses oversized ${modern ? "modern" : "fresh legacy"} writes at %s before dispatch`,
+      WORKERS,
+      async (path, who) => {
+        let writes = 0;
+        const { c, bot } = await deployment(1_024, 5_000, {
+          id: "ledger",
+          listTools: async () => [
+            { name: "write", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+          ],
+          callTool: async () => {
+            writes++;
+            return { written: true };
+          },
+        });
+        const token = who === "bot" ? bot : who;
+        try {
+          const large = countedJson(128 * 1024, modern, true);
+          const refused = await c.fetch(listRequest(path, large.body, token, modern, undefined, true));
+          expect(refused.status).toBe(413);
+          await refused.text();
+          expect(large.pulled()).toBeLessThan(128 * 1024);
+          expect(large.cancelled()).toBe(true);
+          expect(writes).toBe(0);
+          expect(await admittedTotal(c)).toBe(1);
+          const exact = countedJson(1_024, modern, true);
+          const accepted = await c.fetch(listRequest(path, exact.body, token, modern, undefined, true));
+          expect(accepted.status).toBe(200);
+          const result = (await accepted.json()) as { result: { isError?: boolean } };
+          expect(result.result.isError).not.toBe(true);
+          expect(writes).toBe(1);
+          expect(await admittedTotal(c)).toBe(2);
+        } finally {
+          await c.close();
+        }
+      },
+    );
     it.each([
       ["/mcp", "alice"],
       ["/mcp/team", "bob"],
@@ -257,6 +306,11 @@ describe("authenticated MCP body limits", () => {
     const { c } = await deployment();
     try {
       expect(CONFIG_DEFAULTS.admission.requests.maxBodyBytes).toBe(4 * 1024 * 1024);
+      const exact = countedJson(4 * 1024 * 1024, true);
+      const accepted = await c.fetch(listRequest("/mcp", exact.body, "alice", true));
+      expect(accepted.status).toBe(200);
+      await accepted.text();
+      expect(exact.pulled()).toBe(4 * 1024 * 1024);
       const large = countedJson(16 * 1024 * 1024, true);
       const request = listRequest("/mcp", large.body, "alice", true);
       request.headers.set("Content-Length", "1");
@@ -265,7 +319,7 @@ describe("authenticated MCP body limits", () => {
       await response.text();
       expect(large.pulled()).toBeLessThanOrEqual(4 * 1024 * 1024 + 3 * CHUNK);
       expect(large.cancelled()).toBe(true);
-      expect(await admittedTotal(c)).toBe(1);
+      expect(await admittedTotal(c)).toBe(2);
     } finally {
       await c.close();
     }
