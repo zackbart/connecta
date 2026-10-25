@@ -147,7 +147,7 @@ reordering reads like a harmless refactor.
 An admitted non-preflight `/mcp` request then takes five steps in
 `src/routes/mcp.ts`:
 
-1. **Admit.** No request body is read before auth on any endpoint. A request
+1. **Admit.** The fetch-native MCP route reads no body before auth on any endpoint. A request
    whose `Mcp-Method` header names `subscriptions/listen` takes no permit
    before auth. After auth and endpoint admission connecta reads at most
    64 KiB (`MAX_LISTEN_CLASSIFICATION_BYTES`) of it: past that it answers
@@ -345,6 +345,32 @@ stream. Expired queued waiters are pruned before any handoff; every handed-off
 permit has its own deadline even if the recipient never resumes. Lease identities
 make an old late release harmless to a newer permit. Set the bound above the
 longest admitted request the deployment expects to serve.
+
+`admission.requests.maxBodyBytes` bounds each MCP request body at `/mcp`,
+`/mcp/<pool>` and `/agent/<pool>`. It defaults to 4 MiB (4,194,304 bytes).
+A configured value must be a positive safe whole number; invalid values fail
+construction with their configuration path (INV-11). After authentication and
+endpoint admission, core counts streamed bytes before any SDK or native tool
+body reader. A body exactly at the cap proceeds through normal protocol
+validation. Past the cap, core stops reading, cancels both stream branches and
+returns HTTP 413 with JSON-RPC code `-33006`, `"MCP request body too large."`.
+The response retains the request's existing admission lifetime and releases
+the permit when delivery ends. Caller cancellation and the existing request
+deadline also cancel stalled reads. `describeConfig().limits.requests.maxBodyBytes`
+reports the resolved value and its `default` or `config` source.
+
+The pre-dispatch `subscriptions/listen` classification keeps its 64 KiB ceiling;
+a smaller deployment body cap wins. Authentication failures and private endpoint
+refusals still read no body. This envelope bound does not change program size,
+tool argument validation, write accounting or result limits.
+
+The Node `listen()` adapter separately buffers requests before calling the core,
+with its own `maxBodyBytes` option. Its default is also 4 MiB. It stops at the
+first chunk crossing that bound and returns a plain HTTP 413 before auth;
+core's authenticated refusal uses the JSON-RPC envelope above. The smaller bound
+wins. To admit larger bodies on Node, raise both options deliberately. Workers
+and hosts calling `connecta.fetch` apply core's bound after authentication,
+subject to any smaller platform or proxy limit.
 
 Call admission (`src/call-admission.ts`) answers what the envelope cannot see —
 a connector's optional policy over its own `Connector.callTool` attempts,
@@ -1462,8 +1488,8 @@ every vendor ships one reviewed table through one mechanism
    (decoded bytes are at most three quarters of encoded characters). Cloudflare
    KV additionally enforces its documented 25 MiB decoded value limit;
    malformed base64 and values beyond that limit refuse with `invalid_args`.
-   The host's inbound request cap still applies (Node `maxBodyBytes`, or the
-   Workers platform); response and raw-upload limits do not bound JSON fields.
+   The authenticated MCP `admission.requests.maxBodyBytes` cap and any smaller
+   host cap still apply; response and raw-upload limits do not bound JSON fields.
    JSON admission iteratively checks every key and value, with no separate
    depth or node-count ceiling below the accepted request's size. Cyclic
    direct arguments refuse with `invalid_args`; repeated non-cyclic references

@@ -6,6 +6,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuth } from "../src/types.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 
 // No MCP endpoint reads a request body before auth (#857). A request naming
 // `subscriptions/listen` skips the pre-auth permit, so its body was once read,
@@ -71,7 +72,7 @@ function listenRequest(path: string, body: ReadableStream<Uint8Array>, token?: s
   } as RequestInit);
 }
 
-async function deployment() {
+async function deployment(maxBodyBytes?: number, maxDurationMs = 5_000) {
   const storage = memoryStorage();
   const c = createTestConnecta({
     connectors: [calcConnector],
@@ -83,7 +84,7 @@ async function deployment() {
     pools: { team: { tools: ["calc"], members: ["bob", "agent:bot"] } },
     publicUrl: BASE,
     logger: silentLogger,
-    admission: { requests: { concurrency: 4, maxQueueSize: 8, queueTimeoutMs: 1_000, maxDurationMs: 5_000 } },
+    admission: { requests: { concurrency: 4, maxQueueSize: 8, queueTimeoutMs: 1_000, maxDurationMs, maxBodyBytes } },
   });
   return { c, bot: await issueAgentToken(storage, "bot") };
 }
@@ -149,4 +150,255 @@ describe("MCP request bodies before auth", () => {
       }
     },
   );
+});
+
+function countedJson(total: number, modern: boolean) {
+  const message = encoder.encode(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      ...(modern
+        ? {
+            params: {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            },
+          }
+        : {}),
+    }),
+  );
+  let pulled = 0,
+    cancelled = false;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (pulled === total) {
+          controller.close();
+          return;
+        }
+        const chunk = pulled === 0 ? message : new Uint8Array(Math.min(CHUNK, total - pulled)).fill(0x20);
+        pulled += chunk.length;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { body, pulled: () => pulled, cancelled: () => cancelled };
+}
+
+function listRequest(
+  path: string,
+  body: ReadableStream<Uint8Array>,
+  token: string,
+  modern: boolean,
+  signal?: AbortSignal,
+) {
+  return new Request(`${BASE}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": modern ? "2026-07-28" : "2025-06-18",
+      ...(modern ? { "Mcp-Method": "tools/list" } : {}),
+    },
+    body,
+    signal,
+    duplex: "half",
+  } as RequestInit);
+}
+
+describe("authenticated MCP body limits", () => {
+  const cap = 128 * 1024;
+  for (const modern of [true, false]) {
+    it.each([
+      ["/mcp", "alice"],
+      ["/mcp/team", "bob"],
+      ["/agent/team", "bot"],
+    ] as const)(
+      `INV-7 INV-11: bounds ${modern ? "modern" : "fresh legacy"} bodies at %s and releases admission`,
+      WORKERS,
+      async (path, who) => {
+        const { c, bot } = await deployment(cap);
+        const token = who === "bot" ? bot : who;
+        try {
+          const exact = countedJson(cap, modern);
+          const accepted = await c.fetch(listRequest(path, exact.body, token, modern));
+          expect(accepted.status).toBe(200);
+          expect(await accepted.json()).toMatchObject({ jsonrpc: "2.0", id: 1, result: { tools: expect.any(Array) } });
+          expect(exact.pulled()).toBe(cap);
+          expect(await admittedTotal(c)).toBe(1);
+
+          const large = countedJson(cap * 16, modern);
+          const refused = await c.fetch(listRequest(path, large.body, token, modern));
+          expect(refused.status).toBe(413);
+          expect(await refused.json()).toEqual({
+            jsonrpc: "2.0",
+            error: { code: -33006, message: "MCP request body too large." },
+          });
+          expect(large.pulled()).toBeLessThanOrEqual(cap + 3 * CHUNK);
+          expect(large.pulled()).toBeLessThan(cap * 16);
+          expect(large.cancelled()).toBe(true);
+          expect(await admittedTotal(c)).toBe(2);
+        } finally {
+          await c.close();
+        }
+      },
+    );
+  }
+
+  it("INV-7 INV-11: enforces the default 4 MiB while streaming without trusting a length header", WORKERS, async () => {
+    const { c } = await deployment();
+    try {
+      expect(CONFIG_DEFAULTS.admission.requests.maxBodyBytes).toBe(4 * 1024 * 1024);
+      const large = countedJson(16 * 1024 * 1024, true);
+      const request = listRequest("/mcp", large.body, "alice", true);
+      request.headers.set("Content-Length", "1");
+      const response = await c.fetch(request);
+      expect(response.status).toBe(413);
+      await response.text();
+      expect(large.pulled()).toBeLessThanOrEqual(4 * 1024 * 1024 + 3 * CHUNK);
+      expect(large.cancelled()).toBe(true);
+      expect(await admittedTotal(c)).toBe(1);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it(
+    "INV-7: keeps a lower deployment cap on listen candidates before their fixed classification ceiling",
+    WORKERS,
+    async () => {
+      const limit = 8 * 1024;
+      const { c } = await deployment(limit);
+      try {
+        const large = countedBody(LARGE);
+        const response = await c.fetch(listenRequest("/mcp", large.body, "alice"));
+        expect(response.status).toBe(413);
+        await response.text();
+        expect(large.pulled()).toBeLessThanOrEqual(limit + 2 * CHUNK + HEAD.length);
+        expect(await admittedTotal(c)).toBe(0);
+      } finally {
+        await c.close();
+      }
+    },
+  );
+
+  it("INV-7 INV-11: measures UTF-8 bytes at the exact boundary", WORKERS, async () => {
+    const text = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: { _meta: { pad: "é".repeat(256) } },
+    });
+    const bytes = encoder.encode(text);
+    expect(bytes.length).toBeGreaterThan(text.length);
+    for (const [limit, status] of [
+      [bytes.length, 200],
+      [bytes.length - 1, 413],
+    ]) {
+      const { c } = await deployment(limit);
+      try {
+        const body = new ReadableStream<Uint8Array>({
+          start(stream) {
+            stream.enqueue(bytes);
+            stream.close();
+          },
+        });
+        const response = await c.fetch(listRequest("/mcp", body, "alice", false));
+        expect(response.status).toBe(status);
+        await response.text();
+        expect(await admittedTotal(c)).toBe(1);
+      } finally {
+        await c.close();
+      }
+    }
+  });
+
+  it.each(["caller", "deadline"] as const)(
+    "INV-7: cancels a stalled admitted body on %s termination",
+    WORKERS,
+    async (termination) => {
+      const { c } = await deployment(cap, termination === "deadline" ? 200 : 5_000);
+      const controller = new AbortController();
+      const reason = new Error("original caller abort");
+      let announce!: () => void, release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        announce = resolve;
+      });
+      const stalled = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let first = true,
+        cancelled = false;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(stream) {
+            if (first) {
+              first = false;
+              stream.enqueue(encoder.encode("{"));
+              return;
+            }
+            announce();
+            return stalled;
+          },
+          cancel() {
+            cancelled = true;
+            release();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      try {
+        const pending = c.fetch(listRequest("/mcp", body, "alice", true, controller.signal));
+        await started;
+        if (termination === "caller") {
+          controller.abort(reason);
+          await expect(pending).rejects.toBe(reason);
+        } else {
+          const response = await pending;
+          expect(response.status).toBe(504);
+          expect(await response.json()).toMatchObject({ error: { code: -33003 } });
+        }
+        expect(cancelled).toBe(true);
+        expect(await admittedTotal(c)).toBe(1);
+      } finally {
+        release();
+        await c.close();
+      }
+    },
+  );
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, "4096", null, false])(
+    "INV-11: refuses an invalid body bound at construction (%s)",
+    WORKERS,
+    (value) => {
+      expect(() =>
+        createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: value as number } } }),
+      ).toThrow("ConnectaConfig.admission.requests.maxBodyBytes must be a positive whole number");
+    },
+  );
+
+  it("INV-11: reports default and explicit body limits with their configuration provenance", WORKERS, async () => {
+    const defaults = createTestConnecta({ connectors: [] });
+    const explicit = createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: 8_192 } } });
+    try {
+      expect((await defaults.describeConfig()).limits.requests.maxBodyBytes).toEqual({
+        value: 4 * 1024 * 1024,
+        source: "default",
+      });
+      expect((await explicit.describeConfig()).limits.requests.maxBodyBytes).toEqual({
+        value: 8_192,
+        source: "config",
+      });
+    } finally {
+      await Promise.all([defaults.close(), explicit.close()]);
+    }
+  });
 });
