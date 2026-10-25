@@ -433,6 +433,12 @@ after the uncertain write, alongside the final-state and single-write checks.
 Gmail subject, label, header and attachment facts must belong to their named
 message. S5 and L5 verify the new row or slide through a successful read-back;
 a write receipt alone does not establish that verification.
+Gmail G3 accepts an exact complete id list sorted numerically or lexically;
+other orderings, duplicates and omissions fail. Sheets S5/S6 accept equivalent
+A..D append table-search ranges on the exact requested sheet and workbook;
+literal values, insert-rows mode, one write and read-back evidence remain
+required. The [disclosed offline correction](baselines/notes-google-grader-followups.md)
+keeps every original scored table beside the regraded results.
 Long threads, native empty pages, local byte cuts, UTF-16 index pages, revision
 conflicts and post-commit failures are deterministic. The identity controls
 also cover Alice/Bob, fixed subjects, an ownerless pool, read-only refusal and
