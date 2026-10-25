@@ -3587,6 +3587,96 @@ even if a later CONNECT fails before destination dispatch. D6 must preserve the
 SDK JSON-RPC envelope distinction at the leaf: protocol POSTs are not credential
 POSTs; forms and registration JSON are. Discovery GETs remain native fetch.
 
+### Native auth programs (contributor)
+
+Inbound verification, shared authentication admission, machine-token verification,
+static OAuth and the SDK-facing downstream OAuth provider compose private native
+programs. `auth/native.ts` selects registered implementations by the current
+function identity; an original Promise shell enters its own implementation
+without re-reading an overridden method. Class registrations retain their
+original method and prototype/key separately, so instance, inherited and
+prototype decorators can delegate to a saved original without recursion. Custom
+adapters and overridden methods retain their Promise boundary and original errors.
+
+`auth/native-call.ts` provides the canonical `RequestScope` Context from the
+existing call view. Native grant preparation and storage reads execute inside
+that Context and refuse a closed owner; no second request-identity table is
+introduced. Keeping that call-only module separate also keeps downstream call
+services out of metadata and operator UI imports. Native storage uses D2's
+registered storage programs; custom stores remain one-operation Promise leaves.
+
+`authFlow` composes yielded Effects while delivering original typed failures to
+local auth policy catches. Interruption remains interruption, runs yielded
+cleanup and never becomes a diagnostic Cause. A fetch's settlement observer
+cancels a late body. The resource sender records only retained status/refusal
+facts after cancellation; it cannot renew a call capability or send another
+request. Synchronous abort observers finish recording those facts before native
+wait cleanup removes them.
+
+Admission charges track the actual settlement of SDK, crypto, fetch and custom
+Promise leaves. Submitted native storage work has independent settlement so a
+caller-facing deadline cannot release its charge early. Isolate-wide admission
+state remains scalar charges, counters and weak reachability; no request-owned
+client, signal, body or Promise is cached across requests. Organization cache
+TTLs, lookup ordering and rate-limit backoff remain unchanged.
+
+Admission composes explicit native continuations rather than suspending a
+generator that contains its charge token. The workerd collection regression
+holds live middleware work charged, ends a different invocation, then proves
+its unreachable charges are collectable. Neither deadline nor abandonment
+releases a charge; only actual settlement or proven unreachability does.
+
+Refresh claims still transfer ownership synchronously with claim-CAS submission,
+before its answer. The bounded native coordinator starts without request/call
+Context authority and may persist a rotation after its caller closes. A closed
+caller cannot consume that result or resume sending. The cross-request refresh
+join deliberately crosses a Promise boundary so workerd resumes each waiter in
+its own request. Code exchange remains request-owned and one-use. Epochs,
+permanent spent fingerprints, physical-attempt guards and pre-claim transport
+preflight are unchanged.
+
+`authStorage(storage, key, args, beforeSubmit?)` admits the ownership hook and
+native/custom storage invocation in one JavaScript reaction. Its public
+Scheduler delegation suppresses automatic yield only during that initial
+reaction; a microtask restores parent scheduling before pending I/O resumes.
+The four hook sites are `updateGrant`'s guarded write and `claimRefresh`'s
+unknown-lease refusal, ambiguous spent-token write and new claim. A forced
+scheduler regression covers both native and custom stores; real pending TCP
+I/O, pre-submission cancellation, synchronous failure and unknown CAS outcomes
+retain their distinct ownership and exactly-once settlement rules.
+
+Intentional leaves are the Clerk and MCP SDKs (including their callback methods),
+platform fetch/body readers and Web Crypto, custom identity/gate/sealer/storage
+hooks, and the reset-settlement observer required by the callback route. Native
+programs compose around those leaves directly. Public Promise APIs, SDK method
+signatures and published private class declarations remain unchanged; only
+`runtime/run.ts` starts fibers. SDK telemetry remains disabled, and raw SDK,
+body, storage or Cause diagnostics never reach operator records.
+
+The declaration comparison retains 86 of 88 reachable files byte for byte.
+The two exact exceptions swap only adjacent `title` / `instructions` members
+in the inferred provider and Google Workspace schema declarations; both keep
+the same `Field<unknown, unknown, true>` type. Both owning source files are
+unchanged. A narrow machine check restores only those two exact adjacent
+pairs and requires byte equality, with no other type, export or reference
+change. All 88 declarations still exclude Effect and have complete references.
+
+The superseding 2026-10-25 D3/D4 cost ruling authorizes only Worker
+`maxGzip: 785000` (previously 760000) and Clerk `maxGzip: 85000` (previously
+63087). Official cached Node 22.23.4 / zlib 1.3.1-e00f703 measured Clerk at
+47,688 -> 80,961 bytes gzip (+33,273): the generated SDK is unchanged, while
+native Effect adds 91.8 KB raw plus the native helper and small auth-source
+growth. The isolated D4 candidate measured Worker at 762,666, root at 377,177
+and D1 at 88,321 bytes gzip. Optional-graph optimization brought UI to 342,955,
+so the earlier unused UI allowance is revoked and its original 345000 cap
+remains. Historical baselines, root/D1 and all other caps, dependency pins and
+security/API gates remain unchanged. These independent measurements do not
+predict a combined gzip by addition; final artifacts must be rebuilt. Native
+registration, decorated fallback and request/native-storage semantics also
+require a smoke through an actual minified production bundle. Final post-hook
+official artifacts measure root 377,290, D1 88,321, Clerk 80,959, UI 342,959
+and Worker 762,774 bytes gzip, all within those caps.
+
 ### Contributor reference: Node response drain
 
 The Node listener counts active ServerResponses per socket. Once shutdown starts,
