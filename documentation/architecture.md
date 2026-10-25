@@ -2897,6 +2897,68 @@ provider program that carry a `ConnectorCallError`. A failing visibility hook
 also withholds the defect's text; non-withheld operations retain their original
 defects.
 
+### Production HTTP dispatch (contributor reference)
+
+`src/server.ts` retains the origin refusal, HTTPS upgrade and security wrapper,
+then calls the private `src/routes/dispatch.ts` adapter. Each fetch handler owns
+two immutable public Effect HttpRouters: a human table selects CIMD, connect,
+OAuth callback, metadata, health and MCP programs; the agent table selects only
+the existing agent endpoint program. The raw agent-namespace guard runs before
+human dispatch. An unmatched human route runs optional UI fallthrough, wildcard
+OPTIONS metadata/CORS, or the deployment's final 404. Core selection uses the
+router directly, without scanning the other core modules. CIMD runs before UI;
+every other human program runs after optional UI, including its null fallthrough.
+Metadata retains MCP-before-provider discovery order.
+
+The synchronous constructor does no routing work or I/O. The first existing
+edge fiber builds both fixed tables with public `make`, `addAll` and
+`asHttpEffect`. Only synchronous registration and cache publication use
+`Scheduler.PreventSchedulerYield` and an uninterruptible region. The cache
+check is inside that region, so even concurrent first requests with a 16-operation
+yield budget publish only two routers. Normal scheduling and interruption are
+restored before any application callback or I/O. Cached route effects capture
+only deployment programs; they read the private current `RouteContext` service
+when executed. No request, body, signal, Promise, client, Scope or request
+services are retained in the tables. The canonical request/call ownership in
+the MCP program remains unchanged.
+
+Routing uses a body-free GET projection of the URL, with percent escapes and
+the matcher's semicolon delimiter protected. The original request remains in
+`RouteContext`: existing programs own exact raw paths, arbitrary extension
+methods, JSON 405/Allow, HEAD, private OPTIONS, cookies, authentication and body
+refusal order. Router normalization cannot grant a canonical path to an encoded
+prefix, and invalid escapes in an owned suffix still reach the owning program.
+The projection introduces no second request handler or runner. Web responses
+pass through `HttpServerResponse.raw`/`toWeb` with their identity and stream
+ownership intact. The short dispatch Scope does not own MCP's body-held permit
+or the OAuth callback's uninterruptible commitment. Only a genuine public
+`RouteNotFound` before handler entry falls through; application failures,
+including structural lookalikes and genuine router errors, retain their identity.
+
+Four public `effect/http/*` modules are allowed only in the private dispatcher;
+all other root-purity and optional-implementation boundaries remain enforced.
+Direct public module imports avoid the area's barrel cost. The local D3
+measurement over the reviewed D1/D2 stack is root 373,435 to 393,470 bytes gzip
+and Worker 758,274 to 774,384 (official Node 22.23.4/zlib 1.3.1-e00f703, identical
+repository bundle options). The barrel alternative measures 423,348/787,614.
+The parent accepted this measured native-routing cost with a Worker cap of
+785,000 bytes, including room for separately measured native-auth and reviewed
+host/transport additions. Root and all other caps and historical baselines are
+unchanged by D3. Separate-input costs are not a combined gzip measurement;
+the integrated deployment must be measured again.
+
+`test/effect-core-proof.node.test.ts` compares production against the hash-pinned
+legacy dispatcher in a test-only fixture, on Node and real workerd. It retains
+the original 245 exchanges and adds 440 raw-path/extension-method exchanges,
+request isolation, actual public router construction counts, error identity,
+silence, body lifetime and waiting-request I/O evidence. Build-count probes
+instrument public router construction only in test bundles. Mutation probes
+reject baseline drift, missed graphs, bypassed production dispatch, removed
+route selection and broken unmatched fallthrough. No legacy dispatcher ships
+in production; no proof instrumentation is included in deployment bundles.
+The upward MCP protocol leaves remain SDK implementations, with D7's separate
+native-orchestration work and compatibility evidence unchanged.
+
 ### Why not Schema or HttpApi for core routes
 
 Both were measured and both lost. `effect` is imported through its barrel,
@@ -2911,7 +2973,8 @@ the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
 on `./activity`, and matching the wire format meant opting out of most of what
 it does: unowned paths fall through rather than 404, a wrong method is a JSON
 405, and the content-type and size checks run before a body is read. The root
-entry currently imports only `effect` itself (`test/purity.node.test.ts`).
+entry imports `effect` and the four public HTTP modules confined to the private
+dispatcher (`test/purity.node.test.ts`).
 Effect 4.x is a long-term-support line, but its area barrels `effect/http`,
 `effect/http-api`, `effect/schema`, and `effect/sql` are still tagged
 `@stability unstable` and can change within it; only core modules such as
@@ -2946,7 +3009,9 @@ wrong method and an unowned path; our routes need a JSON 405 for the former
 and module fallthrough for the latter. Their `toWebHandler` also builds its
 layer immediately and owns a runner, so adopting it would require proving
 global-scope safety and preserving our scheduler and response-lifetime rules.
-The existing Effect route programs keep those rules without this routing layer.
+Those historical defaults are not the production adapter: the narrow public
+HttpRouter dispatch above preserves explicit method refusals, unowned fallthrough
+and the existing edge runner without `toWebHandler`.
 
 Effect's MCP server has a separate compatibility gate. Its `2026-07-28`
 adapter accepted a stateless `tools/list`, but its `2025-06-18` adapter refused
@@ -2955,9 +3020,9 @@ next request returned 404 on a fresh handler; Connecta served the same fresh
 legacy list with 200 JSON and no session. The stable package exports no MCP
 client, so it also cannot replace our downstream SDK and OAuth implementation.
 [Issue #622](https://github.com/zackbart/connecta/issues/622) records the server
-parity requirements. These measurements support keeping the current MCP,
-validation, and routing implementations; stable v4 alone does not establish a
-replacement's benefit or compatibility.
+parity requirements. These historical measurements supported retaining MCP protocol and validation
+implementations. Production HTTP dispatch now uses the separately proven narrow
+public adapter above; stable v4 alone did not establish its compatibility.
 
 The core's cost is recorded rather than guessed. Against 0.24.4 the root entry
 grew from 235,346 to 279,526 bytes gzip, the Worker example from 263,949 to

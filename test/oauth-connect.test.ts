@@ -150,6 +150,61 @@ function setup(
   };
 }
 
+it("INV-7 INV-9: a dispatched OAuth callback commits once after its caller aborts", async () => {
+  const flow = setup("clerk", "personal", { ui: false });
+  const { authorizationUrl } = await flow.authorize();
+  const begun = await flow.browser(authorizationUrl, "alice");
+  const state = new URL(begun.headers.get("Location")!).searchParams.get("state")!;
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let committed = 0;
+  flow.finishAuth.mockImplementationOnce(async () => {
+    enter();
+    await held;
+    committed++;
+  });
+  const controller = new AbortController();
+  const reason = new Error("callback caller left");
+  let settled = false;
+  const waiting = flow.app
+    .fetch(
+      new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, {
+        headers: flow.headers("alice"),
+        signal: controller.signal,
+      }),
+    )
+    .then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        settled = true;
+        return error;
+      },
+    );
+  try {
+    await entered;
+    controller.abort(reason);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(committed).toBe(0);
+  } finally {
+    release();
+  }
+  expect(await waiting).toBe(reason);
+  expect(committed).toBe(1);
+  expect(flow.finishAuth).toHaveBeenCalledTimes(1);
+  expect((await flow.callback("alice", state)).status).toBe(400);
+  expect(flow.finishAuth).toHaveBeenCalledTimes(1);
+});
+
 it("INV-7: connection starts and callbacks preserve retryable pre-auth refusals without consuming consent", async () => {
   const flow = setup("access", "personal");
   const { authorizationUrl } = await flow.authorize();

@@ -1,5 +1,5 @@
 // Shared by the Node bundle and real service-bound workerd isolates.
-import { Context, Effect, Layer, Scope } from "effect";
+import { Context, Effect, Layer, Scheduler, Scope } from "effect";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { McpProtocol, McpSchema, McpServer } from "effect/ai";
 import { HttpEffect, HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -12,7 +12,7 @@ import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js"
 import { operatorUi } from "../../../src/ui.js";
 import { encryptedCredentialVault } from "../../../src/credentials.js";
 import { runEdge } from "../../../src/runtime/run.js";
-import { matchModule } from "./router.js";
+import { createRouteDispatcher } from "../../../src/routes/dispatch.js";
 import type { RouteContext } from "../../../src/routes/shared.js";
 import type { KVStorage } from "../../../src/types.js";
 
@@ -194,6 +194,41 @@ async function runCimd() {
   } finally { globalThis.fetch = originalFetch; await deployment.close(); }
 }
 
+/** Raw suffixes and extension methods outside the original 245 exchanges. */
+export async function runRoutingEdges() {
+  const rows = [];
+  const paths = [
+    "/health", "/health;tail", "/health%", "/%68ealth", "/HEALTH", "/health/",
+    "/connect", "/connect/", "/connect/%", "/connect/%FF", "/connect/a;b", "/connect/" + "x".repeat(200),
+    "/%63onnect/a", "/connect;/a", "/connect//a",
+    "/oauth/callback", "/oauth/callback/", "/oauth/callback/%", "/oauth/callback/%FF", "/oauth/callback/a;b",
+    "/oauth/client-metadata", "/oauth/client-metadata/", "/oauth/client-metadata/%", "/oauth/client-metadata/oauth;tail",
+    "/oauth/client-metadata/oauth", "/oauth/client-metadata/%6fauth",
+    "/.well-known/proof", "/.well-known/%", "/%2ewell-known/proof", "/.well-known", "/.well-known/",
+    "/mcp", "/mcp/", "/mcp/%", "/mcp/%FF", "/mcp/a;b", "/mcp;/a", "/mcp/" + "x".repeat(200),
+    "/agent/native", "/%61gent/native", "//AGENT/native", "/agent/%", "/missing", "/missing%FF",
+  ];
+  for (const withUi of [false, true]) {
+    const trace: string[] = [];
+    const ui = operatorUi();
+    const deployment = createConnecta({ readOnly: false, executor: executor(), logger: "silent", publicUrl: BASE,
+      connectors: [oauthFixture()], maintainers: [principal],
+      auth: { kind: "proof", authorize() { trace.push("auth"); return { ok: false as const, response: new Response(null, { status: 401 }) }; },
+        handleMetadata: async (request) => { trace.push("metadata:" + new URL(request.url).pathname); return new URL(request.url).pathname === "/.well-known/proof" ? new Response("metadata") : null; } },
+      ...(withUi ? { ui: { ...ui, handle: async () => { trace.push("ui"); return null; } } } : {}),
+    });
+    try {
+      for (const path of paths) for (const method of ["GET", "HEAD", "OPTIONS", "POST", "PROPFIND"]) {
+        trace.length = 0;
+        const request = new Request(BASE + path, { method, ...(method === "POST" ? { body: "unread" } : {}) });
+        const response = await shape(await deployment.fetch(request));
+        rows.push({ path, method, withUi, response, trace: [...trace], bodyUsed: request.bodyUsed });
+      }
+    } finally { await deployment.close(); }
+  }
+  return rows;
+}
+
 /** Bounded diagnostic measurement, never a CI timing threshold. No network. */
 export async function runDispatchLatency() {
   const before = Number(Reflect.get(globalThis, "__proofRouterBuilds") ?? 0);
@@ -220,7 +255,7 @@ export async function runDispatchLatency() {
       rows.push({ path, requests, builds, buildsPerRequest: builds / requests, samplesMs,
         microsecondsPerRequest: samplesMs.map((ms) => ms * 1000 / batchSize) });
     }
-    return { warmup, batches, batchSize, constructionBuilds, rows };
+    return { warmup, batches, batchSize, constructionBuilds, totalBuilds: Number(Reflect.get(globalThis, "__proofRouterBuilds") ?? 0) - before, rows };
   } finally { await deployment.close(); }
 }
 
@@ -322,29 +357,84 @@ export async function runMcp(tools: ReadonlyArray<Record<string, unknown>>) {
 
 /** Raw response identity and error/Scope behavior of the reusable router seam. */
 export async function runRouterSeam() {
-  const request = new Request(BASE + "/owned");
-  const context = { request } as RouteContext;
+  const request = new Request(BASE + "/health");
   const response = new Response("owned", { status: 405, headers: { allow: "PUT", "content-type": "application/json", "set-cookie": "a=1; Path=/" } });
-  const actual = await runEdge(matchModule(context, ["/owned"], Effect.succeed(response)));
-  const missing = await runEdge(matchModule(context, ["/other"], Effect.die("must not run")));
-  const unowned = await runEdge(matchModule(context, ["*"], Effect.succeed(null)));
+  let applicationError: unknown;
+  let calls = 0;
+  const route = createRouteDispatcher(() => {
+    calls++;
+    return applicationError ? Effect.fail(applicationError) : Effect.succeed(null);
+  },
+    () => Effect.succeed(null), async () => response);
+  const context = (path: string, method = "GET") => {
+    const request = new Request(BASE + path, { method });
+    return { request, url: new URL(request.url), path, baseUrl: BASE, opts: { config: {} } } as RouteContext;
+  };
+  const actual = await runEdge(route(context("/health")));
+  const missing = await runEdge(route(context("/missing")));
+  const unowned = await runEdge(route(context("/connect")));
   const reason = new Error("payload-shaped-private-error");
-  let sameError = false;
-  try { await runEdge(matchModule(context, ["/owned"], Effect.fail(reason))); } catch (error) { sameError = error === reason; }
   const shaped = { reason: { _tag: "RouteNotFound" } };
   const typed = new HttpServerError.HttpServerError({ reason: new HttpServerError.RouteNotFound({ request: HttpServerRequest.fromWeb(request) }) });
   const retained = [];
-  for (const applicationError of [shaped, typed]) {
-    try { await runEdge(matchModule(context, ["/owned"], Effect.fail(applicationError))); retained.push(false); }
-    catch (error) { retained.push(error === applicationError); }
+  const errorCalls = [];
+  for (const error of [reason, shaped, typed]) {
+    applicationError = error;
+    const before = calls;
+    try { await runEdge(route(context("/mcp"))); retained.push(false); }
+    catch (caught) { retained.push(caught === error); }
+    errorCalls.push(calls - before);
   }
+  // The unmatched fallback is outside the router-error catch as well.
+  let unmatchedRetainsError = false;
+  try { await runEdge(route(context("/missing"))); } catch (caught) { unmatchedRetainsError = caught === typed; }
+  applicationError = undefined;
   let finalized = 0;
   await runEdge(Effect.scoped(Effect.gen(function* () {
     yield* Effect.addFinalizer(() => Effect.sync(() => { finalized++; }));
-    yield* matchModule(context, ["/owned"], Effect.succeed(new Response(null, { status: 204 })));
+    yield* route(context("/health"));
     yield* Scope.Scope;
   })));
-  return { identity: actual === response, missing, unowned, sameError, sameShapedError: retained[0], sameTypedRouteError: retained[1], finalized, response: await shape(response) };
+  return { identity: actual === response, missing: missing.status, unowned: unowned.status,
+    sameError: retained[0], sameShapedError: retained[1], sameTypedRouteError: retained[2], unmatchedRetainsError,
+    errorCalls, finalized, response: await shape(response) };
+}
+
+/** First-request races and later calls use the same two real public routers. */
+export async function runRouterIsolation() {
+  const builds = () => Number(Reflect.get(globalThis, "__proofRouterBuilds") ?? 0);
+  const start = builds();
+  const seen: string[] = [];
+  const route = createRouteDispatcher((context) => Effect.gen(function* () {
+    const preventYield = yield* Scheduler.PreventSchedulerYield;
+    yield* Effect.promise(() => Promise.resolve());
+    const body = yield* Effect.promise(() => context.request.text());
+    const id = context.request.headers.get("x-request-id");
+    context.defer?.(Promise.resolve());
+    seen.push(context.path);
+    return Response.json({ body, id, path: context.path, preventYield, aborted: context.request.signal.aborted });
+  }), () => Effect.succeed(null), async () => new Response("health"));
+  const constructionBuilds = builds() - start;
+  const run = async (i: number) => {
+    const path = i % 2 ? "/agent/native" : "/mcp/native";
+    const controller = new AbortController();
+    const request = new Request(BASE + path, { method: "POST", headers: { "x-request-id": String(i) }, body: "body-" + i, signal: controller.signal });
+    let deferred = 0;
+    const context = { request, url: new URL(request.url), path, baseUrl: BASE,
+      opts: { config: {} }, defer: () => { deferred++; } } as unknown as RouteContext;
+    const response = await runEdge(route(context).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 16)), { signal: request.signal });
+    const result = await response.json();
+    controller.abort();
+    return { result, deferred };
+  };
+  const first = await Promise.all(Array.from({ length: 16 }, (_, i) => run(i)));
+  const firstBuilds = builds() - start;
+  const later = await Promise.all(Array.from({ length: 16 }, (_, i) => run(i + 16)));
+  const totalBuilds = builds() - start;
+  // Real matcher selection must skip the MCP program for the exact health path.
+  const request = new Request(BASE + "/health");
+  const selected = await runEdge(route({ request, url: new URL(request.url), path: "/health", baseUrl: BASE, opts: { config: {} } } as RouteContext));
+  return { constructionBuilds, firstBuilds, totalBuilds, first, later, selected: await selected.text(), mcpCalls: seen.length };
 }
 
 /** Exercise actual body-held request permits through the compiled dispatcher. */
