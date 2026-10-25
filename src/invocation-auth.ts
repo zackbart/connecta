@@ -1,5 +1,7 @@
+import { authCall, authFlow, registerAuth } from "./auth/native.js";
+import { upwardStep } from "./upward.js";
+import { runEdge } from "./runtime/run.js";
 import { Effect } from "effect";
-import { authCall } from "./auth/native.js";
 import { requestOwner } from "./runtime/request-scope.js";
 import { cloneTool, sourceClassification } from "./tool-safety.js";
 import type { Connector, ConnectorContext, ToolDef } from "./types.js";
@@ -90,7 +92,7 @@ export function recordAuthFailure(scope: object, connector: string, eligible: bo
   failures.set(connector, eligible && failures.get(connector) !== false);
 }
 
-export async function authRecoveryFacts(
+export function authRecoveryFacts(
   scope: object,
   connector: string,
 ): Promise<{
@@ -99,19 +101,24 @@ export async function authRecoveryFacts(
   eligible: boolean;
   reads: ReplayRead[];
 }> {
-  const facts = requestFor(scope);
-  const writeEntered = facts.entered.some((call) => call.classification === "write");
-  const reads = new Map<string, string>();
-  let unsafeEntered = writeEntered;
-  for (const call of facts.entered) {
-    const digest = await classificationDigest(call.definition);
-    unsafeEntered ||= !call.fresh || !digest || (reads.has(call.address) && reads.get(call.address) !== digest);
-    reads.set(call.address, digest);
-  }
-  return {
-    writeEntered,
-    unsafeEntered,
-    eligible: !unsafeEntered && facts.authFailures.get(connector) === true,
-    reads: [...reads].map(([address, digest]) => ({ address, digest })),
-  };
+  return runEdge(authRecoveryFactsNative(scope, connector));
 }
+const authRecoveryFactsNative = registerAuth(authRecoveryFacts, (scope: object, connector: string) =>
+  authFlow<Awaited<ReturnType<typeof authRecoveryFacts>>>(function* () {
+    const facts = requestFor(scope);
+    const writeEntered = facts.entered.some((call) => call.classification === "write");
+    const reads = new Map<string, string>();
+    let unsafeEntered = writeEntered;
+    for (const call of facts.entered) {
+      const digest = yield* upwardStep(authCall<string>(classificationDigest, [call.definition]));
+      unsafeEntered ||= !call.fresh || !digest || (reads.has(call.address) && reads.get(call.address) !== digest);
+      reads.set(call.address, digest);
+    }
+    return {
+      writeEntered,
+      unsafeEntered,
+      eligible: !unsafeEntered && facts.authFailures.get(connector) === true,
+      reads: [...reads].map(([address, digest]) => ({ address, digest })),
+    };
+  }),
+);

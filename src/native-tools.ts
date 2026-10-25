@@ -1,11 +1,18 @@
-// The native tool surface (#703): a pool with `surface: "native"`
-// lists each downstream tool directly, for clients that run their own tool
-// search, instead of the six meta-tools. This layer resolves tool identity; a
-// native call is translated into the exact call_tool or call_destructive_tool
-// call and runs through the same handler, so classification, read-only
-// refusal, validation, admission, redaction, write settlement and result
-// bounds stay in invocation. See documentation/meta-tools.md#native-tool-surface.
+import { duringViewEffect } from "./runtime/call.js";
+import { RequestScope, requestOwner } from "./runtime/request-scope.js";
+import { Effect } from "effect";
+import { upwardStep } from "./upward.js";
+import {
+  authCall,
+  authInvoke,
+  authFlow,
+  authMethod,
+  registerAuth,
+  registerAuthMethod,
+  authOwnMethod,
+} from "./auth/native.js";
 
+import { runEdge } from "./runtime/run.js";
 import {
   ProtocolError,
   type McpServer,
@@ -46,10 +53,17 @@ const NATIVE_OWN_TOOLS: readonly string[] = ["execute_code", "skills", "read_res
 
 const enc = new TextEncoder();
 
-async function shortHash(text: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(text)));
-  return [...digest.subarray(0, HASH_CHARS / 2)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+function shortHash(text: string): Promise<string> {
+  return runEdge(shortHashNative(text));
 }
+const shortHashNative = registerAuth(shortHash, function (text: string) {
+  return authFlow<string>(function* () {
+    const digest = new Uint8Array(
+      yield* upwardStep(authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", enc.encode(text)])),
+    );
+    return [...digest.subarray(0, HASH_CHARS / 2)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  });
+});
 
 /**
  * The connector half of a native name. Connector ids are `[a-z0-9_-]+`; one
@@ -66,13 +80,18 @@ function connectorPart(connectorId: string): string {
  * legal and short, otherwise its head plus a six-hex SHA-256 suffix of the
  * original pair.
  */
-export async function nativeToolName(connectorId: string, toolName: string): Promise<string> {
-  const tool = toolName.replace(/[^A-Za-z0-9_-]/g, "_");
-  const plain = `${connectorPart(connectorId)}${SEPARATOR}${tool}`;
-  if (tool === toolName && PLAIN_TOOL.test(tool) && plain.length <= NATIVE_NAME_MAX) return plain;
-  const head = plain.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
-  return `${head}_${await shortHash(`${connectorId}.${toolName}`)}`;
+export function nativeToolName(connectorId: string, toolName: string): Promise<string> {
+  return runEdge(nativeToolNameNative(connectorId, toolName));
 }
+const nativeToolNameNative = registerAuth(nativeToolName, function (connectorId: string, toolName: string) {
+  return authFlow<string>(function* () {
+    const tool = toolName.replace(/[^A-Za-z0-9_-]/g, "_");
+    const plain = `${connectorPart(connectorId)}${SEPARATOR}${tool}`;
+    if (tool === toolName && PLAIN_TOOL.test(tool) && plain.length <= NATIVE_NAME_MAX) return plain;
+    const head = plain.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
+    return `${head}_${yield* upwardStep(authCall<string>(shortHash, [`${connectorId}.${toolName}`]))}`;
+  });
+});
 
 /** A listed native tool and the downstream tool it calls. */
 export interface NativeTool {
@@ -198,51 +217,17 @@ export class NativeSurface {
    * whole, never partially, with an operator warning; two tools claiming one
    * name are both omitted and stay reachable by address in execute_code.
    */
-  private async claims(connectors = this.registry.listConnectors()) {
-    const loaded = await this.catalog.listCatalogs(true, connectors);
-    const byName = new Map<string, NativeTool | null>();
-    for (const entry of loaded) {
-      if (!("tools" in entry)) continue;
-      for (const tool of entry.tools) {
-        const name = await nativeToolName(entry.connector.id, tool.name);
-        if (byName.has(name)) {
-          byName.set(name, null);
-          logFailure(
-            this.options.logger,
-            "native name collision",
-            failureRecord({ connector: entry.connector.id, tool }),
-          );
-        } else byName.set(name, { name, connector: entry.connector, tool });
-      }
-    }
-    return { loaded, byName };
+  private claims(connectors = this.registry.listConnectors()) {
+    return runEdge(
+      authOwnMethod<{
+        loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
+        byName: Map<string, NativeTool | null>;
+      }>(NativeSurface.prototype, this, "claims", [connectors]),
+    );
   }
 
-  private async list(): Promise<NativeTool[]> {
-    const { loaded, byName } = await this.claims();
-    for (const entry of loaded) {
-      // Validate the whole connector before registering any of its tools.
-      const tool =
-        "tools" in entry
-          ? entry.tools.find((tool) => tool.inputSchema !== undefined && !nativeInputSchema(tool.inputSchema))
-          : undefined;
-      if (!("error" in entry) && !tool) continue;
-      this.options.catalogErrors.push(entry.connector.id);
-      logFailure(
-        this.options.logger,
-        "native catalog unavailable",
-        failureRecord(
-          { connector: entry.connector.id, ...(tool ? { tool } : {}) },
-          "error" in entry ? entry.error : undefined,
-        ),
-      );
-    }
-    return [...byName.values()].filter(
-      (entry): entry is NativeTool =>
-        entry !== null &&
-        !this.options.catalogErrors.includes(entry.connector.id) &&
-        (!(this.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read"),
-    );
+  private list(): Promise<NativeTool[]> {
+    return runEdge(authOwnMethod<NativeTool[]>(NativeSurface.prototype, this, "list", []));
   }
 
   /**
@@ -250,72 +235,25 @@ export class NativeSurface {
    * connector prefix the name could carry, including truncated prefixes. Resolution sees
    * writes on a read-only endpoint, so invocation refuses them by code.
    */
-  private async resolve(
+  private resolve(
     name: string,
   ): Promise<
     | { kind: "found"; entry: NativeTool }
     | { kind: "ambiguous" }
     | { kind: "missing"; failure?: { connector: Connector; cause: unknown } }
   > {
-    const prefixed = this.registry.listConnectors().filter((connector) => {
-      const prefix = `${connectorPart(connector.id)}${SEPARATOR}`;
-      // A hashed name can truncate even the connector prefix, and strips
-      // trailing underscores from its head. Include every possible claimant.
-      const head = prefix.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
-      // A hashed name carries a stripped head only as exactly `${head}_` + six hex digits.
-      return (
-        name.startsWith(prefix) ||
-        (name.length === head.length + 1 + HASH_CHARS &&
-          name.startsWith(`${head}_`) &&
-          /^[0-9a-f]+$/.test(name.slice(-HASH_CHARS)))
-      );
-    });
-    const { loaded, byName } = await this.claims(prefixed);
-    const found = byName.get(name);
-    if (found === null) return { kind: "ambiguous" };
-    // An unavailable possible claimant cannot prove uniqueness.
-    for (const entry of loaded)
-      if ("error" in entry) return { kind: "missing", failure: { connector: entry.connector, cause: entry.error } };
-    return found ? { kind: "found", entry: found } : { kind: "missing" };
+    return runEdge(
+      authOwnMethod<
+        | { kind: "found"; entry: NativeTool }
+        | { kind: "ambiguous" }
+        | { kind: "missing"; failure?: { connector: Connector; cause: unknown } }
+      >(NativeSurface.prototype, this, "resolve", [name]),
+    );
   }
 
   /** A native call: the existing route its current verdict selects. */
-  private async call(name: string, args: Record<string, unknown>, request: ServerContext): Promise<unknown> {
-    this.options.bind(request);
-    const target = await this.resolve(name);
-    if (target.kind !== "found") {
-      const failure = target.kind === "missing" ? target.failure : undefined;
-      const error: CallErrorDetails = failure
-        ? {
-            ...classifyCallError(failure.cause, "catalog_lookup_failed"),
-            connector: failure.connector.id,
-            message: `Connector "${failure.connector.id}" catalog lookup failed.`,
-          }
-        : {
-            code: "unknown_tool",
-            message:
-              target.kind === "ambiguous"
-                ? `Ambiguous native name "${name}". Ask the operator to rename a claimant.`
-                : `Unknown native tool "${name}".`,
-            retryable: false,
-          };
-      if (failure && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
-        error.nextAction = {
-          tool: "authorize_connector",
-          arguments: { connector: failure.connector.id },
-          operatorHandoff: "Give the returned handoff to the operator.",
-        };
-      }
-      const result = jsonResult({ ok: false, error: await withAuthorizationHandoff(this.options.requestScope, error) });
-      result.isError = true;
-      return result;
-    }
-    const address = `${target.entry.connector.id}.${target.entry.tool.name}`;
-    return this.options.route(
-      target.entry.tool.classification === "read" ? "call_tool" : "call_destructive_tool",
-      { address, args },
-      request,
-    );
+  private call(name: string, args: Record<string, unknown>, request: ServerContext): Promise<unknown> {
+    return runEdge(authOwnMethod<unknown>(NativeSurface.prototype, this, "call", [name, args, request]));
   }
 
   private registerTool(server: McpServer, name: string, entry?: NativeTool): void {
@@ -328,8 +266,12 @@ export class NativeSurface {
         ...(entry ? { annotations: annotationsFor(entry.tool) } : {}),
         ...(entry ? { _meta: { "dev.connecta/address": `${entry.connector.id}.${entry.tool.name}` } } : {}),
       },
-      (async (args: Record<string, unknown>, request: ServerContext) =>
-        nativeRecovery(await this.call(name, args ?? {}, request), this.options.executeCode, name)) as never,
+      authMethod((args: Record<string, unknown>, request: ServerContext) =>
+        Effect.gen({ self: this }, function* () {
+          const result = yield* authInvoke<unknown>(this, "call", [name, args ?? {}, request]);
+          return nativeRecovery(result, this.options.executeCode, name);
+        }),
+      ) as never,
     );
   }
 
@@ -339,55 +281,284 @@ export class NativeSurface {
    * when it runs, so a catalog failure comes back as Connecta's structured
    * error rather than "tool not found"), nothing otherwise.
    */
-  async register(server: McpServer, hint: NativeRequestHint): Promise<void> {
-    if (hint.method === "tools/call") {
-      if (NATIVE_NAME.test(hint.name) && !NATIVE_OWN_TOOLS.includes(hint.name)) this.registerTool(server, hint.name);
-      return;
-    }
-    if (hint.method !== "tools/list") return;
-    const tools = await this.list();
-    if (tools.length > MAX_NATIVE_TOOLS) {
-      logFailure(
-        this.options.logger,
-        "native tools/list refused a pool over the 1,000-tool native cap",
-        failureRecord({}),
-      );
-      server.server.setRequestHandler("tools/list", () => {
-        throw new ProtocolError(
-          -32603,
-          `This endpoint has ${tools.length} tools, over the ${MAX_NATIVE_TOOLS}-tool native listing cap. Ask the operator to narrow the pool or use the meta surface.`,
-        );
-      });
-      return;
-    }
-    for (const entry of tools) this.registerTool(server, entry.name, entry);
+  register(server: McpServer, hint: NativeRequestHint): Promise<void> {
+    return runEdge(authOwnMethod<void>(NativeSurface.prototype, this, "register", [server, hint]));
+  }
+  static {
+    registerAuthMethod(
+      NativeSurface.prototype,
+      "register",
+      function (server: McpServer, hint: NativeRequestHint) {
+        const self = this as NativeSurface;
+        return duringViewEffect(
+          {
+            requestScope: (this as NativeSurface).options.requestScope,
+            signal: (this as NativeSurface).options.requestSignal,
+          },
+          () =>
+            authFlow<void>(function* () {
+              if (hint.method === "tools/call") {
+                if (NATIVE_NAME.test(hint.name) && !NATIVE_OWN_TOOLS.includes(hint.name))
+                  self.registerTool(server, hint.name);
+                return;
+              }
+              if (hint.method !== "tools/list") return;
+              const tools = yield* upwardStep(authInvoke<NativeTool[]>(self, "list", []));
+              if (tools.length > MAX_NATIVE_TOOLS) {
+                logFailure(
+                  self.options.logger,
+                  "native tools/list refused a pool over the 1,000-tool native cap",
+                  failureRecord({}),
+                );
+                server.server.setRequestHandler("tools/list", () => {
+                  throw new ProtocolError(
+                    -32603,
+                    `This endpoint has ${tools.length} tools, over the ${MAX_NATIVE_TOOLS}-tool native listing cap. Ask the operator to narrow the pool or use the meta surface.`,
+                  );
+                });
+                return;
+              }
+              for (const entry of tools) self.registerTool(server, entry.name, entry);
+            }),
+        ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
+      },
+      NativeSurface.prototype.register,
+    );
+    registerAuthMethod(
+      NativeSurface.prototype,
+      "call",
+      function (name: string, args: Record<string, unknown>, request: ServerContext) {
+        const self = this as NativeSurface;
+        return duringViewEffect(
+          {
+            requestScope: (this as NativeSurface).options.requestScope,
+            signal: (this as NativeSurface).options.requestSignal,
+          },
+          () =>
+            authFlow<unknown>(function* () {
+              self.options.bind(request);
+              const target = yield* upwardStep(
+                authInvoke<
+                  | { kind: "found"; entry: NativeTool }
+                  | { kind: "ambiguous" }
+                  | { kind: "missing"; failure?: { connector: Connector; cause: unknown } }
+                >(self, "resolve", [name]),
+              );
+              if (target.kind !== "found") {
+                const failure = target.kind === "missing" ? target.failure : undefined;
+                const error: CallErrorDetails = failure
+                  ? {
+                      ...classifyCallError(failure.cause, "catalog_lookup_failed"),
+                      connector: failure.connector.id,
+                      message: `Connector "${failure.connector.id}" catalog lookup failed.`,
+                    }
+                  : {
+                      code: "unknown_tool",
+                      message:
+                        target.kind === "ambiguous"
+                          ? `Ambiguous native name "${name}". Ask the operator to rename a claimant.`
+                          : `Unknown native tool "${name}".`,
+                      retryable: false,
+                    };
+                if (failure && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
+                  error.nextAction = {
+                    tool: "authorize_connector",
+                    arguments: { connector: failure.connector.id },
+                    operatorHandoff: "Give the returned handoff to the operator.",
+                  };
+                }
+                const result = jsonResult({
+                  ok: false,
+                  error: yield* upwardStep(
+                    authCall<CallErrorDetails>(withAuthorizationHandoff, [self.options.requestScope, error]),
+                  ),
+                });
+                result.isError = true;
+                return result;
+              }
+              const address = `${target.entry.connector.id}.${target.entry.tool.name}`;
+              return yield* upwardStep(
+                authInvoke<unknown>(self.options, "route", [
+                  target.entry.tool.classification === "read" ? "call_tool" : "call_destructive_tool",
+                  { address, args },
+                  request,
+                ]),
+              );
+            }),
+        ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
+      },
+      NativeSurface.prototype.call,
+    );
+    registerAuthMethod(
+      NativeSurface.prototype,
+      "resolve",
+      function (name: string) {
+        const self = this as NativeSurface;
+        return duringViewEffect(
+          {
+            requestScope: (this as NativeSurface).options.requestScope,
+            signal: (this as NativeSurface).options.requestSignal,
+          },
+          () =>
+            authFlow<
+              | { kind: "found"; entry: NativeTool }
+              | { kind: "ambiguous" }
+              | { kind: "missing"; failure?: { connector: Connector; cause: unknown } }
+            >(function* () {
+              const prefixed = self.registry.listConnectors().filter((connector) => {
+                const prefix = `${connectorPart(connector.id)}${SEPARATOR}`;
+                // A hashed name can truncate even the connector prefix, and strips
+                // trailing underscores from its head. Include every possible claimant.
+                const head = prefix.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
+                // A hashed name carries a stripped head only as exactly `${head}_` + six hex digits.
+                return (
+                  name.startsWith(prefix) ||
+                  (name.length === head.length + 1 + HASH_CHARS &&
+                    name.startsWith(`${head}_`) &&
+                    /^[0-9a-f]+$/.test(name.slice(-HASH_CHARS)))
+                );
+              });
+              const { loaded, byName } = yield* upwardStep(
+                authInvoke<{
+                  loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
+                  byName: Map<string, NativeTool | null>;
+                }>(self, "claims", [prefixed]),
+              );
+              const found = byName.get(name);
+              if (found === null) return { kind: "ambiguous" };
+              // An unavailable possible claimant cannot prove uniqueness.
+              for (const entry of loaded)
+                if ("error" in entry)
+                  return { kind: "missing", failure: { connector: entry.connector, cause: entry.error } };
+              return found ? { kind: "found", entry: found } : { kind: "missing" };
+            }),
+        ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
+      },
+      NativeSurface.prototype.resolve,
+    );
+    registerAuthMethod(
+      NativeSurface.prototype,
+      "list",
+      function () {
+        const self = this as NativeSurface;
+        return duringViewEffect(
+          {
+            requestScope: (this as NativeSurface).options.requestScope,
+            signal: (this as NativeSurface).options.requestSignal,
+          },
+          () =>
+            authFlow<NativeTool[]>(function* () {
+              const { loaded, byName } = yield* upwardStep(
+                authInvoke<{
+                  loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
+                  byName: Map<string, NativeTool | null>;
+                }>(self, "claims", []),
+              );
+              for (const entry of loaded) {
+                // Validate the whole connector before registering any of its tools.
+                const tool =
+                  "tools" in entry
+                    ? entry.tools.find((tool) => tool.inputSchema !== undefined && !nativeInputSchema(tool.inputSchema))
+                    : undefined;
+                if (!("error" in entry) && !tool) continue;
+                self.options.catalogErrors.push(entry.connector.id);
+                logFailure(
+                  self.options.logger,
+                  "native catalog unavailable",
+                  failureRecord(
+                    { connector: entry.connector.id, ...(tool ? { tool } : {}) },
+                    "error" in entry ? entry.error : undefined,
+                  ),
+                );
+              }
+              return [...byName.values()].filter(
+                (entry): entry is NativeTool =>
+                  entry !== null &&
+                  !self.options.catalogErrors.includes(entry.connector.id) &&
+                  (!(self.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read"),
+              );
+            }),
+        ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
+      },
+      NativeSurface.prototype.list,
+    );
+    registerAuthMethod(
+      NativeSurface.prototype,
+      "claims",
+      function (this: NativeSurface, connectors?: Connector[]) {
+        const self = this as NativeSurface;
+        return duringViewEffect(
+          {
+            requestScope: (this as NativeSurface).options.requestScope,
+            signal: (this as NativeSurface).options.requestSignal,
+          },
+          () =>
+            authFlow<{
+              loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
+              byName: Map<string, NativeTool | null>;
+            }>(function* () {
+              const loaded = yield* upwardStep(
+                authInvoke<({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[]>(
+                  self.catalog,
+                  "listCatalogs",
+                  [true, connectors ?? self.registry.listConnectors()],
+                ),
+              );
+              const byName = new Map<string, NativeTool | null>();
+              for (const entry of loaded) {
+                if (!("tools" in entry)) continue;
+                for (const tool of entry.tools) {
+                  const name = yield* upwardStep(authCall<string>(nativeToolName, [entry.connector.id, tool.name]));
+                  if (byName.has(name)) {
+                    byName.set(name, null);
+                    logFailure(
+                      self.options.logger,
+                      "native name collision",
+                      failureRecord({ connector: entry.connector.id, tool }),
+                    );
+                  } else byName.set(name, { name, connector: entry.connector, tool });
+                }
+              }
+              return { loaded, byName };
+            }),
+        ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
+      },
+      NativeSurface.prototype.claims,
+    );
   }
 }
 
 /** Read the method and tool name a request carries, for {@link NativeSurface.register}. */
-export async function nativeRequestHint(request: Request, modern: boolean): Promise<NativeRequestHint> {
-  let method: unknown;
-  let name: unknown;
-  if (modern) {
-    // The SDK checked both headers against the body before calling the factory.
-    method = request.headers.get("Mcp-Method")?.trim();
-    const header = request.headers.get("Mcp-Name")?.trim();
-    const encoded = header && /^=\?base64\?(.*)\?=$/.exec(header);
-    try {
-      name = encoded ? new TextDecoder().decode(Uint8Array.from(atob(encoded[1]!), (c) => c.charCodeAt(0))) : header;
-    } catch {
-      name = undefined;
-    }
-  } else {
-    try {
-      const body = (await request.clone().json()) as { method?: unknown; params?: { name?: unknown } };
-      method = body?.method;
-      name = body?.params?.name;
-    } catch {
-      return { method: "other" };
-    }
-  }
-  if (method === "tools/list") return { method };
-  if (method === "tools/call" && typeof name === "string") return { method, name };
-  return { method: "other" };
+export function nativeRequestHint(request: Request, modern: boolean): Promise<NativeRequestHint> {
+  return runEdge(nativeRequestHintNative(request, modern));
 }
+const nativeRequestHintNative = registerAuth(nativeRequestHint, function (request: Request, modern: boolean) {
+  return authFlow<NativeRequestHint>(function* () {
+    let method: unknown;
+    let name: unknown;
+    if (modern) {
+      // The SDK checked both headers against the body before calling the factory.
+      method = request.headers.get("Mcp-Method")?.trim();
+      const header = request.headers.get("Mcp-Name")?.trim();
+      const encoded = header && /^=\?base64\?(.*)\?=$/.exec(header);
+      try {
+        name = encoded ? new TextDecoder().decode(Uint8Array.from(atob(encoded[1]!), (c) => c.charCodeAt(0))) : header;
+      } catch {
+        name = undefined;
+      }
+    } else {
+      try {
+        const body = (yield* upwardStep(
+          authInvoke<{ method?: unknown; params?: { name?: unknown } }>(request.clone(), "json", []),
+        )) as { method?: unknown; params?: { name?: unknown } };
+        method = body?.method;
+        name = body?.params?.name;
+      } catch {
+        return { method: "other" };
+      }
+    }
+    if (method === "tools/list") return { method };
+    if (method === "tools/call" && typeof name === "string") return { method, name };
+    return { method: "other" };
+  });
+});

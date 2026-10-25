@@ -1,3 +1,4 @@
+import { authCall, registerAuthMethod } from "./auth/native.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { cloneTool, isWriteLike, writeRefusal } from "./tool-safety.js";
@@ -928,10 +929,7 @@ export class InvocationService {
                             "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
                           ),
                         );
-                  const value = yield* Effect.tryPromise({
-                    try: () => Promise.resolve(context.processInputRequired!(reply, target, sentSecrets)),
-                    catch: (error) => error,
-                  });
+                  const value = yield* authCall<T>(context.processInputRequired, [reply, target, sentSecrets]);
                   return { inputRequired: true as const, value };
                 }
                 assertDownstreamOutputSafe(this.catalog.requestScope, reply);
@@ -1027,13 +1025,7 @@ export class InvocationService {
       const processing: Effect.Effect<T, unknown> = inputRequiredValue
         ? Effect.succeed(inputRequiredValue.value)
         : processResult
-          ? Effect.tryPromise({
-              try: () =>
-                Promise.resolve(
-                  processResult(sentSecrets.redact(result), completed, sentSecrets, valueFormat, rawResult),
-                ) as Promise<T>,
-              catch: (error) => error,
-            })
+          ? authCall<T>(processResult, [sentSecrets.redact(result), completed, sentSecrets, valueFormat, rawResult])
           : Effect.succeed(result as T);
       const processed = yield* Effect.exit(
         timed(
@@ -1087,6 +1079,16 @@ export class InvocationService {
               Effect.map((error) => ({ ...outcome, error })),
             ),
       ),
+    );
+  }
+  static {
+    registerAuthMethod(
+      this.prototype,
+      "invoke",
+      function (address, args, context) {
+        return this.pipeline(address, args, context);
+      },
+      this.prototype.invoke,
     );
   }
 }

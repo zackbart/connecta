@@ -1,6 +1,10 @@
+import { upwardStep } from "../upward.js";
+import { authCall, authInvoke, authFlow, authMethod } from "../auth/native.js";
+import { registryProgram } from "../runtime/registry.js";
+import { requestOwner, RequestScope } from "../runtime/request-scope.js";
 import { observeAgentAdmission } from "../agent-observation.js";
 import { bindActivityRequest } from "../activity-request.js";
-import { closeConnectorScope } from "../connector-scope.js";
+import { closeScope } from "../runtime/connector-scope.js";
 import { executeLimits } from "../config.js";
 import {
   oauthConnectUrl,
@@ -397,7 +401,7 @@ function serveMcp(
   readOnly = false,
   pool?: string,
   principalActor?: ActivityActor,
-): Effect.Effect<Response, never, Scope.Scope> {
+): Effect.Effect<Response, unknown, Scope.Scope> {
   const sentSecrets = sentSecretsForRequest(requestScope);
   // Every McpServer the request builds is fresh and closes with its scope.
   // The modern handler tears its own down after the exchange; the legacy
@@ -405,148 +409,179 @@ function serveMcp(
   const servers: McpServer[] = [];
   // A native pool lists its downstream tools directly (pools.<name>.surface).
   const native = pool !== undefined ? opts.pools.get(pool)?.native : undefined;
-  const createServer = async (hint?: NativeRequestHint): Promise<McpServer> => {
-    const authElicitation = new AuthElicitation({
-      vault: opts.config.vault,
-      publicUrl: opts.config.publicUrl,
-      endpoint: new URL(new URL(request.url).pathname, baseUrl).href,
-      principal: principalKey,
-      registry,
-      canManage: canManageAuth,
-      connectLink: (id, force, after) =>
-        oauthConnectLink(
-          opts,
-          opts.config.publicUrl ?? baseUrl,
-          id,
-          principalKey,
-          force,
-          Boolean(opts.config.vault?.seal && opts.config.vault.open),
-          after,
+  const createServer = authMethod((hint?: NativeRequestHint) =>
+    authFlow<McpServer>(function* () {
+      const authElicitation = new AuthElicitation({
+        vault: opts.config.vault,
+        publicUrl: opts.config.publicUrl,
+        endpoint: new URL(new URL(request.url).pathname, baseUrl).href,
+        principal: principalKey,
+        registry,
+        canManage: canManageAuth,
+        connectLink: authMethod((id: string, force?: boolean, after?: string) =>
+          authCall<{ url: string; nonce: string }>(oauthConnectLink, [
+            opts,
+            opts.config.publicUrl ?? baseUrl,
+            id,
+            principalKey,
+            force,
+            Boolean(opts.config.vault?.seal && opts.config.vault.open),
+            after,
+          ]),
         ),
-      linkProgress: (id, nonce) => oauthConnectLinkProgress(opts, baseUrl, id, nonce),
-      closeLinks: (id, nonces) => closeOAuthConnectLinks(opts, baseUrl, id, nonces),
-      claimRetry: (id, nonce) => claimAuthRetry(opts, baseUrl, id, nonce),
-      unavailable: oauthConnectUnavailable(opts),
-      credentialUi: Boolean(opts.config.ui && opts.config.vault),
-      requestSignal,
-      requestScope,
-      defer: runtimeContext?.waitUntil?.bind(runtimeContext),
-    });
-    const server = new McpServer(opts.config.serverInfo, {
-      // A request-local server cannot publish catalog changes. Set this before
-      // tool registration, whose SDK default otherwise advertises listChanged.
-      capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
-      // Instructions differ per endpoint only by the admitted pool's
-      // description. Every cache hint below is private, so a client keeps
-      // what it learned per endpoint URL and never shares it across them.
-      instructions: endpointInstructions(pool !== undefined ? opts.pools.get(pool)?.description : undefined, native),
-      inputRequired: { legacyShim: false },
-      requestState: { verify: (state, context) => authElicitation.verify(state, context) },
-      cacheHints: {
-        "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
-        "tools/list": {
-          ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000,
-          cacheScope: "private",
+        linkProgress: authMethod((id: string, nonce: string) =>
+          authCall<"claimed" | "started" | "failed" | undefined>(oauthConnectLinkProgress, [opts, baseUrl, id, nonce]),
+        ),
+        closeLinks: authMethod((id: string, nonces: string[]) =>
+          authCall<void>(closeOAuthConnectLinks, [opts, baseUrl, id, nonces]),
+        ),
+        claimRetry: authMethod((id: string, nonce: string) =>
+          authCall<boolean>(claimAuthRetry, [opts, baseUrl, id, nonce]),
+        ),
+        unavailable: oauthConnectUnavailable(opts),
+        credentialUi: Boolean(opts.config.ui && opts.config.vault),
+        requestSignal,
+        requestScope,
+        defer: runtimeContext?.waitUntil?.bind(runtimeContext),
+      });
+      const server = new McpServer(opts.config.serverInfo, {
+        // A request-local server cannot publish catalog changes. Set this before
+        // tool registration, whose SDK default otherwise advertises listChanged.
+        capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
+        // Instructions differ per endpoint only by the admitted pool's
+        // description. Every cache hint below is private, so a client keeps
+        // what it learned per endpoint URL and never shares it across them.
+        instructions: endpointInstructions(pool !== undefined ? opts.pools.get(pool)?.description : undefined, native),
+        inputRequired: { legacyShim: false },
+        requestState: { verify: (state, context) => authElicitation.verify(state, context) },
+        cacheHints: {
+          "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
+          "tools/list": {
+            ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000,
+            cacheScope: "private",
+          },
         },
-      },
-    });
-    servers.push(server);
-    const activity: ActivityRequestContext | undefined = opts.config.activity?.store
-      ? {
-          sink: opts.config.activity?.store,
-          recordTool: opts.config.activity?.recordTool,
-          actor,
-          ...(principalActor ? { principalActor } : {}),
-          requestId: crypto.randomUUID(),
-          ...(pool !== undefined ? { pool } : {}),
-          serverInfo: opts.config.serverInfo,
-          ...(opts.config.activity?.deploymentId ? { deploymentId: opts.config.activity?.deploymentId } : {}),
-          ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
-          logger: opts.config.logger,
-        }
-      : undefined;
-    if (activity) bindActivityRequest(requestScope, activity);
-    const client: McpClientContext = {};
-    registerSkills(server, registry, baseUrl, {
-      requestScope,
-      requestSignal,
-      probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
-      ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
-    });
-    const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
-    const nativeRoute = registerMetaTools(server, registry, {
-      native: diagnostics,
-      authElicitation,
-      client,
-      baseUrl,
-      requestScope,
-      readOnly,
-      canManageAuth,
-      oauthConnectUrl: (id, force) => oauthConnectUrl(opts, baseUrl, id, principalKey, force),
-      oauthConnectUnavailable: oauthConnectUnavailable(opts),
-      credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
-      ...(activity ? { activity } : {}),
-      defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
-      probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
-      discoveryConcurrency: opts.config.discovery.concurrency,
-      requestSignal,
-      ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
-    });
-    if (!native || native.executeCode) {
-      registerExecuteTool(server, registry, {
+      });
+      servers.push(server);
+      const activity: ActivityRequestContext | undefined = opts.config.activity?.store
+        ? {
+            sink: opts.config.activity?.store,
+            recordTool: opts.config.activity?.recordTool,
+            actor,
+            ...(principalActor ? { principalActor } : {}),
+            requestId: crypto.randomUUID(),
+            ...(pool !== undefined ? { pool } : {}),
+            serverInfo: opts.config.serverInfo,
+            ...(opts.config.activity?.deploymentId ? { deploymentId: opts.config.activity?.deploymentId } : {}),
+            ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+            logger: opts.config.logger,
+          }
+        : undefined;
+      if (activity) bindActivityRequest(requestScope, activity);
+      const client: McpClientContext = {};
+      registerSkills(server, registry, baseUrl, {
+        requestScope,
+        requestSignal,
+        probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
+        ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+      });
+      const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
+      const nativeRoute = registerMetaTools(server, registry, {
+        native: diagnostics,
         authElicitation,
         client,
         baseUrl,
         requestScope,
-        executor: opts.executor,
-        defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
-        logger: opts.config.logger,
-        ...(activity ? { activity } : {}),
-        requestSignal,
-        ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
-        ...executeLimits(opts.config),
         readOnly,
-        native: native !== undefined,
-      });
-    }
-    if (native && nativeRoute && hint) {
-      await new NativeSurface(registry, {
-        baseUrl,
-        executeCode: native.executeCode,
-        route: nativeRoute,
-        bind: (context) => authElicitation.bind(context),
-        catalogErrors: diagnostics!.catalogErrors,
-        logger: opts.config.logger,
-        requestScope,
-        requestSignal,
+        canManageAuth,
+        oauthConnectUrl: authMethod((id: string, force?: boolean) =>
+          authCall<string>(oauthConnectUrl, [opts, baseUrl, id, principalKey, force]),
+        ),
+        oauthConnectUnavailable: oauthConnectUnavailable(opts),
+        credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
+        ...(activity ? { activity } : {}),
+        defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         discoveryConcurrency: opts.config.discovery.concurrency,
-        readOnly,
+        requestSignal,
         ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
-      }).register(server, hint);
-    }
-    return server;
-  };
+      });
+      if (!native || native.executeCode) {
+        registerExecuteTool(server, registry, {
+          authElicitation,
+          client,
+          baseUrl,
+          requestScope,
+          executor: opts.executor,
+          defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
+          logger: opts.config.logger,
+          ...(activity ? { activity } : {}),
+          requestSignal,
+          ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+          ...executeLimits(opts.config),
+          readOnly,
+          native: native !== undefined,
+        });
+      }
+      if (native && nativeRoute && hint) {
+        yield* upwardStep(
+          authInvoke<void>(
+            new NativeSurface(registry, {
+              baseUrl,
+              executeCode: native.executeCode,
+              route: nativeRoute,
+              bind: (context) => authElicitation.bind(context),
+              catalogErrors: diagnostics!.catalogErrors,
+              logger: opts.config.logger,
+              requestScope,
+              requestSignal,
+              probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
+              discoveryConcurrency: opts.config.discovery.concurrency,
+              readOnly,
+              ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+            }),
+            "register",
+            [server, hint],
+          ),
+        );
+      }
+      return server;
+    }),
+  );
 
-  const exchange = async (): Promise<Response> => {
+  const exchange = authFlow<Response>(function* () {
     // The v2 entry's built-in legacy fallback streams 2025 results as SSE.
     // Connecta's established wire contract is JSON, so retain the documented
     // user-land legacy branch with the same transport setting while the modern
     // branch uses the fetch-native handler.
-    if (!(await isLegacyRequest(request, undefined, SDK_BODY_BOUND))) {
-      const response = await createMcpHandler(
-        async () => createServer(native ? await nativeRequestHint(request, true) : undefined),
-        {
-          ...SDK_BODY_BOUND,
-          legacy: "reject",
-          // Keep the SDK's validation and prevent it from opening an SSE stream.
-          // Its capacity error below becomes our permanent unsupported method.
-          maxSubscriptions: 0,
-          onerror: (error) => logFailure(opts.config.logger, "MCP handler error", failureRecord({}, error), "error"),
-        },
-      ).fetch(request);
+    if (!(yield* upwardStep(authCall<boolean>(isLegacyRequest, [request, undefined, SDK_BODY_BOUND])))) {
+      const response = yield* upwardStep(
+        authInvoke<Response>(
+          createMcpHandler(
+            authMethod(() =>
+              authFlow<McpServer>(function* () {
+                const hint = native
+                  ? yield* upwardStep(authCall<NativeRequestHint>(nativeRequestHint, [request, true]))
+                  : undefined;
+                return yield* upwardStep(authCall<McpServer>(createServer, [hint]));
+              }),
+            ),
+            {
+              ...SDK_BODY_BOUND,
+              legacy: "reject",
+              // Keep the SDK's validation and prevent it from opening an SSE stream.
+              // Its capacity error below becomes our permanent unsupported method.
+              maxSubscriptions: 0,
+              onerror: (error) =>
+                logFailure(opts.config.logger, "MCP handler error", failureRecord({}, error), "error"),
+            },
+          ),
+          "fetch",
+          [request],
+        ),
+      );
       if (request.headers.get("Mcp-Method") === "subscriptions/listen" && response.status === 200) {
-        const body = await response.clone().json();
+        const body = yield* upwardStep(authInvoke<unknown>(response.clone(), "json", []));
         if (
           isJSONRPCErrorResponse(body) &&
           body.error.code === -32603 &&
@@ -566,14 +601,17 @@ function serveMcp(
     }
 
     // Fresh server + transport per legacy request, stateless and JSON-shaped.
-    const server = await createServer(native ? await nativeRequestHint(request, false) : undefined);
+    const hint = native
+      ? yield* upwardStep(authCall<NativeRequestHint>(nativeRequestHint, [request, false]))
+      : undefined;
+    const server = yield* upwardStep(authCall<McpServer>(createServer, [hint]));
     const transport = new WebStandardStreamableHTTPServerTransport({
       ...SDK_BODY_BOUND,
       enableJsonResponse: true,
     });
-    await server.connect(transport);
-    return transport.handleRequest(request);
-  };
+    yield* upwardStep(authInvoke<void>(server, "connect", [transport]));
+    return yield* upwardStep(authInvoke<Response>(transport, "handleRequest", [request]));
+  });
 
   return Effect.addFinalizer(() =>
     Effect.sync(() => {
@@ -581,12 +619,12 @@ function serveMcp(
     }),
   ).pipe(
     Effect.andThen(
-      Effect.promise(async () => {
-        const response = await exchange();
+      authFlow<Response>(function* () {
+        const response = yield* upwardStep(exchange);
         // Both SDK transports serialize here. This also covers SDK-generated
         // JSON-RPC errors and allowed HTTP 4xx text, outside tool result shaping.
         if (!response.body) return response;
-        const body = await response.text();
+        const body = yield* upwardStep(authInvoke<string>(response, "text", []));
         let text: string | undefined;
         if (response.headers.get("Content-Type")?.includes("application/json")) {
           // Structured redaction also joins text blocks before a secret split
@@ -739,6 +777,7 @@ export function createMcpRoute(opts: ServerOptions): {
       Effect.gen(function* () {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
+            requestOwner(requestScope).close();
             if (!localAbort.signal.aborted) {
               localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
             }
@@ -793,16 +832,25 @@ export function createMcpRoute(opts: ServerOptions): {
         // shares it, to save only the lookups an abandoned authorization
         // finishes on its own.
         // Agent endpoints consult only the `cta_` adapter; human endpoints refuse `cta_`.
-        const admit = (): ReturnType<typeof authorize> =>
+        const admit = authMethod(() =>
           agentEndpoint
-            ? authorizeAgent(
+            ? authCall<Awaited<ReturnType<typeof authorizeAgent>>>(authorizeAgent, [
                 localRequest,
                 baseUrl,
                 opts.config.auth,
                 opts.config.logger,
                 runtimeContext?.waitUntil.bind(runtimeContext),
-              )
-            : authorize(localRequest, baseUrl, opts.config.auth, runtimeContext, true, false, opts.config.logger);
+              ])
+            : authCall<Awaited<ReturnType<typeof authorize>>>(authorize, [
+                localRequest,
+                baseUrl,
+                opts.config.auth,
+                runtimeContext,
+                true,
+                false,
+                opts.config.logger,
+              ]),
+        );
         // Plain /mcp admits maintainers and serves the whole catalog; a pool
         // admits its members, people at /mcp/<pool> and agents at
         // /agent/<pool>, and serves exactly its tools (INV-4).
@@ -828,7 +876,7 @@ export function createMcpRoute(opts: ServerOptions): {
             : undefined;
         };
         const handled = Effect.gen(function* () {
-          const authz = yield* Effect.promise(admit);
+          const authz = yield* authCall<Awaited<ReturnType<typeof authorize>>>(admit, []);
           if (!authz.ok) {
             const response = authz.response;
             // Preserve the auth adapter's challenge and status. The MCP host must
@@ -931,83 +979,96 @@ export function createMcpRoute(opts: ServerOptions): {
               ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
               endpoint: new URL(request.url).pathname,
               origin: request.headers.get("Origin"),
-              currentResultAccess: async (dependencies, classification, signal) => {
-                signal?.throwIfAborted();
-                const current = await admit();
-                if (!current.ok) {
-                  await current.response.body?.cancel().catch(() => {});
-                  signal?.throwIfAborted();
-                  return false;
-                }
-                signal?.throwIfAborted();
-                if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
-                  return false;
-                // Paging re-admits the caller at this endpoint, as a new request would.
-                const currentScope = scopeFor(current);
-                if (!currentScope) return false;
-                const { access: currentAccess, readOnly: currentReadOnly, poolOwner: currentOwner } = currentScope;
-                const view = opts.registry.scoped({
-                  ...currentAccess,
-                  ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
-                  ...(current.principalKey ? { principalKey: current.principalKey } : {}),
-                  caller: callerFor(current.identity, currentOwner),
-                });
-                if (classification === "write" && currentReadOnly) return false;
-                // Both admission and catalogs belong to this pass only. A second
-                // pass after reading the page must observe revocation afresh.
-                const requestScope = {};
-                const catalogs = new Map<string, { connector: Connector; tools: ToolDef[] }>();
-                try {
-                  for (const dependency of dependencies) {
+              currentResultAccess: authMethod(
+                (
+                  dependencies: readonly import("../registry.js").ProgramResultDependency[],
+                  classification: "read" | "write",
+                  signal?: AbortSignal,
+                ) =>
+                  authFlow<boolean>(function* () {
                     signal?.throwIfAborted();
-                    if (dependency.classification === "write" && currentReadOnly) return false;
-                    // Skill and resource content requires a whole grant; catalog metadata requires visibility.
-                    if (dependency.tool === undefined) {
-                      if (
-                        !(dependency.access === "catalog"
-                          ? view.getConnector(dependency.connector)
-                          : view.getResourceConnector(dependency.connector))
-                      )
-                        return false;
-                      continue;
-                    }
-                    const resolved = view.resolveAddress(`${dependency.connector}.${dependency.tool}`);
-                    if (!resolved) return false;
-                    let catalog = catalogs.get(resolved.connector.id);
-                    if (!catalog) {
-                      // Track even a failed load so its scope is always closed.
-                      catalog = { connector: resolved.connector, tools: [] };
-                      catalogs.set(resolved.connector.id, catalog);
-                      catalog.tools = await view.getTools(
-                        resolved.connector.id,
-                        baseUrl,
-                        requestScope,
-                        signal ? { signal } : {},
-                      );
-                    }
-                    signal?.throwIfAborted();
-                    const tool = catalog.tools.find((tool) => tool.name === resolved.toolName);
-                    if (
-                      !(
-                        tool &&
-                        (dependency.access === "catalog" ||
-                          (dependency.classification === "read" && tool.classification === "read") ||
-                          !currentReadOnly)
-                      )
-                    )
+                    const current = yield* upwardStep(authCall<Awaited<ReturnType<typeof authorize>>>(admit, []));
+                    if (!current.ok) {
+                      yield* upwardStep(authCall(() => current.response.body?.cancel().catch(() => {}), []));
+                      signal?.throwIfAborted();
                       return false;
-                  }
-                  return true;
-                } finally {
-                  for (const [id, { connector }] of catalogs) {
-                    await closeConnectorScope(
-                      connector,
-                      view.contextFor(id, baseUrl, requestScope),
-                      runtimeContext?.waitUntil?.bind(runtimeContext),
-                    );
-                  }
-                }
-              },
+                    }
+                    signal?.throwIfAborted();
+                    if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
+                      return false;
+                    // Paging re-admits the caller at this endpoint, as a new request would.
+                    const currentScope = scopeFor(current);
+                    if (!currentScope) return false;
+                    const { access: currentAccess, readOnly: currentReadOnly, poolOwner: currentOwner } = currentScope;
+                    const view = opts.registry.scoped({
+                      ...currentAccess,
+                      ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
+                      ...(current.principalKey ? { principalKey: current.principalKey } : {}),
+                      caller: callerFor(current.identity, currentOwner),
+                    });
+                    if (classification === "write" && currentReadOnly) return false;
+                    // Both admission and catalogs belong to this pass only. A second
+                    // pass after reading the page must observe revocation afresh.
+                    const requestScope = {};
+                    const catalogs = new Map<string, { connector: Connector; tools: ToolDef[] }>();
+                    try {
+                      for (const dependency of dependencies) {
+                        signal?.throwIfAborted();
+                        if (dependency.classification === "write" && currentReadOnly) return false;
+                        // Skill and resource content requires a whole grant; catalog metadata requires visibility.
+                        if (dependency.tool === undefined) {
+                          if (
+                            !(dependency.access === "catalog"
+                              ? view.getConnector(dependency.connector)
+                              : view.getResourceConnector(dependency.connector))
+                          )
+                            return false;
+                          continue;
+                        }
+                        const resolved = view.resolveAddress(`${dependency.connector}.${dependency.tool}`);
+                        if (!resolved) return false;
+                        let catalog = catalogs.get(resolved.connector.id);
+                        if (!catalog) {
+                          // Track even a failed load so its scope is always closed.
+                          catalog = { connector: resolved.connector, tools: [] };
+                          catalogs.set(resolved.connector.id, catalog);
+                          catalog.tools = yield* upwardStep(
+                            registryProgram(
+                              view,
+                              "getTools",
+                              resolved.connector.id,
+                              baseUrl,
+                              requestScope,
+                              signal ? { signal } : {},
+                            ),
+                          );
+                        }
+                        signal?.throwIfAborted();
+                        const tool = catalog.tools.find((tool) => tool.name === resolved.toolName);
+                        if (
+                          !(
+                            tool &&
+                            (dependency.access === "catalog" ||
+                              (dependency.classification === "read" && tool.classification === "read") ||
+                              !currentReadOnly)
+                          )
+                        )
+                          return false;
+                      }
+                      return true;
+                    } finally {
+                      for (const [id, { connector }] of catalogs) {
+                        yield* upwardStep(
+                          closeScope(
+                            connector,
+                            view.contextFor(id, baseUrl, requestScope),
+                            runtimeContext?.waitUntil?.bind(runtimeContext),
+                          ),
+                        );
+                      }
+                    }
+                  }),
+              ),
               caller: callerFor(authz.identity, poolOwner),
             });
           } catch {
@@ -1049,7 +1110,7 @@ export function createMcpRoute(opts: ServerOptions): {
         return Option.isSome(bounded)
           ? bounded.value
           : cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
-      }),
+      }).pipe(Effect.provideService(RequestScope, requestOwner(requestScope))),
       localAbort.signal,
     );
   }
