@@ -1,6 +1,8 @@
 // Node-only: exercises the Node HTTP adapter over real TCP sockets.
 import { once } from "node:events";
+import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { listen } from "../src/node.js";
@@ -10,6 +12,22 @@ import { createTestConnecta, required } from "./helpers.js";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Node listen adapter", () => {
+  it("shuts down after auth, adoption, rotation and doctor with an unused socket and live sandbox (INV-7)", () => {
+    const child = spawnSync(
+      process.execPath,
+      ["--import", "tsx", fileURLToPath(new URL("./fixtures/node-shutdown.ts", import.meta.url))],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    expect(child.error, child.stderr).toBeUndefined();
+    expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(0);
+    expect(child.stdout).toContain("admission closed; sandbox children reaped");
+    expect(`${child.stdout}${child.stderr}`).not.toContain("shutdown timed out");
+    expect(Number(child.stdout.match(/shutdown ms ([\d.]+)/)?.[1])).toBeLessThan(10_000);
+    for (const pid of child.stdout.matchAll(/sandbox pid (\d+)/g)) {
+      expect(() => process.kill(Number(pid[1]), 0)).toThrow();
+    }
+  }, 65_000);
+
   it("propagates a real MCP socket disconnect into execute_code host calls", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let markStarted!: () => void;
