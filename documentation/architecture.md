@@ -3235,7 +3235,11 @@ compiling and configuring the real thing.
   plain fetch carries no grant.
 - **`close()` is idempotent and ordered.** Both admission pools, then the
   connector limiters, then the executor; Node's `listen()` calls it on
-  SIGTERM/SIGINT.
+  SIGTERM/SIGINT. The listener stops accepting connections and closes idle
+  keep-alive sockets plus accepted sockets that have not produced their first
+  HTTP request, then waits for active responses, deferred work, and executor
+  cleanup. `test/node.node.test.ts` covers shutdown after token adoption,
+  rotation, and doctor with an unused connection and a live QuickJS execution.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
   invalid admission rule or limit, an unknown option at any depth, the old
   boolean `accessTokens` option, malformed or repeated `agents` or agents
