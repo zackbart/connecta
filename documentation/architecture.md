@@ -1464,6 +1464,9 @@ every vendor ships one reviewed table through one mechanism
    invocation maps. The shared review harness rejects embedded-URL operation
    keys absent from each vendor's pinned index and invalid path syntax.
    The current Vercel pin was reviewed from its full response document; its unversioned URL does not retain older documents.
+   Vercel project creation registers every submitted environment-variable value
+   before dispatch, so echoes in response metadata, keys and prose are withheld
+   before field selection while safe project and variable metadata remain.
    Generic parameters in descriptions, metadata, nicknames, billing footers,
    notes, DNS TXT, KV values and operator HTML retain their original bytes,
    including whole URL strings. Ordinary code/key URLs can be false positives
