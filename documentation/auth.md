@@ -468,6 +468,11 @@ stop OIDC admission. Both credentials reach exactly the pools listing the
 agent. Human endpoints refuse Vercel workload credentials without consulting
 human adapters. Removing the agent stops both credential paths.
 
+The [operator agent view](./operator-ui.md#operator-data-contract) lists each
+declared agent's supported credential kinds and latest successful pool admission.
+Last seen is payload-free admission evidence, independent of completed-call
+history; a refused credential or pool does not update it.
+
 ## Agent tokens and upgrading from earlier tokens
 
 Machine clients are **agents**, declared by name in code. String entries in `agents`

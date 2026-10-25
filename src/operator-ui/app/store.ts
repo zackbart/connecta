@@ -1881,7 +1881,7 @@ function contractSlotsRefreshed(contract: OperatorUiContractV2): Partial<Operato
     `${token.state}:${token.issuedAt ?? ""}:${token.revokedAt ?? ""}:${token.revision ?? ""}`;
   for (const slot of state.tokens) {
     const token = next.get(slot.name);
-    if (token && stamp(token) !== stamp(slot)) changed.add(slot.name);
+    if (!token || stamp(token) !== stamp(slot)) changed.add(slot.name);
   }
   return changed.size ? unresolve(changed) : {};
 }

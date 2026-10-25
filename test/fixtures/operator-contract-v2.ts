@@ -219,8 +219,8 @@ const pools: OperatorPoolV2[] = [
 ];
 
 const agents: OperatorAgent[] = [
-  { name: "simon-ada", pools: ["ada"], token: { state: "issued", issuedAt: EARLIER, revision: "simonAdaIssuedRevision" }, lastSeenAt: NOW },
-  { name: "triage", pools: ["support"], token: { state: "none", revision: "triageNoneRevision0000" }, lastSeenAt: null },
+  { name: "simon-ada", credentialTypes: ["access_token"], pools: ["ada"], token: { state: "issued", issuedAt: EARLIER, revision: "simonAdaIssuedRevision" }, lastSeenAt: NOW },
+  { name: "triage", credentialTypes: ["access_token"], pools: ["support"], token: { state: "none", revision: "triageNoneRevision0000" }, lastSeenAt: null },
 ];
 
 const matrix: OperatorConnectorPoolCell[] = [

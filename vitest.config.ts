@@ -49,6 +49,7 @@ const WORKERS_SUITES = [
   "test/operator-sinks.test.ts",
   // Browser store fetch/body ordering and recovery deadlines on native timers.
   "test/operator-store.test.ts",
+  "test/operator-agent-state.test.ts",
   "test/clerk-operator-output.test.ts",
   "test/byte-read-response.test.ts",
   "test/write-evidence.test.ts",
