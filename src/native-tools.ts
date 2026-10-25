@@ -56,7 +56,7 @@ const enc = new TextEncoder();
 function shortHash(text: string): Promise<string> {
   return runEdge(shortHashNative(text));
 }
-const shortHashNative = registerAuth(shortHash, function (text: string) {
+const shortHashNative = /* @__PURE__ */ registerAuth(shortHash, function (text: string) {
   return authFlow<string>(function* () {
     const digest = new Uint8Array(
       yield* upwardStep(authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", enc.encode(text)])),
@@ -83,15 +83,18 @@ function connectorPart(connectorId: string): string {
 export function nativeToolName(connectorId: string, toolName: string): Promise<string> {
   return runEdge(nativeToolNameNative(connectorId, toolName));
 }
-const nativeToolNameNative = registerAuth(nativeToolName, function (connectorId: string, toolName: string) {
-  return authFlow<string>(function* () {
-    const tool = toolName.replace(/[^A-Za-z0-9_-]/g, "_");
-    const plain = `${connectorPart(connectorId)}${SEPARATOR}${tool}`;
-    if (tool === toolName && PLAIN_TOOL.test(tool) && plain.length <= NATIVE_NAME_MAX) return plain;
-    const head = plain.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
-    return `${head}_${yield* upwardStep(authCall<string>(shortHash, [`${connectorId}.${toolName}`]))}`;
-  });
-});
+const nativeToolNameNative = /* @__PURE__ */ registerAuth(
+  nativeToolName,
+  function (connectorId: string, toolName: string) {
+    return authFlow<string>(function* () {
+      const tool = toolName.replace(/[^A-Za-z0-9_-]/g, "_");
+      const plain = `${connectorPart(connectorId)}${SEPARATOR}${tool}`;
+      if (tool === toolName && PLAIN_TOOL.test(tool) && plain.length <= NATIVE_NAME_MAX) return plain;
+      const head = plain.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
+      return `${head}_${yield* upwardStep(authCall<string>(shortHash, [`${connectorId}.${toolName}`]))}`;
+    });
+  },
+);
 
 /** A listed native tool and the downstream tool it calls. */
 export interface NativeTool {
@@ -532,33 +535,38 @@ export class NativeSurface {
 export function nativeRequestHint(request: Request, modern: boolean): Promise<NativeRequestHint> {
   return runEdge(nativeRequestHintNative(request, modern));
 }
-const nativeRequestHintNative = registerAuth(nativeRequestHint, function (request: Request, modern: boolean) {
-  return authFlow<NativeRequestHint>(function* () {
-    let method: unknown;
-    let name: unknown;
-    if (modern) {
-      // The SDK checked both headers against the body before calling the factory.
-      method = request.headers.get("Mcp-Method")?.trim();
-      const header = request.headers.get("Mcp-Name")?.trim();
-      const encoded = header && /^=\?base64\?(.*)\?=$/.exec(header);
-      try {
-        name = encoded ? new TextDecoder().decode(Uint8Array.from(atob(encoded[1]!), (c) => c.charCodeAt(0))) : header;
-      } catch {
-        name = undefined;
+const nativeRequestHintNative = /* @__PURE__ */ registerAuth(
+  nativeRequestHint,
+  function (request: Request, modern: boolean) {
+    return authFlow<NativeRequestHint>(function* () {
+      let method: unknown;
+      let name: unknown;
+      if (modern) {
+        // The SDK checked both headers against the body before calling the factory.
+        method = request.headers.get("Mcp-Method")?.trim();
+        const header = request.headers.get("Mcp-Name")?.trim();
+        const encoded = header && /^=\?base64\?(.*)\?=$/.exec(header);
+        try {
+          name = encoded
+            ? new TextDecoder().decode(Uint8Array.from(atob(encoded[1]!), (c) => c.charCodeAt(0)))
+            : header;
+        } catch {
+          name = undefined;
+        }
+      } else {
+        try {
+          const body = (yield* upwardStep(
+            authInvoke<{ method?: unknown; params?: { name?: unknown } }>(request.clone(), "json", []),
+          )) as { method?: unknown; params?: { name?: unknown } };
+          method = body?.method;
+          name = body?.params?.name;
+        } catch {
+          return { method: "other" };
+        }
       }
-    } else {
-      try {
-        const body = (yield* upwardStep(
-          authInvoke<{ method?: unknown; params?: { name?: unknown } }>(request.clone(), "json", []),
-        )) as { method?: unknown; params?: { name?: unknown } };
-        method = body?.method;
-        name = body?.params?.name;
-      } catch {
-        return { method: "other" };
-      }
-    }
-    if (method === "tools/list") return { method };
-    if (method === "tools/call" && typeof name === "string") return { method, name };
-    return { method: "other" };
-  });
-});
+      if (method === "tools/list") return { method };
+      if (method === "tools/call" && typeof name === "string") return { method, name };
+      return { method: "other" };
+    });
+  },
+);

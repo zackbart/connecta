@@ -397,7 +397,7 @@ function validSkillName(name: string): boolean {
 function localRecords(connectors: readonly Connector[]): Promise<SkillRecord[]> {
   return runEdge(localRecordsNative(connectors));
 }
-const localRecordsNative = registerAuth(localRecords, function (connectors: readonly Connector[]) {
+const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (connectors: readonly Connector[]) {
   return authFlow<SkillRecord[]>(function* () {
     const builtIns = AVAILABLE_SKILLS.map((skill) =>
       localRecord(skill.name, `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [
@@ -538,7 +538,7 @@ function validateEntry(entry: ConnectorSkill): void {
 function withManifest(record: SkillRecord): Promise<SkillRecord> {
   return runEdge(withManifestNative(record));
 }
-const withManifestNative = registerAuth(withManifest, function (record: SkillRecord) {
+const withManifestNative = /* @__PURE__ */ registerAuth(withManifest, function (record: SkillRecord) {
   return authFlow<SkillRecord>(function* () {
     const bytes = encoder.encode(record.content!);
     if (bytes.length > MAX_SKILL_BYTES)
@@ -582,6 +582,7 @@ export class SkillsRegistry {
     private readonly baseUrl: string,
     private readonly options: SkillsRegistryOptions = {},
   ) {
+    void SkillsRegistry.nativePrograms;
     this.scope = options.requestScope ?? {};
     this.local = authCall<SkillRecord[]>(localRecords, [registry.listConnectors()]);
   }
@@ -706,7 +707,7 @@ export class SkillsRegistry {
       ),
     );
   }
-  static {
+  private static readonly nativePrograms = /* @__PURE__ */ (() => {
     registerAuthMethod(
       SkillsRegistry.prototype,
       "summaries",
@@ -1105,5 +1106,5 @@ export class SkillsRegistry {
       },
       SkillsRegistry.prototype.operation,
     );
-  }
+  })();
 }

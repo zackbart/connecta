@@ -120,7 +120,7 @@ export function captureDownstreamInput(
 ): Promise<void> {
   return runEdge(captureDownstreamInputNative(scope, connector, address, raw, secrets, write));
 }
-const captureDownstreamInputNative = registerAuth(
+const captureDownstreamInputNative = /* @__PURE__ */ registerAuth(
   captureDownstreamInput,
   function (scope: object, connector: string, address: string, raw: unknown, secrets: SentSecrets, write: boolean) {
     return authFlow<void>(function* () {

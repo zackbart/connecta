@@ -36,6 +36,8 @@ it("INV-4 INV-7 INV-9 INV-13: production minification preserves upward native id
     throw new Error(String(error));
   });
   expect(report).toMatchObject({
+    skills: true,
+    registeredNames: true,
     modern: { answered: "read" },
     legacy: { answered: "write" },
     nativePromiseListings: 0,

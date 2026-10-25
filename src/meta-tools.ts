@@ -97,7 +97,7 @@ function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
 function discoveryResult(operation: () => unknown | Promise<unknown>, hint: string): Promise<ToolResult> {
   return runEdge(discoveryResultNative(operation, hint));
 }
-const discoveryResultNative = registerAuth(
+const discoveryResultNative = /* @__PURE__ */ registerAuth(
   discoveryResult,
   function (operation: () => unknown | Promise<unknown>, hint: string) {
     return authFlow<ToolResult>(function* () {
@@ -340,7 +340,7 @@ function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewSh
 function stashResult(bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
   return runEdge(stashResultNative(bytes, results, preview, rawText));
 }
-const stashResultNative = registerAuth(
+const stashResultNative = /* @__PURE__ */ registerAuth(
   stashResult,
   function (bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
     return authFlow<
@@ -446,7 +446,7 @@ export function pageProgramResult(
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
   return runEdge(pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, wireBytes));
 }
-const pageProgramResultNative = registerAuth(
+const pageProgramResultNative = /* @__PURE__ */ registerAuth(
   pageProgramResult,
   function (
     registry: RegistryView,
@@ -540,7 +540,7 @@ export function guardProgramReturn(
     guardProgramReturnNative(value, registry, baseUrl, dependencies, secrets, logger, maxChars, completedWrite),
   );
 }
-const guardProgramReturnNative = registerAuth(
+const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
   guardProgramReturn,
   function (
     value: unknown,
@@ -652,7 +652,7 @@ function guardEncoded(
 ): Promise<GuardedResult<ToolResult>> {
   return runEdge(guardEncodedNative(text, bytes, results, cap));
 }
-const guardEncodedNative = registerAuth(
+const guardEncodedNative = /* @__PURE__ */ registerAuth(
   guardEncoded,
   function (text: string, bytes: Uint8Array, results: ResultStash, cap: number) {
     return authFlow<GuardedResult<ToolResult>>(function* () {
@@ -726,62 +726,70 @@ const guardEncodedNative = registerAuth(
 function guardText(text: string, results: ResultStash, cap: number): Promise<GuardedResult<ToolResult>> {
   return runEdge(guardTextNative(text, results, cap));
 }
-const guardTextNative = registerAuth(guardText, function (text: string, results: ResultStash, cap: number) {
-  return authFlow<GuardedResult<ToolResult>>(function* () {
-    // `JSON.stringify`'s type says `string` where its behavior says `string |
-    // undefined`, so TypeScript alone does not keep a non-string out of here.
-    // Normalizing at the door means the size check below always measures exactly
-    // the text that is emitted, and no future caller can launder a non-string
-    // through it the way issue #42 describes.
-    const serialized: string = typeof text === "string" ? text : serializeResultText(text);
-    const body = results.secrets?.text(serialized) ?? serialized;
-    return yield* upwardStep(authCall<GuardedResult<ToolResult>>(guardEncoded, [body, enc.encode(body), results, cap]));
-  });
-});
+const guardTextNative = /* @__PURE__ */ registerAuth(
+  guardText,
+  function (text: string, results: ResultStash, cap: number) {
+    return authFlow<GuardedResult<ToolResult>>(function* () {
+      // `JSON.stringify`'s type says `string` where its behavior says `string |
+      // undefined`, so TypeScript alone does not keep a non-string out of here.
+      // Normalizing at the door means the size check below always measures exactly
+      // the text that is emitted, and no future caller can launder a non-string
+      // through it the way issue #42 describes.
+      const serialized: string = typeof text === "string" ? text : serializeResultText(text);
+      const body = results.secrets?.text(serialized) ?? serialized;
+      return yield* upwardStep(
+        authCall<GuardedResult<ToolResult>>(guardEncoded, [body, enc.encode(body), results, cap]),
+      );
+    });
+  },
+);
 
 /** Store an oversized JSON value and replace it with a page handle. */
 function guardValue(value: unknown, results: ResultStash, cap: number): Promise<GuardedResult<unknown>> {
   return runEdge(guardValueNative(value, results, cap));
 }
-const guardValueNative = registerAuth(guardValue, function (value: unknown, results: ResultStash, cap: number) {
-  return authFlow<GuardedResult<unknown>>(function* () {
-    const serialized = serializeResultText(value);
-    const text = results.secrets?.text(serialized) ?? serialized;
-    const bytes = enc.encode(text);
-    if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
-    const notice = yield* upwardStep(
-      authCall<
-        | {
-            truncated: boolean;
-            totalBytes: number;
-            hint: string;
-            resultId?: never;
-            nextOffset?: never;
-            nextAction?: never;
-          }
-        | {
-            truncated: boolean;
-            resultId: string;
-            totalBytes: number;
-            hint: string;
-            nextOffset: number;
-            nextAction:
-              | { tool: string; arguments: { id: string; offset: number; code?: never } }
-              | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-          }
-      >(stashResult, [bytes, results, { kind: "none" }]),
-    );
-    return {
-      result: notice.resultId
-        ? notice
-        : {
-            ...notice,
-            preview: escapedHeadOf(bytes, cap),
-          },
-      truncated: true,
-    };
-  });
-});
+const guardValueNative = /* @__PURE__ */ registerAuth(
+  guardValue,
+  function (value: unknown, results: ResultStash, cap: number) {
+    return authFlow<GuardedResult<unknown>>(function* () {
+      const serialized = serializeResultText(value);
+      const text = results.secrets?.text(serialized) ?? serialized;
+      const bytes = enc.encode(text);
+      if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
+      const notice = yield* upwardStep(
+        authCall<
+          | {
+              truncated: boolean;
+              totalBytes: number;
+              hint: string;
+              resultId?: never;
+              nextOffset?: never;
+              nextAction?: never;
+            }
+          | {
+              truncated: boolean;
+              resultId: string;
+              totalBytes: number;
+              hint: string;
+              nextOffset: number;
+              nextAction:
+                | { tool: string; arguments: { id: string; offset: number; code?: never } }
+                | { tool: string; arguments: { code: string; id?: never; offset?: never } };
+            }
+        >(stashResult, [bytes, results, { kind: "none" }]),
+      );
+      return {
+        result: notice.resultId
+          ? notice
+          : {
+              ...notice,
+              preview: escapedHeadOf(bytes, cap),
+            },
+        truncated: true,
+      };
+    });
+  },
+);
 
 /**
  * The longest head of `bytes` whose JSON string form fits `cap` bytes. Value
@@ -824,7 +832,7 @@ function escapedHeadOf(bytes: Uint8Array, cap: number): string {
 function guardContent(content: TextContent[], results: ResultStash, cap: number): Promise<GuardedResult<ToolResult>> {
   return runEdge(guardContentNative(content, results, cap));
 }
-const guardContentNative = registerAuth(
+const guardContentNative = /* @__PURE__ */ registerAuth(
   guardContent,
   function (content: TextContent[], results: ResultStash, cap: number) {
     return authFlow<GuardedResult<ToolResult>>(function* () {
@@ -1083,7 +1091,7 @@ function metaToolsForRequest(
   function runCall(call: CallArgs, source: ActivityCallSource): Promise<RunCallOutcome> {
     return runEdge(runCallNative(call, source));
   }
-  const runCallNative = registerAuth(runCall, function (call: CallArgs, source: ActivityCallSource) {
+  const runCallNative = /* @__PURE__ */ registerAuth(runCall, function (call: CallArgs, source: ActivityCallSource) {
     return authFlow<RunCallOutcome>(function* () {
       const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
       const outcome = yield* upwardStep(

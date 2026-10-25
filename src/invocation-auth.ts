@@ -103,7 +103,7 @@ export function authRecoveryFacts(
 }> {
   return runEdge(authRecoveryFactsNative(scope, connector));
 }
-const authRecoveryFactsNative = registerAuth(authRecoveryFacts, (scope: object, connector: string) =>
+const authRecoveryFactsNative = /* @__PURE__ */ registerAuth(authRecoveryFacts, (scope: object, connector: string) =>
   authFlow<Awaited<ReturnType<typeof authRecoveryFacts>>>(function* () {
     const facts = requestFor(scope);
     const writeEntered = facts.entered.some((call) => call.classification === "write");

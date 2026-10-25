@@ -3751,7 +3751,10 @@ The canonical `RequestScope` travels through SDK callback edges and registry
 views. A continuation's durable nonce claim still precedes dispatch, retains its
 caller, endpoint, arguments, TTL and round bindings, and cannot authorize another
 write after an ambiguous result. Retained classification and settlement facts
-never reopen a closed request. Agent-output redaction, withheld diagnostics,
+never reopen a closed request. A finished program can still shape its response
+and retained recovery facts after its connector authority closes; the inbound
+request signal still cancels that response work. Neither path grants another
+dispatch. Agent-output redaction, withheld diagnostics,
 secret registration and result bounds retain their existing pure algorithms.
 `upwardStep` is only a typed generator adapter: it lets `authFlow` deliver the
 original ordinary failure to a local catch without converting interruption.
@@ -3768,7 +3771,7 @@ context.
 
 Intentional leaves are actual pinned SDK handler/transport/server operations,
 SDK schema and request-state codecs, platform body readers and cancellation,
-Web Crypto hashes, vault seal/open/sign/verify methods and unregistered custom
+Web Crypto hashes, vault owner/seal/open/sign/verify methods and unregistered custom
 identity, credential, storage, executor and tool callbacks. Connecta's OAuth-link
 binding, TTL, progress, closing and one-use claims are native orchestration around
 those leaves. The supported protocol and unsupported-feature refusals remain

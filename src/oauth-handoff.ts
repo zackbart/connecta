@@ -106,7 +106,7 @@ export function oauthConnectUrl(
 ): Promise<string> {
   return runEdge(oauthConnectUrlNative(opts, baseUrl, connectorId, principal, force, opaque));
 }
-const oauthConnectUrlNative = registerAuth(
+const oauthConnectUrlNative = /* @__PURE__ */ registerAuth(
   oauthConnectUrl,
   function (
     opts: ServerOptions,
@@ -142,7 +142,7 @@ export function oauthConnectLink(
 ): Promise<{ url: string; nonce: string }> {
   return runEdge(oauthConnectLinkNative(opts, baseUrl, connectorId, principal, force, opaque, after));
 }
-const oauthConnectLinkNative = registerAuth(
+const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
   oauthConnectLink,
   function (
     opts: ServerOptions,
@@ -194,7 +194,7 @@ export function oauthConnectLinkProgress(
 ): Promise<"claimed" | "started" | "failed" | undefined> {
   return runEdge(oauthConnectLinkProgressNative(opts, baseUrl, id, nonce));
 }
-const oauthConnectLinkProgressNative = registerAuth(
+const oauthConnectLinkProgressNative = /* @__PURE__ */ registerAuth(
   oauthConnectLinkProgress,
   function (opts: ServerOptions, baseUrl: string, id: string, nonce: string) {
     return authFlow<"claimed" | "started" | "failed" | undefined>(function* () {
@@ -217,7 +217,7 @@ export function closeOAuthConnectLinks(
 ): Promise<void> {
   return runEdge(closeOAuthConnectLinksNative(opts, baseUrl, id, nonces));
 }
-const closeOAuthConnectLinksNative = registerAuth(
+const closeOAuthConnectLinksNative = /* @__PURE__ */ registerAuth(
   closeOAuthConnectLinks,
   function (opts: ServerOptions, baseUrl: string, id: string, nonces: string[]) {
     return authFlow<void>(function* () {
@@ -240,7 +240,7 @@ const closeOAuthConnectLinksNative = registerAuth(
 export function claimAuthRetry(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<boolean> {
   return runEdge(claimAuthRetryNative(opts, baseUrl, id, nonce));
 }
-const claimAuthRetryNative = registerAuth(
+const claimAuthRetryNative = /* @__PURE__ */ registerAuth(
   claimAuthRetry,
   function (opts: ServerOptions, baseUrl: string, id: string, nonce: string) {
     return authFlow<boolean>(function* () {
@@ -264,7 +264,7 @@ export function verifyOAuthHandoff(
 ): Promise<Handoff | null> {
   return runEdge(verifyOAuthHandoffNative(opts, baseUrl, connectorId, token));
 }
-const verifyOAuthHandoffNative = registerAuth(
+const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
   verifyOAuthHandoff,
   function (opts: ServerOptions, baseUrl: string, connectorId: string, token: string | null) {
     return authFlow<Handoff | null>(function* () {
@@ -356,7 +356,7 @@ const verifyOAuthHandoffNative = registerAuth(
 export function consumeOAuthConnectLink(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
   return runEdge(consumeOAuthConnectLinkNative(opts, handoff));
 }
-const consumeOAuthConnectLinkNative = registerAuth(
+const consumeOAuthConnectLinkNative = /* @__PURE__ */ registerAuth(
   consumeOAuthConnectLink,
   function (opts: ServerOptions, handoff: Handoff) {
     return authFlow<boolean>(function* () {
@@ -384,7 +384,7 @@ export function finishOAuthConnectStart(
 ): Promise<boolean> {
   return runEdge(finishOAuthConnectStartNative(opts, handoff, outcome));
 }
-const finishOAuthConnectStartNative = registerAuth(
+const finishOAuthConnectStartNative = /* @__PURE__ */ registerAuth(
   finishOAuthConnectStart,
   function (opts: ServerOptions, handoff: Handoff, outcome: "started" | "failed") {
     return authFlow<boolean>(function* () {

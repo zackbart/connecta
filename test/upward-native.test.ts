@@ -1,3 +1,7 @@
+import { readAgentAdmission } from "../src/agent-observation.js";
+import { accessTokens } from "../src/access-tokens.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { Cause, Deferred, Effect, Exit } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import { authCall, authFlow, authInvoke, authMethod, registerAuth } from "../src/auth/native.js";
@@ -16,7 +20,7 @@ import { RequestScope, requestOwner } from "../src/runtime/request-scope.js";
 import { runEdge } from "../src/runtime/run.js";
 import { agentOutputOperations, sentSecretsForRequest } from "../src/sent-secrets.js";
 import { upwardStep } from "../src/upward.js";
-import { makeRegistry } from "./helpers.js";
+import { createTestConnecta, makeRegistry } from "./helpers.js";
 import { deferred } from "./fixtures/misc.js";
 import { runUpwardBundleSmoke } from "./fixtures/upward-native-bundle.js";
 
@@ -34,6 +38,8 @@ const failure = (unknown = false): CallErrorDetails => ({
 
 it("INV-4 INV-7 INV-9 INV-13: native upward dispatch preserves immutable originals and canonical ownership on both protocol leaves", async () => {
   expect(await runUpwardBundleSmoke()).toMatchObject({
+    skills: true,
+    registeredNames: true,
     modern: { answered: "read" },
     legacy: { answered: "write" },
     nativePromiseListings: 0,
@@ -273,4 +279,73 @@ describe("request-owned authorization handoff sharing", () => {
     expect(factories).toBe(1);
     expect(published).toBe(false);
   });
+});
+
+it("INV-4 INV-7: frozen agent observation follows scope admission and precedes body dispatch even when the exchange fails", async () => {
+  const storage = memoryStorage();
+  const app = createTestConnecta({
+    storage,
+    publicUrl: "https://connecta.test",
+    logger: "silent",
+    agents: ["assistant"],
+    accessTokens: accessTokens(storage),
+    connectors: [{ id: "crm", listTools: async () => [], callTool: async () => null }],
+    pools: { trusted: { tools: ["crm"], members: ["agent:assistant"] } },
+  });
+  const token = await issueAgentToken(storage, "assistant");
+  const request = (path: string, bearer: string, body = "{") =>
+    new Request(`https://connecta.test${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body,
+    });
+  try {
+    for (const [path, bearer, status] of [
+      ["/agent/trusted", "cta_invalid", 401],
+      ["/agent/missing", token, 404],
+      ["/mcp", token, 401],
+    ] as const) {
+      const response = await app.fetch(request(path, bearer));
+      expect(response.status).toBe(status);
+      await response.text();
+      expect(await runEdge(readAgentAdmission(storage, "assistant"))).toBeNull();
+    }
+    let observedBeforeRead: string | null = null;
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          if (pulls++ === 0) {
+            controller.enqueue(new TextEncoder().encode("{"));
+            return;
+          }
+          observedBeforeRead = await runEdge(readAgentAdmission(storage, "assistant"));
+          controller.enqueue(new TextEncoder().encode("}"));
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const init = {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body,
+      duplex: "half",
+    } as RequestInit;
+    const response = await app.fetch(new Request("https://connecta.test/agent/trusted", init));
+    expect(response.status).toBe(400);
+    await response.text();
+    expect(observedBeforeRead).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(await runEdge(readAgentAdmission(storage, "assistant"))).toBe(observedBeforeRead);
+  } finally {
+    await app.close();
+  }
 });

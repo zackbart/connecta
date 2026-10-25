@@ -41,7 +41,7 @@ export function authorizationHandoff(
 ): Promise<AuthorizationHandoff> {
   return runEdge(authorizationHandoffNative(registry, baseUrl, requestScope, opts, args));
 }
-const authorizationHandoffNative = registerAuth(
+const authorizationHandoffNative = /* @__PURE__ */ registerAuth(
   authorizationHandoff,
   function (
     registry: RegistryView,
@@ -141,7 +141,7 @@ export function authorizeConnector(
 ): Promise<AuthorizeConnectorResult> {
   return runEdge(authorizeConnectorNative(...args));
 }
-const authorizeConnectorNative = registerAuth(
+const authorizeConnectorNative = /* @__PURE__ */ registerAuth(
   authorizeConnector,
   function (...args: Parameters<typeof authorizationHandoff>) {
     return authFlow<AuthorizeConnectorResult>(function* () {
@@ -185,9 +185,9 @@ export function enableAuthorizationHandoffs(scope: object, enabled: boolean): vo
   if (request) request.enabled = enabled;
 }
 
-/** One promise per connector also bounds concurrent errors in a program. */
+/** One request-owned producer per connector bounds concurrent errors in a program. */
 export function withAuthorizationHandoff<T extends CallErrorDetails>(scope: object, error: T): Promise<T> {
-  return runEdge(withAuthorizationHandoffEffect(scope, error));
+  return runEdge(withAuthorizationHandoffNative(scope, error));
 }
 export function withAuthorizationHandoffEffect<T extends CallErrorDetails>(scope: object, error: T): Effect.Effect<T> {
   return Effect.gen(function* () {
@@ -250,4 +250,7 @@ export function withAuthorizationHandoffEffect<T extends CallErrorDetails>(scope
   });
 }
 
-registerAuth(withAuthorizationHandoff, withAuthorizationHandoffEffect);
+const withAuthorizationHandoffNative = /* @__PURE__ */ registerAuth(
+  withAuthorizationHandoff,
+  withAuthorizationHandoffEffect,
+);
