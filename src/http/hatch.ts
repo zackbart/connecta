@@ -537,7 +537,7 @@ export function hatch(
   };
   const queryTerms = (query: string) => {
     const terms = queryWords(query).filter((term) => !functionWords.has(term));
-    const resourcePhrase = queryWords(query.split(/\b(?:for|of|in|on|by|with)\b/i)[0]!).filter(isNoun);
+    const resourcePhrase = queryWords(query.split(/(?:^|\s)(?:for|of|in|on|by|with)(?=\s|$)/i)[0]!).filter(isNoun);
     const lookup = terms.find((term) => readActions.has(term));
     const first = terms[0];
     // issue/process remain nouns unless a leading verb has another noun to act on.
