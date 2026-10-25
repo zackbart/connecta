@@ -11,6 +11,8 @@ const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktr
 // workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
 // Pure logic runs only on Node; never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
+  // Native UTF-8/Web Crypto content identity across physical index formats.
+  "test/compact-index.test.ts",
   "test/storage-sql-d1.test.ts",
   // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
   // service-bound Workers. These skip or fail outside workerd.
@@ -20,6 +22,7 @@ const WORKERS_SUITES = [
   "test/catalog-cache.test.ts",
   "test/clerk-organization-workerd.test.ts",
   "test/codemode-compat.test.ts",
+  "test/executor-native.test.ts",
   "test/guest-api-contract.test.ts",
   "test/kv-to-d1.test.ts",
   "test/usage-guide.test.ts",
@@ -28,6 +31,8 @@ const WORKERS_SUITES = [
   "test/call-services.test.ts",
   "test/guarded-transport-parity.test.ts",
   "test/oauth-grant-parity.test.ts",
+  "test/auth-native.test.ts",
+  "test/auth-metadata-challenge.test.ts",
   "test/call-revocation.test.ts",
   "test/call-auxiliary-lifetime.test.ts",
   "test/call-renewal-lifetime.test.ts",
@@ -40,6 +45,8 @@ const WORKERS_SUITES = [
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
+  "test/remote-mcp-native.test.ts",
+  "test/remote-mcp-skills.test.ts",
   "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
   "test/native-tools.test.ts",

@@ -399,6 +399,11 @@ export function admit(call: RestCall) {
   }).pipe(
     Effect.tap(() =>
       Effect.gen(function* () {
+        if (call.method === "POST" && call.op.path === "/v11/projects") {
+          (yield* RequestSecrets).arguments(record(call.body)["environmentVariables"], {
+            items: { properties: { value: { writeOnly: true } } },
+          });
+        }
         if (
           call.method !== "GET" &&
           call.method !== "HEAD" &&

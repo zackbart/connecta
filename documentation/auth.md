@@ -2688,3 +2688,23 @@ Downstream OAuth implementation and evidence are in
 [refresh leases](https://github.com/zackbart/connecta/blob/main/test/oauth-refresh-lease.test.ts),
 and [API OAuth tests](https://github.com/zackbart/connecta/blob/main/test/api-oauth.test.ts).
 Use the test pointers within each section for narrower failure cases.
+
+### Authentication execution (contributor)
+
+Built-in authentication and downstream OAuth use private native programs behind
+the same Promise adapter and SDK contracts. Recognition still selects one
+verifier, and a refusal never falls back to another identity provider. Native
+operations use the existing request owner; cancellation cannot make a closed
+caller consume a refresh result or send another resource request. Once the
+claim CAS is submitted, the bounded refresh coordinator completes independently
+and commits a successful rotation under the existing epoch and spent-token
+rules. Code exchange does not acquire that coordinator ownership.
+
+Authentication capacity remains charged until the underlying uncancellable work
+settles or collection proves that work unreachable. Abandonment alone never
+releases capacity. A native
+refactor does not change membership cache TTLs, audience/resource bindings,
+agent namespaces, credential partitions, OAuth transport policy or the rule of
+one physical attempt per credential-bearing POST. See the
+[native auth implementation](./architecture.md#native-auth-programs-contributor)
+for contributor boundaries and retained Promise leaves.

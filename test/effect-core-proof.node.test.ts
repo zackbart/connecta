@@ -18,6 +18,7 @@ type Cimd = {
 };
 type Latency = {
   constructionBuilds: number;
+  totalBuilds: number;
   warmup: number;
   batches: number;
   batchSize: number;
@@ -41,6 +42,7 @@ type Report = {
   router: {
     node: Comparison;
     workers: Comparison;
+    edges: Record<string, Comparison>;
     nodeAgents: Comparison;
     workersAgents: Comparison;
     runners: { importEdges: number; baseline: number; candidate: number };
@@ -48,15 +50,36 @@ type Report = {
     transforms: Array<{ graph: string; count: number }>;
     cimd: Record<string, [Cimd[], Cimd[]]>;
     latency: Record<string, [Latency, Latency]>;
+    latencyReverse: Record<string, [Latency, Latency]>;
+    isolation: Record<
+      string,
+      {
+        constructionBuilds: number;
+        firstBuilds: number;
+        totalBuilds: number;
+        selected: string;
+        mcpCalls: number;
+        first: Array<{
+          deferred: number;
+          result: { body: string; id: string; path: string; preventYield: boolean; aborted: boolean };
+        }>;
+        later: Array<{
+          deferred: number;
+          result: { body: string; id: string; path: string; preventYield: boolean; aborted: boolean };
+        }>;
+      }
+    >;
     seam: Record<
       string,
       {
         identity: boolean;
-        missing: null;
-        unowned: null;
+        missing: number;
+        unowned: number;
+        unmatchedRetainsError: boolean;
         sameError: boolean;
         sameShapedError: boolean;
         sameTypedRouteError: boolean;
+        errorCalls: number[];
         finalized: number;
         response: Wire;
       }
@@ -119,6 +142,7 @@ describe("Effect 4.0.5 compatibility proof", () => {
   for (const runtime of ["node", "workers"] as const)
     describe(runtime, () => {
       it("matches exact route bytes, raw paths, ingress order, and both agent presentations (INV-4)", () => {
+        expect(report.router.edges[runtime]).toEqual({ cases: 440, equal: true, differences: [] });
         expect(report.router[runtime].cases).toBe(245);
         expect(report.router[runtime].differences).toEqual([]);
         expect(report.router[runtime].equal).toBe(true);
@@ -133,11 +157,13 @@ describe("Effect 4.0.5 compatibility proof", () => {
         const seam = report.router.seam[runtime]!;
         expect(seam).toMatchObject({
           identity: true,
-          missing: null,
-          unowned: null,
+          missing: 404,
+          unowned: 404,
+          unmatchedRetainsError: true,
           sameError: true,
           sameShapedError: true,
           sameTypedRouteError: true,
+          errorCalls: [1, 1, 1],
           finalized: 1,
         });
         expect(seam.response).toEqual({
@@ -177,17 +203,43 @@ describe("Effect 4.0.5 compatibility proof", () => {
         }
       });
 
-      it("records bounded dispatch timings and the current per-request layer rebuilds without a timing threshold", () => {
-        const [baseline, candidate] = report.router.latency[runtime]!;
-        expect([baseline.constructionBuilds, candidate.constructionBuilds]).toEqual([0, 0]);
-        for (const row of baseline.rows) expect(row.builds).toBe(0);
-        expect(candidate.rows).toHaveLength(4);
-        for (const row of candidate.rows) {
-          expect(row.requests).toBe(250);
-          expect(row.samplesMs).toHaveLength(5);
-          expect(row.buildsPerRequest).toBe(row.path === "/oauth/client-metadata/oauth" ? 1 : 6);
-          expect(row.builds).toBe(row.requests * row.buildsPerRequest);
+      it("records bounded dispatch timings and verifies two once-per-handler builds without a timing threshold", () => {
+        for (const measurement of [report.router.latency, report.router.latencyReverse]) {
+          const [baseline, candidate] = measurement[runtime]!;
+          expect([baseline.constructionBuilds, candidate.constructionBuilds]).toEqual([0, 0]);
+          expect([baseline.totalBuilds, candidate.totalBuilds]).toEqual([0, 2]);
+          for (const row of baseline.rows) expect(row.builds).toBe(0);
+          expect(candidate.rows).toHaveLength(4);
+          for (const row of candidate.rows) {
+            expect(row.requests).toBe(250);
+            expect(row.samplesMs).toHaveLength(5);
+            expect(row.buildsPerRequest).toBe(0);
+            expect(row.builds).toBe(0);
+          }
         }
+      });
+
+      it("builds two routers across concurrent first requests, reuses them and reads each request's services (INV-7)", () => {
+        const isolation = report.router.isolation[runtime]!;
+        expect(isolation).toMatchObject({
+          constructionBuilds: 0,
+          firstBuilds: 2,
+          totalBuilds: 2,
+          selected: "health",
+          mcpCalls: 32,
+        });
+        [...isolation.first, ...isolation.later].forEach((row, i) => {
+          expect(row).toEqual({
+            deferred: 1,
+            result: {
+              body: "body-" + i,
+              id: String(i),
+              path: i % 2 ? "/agent/native" : "/mcp/native",
+              preventYield: false,
+              aborted: false,
+            },
+          });
+        });
       });
 
       it("retains body permits and closes exactly once on end/failure/cancel/abort/abandonment (INV-7)", () => {
