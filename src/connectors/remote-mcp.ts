@@ -1,3 +1,4 @@
+import { isOAuthCredentialRequest } from "../auth/oauth-token-response.js";
 import { deriveContext } from "../derived-context.js";
 import { duringViewCall, operationContext, openRequest, settleOnClose, viewSignal } from "../runtime/call.js";
 import {
@@ -117,7 +118,7 @@ import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
-import { guardedTransport } from "../guarded-transport.js";
+import { guardedTransport, sendGuarded, sendCredentialPost } from "../guarded-transport.js";
 import { sourceClassification } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
@@ -2437,6 +2438,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // Native Node fetch can replay below this guard (421 or a host retry
       // dispatcher). Resolve the owned sender before claiming dispatch, so
       // a Node deployment without /node refuses the write while still unsent.
+      // The pinned SDK sends OAuth forms and registration JSON outside MCP's
+      // JSON-RPC envelope. All of those POSTs require the credential policy,
+      // including when their endpoint shares the MCP URL.
+      const credentialPost =
+        isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
       const sender = flight?.write ? guardedTransport(true) : undefined;
       if (flight?.write) {
         if (flight.sent) {
@@ -2450,7 +2456,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             );
           throw resendRefused(flight);
         }
-        flight.sent = true;
         flight.authorization = new Headers(init?.headers).get("authorization");
       }
       const request = flight?.request;
@@ -2459,20 +2464,45 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           method: init?.method ?? "GET",
         });
       const entry = request?.entry;
-      if (request && entry) {
-        if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
-        dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
-      }
+      const dispatch = () => {
+        if (flight?.write) {
+          if (flight.sent) throw resendRefused(flight);
+          flight.sent = true;
+        }
+        if (request && entry) {
+          if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
+          dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+        }
+      };
       trackSentRequest(ctx, input, init);
-      const response = sender
-        ? await sender.send(new URL(input instanceof Request ? input.url : String(input)), {
-            ...init,
-            redirect: "manual",
-          })
-        : writeContinuation
-          ? await fetch(input, { ...init, redirect: "manual" })
-          : await fetch(input, init);
+      const response = credentialPost
+        ? await sendCredentialPost(input, init ?? {}, dispatch)
+        : sender
+          ? await sendGuarded(
+              sender,
+              new URL(input instanceof Request ? input.url : String(input)),
+              {
+                ...init,
+                redirect: "manual",
+              },
+              dispatch,
+            )
+          : await (() => {
+              dispatch();
+              return writeContinuation ? fetch(input, { ...init, redirect: "manual" }) : fetch(input, init);
+            })();
       if (entry) recordProviderResponse(entry, response.status);
+      // Registration goes through the SDK's resourceFetch path, whose redirect
+      // policy may otherwise follow a 307 and repeat the registration body.
+      // Token forms retain the coordinator's existing status/decoding path.
+      if (credentialPost && !isOAuthCredentialRequest(init) && REDIRECT_STATUSES.has(response.status)) {
+        await response.body?.cancel().catch(() => {});
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "OAuth registration endpoint redirected; the request was not repeated.",
+          { retryable: false },
+        );
+      }
       if (flight?.write) {
         if (response.status === 401) flight.unauthorized = true;
         else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
@@ -2559,6 +2589,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         signal,
         ctx.defer,
         exchangeFetch(learnedUrlSafeFetch(id, url, (input, init) => guardedFetch(input, resourceInit(input, init)))),
+        () => {
+          guardedTransport(true);
+        },
       );
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
@@ -3098,7 +3131,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ? provider.disconnectAuthorization(
           learnedUrlSafeFetch(id, new URL(opts.url), async (input, init) => {
             trackSentRequest(ctx, input, init);
-            return await fetch(input, init);
+            return await sendCredentialPost(input, init ?? {});
           }),
         )
       : provider.resetAuthorization(false, preserveClient);
