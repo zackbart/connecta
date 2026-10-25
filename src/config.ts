@@ -1,3 +1,4 @@
+import { registerAgentDescriptions } from "./agent-description.js";
 // ConnectaConfig as one schema.
 //
 // The schema below is the canonical record of the configuration surface. It
@@ -780,6 +781,7 @@ export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; res
     auth: normalizeAuth([...(accessTokens ? [accessTokens.auth] : []), ...(vercel ? [vercel] : []), ...parsed.auth]),
     serverInfo: Object.freeze(info),
   });
+  registerAgentDescriptions(resolved, parsed.agents, accessTokens !== undefined);
   return { input, resolved };
 }
 

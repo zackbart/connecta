@@ -31,6 +31,8 @@ const WORKERS_SUITES = [
   "test/call-services.test.ts",
   "test/guarded-transport-parity.test.ts",
   "test/oauth-grant-parity.test.ts",
+  "test/auth-native.test.ts",
+  "test/auth-metadata-challenge.test.ts",
   "test/call-revocation.test.ts",
   "test/call-auxiliary-lifetime.test.ts",
   "test/call-renewal-lifetime.test.ts",
@@ -40,9 +42,13 @@ const WORKERS_SUITES = [
   "test/remote-mcp-renewal-lifetime.test.ts",
   "test/direct-write-finalizer.test.ts",
   "test/mcp-core.test.ts",
+  "test/upward-native.test.ts",
+  "test/skills-extension.test.ts",
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
+  "test/remote-mcp-native.test.ts",
+  "test/remote-mcp-skills.test.ts",
   "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
   "test/native-tools.test.ts",
@@ -50,6 +56,9 @@ const WORKERS_SUITES = [
   // Native response reads can print sensitive downstream text below JS sinks.
   // workerd-native-output.node.test.ts also invokes these three by filename.
   "test/operator-sinks.test.ts",
+  // Browser store fetch/body ordering and recovery deadlines on native timers.
+  "test/operator-store.test.ts",
+  "test/operator-agent-state.test.ts",
   "test/clerk-operator-output.test.ts",
   "test/byte-read-response.test.ts",
   "test/write-evidence.test.ts",

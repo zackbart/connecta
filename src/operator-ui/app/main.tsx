@@ -75,7 +75,11 @@ function visiblePages(state: OperatorState): OperatorPage[] {
   // the nav's shape; the contract still has to allow Activity.
   const activity = state.data ? activityReadable(state) : navHint().activity && activityAllowed(state);
   return OPERATOR_PAGES.filter((page) => {
-    if (page === "tokens") return state.data?.accessTokenManagement === "available";
+    if (page === "tokens")
+      return (
+        state.data?.accessTokenManagement === "available" ||
+        (state.contract?.role === "maintainer" && state.contract.agents.length > 0)
+      );
     if (page === "activity") return activity;
     return true;
   });

@@ -14,7 +14,23 @@ export default async function setup(project: TestProject) {
   let sdkCalls = 0;
   let sdkPeak = 0;
   const sdkHeld = new Map<string, ServerResponse>();
+  const submissionHeld = new Map<string, ServerResponse>();
   const server = createServer(async (req, res) => {
+    // Independent of admission's counted waves: a submitted native operation
+    // must let another real request run while its TCP response is pending.
+    if (req.url?.startsWith("/submission/")) {
+      const url = new URL(req.url, "http://fixture");
+      if (url.pathname === "/submission/status") {
+        res.end(JSON.stringify({ ids: [...submissionHeld.keys()] }));
+      } else if (url.pathname === "/submission/release") {
+        submissionHeld.get(url.searchParams.get("id")!)?.end("done");
+        res.end("{}");
+      } else {
+        submissionHeld.set(url.pathname, res);
+        res.on("close", () => submissionHeld.delete(url.pathname));
+      }
+      return;
+    }
     // A native binding stand-in: each held id ends only on explicit release,
     // never because its Worker caller disconnected.
     if (req.url?.startsWith("/binding/")) {
@@ -89,6 +105,7 @@ export default async function setup(project: TestProject) {
     bindingHeld.forEach((res) => res.end());
     held.forEach((res) => res.end());
     sdkHeld.forEach((res) => res.destroy());
+    submissionHeld.forEach((res) => res.end());
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };

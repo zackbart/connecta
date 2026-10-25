@@ -1,3 +1,4 @@
+import { registerAuthMethod } from "./auth/native.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
 import { cloneTool } from "./tool-safety.js";
@@ -691,6 +692,7 @@ export class CatalogService {
       readOnly?: boolean | undefined;
     } = {},
   ) {
+    void CatalogService.nativePrograms;
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs = normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
@@ -1644,6 +1646,24 @@ export class CatalogService {
       });
     });
   }
+  private static readonly nativePrograms = /* @__PURE__ */ (() => {
+    for (const [key, native] of [
+      ["search", "searchEffect"],
+      ["describe", "describeEffect"],
+      ["listCatalogs", "listCatalogsEffect"],
+      ["loadConnector", "loadConnectorEffect"],
+      ["resolveTool", "resolve"],
+    ] as const) {
+      registerAuthMethod(
+        CatalogService.prototype,
+        key,
+        function (...args: any[]) {
+          return Reflect.apply(this[native], this, args);
+        },
+        CatalogService.prototype[key],
+      );
+    }
+  })();
 }
 
 function pageTail(page: CatalogSearchPage) {

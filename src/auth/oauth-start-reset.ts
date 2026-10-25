@@ -1,3 +1,5 @@
+import { runEdge } from "../runtime/run.js";
+import { authAll, authFlow, authProgram, registerAuth } from "./native.js";
 // The operator route must not answer while a storage reset it started can
 // still publish an older generation. Storage has no cancellation contract.
 const startResets = new WeakMap<object, Set<Promise<void>>>();
@@ -17,9 +19,12 @@ export function trackOAuthStartReset(scope: object, reset: Promise<void>): void 
   );
 }
 
-export async function drainOAuthStartResets(scope: object): Promise<void> {
-  const pending = startResets.get(scope);
-  while (pending && pending.size > 0) {
-    await Promise.allSettled(pending);
-  }
+export function drainOAuthStartResets(scope: object): Promise<void> {
+  return runEdge(authProgram<void>(drainOAuthStartResetsNative, [scope]));
 }
+const drainOAuthStartResetsNative = /* @__PURE__ */ registerAuth(drainOAuthStartResets, function (scope: object) {
+  return authFlow<void>(function* () {
+    const pending = startResets.get(scope);
+    while (pending && pending.size > 0) yield authAll(pending, true);
+  });
+});
