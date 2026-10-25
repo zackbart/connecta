@@ -3779,3 +3779,12 @@ unchanged. Native consumer, failure, decorator, sharing, close and minified-bund
 regressions live in `upward-native.test.ts` and
 `upward-native-bundle.node.test.ts`; existing wire, continuation, redaction,
 physical-attempt and body/admission suites remain compatibility evidence.
+
+The combined native/operator graph has a measured contributor bundle allowance
+in PR #1060: the UI gzip cap is 346,000 bytes, with its historical baseline
+unchanged. The official full checker measured 345,228 bytes after regenerating
+the merged UI assets. Removing unused Invocation/Catalog registration retention
+returned the public Worker entry from 198,744 to 77,426 bytes; live minified
+Context, inherited-method, decorator and restoration proofs retain native
+composition. Root, example Worker, public Worker, D1 and Clerk caps remain
+unchanged. This cost decision grants no later request-body-limit allowance.

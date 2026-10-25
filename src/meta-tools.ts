@@ -94,34 +94,28 @@ function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
   return result;
 }
 
-function discoveryResult(operation: () => unknown | Promise<unknown>, hint: string): Promise<ToolResult> {
-  return runEdge(discoveryResultNative(operation, hint));
-}
-const discoveryResultNative = /* @__PURE__ */ registerAuth(
-  discoveryResult,
-  function (operation: () => unknown | Promise<unknown>, hint: string) {
-    return authFlow<ToolResult>(function* () {
-      try {
-        const value = yield* upwardStep(authCall<unknown>(operation, []));
-        const text = boundedDiscoveryText(value, hint);
-        const result = jsonResult(value, text);
-        const bytes = enc.encode(JSON.stringify(result)).length;
-        if (bytes > MAX_DISCOVERY_RESULT_BYTES) {
-          throw new DiscoveryPolicyError(
-            "result_too_large",
-            `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
-          );
-        }
-        return result;
-      } catch (err) {
-        if (err instanceof DiscoveryPolicyError) {
-          return discoveryErrorResult(err);
-        }
-        throw err;
+const discoveryResult = function (operation: () => unknown | Promise<unknown>, hint: string) {
+  return authFlow<ToolResult>(function* () {
+    try {
+      const value = yield* upwardStep(authCall<unknown>(operation, []));
+      const text = boundedDiscoveryText(value, hint);
+      const result = jsonResult(value, text);
+      const bytes = enc.encode(JSON.stringify(result)).length;
+      if (bytes > MAX_DISCOVERY_RESULT_BYTES) {
+        throw new DiscoveryPolicyError(
+          "result_too_large",
+          `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
+        );
       }
-    });
-  },
-);
+      return result;
+    } catch (err) {
+      if (err instanceof DiscoveryPolicyError) {
+        return discoveryErrorResult(err);
+      }
+      throw err;
+    }
+  });
+};
 
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
 function isContinuationByte(b: number | undefined): boolean {
@@ -337,101 +331,96 @@ function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewSh
  * documentation/meta-tools.md#result-representation). It is one compact JSON
  * line with no raw newline, so the preview starts after the first `\n`.
  */
-function stashResult(bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
-  return runEdge(stashResultNative(bytes, results, preview, rawText));
-}
-const stashResultNative = /* @__PURE__ */ registerAuth(
-  stashResult,
-  function (bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
-    return authFlow<
-      | {
-          truncated: boolean;
-          totalBytes: number;
-          hint: string;
-          resultId?: never;
-          nextOffset?: never;
-          nextAction?: never;
-        }
-      | {
-          truncated: boolean;
-          resultId: string;
-          totalBytes: number;
-          hint: string;
-          nextOffset: number;
-          nextAction:
-            | { tool: string; arguments: { id: string; offset: number; code?: never } }
-            | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-        }
-    >(function* () {
-      const totalBytes = bytes.length;
-      // Direct pages promise offsets into the original UTF-8 text. JSON-escaping
-      // raw text would change that contract; never stash the encoder's replacement
-      // characters as if they were the completed call's output.
-      if (rawText !== undefined && !isWellFormedText(rawText))
-        return {
-          truncated: true,
-          totalBytes,
-          hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text; request the value as JSON (value mode or a JSON-returning call) to recover it.`,
-        };
-      const id = crypto.randomUUID();
+
+const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
+  return authFlow<
+    | {
+        truncated: boolean;
+        totalBytes: number;
+        hint: string;
+        resultId?: never;
+        nextOffset?: never;
+        nextAction?: never;
+      }
+    | {
+        truncated: boolean;
+        resultId: string;
+        totalBytes: number;
+        hint: string;
+        nextOffset: number;
+        nextAction:
+          | { tool: string; arguments: { id: string; offset: number; code?: never } }
+          | { tool: string; arguments: { code: string; id?: never; offset?: never } };
+      }
+  >(function* () {
+    const totalBytes = bytes.length;
+    // Direct pages promise offsets into the original UTF-8 text. JSON-escaping
+    // raw text would change that contract; never stash the encoder's replacement
+    // characters as if they were the completed call's output.
+    if (rawText !== undefined && !isWellFormedText(rawText))
+      return {
+        truncated: true,
+        totalBytes,
+        hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text; request the value as JSON (value mode or a JSON-returning call) to recover it.`,
+      };
+    const id = crypto.randomUUID();
+    try {
+      // Base64 permits byte-range decoding, and splitting the envelope across
+      // keys keeps a page's storage read proportional to the page instead of to
+      // the whole result (issue #540). Chunk 0 carries the header; the connecta.result
+      // reader below maps a byte offset back to chunk index and base64 quad.
+      const chunkBytes = resultChunkBytes(totalBytes);
+      const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
+      const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
+      for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
+        const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
+        if (offset === 0) chunks[0] += chunk;
+        else chunks.push(chunk);
+      }
+      if (!(yield* upwardStep(authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS])))) {
+        throw new Error("Result stash capacity exhausted");
+      }
+    } catch {
+      // Paging is advisory after a completed call, including an approved write.
+      // Neither backend prose nor a retry hint belongs in this successful result.
       try {
-        // Base64 permits byte-range decoding, and splitting the envelope across
-        // keys keeps a page's storage read proportional to the page instead of to
-        // the whole result (issue #540). Chunk 0 carries the header; the connecta.result
-        // reader below maps a byte offset back to chunk index and base64 quad.
-        const chunkBytes = resultChunkBytes(totalBytes);
-        const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
-        const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
-        for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
-          const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
-          if (offset === 0) chunks[0] += chunk;
-          else chunks.push(chunk);
-        }
-        if (!(yield* upwardStep(authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS])))) {
-          throw new Error("Result stash capacity exhausted");
-        }
+        results.warn();
       } catch {
-        // Paging is advisory after a completed call, including an approved write.
-        // Neither backend prose nor a retry hint belongs in this successful result.
-        try {
-          results.warn();
-        } catch {
-          // Logging cannot change the call either.
-        }
-        return {
-          truncated: true,
-          totalBytes,
-          hint: results.write
-            ? `Paging is unavailable. ${WRITE_ALREADY_RAN}`
-            : results.pagingTool
-              ? "Paging is unavailable."
-              : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
-        };
+        // Logging cannot change the call either.
       }
       return {
         truncated: true,
-        resultId: id,
         totalBytes,
-        hint: pagingHint(results, totalBytes, preview),
-        nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
-        nextAction:
-          results.pagingTool === "read_result"
-            ? {
-                tool: "read_result",
-                arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
-              }
-            : {
-                tool: "execute_code",
-                // A byte may cost six JSON characters when escaped. Leave room for the
-                // result id, page counters, and continuation metadata in the returned page.
-                arguments: {
-                  code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
-                },
-              },
+        hint: results.write
+          ? `Paging is unavailable. ${WRITE_ALREADY_RAN}`
+          : results.pagingTool
+            ? "Paging is unavailable."
+            : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
       };
-    });
-  },
-);
+    }
+    return {
+      truncated: true,
+      resultId: id,
+      totalBytes,
+      hint: pagingHint(results, totalBytes, preview),
+      nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
+      nextAction:
+        results.pagingTool === "read_result"
+          ? {
+              tool: "read_result",
+              arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
+            }
+          : {
+              tool: "execute_code",
+              // A byte may cost six JSON characters when escaped. Leave room for the
+              // result id, page counters, and continuation metadata in the returned page.
+              arguments: {
+                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
+              },
+            },
+    };
+  });
+};
 
 /** Program calls use the direct-call envelope, ledger, expiry and authority. */
 export function pageProgramResult(
@@ -466,26 +455,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
       const bytes = enc.encode(text);
       const write = resolved.definition.classification !== "read";
       const notice = yield* upwardStep(
-        authCall<
-          | {
-              truncated: boolean;
-              totalBytes: number;
-              hint: string;
-              resultId?: never;
-              nextOffset?: never;
-              nextAction?: never;
-            }
-          | {
-              truncated: boolean;
-              resultId: string;
-              totalBytes: number;
-              hint: string;
-              nextOffset: number;
-              nextAction:
-                | { tool: string; arguments: { id: string; offset: number; code?: never } }
-                | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-            }
-        >(stashResult, [
+        stashResult(
           bytes,
           {
             binding: {
@@ -509,7 +479,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
           },
           { kind: "none" },
           format === "text" ? text : undefined,
-        ]),
+        ),
       );
       return {
         format: "paged",
@@ -579,28 +549,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         ),
         warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
       };
-      const notice = yield* upwardStep(
-        authCall<
-          | {
-              truncated: boolean;
-              totalBytes: number;
-              hint: string;
-              resultId?: never;
-              nextOffset?: never;
-              nextAction?: never;
-            }
-          | {
-              truncated: boolean;
-              resultId: string;
-              totalBytes: number;
-              hint: string;
-              nextOffset: number;
-              nextAction:
-                | { tool: string; arguments: { id: string; offset: number; code?: never } }
-                | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-            }
-        >(stashResult, [bytes, results, { kind: "none" }, text]),
-      );
+      const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }, text));
       // Put the entire recovery route ahead of the preview in both response forms.
       // A client retaining only the first 2,000 characters still sees the action.
       if (notice.resultId) {
@@ -644,152 +593,65 @@ function noticeFirst(notice: object, preview: string): ToolResult {
  * `text` already encoded, so a caller that had to measure it to make this
  * decision doesn't encode it twice.
  */
-function guardEncoded(
-  text: string,
-  bytes: Uint8Array,
-  results: ResultStash,
-  cap: number,
-): Promise<GuardedResult<ToolResult>> {
-  return runEdge(guardEncodedNative(text, bytes, results, cap));
-}
-const guardEncodedNative = /* @__PURE__ */ registerAuth(
-  guardEncoded,
-  function (text: string, bytes: Uint8Array, results: ResultStash, cap: number) {
-    return authFlow<GuardedResult<ToolResult>>(function* () {
-      if (bytes.length <= cap) {
-        return {
-          result: { content: [{ type: "text", text }] },
-          truncated: false,
-        };
-      }
-      if (!isWellFormedText(text)) {
-        const notice = yield* upwardStep(
-          authCall<
-            | {
-                truncated: boolean;
-                totalBytes: number;
-                hint: string;
-                resultId?: never;
-                nextOffset?: never;
-                nextAction?: never;
-              }
-            | {
-                truncated: boolean;
-                resultId: string;
-                totalBytes: number;
-                hint: string;
-                nextOffset: number;
-                nextAction:
-                  | { tool: string; arguments: { id: string; offset: number; code?: never } }
-                  | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-              }
-          >(stashResult, [bytes, results, { kind: "none" }, text]),
-        );
-        return { result: noticeFirst(notice, ""), truncated: true };
-      }
-      const head = headOf(bytes, cap);
-      const notice = yield* upwardStep(
-        authCall<
-          | {
-              truncated: boolean;
-              totalBytes: number;
-              hint: string;
-              resultId?: never;
-              nextOffset?: never;
-              nextAction?: never;
-            }
-          | {
-              truncated: boolean;
-              resultId: string;
-              totalBytes: number;
-              hint: string;
-              nextOffset: number;
-              nextAction:
-                | { tool: string; arguments: { id: string; offset: number; code?: never } }
-                | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-            }
-        >(stashResult, [
-          bytes,
-          results,
-          {
-            kind: "prefix",
-            bytes: head.length,
-          },
-        ]),
-      );
-      return { result: noticeFirst(notice, dec.decode(head)), truncated: true };
-    });
-  },
-);
+
+const guardEncoded = function (text: string, bytes: Uint8Array, results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<ToolResult>>(function* () {
+    if (bytes.length <= cap) {
+      return {
+        result: { content: [{ type: "text", text }] },
+        truncated: false,
+      };
+    }
+    if (!isWellFormedText(text)) {
+      const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }, text));
+      return { result: noticeFirst(notice, ""), truncated: true };
+    }
+    const head = headOf(bytes, cap);
+    const notice = yield* upwardStep(
+      stashResult(bytes, results, {
+        kind: "prefix",
+        bytes: head.length,
+      }),
+    );
+    return { result: noticeFirst(notice, dec.decode(head)), truncated: true };
+  });
+};
 
 /** {@link guardEncoded} over a string that has not been measured yet. */
-function guardText(text: string, results: ResultStash, cap: number): Promise<GuardedResult<ToolResult>> {
-  return runEdge(guardTextNative(text, results, cap));
-}
-const guardTextNative = /* @__PURE__ */ registerAuth(
-  guardText,
-  function (text: string, results: ResultStash, cap: number) {
-    return authFlow<GuardedResult<ToolResult>>(function* () {
-      // `JSON.stringify`'s type says `string` where its behavior says `string |
-      // undefined`, so TypeScript alone does not keep a non-string out of here.
-      // Normalizing at the door means the size check below always measures exactly
-      // the text that is emitted, and no future caller can launder a non-string
-      // through it the way issue #42 describes.
-      const serialized: string = typeof text === "string" ? text : serializeResultText(text);
-      const body = results.secrets?.text(serialized) ?? serialized;
-      return yield* upwardStep(
-        authCall<GuardedResult<ToolResult>>(guardEncoded, [body, enc.encode(body), results, cap]),
-      );
-    });
-  },
-);
+
+const guardText = function (text: string, results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<ToolResult>>(function* () {
+    // `JSON.stringify`'s type says `string` where its behavior says `string |
+    // undefined`, so TypeScript alone does not keep a non-string out of here.
+    // Normalizing at the door means the size check below always measures exactly
+    // the text that is emitted, and no future caller can launder a non-string
+    // through it the way issue #42 describes.
+    const serialized: string = typeof text === "string" ? text : serializeResultText(text);
+    const body = results.secrets?.text(serialized) ?? serialized;
+    return yield* upwardStep(guardEncoded(body, enc.encode(body), results, cap));
+  });
+};
 
 /** Store an oversized JSON value and replace it with a page handle. */
-function guardValue(value: unknown, results: ResultStash, cap: number): Promise<GuardedResult<unknown>> {
-  return runEdge(guardValueNative(value, results, cap));
-}
-const guardValueNative = /* @__PURE__ */ registerAuth(
-  guardValue,
-  function (value: unknown, results: ResultStash, cap: number) {
-    return authFlow<GuardedResult<unknown>>(function* () {
-      const serialized = serializeResultText(value);
-      const text = results.secrets?.text(serialized) ?? serialized;
-      const bytes = enc.encode(text);
-      if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
-      const notice = yield* upwardStep(
-        authCall<
-          | {
-              truncated: boolean;
-              totalBytes: number;
-              hint: string;
-              resultId?: never;
-              nextOffset?: never;
-              nextAction?: never;
-            }
-          | {
-              truncated: boolean;
-              resultId: string;
-              totalBytes: number;
-              hint: string;
-              nextOffset: number;
-              nextAction:
-                | { tool: string; arguments: { id: string; offset: number; code?: never } }
-                | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-            }
-        >(stashResult, [bytes, results, { kind: "none" }]),
-      );
-      return {
-        result: notice.resultId
-          ? notice
-          : {
-              ...notice,
-              preview: escapedHeadOf(bytes, cap),
-            },
-        truncated: true,
-      };
-    });
-  },
-);
+
+const guardValue = function (value: unknown, results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<unknown>>(function* () {
+    const serialized = serializeResultText(value);
+    const text = results.secrets?.text(serialized) ?? serialized;
+    const bytes = enc.encode(text);
+    if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
+    const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }));
+    return {
+      result: notice.resultId
+        ? notice
+        : {
+            ...notice,
+            preview: escapedHeadOf(bytes, cap),
+          },
+      truncated: true,
+    };
+  });
+};
 
 /**
  * The longest head of `bytes` whose JSON string form fits `cap` bytes. Value
@@ -829,96 +691,49 @@ function escapedHeadOf(bytes: Uint8Array, cap: number): string {
  * the head of a half-written base64 image is of no use to anyone. Either way
  * the full envelope is stashed and pages through `connecta.result`.
  */
-function guardContent(content: TextContent[], results: ResultStash, cap: number): Promise<GuardedResult<ToolResult>> {
-  return runEdge(guardContentNative(content, results, cap));
-}
-const guardContentNative = /* @__PURE__ */ registerAuth(
-  guardContent,
-  function (content: TextContent[], results: ResultStash, cap: number) {
-    return authFlow<GuardedResult<ToolResult>>(function* () {
-      content = results.secrets?.redact({ content }).content ?? content;
-      const only = content.length === 1 ? content[0] : undefined;
-      if (only?.type === "text" && typeof only.text === "string") {
-        const bytes = enc.encode(only.text);
-        // Under the cap the block passes through untouched, annotations included.
-        if (bytes.length <= cap) return { result: { content }, truncated: false };
-        return yield* upwardStep(authCall<GuardedResult<ToolResult>>(guardEncoded, [only.text, bytes, results, cap]));
-      }
-      let text: string;
-      try {
-        const serialized = JSON.stringify(content);
-        text = results.secrets?.text(serialized) ?? serialized;
-      } catch {
-        // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
-        // be measured, stashed, or paged either — there is nothing this guard could
-        // do with it. Pass it through as the old text-only measure did, rather than
-        // turning a call that used to succeed into result_processing_failed.
-        return { result: { content }, truncated: false };
-      }
-      const bytes = enc.encode(text);
-      // Under the cap the downstream blocks pass through untouched, non-text ones
-      // included, in their original order.
-      if (bytes.length <= cap) {
-        return { result: { content }, truncated: false };
-      }
-      if (content.every((b) => b.type === "text")) {
-        const joined = enc.encode(content.map((b) => b.text).join("\n"));
-        const notice = yield* upwardStep(
-          authCall<
-            | {
-                truncated: boolean;
-                totalBytes: number;
-                hint: string;
-                resultId?: never;
-                nextOffset?: never;
-                nextAction?: never;
-              }
-            | {
-                truncated: boolean;
-                resultId: string;
-                totalBytes: number;
-                hint: string;
-                nextOffset: number;
-                nextAction:
-                  | { tool: string; arguments: { id: string; offset: number; code?: never } }
-                  | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-              }
-          >(stashResult, [bytes, results, { kind: "text-of-envelope" }]),
-        );
-        return {
-          result: noticeFirst(notice, dec.decode(headOf(joined, cap))),
-          truncated: true,
-        };
-      }
-      const notice = yield* upwardStep(
-        authCall<
-          | {
-              truncated: boolean;
-              totalBytes: number;
-              hint: string;
-              resultId?: never;
-              nextOffset?: never;
-              nextAction?: never;
-            }
-          | {
-              truncated: boolean;
-              resultId: string;
-              totalBytes: number;
-              hint: string;
-              nextOffset: number;
-              nextAction:
-                | { tool: string; arguments: { id: string; offset: number; code?: never } }
-                | { tool: string; arguments: { code: string; id?: never; offset?: never } };
-            }
-        >(stashResult, [bytes, results, { kind: "none" }]),
-      );
+
+const guardContent = function (content: TextContent[], results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<ToolResult>>(function* () {
+    content = results.secrets?.redact({ content }).content ?? content;
+    const only = content.length === 1 ? content[0] : undefined;
+    if (only?.type === "text" && typeof only.text === "string") {
+      const bytes = enc.encode(only.text);
+      // Under the cap the block passes through untouched, annotations included.
+      if (bytes.length <= cap) return { result: { content }, truncated: false };
+      return yield* upwardStep(guardEncoded(only.text, bytes, results, cap));
+    }
+    let text: string;
+    try {
+      const serialized = JSON.stringify(content);
+      text = results.secrets?.text(serialized) ?? serialized;
+    } catch {
+      // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
+      // be measured, stashed, or paged either — there is nothing this guard could
+      // do with it. Pass it through as the old text-only measure did, rather than
+      // turning a call that used to succeed into result_processing_failed.
+      return { result: { content }, truncated: false };
+    }
+    const bytes = enc.encode(text);
+    // Under the cap the downstream blocks pass through untouched, non-text ones
+    // included, in their original order.
+    if (bytes.length <= cap) {
+      return { result: { content }, truncated: false };
+    }
+    if (content.every((b) => b.type === "text")) {
+      const joined = enc.encode(content.map((b) => b.text).join("\n"));
+      const notice = yield* upwardStep(stashResult(bytes, results, { kind: "text-of-envelope" }));
       return {
-        result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
+        result: noticeFirst(notice, dec.decode(headOf(joined, cap))),
         truncated: true,
       };
-    });
-  },
-);
+    }
+    const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }));
+    return {
+      result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
+      truncated: true,
+    };
+  });
+};
 
 // --- compact schema rendering (feature 3a) --------------------------------
 
@@ -1171,9 +986,7 @@ function metaToolsForRequest(
                   });
                   if (call.resultMode === "value") {
                     let value = result;
-                    const guarded = yield* upwardStep(
-                      authCall<GuardedResult<unknown>>(guardValue, [value, results, cap]),
-                    );
+                    const guarded = yield* upwardStep(guardValue(value, results, cap));
                     value = guarded.result;
                     return processed(jsonResult({ ok: true, data: value, format }), guarded.truncated, { value });
                   }
@@ -1192,18 +1005,14 @@ function metaToolsForRequest(
                         },
                       ];
                     }
-                    const guarded = yield* upwardStep(
-                      authCall<GuardedResult<ToolResult>>(guardContent, [content, results, cap]),
-                    );
+                    const guarded = yield* upwardStep(guardContent(content, results, cap));
                     // Native blocks and bounded previews are the result. A format-only
                     // structuredContent hides them in clients that prefer that field.
                     guarded.result._meta = { "dev.connecta/format": format };
                     return processed(guarded.result, guarded.truncated);
                   }
                   const value = result;
-                  const guarded = yield* upwardStep(
-                    authCall<GuardedResult<ToolResult>>(guardText, [serializeResultText(value), results, cap]),
-                  );
+                  const guarded = yield* upwardStep(guardText(serializeResultText(value), results, cap));
                   guarded.result._meta = { "dev.connecta/format": format };
                   return processed(guarded.result, guarded.truncated, { value });
                 }),
@@ -1309,7 +1118,7 @@ function metaToolsForRequest(
           );
         }
         return yield* upwardStep(
-          authCall<ToolResult>(discoveryResult, [
+          discoveryResult(
             authMethod(() =>
               authFlow<CatalogSearchResult>(function* () {
                 return yield* upwardStep(
@@ -1327,7 +1136,7 @@ function metaToolsForRequest(
               }),
             ),
             "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
-          ]),
+          ),
         );
       }),
     ),

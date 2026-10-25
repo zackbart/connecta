@@ -36,6 +36,13 @@ it("INV-4 INV-7 INV-9 INV-13: production minification preserves upward native id
     throw new Error(String(error));
   });
   expect(report).toMatchObject({
+    classes: {
+      base: { catalog: true, invocation: true },
+      inherited: { catalog: true, invocation: true },
+      decorated: { catalog: false, invocation: false },
+      custom: { catalog: false, invocation: false },
+      restored: { catalog: true, invocation: true },
+    },
     skills: true,
     registeredNames: true,
     modern: { answered: "read" },

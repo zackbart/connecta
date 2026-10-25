@@ -334,7 +334,9 @@ export class InvocationService {
     private readonly registry: RegistryView,
     private readonly catalog: CatalogService,
     private readonly activity?: ActivityRequestContext,
-  ) {}
+  ) {
+    void InvocationService.nativePrograms;
+  }
 
   invoke<T = unknown>(address: string, args: unknown, context: InvocationContext<T>): Promise<InvocationOutcome<T>> {
     return runEdge(this.pipeline(address, args, context));
@@ -1081,14 +1083,14 @@ export class InvocationService {
       ),
     );
   }
-  static {
+  private static readonly nativePrograms = /* @__PURE__ */ (() => {
     registerAuthMethod(
-      this.prototype,
+      InvocationService.prototype,
       "invoke",
       function (address, args, context) {
         return this.pipeline(address, args, context);
       },
-      this.prototype.invoke,
+      InvocationService.prototype.invoke,
     );
-  }
+  })();
 }

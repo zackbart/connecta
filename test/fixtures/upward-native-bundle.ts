@@ -1,3 +1,4 @@
+import { upwardClassSmoke } from "./upward-classes.js";
 import { hasAuthProgram } from "../../src/auth/native.js";
 import { nativeToolName } from "../../src/native-tools.js";
 import { Effect } from "effect";
@@ -60,6 +61,6 @@ export async function runUpwardBundleSmoke() {
     await exchange(true, "crm.read");
     connector.listTools = original;
     await exchange(false, "crm.read");
-    return { modern, legacy, skills, registeredNames: hasAuthProgram(nativeToolName), nativePromiseListings, promiseListings, nativeListings, decoratedListings, writes, requestOwners: owners.size, allOwnersClosed: [...owners].every((owner) => !(owner as { open: boolean }).open) };
+    return { classes: await upwardClassSmoke(), modern, legacy, skills, registeredNames: hasAuthProgram(nativeToolName), nativePromiseListings, promiseListings, nativeListings, decoratedListings, writes, requestOwners: owners.size, allOwnersClosed: [...owners].every((owner) => !(owner as { open: boolean }).open) };
   } finally { await app.close(); }
 }

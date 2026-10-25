@@ -692,6 +692,7 @@ export class CatalogService {
       readOnly?: boolean | undefined;
     } = {},
   ) {
+    void CatalogService.nativePrograms;
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs = normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
@@ -1645,7 +1646,7 @@ export class CatalogService {
       });
     });
   }
-  static {
+  private static readonly nativePrograms = /* @__PURE__ */ (() => {
     for (const [key, native] of [
       ["search", "searchEffect"],
       ["describe", "describeEffect"],
@@ -1654,15 +1655,15 @@ export class CatalogService {
       ["resolveTool", "resolve"],
     ] as const) {
       registerAuthMethod(
-        this.prototype,
+        CatalogService.prototype,
         key,
         function (...args: any[]) {
           return Reflect.apply(this[native], this, args);
         },
-        this.prototype[key],
+        CatalogService.prototype[key],
       );
     }
-  }
+  })();
 }
 
 function pageTail(page: CatalogSearchPage) {

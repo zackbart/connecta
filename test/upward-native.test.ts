@@ -38,6 +38,13 @@ const failure = (unknown = false): CallErrorDetails => ({
 
 it("INV-4 INV-7 INV-9 INV-13: native upward dispatch preserves immutable originals and canonical ownership on both protocol leaves", async () => {
   expect(await runUpwardBundleSmoke()).toMatchObject({
+    classes: {
+      base: { catalog: true, invocation: true },
+      inherited: { catalog: true, invocation: true },
+      decorated: { catalog: false, invocation: false },
+      custom: { catalog: false, invocation: false },
+      restored: { catalog: true, invocation: true },
+    },
     skills: true,
     registeredNames: true,
     modern: { answered: "read" },
