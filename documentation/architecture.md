@@ -3399,3 +3399,37 @@ Native pools resolve names through a shared claimant index for listing and
 calling, then use the existing invocation routes. Native recovery adapts only
 Connecta error envelopes in `src/native-recovery.ts`; provider dispatch and
 continuation enforcement stay in their existing owners.
+
+### Contributor reference: owned Node transport dispatch
+
+`src/guarded-transport.ts` is the platform-neutral runtime slot. `sendGuarded`
+invokes a dispatch callback before legacy/fake sends; a transport declaring
+`delaysDispatch` must invoke it exactly once at its last safe pre-send boundary.
+The Node sender does this before a direct send or after CONNECT/TLS establishment,
+before exposing the socket to undici's destination Client. A refusal there must
+never reach the destination or acquire dispatch provenance. Each send owns its
+Client/ProxyAgent and response lifetime, with HTTP/1.1, non-idempotent dispatch,
+no interceptors and no redirects. No dispatcher, response, callback or signal is
+cached across requests. This seam is transport policy; SDK protocol, auth and
+request/coordinator ownership remain with their existing adapters.
+
+### Contributor reference: OAuth credential transport seam
+
+`sendCredentialPost` in `src/guarded-transport.ts` is a Promise platform leaf for
+SDK-authenticated token, registration and revocation POSTs. It resolves the
+owned policy, forces manual redirects and withholds native exception text/cause,
+while preserving the caller's original abort reason. The SDK still constructs
+auth headers/forms and decodes the byte-safe response; this leaf supplies no
+OAuth retry, grant, response-decoding or ownership orchestration.
+
+`OAuthRefreshCoordinator.coordinatedFetch` accepts an optional final synchronous
+`prepareCredentialRequest` hook. Production adapters resolve `guardedTransport(true)`
+there before claiming a code/refresh grant, so an unsupported Node host consumes
+neither. The base-fetch leaves in static OAuth and remote MCP call
+`sendCredentialPost`; remote registration and disconnect revocation do so too.
+D4 must preserve this preflight and the distinction between request-owned code
+exchange and coordinator-owned refresh after claim submission. The existing
+spent-token algorithm intentionally remains conservative after a submitted claim,
+even if a later CONNECT fails before destination dispatch. D6 must preserve the
+SDK JSON-RPC envelope distinction at the leaf: protocol POSTs are not credential
+POSTs; forms and registration JSON are. Discovery GETs remain native fetch.
