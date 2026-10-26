@@ -3,7 +3,7 @@
 ## Required behavioral checks
 
 Two commands run on every PR in CI's `behavior` job. Neither needs a login,
-model, network or vendor account.
+model, external network or vendor account.
 
 ```sh
 pnpm run eval:outcomes
@@ -17,8 +17,11 @@ paging, one Stripe refund, reconciliation after a committed refund answered
 HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
 and a secret rotation that never reads a value. Each is graded on outcome:
 downstream state, the physical write ledger and the final answer, not the
-route. Each reference must pass and an agent that does nothing must fail.
-Controls then require failure for the right post sent to the wrong channel,
+route. Paging must deliver the actual failing test and HTTP status through a
+service or guest bridge. Each reference must pass and doing nothing must fail.
+Controls reject failed paging and fabricated answers without reading the log.
+They also require rejected setup to exit without leaving servers alive,
+and require failure for the right post sent to the wrong channel,
 a duplicated post, a conversation missing its final completion, a trial
 interrupted with passing checks, and agent batches with an omitted, skipped,
 duplicated, interrupted or cached-pass-only trial or an early stop. Grading

@@ -177,19 +177,21 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       ledger: [],
     };
   const world = new World(task.world);
-  await world.start();
-  for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-  const deployment = await startNodeDeployment(
-    world.connectorSpecs(),
-    task.deployment,
-    task.world?.oauth ? world.oauth : undefined,
-    surfaceArm,
-  );
-  const hostEvents: StreamEvent[] = [];
-  const host = task.host
-    ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
-    : undefined;
+  let cleanupDeployment: Awaited<ReturnType<typeof startNodeDeployment>> | undefined;
+  let cleanupHost: Awaited<ReturnType<typeof startAuthHost>> | undefined;
   try {
+    await world.start();
+    for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
+    const deployment = (cleanupDeployment = await startNodeDeployment(
+      world.connectorSpecs(),
+      task.deployment,
+      task.world?.oauth ? world.oauth : undefined,
+      surfaceArm,
+    ));
+    const hostEvents: StreamEvent[] = [];
+    const host = (cleanupHost = task.host
+      ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
+      : undefined);
     const surface = await surfaceOf(deployment.mcpUrl, deployment.token);
     assertSurface(
       surface.map((tool) => tool.name),
@@ -346,9 +348,9 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       startedAt,
     };
   } finally {
-    await host?.close();
-    await deployment.close();
-    await world.stop();
+    const cleanup = await Promise.allSettled([cleanupHost?.close(), cleanupDeployment?.close(), world.stop()]);
+    const failed = cleanup.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   }
 }
 

@@ -58,12 +58,12 @@ export async function playReference<T>(
 ): Promise<T> {
   const surface = options.surface ?? "six";
   const world = new World(task.world);
-  await world.start();
-  for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
   let deployment: Deployment | undefined;
   let host: Awaited<ReturnType<typeof startAuthHost>> | undefined;
   let session: McpSession | undefined;
   try {
+    await world.start();
+    for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
     deployment = await startNodeDeployment(
       world.connectorSpecs(),
       task.deployment,
@@ -139,9 +139,8 @@ export async function playReference<T>(
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     return await inspect({ world, trace, deployment });
   } finally {
-    await session?.close();
-    await host?.close();
-    await deployment?.close();
-    await world.stop();
+    const cleanup = await Promise.allSettled([session?.close(), host?.close(), deployment?.close(), world.stop()]);
+    const failed = cleanup.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   }
 }

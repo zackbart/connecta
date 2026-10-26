@@ -78,6 +78,23 @@ function pagedOriginalResult(world: World, trace: AgentTrace): boolean {
   );
 }
 
+/** Facts must cross a real service or guest bridge, not just appear in the answer. */
+function logFactsDelivered(world: World, trace: AgentTrace): boolean {
+  const chunks = trace.toolUses
+    .filter((use) => use.tool === "call_tool" && use.input.address === "ci.get_run_log" && !use.isError)
+    .map((use) => use.resultText ?? "");
+  for (const program of world.programs.filter((p) => p.succeeded)) {
+    for (const call of program.calls) {
+      if (call.outcome !== "ok" || !["connecta.call", "connecta.result"].includes(call.name)) continue;
+      const result = call.result as { text?: unknown; data?: unknown } | undefined;
+      if (typeof result?.text === "string") chunks.push(result.text);
+      else if (typeof result?.data === "string") chunks.push(result.data);
+    }
+  }
+  const delivered = chunks.join("");
+  return /test\/payments\/refund\.test\.ts/.test(delivered) && /expected status 200, received 409\b/.test(delivered);
+}
+
 function callsAllSettled(code: string): boolean {
   const source = ts.createSourceFile("program.js", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   let found = false;
@@ -252,6 +269,7 @@ const paging = withCorrectness(
         "the log was fetched exactly once",
         world.ledger.calls.filter((c) => c.service === "ci" && c.tool === "get_run_log").length === 1,
       ),
+      check("log-facts", "the actual failing test and HTTP status were read", logFactsDelivered(world, trace)),
       check(
         "result-api",
         "used successful result paging or code-arm reduction",
