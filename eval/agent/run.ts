@@ -348,9 +348,10 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       startedAt,
     };
   } finally {
-    const cleanup = await Promise.allSettled([cleanupHost?.close(), cleanupDeployment?.close(), world.stop()]);
-    const failed = cleanup.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") throw failed.reason;
+    await Promise.allSettled([cleanupHost?.close(), cleanupDeployment?.close(), world.stop()]).then((cleanup) => {
+      const failed = cleanup.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    });
   }
 }
 

@@ -139,8 +139,9 @@ export async function playReference<T>(
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     return await inspect({ world, trace, deployment });
   } finally {
-    const cleanup = await Promise.allSettled([session?.close(), host?.close(), deployment?.close(), world.stop()]);
-    const failed = cleanup.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") throw failed.reason;
+    await Promise.allSettled([session?.close(), host?.close(), deployment?.close(), world.stop()]).then((cleanup) => {
+      const failed = cleanup.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    });
   }
 }
