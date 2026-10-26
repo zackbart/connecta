@@ -174,14 +174,15 @@ describe("OAuthRefreshCoordinator", () => {
     ["a rotating answer", bearer("access-new", "refresh-new"), bearer("access-new", "refresh-new")],
     ["an answer that keeps the refresh token", bearer("access-new"), bearer("access-new", "refresh-old")],
   ])(
-    "redeems once per epoch for eight scopes and hands each the same tokens after %s",
+    "coordinates eight scopes and permits the next successful refresh generation after %s",
     async (_name, answer, expected) => {
       const storage = await grantStore();
       const coordinator = new OAuthRefreshCoordinator();
       const gate = deferred<void>();
-      const server = tokenServer(async () => {
-        await gate.promise;
-        return Response.json(answer);
+      const nextGate = deferred<void>();
+      const server = tokenServer(async (n) => {
+        await (n === 1 ? gate.promise : nextGate.promise);
+        return Response.json(n === 1 ? answer : bearer("access-next", expected.refresh_token));
       });
       const flows = await Promise.all(Array.from({ length: 8 }, () => flow(storage, coordinator)));
       const refreshes = flows.map((provider) => refresh(coordinator, provider, server.fetch));
@@ -199,13 +200,17 @@ describe("OAuthRefreshCoordinator", () => {
       const writes = vi.spyOn(storage, "compareAndSet");
       await Promise.all(flows.map((provider, i) => provider.saveTokens(bodies[i]!, ISSUER)));
       expect(writes).not.toHaveBeenCalled();
-      // Only a new fingerprint permits another dispatch. A confirmed unchanged
-      // token can still hand the SDK its committed result.
-      const next = await flow(storage, coordinator);
-      expect((await refresh(coordinator, next, server.fetch, expected.refresh_token)).status).toBe(200);
-      expect(server.redeemed).toEqual(
-        expected.refresh_token === "refresh-old" ? ["refresh-old"] : ["refresh-old", expected.refresh_token],
+      // A fresh flow can refresh again after the successful commit, including
+      // vendors that return the same refresh-token bytes for several hours.
+      const coordinators = [new OAuthRefreshCoordinator(), new OAuthRefreshCoordinator()];
+      const next = await Promise.all(coordinators.map((c) => flow(storage, c)));
+      const following = next.map((provider, i) =>
+        refresh(coordinators[i]!, provider, server.fetch, expected.refresh_token),
       );
+      await drain();
+      nextGate.resolve();
+      for (const response of await Promise.all(following)) expect(response.status).toBe(200);
+      expect(server.redeemed).toEqual(["refresh-old", expected.refresh_token]);
     },
   );
 

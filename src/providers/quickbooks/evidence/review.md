@@ -33,6 +33,16 @@ availability. We retain only explicitly reviewed read fields.
   provider adds no grant metadata or assumed expiry response fields. Intuit's
   documented confidential-client flow uses Basic auth; PKCE is not advertised
   by the discovery document, so this adapter disables it.
+- The official [OAuth JavaScript client](https://github.com/intuit/oauth-jsclient/blob/master/src/OAuthClient.js)
+  confirms the discovery revocation URL and Basic-authenticated JSON POST
+  containing `token`. Disconnect uses that fixed endpoint with the latest
+  refresh token after local grant removal, through the shared bounded
+  revocation flow; it never follows redirects or retries.
+- Intuit may return unchanged refresh-token bytes across hourly access-token
+  refreshes; see the official [SDK authorization guide](https://github.com/intuit/QuickBooks-V3-PHP-SDK/blob/master/docs/_sources/authorization.rst.txt).
+  Always persist the latest returned tokens. A successfully committed refresh
+  permits a subsequent coordinated generation, while outstanding or ambiguous
+  attempts stay blocked. No provider-specific expiry fields are assumed.
 - [Official refresh-policy announcement](https://medium.com/intuitdev/important-changes-to-refresh-token-policy-8443779d40db)
   (2025-11-12) caps refresh authorization at five years while retaining the
   rolling 100-day usage requirement. Rotation does not restart the absolute
