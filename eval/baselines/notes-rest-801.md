@@ -52,7 +52,8 @@ workflows can miss a required replay or source-selection criterion.
    through a read; the grader no longer demands a successful retry response.
 2. The fixture-invalid Luna refund is excluded from the replacement baseline.
    Both runners freshly received correct reconciliation data. Historical raw
-   and regraded files below remain diagnostic history, unchanged.
+   files remain unchanged; regraded copies are recoverable from the immutable
+   links below.
 3. Every read-only REST task checks executions, direct attempts and observed
    guest calls against the providers' complete static catalog annotations.
    Unknown tools fail closed. Exhaustive controls reject every named/generic
@@ -148,11 +149,35 @@ replacement above is a third live batch, saved separately.
 
 The historical second-batch raw files are [Luna](gpt-6-luna-rest-801-live.json) and
 [Sonnet](sonnet-5-5-rest-801-live.json). Their original scores are 5/10 and 7/10.
-The historical [Luna grade](gpt-6-luna-rest-801.json) and
-[Sonnet grade](sonnet-5-5-rest-801.json) were computed from full saved inputs with
-`regradeTrial`, using route grading, without executing programs or contacting a
-model. Only Luna's pin-answer grade changes. Regrade source paths are relative
-baseline filenames. The original JSON files stay unchanged.
+The historical full-file regrades are archived in Git history. They were computed
+from full saved inputs with `regradeTrial`, using route grading, without
+executing programs or contacting a model. The historical grader commit is
+[`3696188261da`](https://github.com/zackbart/connecta/commit/3696188261da5722073b879d55c25f2fa3e685d5).
+Its regrade metadata records dirty exported files but a clean product source
+tree; the original live run metadata and clean flags are identical in both copies.
+
+All 20 trials have identical `saved` inputs, final answers, tool traces, ledgers,
+metrics and runner metadata in the raw and regraded files. Only `checks`,
+`status` and added `regrade` metadata differ. Checks were reordered, but by check
+id the sole verdict change is Luna's `801-cloudflare-pin-refusal` /
+`answer-evidence`: false to true, changing that trial from fail to pass and
+Luna's total from **5/10 to 6/10**. Sonnet remains **7/10** with identical check
+verdicts. Every trial's `regrade.unavailable` is empty. The regrade timestamps
+are 2026-10-15 20:53:40.618 UTC (Luna) and 20:53:41.100 UTC (Sonnet); source
+filenames name the corresponding raw `*-rest-801-live.json` files.
+These are alternate grades of the same paid interactions, not additional runs.
+A current-grader regrade need not reproduce these historical grades.
+
+The raw live files remain local. The following immutable copies and exact-byte
+hashes preserve recovery and verification of both the retained sources and the
+removed full-file regrades:
+
+| File (immutable historical copy) | SHA-256 of exact file bytes |
+| --- | --- |
+| [gpt-6-luna-rest-801-live.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/gpt-6-luna-rest-801-live.json) | `eaff00723447bbda17f3f63cb8cf5a34d592422837ce334be110dfad3f910796` |
+| [sonnet-5-5-rest-801-live.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/sonnet-5-5-rest-801-live.json) | `e5d524d36a102220f895609634bd6dd018122e25027ec01296885e816d59a6cf` |
+| [gpt-6-luna-rest-801.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/gpt-6-luna-rest-801.json) | `84084e8bc93f089c54c8069dfbae4c9c25ada23b97fb477cc5f0ded0fdf2ea53` |
+| [sonnet-5-5-rest-801.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/sonnet-5-5-rest-801.json) | `003ff779846f8ab357daf6e050e8010441478645eca1c5a4466f5af379a3452f` |
 
 All credentials are fresh fake sentinels. Exports contain no managed access
 tokens, fake vault keys, absolute home paths, or real email addresses.
@@ -220,10 +245,19 @@ responses that cannot establish product behavior.
 
 ## Initial batch and harness corrections
 
-The initial [Luna](gpt-6-luna-rest-801-initial.json) and
-[Sonnet](sonnet-5-5-rest-801-initial.json) files preserve their original 2/10 and
-5/10 grades. They are diagnostic trials with known harness defects, not a
-comparison baseline for the final batch.
+The initial Luna and Sonnet batches preserve original scores of **2/10** and
+**5/10**, respectively. These are 20 distinct paid interactions, not duplicates
+of the second batch or review-round replacements. Both ran all ten tasks from
+clean source `ca0b77954159`, runtime tree `970b159693b4`, on 2026-10-15 at
+20:35 UTC with the runner versions and settings recorded above. Their known
+harness defects make them invalid as a comparison baseline for the final batch.
+They are archived in Git history; these links and hashes recover the complete
+original traces, failures and metadata without retaining another local copy:
+
+| File (immutable historical copy) | SHA-256 of exact file bytes |
+| --- | --- |
+| [gpt-6-luna-rest-801-initial.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/gpt-6-luna-rest-801-initial.json) | `302c392002b17db7c7cc0470a5c832eb7081c35ab92ed082f3dc558c26fe24bb` |
+| [sonnet-5-5-rest-801-initial.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/sonnet-5-5-rest-801-initial.json) | `7fac179522ebbdbfbcaea0f94d240440ca823162310a3805cfe223a67d172e72` |
 
 The second batch followed corrections for missing Notion response `plain_text`,
 Vercel's `/v10/projects` route and supported environment upsert, a deployment
