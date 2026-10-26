@@ -10,6 +10,7 @@
 // listing them in `truncated`; a required parameter or body field is never cut.
 import { Effect, Schema } from "effect";
 import { lexicalSearchContent } from "../catalog.js";
+import { registerOperationVocabulary } from "../operation-vocabulary.js";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import { keyResendAdvice } from "../errors.js";
@@ -67,6 +68,10 @@ function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
+  /** Immutable deployment policy included in continuation MACs, independently of agent arguments. */
+  readonly cursorScope?: Readonly<Record<string, unknown>>;
+  /** Construction-owned suggestions for the configured authored catalog; never dispatch authority. */
+  readonly named?: HatchDeclaration["named"];
   /** Optional construction-time identity binding for a reviewed operation index. */
   readonly index?: OperationIndex;
   /** Resolve configured query routing before validation and cursor binding. */
@@ -87,6 +92,8 @@ export interface HatchBinding {
   readonly searchNoun?: (term: string) => boolean;
   /** Static operation refusal, also shown by search and details without request validation. */
   readonly refusal?: (operation: Operation) => string | undefined;
+  /** Pure construction-owned discovery restriction; never dispatch authority. Snapshotted once per operation. */
+  readonly discoveryRefusal?: (operation: Operation) => string | undefined;
   readonly refuse?: (call: RestCall) => string | undefined;
   readonly send: (
     call: RestCall,
@@ -105,7 +112,7 @@ export interface HatchBinding {
 }
 
 /** 0014's starting discovery budgets, measured as serialized JSON bytes of the tool's own result. */
-export const SEARCH_BUDGET = { hits: 6, maxHits: 8, bytes: 16 * 1024, summaryChars: 300 } as const;
+export const SEARCH_BUDGET = { hits: 6, maxHits: 8, bytes: 16 * 1024, summaryChars: 300, refusalChars: 512 } as const;
 export const DETAILS_BUDGET_BYTES = 32 * 1024;
 
 /** What a provider declares; the kit adds the connection. */
@@ -206,7 +213,12 @@ function parameters(values: Readonly<Record<string, unknown>>): Parameters {
   });
 }
 
-const cap = (text: string, chars: number) => (text.length > chars ? `${text.slice(0, chars - 1)}…` : text);
+const cap = (text: string, chars: number) => {
+  if (text.length <= chars) return text;
+  let end = chars - 1;
+  if (/[\uD800-\uDBFF]/.test(text[end - 1]!)) end--;
+  return `${text.slice(0, end)}…`;
+};
 
 /** One piece of a contract that may travel alone: a parameter, a body property, the body, or a long label. */
 type Piece =
@@ -220,7 +232,7 @@ type Piece =
       readonly required: boolean;
     }
   | { readonly kind: "body"; readonly of: string; readonly value: unknown }
-  | { readonly kind: "text"; readonly of: "operationId" | "summary"; readonly value: string };
+  | { readonly kind: "text"; readonly of: "operationId" | "summary" | "refusal"; readonly value: string };
 
 /**
  * Every piece of a contract, in order: long labels, parameters, then the body.
@@ -229,7 +241,10 @@ type Piece =
  * property, each carrying whether it is required, so pages and chunks
  * together reconstruct the whole schema. Any other body travels whole.
  */
-function piecesOf(contract: OperationContract, capped: { operationId: boolean; summary: boolean }): Piece[] {
+function piecesOf(
+  contract: OperationContract & { refusal?: string },
+  capped: { operationId: boolean; summary: boolean; refusal: boolean },
+): Piece[] {
   const schema = contract.body?.schema as Record<string, unknown> | undefined;
   const properties = schema?.["properties"];
   const required = new Set(Array.isArray(schema?.["required"]) ? (schema["required"] as string[]) : []);
@@ -240,6 +255,7 @@ function piecesOf(contract: OperationContract, capped: { operationId: boolean; s
   return [
     ...(capped.operationId ? [{ kind: "text" as const, of: "operationId" as const, value: contract.operationId }] : []),
     ...(capped.summary ? [{ kind: "text" as const, of: "summary" as const, value: contract.summary }] : []),
+    ...(capped.refusal ? [{ kind: "text" as const, of: "refusal" as const, value: contract.refusal! }] : []),
     ...contract.parameters.map((value) => ({ kind: "parameter" as const, of: `parameters.${value.name}`, value })),
     ...(contract.body === undefined
       ? []
@@ -317,20 +333,26 @@ export function hatch(
       throw new Error(`Hatch verdict ${key} must be read, write, destructive, or refuse.`);
     }
   }
-  const named = new Map(Object.entries(options.named ?? {}));
+  const named = new Map(Object.entries(options.binding?.named ?? options.named ?? {}));
   for (const [key, tool] of named) {
     if (!known(key) || !tool.trim()) throw new Error(`Hatch named tool for ${key} needs an indexed operation.`);
   }
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
   const refusalOf = (op: Operation) =>
     connection.safety.refusal?.({ method: op.method, template: op.path }) ?? options.binding?.refusal?.(op);
-  const summaryOf = (op: Operation) => {
-    const reason =
-      verdictOf(op) === "refuse"
-        ? (refusalOf(op) ?? `Connecta refuses ${op.method} ${op.path}: it has no admitted hatch verdict.`)
-        : undefined;
-    return reason ? `Refused: ${reason}` : op.summary;
-  };
+  const discoveryRefusals = new Map<string, string>();
+  if (options.binding?.discoveryRefusal)
+    for (const op of index.ops) {
+      const reason = options.binding.discoveryRefusal(op);
+      if (reason !== undefined) discoveryRefusals.set(`${op.method} ${op.path}`, reason);
+    }
+  const discoveryVerdictOf = (op: Operation): Verdict =>
+    discoveryRefusals.has(`${op.method} ${op.path}`) ? "refuse" : verdictOf(op);
+  const discoveryRefusal = (op: Operation) =>
+    discoveryRefusals.get(`${op.method} ${op.path}`) ??
+    (verdictOf(op) === "refuse"
+      ? (refusalOf(op) ?? `Connecta refuses ${op.method} ${op.path}: it has no admitted hatch verdict.`)
+      : undefined);
   const pages = new Map(
     Object.entries(options.pages ?? {}).map(([key, declared]) => {
       const adapters: readonly HatchPageAdapter[] = Array.isArray(declared) ? declared : [declared as HatchPageAdapter];
@@ -344,7 +366,8 @@ export function hatch(
           !["query", "body"].includes(adapter.in) ||
           typeof adapter.next !== "function" ||
           typeof adapter.decode !== "function" ||
-          (adapter.prepareQuery !== undefined && typeof adapter.prepareQuery !== "function")
+          (adapter.prepareQuery !== undefined && typeof adapter.prepareQuery !== "function") ||
+          (adapter.total !== undefined && typeof adapter.total !== "function")
         ) {
           throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
         }
@@ -385,12 +408,14 @@ export function hatch(
         }
       : {}),
   });
+  const hasTotals = [...pages.values()].some((adapters) => adapters.some((adapter) => adapter.total !== undefined));
   const envelope = pages.size
     ? Schema.Struct({
         ...callEnvelope.fields,
         page: Schema.optionalKey(
           Schema.Struct({
             ...StandardPage.fields,
+            ...(hasTotals ? { total: Schema.optionalKey(Integer.check(Schema.isGreaterThanOrEqualTo(0))) } : {}),
             param: Schema.String.annotate({
               description:
                 options.pageCursor === "argument"
@@ -404,7 +429,7 @@ export function hatch(
     : callEnvelope;
   const tool = (kind: string) => `${name}_api_${kind}`;
   const route = (op: Operation) => {
-    const verdict = verdictOf(op);
+    const verdict = discoveryVerdictOf(op);
     const authored = named.get(`${op.method} ${op.path}`);
     return {
       ...(verdict === "refuse" || (verdict !== "read" && options.writeEnabled === false)
@@ -529,6 +554,7 @@ export function hatch(
   };
   const queryTerms = (query: string) => {
     const terms = queryWords(query).filter((term) => !functionWords.has(term));
+    const resourcePhrase = queryWords(query.split(/(?:^|\s)(?:for|of|in|on|by|with)(?=\s|$)/i)[0]!).filter(isNoun);
     const lookup = terms.find((term) => readActions.has(term));
     const first = terms[0];
     // issue/process remain nouns unless a leading verb has another noun to act on.
@@ -546,6 +572,7 @@ export function hatch(
       const nouns = object.slice(1).filter(isNoun);
       return {
         terms,
+        resourcePhrase,
         nouns,
         suppliedValue: object.length > 1 && !nouns.length,
         verbWords:
@@ -559,6 +586,7 @@ export function hatch(
     const verb = lookup ?? (leadingVerb ? first : undefined);
     return {
       terms,
+      resourcePhrase,
       suppliedValue: false,
       nouns: terms.filter(
         (term, position) =>
@@ -591,6 +619,7 @@ export function hatch(
   const rank = (found: readonly Operation[], query: ReturnType<typeof queryTerms>, pathQuery: boolean): Operation[] => {
     if (pathQuery) return [...found];
     const { nouns, intent, verbWords } = query;
+    const headNouns = query.resourcePhrase.length ? query.resourcePhrase : nouns;
     const phrase = intent === undefined && nouns.length > 1;
     // Modifiers may precede the resource in action/read queries. Noun phrases
     // retain their broader resource match without the half-coverage threshold.
@@ -604,11 +633,7 @@ export function hatch(
         const description = words(`${op.summary} ${op.operationId}`);
         const verbal = [...description, ...words(op.path)];
         const text = [...verbal, ...words(op.tag)];
-        const version = parts.findIndex((part) => /^v\d+$/.test(part));
-        const resources = parts
-          .slice(version + 1)
-          .filter((part) => !part.startsWith("{"))
-          .flatMap(words);
+        const resources = parts.filter((part) => !part.startsWith("{") && !/^v\d+$/.test(part)).flatMap(words);
         const authored = named.get(`${op.method} ${op.path}`);
         const summary = phrase ? queryWords(op.summary) : [];
         return {
@@ -620,6 +645,16 @@ export function hatch(
           parameter,
           text,
           resources,
+          terminal: parts
+            .filter((part) => !part.startsWith("{") && !/^v\d+$/.test(part))
+            .slice(-1)
+            .some((part) =>
+              words(part).some((word) => sameNoun(word, headNouns.at(-1) ?? "") || sameNoun(word, headNouns.join(""))),
+            ),
+          readDescription: readActions.has(description[0] ?? ""),
+          authoredCoverage: nouns.filter((term) =>
+            description.slice(1).some((word) => !readActions.has(word) && matches(word, term)),
+          ).length,
           authored: Number(authored !== undefined && !authored.startsWith(`${name}_api_`)),
           phrasePrefix: Number(nouns.every((term, position) => summary[position] === term)),
           identity: [...literal, ...words(op.operationId)],
@@ -636,6 +671,7 @@ export function hatch(
             nouns.some((term) => identity.some((word) => matches(word, term))))
         );
       });
+    const terminalExists = features.some((feature) => feature.terminal);
     const focus = nouns.find((term) => features.some(({ literal }) => literal.some((word) => sameNoun(word, term))));
     const resourceNouns = nouns.filter((term) =>
       features.some(({ literal }) => literal.some((word) => sameNoun(word, term))),
@@ -647,7 +683,9 @@ export function hatch(
         .filter(
           ({ op, verbMatch }) =>
             verbMatch &&
-            (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))),
+            (intent === "read"
+              ? discoveryVerdictOf(op) === "read"
+              : ["write", "destructive"].includes(discoveryVerdictOf(op))),
         )
         .map(({ covered }) => covered),
     );
@@ -663,6 +701,9 @@ export function hatch(
         covered,
         descriptive,
         resources,
+        terminal,
+        readDescription,
+        authoredCoverage,
         authored,
         phrasePrefix,
       }) => ({
@@ -670,14 +711,20 @@ export function hatch(
         position,
         intent: Number(
           intent === undefined ||
-            (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))) ||
-            (verdictOf(op) === "refuse" && verbMatch && covered > admittedCoverage),
+            (intent === "read"
+              ? discoveryVerdictOf(op) === "read"
+              : ["write", "destructive"].includes(discoveryVerdictOf(op))) ||
+            (discoveryVerdictOf(op) === "refuse" && verbMatch && covered > admittedCoverage),
         ),
         verbMatch: Number(verbMatch),
         covered,
         phrasePrefix,
         completeAuthored: Number(authored && descriptive === nouns.length),
         phraseCoverage: nouns.filter((term) => resources.some((word) => sameNoun(word, term))).length,
+        resourceHead: Number(
+          terminal || (terminalExists && authored && authoredCoverage === nouns.length && readDescription),
+        ),
+        readable: Number(discoveryVerdictOf(op) === "read"),
         focused: Number(
           (intent !== undefined || resourceOnly) &&
             focus !== undefined &&
@@ -699,6 +746,8 @@ export function hatch(
           (phrase
             ? b.covered - a.covered ||
               b.phrasePrefix - a.phrasePrefix ||
+              b.resourceHead - a.resourceHead ||
+              (a.resourceHead && b.resourceHead ? b.readable - a.readable : 0) ||
               a.depth - a.authored - (b.depth - b.authored) ||
               b.phraseCoverage - a.phraseCoverage ||
               b.authored - a.authored
@@ -805,12 +854,18 @@ export function hatch(
       description: "The request or response field this operation was found by; call its tool to read the field.",
     }),
   );
+  const RefusalReason = Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Reviewed refusal reason, separate from the pinned summary. Cut text is marked in truncated; details serves the complete text, paged if needed.",
+    }),
+  );
   const searchTool = tool("search");
   const detailsTool = tool("details");
   const tools = [
     read(connection, {
       name: searchTool,
-      description: `Find ${title} API operations by keyword or path. Returns up to ${SEARCH_BUDGET.maxHits} compact matches with the tool that calls each; reads no account data.`,
+      description: `Find ${title} API operations by keyword or path. Returns up to ${SEARCH_BUDGET.maxHits} compact matches with routing and separate refusal reasons; reads no account data.`,
       input: Schema.Struct({
         query: text(1, 200).annotate({ description: "Keywords or a path, e.g. refund charge." }),
         method: Schema.optionalKey(Method.annotate({ description: "Only operations with this method." })),
@@ -831,6 +886,12 @@ export function hatch(
             path: Schema.String,
             operationId: Schema.String,
             summary: Schema.String,
+            refusal: Schema.optionalKey(
+              text(1, SEARCH_BUDGET.refusalChars).annotate({
+                description:
+                  "Reviewed refusal, capped separately from summary. A cut reason is marked in truncated; details returns it whole.",
+              }),
+            ),
             ...Routing,
             matched: Matched,
           }),
@@ -846,6 +907,8 @@ export function hatch(
       run: (args) =>
         Effect.gen(function* () {
           const scope = {
+            discoveryFormat: "summary-refusal-1",
+            ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             query: args.query,
             ...(args.method ? { method: args.method } : {}),
@@ -906,15 +969,17 @@ export function hatch(
             .slice(offset, offset + (args.limit ?? SEARCH_BUDGET.hits))
             .map(({ op, field }, position) => {
               const { named: authored, ...routed } = route(op);
-              const label = (key: string, text: string) => {
-                if (text.length > SEARCH_BUDGET.summaryChars) truncated.push(`operations[${position}].${key}`);
-                return cap(text, SEARCH_BUDGET.summaryChars);
+              const refusal = discoveryRefusal(op);
+              const label = (key: string, text: string, max: number = SEARCH_BUDGET.summaryChars) => {
+                if (text.length > max) truncated.push(`operations[${position}].${key}`);
+                return cap(text, max);
               };
               return {
                 method: op.method,
                 path: op.path,
                 operationId: label("operationId", op.operationId),
-                summary: label("summary", summaryOf(op)),
+                summary: label("summary", op.summary),
+                ...(refusal ? { refusal: label("refusal", refusal, SEARCH_BUDGET.refusalChars) } : {}),
                 ...routed,
                 // A named tool's projection may omit the matched field, so a field match points at the hatch only.
                 ...(field
@@ -949,7 +1014,7 @@ export function hatch(
     }),
     read(connection, {
       name: detailsTool,
-      description: `Read one ${title} API operation's request contract: path, query and body parameters with types and required names. Reads no account data.`,
+      description: `Read one ${title} API operation's request contract and refusal, including methods outside the call schemas. Reads no account data.`,
       input: Schema.Struct({
         method: Method.annotate({ description: "The operation's HTTP method." }),
         path: Path.annotate({ description: "The path template from search, or a concrete path." }),
@@ -965,6 +1030,7 @@ export function hatch(
         path: Schema.String,
         operationId: Schema.String,
         summary: Schema.String,
+        refusal: RefusalReason,
         server: Schema.optionalKey(Schema.String),
         parameters: Schema.Array(Schema.Unknown).annotate({ description: "Path and query parameters." }),
         body: Schema.optionalKey(
@@ -999,14 +1065,17 @@ export function hatch(
         Effect.gen(function* () {
           const { op, contract } = yield* checked(() => {
             const op = index.operation(args.method, args.path) ?? index.resolve(args.method, args.path).op;
-            return { op, contract: { ...index.contract(op, args.param), summary: summaryOf(op) } };
+            const refusal = discoveryRefusal(op);
+            return { op, contract: { ...index.contract(op, args.param), ...(refusal ? { refusal } : {}) } };
           });
-          const tail = { verdict: verdictOf(op), ...route(op), revision: index.revision };
+          const tail = { verdict: discoveryVerdictOf(op), ...route(op), revision: index.revision };
           const whole = { ...contract, ...tail };
           if (args.cursor === undefined && bytes(whole) <= DETAILS_BUDGET_BYTES) return whole;
           // Bounded pages: every parameter and body property arrives whole on some page, and a
           // piece too large for one page arrives as consecutive chunks of its JSON. Nothing is dropped.
           const scope = {
+            discoveryFormat: "summary-refusal-1",
+            ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             method: args.method,
             path: args.path,
@@ -1024,6 +1093,7 @@ export function hatch(
           const capped = {
             operationId: contract.operationId.length > SEARCH_BUDGET.summaryChars,
             summary: contract.summary.length > SEARCH_BUDGET.summaryChars,
+            refusal: (contract.refusal?.length ?? 0) > SEARCH_BUDGET.refusalChars,
           };
           const pieces = piecesOf(contract, capped);
           if (
@@ -1049,9 +1119,10 @@ export function hatch(
             path: contract.path,
             operationId: cap(contract.operationId, SEARCH_BUDGET.summaryChars),
             summary: cap(contract.summary, SEARCH_BUDGET.summaryChars),
+            ...(contract.refusal ? { refusal: cap(contract.refusal, SEARCH_BUDGET.refusalChars) } : {}),
             ...(contract.server ? { server: contract.server } : {}),
           };
-          const truncated = (["operationId", "summary"] as const).filter((key) => capped[key]);
+          const truncated = (["operationId", "summary", "refusal"] as const).filter((key) => capped[key]);
           const parameters: unknown[] = [];
           const properties: Record<string, unknown> = {};
           const required: string[] = [];
@@ -1214,6 +1285,7 @@ export function hatch(
         );
       const scope = adapter
         ? {
+            ...(options.binding?.cursorScope === undefined ? {} : { deploymentPolicy: options.binding.cursorScope }),
             revision: yield* Effect.promise(() => index.cursorRevision()),
             method,
             path,
@@ -1359,6 +1431,7 @@ export function hatch(
         : undefined;
       let page;
       if (adapter && next !== undefined) {
+        const total = adapter.total ? yield* checked(() => adapter!.total!(answer.data)) : undefined;
         const secrets = yield* RequestSecrets;
         if (
           next !== null &&
@@ -1373,6 +1446,7 @@ export function hatch(
         }
         page = {
           hasMore: next !== null,
+          ...(typeof total === "number" && Number.isSafeInteger(total) && total >= 0 ? { total } : {}),
           ...(next === null || typeof next === "object"
             ? {}
             : {
@@ -1488,5 +1562,15 @@ export function hatch(
       }),
     );
   }
+  registerOperationVocabulary(tools[0]!, function* () {
+    for (const op of index.ops) {
+      const verdict = discoveryVerdictOf(op);
+      yield {
+        text: `${op.path.slice(0, 384)} ${op.operationId.slice(0, 128)} ${op.summary.slice(0, 384)} ${op.tag.slice(0, 128)}`,
+        route: verdict === "refuse" ? searchTool : route(op).tool,
+        write: verdict !== "read",
+      };
+    }
+  });
   return tools;
 }

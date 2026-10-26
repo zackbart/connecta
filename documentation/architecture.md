@@ -147,7 +147,7 @@ reordering reads like a harmless refactor.
 An admitted non-preflight `/mcp` request then takes five steps in
 `src/routes/mcp.ts`:
 
-1. **Admit.** No request body is read before auth on any endpoint. A request
+1. **Admit.** The fetch-native MCP route reads no body before auth on any endpoint. A request
    whose `Mcp-Method` header names `subscriptions/listen` takes no permit
    before auth. After auth and endpoint admission connecta reads at most
    64 KiB (`MAX_LISTEN_CLASSIFICATION_BYTES`) of it: past that it answers
@@ -345,6 +345,34 @@ stream. Expired queued waiters are pruned before any handoff; every handed-off
 permit has its own deadline even if the recipient never resumes. Lease identities
 make an old late release harmless to a newer permit. Set the bound above the
 longest admitted request the deployment expects to serve.
+
+`admission.requests.maxBodyBytes` bounds each MCP request body at `/mcp`,
+`/mcp/<pool>` and `/agent/<pool>`. It defaults to 4 MiB (4,194,304 bytes).
+This restricts bodies that previously reached the host's larger platform cap;
+deployments needing larger MCP envelopes must configure the bound explicitly.
+A configured value must be a positive safe whole number; invalid values fail
+construction with their configuration path (INV-11). After authentication and
+endpoint admission, core counts streamed bytes before any SDK or native tool
+body reader. A body exactly at the cap proceeds through normal protocol
+validation. Past the cap, core stops reading, cancels both stream branches and
+returns HTTP 413 with JSON-RPC code `-33006`, `"MCP request body too large."`.
+The response retains the request's existing admission lifetime and releases
+the permit when delivery ends. Caller cancellation and the existing request
+deadline also cancel stalled reads. `describeConfig().limits.requests.maxBodyBytes`
+reports the resolved value and its `default` or `config` source.
+
+The pre-dispatch `subscriptions/listen` classification keeps its 64 KiB ceiling;
+a smaller deployment body cap wins. Authentication failures and private endpoint
+refusals still read no body. This envelope bound does not change program size,
+tool argument validation, write accounting or result limits.
+
+The Node `listen()` adapter separately buffers requests before calling the core,
+with its own `maxBodyBytes` option. Its default is also 4 MiB. It stops at the
+first chunk crossing that bound and returns a plain HTTP 413 before auth;
+core's authenticated refusal uses the JSON-RPC envelope above. The smaller bound
+wins. To admit larger bodies on Node, raise both options deliberately. Workers
+and hosts calling `connecta.fetch` apply core's bound after authentication,
+subject to any smaller platform or proxy limit.
 
 Call admission (`src/call-admission.ts`) answers what the envelope cannot see —
 a connector's optional policy over its own `Connector.callTool` attempts,
@@ -696,8 +724,9 @@ A deployment has one store. On Workers it is one D1 database
 (`d1Storage(env.CONNECTA_DB)` from `@zackbart/connecta/d1`); on Node it is one
 SQLite file (`sqliteStorage(path)` from `@zackbart/connecta/sqlite`, over the
 built-in `node:sqlite`). Both are the same SQL key-value store
-(`src/storage/sql.ts`) over a three-method driver, so every statement runs
-unchanged on each, and the same module carries the activity table beside it.
+(`src/storage/sql-native.ts`) over a native Effect SQL execution service, so
+every statement runs unchanged on each, and the same module carries the
+activity table beside it. `src/storage/sql.ts` owns the Promise edges.
 Each store creates its tables on first use. `memoryStorage()` is the default
 and the test double. Workers KV and the 0.28 JSON file store are gone: KV is
 eventually consistent and cannot compare-and-set, and the file store rewrote
@@ -1337,7 +1366,7 @@ roots (including root-array items) also leave fields absent. Empty,
 schemaless and non-JSON responses declare no fields. Request shrinking and
 endpoint contract digests do not depend on this metadata. Legacy REST tools
 retain their catalog and discovery behavior until each provider's step 2.
-Fields are optional additive metadata in format 4, so a previously compiled
+Fields remain optional additive metadata, so a previously compiled
 index without the source bytes remains usable without inventing a response
 contract. Vercel's step-2 pin review restores response metadata from the reviewed public
 document; operations without declared response properties still refuse fields. Breeze's pin declares no response
@@ -1347,6 +1376,39 @@ offline; `providers:check` reports a pin that differs from the live document.
 No maintained provider selects an implementation with `surface` any more. See
 the
 [provider auth migration](./provider-auth-migration.md).
+
+#### Generated index storage (contributor contract)
+
+Generated format 5 stores the same logical `OpenApiData` as earlier formats.
+The shared renderer interns complete parameter rows by their exact JSON text,
+including descriptions, required flags and compact schema references. Each
+operation records parameter-row ids and its unchanged serialized body. Shared
+schema definitions, response fields, lossless request graphs, operation order,
+pins and all compiler shrink options retain their existing meaning. The two
+indexes derived directly from kit declarations continue using their plain
+logical representation.
+
+`compactOpenApi` exposes the exact original `details` string through an
+enumerable, replaceable property. `OperationIndex` parses definitions once per
+instance and decodes each operation row on first use. Each row occurrence gets
+its own parsed parameters; dictionary sharing introduces no new mutable object
+sharing between operations or instances. Existing shared schema references and
+their mutation behaviour remain intact. Ordinary logical indexes still use
+`JSON.parse`. Construction neither expands the complete details string nor
+computes an identity hash. Cursor binding continues hashing the same canonical
+logical data and policy, with no encoding metadata in its preimage, preserving
+existing cursor bytes for unchanged content.
+
+The runtime codec uses no platform-specific imports, recursive references or
+compression dependency. Parameter ids must be nonnegative safe integers naming
+existing strings. Reconstructing a row or full details text is bounded to 64 Mi
+UTF-16 code units; full reconstruction must match its recorded exact length.
+These physical decode checks do not change request validation, schema traversal,
+search, refusal, result or discovery budgets. Generation and offline roundtrip
+tests must preserve every pinned logical contract; storage changes never accept
+new upstream evidence or golden bytes. The compaction suites cover exact strings,
+native Web Crypto identity, malformed references, lazy decoding, mutation
+semantics and every maintained provider.
 
 #### Value safety for REST vendors
 
@@ -1407,7 +1469,7 @@ every vendor ships one reviewed table through one mechanism
    reviews the pinned spec's free-text fields for embedded vendor-minted links
    and records its verdict and source limitations beside its value-safety table.
    Stripe, Vercel, and Cloudflare use **reviewed paths plus global signing
-   parameters**. Literal AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
+   parameters**. Known AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
    Credential and Security-Token values are withheld across all decoded string
    values, including values written with decimal, hexadecimal or named HTML
    character references. References are read whole as value data; decoding
@@ -1417,7 +1479,8 @@ every vendor ships one reviewed table through one mechanism
    length. Numeric references also accept an omitted semicolon, and `amp`
    may omit its semicolon immediately before `#`. Signing separators accept
    nested ampersand references around decimal, hexadecimal or named `=`
-   references.
+   references. Recognized name representations retain their source spelling
+   and use the same fixed signing-name vocabulary and value boundaries.
    A literal query separator such as `&name=alice` still ends the signing
    value. Ordinary query strings and prose retain their original spelling.
    Generic credential names (`code`, `key`, `token`, `signature`, `sig`, etc.)
@@ -1430,6 +1493,9 @@ every vendor ships one reviewed table through one mechanism
    invocation maps. The shared review harness rejects embedded-URL operation
    keys absent from each vendor's pinned index and invalid path syntax.
    The current Vercel pin was reviewed from its full response document; its unversioned URL does not retain older documents.
+   Vercel project creation registers every submitted environment-variable value
+   before dispatch, so echoes in response metadata, keys and prose are withheld
+   before field selection while safe project and variable metadata remain.
    Generic parameters in descriptions, metadata, nicknames, billing footers,
    notes, DNS TXT, KV values and operator HTML retain their original bytes,
    including whole URL strings. Ordinary code/key URLs can be false positives
@@ -1461,8 +1527,8 @@ every vendor ships one reviewed table through one mechanism
    (decoded bytes are at most three quarters of encoded characters). Cloudflare
    KV additionally enforces its documented 25 MiB decoded value limit;
    malformed base64 and values beyond that limit refuse with `invalid_args`.
-   The host's inbound request cap still applies (Node `maxBodyBytes`, or the
-   Workers platform); response and raw-upload limits do not bound JSON fields.
+   The authenticated MCP `admission.requests.maxBodyBytes` cap and any smaller
+   host cap still apply; response and raw-upload limits do not bound JSON fields.
    JSON admission iteratively checks every key and value, with no separate
    depth or node-count ceiling below the accepted request's size. Cyclic
    direct arguments refuse with `invalid_args`; repeated non-cyclic references
@@ -1483,8 +1549,8 @@ every vendor ships one reviewed table through one mechanism
    line ending before the destination are recognized. This scanner treats a marker
    after the close as ordinary text; kit admission applies the whole-value and
    path/query rules described above. This boundary is independent of redaction's fail-closed
-   span. Each string is scanned alone; split rich-text runs and encoded
-   signing parameter names are outside this scan's threat model.
+   span. Each string is scanned alone; split rich-text runs are outside this
+   scan's threat model.
    Sent-secret redaction runs before this step, in the provider kit's parse
    pass, so a rule that decides on a value can read the `[redacted]`
    placeholder where the vendor wrote what the rule matches. Every such
@@ -1778,7 +1844,15 @@ There are no characterization tiers, path classifiers, or planning-only runs.
 `test/goldens-harness.test.ts` keeps the source and mutation guards on Node:
 replaced Authorization headers, changed auxiliary/login bytes, writes sent
 early or twice, and missing secret-encoding redaction must alter a capture or
-fail it. Ordinary runs use one source-probe schedule. Nightly Node runs set
+fail it. Mutation probes capture the affected call rather than repeating an
+entire provider catalog. Redaction negative controls use Forms, GitHub, Breeze
+and Tithe.ly to cover OAuth/Bearer, app-token, query-key and provider-kit lanes;
+the ordinary goldens still check every provider's complete secret echoes.
+The native-extension budget is checked directly at its 100-extension boundary,
+and a gated closed-epoch continuation must fail before entering the next
+capture's network. Genuine crypto completion, rejection, late dispatch and
+producer-fed stream probes retain their native settlement coverage without
+repeating a million-turn synthetic delay. Ordinary runs use one source-probe schedule. Nightly Node runs set
 `CONNECTA_GOLDENS_DETERMINISM=1` for an identical repeat, provider jitter seeds
 1 and 2, and the complete source-probe jitter matrix. Small native-source probes also run on
 workerd: `scheduler.wait`, CompressionStream, saved timers/microtasks and
@@ -1969,13 +2043,187 @@ storage is the root's namespaced to its principal.
 | Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, when its admitted-request lifetime ends in that request, or at once if the handler fails first. If workerd runs none of those callbacks, the next request reclaims only the expired admission record; it cannot close another request's Scope. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment. |
 | Admission (`executor-admission.ts`, `call-admission.ts`)               | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires.                                                                                                                                                                                                                                                                                                                                    |
 | One tool call (`invocation.ts`)                                        | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`.                                                                                                                                                                                                                                                                                                     |
-| `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own.                                                                                                                                                                                                                                                                      |
+| `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. Public executor methods stay Promise-shaped; registered built-in execution composes directly as an Effect under the signal and `execute.watchdogMs`. Queued acquisition retains its Promise request handoff. Each guest host call is a fiber of its own.                                                                                                                                                                     |
 | Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency.                                                                                                                                                                                    |
 | Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
 | Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
 | Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+### Native registry and request services (contributor)
+
+Registry catalog loading, classification, OAuth handoffs, status, invalidation,
+credential readiness, and result stashing have private Effect programs in
+`src/runtime/registry.ts`. Static class blocks install those programs while
+preserving the published Registry declaration, including its private member
+names. `registryProgram(view, method, ...args)` checks the installed method's
+identity; a custom or replaced method remains a Promise leaf. A Promise shell
+selects its original class implementation through `registryEdgeProgram`, so a
+wrapper can call the original without redispatching to itself. Catalog search,
+describe, resolution, and listing compose these programs directly. The shared
+listing is a native child of its request's Scope, started through
+`forkRequest` in the edge runner; an individual reader cannot terminate a read
+another reader still needs. Closing the request aborts and closes those children.
+Settled reads remove their request-close finalizer; active reads retain it,
+including in long-lived caller-supplied scopes.
+
+Native catalog and maintained API entry points report policy, validation, and
+operation-construction throws as typed failures with the original thrown value,
+matching the Promise boundary. Native consumers can use `Effect.catch` and
+`Effect.result` without losing refusals to the defect channel. Interruption
+remains interruption. Normalization belongs at these program boundaries;
+pure catalog algorithms and core validation retain their existing behavior.
+
+`RequestScope` in `src/runtime/request-scope.ts` represents the existing request
+identity. It owns call revocation, teardown, operation signals, the complete
+sent-secret set, and invocation/auth recovery facts. `openRequest` preserves
+its synchronous revocation bridge. Live context access refuses after closure;
+`recordedService` and the owner's `retained` facts remain available for
+settlement and redaction. Sharing a request identity grants no call authority
+to a spread copy of a context. Call deadlines, request lifetime, and the OAuth
+refresh coordinator remain distinct owners.
+
+Maintained API programs register their original tool-handler identity through
+`src/runtime/call-entry.ts`. Invocation enters the native API validation and
+settlement pipeline, which composes a registered tool program directly; the
+Promise handler is its public shell. Replacement and custom handlers stay
+Promise leaves. Both paths retain argument validation, generic withheld
+handler diagnostics, secret redaction, call revocation, and core write-outcome
+settlement. Custom connector hooks, vault and cache adapters, Web Crypto,
+downstream OAuth, and the remote SDK retain their existing Promise boundaries.
+Cross-request call admission deliberately remains a Promise handoff so workerd
+resumes queued work in the request waiting for the permit.
+
+The `Storage` service composes built-in `getNativeStorage` operations directly.
+Registry wrappers propagate that optional capability through principal,
+connector, subject, and result prefixes, including nested namespaces; list
+results strip only their own prefix. Custom stores keep the Promise fallback.
+These adapters add no retry, transaction, or storage encoding and preserve
+D1's single atomic batch and SQLite's native transaction. Native activity
+lookup remains available to the route and activity consumers.
+
+### Native executor hosts (contributor)
+
+`src/runtime/executor.ts` registers private execution programs by executor or
+lease identity and the original `execute` method. `executorProgram` composes a
+registered implementation directly; custom or replaced methods remain Promise
+leaves. Public shells call their own implementation directly, allowing wrappers
+to delegate to a saved original without recursion. Native interruption retains
+the QuickJS log prefix; Promise leaves are observed even when a terminal budget
+race wins before their settlement. Redaction and write settlement remain in the
+existing execute pipeline, using its request identity and call capabilities.
+The executor seam creates no second request or call owner.
+
+Both built-ins acquire their permits through native admission and return
+execute-once leases with synchronous, idempotent release. A queued standalone
+execution crosses `awaitExecutorLease`'s Promise handoff before host setup, so
+workerd resumes in the waiting request. `execute_code` retains its public
+`acquire()` handoff for that same reason. A cancelled queued handoff withdraws
+its waiter, and a late custom acquisition releases its abandoned lease.
+
+The Worker SDK prepares source and dispatchers against an inert loader. The
+native host then acquires the actual Loader handle and RPC entrypoint with
+`Effect.acquireRelease`, awaits the native RPC Promise, and races the run with
+its lease's cancellation Deferred. A resource Scope owns entrypoint-before-
+Loader disposal on every exit, including never-settling evaluation. Release
+closes that Scope synchronously before returning the permit; a failed disposer
+cannot skip the next one. Forwarders lose their providers and pending waits at
+run end. Only native RPC output and the run's private host-failure map can
+supply failure provenance. Guest source isolation, intrinsic capture, import
+routing, codecs and the SDK's source-generation checks remain ordinary leaves.
+Both built-ins normalize provider leaf returns with `Promise.resolve`, retaining
+direct JavaScript callers' synchronous value tolerance and original host
+rejections. The published provider-function signature remains Promise-shaped.
+
+QuickJS owns host-call fibers in each active run's Scope. Completion,
+interruption, cancellation, recycling and shutdown revoke provider lookup and
+interrupt those fibers; late SDK results and stale IPC cannot reply to another
+run. Releasing a lease during readiness or crash backoff also cancels the old
+run before its slot is handed back. Child retirement closes its resource Scope,
+sends SIGTERM, and escalates to SIGKILL after one second. Shutdown joins native
+completion Deferreds for all retirement tails. Crash backoff remains a Schedule.
+`forkOwned` in `src/runtime/run.ts` starts the host and startup-watchdog children;
+no executor starts a fiber directly. Child process events, IPC encoding and
+bounds, QuickJS VM/job pumping and guest code remain platform or pure leaves.
+
+`test/executor-native.test.ts` exercises native dispatch and Worker disposal,
+never-settling evaluation/host calls, late rejection, execute-once ownership and
+original acquisition errors in workerd. `test/quickjs-pool.node.test.ts` covers
+readiness release, stale/malformed IPC, late host failures, backoff and bounded
+kill. Real Worker and QuickJS guest contracts, the HTTP Worker budget/queued
+request fixture and native-output suites supply runtime parity evidence;
+provider goldens do not execute a sandbox.
+
+### Native SQL storage (contributor)
+
+`src/storage/sql-native.ts` composes KV, activity schema upgrades, retention,
+and bounded SQL copies as Effects. `src/storage/d1-copy.ts` composes the
+Workers KV copy, source-bound resume claims, verification, cutover guard, and
+recovery. Public factories and copy functions retain their Promise contracts;
+custom Promise SQL drivers retain the fallback lift.
+
+`src/storage/sql-driver.ts` constructs a public Effect 4.0.5 `SqlClient`
+service inside each operation. Reads execute SQL `Statement` Effects and writes
+execute their raw operations through that service, including its connection
+borrowing, statement-transformer context, and tracing semantics. Internal
+statement transformers see the current service; no client, statement, or
+Reactivity state is cached across operations or requests.
+
+Atomic batches remain one native database operation: D1's public `batch`, or
+SQLite's synchronous `BEGIN IMMEDIATE` through `COMMIT`, with rollback on
+failure. Neither path retries a dispatched write. The D1 binding's
+`meta.changes` is retained for every statement, including zero; no `RETURNING`
+payload, extra metadata statement, or D1 transaction is needed. The dependency
+is the existing exact `effect` pin. Connecta does not adopt `@effect/sql-d1`:
+its 4.0.5 batch API drops metadata and its binding contract is wider than
+Connecta's published structural interface.
+
+The D.2 architecture allowance was measured against `0e314247` using cached
+official `node:22-slim` (Node 22.23.4, zlib 1.3.1-e00f703), no network, and
+read-only bundle artifacts: `/d1` grew from 62,516 to 88,305 bytes gzip
+(+25,789); the Worker example grew from 729,847 to 756,375 (+26,528).
+Final typed-driver failure normalization measures 88,319 and 756,377 bytes
+on that same official runtime. Executing real services and statement operations requires those runtime
+semantics; the earlier identity-compiler facade did not provide them. The
+explicit allowance changes only `/d1`'s cap from 62,542 to 90,000 bytes and
+the Worker example's cap from 743,000 to 760,000. Historical baselines and
+all other caps stay fixed. Final integration must remeasure the combined
+implementation and satisfy the same compatibility and privacy contracts.
+
+The platform connection capability contains no request state. D1 prepares in
+the current request and retains no prepared handles or promises. SQLite keeps
+its existing connection-owned prepared-statement cache; externally supplied
+databases remain caller-owned. Schema readiness is a boolean. A microtask
+boundary precedes dispatch so pending cancellation can stop physical execution;
+a SQLite batch never yields between transaction controls. Cancellation cannot
+undo an already-submitted D1 write and never causes replay.
+
+Public SQL Statement operations create spans, so SQL tracing is disabled
+before executing them. Private `SqlError` values contain fixed wording with
+no driver cause or parameters; the original thrown value is restored only
+at the private SQL boundary. Operator sinks receive no new SQL diagnostics.
+The tracing contract is checked with a recording tracer and a mutation that
+removes the guard, which must fail. Existing import and copy errors retain
+their fixed, payload-free wording.
+
+`src/runtime/native-storage.ts` supplies optional `getNativeStorage` and
+`getNativeActivity` lookups. An internal consumer may compose their Effects
+without starting another fiber; an absent lookup requires the existing custom
+Promise-store fallback. Registration normalizes operation-construction,
+validation, and decoding throws into typed failures with the original thrown
+value, matching that fallback. Interruption remains interruption. The lookup
+module imports no SQL or platform implementation and does not change the
+published storage interfaces.
+
+The synchronous state-file parser, validation, file read, and one atomic
+SQLite import remain native synchronous leaves because `importStateFile` is a
+published synchronous API. `openSqlite` retains file modes, WAL, busy timeout,
+and database ownership. `test/sql-effect-contract.ts` runs native-path,
+affected-row, 50-claim, cancellation, and tracing checks on SQLite and native
+D1. `test/kv-to-d1.test.ts` also reuses stores across separate workerd requests;
+the existing SQL contracts prove rollback, database-clock TTL, encodings,
+activity upgrades, and copy recovery.
 
 ### Internal provider HTTP failures (contributor)
 
@@ -2165,19 +2413,38 @@ retrieval.
 Reviewed intent, the requested verb/synonym in summary/id/path, and resource
 focus sort first. A refused operation with a matching verb shares the intent
 tier only when its noun coverage exceeds every admitted operation matching that
-verb and intent. Search and details render the same reviewed reason used at
-call time in the refused operation's summary, without feeding that reason
-into ranking. Search caps long summaries and details pages their complete
-text. REST safety tables supply the reason through `restSafety`; reviewed
-bindings declare static operation refusals separately from argument validation.
+verb and intent. Search and details retain the original indexed summary and expose the reviewed
+reason in a separate optional `refusal` field. Ranking uses the original indexed
+text, never the newly attached reason. Search caps refusal text at 512 UTF-16
+code units without splitting a surrogate pair, independently of its 300-unit
+summary cap. A cut reason names `operations[i].refusal` in `truncated`; details
+returns the complete reason within its 32 KiB envelope or reconstructible
+`of: "refusal"` text chunks. The five long Cloudflare reasons fit whole in the
+search refusal budget, including their named alternatives. REST safety tables
+supply the reason through `restSafety`; reviewed bindings declare static operation
+refusals separately from argument validation. Discovery cursors additionally bind
+the summary/refusal representation format, so an old piece offset cannot skip a
+required parameter after this representation changes. The binding's deployment
+`cursorScope`, named suggestions and paging totals retain their existing seams.
 An unreviewed operation reports the missing hatch verdict. A refused hit has
 no read/write hatch pointer; a reviewed named alternative can still be shown.
 
-Verb-less noun phrases then sort by noun coverage, an exact summary phrase prefix,
-then path depth with a one-segment preference for authored tools, exact
-resource-noun coverage, and authored-tool preference. A pointer to another
-hatch receives no authored-tool preference. Exact resource nouns
-exclude a namespace before a version segment. For a single noun, and for
+Verb-less noun phrases first sort by noun coverage and an exact summary phrase
+prefix, then by an exact terminal resource: the last literal non-version segment must contain the last query noun
+or the concatenated noun phrase (`invoiceitems` for `invoice items`). An authored
+read whose vendor summary/id covers every noun shares that terminal-resource
+tier only when a real terminal-resource match exists and its description
+begins with a read action; the action word itself
+does not supply noun coverage. This preserves aggregate
+authored entry points without treating a verification action as a token list. When both candidates match the terminal resource,
+a reviewed read precedes writes and refusals. Depth with a one-segment authored
+tool preference, exact resource-noun coverage, and authored-tool preference
+break remaining ties. A pointer to another hatch receives no authored preference.
+Exact resource nouns include literal namespaces on either side of a version
+segment; parameters and version markers supply no resource coverage. This
+prefers `members` over summary-only membership matches and `tokens` over a
+verification action, while direct versioned collections retain their depth
+advantage over nested collections. For a single noun, and for
 leading `list` queries with one exact resource noun plus modifiers, collection
 ties sort by exact root, fewer nested resources, matching namespace, shallow
 depth and authored tool. Other leading `list` queries prefer authored tools
@@ -2188,6 +2455,15 @@ roots share the collection keys. Sort keys are computed once per operation
 per query; lexical relevance and index order resolve remaining ties.
 Operations found only through a request or response field follow primary
 matches, and search names an authored tool whenever one serves an operation.
+A refused method outside a read/write tool's input schema is inspected through
+`_api_details` with its indexed method and path. Call validation remains closed:
+Gmail's 49 non-GET refusals do not add a method field or a write hatch, and Forms'
+refused DELETE remains outside its write enum. GitHub's refused raw PUT merge
+is likewise outside its write enum; its named guarded alternative is unaffected.
+These 51 schema refusals happen
+before authentication or I/O; details exposes the same reviewed reason as search.
+Every schema-reachable refused operation still fails with that reason before
+authentication or dispatch. This is policy inspection, never execution admission.
 `_api_read` omits
 `method` only when GET is its one reviewed read method.
 A standard list can declare `limit.values` for a vendor's discrete page sizes.
@@ -2722,6 +2998,71 @@ provider program that carry a `ConnectorCallError`. A failing visibility hook
 also withholds the defect's text; non-withheld operations retain their original
 defects.
 
+### Production HTTP dispatch (contributor reference)
+
+`src/server.ts` retains the origin refusal, HTTPS upgrade and security wrapper,
+then calls the private `src/routes/dispatch.ts` adapter. Each fetch handler owns
+two immutable public Effect HttpRouters: a human table selects CIMD, connect,
+OAuth callback, metadata, health and MCP programs; the agent table selects only
+the existing agent endpoint program. The raw agent-namespace guard runs before
+human dispatch. An unmatched human route runs optional UI fallthrough, wildcard
+OPTIONS metadata/CORS, or the deployment's final 404. Core selection uses the
+router directly, without scanning the other core modules. CIMD runs before UI;
+every other human program runs after optional UI, including its null fallthrough.
+Metadata retains MCP-before-provider discovery order.
+
+The synchronous constructor does no routing work or I/O. The first existing
+edge fiber builds both fixed tables with public `make`, `addAll` and
+`asHttpEffect`. Only synchronous registration and cache publication use
+`Scheduler.PreventSchedulerYield` and an uninterruptible region. The cache
+check is inside that region, so even concurrent first requests with a 16-operation
+yield budget publish only two routers. Normal scheduling and interruption are
+restored before any application callback or I/O. Cached route effects capture
+only deployment programs; they read the private current `RouteContext` service
+when executed. No request, body, signal, Promise, client, Scope or request
+services are retained in the tables. The canonical request/call ownership in
+the MCP program remains unchanged.
+
+Routing uses a body-free GET projection of the URL, with percent escapes and
+the matcher's semicolon delimiter protected. The original request remains in
+`RouteContext`: existing programs own exact raw paths, arbitrary extension
+methods, JSON 405/Allow, HEAD, private OPTIONS, cookies, authentication and body
+refusal order. Router normalization cannot grant a canonical path to an encoded
+prefix, and invalid escapes in an owned suffix still reach the owning program.
+The projection introduces no second request handler or runner. Web responses
+pass through `HttpServerResponse.raw`/`toWeb` with their identity and stream
+ownership intact. The short dispatch Scope does not own MCP's body-held permit
+or the OAuth callback's uninterruptible commitment. Only a genuine public
+`RouteNotFound` before handler entry falls through; application failures,
+including structural lookalikes and genuine router errors, retain their identity.
+
+Four public `effect/http/*` modules are allowed only in the private dispatcher;
+all other root-purity and optional-implementation boundaries remain enforced.
+Direct public module imports avoid the area's barrel cost. The local D3
+measurement over the reviewed D1/D2 stack is root 373,435 to 393,470 bytes gzip
+and Worker 758,274 to 774,384 (official Node 22.23.4/zlib 1.3.1-e00f703, identical
+repository bundle options). The barrel alternative measures 423,348/787,614.
+The parent accepted this measured native-routing cost with a Worker cap of
+785,000 bytes, including room for separately measured native-auth and reviewed
+host/transport additions. Root and all other caps and historical baselines are
+unchanged by D3. Separate-input costs are not a combined gzip measurement;
+the integrated deployment must be measured again.
+
+`test/server.test.ts` asserts production routing directly on Node and workerd:
+raw prefixes and malformed suffixes, extension methods, CIMD before auth/UI/body
+reads, Response/error identity, unmatched fallthrough, concurrent request
+isolation, and body-held permits through end/failure/cancel/abort/abandonment.
+`test/node.node.test.ts` bundles one unmodified production Worker and
+verifies that a queued request owns its native I/O after the preceding response
+ends. Server-route, request-admission and request-pipeline suites retain ingress
+ordering, security headers, overload/shutdown and cancellation regressions.
+Root purity, declaration and bundle checks own import boundaries and size caps.
+The frozen legacy dispatcher, source transforms, diagnostic latency loops and
+rejected Effect MCP adapters were migration evidence; their historical source
+is linked from decision 0016 rather than rebuilt by ordinary tests.
+The upward MCP protocol leaves remain SDK implementations, with D7's separate
+native-orchestration work and compatibility evidence unchanged.
+
 ### Why not Schema or HttpApi for core routes
 
 Both were measured and both lost. `effect` is imported through its barrel,
@@ -2736,7 +3077,8 @@ the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
 on `./activity`, and matching the wire format meant opting out of most of what
 it does: unowned paths fall through rather than 404, a wrong method is a JSON
 405, and the content-type and size checks run before a body is read. The root
-entry currently imports only `effect` itself (`test/purity.node.test.ts`).
+entry imports `effect` and the four public HTTP modules confined to the private
+dispatcher (`test/purity.node.test.ts`).
 Effect 4.x is a long-term-support line, but its area barrels `effect/http`,
 `effect/http-api`, `effect/schema`, and `effect/sql` are still tagged
 `@stability unstable` and can change within it; only core modules such as
@@ -2771,7 +3113,9 @@ wrong method and an unowned path; our routes need a JSON 405 for the former
 and module fallthrough for the latter. Their `toWebHandler` also builds its
 layer immediately and owns a runner, so adopting it would require proving
 global-scope safety and preserving our scheduler and response-lifetime rules.
-The existing Effect route programs keep those rules without this routing layer.
+Those historical defaults are not the production adapter: the narrow public
+HttpRouter dispatch above preserves explicit method refusals, unowned fallthrough
+and the existing edge runner without `toWebHandler`.
 
 Effect's MCP server has a separate compatibility gate. Its `2026-07-28`
 adapter accepted a stateless `tools/list`, but its `2025-06-18` adapter refused
@@ -2780,9 +3124,9 @@ next request returned 404 on a fresh handler; Connecta served the same fresh
 legacy list with 200 JSON and no session. The stable package exports no MCP
 client, so it also cannot replace our downstream SDK and OAuth implementation.
 [Issue #622](https://github.com/zackbart/connecta/issues/622) records the server
-parity requirements. These measurements support keeping the current MCP,
-validation, and routing implementations; stable v4 alone does not establish a
-replacement's benefit or compatibility.
+parity requirements. These historical measurements supported retaining MCP protocol and validation
+implementations. Production HTTP dispatch now uses the separately proven narrow
+public adapter above; stable v4 alone did not establish its compatibility.
 
 The core's cost is recorded rather than guessed. Against 0.24.4 the root entry
 grew from 235,346 to 279,526 bytes gzip, the Worker example from 263,949 to
@@ -3195,7 +3539,12 @@ compiling and configuring the real thing.
   The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
   provider/tool on Node, fails on missing provider/tool examples or a
   dispatched failure bypassing the helper, and covers served write/read
-  overrides with HTTP 503 and a connection reset after send. Local metadata
+  overrides with HTTP 503 for every tool and a connection reset after send
+  for each provider/verdict representative. HTTP 401 recovery uses those
+  representatives plus the distinct composite, auxiliary, owner-lookup and
+  POST-as-read paths; every provider's full golden failure matrix still runs.
+  Shared sender and real-socket evidence below own status/reset permutations.
+  Local metadata
   tools prove zero sends; composite calls prove each distinct request leaves
   once. The round-5 cases additionally cover Docs creation with initial text,
   composite success followed by refusal, GitHub preflight failures, typed
@@ -3276,3 +3625,300 @@ Native pools resolve names through a shared claimant index for listing and
 calling, then use the existing invocation routes. Native recovery adapts only
 Connecta error envelopes in `src/native-recovery.ts`; provider dispatch and
 continuation enforcement stay in their existing owners.
+
+### Contributor reference: owned Node transport dispatch
+
+`src/guarded-transport.ts` is the platform-neutral runtime slot. `sendGuarded`
+invokes a dispatch callback before legacy/fake sends; a transport declaring
+`delaysDispatch` must invoke it exactly once at its last safe pre-send boundary.
+The Node sender does this before a direct send or after CONNECT/TLS establishment,
+before exposing the socket to undici's destination Client. A refusal there must
+never reach the destination or acquire dispatch provenance. Each send owns its
+Client/ProxyAgent and response lifetime, with HTTP/1.1, non-idempotent dispatch,
+no interceptors and no redirects. No dispatcher, response, callback or signal is
+cached across requests. This seam is transport policy; SDK protocol, auth and
+request/coordinator ownership remain with their existing adapters.
+
+### Contributor reference: OAuth credential transport seam
+
+`sendCredentialPost` in `src/guarded-transport.ts` is a Promise platform leaf for
+SDK-authenticated token, registration and revocation POSTs. It resolves the
+owned policy, forces manual redirects and withholds native exception text/cause,
+while preserving the caller's original abort reason. The SDK still constructs
+auth headers/forms and decodes the byte-safe response; this leaf supplies no
+OAuth retry, grant, response-decoding or ownership orchestration.
+
+`OAuthRefreshCoordinator.coordinatedFetch` accepts an optional final synchronous
+`prepareCredentialRequest` hook. Production adapters resolve `guardedTransport(true)`
+there before claiming a code/refresh grant, so an unsupported Node host consumes
+neither. The base-fetch leaves in static OAuth and remote MCP call
+`sendCredentialPost`; remote registration and disconnect revocation do so too.
+D4 must preserve this preflight and the distinction between request-owned code
+exchange and coordinator-owned refresh after claim submission. The existing
+spent-token algorithm intentionally remains conservative after a submitted claim,
+even if a later CONNECT fails before destination dispatch. D6 must preserve the
+SDK JSON-RPC envelope distinction at the leaf: protocol POSTs are not credential
+POSTs; forms and registration JSON are. Discovery GETs remain native fetch.
+
+### Contributor reference: Node response drain
+
+The Node listener counts active ServerResponses per socket. Once shutdown starts,
+each finish/close removes its response; the last completion calls `destroySoon`
+to flush queued bytes and close the connection. This also covers SSE whose
+headers were sent before shutdown and pipelined responses waiting behind an
+inflight response. Normal keepalive remains Node-owned until shutdown. Idle and
+never-admitted sockets retain their separate close paths, and the configured
+shutdown deadline still forces exit 1 for work that never completes.
+
+### Native auth programs (contributor)
+
+Inbound verification, shared authentication admission, machine-token verification,
+static OAuth and the SDK-facing downstream OAuth provider compose private native
+programs. `auth/native.ts` selects registered implementations by the current
+function identity; an original Promise shell enters its own implementation
+without re-reading an overridden method. Class registrations retain their
+original method and prototype/key separately, so instance, inherited and
+prototype decorators can delegate to a saved original without recursion. Custom
+adapters and overridden methods retain their Promise boundary and original errors.
+
+`auth/native-call.ts` provides the canonical `RequestScope` Context from the
+existing call view. Native grant preparation and storage reads execute inside
+that Context and refuse a closed owner; no second request-identity table is
+introduced. Keeping that call-only module separate also keeps downstream call
+services out of metadata and operator UI imports. Native storage uses D2's
+registered storage programs; custom stores remain one-operation Promise leaves.
+
+`authFlow` composes yielded Effects while delivering original typed failures to
+local auth policy catches. Interruption remains interruption, runs yielded
+cleanup and never becomes a diagnostic Cause. A fetch's settlement observer
+cancels a late body. The resource sender records only retained status/refusal
+facts after cancellation; it cannot renew a call capability or send another
+request. Synchronous abort observers finish recording those facts before native
+wait cleanup removes them.
+
+Admission charges track the actual settlement of SDK, crypto, fetch and custom
+Promise leaves. Submitted native storage work has independent settlement so a
+caller-facing deadline cannot release its charge early. Isolate-wide admission
+state remains scalar charges, counters and weak reachability; no request-owned
+client, signal, body or Promise is cached across requests. Organization cache
+TTLs, lookup ordering and rate-limit backoff remain unchanged.
+
+Admission composes explicit native continuations rather than suspending a
+generator that contains its charge token. The workerd collection regression
+holds live middleware work charged, ends a different invocation, then proves
+its unreachable charges are collectable. Neither deadline nor abandonment
+releases a charge; only actual settlement or proven unreachability does.
+
+Refresh claims still transfer ownership synchronously with claim-CAS submission,
+before its answer. The bounded native coordinator starts without request/call
+Context authority and may persist a rotation after its caller closes. A closed
+caller cannot consume that result or resume sending. The cross-request refresh
+join deliberately crosses a Promise boundary so workerd resumes each waiter in
+its own request. Code exchange remains request-owned and one-use. Epochs,
+permanent spent fingerprints, physical-attempt guards and pre-claim transport
+preflight are unchanged.
+
+`authStorage(storage, key, args, beforeSubmit?)` admits the ownership hook and
+native/custom storage invocation in one JavaScript reaction. Its public
+Scheduler delegation suppresses automatic yield only during that initial
+reaction; a microtask restores parent scheduling before pending I/O resumes.
+The four hook sites are `updateGrant`'s guarded write and `claimRefresh`'s
+unknown-lease refusal, ambiguous spent-token write and new claim. A forced
+scheduler regression covers both native and custom stores; real pending TCP
+I/O, pre-submission cancellation, synchronous failure and unknown CAS outcomes
+retain their distinct ownership and exactly-once settlement rules.
+
+Intentional leaves are the Clerk and MCP SDKs (including their callback methods),
+platform fetch/body readers and Web Crypto, custom identity/gate/sealer/storage
+hooks, and the reset-settlement observer required by the callback route. Native
+programs compose around those leaves directly. Public Promise APIs, SDK method
+signatures and published private class declarations remain unchanged; only
+`runtime/run.ts` starts fibers. SDK telemetry remains disabled, and raw SDK,
+body, storage or Cause diagnostics never reach operator records.
+
+The declaration comparison retains 86 of 88 reachable files byte for byte.
+The two exact exceptions swap only adjacent `title` / `instructions` members
+in the inferred provider and Google Workspace schema declarations; both keep
+the same `Field<unknown, unknown, true>` type. Both owning source files are
+unchanged. A narrow machine check restores only those two exact adjacent
+pairs and requires byte equality, with no other type, export or reference
+change. All 88 declarations still exclude Effect and have complete references.
+
+The superseding 2026-10-25 D3/D4 cost ruling authorizes only Worker
+`maxGzip: 785000` (previously 760000) and Clerk `maxGzip: 85000` (previously
+63087). Official cached Node 22.23.4 / zlib 1.3.1-e00f703 measured Clerk at
+47,688 -> 80,961 bytes gzip (+33,273): the generated SDK is unchanged, while
+native Effect adds 91.8 KB raw plus the native helper and small auth-source
+growth. The isolated D4 candidate measured Worker at 762,666, root at 377,177
+and D1 at 88,321 bytes gzip. Optional-graph optimization brought UI to 342,955,
+so the earlier unused UI allowance is revoked and its original 345000 cap
+remains. Historical baselines, root/D1 and all other caps, dependency pins and
+security/API gates remain unchanged. These independent measurements do not
+predict a combined gzip by addition; final artifacts must be rebuilt. Native
+registration, decorated fallback and request/native-storage semantics also
+require a smoke through an actual minified production bundle. Final post-hook
+official artifacts measure root 377,290, D1 88,321, Clerk 80,959, UI 342,959
+and Worker 762,774 bytes gzip, all within those caps.
+
+### Native remote MCP programs (contributor)
+
+Remote MCP connection joins, credential and epoch checks, catalog intake,
+negotiation, calls, resources, Skills, auth and status compose native programs in
+`connectors/remote-mcp.ts`. `catalog-cache.ts` owns native SDK cache reads,
+chunked publication, generation fencing, complete refresh acceptance and listing
+serialization; `connectors/negotiation-cache.ts` owns native negotiation storage.
+The published connector, cache and SDK callback methods remain Promise shells.
+Native consumers select those programs through `authCall` / `authInvoke` by
+current function identity. Each original shell enters its own immutable program,
+so a decorator or inherited delegate can call a saved original without recursion.
+`invocation-auth.ts` follows that same identity dispatch for local credential
+checks. The remote call registers its final original function with
+`runtime/call-entry.ts`, preserving invocation validation, policy and call services.
+A replaced function cannot inherit that native call proof.
+
+Connector and cache state use the canonical `RequestScope` from the existing
+view services. The shared connection provides only that request owner, never the
+first waiter's call services, credentials or budget. SDK cache callback edges
+restore that same owner. Every operation captures its own generation, credential
+identity and listing binding before waiting; a later listing cannot adopt an
+abandoned publication. Request closure revokes the connector and cache scopes.
+No client, transport, response, signal, promise or live request Context is shared
+across inbound requests. D4's bounded refresh coordinator retains its separate
+ownership, synchronous submission gate and waiting-request handoff.
+
+Two deliberate Promise waits remain: a connect waiter receives the Deferred's
+answer in its own workerd request continuation, and a serialized listing waits
+for a Promise turn before running its native program. Cancelling a queued
+listing releases its turn only after its predecessor, so it cannot unlock a
+listing still using the SDK cache binding. Cancellation after entry ends that
+listing's publication without starving a live sibling. Teardown starts native
+finalizers before checking caller ownership and joins their bounded independent
+settlement. Only `runtime/run.ts` starts fibers.
+
+Physical sender Promise observers retain response status, write refusal and
+redirect facts even when a native waiter closes first. The call's abort path
+yields one scheduler reaction before settling those facts, including when the
+SDK rejects synchronously from the abort event. These observations grant no live
+authority: a closed caller cannot renew, send, publish a cache result or consume
+late output. Source/effective write classification, one physical attempt,
+withheld transport text, explicit downstream tool errors, input suspension,
+final output validation and original abort/error identity remain enforced.
+
+Intentional leaves are the pinned MCP SDK's actual client/transport operations
+and schema validators, the owned one-attempt sender and platform fetch,
+Web Crypto fingerprints, bounded byte/SSE stream readers and body cancellation,
+and unregistered custom token, credential, storage, sealer or observation hooks.
+SDK `ResponseCacheStore` is the callback contract, not a replacement client or
+protocol implementation. Its storage and refresh algorithms are native programs;
+its Promise shells are required SDK edges. The connector keeps modern/legacy
+negotiation, header mirroring, cache partitions and TTL semantics. No SDK/Effect
+pin or supported protocol surface changes.
+
+Native storage and activity selection in `runtime/native-storage.ts` checks the
+current methods against their original registered identity, and selected programs
+check again when executed. A replacement or decorator owns the Promise fallback;
+restoring originals restores native composition. Registry storage namespaces
+select the underlying current methods at dispatch, including namespaces created
+while a source method is decorated. Original SQL shells call their own native
+program directly. Tests cover current and previously selected programs, own and
+inherited saved-original delegates, get/set/CAS and activity record/list,
+restoration, typed failures and interruption. The D4 native proof fixtures install
+their intentional throwing Promise shells before registration, so they establish
+native composition without authorizing bypass of later replacements.
+
+`remote-mcp-native.test.ts` runs native SDK/cache/request-boundary cases on Node
+and workerd. `remote-mcp-native-bundle.node.test.ts` additionally loads an actual
+minified production bundle to verify call/cache registration, request Context,
+native storage, saved-original delegates, custom replacements and closed-owner
+refusal. Existing wire, physical-attempt, cache and OAuth lifetime suites remain
+the compatibility evidence; provider golden observations remain unchanged.
+
+### Native upward MCP orchestration (contributor)
+
+`routes/mcp.ts` composes server preparation, native catalog selection, exchange,
+output redaction and response-owned request cleanup as native programs. The
+pinned SDK's modern `createMcpHandler` and a fresh stateless legacy JSON transport
+remain the protocol implementations. Effect 4.0.5's public MCP adapters cannot
+serve the required fresh legacy contract; this implementation does not adopt
+Effect McpServer. Each inbound request constructs fresh servers and keeps its
+admission scope until its response body ends, fails, is cancelled or reaches its
+existing deadline. Authentication and endpoint admission precede body dispatch.
+The declared-agent observation stays after successful endpoint admission and
+before listen classification or body dispatch.
+
+Meta tools, native tools, Skills/resources and upward auth/input continuations
+compose registered native programs. SDK registration signatures and Promise
+shells remain unchanged. Current-method identity governs consumer dispatch;
+each original shell enters its own immutable program, so decorators, inherited
+delegates and replacements retain authority. Catalog policy failures reach
+native consumers as ordinary typed failures. Invocation still owns validation,
+classification, read-only enforcement, dispatch, write settlement and accounting.
+Its input and result callbacks select native programs while custom synchronous
+or Promise callbacks retain their original behavior.
+
+The canonical `RequestScope` travels through SDK callback edges and registry
+views. A continuation's durable nonce claim still precedes dispatch, retains its
+caller, endpoint, arguments, TTL and round bindings, and cannot authorize another
+write after an ambiguous result. Retained classification and settlement facts
+never reopen a closed request. A finished program can still shape its response
+and retained recovery facts after its connector authority closes; the inbound
+request signal still cancels that response work. Neither path grants another
+dispatch. Agent-output redaction, withheld diagnostics,
+secret registration and result bounds retain their existing pure algorithms.
+`upwardStep` is only a typed generator adapter: it lets `authFlow` deliver the
+original ordinary failure to a local catch without converting interruption.
+
+Concurrent authorization failures share one request-owned producer and Deferred
+answer per connector, including failures and the unknown-write advice variant.
+The existing `forkRequest` seam starts that producer under the request Scope;
+its Context contains only the canonical request owner and scheduler. A waiting
+call's budget, credentials and cancellation do not own the producer. Closing the
+request revokes it, and a closed request cannot consume or restart its handoff.
+Only `runtime/run.ts` starts fibers. Admission and downstream refresh/connection
+waits retain their deliberate Promise handoffs for workerd's waiting-request I/O
+context.
+
+Intentional leaves are actual pinned SDK handler/transport/server operations,
+SDK schema and request-state codecs, platform body readers and cancellation,
+Web Crypto hashes, vault owner/seal/open/sign/verify methods and unregistered custom
+identity, credential, storage, executor and tool callbacks. Connecta's OAuth-link
+binding, TTL, progress, closing and one-use claims are native orchestration around
+those leaves. The supported protocol and unsupported-feature refusals remain
+unchanged. Native consumer, failure, decorator, sharing, close and minified-bundle
+regressions live in `upward-native.test.ts` and
+`upward-native-bundle.node.test.ts`; existing wire, continuation, redaction,
+physical-attempt and body/admission suites remain compatibility evidence.
+
+The combined native/operator graph has a measured contributor bundle allowance
+in PR #1060: the UI gzip cap is 346,000 bytes, with its historical baseline
+unchanged. The official full checker measured 345,228 bytes after regenerating
+the merged UI assets. Removing unused Invocation/Catalog registration retention
+returned the public Worker entry from 198,744 to 77,426 bytes; live minified
+Context, inherited-method, decorator and restoration proofs retain native
+composition. Root, example Worker, public Worker, D1 and Clerk caps remain
+unchanged. This cost decision grants no later request-body-limit allowance.
+
+### Catalog operation vocabulary (contributor)
+
+The standard hatch privately registers bounded vendor operation text against its
+ApiTool identity; `apiConnector` transfers those facts to the constructed
+connector. `operation-vocabulary.ts` contains only pure lexical/cache logic and
+types. Catalog discovery consumes those facts after loading and classifying a
+complete visible catalog. It never imports a provider or an operation index,
+parses operation contracts, invokes a handler, or authenticates. Matching requires
+all terms in a single operation and a visible destination hatch. Endpoint,
+connector and tool grants are checked on every query, outside the request-free
+cache. Exact authored names and complete authored matches precede API pointers;
+ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
+The published discovery contract states compilation, query and cache bounds.
+No request identity, signal, credential or promise enters a vocabulary cache.
+
+### Authenticated body-bound cost (contributor)
+
+The separate #860 change has a measured allowance only for the example Worker
+gzip cap, from 785,000 to 786,000 bytes, with its historical baseline unchanged.
+The official full checker measures 785,036 bytes against D7's exact 784,948-byte
+lower graph, an actual 88-byte increase. It reuses the bounded platform body
+inspector, preserves native orchestration and avoids a new reader lifecycle.
+Root, UI, public Worker, D1, Clerk and asset caps remain fixed. The cost ruling
+does not approve protocol, cancellation or authority semantics.

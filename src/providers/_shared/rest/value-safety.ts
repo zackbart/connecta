@@ -448,9 +448,26 @@ function sanitizeUrl(value: string, credentials = true): string {
 // fragments. AWS and Google signing parameters are withheld globally. The
 // destination scanner also drives generic write admission for copied placeholders.
 
-/** Signing parameters that are a credential in any URL, with their `=` plain or encoded. */
-const SIGNING_PARAM =
-  /x-(?:amz|goog)-(?:signature|credential|security-token)(?:=|%(?:25)*3d|&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*(?:#0*61;?|#x0*3d;?|equals;?)|\\u003d)/gi;
+/** An `=`, plain or encoded, as a signing parameter's name ends with one. */
+const EQUALS = /=|%(?:25)*3d|&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*(?:#0*61;?|#x0*3d;?|equals;?)|\\u003d/iy;
+const EQUALS_BEFORE = new RegExp(`(?:${EQUALS.source})$`, "i");
+const AMP_REFERENCE = String.raw`&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*`;
+
+/** Fixed ASCII name units, matched in source coordinates without decoding or rewriting the text. */
+function signingName(text: string): string {
+  return Array.from(text, (char) => {
+    const codes = [...new Set([char.toLowerCase().charCodeAt(0), char.toUpperCase().charCodeAt(0)])];
+    const hex = codes.map((code) => code.toString(16)).join("|");
+    const named = char === "-" ? "|(?:hyphen|dash);" : "";
+    return `(?:${char === "." ? "\\." : char}|%(?:25)*(?:${hex})|${AMP_REFERENCE}(?:#0*(?:${codes.join("|")});?|#x0*(?:${hex});?${named})|\\\\(?:u00|x)(?:${hex}))`;
+  }).join("");
+}
+
+/** Established signing names and withheld suffixes, retaining each unit's source spelling. */
+const SIGNING_PARAM = new RegExp(
+  `${signingName("x-")}(?:${signingName("amz")}|${signingName("goog")})${signingName("-")}(?:(?:${["signature", "credential", "security-token"].map(signingName).join("|")})(?:${EQUALS.source})|\\[redacted\\])`,
+  "gi",
+);
 /**
  * One encoded character at the start of link text: a percent escape, an HTML
  * character reference, a `\u` or `\x` escape, or a Markdown backslash escape.
@@ -797,17 +814,22 @@ function withholdSigningParams(anchored: string): string {
   SIGNING_PARAM.lastIndex = 0;
   let signing = SIGNING_PARAM.exec(anchored);
   let altered = alteredParameter(anchored, 0);
-  while (signing || altered >= 0) {
+  while (signing || altered) {
     const named = signing ? signing.index + signing[0].length : -1;
-    const inferred = altered >= 0 && (named < 0 || altered < named);
-    const start = inferred ? altered : named;
+    const alteredStart = altered?.start ?? -1;
+    const boundary = altered?.value ?? -1;
+    // A complete altered-name boundary takes precedence over its withheld family suffix.
+    const inferred =
+      alteredStart >= 0 && (named < 0 || alteredStart < signing!.index || (alteredStart < named && boundary > named));
+    const start = inferred ? alteredStart : named;
     // Skip an existing complete placeholder, but still remove any suffix.
     const already = anchored.startsWith(REDACTED, start);
-    const end = valueEnd(anchored, already ? start + REDACTED.length : start, inferred);
+    const from = inferred && altered?.value !== undefined ? altered.value : already ? start + REDACTED.length : start;
+    const end = valueEnd(anchored, from, inferred && altered?.value === undefined);
     // Resume both scans after this value, as one scan would.
     SIGNING_PARAM.lastIndex = end;
     if (named >= 0 && named <= end) signing = SIGNING_PARAM.exec(anchored);
-    if (altered >= 0 && altered <= end) altered = alteredParameter(anchored, end);
+    if (altered && altered.start <= end) altered = alteredParameter(anchored, end);
     if (end === start || (already && end === start + REDACTED.length)) continue;
     out += `${anchored.slice(copied, start)}${REDACTED}`;
     copied = end;
@@ -815,10 +837,8 @@ function withholdSigningParams(anchored: string): string {
   return copied === 0 ? anchored : out + anchored.slice(copied);
 }
 
-/** An `=`, plain or encoded, as a signing parameter's name ends with one. */
-const EQUALS = /=|%(?:25)*3d|&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*(?:#0*61;?|#x0*3d;?|equals;?)|\\u003d/iy;
-const EQUALS_BEFORE = /(?:=|%(?:25)*3d|&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*(?:#0*61;?|#x0*3d;?|equals;?)|\\u003d)$/i;
-const NAME_CHAR = /[\w.~-]/;
+const NAME_CHAR = /[\w.%~;-]/;
+const NAME_ESCAPE = new RegExp(Array.from("abcdefghijklmnopqrstuvwxyz0123456789_.~-", signingName).join("|"), "iy");
 
 /** Where a parameter's value ends, reading placeholders and character references whole (#703). */
 function valueEnd(text: string, at: number, inferred: boolean): number {
@@ -833,8 +853,8 @@ function valueEnd(text: string, at: number, inferred: boolean): number {
 }
 
 /**
- * Where the next placeholder that may hide a signing parameter starts, at or
- * after `from`, or `-1` (#703). Redaction may have taken a signing name, its
+ * The next placeholder that may hide a signing parameter, at or after `from`,
+ * and its value boundary when a name is recognized (#703). Redaction may have taken a signing name, its
  * `=`, and the start of its value, so a placeholder followed by any of a
  * value's base64 or base64url characters (`+`, `/`, `=`, `-`, `_` included)
  * or `%` escapes goes with them, however short. References count when they
@@ -844,32 +864,41 @@ function valueEnd(text: string, at: number, inferred: boolean): number {
  * right after an `=` with nothing readable after it is a withheld value.
  * Each placeholder is read once, resuming after its run.
  */
-function alteredParameter(text: string, from: number): number {
+function alteredParameter(text: string, from: number): { start: number; value?: number } | undefined {
   for (let at = text.indexOf(REDACTED, from); at >= 0;) {
     const tail = splitRemainder(text, at, endsValue);
-    if (tail.readable) return at;
-    let end = at;
-    while (end < tail.end) {
-      if (text.startsWith(REDACTED, end)) end += REDACTED.length;
-      else if (NAME_CHAR.test(text[end]!)) end++;
-      else break;
+    // Read a possible name before inferring a value remainder: a name's encoded `=` or dash
+    // can otherwise look like the end of the remainder. A leading partial reference belongs
+    // to the name too; the placeholder may have removed its opening characters.
+    if (!EQUALS_BEFORE.test(text.slice(Math.max(0, at - 64), at))) {
+      // The tail already read any earlier placeholders. Only its last one can lead a
+      // name beyond that tail; keep the redaction start so no earlier data is exposed.
+      let end = text.lastIndexOf(REDACTED, tail.end - REDACTED.length) + REDACTED.length;
+      while (end < text.length) {
+        EQUALS.lastIndex = end;
+        if (EQUALS.test(text)) return { start: at, value: EQUALS.lastIndex };
+        NAME_ESCAPE.lastIndex = end;
+        // A later placeholder gets its own scan; never look ahead across it twice.
+        if (text.startsWith(REDACTED, end)) break;
+        else if (NAME_CHAR.test(text[end]!)) end++;
+        else if (NAME_ESCAPE.test(text)) end = NAME_ESCAPE.lastIndex;
+        else {
+          const reference = bareReferenceEnd(text, end, true);
+          if (reference === end) break;
+          end = reference;
+        }
+      }
     }
-    EQUALS.lastIndex = end;
-    if (
-      redactionAltered(text.slice(at, end)) &&
-      !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 64), at)) &&
-      EQUALS.test(text)
-    )
-      return EQUALS.lastIndex;
+    if (tail.readable) return { start: at };
     at = text.indexOf(REDACTED, Math.max(tail.end, at + REDACTED.length));
   }
-  return -1;
+  return undefined;
 }
 
 /**
  * Reviewed REST text policy: only credential-bearing URL queries/fragments
  * change. Ordinary links, including external proxies, retain their bytes.
- * Literal AWS/Google signing names are withheld anywhere, as in #818.
+ * The established AWS/Google signing names are withheld in their source spelling anywhere.
  */
 export function withholdEmbeddedUrls(text: string): string {
   return withholdSigningParams(withholdLinkQueries(text));

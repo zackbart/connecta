@@ -41,6 +41,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
-    "prepack": "pnpm run check"
+    "prepack": "pnpm run check",
+    "probe:catalog": "node scripts/probe-catalog.mjs"
   }
 }

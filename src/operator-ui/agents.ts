@@ -27,7 +27,8 @@ export interface AgentRow {
   name: string;
   /** Pools it belongs to, from `agents[].pools`; empty when the contract does not list it. */
   pools: string[];
-  slot: AgentSlot;
+  credentialTypes: OperatorAgent["credentialTypes"];
+  slot: AgentSlot | null;
   /**
    * Whether `slot` comes from the live slot list. Only a live slot can be
    * acted on: one known only from the contract may be stale, so its controls
@@ -50,8 +51,8 @@ export function slotActions(slot: Pick<AgentSlot, "state">): SlotAction[] {
   return slot.state === "issued" ? ["rotate", "revoke"] : ["issue"];
 }
 
-function contractSlot(agent: OperatorAgent): AgentSlot {
-  return { name: agent.name, ...agent.token };
+function contractSlot(agent: OperatorAgent): AgentSlot | null {
+  return agent.token ? { name: agent.name, ...agent.token } : null;
 }
 
 function maintainerAgents(contract: OperatorUiContractV2 | null): OperatorAgent[] {
@@ -71,7 +72,8 @@ export function resolveSlot(
   const listed = slots.find((slot) => slot.name === name);
   if (listed) return { slot: listed, live: true };
   const agent = maintainerAgents(contract).find((candidate) => candidate.name === name);
-  return agent ? { slot: contractSlot(agent), live: false } : null;
+  const slot = agent && contractSlot(agent);
+  return slot ? { slot, live: false } : null;
 }
 
 /**
@@ -87,30 +89,38 @@ export function agentRows(
   const declared = new Map(agents.map((agent) => [agent.name, agent]));
   const names = [...slots.map((slot) => slot.name), ...agents.map((agent) => agent.name)];
   return [...new Set(names)].map((name) => {
-    const { slot, live } = resolveSlot(contract, slots, name)!;
+    const { slot, live } = resolveSlot(contract, slots, name) ?? { slot: null, live: false };
     const agent = declared.get(name);
     return {
       name,
       pools: agent?.pools ?? [],
+      credentialTypes: agent?.credentialTypes ?? [],
       slot,
       live,
-      blocked: !live ? SLOT_UNAVAILABLE : unresolved.includes(name) || !slot.revision ? SLOT_UNRESOLVED : null,
+      blocked: !slot
+        ? "Agent tokens aren't configured."
+        : !live
+          ? SLOT_UNAVAILABLE
+          : unresolved.includes(name) || !slot.revision
+            ? SLOT_UNRESOLVED
+            : null,
       lastSeenAt: agent?.lastSeenAt ?? null,
-      actions: slotActions(slot),
+      actions: slot ? slotActions(slot) : [],
     };
   });
 }
 
-export function slotBadge(slot: Pick<AgentSlot, "state">): { label: string; tone: Tone } {
+export function slotBadge(slot: Pick<AgentSlot, "state"> | null): { label: string; tone: Tone } {
+  if (!slot) return { label: "Not configured", tone: "neutral" };
   if (slot.state === "issued") return { label: "Issued", tone: "ok" };
   if (slot.state === "revoked") return { label: "Revoked", tone: "warn" };
   return { label: "No token", tone: "neutral" };
 }
 
 /** When the slot last changed, issued or revoked (its badge says which); a dash when it never has. */
-export function slotSince(slot: AgentSlot, format: (value: string) => string): string {
-  if (slot.state === "issued") return format(slot.issuedAt);
-  if (slot.state === "revoked") return format(slot.revokedAt);
+export function slotSince(slot: AgentSlot | null, format: (value: string) => string): string {
+  if (slot?.state === "issued") return format(slot.issuedAt);
+  if (slot?.state === "revoked") return format(slot.revokedAt);
   return "—";
 }
 

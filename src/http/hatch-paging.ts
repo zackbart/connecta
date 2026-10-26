@@ -6,6 +6,8 @@ export interface HatchPageAdapter {
   readonly param: string;
   readonly in: "query" | "body";
   readonly headers?: readonly string[];
+  /** Reviewed exact vendor count only; missing or invalid optional counts are omitted. */
+  readonly total?: (data: unknown) => number | undefined;
   /** With a separate cursor, permit a first-request raw record id. Parameter-based
    * paging permits only a numeric timestamp anchor; opaque tokens stay signed. */
   readonly initialAnchor?: boolean;

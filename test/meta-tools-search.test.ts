@@ -483,9 +483,9 @@ describe("search_tools", () => {
     const gifts = createMetaTools(makeRegistry([overflowFixture.create("gifts")]), BASE);
     for (const query of ["tap", "webhook"]) {
       const found = textOf(await gifts.searchTools({ connector: "gifts", query })) as SearchResult;
-      expect(found.tools).toEqual([]);
-      expect(found.queryAnalysis!.guidance).toContain("gifts.overflow_api_search");
-      expect(found.queryAnalysis!.guidance).not.toContain("capability is configured");
+      expect(found.tools.map((tool) => tool.address)).toEqual(["gifts.overflow_api_search"]);
+      expect(found.total).toBe(1);
+      expect(found.queryAnalysis?.unmatchedTerms ?? []).toEqual([]);
     }
   });
 

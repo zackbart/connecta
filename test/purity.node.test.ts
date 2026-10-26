@@ -316,12 +316,19 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     }
   });
 
-  it("lets the root entry reach only Effect's stable core", () => {
+  it("confines root Effect HTTP imports to the private dispatcher", () => {
     const graph = importGraph(ENTRY);
     for (const file of graph) {
       for (const spec of allSpecifiers(sourceOf(file))) {
         if (!isEffectSpecifier(spec)) continue;
-        expect(ROOT_EFFECT_ALLOWED.has(spec), `${file} is reachable from index.ts and imports ${spec}`).toBe(true);
+        expect(
+          ROOT_EFFECT_ALLOWED.has(spec) ||
+            (file === join(SRC, "routes", "dispatch.ts") &&
+              ["HttpRouter", "HttpServerError", "HttpServerRequest", "HttpServerResponse"].some(
+                (name) => spec === `effect/http/${name}`,
+              )),
+          `${file} is reachable from index.ts and imports ${spec}`,
+        ).toBe(true);
       }
     }
   });
@@ -334,10 +341,14 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     for (const file of importGraph(ENTRY)) expect(file.startsWith(kit), `index.ts reaches ${file}`).toBe(false);
   });
 
-  it("confines Effect's unstable area modules to the kit's transport and vendor modules", () => {
-    // effect/http and effect/http-api can change within 4.x; an upgrade that
-    // moves them should touch these three files and nothing else.
-    const allowed = new Set(["client.ts", "oauth.ts", "vendor.ts"].map((name) => join(SRC, "http", name)));
+  it("confines Effect's unstable area modules to transport, vendor, and SQL execution modules", () => {
+    // Unstable HTTP and SQL APIs are confined to their implementation modules;
+    // upgrading the exact Effect pin requires deliberately checking these seams.
+    const allowed = new Set([
+      ...["client.ts", "oauth.ts", "vendor.ts"].map((name) => join(SRC, "http", name)),
+      join(SRC, "storage", "sql-driver.ts"),
+      join(SRC, "routes", "dispatch.ts"),
+    ]);
     for (const file of everySource) {
       for (const spec of allSpecifiers(sourceOf(file))) {
         if (!spec.startsWith("effect/")) continue;

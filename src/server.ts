@@ -1,13 +1,9 @@
 import { Effect } from "effect";
 import { authenticationSnapshot } from "./auth-admission.js";
-import { notFoundResponse } from "./branding.js";
 import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
-import { isAgentPath } from "./routes/agent-path.js";
-import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
-import { routeOAuthCallback } from "./routes/oauth.js";
-import { routeOAuthClientMetadata } from "./routes/oauth-client-metadata.js";
-import { routeConnect } from "./routes/connect.js";
+import { createMcpRoute } from "./routes/mcp.js";
+import { createRouteDispatcher } from "./routes/dispatch.js";
 import { runEdge } from "./runtime/run.js";
 import {
   authMetadata,
@@ -75,55 +71,7 @@ export function createFetchHandler(
     });
   };
 
-  const route = (context: RouteContext): Effect.Effect<Response, unknown> =>
-    Effect.gen(function* () {
-      const { request, path, baseUrl } = context;
-      // The agent namespace is routed before anything else, so no path
-      // Cloudflare Access bypasses as `/agent/*` can reach a human route.
-      if (isAgentPath(path)) return (yield* routeMcp.handle(context)) ?? notFoundResponse(request, opts.config);
-
-      const clientMetadata = routeOAuthClientMetadata(context);
-      if (clientMetadata) return clientMetadata;
-
-      // Private mutations own OPTIONS so they never inherit wildcard CORS.
-      const ui = opts.config.ui;
-      if (ui) {
-        const uiResponse = yield* Effect.promise(() => ui.handle(context));
-        if (uiResponse) return uiResponse;
-      }
-
-      const connect = yield* routeConnect(context);
-      if (connect) return connect;
-
-      const oauthCallback = yield* routeOAuthCallback(context);
-      if (oauthCallback) return oauthCallback;
-
-      if (request.method === "OPTIONS") {
-        const preflight = yield* routeMcp.handle(context);
-        if (preflight) return preflight;
-        const response = yield* metadata(request, baseUrl);
-        if (response) return response;
-        return new Response(null, {
-          status: 204,
-          headers: MCP_CORS_HEADERS,
-        });
-      }
-
-      if (path.startsWith("/.well-known/")) {
-        const guardedMetadata = yield* routeMcp.handle(context);
-        if (guardedMetadata) return guardedMetadata;
-        const response = yield* metadata(request, baseUrl);
-        if (response) return response;
-        return notFoundResponse(request, opts.config);
-      }
-
-      if (path === "/health") return yield* Effect.promise(health);
-
-      const mcp = yield* routeMcp.handle(context);
-      if (mcp) return mcp;
-
-      return notFoundResponse(request, opts.config);
-    });
+  const route = createRouteDispatcher(routeMcp.handle, metadata, health);
 
   const serve = (
     request: Request,

@@ -13,12 +13,14 @@ import {
   vercelErrors,
   VercelApi,
   usageGuide,
+  transformGuide,
   VERCEL_VERDICTS,
   VERCEL_PAGES,
   vercelBinding,
   vercelIndex,
 } from "./api.js";
 import { VERCEL_API_BASE_URL } from "./lib/config.js";
+import { pinOptions, PIN_WRITE_STEPS } from "./lib/pin.js";
 import { vercelTools } from "./tools.js";
 import { skill } from "./skill.generated.js";
 export { VERCEL_API_BASE_URL } from "./lib/config.js";
@@ -43,10 +45,16 @@ interface VercelCommonOptions {
  * Connecta's REST connector to `api.vercel.com` with one operator-managed
  * access token, pasted into the connection in the operator UI.
  */
+export interface VercelTeamPin {
+  readonly teamId: string;
+}
+
 export interface VercelTokenOptions extends VercelCommonOptions {
   auth: { type: "token" };
   /** Default team id for operations that accept one. Omit for the token owner's personal account. */
   teamId?: string;
+  /** Deployment-owned confinement to one team, independent of routing defaults and token permissions. */
+  pin?: VercelTeamPin;
   /** API base override for a proxy or test double. */
   baseUrl?: string;
 }
@@ -67,6 +75,7 @@ const VERCEL_OPTIONS = variants(
     token: optionsOf<VercelTokenOptions>()({
       ...COMMON,
       ...keys("teamId", "baseUrl"),
+      pin: optionsOf<VercelTeamPin>()(keys("teamId")),
       auth: optionsOf<VercelTokenOptions["auth"]>()(keys("type")),
     }).shape,
   },
@@ -84,10 +93,12 @@ export const vercel = defineApiProvider<VercelOptions>({
     note: "./providers/vercel standalone gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899).",
   },
   skill,
+  blocks: { keys: ["pinned", "unpinned"], select: (options) => [options.pin ? "pinned" : "unpinned"] },
   options: VERCEL_OPTIONS,
   vendor: VercelApi,
   baseUrl: (options) => {
     if (options.auth.type !== "token") removedHostedMcp();
+    pinOptions(options);
     return options.baseUrl ?? VERCEL_API_BASE_URL;
   },
   description: (options) => `Vercel account and deployments: ${options.purpose}`,
@@ -109,12 +120,14 @@ export const vercel = defineApiProvider<VercelOptions>({
   inBandRefusals: true,
   probe,
   guide: usageGuide,
+  transformGuide,
   hatch: {
     name: "vercel",
     title: "Vercel",
     index: vercelIndex,
     verdicts: VERCEL_VERDICTS,
     pages: VERCEL_PAGES,
+    writeSteps: PIN_WRITE_STEPS,
     pathExample: "/v13/deployments/dpl_123",
     named: {
       "GET /v2/teams": "list_teams",
@@ -125,8 +138,8 @@ export const vercel = defineApiProvider<VercelOptions>({
       "GET /v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs": "get_runtime_logs",
     },
     binding: vercelBinding,
-    notes: () => ({
-      read: "Pass page.nextCursor unchanged in the query parameter page.param names. Team selectors override the routing default; token permissions enforce scope.",
+    notes: (options) => ({
+      read: `Pass page.nextCursor unchanged in the query parameter page.param names. ${pinOptions(options).pin ? "The deployment team pin applies to every call; personal and foreign team selectors are refused." : "Team selectors override the routing default; token permissions enforce scope."}`,
       write: "JSON writes only. Use vercel_api_upload for explicit bytes.",
     }),
   },

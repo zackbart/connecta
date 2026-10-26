@@ -124,3 +124,22 @@ export default connectaInstructions({ pool: "assistant", getToken: getVercelOidc
 
 Install `@vercel/oidc` in the Eve app when using this variant. The helper has no
 dependency on it and never switches credential types automatically.
+
+## Contributor validation
+
+In a source checkout with dependencies installed and both packages built, run
+`pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
+on Node 24. This boots real Eve 0.83.0 with a packed, installed helper against
+seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
+meta, native, and native-plus-code surfaces. Native listings include two
+Connecta tools beyond the downstream count. A 1,001-tool native catalog must
+refuse listing. `--counts 40,1000` selects a smaller matrix.
+
+The probe uses Eve's public language-model interface with a deterministic local
+transport, without model credentials or paid calls. It measures construction,
+cold and warm discovery, schema and result bytes, call counts, concurrent-call
+isolation, bounded-result paging, and process memory. Fresh child processes
+isolate each matrix cell; Eve startup is separate from turn latency. Reports
+retain actual Eve events and transport inputs. Token usage and model task
+quality remain unmeasured; these results establish local runtime contracts,
+not live Vercel workload admission or production model performance.

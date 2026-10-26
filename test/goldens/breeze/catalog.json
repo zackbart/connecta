@@ -1138,7 +1138,7 @@
     },
     {
       "name": "breeze_api_search",
-      "description": "Find Breeze ChMS API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "description": "Find Breeze ChMS API operations by keyword or path. Returns up to 8 compact matches with routing and separate refusal reasons; reads no account data.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1196,6 +1196,12 @@
                 },
                 "summary": {
                   "type": "string"
+                },
+                "refusal": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "description": "Reviewed refusal, capped separately from summary. A cut reason is marked in truncated; details returns it whole."
                 },
                 "tool": {
                   "type": "string",
@@ -1256,7 +1262,7 @@
     },
     {
       "name": "breeze_api_details",
-      "description": "Read one Breeze ChMS API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "description": "Read one Breeze ChMS API operation's request contract and refusal, including methods outside the call schemas. Reads no account data.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1309,6 +1315,10 @@
           },
           "summary": {
             "type": "string"
+          },
+          "refusal": {
+            "type": "string",
+            "description": "Reviewed refusal reason, separate from the pinned summary. Cut text is marked in truncated; details serves the complete text, paged if needed."
           },
           "server": {
             "type": "string"

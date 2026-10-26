@@ -1,3 +1,4 @@
+import { authCall, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
 import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
@@ -43,9 +44,10 @@ import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
 import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
-import { normalizeTimeoutMs, underAnySignal } from "./timeout.js";
+import { normalizeTimeoutMs } from "./timeout.js";
 import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
+import { executorProgram } from "./runtime/executor.js";
 import {
   connectorGuide,
   connectorGuideRequired,
@@ -1175,7 +1177,7 @@ function sandboxProvider(
 }
 
 /**
- * Await an executor's promise without trusting it to settle.
+ * Await executor work without trusting it to settle.
  *
  * An executor's deadline is its own business, and the Dynamic Worker's lives
  * inside the sandbox: a wedged isolate never fires it, so the call never
@@ -1188,14 +1190,17 @@ function sandboxProvider(
  * a ceiling of its own. Cancellation settles as the same `executor_cancelled`
  * the QuickJS pool reports, unless the executor reports its own first; the
  * ceiling as an untyped executor failure naming the key that sets it. Either
- * way the handler returns and releases the lease, and the abandoned call
- * keeps whatever it was doing: the QuickJS lease release recycles its child,
- * the Worker adapter disposes its handles without waiting for the guest. A
- * lease granted after its request gave up goes to `late`. The result contract is untouched
- * — this only decides when to stop waiting for one.
+ * way the handler releases the lease. Losing native programs are interrupted
+ * and their finalizers awaited, so native interruption cleanup must remain
+ * synchronous or bounded to avoid delaying the watchdog or terminal response.
+ * Custom Promise leaves may continue, with late settlements still observed;
+ * lease release recycles the QuickJS child or disposes Worker handles without
+ * waiting for the guest. A lease granted after its request gave up goes to
+ * `late`. The result contract is untouched — this only decides when to stop
+ * waiting for one.
  */
 function awaitExecutor<A>(
-  start: () => A | Promise<A>,
+  start: (() => A | Promise<A>) | Effect.Effect<A, unknown>,
   signal: AbortSignal,
   options: {
     late?: (value: A) => void;
@@ -1205,23 +1210,25 @@ function awaitExecutor<A>(
 ): Effect.Effect<A, unknown> {
   const started = Date.now();
   const contenders: Array<Effect.Effect<A, unknown>> = [
-    Effect.suspend(() => {
-      let pending: Promise<A> | undefined;
-      const settling = Effect.tryPromise({
-        try: () => (pending = Promise.resolve(start())),
-        catch: (err) => err,
-      });
-      const { late } = options;
-      return late
-        ? settling.pipe(
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                pending?.then(late, () => {});
-              }),
-            ),
-          )
-        : settling;
-    }),
+    typeof start !== "function"
+      ? start
+      : Effect.suspend(() => {
+          let pending: Promise<A> | undefined;
+          const settling = Effect.tryPromise({
+            try: () => (pending = Promise.resolve(start())),
+            catch: (err) => err,
+          });
+          const { late } = options;
+          return late
+            ? settling.pipe(
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    pending?.then(late, () => {});
+                  }),
+                ),
+              )
+            : settling;
+        }),
     // An executor that honors the signal rejects in the abort event itself,
     // with the logs it captured attached, and that report beats ours by one
     // timer turn. (A 1ms sleep, not 0: Effect.sleep(0) waits a microtask,
@@ -1443,22 +1450,21 @@ export function createExecuteTool(
             if (diagnostics) diagnostics.executorWallMs = elapsed;
           },
           awaitExecutor(
-            () =>
-              (admitted
-                ? admitted.execute(wrapGuestProgram(program), [provider])
-                : executor.execute(wrapGuestProgram(program), [provider])
-              ).then(
-                (outcome) => {
-                  executorLogs = sentSecrets.redact(outcome?.logs);
-                  return sentSecrets.redact(outcome);
-                },
-                (err: unknown) => {
-                  if (err !== null && typeof err === "object" && "logs" in err) {
-                    executorLogs = sentSecrets.redact(err.logs);
-                  }
-                  throw sentSecrets.redact(err);
-                },
-              ),
+            executorProgram(admitted ?? executor, wrapGuestProgram(program), [provider], {
+              result: (outcome) => {
+                executorLogs = sentSecrets.redact(outcome?.logs);
+              },
+              error: (err) => {
+                if (err !== null && typeof err === "object" && "logs" in err)
+                  executorLogs = sentSecrets.redact(err.logs);
+              },
+              interrupted: (logs) => {
+                executorLogs = sentSecrets.redact(logs);
+              },
+            }).pipe(
+              Effect.map((outcome) => sentSecrets.redact(outcome)),
+              Effect.mapError((error) => sentSecrets.redact(error)),
+            ),
             signal,
             { watchdog, terminal: Deferred.await(terminal) },
           ).pipe(
@@ -1531,29 +1537,26 @@ export function createExecuteTool(
 
   return agentOutputOperations(
     (requestScope) => ({
-      execute: (
-        { code, diagnostics }: { code: string; diagnostics?: boolean },
-        options: { signal?: AbortSignal } = {},
-      ) => {
-        // A code-unit count above the cap is already too large in UTF-8. Check
-        // that first so a huge direct-call string is never encoded in full.
-        if (
-          code.length > EXECUTE_MAX_CODE_BYTES ||
-          new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES
-        ) {
-          const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-          const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
-          response.structuredContent = {
-            ...response.structuredContent,
-            hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
-          };
-          response.content[0]!.text = JSON.stringify(response.structuredContent);
-          return Promise.resolve(response);
-        }
-        return runEdge(
-          Effect.suspend(() => play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)),
-        );
-      },
+      execute: authMethod(
+        ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) => {
+          // A code-unit count above the cap is already too large in UTF-8. Check
+          // that first so a huge direct-call string is never encoded in full.
+          if (
+            code.length > EXECUTE_MAX_CODE_BYTES ||
+            new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES
+          ) {
+            const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+            const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
+            response.structuredContent = {
+              ...response.structuredContent,
+              hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+            };
+            response.content[0]!.text = JSON.stringify(response.structuredContent);
+            return Effect.succeed(response);
+          }
+          return Effect.suspend(() => play(normalizeProgramSource(code), diagnostics, options.signal, requestScope));
+        },
+      ),
     }),
     config.requestScope,
   ).execute;
@@ -1882,16 +1885,41 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    async (args, extra) => {
-      if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
-      const run = () =>
-        underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
-          execute(args as { code: string; diagnostics?: boolean }, {
-            signal,
+    authMethod((args, extra) =>
+      Effect.gen(function* () {
+        if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
+        const run = authMethod(() =>
+          Effect.suspend(() => {
+            const controller = new AbortController();
+            const forwarders = [extra.mcpReq.signal, ctx.requestSignal]
+              .filter((signal): signal is AbortSignal => signal !== undefined)
+              .map((signal) => {
+                const forward = () => controller.abort(signal.reason);
+                if (signal.aborted) forward();
+                else signal.addEventListener("abort", forward, { once: true });
+                return { signal, forward };
+              });
+            return authCall<ToolResult>(execute, [
+              args as { code: string; diagnostics?: boolean },
+              { signal: controller.signal },
+            ]).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  for (const { signal, forward } of forwarders) signal.removeEventListener("abort", forward);
+                }),
+              ),
+            );
           }),
         );
-      const result = await (ctx.authElicitation ? ctx.authElicitation.run("execute_code", args, extra, run) : run());
-      return ctx.native ? (nativeRecovery(result, true) as typeof result) : result;
-    },
+        const result = yield* ctx.authElicitation
+          ? authInvoke<ToolResult | import("@modelcontextprotocol/server").InputRequiredResult>(
+              ctx.authElicitation,
+              "run",
+              ["execute_code", args, extra, run],
+            )
+          : authCall(run, []);
+        return ctx.native ? (nativeRecovery(result, true) as typeof result) : result;
+      }),
+    ),
   );
 }

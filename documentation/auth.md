@@ -468,6 +468,13 @@ stop OIDC admission. Both credentials reach exactly the pools listing the
 agent. Human endpoints refuse Vercel workload credentials without consulting
 human adapters. Removing the agent stops both credential paths.
 
+The [operator agent view](./operator-ui.md#operator-data-contract) lists each
+declared agent's supported credential kinds and latest sampled successful pool
+admission. Last seen is payload-free admission evidence sampled within a minute,
+independent of completed-call history; a refused credential or pool does not
+update it. Recording is best effort within 500 ms or the shorter configured probe
+deadline; failure loses a sample and a later eligible admission can try again.
+
 ## Agent tokens and upgrading from earlier tokens
 
 Machine clients are **agents**, declared by name in code. String entries in `agents`
@@ -2306,6 +2313,25 @@ and Origin checks. Vaults without sealing keep ordinary handoffs and cannot
 serve URL elicitation. See [authorization recovery](./meta-tools.md#authorization-recovery)
 for capability gating, retry termination, and dispatch restrictions.
 
+Downstream OAuth credential POSTs (code exchange, refresh, dynamic client
+registration and revocation) use a transport that sends each request at most
+once and never follows redirects. On Node, serve with `listen` from
+`@zackbart/connecta/node` and retain the `undici` peer; custom root-only Node
+hosts refuse these POSTs before dispatch. Node's explicit `listen({ proxy })`
+option applies to them. Discovery GETs keep native fetch and its host proxy
+policy. Workers use their native fetch transport. See [Node transport setup](./deploying.md#start-on-node).
+
+A refresh without a confirmed usable answer may have rotated the refresh token.
+Connecta blocks its fingerprint and requires a fresh authorization flow, without
+replaying that token or claiming the server did not receive it. Authorization
+can still be restarted; an unresolved fingerprint cannot become redeemable again
+by writing the same token into an old grant. Registration failure can leave a
+client at the provider; check the provider's client administration before
+starting another registration if its reply was lost. Disconnect removes the
+local grant before attempting revocation, and an unconfirmed revocation asks the
+operator to revoke it at the provider. No token forms or provider error prose
+are included in diagnostics.
+
 A verified `/connect` visit gives downstream OAuth work and its state handoff 30 seconds. The request signal
 and deadline reach discovery, registration, and other downstream fetches; expiry returns `504 OAuth
 authorization start timed out`. A restart's grant write, catalog invalidation, and scope close drain before
@@ -2662,3 +2688,23 @@ Downstream OAuth implementation and evidence are in
 [refresh leases](https://github.com/zackbart/connecta/blob/main/test/oauth-refresh-lease.test.ts),
 and [API OAuth tests](https://github.com/zackbart/connecta/blob/main/test/api-oauth.test.ts).
 Use the test pointers within each section for narrower failure cases.
+
+### Authentication execution (contributor)
+
+Built-in authentication and downstream OAuth use private native programs behind
+the same Promise adapter and SDK contracts. Recognition still selects one
+verifier, and a refusal never falls back to another identity provider. Native
+operations use the existing request owner; cancellation cannot make a closed
+caller consume a refresh result or send another resource request. Once the
+claim CAS is submitted, the bounded refresh coordinator completes independently
+and commits a successful rotation under the existing epoch and spent-token
+rules. Code exchange does not acquire that coordinator ownership.
+
+Authentication capacity remains charged until the underlying uncancellable work
+settles or collection proves that work unreachable. Abandonment alone never
+releases capacity. A native
+refactor does not change membership cache TTLs, audience/resource bindings,
+agent namespaces, credential partitions, OAuth transport policy or the rule of
+one physical attempt per credential-bearing POST. See the
+[native auth implementation](./architecture.md#native-auth-programs-contributor)
+for contributor boundaries and retained Promise leaves.

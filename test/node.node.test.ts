@@ -1,4 +1,6 @@
-// Node-only: exercises the Node HTTP adapter over real TCP sockets.
+// Node-only: exercises native Node HTTP sockets and a separately bundled workerd isolate.
+import { createRequire } from "node:module";
+import { build } from "esbuild";
 import { once } from "node:events";
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
@@ -12,6 +14,77 @@ import { createTestConnecta, required } from "./helpers.js";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Node listen adapter", () => {
+  it("INV-7 INV-11: bounds the pre-auth buffer at the core's 4 MiB default over real sockets", async () => {
+    const core = createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: 8 * 1024 * 1024 } } });
+    expect((await core.describeConfig()).limits.requests.maxBodyBytes.value).toBe(8 * 1024 * 1024);
+    const forwarded: number[] = [];
+    const app = {
+      ...core,
+      fetch: async (request: Request) => {
+        forwarded.push((await request.arrayBuffer()).byteLength);
+        return new Response("forwarded");
+      },
+    };
+    const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    try {
+      for (const [size, status] of [
+        [4 * 1024 * 1024, 200],
+        [4 * 1024 * 1024 + 1, 413],
+      ]) {
+        const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+          method: "POST",
+          body: " ".repeat(size!),
+        });
+        expect(response.status).toBe(status);
+        await response.text();
+      }
+      expect(forwarded).toEqual([4 * 1024 * 1024]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await core.close();
+    }
+  });
+
+  it.each([undefined, 256])(
+    "INV-7: preserves the lower of core and Node adapter body bounds (%s)",
+    async (maxBodyBytes) => {
+      const core = createTestConnecta({ connectors: [], admission: { requests: { maxBodyBytes: 512 } } });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        ...(maxBodyBytes !== undefined ? { maxBodyBytes } : {}),
+      });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      try {
+        const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + " ".repeat(512),
+        });
+        expect(response.status).toBe(413);
+        if (maxBodyBytes === undefined) {
+          expect(await response.json()).toEqual({
+            jsonrpc: "2.0",
+            error: { code: -33006, message: "MCP request body too large." },
+          });
+        } else expect(await response.text()).toBe("Payload Too Large");
+        const health = (await (await core.fetch(new Request("http://127.0.0.1/health"))).json()) as {
+          admission: { requests: { active: number } };
+        };
+        expect(health.admission.requests.active).toBe(0);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    },
+  );
+
   it("shuts down after auth, adoption, rotation and doctor with an unused socket and live sandbox (INV-7)", () => {
     const child = spawnSync(
       process.execPath,
@@ -27,6 +100,37 @@ describe("Node listen adapter", () => {
       expect(() => process.kill(Number(pid[1]), 0)).toThrow();
     }
   }, 65_000);
+
+  it.each([
+    ["short", 1_500, 0],
+    ["long", 6_000, 0],
+    ["sse", 1_500, 0],
+    ["pipeline", 1_500, 0],
+    ["unused", 0, 0],
+    ["partial", 0, 0],
+    ["error", 1_500, 0],
+    ["deadline", 350, 1],
+  ] as const)(
+    "INV-7: drains %s with a non-closing keepalive peer in a bounded time",
+    (mode, duration, code) => {
+      const child = spawnSync(
+        process.execPath,
+        ["--import", "tsx", fileURLToPath(new URL("./fixtures/node-response-drain.ts", import.meta.url)), mode],
+        { encoding: "utf8", timeout: 20_000 },
+      );
+      expect(child.error, child.stderr).toBeUndefined();
+      expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(code);
+      expect(child.stdout).toContain(`peer verified ${mode}`);
+      const result = JSON.parse(child.stdout.split("\n").find((line) => line.startsWith('{"mode"'))!);
+      console.info("shutdown observation", result);
+      expect(result).toMatchObject({ mode, code });
+      expect(result.elapsed).toBeLessThan(duration + 1_500);
+      if (duration) expect(result.elapsed).toBeGreaterThanOrEqual(duration - 100);
+      expect(child.stderr.includes("shutdown timed out")).toBe(mode === "deadline");
+      expect(`${child.stdout}${child.stderr}`).not.toContain("PRIVATE_STREAM_FAILURE");
+    },
+    25_000,
+  );
 
   it("propagates a real MCP socket disconnect into execute_code host calls", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -124,3 +228,59 @@ async function viWaitForAbort(predicate: () => boolean | Promise<boolean>): Prom
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+it("INV-7: a body-held permit hands native I/O to its queued workerd request", async () => {
+  const requireWrangler = createRequire(import.meta.resolve("wrangler"));
+  const { Miniflare, Log, LogLevel } = requireWrangler("miniflare");
+  const bundle = await build({
+    entryPoints: [fileURLToPath(new URL("./fixtures/router-queue-worker.ts", import.meta.url))],
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    conditions: ["workerd", "worker", "browser", "import"],
+    external: ["node:*"],
+    write: false,
+    logLevel: "silent",
+  });
+  const worker = new Miniflare({
+    modules: true,
+    script: bundle.outputFiles[0]!.text,
+    compatibilityDate: "2025-01-01",
+    compatibilityFlags: [
+      "nodejs_compat",
+      "enable_request_signal",
+      "enable_weak_ref",
+      "unhandled_rejection_after_microtask_checkpoint",
+    ],
+    log: new Log(LogLevel.NONE),
+    outboundService: (request: Request) => new Response("native:" + new URL(request.url).pathname),
+  });
+  try {
+    const held = await worker.dispatchFetch("https://connecta.test/mcp");
+    let settled = false;
+    const waiting = worker
+      .dispatchFetch("https://connecta.test/mcp", {
+        method: "POST",
+        headers: { "x-queue-waiter": "yes" },
+        body: "waiter-owned",
+      })
+      .then(async (response: Response) => {
+        settled = true;
+        return { status: response.status, body: await response.text() };
+      });
+    const state = async () =>
+      (await (await worker.dispatchFetch("https://connecta.test/queue-state")).json()) as {
+        secondReads: number;
+        waiterArrived: boolean;
+      };
+    await expect.poll(async () => (await state()).waiterArrived).toBe(true);
+    expect(settled).toBe(false);
+    expect(await state()).toEqual({ secondReads: 0, waiterArrived: true });
+    await (await worker.dispatchFetch("https://connecta.test/queue-release")).text();
+    expect(await held.text()).toBe("held");
+    expect(await waiting).toEqual({ status: 401, body: "native:/waiter-owned" });
+    expect(await state()).toEqual({ secondReads: 1, waiterArrived: true });
+  } finally {
+    await worker.dispose();
+  }
+}, 30_000);

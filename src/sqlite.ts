@@ -8,6 +8,7 @@
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { effectSqlDriver, sqlDriverEdge, sqlSync } from "./storage/sql-driver.js";
 import type { ActivityStore } from "./activity.js";
 import type { KVStorage } from "./types.js";
 import { validateStorageKey } from "./storage/keys.js";
@@ -74,28 +75,30 @@ function sqliteDriver(database: SqliteDatabase): SqlDriver {
   const run = (statement: SqlStatement) => {
     return Number(prepare(statement).run(...statement.params).changes);
   };
-  const driver: SqlDriver = {
-    async all<Row>(statement: SqlStatement) {
-      return prepare(statement).all(...statement.params) as Row[];
-    },
-    async run(statement) {
-      return run(statement);
-    },
-    async batch(batch) {
-      // Synchronous from BEGIN to COMMIT: no other call on this connection
-      // can interleave, and IMMEDIATE takes the write lock up front so
-      // another process cannot either.
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        const changes = batch.map(run);
-        db.exec("COMMIT");
-        return changes;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-    },
-  };
+  const driver = sqlDriverEdge(
+    effectSqlDriver({
+      all: (statement) => sqlSync(() => prepare(statement).all(...statement.params)),
+      run: (statement) => sqlSync(() => run(statement)),
+      batch: (batch) =>
+        sqlSync(() => {
+          // One synchronous native leaf: no fiber can yield between BEGIN and
+          // COMMIT and let another caller interleave on this DatabaseSync.
+          db.exec("BEGIN IMMEDIATE");
+          try {
+            const changes = batch.map(run);
+            db.exec("COMMIT");
+            return changes;
+          } catch (error) {
+            try {
+              db.exec("ROLLBACK");
+            } catch {
+              /* Preserve the original failure. */
+            }
+            throw error;
+          }
+        }),
+    }),
+  );
   drivers.set(db, driver);
   return driver;
 }

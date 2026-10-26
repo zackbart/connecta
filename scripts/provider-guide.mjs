@@ -69,7 +69,7 @@ function hatchLine(name, hatch) {
       : "") +
     " An operation without a reviewed verdict is refused." +
     (refused
-      ? ` ${refused} ${refused === 1 ? "operation is" : "operations are"} refused by design; use ${tool("details")} with the method and path to inspect an operation's contract and refusal.`
+      ? ` ${refused} ${refused === 1 ? "operation is" : "operations are"} refused by design; use ${tool("details")} with the method and path to inspect the original operation summary and its separate refusal. Use details for refused methods outside the read/write call schemas; those methods remain unavailable.`
       : "")
   );
 }
@@ -102,8 +102,20 @@ function errorsLine(name, errors) {
  * withheld-values line renders only for a kit whose hatch refuses a write
  * carrying a withheld placeholder (`kit.refusesWithheld`).
  */
-export function renderConventions({ name, kind, kit, tools = [] }) {
+export function renderConventions({ name, kind, kit, tools = [], keys = [], toolBlocks }) {
   if (kind !== "api") fail(name, `a standard provider's kind is api, not ${kind}`);
+  const blocks = new Map();
+  if (toolBlocks !== undefined) {
+    if (!toolBlocks || typeof toolBlocks !== "object" || Array.isArray(toolBlocks))
+      fail(name, "conventionToolBlocks must map authored tools to declared guide blocks");
+    const known = new Set(tools.map((tool) => tool.name));
+    for (const [tool, key] of Object.entries(toolBlocks)) {
+      if (!known.has(tool)) fail(name, `conventionToolBlocks names unknown tool ${tool}`);
+      if (typeof key !== "string" || !keys.includes(key))
+        fail(name, `conventionToolBlocks tool ${tool} needs one declared, unambiguous block key`);
+      blocks.set(tool, key);
+    }
+  }
   const api = [];
   const tail = [];
   {
@@ -132,11 +144,11 @@ export function renderConventions({ name, kind, kit, tools = [] }) {
     if (paged.length) {
       api.push(
         "- **Paging:** while `page.hasMore` is true, continue with `page.nextCursor` unchanged. " +
-          (cursors.length
-            ? `For ${names(cursors)}, pass it as the top-level \`cursor\`; omit raw paging anchors on continuations. `
+          (cursors.some((tool) => !blocks.has(tool.name))
+            ? `For ${names(cursors.filter((tool) => !blocks.has(tool.name)))}, pass it as the top-level \`cursor\`; omit raw paging anchors on continuations. `
             : "") +
-          (parameters.length
-            ? `For ${names(parameters)}, put it in \`query[page.param]\` or \`body[page.param]\`, as \`page.in\` specifies. `
+          (parameters.some((tool) => !blocks.has(tool.name))
+            ? `For ${names(parameters.filter((tool) => !blocks.has(tool.name)))}, put it in \`query[page.param]\` or \`body[page.param]\`, as \`page.in\` specifies. `
             : "") +
           "Keep the original method, path, filters, page size, fields and headers. " +
           (pageSize
@@ -145,6 +157,20 @@ export function renderConventions({ name, kind, kit, tools = [] }) {
           "The last page has no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation was withheld. " +
           "When approaching execute_code's per-program call limit, return page.nextCursor before the call that would exceed it and continue in the next program; don't restart.",
       );
+      for (const key of keys) {
+        const groupCursors = cursors.filter((tool) => blocks.get(tool.name) === key);
+        const groupParameters = parameters.filter((tool) => blocks.get(tool.name) === key);
+        if (!groupCursors.length && !groupParameters.length) continue;
+        const sentence = (
+          (groupCursors.length
+            ? `For ${names(groupCursors)}, pass \`page.nextCursor\` as the top-level \`cursor\`. `
+            : "") +
+          (groupParameters.length
+            ? `For ${names(groupParameters)}, use \`query[page.param]\` or \`body[page.param]\`, as \`page.in\` specifies.`
+            : "")
+        ).trimEnd();
+        api.push(`<!-- when: ${key} -->\n- **Paging:** ${sentence}\n<!-- end -->`);
+      }
     }
     api.push(
       "- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a " +

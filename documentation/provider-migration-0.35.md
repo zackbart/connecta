@@ -15,22 +15,26 @@ For hosted MCP removals, follow [Migrate hosted MCP presets](./hosted-mcp-migrat
 
 On Node, serve with `listen()` from `@zackbart/connecta/node` and install the
 exact `undici@6.29.1` peer. `listen()` installs the owned sender for every
-maintained-provider request, including reads, and for remote MCP writes.
-It connects directly, ignoring `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`
-and host proxy dispatchers. Only remote MCP reads retain native fetch and its
-proxy settings.
+maintained-provider request, including reads, remote MCP writes, and downstream
+OAuth token, registration and revocation POSTs. It connects directly by default
+or through an explicit HTTP(S) CONNECT `proxy` option on `listen()`. Ambient
+`NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY` and host proxy dispatchers do
+not configure the owned sender. Remote MCP reads and OAuth discovery GETs retain
+native fetch and need their own host proxy policy.
 
 A Node host serving `connecta.fetch` without `listen()` has no owned sender.
 Every maintained-provider write, every reviewed POST read and every remote MCP
-write is refused before sending; each worked in 0.34.1. For example, the reviewed
+write is refused before sending; each worked in 0.34.1. Downstream OAuth
+credential POSTs also require the owned sender. For example, the reviewed
 `vercel_api_read` POST to `/v1/registrar/domains/availability` requires `listen()`
 even on a read-only endpoint.
 
-Before upgrading a deployment that needs a proxy for maintained providers or
-remote MCP, arrange approved direct egress or use the Workers shape. Setting
-`readOnly` is a stopgap only for remote MCP connectors, not maintained providers.
-Explicit proxy configuration for the owned sender is follow-up work, not support
-shipped in 0.35.0. Follow [Node startup](./deploying.md#start-on-node) for setup.
+Before upgrading a deployment that needs a proxy, configure
+`listen(connecta, { port: 3000, proxy: "http://proxy.example.com:8080" })` for
+owned sends and retain the host's separate native-fetch proxy policy for reads
+and discovery. An uncertain OAuth refresh requires fresh authorization rather
+than replaying the spent token. Follow [Node startup](./deploying.md#start-on-node)
+for proxy credentials, TLS trust and startup requirements.
 
 ## Provider response media and path hardening
 
@@ -333,7 +337,7 @@ entries that name the old tools or arguments before upgrading.
 | Named-list `perPage`, `offset`                                | `limit`, then the returned opaque `cursor`                                                                                           |
 | Named-list noun keys                                          | `items` (including people, workflows, cards, notes, fields, serviceTypes, plans, teams, schedules, memberships, donations and funds) |
 | `page.nextOffset`                                             | `page.nextCursor`, present only when `hasMore` is true                                                                               |
-| `page.totalCount`                                             | Removed from named results for now; the hatch retains vendor `data.meta.total_count`                                                 |
+| `page.totalCount`                                             | Optional reliable `page.total` on named results and paged hatch reads; omitted when the vendor total is invalid or unavailable       |
 | `get_plan.plan`                                               | Projected plan properties at the top level, with `id` and `service_type_id`                                                          |
 | `itemsTruncated`, `teamMembersTruncated`                      | `truncated` contains `items[]` and/or `teamMembers[]`                                                                                |
 | `apply_workflow_card_action` result `{cardId,action,applied}` | `{ok:true}` on acknowledgement                                                                                                       |

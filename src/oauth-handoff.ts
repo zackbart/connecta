@@ -1,3 +1,6 @@
+import { upwardStep } from "./upward.js";
+import { authCall, authInvoke, authFlow, authStorage, registerAuth } from "./auth/native.js";
+import { runEdge } from "./runtime/run.js";
 import type { ServerOptions } from "./routes/shared.js";
 import { oauthConnectKeys } from "./storage/keys.js";
 
@@ -93,7 +96,7 @@ export function oauthConnectUnavailable(opts: Pick<ServerOptions, "config">): st
   return undefined;
 }
 
-export async function oauthConnectUrl(
+export function oauthConnectUrl(
   opts: ServerOptions,
   baseUrl: string,
   connectorId: string,
@@ -101,10 +104,34 @@ export async function oauthConnectUrl(
   force = false,
   opaque = false,
 ): Promise<string> {
-  return (await oauthConnectLink(opts, baseUrl, connectorId, principal, force, opaque)).url;
+  return runEdge(oauthConnectUrlNative(opts, baseUrl, connectorId, principal, force, opaque));
 }
+const oauthConnectUrlNative = /* @__PURE__ */ registerAuth(
+  oauthConnectUrl,
+  function (
+    opts: ServerOptions,
+    baseUrl: string,
+    connectorId: string,
+    principal: string | undefined,
+    force: boolean = false,
+    opaque: boolean = false,
+  ) {
+    return authFlow<string>(function* () {
+      return (yield* upwardStep(
+        authCall<{ url: string; nonce: string }>(oauthConnectLink, [
+          opts,
+          baseUrl,
+          connectorId,
+          principal,
+          force,
+          opaque,
+        ]),
+      )).url;
+    });
+  },
+);
 
-export async function oauthConnectLink(
+export function oauthConnectLink(
   opts: ServerOptions,
   baseUrl: string,
   connectorId: string,
@@ -113,145 +140,260 @@ export async function oauthConnectLink(
   opaque = false,
   after?: string,
 ): Promise<{ url: string; nonce: string }> {
-  const unavailable = oauthConnectUnavailable(opts);
-  if (unavailable) throw new Error(unavailable);
-  const connector = opts.registry.getConnector(connectorId);
-  if (!connector || !principal) throw new Error("OAuth connection requires an initiating user identity.");
-  const handoff: Handoff = {
-    connector: connectorId,
-    owner: connector.authScope === "personal" ? principal : "shared",
-    principal,
-    origin: new URL(baseUrl).origin,
-    expiresAt: Date.now() + HANDOFF_TTL_MS,
-    nonce: crypto.randomUUID(),
-    force,
-    ...(after ? { after } : {}),
-  };
-  const vault = opts.config.vault!;
-  if (opaque && (!vault.seal || !vault.open)) throw new Error("URL elicitation requires a sealing credential vault.");
-  const compact = encodeHandoff(handoff);
-  const payload = opaque
-    ? `v4.${encodeSegment(await vault.seal!(connectorId, "connecta:connect-link:v4", compact))}`
-    : `v3.${encodeSegment(compact)}`;
-  // Preserve the vault's entire signature and its representation, including
-  // custom vaults, while keeping every URL segment unpadded base64url.
-  const signature = encodeSegment(await vault.signOAuthHandoff!(payload));
-  const url = new URL(`/connect/${connectorId}`, baseUrl);
-  url.searchParams.set("h", `${payload}.${signature}`);
-  return { url: url.toString(), nonce: handoff.nonce };
+  return runEdge(oauthConnectLinkNative(opts, baseUrl, connectorId, principal, force, opaque, after));
 }
+const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
+  oauthConnectLink,
+  function (
+    opts: ServerOptions,
+    baseUrl: string,
+    connectorId: string,
+    principal: string | undefined,
+    force: boolean = false,
+    opaque: boolean = false,
+    after?: string,
+  ) {
+    return authFlow<{ url: string; nonce: string }>(function* () {
+      const unavailable = oauthConnectUnavailable(opts);
+      if (unavailable) throw new Error(unavailable);
+      const connector = opts.registry.getConnector(connectorId);
+      if (!connector || !principal) throw new Error("OAuth connection requires an initiating user identity.");
+      const handoff: Handoff = {
+        connector: connectorId,
+        owner: connector.authScope === "personal" ? principal : "shared",
+        principal,
+        origin: new URL(baseUrl).origin,
+        expiresAt: Date.now() + HANDOFF_TTL_MS,
+        nonce: crypto.randomUUID(),
+        force,
+        ...(after ? { after } : {}),
+      };
+      const vault = opts.config.vault!;
+      if (opaque && (!vault.seal || !vault.open))
+        throw new Error("URL elicitation requires a sealing credential vault.");
+      const compact = encodeHandoff(handoff);
+      const payload = opaque
+        ? `v4.${encodeSegment(yield* upwardStep(authInvoke<string>(vault, "seal", [connectorId, "connecta:connect-link:v4", compact])))}`
+        : `v3.${encodeSegment(compact)}`;
+      // Preserve the vault's entire signature and its representation, including
+      // custom vaults, while keeping every URL segment unpadded base64url.
+      const signature = encodeSegment(yield* upwardStep(authInvoke<string>(vault, "signOAuthHandoff", [payload])));
+      const url = new URL(`/connect/${connectorId}`, baseUrl);
+      url.searchParams.set("h", `${payload}.${signature}`);
+      return { url: url.toString(), nonce: handoff.nonce };
+    });
+  },
+);
 
 /** A claim precedes OAuth reset; only a completed start can prove recovery. */
-export async function oauthConnectLinkProgress(
+export function oauthConnectLinkProgress(
   opts: ServerOptions,
   baseUrl: string,
   id: string,
   nonce: string,
 ): Promise<"claimed" | "started" | "failed" | undefined> {
-  const stage = await opts.registry.contextFor(id, baseUrl).storage.get(oauthConnectKeys.used(nonce));
-  return stage === "used" ? "claimed" : stage === "started" || stage === "failed" ? stage : undefined;
+  return runEdge(oauthConnectLinkProgressNative(opts, baseUrl, id, nonce));
 }
+const oauthConnectLinkProgressNative = /* @__PURE__ */ registerAuth(
+  oauthConnectLinkProgress,
+  function (opts: ServerOptions, baseUrl: string, id: string, nonce: string) {
+    return authFlow<"claimed" | "started" | "failed" | undefined>(function* () {
+      const stage = yield* upwardStep(
+        authStorage<string | null>(opts.registry.contextFor(id, baseUrl).storage, "get", [
+          oauthConnectKeys.used(nonce),
+        ]),
+      );
+      return stage === "used" ? "claimed" : stage === "started" || stage === "failed" ? stage : undefined;
+    });
+  },
+);
 
 /** Make outstanding flow links single-use refusals before a completion check. */
-export async function closeOAuthConnectLinks(
+export function closeOAuthConnectLinks(
   opts: ServerOptions,
   baseUrl: string,
   id: string,
   nonces: string[],
 ): Promise<void> {
-  const storage = opts.registry.contextFor(id, baseUrl).storage;
-  for (const nonce of nonces) {
-    await storage.compareAndSet(oauthConnectKeys.used(nonce), null, "closed", { ttlSeconds: HANDOFF_TTL_MS / 1000 });
-  }
+  return runEdge(closeOAuthConnectLinksNative(opts, baseUrl, id, nonces));
 }
+const closeOAuthConnectLinksNative = /* @__PURE__ */ registerAuth(
+  closeOAuthConnectLinks,
+  function (opts: ServerOptions, baseUrl: string, id: string, nonces: string[]) {
+    return authFlow<void>(function* () {
+      const storage = opts.registry.contextFor(id, baseUrl).storage;
+      for (const nonce of nonces) {
+        yield* upwardStep(
+          authStorage<boolean>(storage, "compareAndSet", [
+            oauthConnectKeys.used(nonce),
+            null,
+            "closed",
+            { ttlSeconds: HANDOFF_TTL_MS / 1000 },
+          ]),
+        );
+      }
+    });
+  },
+);
 
 /** Consuming a round prevents replay from creating sibling retry lineages. */
-export async function claimAuthRetry(
-  opts: ServerOptions,
-  baseUrl: string,
-  id: string,
-  nonce: string,
-): Promise<boolean> {
-  return opts.registry
-    .contextFor(id, baseUrl)
-    .storage.compareAndSet(oauthConnectKeys.retry(nonce), null, "used", { ttlSeconds: HANDOFF_TTL_MS / 1000 });
+export function claimAuthRetry(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<boolean> {
+  return runEdge(claimAuthRetryNative(opts, baseUrl, id, nonce));
 }
+const claimAuthRetryNative = /* @__PURE__ */ registerAuth(
+  claimAuthRetry,
+  function (opts: ServerOptions, baseUrl: string, id: string, nonce: string) {
+    return authFlow<boolean>(function* () {
+      return yield* upwardStep(
+        authStorage<boolean>(opts.registry.contextFor(id, baseUrl).storage, "compareAndSet", [
+          oauthConnectKeys.retry(nonce),
+          null,
+          "used",
+          { ttlSeconds: HANDOFF_TTL_MS / 1000 },
+        ]),
+      );
+    });
+  },
+);
 
-export async function verifyOAuthHandoff(
+export function verifyOAuthHandoff(
   opts: ServerOptions,
   baseUrl: string,
   connectorId: string,
   token: string | null,
 ): Promise<Handoff | null> {
-  if (!token || token.length > 4096) return null;
-  try {
-    const parts = token.split(".");
-    let h: Handoff;
-    if (parts.length === 3 && (parts[0] === "v3" || parts[0] === "v4")) {
-      const [version, body, signature] = parts;
-      const payload = `${version}.${body}`;
-      if (!(await opts.config.vault?.verifyOAuthHandoff?.(payload, decodeSegment(signature!)))) return null;
-      const decoded = decodeSegment(body!);
-      h = decodeHandoff(
-        version === "v4" ? await opts.config.vault!.open!(connectorId, "connecta:connect-link:v4", decoded) : decoded,
-      );
-    } else {
-      // Keep pre-upgrade JSON and sealed v2 links until their original expiry.
-      // Authenticate their exact original text; never normalize before verifying.
-      const [payload, signature, ...rest] = parts;
-      if (!payload || !signature || rest.length) return null;
-      if (!(await opts.config.vault?.verifyOAuthHandoff?.(payload, signature))) return null;
-      h = JSON.parse(
-        payload.startsWith("v2:")
-          ? await opts.config.vault!.open!(connectorId, "connecta:connect-link:v2", atob(payload.slice(3)))
-          : atob(payload),
-      );
-    }
-    const connector = opts.registry.getConnector(connectorId);
-    if (
-      !connector ||
-      h.connector !== connectorId ||
-      typeof h.principal !== "string" ||
-      !h.principal ||
-      h.owner !== (connector.authScope === "personal" ? h.principal : "shared") ||
-      h.origin !== new URL(baseUrl).origin ||
-      !Number.isSafeInteger(h.expiresAt) ||
-      h.expiresAt <= Date.now() ||
-      h.expiresAt > Date.now() + HANDOFF_TTL_MS ||
-      typeof h.nonce !== "string" ||
-      !h.nonce ||
-      typeof h.force !== "boolean"
-    )
-      return null;
-    if (
-      h.after !== undefined &&
-      (typeof h.after !== "string" || !/^[a-f0-9-]{36}$/.test(h.after) || h.after === h.nonce || h.force)
-    )
-      return null;
-    if (await opts.registry.contextFor(connectorId, baseUrl).storage.get(oauthConnectKeys.used(h.nonce))) return null;
-    return h;
-  } catch {
-    return null;
-  }
+  return runEdge(verifyOAuthHandoffNative(opts, baseUrl, connectorId, token));
 }
+const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
+  verifyOAuthHandoff,
+  function (opts: ServerOptions, baseUrl: string, connectorId: string, token: string | null) {
+    return authFlow<Handoff | null>(function* () {
+      if (!token || token.length > 4096) return null;
+      try {
+        const parts = token.split(".");
+        let h: Handoff;
+        if (parts.length === 3 && (parts[0] === "v3" || parts[0] === "v4")) {
+          const [version, body, signature] = parts;
+          const payload = `${version}.${body}`;
+          if (
+            !(yield* upwardStep(
+              authInvoke<boolean | undefined>(opts.config.vault, "verifyOAuthHandoff", [
+                payload,
+                decodeSegment(signature!),
+              ]),
+            ))
+          )
+            return null;
+          const decoded = decodeSegment(body!);
+          h = decodeHandoff(
+            version === "v4"
+              ? yield* upwardStep(
+                  authInvoke<string>(opts.config.vault!, "open", [connectorId, "connecta:connect-link:v4", decoded]),
+                )
+              : decoded,
+          );
+        } else {
+          // Keep pre-upgrade JSON and sealed v2 links until their original expiry.
+          // Authenticate their exact original text; never normalize before verifying.
+          const [payload, signature, ...rest] = parts;
+          if (!payload || !signature || rest.length) return null;
+          if (
+            !(yield* upwardStep(
+              authInvoke<boolean | undefined>(opts.config.vault, "verifyOAuthHandoff", [payload, signature]),
+            ))
+          )
+            return null;
+          h = JSON.parse(
+            payload.startsWith("v2:")
+              ? yield* upwardStep(
+                  authInvoke<string>(opts.config.vault!, "open", [
+                    connectorId,
+                    "connecta:connect-link:v2",
+                    atob(payload.slice(3)),
+                  ]),
+                )
+              : atob(payload),
+          );
+        }
+        const connector = opts.registry.getConnector(connectorId);
+        if (
+          !connector ||
+          h.connector !== connectorId ||
+          typeof h.principal !== "string" ||
+          !h.principal ||
+          h.owner !== (connector.authScope === "personal" ? h.principal : "shared") ||
+          h.origin !== new URL(baseUrl).origin ||
+          !Number.isSafeInteger(h.expiresAt) ||
+          h.expiresAt <= Date.now() ||
+          h.expiresAt > Date.now() + HANDOFF_TTL_MS ||
+          typeof h.nonce !== "string" ||
+          !h.nonce ||
+          typeof h.force !== "boolean"
+        )
+          return null;
+        if (
+          h.after !== undefined &&
+          (typeof h.after !== "string" || !/^[a-f0-9-]{36}$/.test(h.after) || h.after === h.nonce || h.force)
+        )
+          return null;
+        if (
+          yield* upwardStep(
+            authStorage<string | null>(opts.registry.contextFor(connectorId, baseUrl).storage, "get", [
+              oauthConnectKeys.used(h.nonce),
+            ]),
+          )
+        )
+          return null;
+        return h;
+      } catch {
+        return null;
+      }
+    });
+  },
+);
 
 /** Claim only after browser identity and permissions pass, before starting OAuth. */
-export async function consumeOAuthConnectLink(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
-  if (handoff.expiresAt <= Date.now()) return false;
-  const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
-  if (handoff.after && (await storage.get(oauthConnectKeys.used(handoff.after))) !== "started") return false;
-  const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
-  return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), null, "used", expiry);
+export function consumeOAuthConnectLink(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
+  return runEdge(consumeOAuthConnectLinkNative(opts, handoff));
 }
+const consumeOAuthConnectLinkNative = /* @__PURE__ */ registerAuth(
+  consumeOAuthConnectLink,
+  function (opts: ServerOptions, handoff: Handoff) {
+    return authFlow<boolean>(function* () {
+      if (handoff.expiresAt <= Date.now()) return false;
+      const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
+      if (
+        handoff.after &&
+        (yield* upwardStep(authStorage<string | null>(storage, "get", [oauthConnectKeys.used(handoff.after)]))) !==
+          "started"
+      )
+        return false;
+      const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
+      return yield* upwardStep(
+        authStorage<boolean>(storage, "compareAndSet", [oauthConnectKeys.used(handoff.nonce), null, "used", expiry]),
+      );
+    });
+  },
+);
 
 /** Terminal marker only after the start and every tracked reset have settled. */
-export async function finishOAuthConnectStart(
+export function finishOAuthConnectStart(
   opts: ServerOptions,
   handoff: Handoff,
   outcome: "started" | "failed",
 ): Promise<boolean> {
-  if (handoff.expiresAt <= Date.now()) return false;
-  const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
-  const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
-  return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), "used", outcome, expiry);
+  return runEdge(finishOAuthConnectStartNative(opts, handoff, outcome));
 }
+const finishOAuthConnectStartNative = /* @__PURE__ */ registerAuth(
+  finishOAuthConnectStart,
+  function (opts: ServerOptions, handoff: Handoff, outcome: "started" | "failed") {
+    return authFlow<boolean>(function* () {
+      if (handoff.expiresAt <= Date.now()) return false;
+      const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
+      const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
+      return yield* upwardStep(
+        authStorage<boolean>(storage, "compareAndSet", [oauthConnectKeys.used(handoff.nonce), "used", outcome, expiry]),
+      );
+    });
+  },
+);

@@ -1,7 +1,23 @@
+import { detach, runEdge } from "./runtime/run.js";
+import { Deferred, Effect } from "effect";
+import {
+  authFlow,
+  authCall,
+  authInvoke,
+  authValue,
+  authMethod,
+  authProgram,
+  registerAuth,
+  authStorage,
+  authMap,
+  authAwait,
+} from "./auth/native.js";
 // The SDK owns aggregation and freshness. This adapter stores only complete,
 // intake-redacted catalog successes in the deployment's SQL-backed KV.
 import type {
   CacheKey,
+  CacheEntry,
+  StandardSchemaV1,
   ClientOptions,
   ListToolsResult,
   ListResourcesResult,
@@ -12,14 +28,15 @@ import { MAX_CACHE_TTL_MS, specTypeSchemas } from "@modelcontextprotocol/client"
 import { callerOf } from "./connector-caller.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Context } from "effect";
-import { serviceFor, setViewService } from "./runtime/call.js";
+import { RequestScope } from "./runtime/request-scope.js";
+import { serviceFor, setViewService, viewServices } from "./runtime/call.js";
 import { ConnectorCallError } from "./errors.js";
 import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
 import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { responseCacheKeys } from "./storage/keys.js";
-import type { ConnectorContext, KVStorage, ToolDef } from "./types.js";
+import type { ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } from "./types.js";
 
 interface CatalogCacheSettings {
   storage: KVStorage;
@@ -53,134 +70,284 @@ interface RefreshManifest {
   fingerprint: string;
 }
 /** Publish one accepted catalog refresh, with its partitioned drift baseline. */
-export async function observeCompletedCatalogRefresh(
-  ctx: ConnectorContext,
-  refresh: CompletedCatalogRefresh,
-): Promise<void> {
-  await serviceFor(ctx, CatalogPolicy)?.onCompletedCatalogRefresh?.(refresh, ctx);
+export function observeCompletedCatalogRefresh(ctx: ConnectorContext, refresh: CompletedCatalogRefresh): Promise<void> {
+  return runEdge(authProgram<void>(observeCompletedCatalogRefreshNative, [ctx, refresh]));
 }
+const observeCompletedCatalogRefreshNative = /* @__PURE__ */ registerAuth(
+  observeCompletedCatalogRefresh,
+  (ctx: ConnectorContext, refresh: CompletedCatalogRefresh) =>
+    authFlow<void>(function* () {
+      (yield authValue(() => serviceFor(ctx, CatalogPolicy)?.onCompletedCatalogRefresh?.(refresh, ctx))) as
+        | void
+        | undefined;
+    }),
+);
 /** Hash-only facts preserve change counts without storing tool names or schemas. */
-async function catalogFingerprints(tools: readonly { name: string }[]): Promise<CatalogToolFingerprint[]> {
-  const facts: CatalogToolFingerprint[] = [];
-  for (let offset = 0; offset < tools.length; offset += 128) {
-    facts.push(
-      ...(await Promise.all(
-        tools.slice(offset, offset + 128).map(async (tool) => ({
-          name: (await fingerprintSerializedCatalog(tool.name)).fingerprint,
-          fact: (await fingerprintSerializedCatalog(JSON.stringify(tool))).fingerprint,
-        })),
-      )),
-    );
-  }
-  return facts;
+function catalogFingerprints(
+  tools: readonly {
+    name: string;
+  }[],
+): Promise<CatalogToolFingerprint[]> {
+  return runEdge(authProgram<CatalogToolFingerprint[]>(catalogFingerprintsNative, [tools]));
 }
-async function refreshBaseline(
+const catalogFingerprintsNative = /* @__PURE__ */ registerAuth(
+  catalogFingerprints,
+  (
+    tools: readonly {
+      name: string;
+    }[],
+  ) =>
+    authFlow<CatalogToolFingerprint[]>(function* () {
+      const facts: CatalogToolFingerprint[] = [];
+      for (let offset = 0; offset < tools.length; offset += 128) {
+        facts.push(
+          ...((yield authMap(
+            tools.slice(offset, offset + 128),
+            (value) =>
+              authCall(
+                authMethod((tool: { name: string }) =>
+                  authFlow<{
+                    name: string;
+                    fact: string;
+                  }>(function* () {
+                    return {
+                      name: (
+                        (yield authCall(fingerprintSerializedCatalog, [tool.name])) as {
+                          fingerprint: string;
+                          byteLength: number;
+                        }
+                      ).fingerprint,
+                      fact: (
+                        (yield authCall(fingerprintSerializedCatalog, [JSON.stringify(tool)])) as {
+                          fingerprint: string;
+                          byteLength: number;
+                        }
+                      ).fingerprint,
+                    };
+                  }),
+                ),
+                [value],
+              ),
+            false,
+          )) as {
+            name: string;
+            fact: string;
+          }[]),
+        );
+      }
+      return facts;
+    }),
+);
+function refreshBaseline(
   storage: KVStorage,
   key: string,
   raw: string | null,
   io: CacheOperation["io"],
 ): Promise<RefreshBaseline | undefined> {
-  if (!raw) return;
-  try {
-    const value = JSON.parse(raw) as RefreshManifest;
-    const hash = (v: unknown) => typeof v === "string" && /^sha256:[0-9]+:[0-9a-f]{64}$/.test(v);
-    if (
-      !hash(value.digest) ||
-      !hash(value.fingerprint) ||
-      !/^[0-9a-f-]{36}$/.test(value.revision) ||
-      !Number.isInteger(value.chunkCount) ||
-      value.chunkCount < 1 ||
-      value.chunkCount > Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES)
-    )
-      return;
-    const chunks: string[] = [];
-    for (let index = 0; index < value.chunkCount; index++) {
-      const chunk = await io(() => storage.get(responseCacheKeys.chunk(key, value.revision, index)));
-      if (chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES) return;
-      chunks.push(chunk);
-    }
-    const serialized = chunks.join("");
-    if ((await fingerprintSerializedCatalog(serialized)).fingerprint !== value.fingerprint) return;
-    const tools = JSON.parse(serialized) as CatalogToolFingerprint[];
-    if (
-      Array.isArray(tools) &&
-      tools.length <= MAX_CATALOG_TOOLS &&
-      tools.every((tool) => tool && hash(tool.name) && hash(tool.fact))
-    )
-      return { digest: value.digest, tools };
-  } catch {
-    /* Retired or torn baselines establish a new count baseline. */
-  }
+  return runEdge(authProgram<RefreshBaseline | undefined>(refreshBaselineNative, [storage, key, raw, io]));
 }
-async function acceptCatalogRefresh(
+const refreshBaselineNative = /* @__PURE__ */ registerAuth(
+  refreshBaseline,
+  (storage: KVStorage, key: string, raw: string | null, io: CacheOperation["io"]) =>
+    authFlow<RefreshBaseline | undefined>(function* () {
+      if (!raw) return;
+      try {
+        const value = JSON.parse(raw) as RefreshManifest;
+        const hash = (v: unknown) => typeof v === "string" && /^sha256:[0-9]+:[0-9a-f]{64}$/.test(v);
+        if (
+          !hash(value.digest) ||
+          !hash(value.fingerprint) ||
+          !/^[0-9a-f-]{36}$/.test(value.revision) ||
+          !Number.isInteger(value.chunkCount) ||
+          value.chunkCount < 1 ||
+          value.chunkCount > Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES)
+        )
+          return;
+        const chunks: string[] = [];
+        for (let index = 0; index < value.chunkCount; index++) {
+          const chunk = (yield authCall(io, [
+            authMethod(
+              () =>
+                authStorage(storage, "get", [responseCacheKeys.chunk(key, value.revision, index)]) as Effect.Effect<
+                  string | null,
+                  unknown
+                >,
+            ),
+          ])) as string | null;
+          if (chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES) return;
+          chunks.push(chunk);
+        }
+        const serialized = chunks.join("");
+        if (
+          (
+            (yield authCall(fingerprintSerializedCatalog, [serialized])) as {
+              fingerprint: string;
+              byteLength: number;
+            }
+          ).fingerprint !== value.fingerprint
+        )
+          return;
+        const tools = JSON.parse(serialized) as CatalogToolFingerprint[];
+        if (
+          Array.isArray(tools) &&
+          tools.length <= MAX_CATALOG_TOOLS &&
+          tools.every((tool: CatalogToolFingerprint) => tool && hash(tool.name) && hash(tool.fact))
+        )
+          return { digest: value.digest, tools };
+      } catch {}
+    }),
+);
+function acceptCatalogRefresh(
   storage: KVStorage,
   key: string,
   connectorId: string,
   digest: string,
-  tools: readonly { name: string }[],
+  tools: readonly {
+    name: string;
+  }[],
   privateCatalog: boolean,
   current: () => Promise<boolean>,
   io: CacheOperation["io"],
 ): Promise<CompletedCatalogRefresh | undefined> {
-  const next = await catalogFingerprints(tools);
-  const serialized = JSON.stringify(next);
-  const revision = crypto.randomUUID();
-  const fingerprint = (await fingerprintSerializedCatalog(serialized)).fingerprint;
-  // Fingerprints are ASCII. Chunk them under the same platform value ceiling
-  // as catalogs, then publish their manifest in one compare-and-set.
-  const chunkCount = Math.ceil(serialized.length / MAX_CATALOG_CHUNK_BYTES);
-  for (let index = 0; index < chunkCount; index++) {
-    if (!(await current())) return;
-    const chunk = serialized.slice(index * MAX_CATALOG_CHUNK_BYTES, (index + 1) * MAX_CATALOG_CHUNK_BYTES);
-    await io(() =>
-      storage.set(responseCacheKeys.chunk(key, revision, index), chunk, { ttlSeconds: GENERATION_TTL_SECONDS + 300 }),
-    );
-  }
-  const manifest: RefreshManifest = { digest, revision, chunkCount, fingerprint };
-  for (let attempt = 0; attempt < 16; attempt++) {
-    if (!(await current())) return;
-    const raw = await io(() => storage.get(key));
-    const previous = await refreshBaseline(storage, key, raw, io);
-    if (!(await current())) return;
-    const published = await io(() =>
-      storage.compareAndSet(key, raw, JSON.stringify(manifest), { ttlSeconds: GENERATION_TTL_SECONDS }),
-    );
-    if (!(await current())) return;
-    if (published)
-      return {
-        connectorId,
-        digest,
-        next,
-        private: privateCatalog,
-        ...(previous ? { previousDigest: previous.digest, previous: previous.tools } : {}),
-      };
-  }
-  throw new Error("Catalog refresh baseline is busy.");
+  return runEdge(
+    authProgram<CompletedCatalogRefresh | undefined>(acceptCatalogRefreshNative, [
+      storage,
+      key,
+      connectorId,
+      digest,
+      tools,
+      privateCatalog,
+      current,
+      io,
+    ]),
+  );
 }
+const acceptCatalogRefreshNative = /* @__PURE__ */ registerAuth(
+  acceptCatalogRefresh,
+  (
+    storage: KVStorage,
+    key: string,
+    connectorId: string,
+    digest: string,
+    tools: readonly {
+      name: string;
+    }[],
+    privateCatalog: boolean,
+    current: () => Promise<boolean>,
+    io: CacheOperation["io"],
+  ) =>
+    authFlow<CompletedCatalogRefresh | undefined>(function* () {
+      const next = (yield authCall(catalogFingerprints, [tools])) as CatalogToolFingerprint[];
+      const serialized = JSON.stringify(next);
+      const revision = crypto.randomUUID();
+      const fingerprint = (
+        (yield authCall(fingerprintSerializedCatalog, [serialized])) as {
+          fingerprint: string;
+          byteLength: number;
+        }
+      ).fingerprint;
+      const chunkCount = Math.ceil(serialized.length / MAX_CATALOG_CHUNK_BYTES);
+      for (let index = 0; index < chunkCount; index++) {
+        if (!((yield authCall(current, [])) as boolean)) return;
+        const chunk = serialized.slice(index * MAX_CATALOG_CHUNK_BYTES, (index + 1) * MAX_CATALOG_CHUNK_BYTES);
+        (yield authCall(io, [
+          authMethod(
+            () =>
+              authStorage(storage, "set", [
+                responseCacheKeys.chunk(key, revision, index),
+                chunk,
+                { ttlSeconds: GENERATION_TTL_SECONDS + 300 },
+              ]) as Effect.Effect<void, unknown>,
+          ),
+        ])) as void;
+      }
+      const manifest: RefreshManifest = { digest, revision, chunkCount, fingerprint };
+      for (let attempt = 0; attempt < 16; attempt++) {
+        if (!((yield authCall(current, [])) as boolean)) return;
+        const raw = (yield authCall(io, [
+          authMethod(() => authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>),
+        ])) as string | null;
+        const previous = (yield authCall(refreshBaseline, [storage, key, raw, io])) as RefreshBaseline | undefined;
+        if (!((yield authCall(current, [])) as boolean)) return;
+        const published = (yield authCall(io, [
+          authMethod(
+            () =>
+              authStorage(storage, "compareAndSet", [
+                key,
+                raw,
+                JSON.stringify(manifest),
+                { ttlSeconds: GENERATION_TTL_SECONDS },
+              ]) as Effect.Effect<boolean, unknown>,
+          ),
+        ])) as boolean;
+        if (!((yield authCall(current, [])) as boolean)) return;
+        if (published)
+          return {
+            connectorId,
+            digest,
+            next,
+            private: privateCatalog,
+            ...(previous ? { previousDigest: previous.digest, previous: previous.tools } : {}),
+          };
+      }
+      throw new Error("Catalog refresh baseline is busy.");
+    }),
+);
 /** Custom dynamic connectors have no SDK cache; publish their complete intake here. */
-export async function observeUncachedCatalogRefresh(
+export function observeUncachedCatalogRefresh(
   ctx: ConnectorContext,
   connectorId: string,
-  tools: readonly { name: string }[],
+  tools: readonly {
+    name: string;
+  }[],
 ): Promise<void> {
-  const policy = serviceFor(ctx, CatalogPolicy);
-  if (!policy?.onCompletedCatalogRefresh) return;
-  const config = (await fingerprintSerializedCatalog("custom-connector")).fingerprint;
-  const partition = (await fingerprintSerializedCatalog(JSON.stringify([policy.partition, ctx.baseUrl, ctx.publicUrl])))
-    .fingerprint;
-  const digest = (await fingerprintSerializedCatalog(JSON.stringify(tools))).fingerprint;
-  const refresh = await acceptCatalogRefresh(
-    policy.storage,
-    responseCacheKeys.refreshDigest(connectorId, config, partition),
-    connectorId,
-    digest,
-    tools,
-    true,
-    async () => !ctx.signal?.aborted,
-    (read) => read(),
-  );
-  if (refresh) await observeCompletedCatalogRefresh(ctx, refresh);
+  return runEdge(authProgram<void>(observeUncachedCatalogRefreshNative, [ctx, connectorId, tools]));
 }
+const observeUncachedCatalogRefreshNative = /* @__PURE__ */ registerAuth(
+  observeUncachedCatalogRefresh,
+  (
+    ctx: ConnectorContext,
+    connectorId: string,
+    tools: readonly {
+      name: string;
+    }[],
+  ) =>
+    authFlow<void>(function* () {
+      const policy = serviceFor(ctx, CatalogPolicy);
+      if (!policy?.onCompletedCatalogRefresh) return;
+      const config = (
+        (yield authCall(fingerprintSerializedCatalog, ["custom-connector"])) as {
+          fingerprint: string;
+          byteLength: number;
+        }
+      ).fingerprint;
+      const partition = (
+        (yield authCall(fingerprintSerializedCatalog, [
+          JSON.stringify([policy.partition, ctx.baseUrl, ctx.publicUrl]),
+        ])) as {
+          fingerprint: string;
+          byteLength: number;
+        }
+      ).fingerprint;
+      const digest = (
+        (yield authCall(fingerprintSerializedCatalog, [JSON.stringify(tools)])) as {
+          fingerprint: string;
+          byteLength: number;
+        }
+      ).fingerprint;
+      const refresh = (yield authCall(acceptCatalogRefresh, [
+        policy.storage,
+        responseCacheKeys.refreshDigest(connectorId, config, partition),
+        connectorId,
+        digest,
+        tools,
+        true,
+        authMethod(() => Effect.sync(() => !ctx.signal?.aborted)),
+        authMethod(<T>(read: () => Promise<T>) => authCall(read, []) as Effect.Effect<T, unknown>),
+      ])) as CompletedCatalogRefresh | undefined;
+      if (refresh) (yield authCall(observeCompletedCatalogRefresh, [ctx, refresh])) as void;
+    }),
+);
 export type CatalogMethod = "tools/list" | "resources/list" | "resources/templates/list";
 export type CatalogResult = ListToolsResult | ListResourcesResult | ListResourceTemplatesResult;
 export function catalogItems(method: CatalogMethod, result: CatalogResult) {
@@ -249,12 +416,13 @@ export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSet
 interface CacheScope {
   closed: boolean;
   abort: AbortController;
-  invalidating?: Promise<void>;
+  invalidating?: Deferred.Deferred<void, unknown>;
 }
 const defaultOwner = {};
 const scopes = new WeakMap<object, Map<string, WeakMap<object, CacheScope>>>();
 function cacheScope(ctx: ConnectorContext, connectorId: string, owner = defaultOwner): CacheScope {
-  const key = ctx.requestScope ?? ctx;
+  const request = Context.get(viewServices(ctx), RequestScope);
+  const key = request;
   let connectors = scopes.get(key);
   if (!connectors) {
     connectors = new Map();
@@ -269,6 +437,11 @@ function cacheScope(ctx: ConnectorContext, connectorId: string, owner = defaultO
   if (!scope) {
     scope = { closed: false, abort: new AbortController() };
     owners.set(owner, scope);
+    const owned = scope;
+    request.own(() => {
+      owned.closed = true;
+      owned.abort.abort();
+    });
   }
   return scope;
 }
@@ -281,12 +454,28 @@ export function observeCatalogChange(
 ): void {
   const scope = cacheScope(ctx, connectorId, owner);
   if (scope.closed || connectionSignal?.aborted) return;
-  const writing = invalidateCatalogCache(serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage, connectorId).catch(
-    (error) => {
-      logFailure(ctx.logger, "catalog invalidation failed", failureRecord({ connector: connectorId }, error));
-    },
+  const previous = scope.invalidating;
+  const settled = Deferred.makeUnsafe<void, unknown>();
+  scope.invalidating = settled;
+  const writing = authCall<void>(invalidateCatalogCache, [
+    serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage,
+    connectorId,
+  ]).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() =>
+        logFailure(ctx.logger, "catalog invalidation failed", failureRecord({ connector: connectorId }, error)),
+      ),
+    ),
   );
-  scope.invalidating = scope.invalidating ? Promise.all([scope.invalidating, writing]).then(() => {}) : writing;
+  // Start the fence in this SDK callback's request, and retain only its native
+  // settlement for teardown. Concurrent notifications still begin immediately.
+  detach(
+    Effect.all([previous ? Deferred.await(previous) : Effect.void, writing], { concurrency: "unbounded" }).pipe(
+      Effect.asVoid,
+      Effect.provideService(RequestScope, Context.get(viewServices(ctx), RequestScope)),
+      Effect.onExit((exit) => Deferred.done(settled, exit)),
+    ),
+  );
 }
 export function closeCatalogCacheScope(
   ctx: ConnectorContext,
@@ -296,7 +485,7 @@ export function closeCatalogCacheScope(
   const scope = cacheScope(ctx, connectorId, owner);
   scope.closed = true;
   scope.abort.abort();
-  return scope.invalidating;
+  return scope.invalidating ? runEdge(Deferred.await(scope.invalidating)) : undefined;
 }
 
 /** Zero is an explicit refusal to reuse. Positive hints use the configured bounds. */
@@ -395,11 +584,22 @@ function catalogCeiling(): ConnectorCallError {
 }
 
 const GENERATION_TTL_SECONDS = (MAX_CACHE_TTL_MS * 2) / 1000;
-export async function invalidateCatalogCache(storage: KVStorage, connectorId: string): Promise<void> {
-  await storage.set(responseCacheKeys.generation(connectorId), crypto.randomUUID(), {
-    ttlSeconds: GENERATION_TTL_SECONDS,
-  });
+export function invalidateCatalogCache(storage: KVStorage, connectorId: string): Promise<void> {
+  return runEdge(authProgram<void>(invalidateCatalogCacheNative, [storage, connectorId]));
 }
+const invalidateCatalogCacheNative = /* @__PURE__ */ registerAuth(
+  invalidateCatalogCache,
+  (storage: KVStorage, connectorId: string) =>
+    authFlow<void>(function* () {
+      (yield authStorage(storage, "set", [
+        responseCacheKeys.generation(connectorId),
+        crypto.randomUUID(),
+        {
+          ttlSeconds: GENERATION_TTL_SECONDS,
+        },
+      ])) as void;
+    }),
+);
 interface Manifest {
   stamp: number;
   expiresAt: number;
@@ -426,7 +626,7 @@ interface CacheOperation {
 }
 
 /** Keys ignore self-reported serverInfo and bind the configured connector instead. */
-export async function catalogClientOptions(
+export function catalogClientOptions(
   ctx: ConnectorContext,
   connectorId: string,
   config: string,
@@ -441,487 +641,708 @@ export async function catalogClientOptions(
       ctx: ConnectorContext,
       method: CatalogMethod,
       result: CatalogResult,
-    ) => CatalogResult & { ttlMs: number; cacheScope: "public" | "private" };
+    ) => CatalogResult & {
+      ttlMs: number;
+      cacheScope: "public" | "private";
+    };
     completeCatalogRefresh: (result: ListToolsResult) => Promise<CompletedCatalogRefresh | undefined>;
     withListing: <T>(ctx: ConnectorContext, read: () => Promise<T>) => Promise<T>;
     currentContext: () => ConnectorContext;
     fallbackTools: () => Promise<ListToolsResult | undefined>;
   }
 > {
-  const policy = serviceFor(ctx, CatalogPolicy);
-  const partition = JSON.stringify([
-    policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
-    ctx.baseUrl,
-    ctx.publicUrl,
-    authPartition,
-  ]);
-  const sharedPartition = JSON.stringify([
-    "host-shared",
-    policy?.sharedPartition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)?.pool]),
-    authPartition,
-  ]);
-  const storage = policy?.storage ?? ctx.storage;
-  const configHash = (
-    await fingerprintSerializedCatalog(
-      JSON.stringify([
-        config,
-        policy?.defaultTtlMs ?? 300_000,
-        policy?.minTtlMs ?? 0,
-        policy?.maxTtlMs ?? MAX_CACHE_TTL_MS,
-      ]),
-    )
-  ).fingerprint;
-  const scope = cacheScope(ctx, connectorId, owner);
-  let unavailable = false;
-  const connectionGeneration: Listing["generation"] = {};
-  let active: Listing | undefined;
-  // ResponseCacheStore has no per-call options. A method snapshots its binding
-  // before any await; an abandoned storage promise never adopts a later listing.
-  const capture = (listing = active): CacheOperation => {
-    const signals = [scope.abort.signal, connectionSignal, listing?.ctx.signal].filter(
-      (signal): signal is AbortSignal => signal !== undefined,
-    );
-    const ended = () => scope.closed || listing?.ended === true || signals.some((signal) => signal.aborted);
-    const reason = () =>
-      signals.find((signal) => signal.aborted)?.reason ??
-      new ConnectorCallError("connector_call_failed", "Catalog cache operation ended.");
-    return {
-      ctx: listing?.ctx ?? ctx,
-      generation: listing?.generation ?? { ...connectionGeneration },
-      credentialIdentity: listing?.credentialIdentity,
-      listing,
-      stopped: () => unavailable || ended(),
-      io: (read) =>
-        new Promise((resolve, reject) => {
-          const cleanup = () => {
-            for (const signal of signals) signal.removeEventListener("abort", abort);
-          };
-          const abort = () => {
-            cleanup();
-            reject(reason());
-          };
-          if (ended()) {
-            abort();
-            return;
+  return runEdge(
+    authProgram<Awaited<ReturnType<typeof catalogClientOptions>>>(catalogClientOptionsNative, [
+      ctx,
+      connectorId,
+      config,
+      authPartition,
+      connectionSignal,
+      owner,
+      sharing,
+      resolveCredentialIdentity,
+    ]),
+  );
+}
+const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
+  catalogClientOptions,
+  (
+    ctx: ConnectorContext,
+    connectorId: string,
+    config: string,
+    authPartition: string,
+    connectionSignal?: AbortSignal,
+    owner?: object,
+    sharing: "private" | "shared" = "private",
+    resolveCredentialIdentity?: () => Promise<string>,
+  ) =>
+    authFlow<Awaited<ReturnType<typeof catalogClientOptions>>>(function* () {
+      const request = Context.get(viewServices(ctx), RequestScope);
+      // SDK callbacks start at their own Promise edge. Reprovide only their
+      // canonical request owner, never the initiating call's live services.
+      const cacheMethod = <Args extends unknown[], A>(program: (...args: Args) => Effect.Effect<A, unknown>) =>
+        authMethod((...args: Args) => program(...args).pipe(Effect.provideService(RequestScope, request)));
+      const policy = serviceFor(ctx, CatalogPolicy);
+      const partition = JSON.stringify([
+        policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
+        ctx.baseUrl,
+        ctx.publicUrl,
+        authPartition,
+      ]);
+      const sharedPartition = JSON.stringify([
+        "host-shared",
+        policy?.sharedPartition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)?.pool]),
+        authPartition,
+      ]);
+      const storage = policy?.storage ?? ctx.storage;
+      const configHash = (
+        (yield authCall(fingerprintSerializedCatalog, [
+          JSON.stringify([
+            config,
+            policy?.defaultTtlMs ?? 300000,
+            policy?.minTtlMs ?? 0,
+            policy?.maxTtlMs ?? MAX_CACHE_TTL_MS,
+          ]),
+        ])) as {
+          fingerprint: string;
+          byteLength: number;
+        }
+      ).fingerprint;
+      const scope = cacheScope(ctx, connectorId, owner);
+      let unavailable = false;
+      const connectionGeneration: Listing["generation"] = {};
+      let active: Listing | undefined;
+      const capture = (listing: Listing | undefined = active): CacheOperation => {
+        const signals = [scope.abort.signal, connectionSignal, listing?.ctx.signal].filter(
+          (signal): signal is AbortSignal => signal !== undefined,
+        );
+        const ended = () => scope.closed || listing?.ended === true || signals.some((signal) => signal.aborted);
+        const reason = () =>
+          signals.find((signal) => signal.aborted)?.reason ??
+          new ConnectorCallError("connector_call_failed", "Catalog cache operation ended.");
+        return {
+          ctx: listing?.ctx ?? ctx,
+          generation: listing?.generation ?? { ...connectionGeneration },
+          credentialIdentity: listing?.credentialIdentity,
+          listing,
+          stopped: () => unavailable || ended(),
+          io: cacheMethod(<T>(read: () => Promise<T>) =>
+            authFlow<T>(function* () {
+              if (ended()) throw reason();
+              return yield authAwait(authCall<T>(read, []), AbortSignal.any(signals));
+            }),
+          ),
+        };
+      };
+      let lastStamp = 0;
+      let staleTools:
+        | {
+            result: ListToolsResult;
+            manifest: Manifest;
           }
-          for (const signal of signals) signal.addEventListener("abort", abort, { once: true });
-          // Storage cannot cancel dispatched I/O. Stop waiting, but attach both
-          // outcomes so its eventual completion cannot continue cache publication.
+        | undefined;
+      const currentGeneration = cacheMethod(({ stopped, io, generation }: CacheOperation) =>
+        authFlow<string | undefined>(function* () {
+          const key = responseCacheKeys.generation(connectorId);
+          for (let attempt = 0; attempt < 16; attempt++) {
+            if (stopped()) return undefined;
+            const current = (yield authCall(io, [
+              cacheMethod(() => authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>),
+            ])) as string | null;
+            if (stopped()) return undefined;
+            if (current) return current;
+            const next = generation.value ?? crypto.randomUUID();
+            const claimed = (yield authCall(io, [
+              cacheMethod(
+                () =>
+                  authStorage(storage, "compareAndSet", [
+                    key,
+                    null,
+                    next,
+                    { ttlSeconds: GENERATION_TTL_SECONDS },
+                  ]) as Effect.Effect<boolean, unknown>,
+              ),
+            ])) as boolean;
+            if (stopped()) return undefined;
+            if (claimed) return next;
+          }
+          throw new Error("Catalog cache generation is busy.");
+        }),
+      );
+      const namespace = cacheMethod((operation: CacheOperation) =>
+        authFlow<string | undefined>(function* () {
+          const { stopped, generation, io } = operation;
+          if (
+            resolveCredentialIdentity &&
+            ((yield authCall(io, [resolveCredentialIdentity])) as string) !== operation.credentialIdentity
+          )
+            return undefined;
+          const current = (yield authCall(currentGeneration, [operation])) as string | undefined;
+          if (!current || stopped()) return undefined;
+          generation.value ??= current;
+          return generation.value === current
+            ? responseCacheKeys.namespace(connectorId, configHash, generation.value)
+            : undefined;
+        }),
+      );
+      const address = cacheMethod((key: CacheKey, operation: CacheOperation) =>
+        authFlow<string | undefined>(function* () {
+          const { stopped } = operation;
+          if (stopped() || !isCatalogMethod(key.method) || key.params) return undefined;
+          let pair: unknown;
           try {
-            read().then(
-              (value) => {
-                cleanup();
-                resolve(value);
-              },
-              (error) => {
-                cleanup();
-                reject(error);
-              },
-            );
+            pair = JSON.parse(key.partition ?? "");
+          } catch {
+            return undefined;
+          }
+          if (
+            !Array.isArray(pair) ||
+            pair.length !== 2 ||
+            (pair[1] !== partition && (pair[1] !== "" || sharing !== "shared"))
+          )
+            return undefined;
+          const prefix = (yield authCall(namespace, [operation])) as string | undefined;
+          if (!prefix || stopped()) return undefined;
+          const digest = (
+            (yield authCall(fingerprintSerializedCatalog, [
+              JSON.stringify([
+                key.method,
+                pair[1] === "" ? sharedPartition : partition,
+                operation.credentialIdentity ?? null,
+              ]),
+            ])) as {
+              fingerprint: string;
+              byteLength: number;
+            }
+          ).fingerprint;
+          return stopped() ? undefined : responseCacheKeys.entry(prefix, digest);
+        }),
+      );
+      const manifest = (raw: string | null): Manifest | undefined => {
+        if (!raw) return undefined;
+        try {
+          const m = JSON.parse(raw) as Manifest;
+          return Number.isSafeInteger(m.stamp) &&
+            m.stamp > 0 &&
+            Number.isFinite(m.expiresAt) &&
+            Number.isFinite(m.fetchedAt) &&
+            m.fetchedAt >= 0 &&
+            m.fetchedAt <= m.expiresAt &&
+            (m.scope === "public" || m.scope === "private") &&
+            typeof m.revision === "string" &&
+            /^[0-9a-f-]{36}$/.test(m.revision) &&
+            Number.isInteger(m.chunkCount) &&
+            m.chunkCount > 0 &&
+            m.chunkCount <= Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES) + 1 &&
+            /^sha256:[0-9]+:[0-9a-f]{64}$/.test(m.fingerprint)
+            ? m
+            : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const intake = (ctx: ConnectorContext, method: CatalogMethod, result: CatalogResult) => {
+        const body = sharing === "private" ? { ...result, cacheScope: "private" as const } : result;
+        if (method === "tools/list") return catalogIntake(ctx, body as ListToolsResult);
+        const field = method === "resources/list" ? "resources" : "resourceTemplates";
+        const items = catalogItems(method, body).map(({ _meta: _ignored, ...item }) => item);
+        if (items.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
+        const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...body, [field]: items });
+        if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES)
+          throw catalogCeiling();
+        return {
+          ...clean,
+          ttlMs: catalogTtlMs(ctx, body.ttlMs),
+          cacheScope: body.cacheScope === "public" ? ("public" as const) : ("private" as const),
+        };
+      };
+      const completeCatalogRefresh = cacheMethod((result: ListToolsResult) =>
+        authFlow<CompletedCatalogRefresh | undefined>(function* () {
+          const listing = active;
+          const operation = capture();
+          const { stopped, io } = operation;
+          if (!listing || stopped()) return;
+          const clean = intake(listing.ctx, "tools/list", result);
+          const digest = (
+            (yield authCall(fingerprintSerializedCatalog, [JSON.stringify(clean)])) as {
+              fingerprint: string;
+              byteLength: number;
+            }
+          ).fingerprint;
+          const partitionDigest = (
+            (yield authCall(fingerprintSerializedCatalog, [
+              JSON.stringify([
+                clean.cacheScope === "public" ? sharedPartition : partition,
+                operation.credentialIdentity ?? null,
+              ]),
+            ])) as {
+              fingerprint: string;
+              byteLength: number;
+            }
+          ).fingerprint;
+          try {
+            return (yield authCall(acceptCatalogRefresh, [
+              storage,
+              responseCacheKeys.refreshDigest(connectorId, configHash, partitionDigest),
+              connectorId,
+              digest,
+              (clean as ListToolsResult).tools,
+              clean.cacheScope !== "public",
+              cacheMethod(() =>
+                authFlow<boolean>(function* () {
+                  return !stopped() && !!((yield authCall(namespace, [operation])) as string | undefined) && !stopped();
+                }),
+              ),
+              io,
+            ])) as CompletedCatalogRefresh | undefined;
           } catch (error) {
-            cleanup();
-            reject(error);
+            if (!stopped())
+              logFailure(
+                listing.ctx.logger,
+                "catalog refresh observation failed",
+                failureRecord({ connector: connectorId }, error),
+              );
           }
         }),
-    };
-  };
-  let lastStamp = 0;
-  let staleTools: { result: ListToolsResult; manifest: Manifest } | undefined;
-  const currentGeneration = async ({ stopped, io, generation }: CacheOperation): Promise<string | undefined> => {
-    const key = responseCacheKeys.generation(connectorId);
-    for (let attempt = 0; attempt < 16; attempt++) {
-      if (stopped()) return undefined;
-      const current = await io(() => storage.get(key));
-      if (stopped()) return undefined;
-      if (current) return current;
-      const next = generation.value ?? crypto.randomUUID();
-      const claimed = await io(() => storage.compareAndSet(key, null, next, { ttlSeconds: GENERATION_TTL_SECONDS }));
-      if (stopped()) return undefined;
-      if (claimed) return next;
-    }
-    throw new Error("Catalog cache generation is busy.");
-  };
-  const namespace = async (operation: CacheOperation): Promise<string | undefined> => {
-    const { stopped, generation, io } = operation;
-    if (resolveCredentialIdentity && (await io(resolveCredentialIdentity)) !== operation.credentialIdentity)
-      return undefined;
-    const current = await currentGeneration(operation);
-    if (!current || stopped()) return undefined;
-    generation.value ??= current;
-    return generation.value === current
-      ? responseCacheKeys.namespace(connectorId, configHash, generation.value)
-      : undefined;
-  };
-  const address = async (key: CacheKey, operation: CacheOperation): Promise<string | undefined> => {
-    const { stopped } = operation;
-    if (stopped() || !isCatalogMethod(key.method) || key.params) return undefined;
-    let pair: unknown;
-    try {
-      pair = JSON.parse(key.partition ?? "");
-    } catch {
-      return undefined;
-    }
-    if (
-      !Array.isArray(pair) ||
-      pair.length !== 2 ||
-      (pair[1] !== partition && (pair[1] !== "" || sharing !== "shared"))
-    )
-      return undefined;
-    const prefix = await namespace(operation);
-    if (!prefix || stopped()) return undefined;
-    // Hash the admitted principal/pool/auth partition; no identities or server text in keys.
-    const digest = (
-      await fingerprintSerializedCatalog(
-        JSON.stringify([
-          key.method,
-          pair[1] === "" ? sharedPartition : partition,
-          operation.credentialIdentity ?? null,
-        ]),
-      )
-    ).fingerprint;
-    return stopped() ? undefined : responseCacheKeys.entry(prefix, digest);
-  };
-  const manifest = (raw: string | null): Manifest | undefined => {
-    if (!raw) return undefined;
-    try {
-      const m = JSON.parse(raw) as Manifest;
-      return Number.isSafeInteger(m.stamp) &&
-        m.stamp > 0 &&
-        Number.isFinite(m.expiresAt) &&
-        Number.isFinite(m.fetchedAt) &&
-        m.fetchedAt >= 0 &&
-        m.fetchedAt <= m.expiresAt &&
-        (m.scope === "public" || m.scope === "private") &&
-        typeof m.revision === "string" &&
-        /^[0-9a-f-]{36}$/.test(m.revision) &&
-        Number.isInteger(m.chunkCount) &&
-        m.chunkCount > 0 &&
-        m.chunkCount <= Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES) + 1 &&
-        /^sha256:[0-9]+:[0-9a-f]{64}$/.test(m.fingerprint)
-        ? m
-        : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  const intake = (ctx: ConnectorContext, method: CatalogMethod, result: CatalogResult) => {
-    const body = sharing === "private" ? { ...result, cacheScope: "private" as const } : result;
-    if (method === "tools/list") return catalogIntake(ctx, body as ListToolsResult);
-    const field = method === "resources/list" ? "resources" : "resourceTemplates";
-    const items = catalogItems(method, body).map(({ _meta: _ignored, ...item }) => item);
-    if (items.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
-    const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...body, [field]: items });
-    if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES)
-      throw catalogCeiling();
-    return {
-      ...clean,
-      ttlMs: catalogTtlMs(ctx, body.ttlMs),
-      cacheScope: body.cacheScope === "public" ? ("public" as const) : ("private" as const),
-    };
-  };
-  const completeCatalogRefresh = async (result: ListToolsResult) => {
-    const listing = active;
-    const operation = capture();
-    const { stopped, io } = operation;
-    if (!listing || stopped()) return;
-    const clean = intake(listing.ctx, "tools/list", result);
-    const digest = (await fingerprintSerializedCatalog(JSON.stringify(clean))).fingerprint;
-    const partitionDigest = (
-      await fingerprintSerializedCatalog(
-        JSON.stringify([
-          clean.cacheScope === "public" ? sharedPartition : partition,
-          operation.credentialIdentity ?? null,
-        ]),
-      )
-    ).fingerprint;
-    try {
-      return await acceptCatalogRefresh(
-        storage,
-        responseCacheKeys.refreshDigest(connectorId, configHash, partitionDigest),
-        connectorId,
-        digest,
-        (clean as ListToolsResult).tools,
-        clean.cacheScope !== "public",
-        async () => !stopped() && !!(await namespace(operation)) && !stopped(),
-        io,
       );
-    } catch (error) {
-      if (!stopped())
-        logFailure(
-          listing.ctx.logger,
-          "catalog refresh observation failed",
-          failureRecord({ connector: connectorId }, error),
-        );
-    }
-  };
-  const store: ResponseCacheStore = {
-    async get(key) {
-      const operation = capture();
-      const { ctx, stopped, io } = operation;
-      const root = await address(key, operation);
-      if (!root || stopped()) return undefined;
-      const m = manifest(await io(() => storage.get(root)));
-      if (
-        stopped() ||
-        !m ||
-        (m.expiresAt <= Date.now() && (key.method !== "tools/list" || m.expiresAt + STALE_FALLBACK_MS <= Date.now()))
-      )
-        return undefined;
-      const chunks: string[] = [];
-      for (let i = 0; i < m.chunkCount; i++) {
-        if (stopped()) return undefined;
-        const chunk = await io(() => storage.get(responseCacheKeys.chunk(root, m.revision, i)));
-        if (stopped() || chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES)
-          return undefined;
-        chunks.push(chunk);
-      }
-      const value = chunks.join("");
-      const fingerprint = await fingerprintSerializedCatalog(value);
-      if (
-        stopped() ||
-        fingerprint.byteLength > MAX_SERIALIZED_CATALOG_BYTES ||
-        fingerprint.fingerprint !== m.fingerprint ||
-        !(await namespace(operation)) ||
-        stopped()
-      )
-        return undefined;
-      const result = JSON.parse(value) as CatalogResult;
-      const method = key.method as CatalogMethod;
-      const items = catalogItems(method, result);
-      if (
-        !Array.isArray(items) ||
-        items.length > MAX_CATALOG_TOOLS ||
-        "nextCursor" in result ||
-        (result.resultType !== undefined && result.resultType !== "complete")
-      )
-        return undefined;
-      const validated = await catalogSchema(method)["~standard"].validate(result);
-      if (stopped() || validated.issues) return undefined;
-      const clean = intake(ctx, method, validated.value);
-      if (m.expiresAt <= Date.now()) {
-        if (method === "tools/list" && (!staleTools || staleTools.manifest.fetchedAt < m.fetchedAt))
-          staleTools = { result: clean as ListToolsResult, manifest: m };
-        return undefined;
-      }
-      observeCatalogFetch(ctx, m.fetchedAt, method);
-      observeCatalogExpiry(ctx, method, clean.ttlMs, m.expiresAt);
-      return { value: JSON.stringify(clean), stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };
-    },
-    async set(key, entry) {
-      const operation = capture();
-      const { ctx, stopped, io } = operation;
-      const root = await address(key, operation);
-      if (!root || stopped()) return 0;
-      const result = JSON.parse(entry.value) as CatalogResult;
-      const method = key.method as CatalogMethod;
-      if (catalogTtlMs(ctx, result.ttlMs) === 0) {
-        if (!stopped() && (await namespace(operation)) && !stopped()) await io(() => storage.delete(root));
-        return 0;
-      }
-      if (
-        !Array.isArray(catalogItems(method, result)) ||
-        "nextCursor" in result ||
-        (result.resultType !== undefined && result.resultType !== "complete")
-      )
-        return 0;
-      // Defence in depth: the SDK catches store failures, so intake also runs on
-      // the request path, where a secret-bearing name refuses the entire list.
-      const value = JSON.stringify(intake(ctx, method, result));
-      const fingerprint = await fingerprintSerializedCatalog(value);
-      const expiresAt = Math.min(
-        entry.expiresAt ?? Date.now(),
-        (catalogFetchedAt(ctx, method) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs),
-      );
-      if (stopped() || expiresAt <= Date.now() || !(await namespace(operation)) || stopped()) return 0;
-      const revision = crypto.randomUUID();
-      const bytes = new TextEncoder().encode(value);
-      const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-      let offset = 0;
-      let chunkCount = 0;
-      const ttlSeconds = () =>
-        Math.max(0.001, (expiresAt + (method === "tools/list" ? STALE_FALLBACK_MS : 0) - Date.now()) / 1000);
-      while (offset < bytes.length) {
-        if (stopped() || expiresAt <= Date.now()) return 0;
-        let end = Math.min(offset + MAX_CATALOG_CHUNK_BYTES, bytes.length);
-        while (end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
-        const chunk = responseCacheKeys.chunk(root, revision, chunkCount++);
-        await io(() => storage.set(chunk, decoder.decode(bytes.subarray(offset, end)), { ttlSeconds: ttlSeconds() }));
-        if (stopped()) return 0;
-        offset = end;
-      }
-      for (let attempt = 0; attempt < 16; attempt++) {
-        if (stopped() || expiresAt <= Date.now() || !(await namespace(operation)) || stopped()) return 0;
-        const previous = await io(() => storage.get(root));
-        if (stopped() || expiresAt <= Date.now()) return 0;
-        const stamp = Math.max(Date.now(), (manifest(previous)?.stamp ?? 0) + 1, lastStamp + 1);
-        const m: Manifest = {
-          stamp,
-          expiresAt,
-          fetchedAt: catalogFetchedAt(ctx, method) ?? Date.now(),
-          scope: sharing === "shared" && result.cacheScope === "public" ? "public" : "private",
-          revision,
-          chunkCount,
-          fingerprint: fingerprint.fingerprint,
-        };
-        const published = await io(() =>
-          storage.compareAndSet(root, previous, JSON.stringify(m), { ttlSeconds: ttlSeconds() }),
-        );
-        if (stopped()) return 0;
-        if (published) {
-          lastStamp = stamp;
-          return stamp;
-        }
-      }
-      throw new Error("Catalog cache publication is busy.");
-    },
-    async delete(key) {
-      const operation = capture();
-      const root = await address(key, operation);
-      if (root && !operation.stopped()) await operation.io(() => storage.delete(root));
-    },
-    async evict(method) {
-      if (isCatalogMethod(method)) await store.clear();
-    },
-    async clear() {
-      const operation = capture();
-      if (!operation.stopped()) await operation.io(() => invalidateCatalogCache(storage, connectorId));
-    },
-  };
-  // Refresh/bypass listings may never call get(). Pin before any wire I/O so
-  // their first late publication cannot adopt a post-notification generation.
-  // Reading an absent generation pins a nonce without mutating storage before
-  // negotiation/auth succeeds. The first cache operation may claim that nonce.
-  try {
-    const { stopped, io } = capture({ ctx, generation: connectionGeneration, ended: false });
-    if (!stopped()) {
-      const current = await io(() => storage.get(responseCacheKeys.generation(connectorId)));
-      if (!stopped()) connectionGeneration.value = current ?? crypto.randomUUID();
-    }
-  } catch (error) {
-    unavailable = true;
-    logFailure(ctx.logger, "catalog read failed", failureRecord({ connector: connectorId }, error));
-  }
-  let tail = Promise.resolve();
-  const withListing = <T>(listingCtx: ConnectorContext, read: () => Promise<T>): Promise<T> => {
-    const pending = tail.then(async () => {
-      if (scope.closed || connectionSignal?.aborted)
-        throw new ConnectorCallError("connector_call_failed", "Catalog cache scope ended.");
-      if (listingCtx.signal?.aborted) throw listingCtx.signal.reason;
-      if (policy && !(serviceFor(listingCtx, CatalogPolicy) !== undefined))
-        setViewService(listingCtx, CatalogPolicy, policy);
-      const listing: Listing = { ctx: listingCtx, generation: {}, ended: false };
-      active = listing;
-      staleTools = undefined;
-      const operation = capture();
+      const store: ResponseCacheStore = {
+        get: cacheMethod((key: CacheKey) =>
+          authFlow<
+            | {
+                value: string;
+                stamp: number;
+                expiresAt: number;
+                scope: "private" | "public";
+              }
+            | undefined
+          >(function* () {
+            const operation = capture();
+            const { ctx, stopped, io } = operation;
+            const root = (yield authCall(address, [key, operation])) as string | undefined;
+            if (!root || stopped()) return undefined;
+            const m = manifest(
+              (yield authCall(io, [
+                cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
+              ])) as string | null,
+            );
+            if (
+              stopped() ||
+              !m ||
+              (m.expiresAt <= Date.now() &&
+                (key.method !== "tools/list" || m.expiresAt + STALE_FALLBACK_MS <= Date.now()))
+            )
+              return undefined;
+            const chunks: string[] = [];
+            for (let i = 0; i < m.chunkCount; i++) {
+              if (stopped()) return undefined;
+              const chunk = (yield authCall(io, [
+                cacheMethod(
+                  () =>
+                    authStorage(storage, "get", [responseCacheKeys.chunk(root, m.revision, i)]) as Effect.Effect<
+                      string | null,
+                      unknown
+                    >,
+                ),
+              ])) as string | null;
+              if (stopped() || chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES)
+                return undefined;
+              chunks.push(chunk);
+            }
+            const value = chunks.join("");
+            const fingerprint = (yield authCall(fingerprintSerializedCatalog, [value])) as {
+              fingerprint: string;
+              byteLength: number;
+            };
+            if (
+              stopped() ||
+              fingerprint.byteLength > MAX_SERIALIZED_CATALOG_BYTES ||
+              fingerprint.fingerprint !== m.fingerprint ||
+              !((yield authCall(namespace, [operation])) as string | undefined) ||
+              stopped()
+            )
+              return undefined;
+            const result = JSON.parse(value) as CatalogResult;
+            const method = key.method as CatalogMethod;
+            const items = catalogItems(method, result);
+            if (
+              !Array.isArray(items) ||
+              items.length > MAX_CATALOG_TOOLS ||
+              "nextCursor" in result ||
+              (result.resultType !== undefined && result.resultType !== "complete")
+            )
+              return undefined;
+            const validated = (yield authInvoke(catalogSchema(method)["~standard"], "validate", [result])) as
+              | StandardSchemaV1.FailureResult
+              | StandardSchemaV1.SuccessResult<ListToolsResult>
+              | StandardSchemaV1.SuccessResult<ListResourceTemplatesResult>
+              | StandardSchemaV1.SuccessResult<ListResourcesResult>;
+            if (stopped() || validated.issues) return undefined;
+            const clean = intake(ctx, method, validated.value);
+            if (m.expiresAt <= Date.now()) {
+              if (method === "tools/list" && (!staleTools || staleTools.manifest.fetchedAt < m.fetchedAt))
+                staleTools = { result: clean as ListToolsResult, manifest: m };
+              return undefined;
+            }
+            observeCatalogFetch(ctx, m.fetchedAt, method);
+            observeCatalogExpiry(ctx, method, clean.ttlMs, m.expiresAt);
+            return { value: JSON.stringify(clean), stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };
+          }),
+        ),
+        set: cacheMethod(
+          (
+            key: CacheKey,
+            entry: {
+              value: string;
+              expiresAt?: number;
+              scope?: "public" | "private";
+            },
+          ) =>
+            authFlow<number>(function* () {
+              const operation = capture();
+              const { ctx, stopped, io } = operation;
+              const root = (yield authCall(address, [key, operation])) as string | undefined;
+              if (!root || stopped()) return 0;
+              const result = JSON.parse(entry.value) as CatalogResult;
+              const method = key.method as CatalogMethod;
+              if (catalogTtlMs(ctx, result.ttlMs) === 0) {
+                if (!stopped() && ((yield authCall(namespace, [operation])) as string | undefined) && !stopped())
+                  (yield authCall(io, [
+                    cacheMethod(() => authStorage(storage, "delete", [root]) as Effect.Effect<void, unknown>),
+                  ])) as void;
+                return 0;
+              }
+              if (
+                !Array.isArray(catalogItems(method, result)) ||
+                "nextCursor" in result ||
+                (result.resultType !== undefined && result.resultType !== "complete")
+              )
+                return 0;
+              const value = JSON.stringify(intake(ctx, method, result));
+              const fingerprint = (yield authCall(fingerprintSerializedCatalog, [value])) as {
+                fingerprint: string;
+                byteLength: number;
+              };
+              const expiresAt = Math.min(
+                entry.expiresAt ?? Date.now(),
+                (catalogFetchedAt(ctx, method) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs),
+              );
+              if (
+                stopped() ||
+                expiresAt <= Date.now() ||
+                !((yield authCall(namespace, [operation])) as string | undefined) ||
+                stopped()
+              )
+                return 0;
+              const revision = crypto.randomUUID();
+              const bytes = new TextEncoder().encode(value);
+              const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+              let offset = 0;
+              let chunkCount = 0;
+              const ttlSeconds = () =>
+                Math.max(0.001, (expiresAt + (method === "tools/list" ? STALE_FALLBACK_MS : 0) - Date.now()) / 1000);
+              while (offset < bytes.length) {
+                if (stopped() || expiresAt <= Date.now()) return 0;
+                let end = Math.min(offset + MAX_CATALOG_CHUNK_BYTES, bytes.length);
+                while (end < bytes.length && (bytes[end]! & 192) === 128) end--;
+                const chunk = responseCacheKeys.chunk(root, revision, chunkCount++);
+                (yield authCall(io, [
+                  cacheMethod(
+                    () =>
+                      authStorage(storage, "set", [
+                        chunk,
+                        decoder.decode(bytes.subarray(offset, end)),
+                        { ttlSeconds: ttlSeconds() },
+                      ]) as Effect.Effect<void, unknown>,
+                  ),
+                ])) as void;
+                if (stopped()) return 0;
+                offset = end;
+              }
+              for (let attempt = 0; attempt < 16; attempt++) {
+                if (
+                  stopped() ||
+                  expiresAt <= Date.now() ||
+                  !((yield authCall(namespace, [operation])) as string | undefined) ||
+                  stopped()
+                )
+                  return 0;
+                const previous = (yield authCall(io, [
+                  cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
+                ])) as string | null;
+                if (stopped() || expiresAt <= Date.now()) return 0;
+                const stamp = Math.max(Date.now(), (manifest(previous)?.stamp ?? 0) + 1, lastStamp + 1);
+                const m: Manifest = {
+                  stamp,
+                  expiresAt,
+                  fetchedAt: catalogFetchedAt(ctx, method) ?? Date.now(),
+                  scope: sharing === "shared" && result.cacheScope === "public" ? "public" : "private",
+                  revision,
+                  chunkCount,
+                  fingerprint: fingerprint.fingerprint,
+                };
+                const published = (yield authCall(io, [
+                  cacheMethod(
+                    () =>
+                      authStorage(storage, "compareAndSet", [
+                        root,
+                        previous,
+                        JSON.stringify(m),
+                        { ttlSeconds: ttlSeconds() },
+                      ]) as Effect.Effect<boolean, unknown>,
+                  ),
+                ])) as boolean;
+                if (stopped()) return 0;
+                if (published) {
+                  lastStamp = stamp;
+                  return stamp;
+                }
+              }
+              throw new Error("Catalog cache publication is busy.");
+            }),
+        ),
+        delete: cacheMethod((key: CacheKey) =>
+          authFlow<void>(function* () {
+            const operation = capture();
+            const root = (yield authCall(address, [key, operation])) as string | undefined;
+            if (root && !operation.stopped())
+              (yield authInvoke(operation, "io", [
+                cacheMethod(() => authStorage(storage, "delete", [root]) as Effect.Effect<void, unknown>),
+              ])) as void;
+          }),
+        ),
+        evict: cacheMethod((method: string) =>
+          authFlow<void>(function* () {
+            if (isCatalogMethod(method)) (yield authInvoke(store, "clear", [])) as void;
+          }),
+        ),
+        clear: cacheMethod(() =>
+          authFlow<void>(function* () {
+            const operation = capture();
+            if (!operation.stopped())
+              (yield authInvoke(operation, "io", [
+                cacheMethod(
+                  () => authCall(invalidateCatalogCache, [storage, connectorId]) as Effect.Effect<void, unknown>,
+                ),
+              ])) as void;
+          }),
+        ),
+      };
       try {
-        if (resolveCredentialIdentity) listing.credentialIdentity = await operation.io(resolveCredentialIdentity);
-        // Each new listing pins before even a refresh's first wire page. A
-        // notification fences this listing, while a later listing can refresh.
-        if (!operation.stopped()) {
-          try {
-            listing.generation.value =
-              (await operation.io(() => storage.get(responseCacheKeys.generation(connectorId)))) ?? crypto.randomUUID();
-            connectionGeneration.value = listing.generation.value;
-          } catch (error) {
-            if (operation.stopped()) throw error;
-            unavailable = true;
-            logFailure(ctx.logger, "catalog read failed", failureRecord({ connector: connectorId }, error));
-          }
+        const { stopped, io } = capture({ ctx, generation: connectionGeneration, ended: false });
+        if (!stopped()) {
+          const current = (yield authCall(io, [
+            cacheMethod(
+              () =>
+                authStorage(storage, "get", [responseCacheKeys.generation(connectorId)]) as Effect.Effect<
+                  string | null,
+                  unknown
+                >,
+            ),
+          ])) as string | null;
+          if (!stopped()) connectionGeneration.value = current ?? crypto.randomUUID();
         }
-        return await read();
-      } finally {
-        listing.ended = true;
-        active = undefined;
+      } catch (error) {
+        unavailable = true;
+        logFailure(ctx.logger, "catalog read failed", failureRecord({ connector: connectorId }, error));
       }
-    });
-    // Keep the binding through the entire SDK method, including its opposite
-    // partition delete even when set() failed. Only then may a sibling bind.
-    tail = pending.then(
-      () => {},
-      () => {},
-    );
-    return pending;
-  };
-  const fallbackTools = async (): Promise<ListToolsResult | undefined> => {
-    const operation = capture();
-    if (
-      !staleTools ||
-      operation.stopped() ||
-      !(await namespace(operation)) ||
-      operation.stopped() ||
-      staleTools.manifest.expiresAt + STALE_FALLBACK_MS <= Date.now()
-    )
-      return;
-    const { result, manifest } = staleTools;
-    observeCatalogFetch(operation.ctx, manifest.fetchedAt);
-    observeCatalogExpiry(
-      operation.ctx,
-      "tools/list",
-      typeof result.ttlMs === "number" ? result.ttlMs : 0,
-      manifest.expiresAt,
-      true,
-    );
-    return result;
-  };
-  return {
-    intake,
-    completeCatalogRefresh,
-    fallbackTools,
-    responseCacheStore: store,
-    cachePartition: partition,
-    defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000,
-    withListing,
-    currentContext: () => active?.ctx ?? ctx,
-  };
-}
+      // The queue retains only a Promise turn. Awaiting it in this caller's
+      // request preserves workerd I/O ownership; the listing program stays native.
+      let tail = Promise.resolve();
+      const withListing = cacheMethod(<T>(listingCtx: ConnectorContext, read: () => Promise<T>) =>
+        authFlow<T>(function* () {
+          const previous = tail;
+          let release!: () => void;
+          tail = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          let entered = false;
+          try {
+            yield authValue(() => previous);
+            entered = true;
+            if (scope.closed || connectionSignal?.aborted)
+              throw new ConnectorCallError("connector_call_failed", "Catalog cache scope ended.");
+            if (listingCtx.signal?.aborted) throw listingCtx.signal.reason;
+            if (policy && serviceFor(listingCtx, CatalogPolicy) === undefined)
+              setViewService(listingCtx, CatalogPolicy, policy);
+            const listing: Listing = { ctx: listingCtx, generation: {}, ended: false };
+            active = listing;
+            staleTools = undefined;
+            const operation = capture();
+            try {
+              if (resolveCredentialIdentity)
+                listing.credentialIdentity = yield authInvoke<string>(operation, "io", [resolveCredentialIdentity]);
+              if (!operation.stopped()) {
+                try {
+                  const generation: string =
+                    (yield authInvoke<string | null>(operation, "io", [
+                      cacheMethod(() =>
+                        authStorage<string | null>(storage, "get", [responseCacheKeys.generation(connectorId)]),
+                      ),
+                    ])) ?? crypto.randomUUID();
+                  listing.generation.value = generation;
+                  connectionGeneration.value = generation;
+                } catch (error) {
+                  if (operation.stopped()) throw error;
+                  unavailable = true;
+                  logFailure(
+                    listingCtx.logger,
+                    "catalog read failed",
+                    failureRecord({ connector: connectorId }, error),
+                  );
+                }
+              }
+              return yield authCall<T>(read, []);
+            } finally {
+              listing.ended = true;
+              active = undefined;
+            }
+          } finally {
+            // A cancelled queued waiter cannot unlock the listing ahead of it.
+            if (entered) release();
+            else void previous.then(release);
+          }
+        }),
+      );
+      const fallbackTools = cacheMethod(() =>
+        authFlow<ListToolsResult | undefined>(function* () {
+          const operation = capture();
+          if (
+            !staleTools ||
+            operation.stopped() ||
+            !((yield authCall(namespace, [operation])) as string | undefined) ||
+            operation.stopped() ||
+            staleTools.manifest.expiresAt + STALE_FALLBACK_MS <= Date.now()
+          )
+            return;
+          const { result, manifest } = staleTools;
+          observeCatalogFetch(operation.ctx, manifest.fetchedAt);
+          observeCatalogExpiry(
+            operation.ctx,
+            "tools/list",
+            typeof result.ttlMs === "number" ? result.ttlMs : 0,
+            manifest.expiresAt,
+            true,
+          );
+          return result;
+        }),
+      );
+      return {
+        intake,
+        completeCatalogRefresh,
+        fallbackTools,
+        responseCacheStore: store,
+        cachePartition: partition,
+        defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000,
+        withListing,
+        currentContext: () => active?.ctx ?? ctx,
+      };
+    }),
+);
 
 function isCatalogMethod(method: string): method is CatalogMethod {
   return method === "tools/list" || method === "resources/list" || method === "resources/templates/list";
 }
 
-async function customCatalogCache(ctx: ConnectorContext, connectorId: string) {
-  const credential = await ctx.credential?.getAll();
-  const auth = (await fingerprintSerializedCatalog(JSON.stringify(credential ?? null))).fingerprint;
-  const cache = await catalogClientOptions(ctx, connectorId, "custom-connector", auth);
-  const key: CacheKey = { method: "tools/list", partition: JSON.stringify(["custom-connector", cache.cachePartition]) };
-  return { cache, key };
+function customCatalogCache(ctx: ConnectorContext, connectorId: string) {
+  return runEdge(
+    authProgram<{ cache: Awaited<ReturnType<typeof catalogClientOptions>>; key: CacheKey }>(customCatalogCacheNative, [
+      ctx,
+      connectorId,
+    ]),
+  );
 }
+const customCatalogCacheNative = /* @__PURE__ */ registerAuth(
+  customCatalogCache,
+  (ctx: ConnectorContext, connectorId: string) =>
+    authFlow<{ cache: Awaited<ReturnType<typeof catalogClientOptions>>; key: CacheKey }>(function* () {
+      const credential = (yield authValue(() => ctx.credential?.getAll())) as
+        | ConnectorCredentialValues
+        | null
+        | undefined;
+      const auth = (
+        (yield authCall(fingerprintSerializedCatalog, [JSON.stringify(credential ?? null)])) as {
+          fingerprint: string;
+          byteLength: number;
+        }
+      ).fingerprint;
+      const cache = (yield authCall(catalogClientOptions, [ctx, connectorId, "custom-connector", auth])) as Awaited<
+        ReturnType<typeof catalogClientOptions>
+      >;
+      const key: CacheKey = {
+        method: "tools/list",
+        partition: JSON.stringify(["custom-connector", cache.cachePartition]),
+      };
+      return { cache, key };
+    }),
+);
 /** Custom listings always fetch. Only an authenticated owner may retain a
  * complete private fallback; unscoped/operator reads start no cache I/O. */
-export async function storeCustomCatalogFallback(
+export function storeCustomCatalogFallback(
   ctx: ConnectorContext,
   connectorId: string,
   tools: readonly ToolDef[],
 ): Promise<void> {
-  const ttlMs = catalogTtlMs(ctx, undefined);
-  observeCatalogFetch(ctx, Date.now());
-  observeCatalogExpiry(ctx, "tools/list", ttlMs);
-  if (!ttlMs || !callerOf(ctx)?.authenticated) return;
-  const { cache, key } = await customCatalogCache(ctx, connectorId);
-  await cache.withListing(ctx, async () => {
-    const result = catalogIntake(ctx, {
-      tools: tools.map((tool) => ({
-        ...tool,
-        inputSchema: tool.inputSchema ?? { type: "object" },
-      })) as ListToolsResult["tools"],
-      ttlMs,
-      cacheScope: "private",
-    });
-    await cache.responseCacheStore!.set(key, {
-      value: JSON.stringify(result),
-      expiresAt: catalogExpiry(ctx)!.expiresAt,
-      scope: "private",
-    });
-  });
+  return runEdge(authProgram<void>(storeCustomCatalogFallbackNative, [ctx, connectorId, tools]));
 }
-export async function customCatalogFallback(
-  ctx: ConnectorContext,
-  connectorId: string,
-): Promise<ToolDef[] | undefined> {
-  if (!callerOf(ctx)?.authenticated) return;
-  const { cache, key } = await customCatalogCache(ctx, connectorId);
-  return cache.withListing(ctx, async () => {
-    await cache.responseCacheStore!.get(key);
-    return (await cache.fallbackTools())?.tools as ToolDef[] | undefined;
-  });
+const storeCustomCatalogFallbackNative = /* @__PURE__ */ registerAuth(
+  storeCustomCatalogFallback,
+  (ctx: ConnectorContext, connectorId: string, tools: readonly ToolDef[]) =>
+    authFlow<void>(function* () {
+      const ttlMs = catalogTtlMs(ctx, undefined);
+      observeCatalogFetch(ctx, Date.now());
+      observeCatalogExpiry(ctx, "tools/list", ttlMs);
+      if (!ttlMs || !callerOf(ctx)?.authenticated) return;
+      const { cache, key } = (yield authCall(customCatalogCache, [ctx, connectorId])) as {
+        cache: Awaited<ReturnType<typeof catalogClientOptions>>;
+        key: CacheKey;
+      };
+      (yield authInvoke(cache, "withListing", [
+        ctx,
+        authMethod(() =>
+          authFlow<void>(function* () {
+            const result = catalogIntake(ctx, {
+              tools: tools.map((tool: ToolDef) => ({
+                ...tool,
+                inputSchema: tool.inputSchema ?? { type: "object" },
+              })) as ListToolsResult["tools"],
+              ttlMs,
+              cacheScope: "private",
+            });
+            (yield authInvoke(cache.responseCacheStore!, "set", [
+              key,
+              {
+                value: JSON.stringify(result),
+                expiresAt: catalogExpiry(ctx)!.expiresAt,
+                scope: "private",
+              },
+            ])) as number;
+          }),
+        ),
+      ])) as void;
+    }),
+);
+export function customCatalogFallback(ctx: ConnectorContext, connectorId: string): Promise<ToolDef[] | undefined> {
+  return runEdge(authProgram<ToolDef[] | undefined>(customCatalogFallbackNative, [ctx, connectorId]));
 }
+const customCatalogFallbackNative = /* @__PURE__ */ registerAuth(
+  customCatalogFallback,
+  (ctx: ConnectorContext, connectorId: string) =>
+    authFlow<ToolDef[] | undefined>(function* () {
+      if (!callerOf(ctx)?.authenticated) return;
+      const { cache, key } = (yield authCall(customCatalogCache, [ctx, connectorId])) as {
+        cache: Awaited<ReturnType<typeof catalogClientOptions>>;
+        key: CacheKey;
+      };
+      return (yield authInvoke(cache, "withListing", [
+        ctx,
+        authMethod(() =>
+          authFlow<ToolDef[] | undefined>(function* () {
+            (yield authInvoke(cache.responseCacheStore!, "get", [key])) as CacheEntry | undefined;
+            return ((yield authInvoke(cache, "fallbackTools", [])) as ListToolsResult | undefined)?.tools as
+              | ToolDef[]
+              | undefined;
+          }),
+        ),
+      ])) as ToolDef[] | undefined;
+    }),
+);

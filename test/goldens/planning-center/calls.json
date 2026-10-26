@@ -28,19 +28,19 @@
           },
           {
             "method": "GET",
-            "path": "/people/v2/people",
-            "operationId": "",
-            "summary": "Find and search People profiles: a person, contact details, active or inactive members, name, email or phone. (List Person)",
-            "tool": "pco_api_read",
-            "named": "search_people"
-          },
-          {
-            "method": "GET",
             "path": "/people/v2/me",
             "operationId": "",
             "summary": "List Person — Planning Center People",
             "tool": "pco_api_read",
             "named": "get_me"
+          },
+          {
+            "method": "GET",
+            "path": "/people/v2/people",
+            "operationId": "",
+            "summary": "Find and search People profiles: a person, contact details, active or inactive members, name, email or phone. (List Person)",
+            "tool": "pco_api_read",
+            "named": "search_people"
           },
           {
             "method": "GET",
@@ -62,7 +62,7 @@
         "revision": "people@2026-06-04,services@2018-11-01,groups@2023-07-10,check-ins@2025-05-28,calendar@2026-06-22,registrations@2025-05-01,giving@2019-10-18,publishing@2024-03-25,webhooks@2022-10-20,api@2026-09-24",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiNDEzMmE4NGE2MDdmYTY1MTlhYzI4MmYyNzMzMDhiMzQiLCJjIjoiNiIsIm0iOiI4UmFBOWFCQi1pVURzdjkxYUpNa2JUUHNSSHlJNTFiVlZZdmVGRUNQNEZjIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiZTIxNWVhMmYyYjA3NDMzN2FhMzJlY2I2ODQ1YWVjMTMiLCJjIjoiNiIsIm0iOiJIRjhOMElxZ3BILVFheV9hS0FYM19VWHgxWnFXdVFKN19hWHdhNnVQZkhnIn0"
         }
       }
     }
@@ -264,6 +264,7 @@
         },
         "page": {
           "hasMore": false,
+          "total": 1,
           "param": "offset",
           "in": "query"
         }
@@ -313,6 +314,7 @@
         },
         "page": {
           "hasMore": false,
+          "total": 1,
           "param": "offset",
           "in": "query"
         }
@@ -491,7 +493,8 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiNTA2MjA5YjU3MjNiYTY1NjgwMjM4NDRkYWNkNmQzMWIiLCJjIjoiMSIsIm0iOiIyR3hTQ2FLNTdkbGZEbXU3cGdIYXBtcHlZRVg4T2hhd2M1NzZMUXVVODlJIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiNTA2MjA5YjU3MjNiYTY1NjgwMjM4NDRkYWNkNmQzMWIiLCJjIjoiMSIsIm0iOiIyR3hTQ2FLNTdkbGZEbXU3cGdIYXBtcHlZRVg4T2hhd2M1NzZMUXVVODlJIn0",
+          "total": 2
         }
       }
     }
@@ -744,7 +747,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -793,7 +797,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -960,7 +965,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1051,7 +1057,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1089,7 +1096,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1133,7 +1141,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1285,7 +1294,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1329,7 +1339,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1427,7 +1438,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1469,7 +1481,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1576,7 +1589,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -1631,7 +1645,8 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiYmE5NWRiOGJlMDQ2ZmVjNjFkOTI4Nzg3ODI0MDA1ZTMiLCJjIjoiMiIsIm0iOiJub0dhNUNmOEMwUEN0Q3lVaUdqdlFvVXBVSDZ6U2Q0bjBGM09Zby1jQUZvIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYmE5NWRiOGJlMDQ2ZmVjNjFkOTI4Nzg3ODI0MDA1ZTMiLCJjIjoiMiIsIm0iOiJub0dhNUNmOEMwUEN0Q3lVaUdqdlFvVXBVSDZ6U2Q0bjBGM09Zby1jQUZvIn0",
+          "total": 3
         }
       }
     }
@@ -1670,7 +1685,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }

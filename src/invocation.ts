@@ -1,7 +1,8 @@
-import { withAuthorizationHandoff } from "./authorization-handoff.js";
+import { authCall, registerAuthMethod } from "./auth/native.js";
+import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { cloneTool, isWriteLike, writeRefusal } from "./tool-safety.js";
-import { Cause, Effect, Exit, type Scope } from "effect";
+import { Cause, Context, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
@@ -30,11 +31,11 @@ import {
   recordedToolName,
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
-import { runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { recoveryRecord, recordRecoveryFacts } from "./call-recovery.js";
-import { callFromContext, contextView, viewServices } from "./runtime/call.js";
+import { callFromContext, contextView, viewServices, Credentials } from "./runtime/call.js";
 import { chargeCallBudget } from "./runtime/call-admission.js";
 import { callEntry } from "./runtime/call-entry.js";
 import {
@@ -54,7 +55,7 @@ import {
   recordAuthFailure,
   recordCallEntry,
   replayClassificationDigest,
-  resolveInvocationAuth,
+  resolveInvocationAuthEffect,
 } from "./invocation-auth.js";
 import {
   downstreamContinuation,
@@ -333,7 +334,9 @@ export class InvocationService {
     private readonly registry: RegistryView,
     private readonly catalog: CatalogService,
     private readonly activity?: ActivityRequestContext,
-  ) {}
+  ) {
+    void InvocationService.nativePrograms;
+  }
 
   invoke<T = unknown>(address: string, args: unknown, context: InvocationContext<T>): Promise<InvocationOutcome<T>> {
     return runEdge(this.pipeline(address, args, context));
@@ -816,6 +819,7 @@ export class InvocationService {
                 requestSourceSignal: context.requestSignal,
                 served: write ? "write" : "read",
                 charge: (signal) => runEdge(chargeCallBudget(permit, signal)),
+                chargeEffect: (signal) => chargeCallBudget(permit, signal),
                 chargeClosed: () =>
                   new CallAdmissionError(
                     "closed",
@@ -833,33 +837,31 @@ export class InvocationService {
               const connector = target.connector;
               const callTool = connector.callTool;
               logicalCall = openLogicalCall(connectorContext, connector, callTool);
-              yield* Effect.tryPromise({
-                try: async () => {
-                  try {
-                    if (target.connector.credential) {
-                      if (!connectorContext.credential) {
-                        throw new ConnectorCallError(
-                          "auth_required",
-                          "Operator-managed credential storage is not configured. Call " +
-                            `authorize_connector({ connector: "${target.connector.id}" }).`,
-                        );
-                      }
-                      if (!(await connectorContext.credential.getAll())) {
-                        throw new ConnectorCallError(
-                          "auth_required",
-                          `Connector "${target.connector.id}" has no stored credential. Call authorize_connector.`,
-                        );
-                      }
-                    }
-                    await resolveInvocationAuth(connector, callTool, connectorContext);
-                  } catch (error) {
-                    const code = classifyCallError(error).code;
-                    preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
-                    throw error;
+              yield* Effect.gen(function* () {
+                if (target.connector.credential) {
+                  if (!connectorContext.credential) {
+                    throw new ConnectorCallError(
+                      "auth_required",
+                      "Operator-managed credential storage is not configured. Call " +
+                        `authorize_connector({ connector: "${target.connector.id}" }).`,
+                    );
                   }
-                },
-                catch: (error) => error,
-              });
+                  if (!(yield* Context.get(lease.services, Credentials).values)) {
+                    throw new ConnectorCallError(
+                      "auth_required",
+                      `Connector "${target.connector.id}" has no stored credential. Call authorize_connector.`,
+                    );
+                  }
+                }
+                yield* resolveInvocationAuthEffect(connector, callTool, connectorContext);
+              }).pipe(
+                Effect.onError((cause) =>
+                  Effect.sync(() => {
+                    const code = classifyCallError(causeError(cause, connectorContext.signal)).code;
+                    preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
+                  }),
+                ),
+              );
               // Cancellation can arrive during admission or context construction.
               if (admissionSignal?.aborted) throw admissionSignal.reason;
               dispatchedToConnector = true;
@@ -929,10 +931,7 @@ export class InvocationService {
                             "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
                           ),
                         );
-                  const value = yield* Effect.tryPromise({
-                    try: () => Promise.resolve(context.processInputRequired!(reply, target, sentSecrets)),
-                    catch: (error) => error,
-                  });
+                  const value = yield* authCall<T>(context.processInputRequired, [reply, target, sentSecrets]);
                   return { inputRequired: true as const, value };
                 }
                 assertDownstreamOutputSafe(this.catalog.requestScope, reply);
@@ -1028,13 +1027,7 @@ export class InvocationService {
       const processing: Effect.Effect<T, unknown> = inputRequiredValue
         ? Effect.succeed(inputRequiredValue.value)
         : processResult
-          ? Effect.tryPromise({
-              try: () =>
-                Promise.resolve(
-                  processResult(sentSecrets.redact(result), completed, sentSecrets, valueFormat, rawResult),
-                ) as Promise<T>,
-              catch: (error) => error,
-            })
+          ? authCall<T>(processResult, [sentSecrets.redact(result), completed, sentSecrets, valueFormat, rawResult])
           : Effect.succeed(result as T);
       const processed = yield* Effect.exit(
         timed(
@@ -1084,11 +1077,20 @@ export class InvocationService {
       Effect.flatMap((outcome: InvocationOutcome<T>): Effect.Effect<InvocationOutcome<T>> =>
         outcome.ok
           ? Effect.succeed(outcome)
-          : Effect.promise(async () => ({
-              ...outcome,
-              error: await withAuthorizationHandoff(this.catalog.requestScope, outcome.error),
-            })),
+          : withAuthorizationHandoffEffect(this.catalog.requestScope, outcome.error).pipe(
+              Effect.map((error) => ({ ...outcome, error })),
+            ),
       ),
     );
   }
+  private static readonly nativePrograms = /* @__PURE__ */ (() => {
+    registerAuthMethod(
+      InvocationService.prototype,
+      "invoke",
+      function (address, args, context) {
+        return this.pipeline(address, args, context);
+      },
+      InvocationService.prototype.invoke,
+    );
+  })();
 }

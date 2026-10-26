@@ -320,7 +320,7 @@ describe("Planning Center contracts", () => {
       await invoke("search_people", { status: "active", limit: 1, cursor: first.page.nextCursor, fields: ["name"] }),
     ).toEqual({
       items: [{ name: "Bob" }],
-      page: { hasMore: false },
+      page: { hasMore: false, total: 2 },
     });
     expect(calls.at(-1)!.url.searchParams.get("offset")).toBe("1");
     expect(calls.at(-1)!.url.searchParams.get("where[status]")).toBe("active");

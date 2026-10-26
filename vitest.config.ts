@@ -11,6 +11,9 @@ const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktr
 // workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
 // Pure logic runs only on Node; never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
+  // Native UTF-8/Web Crypto content identity across physical index formats.
+  "test/compact-index.test.ts",
+  "test/storage-sql-d1.test.ts",
   // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
   // service-bound Workers. These skip or fail outside workerd.
   "test/auth-admission-binding.test.ts",
@@ -19,6 +22,7 @@ const WORKERS_SUITES = [
   "test/catalog-cache.test.ts",
   "test/clerk-organization-workerd.test.ts",
   "test/codemode-compat.test.ts",
+  "test/executor-native.test.ts",
   "test/guest-api-contract.test.ts",
   "test/kv-to-d1.test.ts",
   "test/usage-guide.test.ts",
@@ -27,6 +31,8 @@ const WORKERS_SUITES = [
   "test/call-services.test.ts",
   "test/guarded-transport-parity.test.ts",
   "test/oauth-grant-parity.test.ts",
+  "test/auth-native.test.ts",
+  "test/auth-metadata-challenge.test.ts",
   "test/call-revocation.test.ts",
   "test/call-auxiliary-lifetime.test.ts",
   "test/call-renewal-lifetime.test.ts",
@@ -36,9 +42,13 @@ const WORKERS_SUITES = [
   "test/remote-mcp-renewal-lifetime.test.ts",
   "test/direct-write-finalizer.test.ts",
   "test/mcp-core.test.ts",
+  "test/upward-native.test.ts",
+  "test/skills-extension.test.ts",
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
+  "test/remote-mcp-native.test.ts",
+  "test/remote-mcp-skills.test.ts",
   "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
   "test/native-tools.test.ts",
@@ -46,6 +56,9 @@ const WORKERS_SUITES = [
   // Native response reads can print sensitive downstream text below JS sinks.
   // workerd-native-output.node.test.ts also invokes these three by filename.
   "test/operator-sinks.test.ts",
+  // Browser store fetch/body ordering and recovery deadlines on native timers.
+  "test/operator-store.test.ts",
+  "test/operator-agent-state.test.ts",
   "test/clerk-operator-output.test.ts",
   "test/byte-read-response.test.ts",
   "test/write-evidence.test.ts",
@@ -58,6 +71,9 @@ const WORKERS_SUITES = [
   "test/credentials.test.ts",
   // Every provider's characterized requests, built by workerd.
   "test/goldens.test.ts",
+  // Provider pin policy crosses native fetch, request budgets and Web Crypto cursors.
+  "src/providers/vercel/provider.pin.test.ts",
+  "src/providers/planning-center/provider.pagination.test.ts",
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
   // Brace globs tolerate deleted files without enrolling other suites.
   "test/{http-kit,http-hatch,http-provider}.test.ts",
@@ -268,6 +284,7 @@ export default defineConfig({
               d1Databases: ["KV_COPY_TARGET"],
               serviceBindings: {
                 CLERK_ORGANIZATION: "clerk-organization",
+                SQL_LIFETIMES: "sql-lifetimes",
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
                 ...Object.fromEntries(
@@ -279,6 +296,14 @@ export default defineConfig({
                 ),
               },
               workers: await Promise.all([
+                {
+                  name: "sql-lifetimes",
+                  modules: true,
+                  script: await fixtureBundle("./test/fixtures/d1-native-worker.ts"),
+                  compatibilityDate: "2025-01-01",
+                  compatibilityFlags: ["nodejs_compat"],
+                  d1Databases: { DB: "sql-lifetimes" },
+                },
                 clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
