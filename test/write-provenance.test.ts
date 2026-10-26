@@ -44,7 +44,7 @@ import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { writeStateOf } from "../src/program-writes.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { googleOptions } from "./fixtures/provider-options.js";
-import { PRIVATE_KEY } from "./goldens/rsa-fixture.js";
+import { PRIVATE_KEY } from "./fixtures/rsa.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";

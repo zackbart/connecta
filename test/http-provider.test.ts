@@ -24,7 +24,6 @@ import type { ConnectorContext } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
 import { makeRegistry } from "./helpers.js";
-import tithelyCalls from "./goldens/tithely/calls.json";
 
 type Options = ProviderOptions & { baseUrl?: string; defaultPageSize?: number; sensitiveFields?: "drop" | "return" };
 const who = get("who", "/who", { success: Schema.Unknown });
@@ -304,7 +303,7 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
   const rows: Row[] = [
     { name: "safe result", tool: "who" },
     { name: "empty write ledger", tool: "refuse", refused: true },
-    { name: "Tithe.ly golden Accept", tool: "who", headers: { Accept: "application/json" }, accept: true },
+    { name: "explicit Accept header", tool: "who", headers: { Accept: "application/json" }, accept: true },
     {
       name: "admit before credentials",
       tool: "who",
@@ -314,10 +313,7 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
   ];
   for (const row of rows) {
     const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      if (row.accept)
-        expect(new Headers(init?.headers).get("accept")).toBe(
-          tithelyCalls.find(({ steps }) => steps.length > 0)!.steps[0]![0]!.headers.accept,
-        );
+      if (row.accept) expect(new Headers(init?.headers).get("accept")).toBe("application/json");
       return Response.json({ envelope: { visible: "yes", private: "drop" } });
     });
     vi.stubGlobal("fetch", fetch);

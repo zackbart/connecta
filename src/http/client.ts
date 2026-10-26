@@ -448,7 +448,7 @@ function bodyInit(request: HttpClientRequest.HttpClientRequest): { body?: BodyIn
       return { body: body.body as BodyInit };
     case "Uint8Array":
       // The retained text when there is one, so the wire carries exactly the
-      // string guarded-fetch sent and goldens record the same body.
+      // string guarded-fetch sent.
       return { body: (body.text ?? body.body) as BodyInit };
     case "FormData":
       return { body: body.formData };

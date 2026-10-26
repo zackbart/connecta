@@ -1,7 +1,7 @@
-// The Google Forms connection. Request and result shapes are pinned by
-// test/goldens/forms; delegation, subjects, and tokens are
-// test/google-workspace-delegation.test.ts. This suite keeps what neither
-// reaches: refusals, cuts, declared keys, result bounds, and cursors.
+// The Google Forms connection. Shared failure coverage lives in
+// test/provider-failure-sweep.test.ts; delegation, subjects, and tokens in
+// test/google-workspace-delegation.test.ts. This suite covers additional
+// behavior: refusals, cuts, declared keys, result bounds, and cursors.
 import { Validator } from "@cfworker/json-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMetaTools } from "../../meta-tools.js";

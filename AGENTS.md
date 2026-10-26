@@ -105,16 +105,9 @@ A single inline changed-files step in `static` selects
 PR browser/audit/Eve jobs with `git diff --name-only -z` against the PR base. Their
 canonical path expressions and the browser import rationale live only in
 [ci.yml](.github/workflows/ci.yml). Main, nightly and manual runs always select
-all three. There are no planning exceptions, goldens tiers or classifier scripts.
+all three. There are no planning exceptions or classifier scripts.
 
-Node compares each golden's forward and reverse observations byte for byte;
-workerd compares its canonical observation. Each order starts a fresh module
-graph. Normal runs capture once. The nightly Node job sets
-`CONNECTA_GOLDENS_DETERMINISM=1`: one identical repeat, jitter seeds 1 and 2,
-and the complete source-probe jitter matrix. Use the same flag locally to
-reproduce it. Golden updates retain both orders in the fixture format.
-Small golden native-source probes also run on workerd. Mixed boundary suites
-use Vitest tags: `workers` marks native cases, while the Workers project skips
+Mixed boundary suites use Vitest tags: `workers` marks native cases, while the Workers project skips
 `node` cases. Node runs both tags. Brace-glob selection tolerates deleted
 files; portable filenames alone do not enroll a new suite in workerd.
 
@@ -204,6 +197,12 @@ and `scripts/check-package.mjs`; reflect product-facing changes in README. `conn
 checks health, executor, and the current meta-tool set.
 
 ## Tests
+
+Characterization goldens and their capture/update/determinism machinery are
+retired under #1072. Preserve actual data, privacy, failure/recovery, physical
+write counts and request lifetimes through the existing outcome journeys and
+focused fault probes. Do not require provider snapshot enrollment or byte
+equivalence. See architecture's contributor behavioral evidence map.
 
 Core suites live in `test/` and `src/providers/<name>/`; root Node runs every
 `*.test.ts` in those locations. The separate `packages/connecta-eve/test/` suites

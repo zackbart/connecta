@@ -22,13 +22,10 @@ newest head's run.
   The exemption guard rejects names absent from the PR base (the pre-push SHA on main; HEAD's
   first parent on nightly/manual); it fails on missing comparison history.
 - `node`: unfiltered `test:node` through `vitest.config.node.ts`, including
-  INV/spec evidence and collection enforcement. Goldens compare forward and
-  reverse observations; nightly adds repeats/jitter via
-  `CONNECTA_GOLDENS_DETERMINISM=1`.
+  INV/spec evidence and collection enforcement.
 - `workers`: `test:workers`, runtime-sensitive `WORKERS_SUITES` in
   [vitest.config.ts](../../../vitest.config.ts). Mixed suites tag native cases
-  `workers`; workerd skips cases tagged `node`. Node runs both. Goldens compare
-  one canonical observation; small native-source probes include `scheduler.wait`.
+  `workers`; workerd skips cases tagged `node`. Node runs both.
 - `browser`: Playwright `behavior` retries twice in CI; `visual` never retries.
   Any failed attempt, including a flaky pass, uploads `playwright-report` with
   HTML, diffs and traces.

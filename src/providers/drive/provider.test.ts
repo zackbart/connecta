@@ -1,8 +1,6 @@
-// The Google Drive connection. Request and result shapes are pinned by
-// test/goldens/drive; this suite keeps what the goldens do not reach: bounded
-// and ranged reads, cursors, size guards, upload encoding, and refusals.
-// Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts;
-// what this suite adds is that Drive's two transports act as the same account.
+// Google Drive fixture regressions cover bounded/ranged reads, cursors,
+// size guards, uploads and refusals. Delegation, subjects and tokens are covered
+// by test/google-workspace-delegation.test.ts, including both transports.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { drive } from "./index.js";

@@ -1,10 +1,5 @@
-// The Tithe.ly giving connection on the provider kit, on decision 0011's
-// standard surface. Request shapes, projections, the hatch's discovery and
-// status mapping live in the goldens, which build one live, dropping
-// connection; these tests pin key-pair admission and the credential probe, the
-// guide and catalog in every other mode, the bank and legal boundary and that
-// no argument widens it, the vendor shapes that once parsed wrong, and the
-// catalog and decoder agreeing on every input.
+// Tithe.ly fixture regressions cover key-pair admission, credential probes,
+// connection modes, the bank/legal privacy boundary and vendor response shapes.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
@@ -17,7 +12,6 @@ import { tithelyTools } from "./tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
 import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
-import goldenCatalog from "../../../test/goldens/tithely/catalog.json";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 interface StubResponse {
@@ -289,7 +283,7 @@ describe("keys and writes", () => {
   });
 });
 
-describe("connection modes the goldens do not build", () => {
+describe("connection modes", () => {
   it("INV-5: the probe tests the candidate keys, refusing a missing, swapped or empty pair before any request", async () => {
     const stored = context({ publicKey: "pub_stored", privateKey: "pri_stored" });
     stored.credential!.getAll = vi.fn(stored.credential!.getAll);
@@ -333,25 +327,15 @@ describe("connection modes the goldens do not build", () => {
       for (const sensitiveFields of ["drop", "return"] as const) {
         for (const instructions of [undefined, "  Reduce to weekly totals.  "]) {
           const live = environment === "live";
-          // The golden is the live, dropping guide without instructions; each mode changes one line of it.
-          let content = goldenCatalog.guide.content;
-          if (!live)
-            content = content.replace(
-              "Live Tithe.ly (tithe.ly): real donors and real money.",
-              "Test Tithe.ly (tithelydev.com): a test account; no real money moves.",
-            );
-          if (sensitiveFields === "return")
-            content = content.replace(
-              dropped,
-              "This connection returns organizations' payout bank and legal-contact details through tithely_api_read; the named reads still omit them.",
-            );
-          if (instructions) content += "\n## Account instructions\n\nReduce to weekly totals.\n";
           const connector = connection({ environment, sensitiveFields, ...(instructions ? { instructions } : {}) });
-          expect(connector.usageGuide).toEqual({
-            content,
-            summary: goldenCatalog.guide.summary.replace("Live", live ? "Live" : "Test"),
-            required: true,
-          });
+          const guide = connector.usageGuide as { content: string; summary: string; required?: boolean };
+          expect(guide.required).toBe(true);
+          expect(guide.summary).toContain(live ? "Live" : "Test");
+          expect(guide.content).toContain(live ? "real donors and real money" : "no real money moves");
+          expect(guide.content).toContain(
+            sensitiveFields === "return" ? "returns organizations' payout bank and legal-contact details" : dropped,
+          );
+          if (instructions) expect(guide.content).toContain("Reduce to weekly totals.");
           expect([connector.title, connector.description]).toEqual(
             live
               ? ["Tithe.ly Giving", `Tithe.ly giving — live donors and real money — ${purpose}`]

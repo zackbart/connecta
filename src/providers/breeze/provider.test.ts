@@ -1,7 +1,5 @@
-// The Breeze connection is hand-written fetch against one church's own host.
-// Request shapes, projections, and status mapping live in the characterization
-// goldens. Every Breeze call is a GET, writes included, so the read hatch's
-// allowlist is the safety boundary under test here.
+// Breeze uses GET for writes as well as reads. These regressions exercise
+// hatch admission, credential probes, projection and input decoding.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { errors, breezeSafety } from "./api.js";
@@ -9,7 +7,7 @@ import { breezeTools } from "./tools.js";
 import { resultSafety } from "../../http/safety.js";
 import type { Connection } from "../../http/vendor.js";
 import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
-import goldenCalls from "../../../test/goldens/breeze/calls.json";
+import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
 import { ConnectorCallError } from "../../errors.js";
 import { breeze } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -417,7 +415,7 @@ it("INV-11: every authored catalog agrees with its kit decoder at argument bound
     pageSize: 100,
   });
   for (const tool of tools) {
-    const base = goldenCalls.find((row) => row.tool === tool.name)!.args;
+    const base = (failureArguments.breeze as Record<string, Record<string, unknown>>)[tool.name] ?? {};
     expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
   }
 });

@@ -1,13 +1,13 @@
 import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
-import goldenSpec from "../../../test/goldens/overflow/spec.js";
+import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
 import { resultSafety } from "../../http/safety.js";
 import type { Connection } from "../../http/vendor.js";
 import { validateToolInput } from "../../validate.js";
 import { errors, safety, OVERFLOW_INDEX, OVERFLOW_VERDICTS } from "./api.js";
 import { overflowTools } from "./tools.js";
-// Goldens own catalog and fixture bytes. Fold wire-edge regressions into the
-// existing reset-header and candidate-credential cases without adding rows.
+// Overflow fixture regressions cover reset headers, candidate credentials,
+// pagination, privacy and single-send recovery.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { overflow } from "./index.js";
@@ -106,7 +106,7 @@ describe("overflow() standard surface", () => {
   it("INV-1 INV-5 INV-9 INV-11: admits the standard contracts, binds exact-count pages, strips secrets and preserves single-send recovery", async () => {
     const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
     for (const tool of overflowTools({ connection: kitConnection, pageSize: 25 })) {
-      const base = goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {};
+      const base = (failureArguments["overflow"] as Record<string, Record<string, unknown>>)[tool.name] ?? {};
       expect(
         validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }),
         tool.name,
