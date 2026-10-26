@@ -705,7 +705,9 @@ describe("OpenAPI operation index generation", () => {
     let operations = 0,
       requiredAnnotations = 0;
     for (const pin of pins) {
-      const bytes = readFileSync(new URL(`./fixtures/google-discovery/${pin.provider}.json`, import.meta.url));
+      const bytes = readFileSync(
+        new URL(`../src/providers/${pin.provider}/evidence/discovery.document.json`, import.meta.url),
+      );
       expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(pin.digest);
       const original = JSON.parse(bytes.toString());
       const normalized = normalizeDiscovery(original);
@@ -1556,11 +1558,14 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
   });
 
   it("compiles a vendored document offline and moves its pin only by review", async () => {
-    const { readOpenApiSource, sha256, specProvider } = await spec();
+    const { readOpenApiSource, checkOpenApiOutputs, sha256, specProvider } = await spec();
     const { normalizeDiscovery, GOOGLE_DISCOVERY_FORMAT } = await import(
       new URL("../scripts/google-discovery.mjs", import.meta.url).href
     );
-    const original = readFileSync(new URL("./fixtures/google-discovery/forms.json", import.meta.url), "utf8");
+    const original = readFileSync(
+      new URL("../src/providers/forms/evidence/discovery.document.json", import.meta.url),
+      "utf8",
+    );
     const originalPin = {
       url: "https://forms.googleapis.com/$discovery/rest?version=v1",
       documentation: "https://developers.google.com/forms/api",
@@ -1576,15 +1581,24 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
       }),
       "evidence/discovery.json": JSON.stringify(originalPin),
       "evidence/discovery.document.json": original,
-      "evidence/openapi.document.json": normalized,
     });
     await specProvider(derived.provider);
-    writeFileSync(
-      join(derived.directory, "evidence/openapi.document.json"),
-      normalized.replace('"openapi": "3.1.0"', '"openapi": "3.0.0"'),
-    );
-    await expect(specProvider(derived.provider)).rejects.toThrow("Discovery conversion differs");
-    writeFileSync(join(derived.directory, "evidence/openapi.document.json"), normalized);
+    const output = join(derived.directory, "openapi.generated.ts");
+    expect(readFileSync(output, "utf8")).toContain(`// document: ${sha256(normalized)}`);
+    expect(readdirSync(join(derived.directory, "evidence"))).not.toContain("openapi.document.json");
+    expect(await checkOpenApiOutputs(derived.root, [derived.provider])).toEqual([]);
+    // Summary edits change the derived document even when original bytes stay pinned.
+    const primary = JSON.parse(readFileSync(join(derived.directory, "evidence/openapi.json"), "utf8"));
+    primary.discovery.summaries = { "forms.forms.get": "A reviewed new summary" };
+    writeFileSync(join(derived.directory, "evidence/openapi.json"), JSON.stringify(primary));
+    expect(await checkOpenApiOutputs(derived.root, [derived.provider])).toEqual(["acme/openapi.generated.ts"]);
+    await specProvider(derived.provider);
+    expect(await checkOpenApiOutputs(derived.root, [derived.provider])).toEqual([]);
+    await expect(specProvider(derived.provider, { record: true })).rejects.toThrow("a vendored pin moves by review");
+    await expect(specProvider(derived.provider, { file: output })).rejects.toThrow("a vendored pin moves by review");
+    writeFileSync(join(derived.directory, "evidence/openapi.json"), JSON.stringify({ ...primary, revision: "other" }));
+    await expect(specProvider(derived.provider)).rejects.toThrow("primary pin do not match");
+    writeFileSync(join(derived.directory, "evidence/openapi.json"), JSON.stringify(primary));
     writeFileSync(join(derived.directory, "evidence/discovery.document.json"), original + " ");
     await expect(specProvider(derived.provider)).rejects.toThrow("Discovery source bytes");
     const yaml = "openapi: 3.0.0\n";

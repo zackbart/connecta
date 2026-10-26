@@ -5,7 +5,7 @@ service-account mints were used. The official Discovery snapshot is revision
 20261022, archived verbatim under SHA-256
 `2e867ccaa2a404efaffc20705102b90510d1be5cb47ca23795a776cfa0548869`.
 The source revision alone is mutable; the bytes and digest are the pin.
-`openapi.document.json` is the deterministic google-discovery-v1 conversion;
+The google-discovery-v1 conversion is derived in memory from the original;
 its digest is stamped separately in `openapi.generated.ts`. The complete
 source-id/normalized-key mapping is in `x-google-discovery.mapping`.
 

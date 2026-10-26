@@ -1328,10 +1328,11 @@ The indexed hatch (`src/http/hatch.ts`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the
 provider's pin (`evidence/openapi.json`)
-into `openapi.generated.ts`. A `vendored: true` pin compiles the reviewed
-conversion in `evidence/openapi.document.json` instead of fetching, and the
-generated header records that document's digest beside the pin's, so the
-offline freshness check sees a changed conversion.
+into `openapi.generated.ts`. A `vendored: true` pin compiles offline from
+the reviewed conversion in `evidence/openapi.document.json`, or derives a
+deterministic Discovery conversion from its pinned original as described below.
+The generated header records the converted document's digest beside the pin's,
+so offline freshness sees a changed conversion.
 Each call is matched to an operation and checked against its parameters before
 transport. Resolved path parameters are validated before authentication or dispatch,
 including pinned enums and numeric bounds. Number path values must decode to canonical finite ASCII decimals without
@@ -2668,8 +2669,20 @@ All six Google Workspace products use the shared standard-surface support.
 archived exact-byte official Discovery documents into deterministic OpenAPI.
 The primary vendored pin retains the official URL, revision and source digest;
 its `discovery` relation names the sibling source pin and normalizer format.
-Generation and offline freshness reproduce the conversion, and the generated
-module records its independent document digest. Full source method inventory
+The sole retained document is `evidence/discovery.document.json`; no converted
+`openapi.document.json` is retained for these pins. Generation and offline
+freshness validate the original bytes against `discovery.json` and the primary
+pin, then derive the conversion in memory, including reviewed summary overrides.
+Its digest uses two-space JSON indentation and a terminal newline; the generated
+module records that independent document digest, preserving freshness checks
+for changes to the normalizer or summaries. This supersedes Decision 0011's
+retained-conversion requirement for deterministic Discovery evidence. Frozen
+measurements read those same provider-owned originals but validate the existing
+`test/fixtures/google-discovery/manifest.json` digests independently: a provider
+pin update must fail the historical measurement rather than silently rebase it.
+That reviewed pin-change PR must re-measure and update the product's manifest
+entry and the Forms #1009 drift-check digests when applicable, or retire the
+measurement. Full source method inventory
 and canonical source-to-relative-path mappings survive normalization. Gmail's
 source `userId` becomes deployment-owned `me`; runtime paths are relative to
 the existing connection root. Reserved Slides ids remain one encoded segment.

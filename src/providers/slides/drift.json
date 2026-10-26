@@ -12,7 +12,6 @@
     "evidence": {
       "discovery.document.json": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
       "discovery.json": "sha256:c0f579b8a691b76e19e850937897412d9ab940164155fdf9be7df54ad0148c9f",
-      "openapi.document.json": "sha256:e598f9ad859cda834d4dc43f5d09d346605d5a7323013dc9fc2383611b8a843e",
       "openapi.json": "sha256:3d5b812474312d02bd4f779c3de9ae052b1915aef4300cf171f4c8f321ebbac1"
     }
   },

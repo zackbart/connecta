@@ -2,7 +2,7 @@
 
 Contributor evidence for the archived official Slides v1 Discovery revision 20261019. The exact source SHA-256 is
 `ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea`.
-The primary pin records the deterministic `google-discovery-v1` conversion;
+The primary pin records the original and its deterministic `google-discovery-v1` conversion relation;
 the generated index names both source and normalized-document digests.
 
 All five source methods remain searchable. Four generic JSON routes are

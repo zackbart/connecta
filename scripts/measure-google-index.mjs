@@ -24,7 +24,9 @@ const options = {
 const measurements = [];
 const indexes = [];
 for (const pin of pins) {
-  const bytes = await readFile(new URL(`../test/fixtures/google-discovery/${pin.provider}.json`, import.meta.url));
+  const bytes = await readFile(
+    new URL(`../src/providers/${pin.provider}/evidence/discovery.document.json`, import.meta.url),
+  );
   if (sha256(bytes) !== pin.digest) throw new Error(`Changed frozen ${pin.provider} bytes`);
   const document = normalizeDiscovery(JSON.parse(bytes));
   const source = { ...pin, options };

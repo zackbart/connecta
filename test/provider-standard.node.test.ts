@@ -317,12 +317,10 @@ describe("the provider standard's rules", () => {
           digest: DIGEST,
         }),
         [`evidence/${document}`]: "{}",
-        ...("discovery" in source ? { "evidence/openapi.document.json": "{}" } : {}),
       };
       const drift = JSON.parse(base.read("drift.json")!);
       drift.generated.evidence[pin] = DIGEST;
       drift.generated.evidence[document] = DIGEST;
-      if ("discovery" in source) drift.generated.evidence["openapi.document.json"] = DIGEST;
       extra["drift.json"] = JSON.stringify(drift);
       const fixture = {
         ...base,
