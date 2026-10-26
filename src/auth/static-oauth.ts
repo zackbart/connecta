@@ -56,6 +56,7 @@ import {
   registerAuthMethod,
 } from "./native.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
+import type { MigratedGrantBody } from "./oauth-v2-migration.js";
 import { bindRenewableGrant, OAUTH_CHALLENGE_MAX_BYTES, type RenewableGrant } from "./renewable-grant.js";
 
 /**
@@ -150,6 +151,8 @@ function configuredUrl(id: string, option: string, value: unknown): URL {
 interface StaticOAuthSettings {
   authorizationEndpoint: URL;
   tokenEndpoint: URL;
+  revocationEndpoint?: URL;
+  revocationRequestFormat: "form" | "json";
   clientId: string;
   clientSecret?: string;
   clientAuthentication: ApiOAuthClientAuthentication;
@@ -177,6 +180,20 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
   }
   const authorizationEndpoint = configuredUrl(id, "authorizationEndpoint", config.authorizationEndpoint);
   const tokenEndpoint = configuredUrl(id, "tokenEndpoint", config.tokenEndpoint);
+  const revocationEndpoint =
+    config.revocationEndpoint === undefined
+      ? undefined
+      : configuredUrl(id, "revocationEndpoint", config.revocationEndpoint);
+  if (revocationEndpoint?.search)
+    throw new Error(`[connecta] connector "${id}" oauth.revocationEndpoint must not carry a query.`);
+  const revocationRequestFormat = config.revocationRequestFormat ?? "form";
+  if (
+    (revocationRequestFormat !== "form" && revocationRequestFormat !== "json") ||
+    (config.revocationRequestFormat !== undefined && !revocationEndpoint)
+  )
+    throw new Error(
+      `[connecta] connector "${id}" oauth.revocationRequestFormat requires an endpoint and form or json.`,
+    );
   if (tokenEndpoint.search) {
     throw new Error(`[connecta] connector "${id}" oauth.tokenEndpoint must not carry a query.`);
   }
@@ -279,6 +296,8 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
   return {
     authorizationEndpoint,
     tokenEndpoint,
+    ...(revocationEndpoint ? { revocationEndpoint } : {}),
+    revocationRequestFormat,
     clientId: config.clientId,
     ...(config.clientSecret !== undefined ? { clientSecret: config.clientSecret } : {}),
     clientAuthentication,
@@ -345,6 +364,30 @@ class StaticOAuthProvider extends KvOAuthProvider {
       issuer: this.settings.identity,
       clientId: this.settings.clientId,
       tokenEndpoint: this.settings.tokenEndpoint.href,
+    };
+  }
+
+  protected override revocationSnapshot(body: MigratedGrantBody) {
+    const { settings } = this;
+    if (!settings.revocationEndpoint) return { body };
+    return {
+      body: {
+        ...body,
+        client: { value: { client_id: settings.clientId, issuer: settings.identity } },
+        discovery: {
+          authorizationServerUrl: settings.identity,
+          authorizationServerMetadata: {
+            revocation_endpoint: settings.revocationEndpoint.href,
+            revocation_endpoint_auth_methods_supported: [settings.clientAuthentication],
+          },
+        } as OAuthDiscoveryState,
+      },
+      client: {
+        issuer: settings.identity,
+        clientId: settings.clientId,
+        ...(settings.clientSecret !== undefined ? { clientSecret: settings.clientSecret } : {}),
+        tokenEndpointAuthMethod: settings.clientAuthentication,
+      },
     };
   }
 
@@ -1160,7 +1203,25 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const disconnectAuth = authMethod((ctx: ConnectorContext) => {
     return authFlow<void>(function* () {
       rejectedScopes.delete(scopeOf(ctx));
-      (yield authInvoke(providerFor(ctx), "resetAuthorization", [true])) as void;
+      if (!settings.revocationEndpoint) {
+        (yield authInvoke(providerFor(ctx), "resetAuthorization", [true])) as void;
+        return;
+      }
+      (yield authInvoke(providerFor(ctx), "disconnectAuthorization", [
+        authMethod((input: string | URL, init: RequestInit = {}) => {
+          // Register the standard form's credentials before any JSON framing.
+          trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
+          if (settings.revocationRequestFormat === "json" && init.body instanceof URLSearchParams) {
+            const params = new URLSearchParams(init.body);
+            params.delete("token_type_hint");
+            const headers = new Headers(init.headers);
+            headers.set("Content-Type", "application/json");
+            headers.set("Accept", "application/json");
+            init = { ...init, headers, body: JSON.stringify(Object.fromEntries(params)) };
+          }
+          return authCall(tokenEndpointFetch, [sentSecretsFor(ctx), input, init]);
+        }),
+      ])) as void;
     });
   });
 

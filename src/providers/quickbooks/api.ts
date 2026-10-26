@@ -81,6 +81,8 @@ export function oauth(options: Readonly<QuickBooksOptions>): ApiOAuthConfig {
   return {
     authorizationEndpoint: "https://appcenter.intuit.com/connect/oauth2",
     tokenEndpoint: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+    revocationEndpoint: "https://developer.api.intuit.com/v2/oauth2/tokens/revoke",
+    revocationRequestFormat: "json",
     clientId: options.clientId,
     clientSecret: options.clientSecret,
     scope: "com.intuit.quickbooks.accounting",
@@ -163,6 +165,28 @@ export const errors: VendorErrors = {
 };
 
 /** Missing data is a failed read, never a fabricated empty record/report/search. */
+const container = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const cells = (value: unknown): boolean =>
+  Array.isArray(value) && value.every((cell) => container(cell) && typeof cell["value"] === "string");
+function reportRows(value: unknown, depth = 0): boolean {
+  if (!container(value) || depth > 32) return false;
+  if (value["Row"] === undefined) return Object.keys(value).length === 0;
+  return (
+    Array.isArray(value["Row"]) &&
+    value["Row"].every((row: unknown) => {
+      if (!container(row)) return false;
+      if (!["Header", "Summary", "ColData", "Rows"].some((key) => row[key] !== undefined)) return false;
+      for (const key of ["Header", "Summary"]) {
+        if (row[key] !== undefined && (!container(row[key]) || !cells(row[key]["ColData"]))) return false;
+      }
+      return (
+        (row["ColData"] === undefined || cells(row["ColData"])) &&
+        (row["Rows"] === undefined || reportRows(row["Rows"], depth + 1))
+      );
+    })
+  );
+}
 export const result: NonNullable<ConnectOptions["result"]> = (body, answer) => {
   const root = object(body);
   const path = answer.operation.template;
@@ -170,21 +194,32 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) => {
   if (path === "/query") {
     const rows = root["QueryResponse"];
     valid =
-      rows !== null &&
-      typeof rows === "object" &&
-      !Array.isArray(rows) &&
-      Object.entries(object(rows)).every(
+      container(rows) &&
+      Object.entries(rows).every(
         ([key, value]) =>
-          ["startPosition", "maxResults", "totalCount"].includes(key) ||
+          (["startPosition", "maxResults", "totalCount"].includes(key) &&
+            typeof value === "number" &&
+            Number.isSafeInteger(value) &&
+            value >= (key === "startPosition" ? 1 : 0)) ||
           (answer.operation.flags?.[key] === true &&
             Array.isArray(value) &&
-            value.every((row) => typeof object(row)["Id"] === "string")),
-      );
+            (rows["totalCount"] === undefined ||
+              (typeof rows["totalCount"] === "number" && rows["totalCount"] >= value.length)) &&
+            (value.length > 0 ||
+              ((rows["totalCount"] === undefined || rows["totalCount"] === 0) &&
+                (rows["maxResults"] === undefined || rows["maxResults"] === 0))) &&
+            value.every((row) => typeof object(row)["Id"] === "string" && object(row)["Id"] !== "")),
+      ) &&
+      (Object.keys(rows).some((key) => answer.operation.flags?.[key] === true) ||
+        ((rows["totalCount"] === undefined || rows["totalCount"] === 0) &&
+          (rows["maxResults"] === undefined || rows["maxResults"] === 0)));
   } else if (path.startsWith("/reports/")) {
+    const columns = object(root["Columns"])["Column"];
     valid =
       typeof object(root["Header"])["ReportName"] === "string" &&
-      Array.isArray(object(root["Columns"])["Column"]) &&
-      root["Rows"] !== undefined;
+      Array.isArray(columns) &&
+      columns.every((column: unknown) => container(column)) &&
+      reportRows(root["Rows"]);
   } else {
     const key = path.startsWith("/companyinfo/")
       ? "CompanyInfo"
