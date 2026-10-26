@@ -104,7 +104,8 @@ export function quickbooksBinding({
       "Fixed company/environment, indexed GETs only, minorversion 75; query SQL is reserved for the named structured builder.",
     cursorScope: { realmId: options.realmId, environment: options.environment },
     refuse: (call) => {
-      if (call.op.path === "/query") return "Raw SQL is refused; use search_records with structured filters.";
+      // The indexed refusal owns /query, including its discovery/details reason.
+      if (call.op.path === "/query") return undefined;
       if (call.op.path === "/companyinfo/{id}" && call.path !== `/companyinfo/${options.realmId}`)
         return "Company info must name this connector's configured realmId.";
       if (!/^\/(?:[a-z]+\/[1-9]\d{0,30}|reports\/[A-Za-z]+)$/.test(call.path))
