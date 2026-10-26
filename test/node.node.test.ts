@@ -1,4 +1,6 @@
-// Node-only: exercises the Node HTTP adapter over real TCP sockets.
+// Node-only: exercises native Node HTTP sockets and a separately bundled workerd isolate.
+import { createRequire } from "node:module";
+import { build } from "esbuild";
 import { once } from "node:events";
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
@@ -226,3 +228,59 @@ async function viWaitForAbort(predicate: () => boolean | Promise<boolean>): Prom
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+it("INV-7: a body-held permit hands native I/O to its queued workerd request", async () => {
+  const requireWrangler = createRequire(import.meta.resolve("wrangler"));
+  const { Miniflare, Log, LogLevel } = requireWrangler("miniflare");
+  const bundle = await build({
+    entryPoints: [fileURLToPath(new URL("./fixtures/router-queue-worker.ts", import.meta.url))],
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    conditions: ["workerd", "worker", "browser", "import"],
+    external: ["node:*"],
+    write: false,
+    logLevel: "silent",
+  });
+  const worker = new Miniflare({
+    modules: true,
+    script: bundle.outputFiles[0]!.text,
+    compatibilityDate: "2025-01-01",
+    compatibilityFlags: [
+      "nodejs_compat",
+      "enable_request_signal",
+      "enable_weak_ref",
+      "unhandled_rejection_after_microtask_checkpoint",
+    ],
+    log: new Log(LogLevel.NONE),
+    outboundService: (request: Request) => new Response("native:" + new URL(request.url).pathname),
+  });
+  try {
+    const held = await worker.dispatchFetch("https://connecta.test/mcp");
+    let settled = false;
+    const waiting = worker
+      .dispatchFetch("https://connecta.test/mcp", {
+        method: "POST",
+        headers: { "x-queue-waiter": "yes" },
+        body: "waiter-owned",
+      })
+      .then(async (response: Response) => {
+        settled = true;
+        return { status: response.status, body: await response.text() };
+      });
+    const state = async () =>
+      (await (await worker.dispatchFetch("https://connecta.test/queue-state")).json()) as {
+        secondReads: number;
+        waiterArrived: boolean;
+      };
+    await expect.poll(async () => (await state()).waiterArrived).toBe(true);
+    expect(settled).toBe(false);
+    expect(await state()).toEqual({ secondReads: 0, waiterArrived: true });
+    await (await worker.dispatchFetch("https://connecta.test/queue-release")).text();
+    expect(await held.text()).toBe("held");
+    expect(await waiting).toEqual({ status: 401, body: "native:/waiter-owned" });
+    expect(await state()).toEqual({ secondReads: 1, waiterArrived: true });
+  } finally {
+    await worker.dispose();
+  }
+}, 30_000);

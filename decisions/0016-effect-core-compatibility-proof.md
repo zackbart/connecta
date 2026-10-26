@@ -15,7 +15,7 @@ contract is the contributor HTTP dispatch section in
 [architecture](../documentation/architecture.md#production-http-dispatch-contributor-reference).
 No D3 budget acceptance follows from the earlier spike's approval.
 
-The proof runner now compares the actual production dispatcher with a hash-pinned
+The proof runner at [the final integration checkpoint](https://github.com/zackbart/connecta/tree/d0451f8e1ea683e0ac187058a58557a2df7cc282) compared the actual production dispatcher with a hash-pinned
 test-only snapshot of `src/server.ts` at `ac511e6b` (the reviewed pre-D3 dispatcher,
 unchanged from `a471a2a6`). Both graphs use the current lower native core and
 identical fixtures. Only the legacy baseline is substituted; the production
@@ -24,6 +24,7 @@ one server module must be visited per graph, and baseline drift, missed graphs,
 removed real route selection and broken unmatched fallthrough are mutation-tested.
 The obsolete prefix-layer transform/fixture are retired in the production
 PR (the workerd config now runs unmodified production), so intentional server changes cannot silently compare baseline to baseline.
+The historical runner and rejected MCP alternatives were retired by #1069 after direct production regressions moved into the server and Node adapter suites. Commands below reproduce the historical checkpoint, not current verification.
 Effect remains **4.0.5**, SDK **2.3.1**. D7 evidence and its approved SDK protocol
 leaves remain intact. The historical sections below describe the spike rather
 than current production routing.
@@ -204,7 +205,7 @@ dispatcher's performance. That design requires its own measurement.
 ## D.7 observations and safe implementation alternative
 
 `effectMcp`, `effectExchange`, and `runMcp` in
-[`observations.ts`](../test/fixtures/effect-proof/observations.ts) exercise
+[`observations.ts`](https://github.com/zackbart/connecta/blob/d0451f8e1ea683e0ac187058a58557a2df7cc282/test/fixtures/effect-proof/observations.ts) exercise
 the genuine Effect registration, protocol codecs and HTTP transport. The six
 tool descriptors come from the actual current Connecta list. The handles are
 explicitly synthetic; their successful execution does not prove Connecta's
