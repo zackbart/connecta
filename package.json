@@ -115,6 +115,10 @@
       "types": "./dist/providers/planning-center/index.d.ts",
       "import": "./dist/providers/planning-center/index.js"
     },
+    "./providers/quickbooks": {
+      "types": "./dist/providers/quickbooks/index.d.ts",
+      "import": "./dist/providers/quickbooks/index.js"
+    },
     "./providers/sheets": {
       "types": "./dist/providers/sheets/index.d.ts",
       "import": "./dist/providers/sheets/index.js"
