@@ -8,7 +8,7 @@ import { Credentials, RequestSecrets } from "../../http/services.js";
 import { get, post, patch, type Connection, type ConnectOptions, type SendOptions } from "../../http/vendor.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
-import type { RestCall, RestReadPost } from "../_shared/rest/tools.js";
+import type { RestCall, RestReadPost } from "../_shared/rest/kit.js";
 import {
   valueSafety,
   withholdEmbeddedUrlsIn,

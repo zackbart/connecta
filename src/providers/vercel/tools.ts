@@ -9,7 +9,7 @@ import { vercelPage } from "../../http/hatch-paging.js";
 import type { Connection } from "../../http/vendor.js";
 import type { JsonSchema } from "../../types.js";
 import { schema, typedParams } from "../_shared/rest/kit.js";
-import type { RestCall } from "../_shared/rest/tools.js";
+import type { RestCall } from "../_shared/rest/kit.js";
 import type { RestMethod } from "../_shared/rest/operation-index.js";
 import { refuseWithheldUpload } from "../_shared/rest/value-safety.js";
 import { rowStop, type LogLimits } from "./lib/logs.js";

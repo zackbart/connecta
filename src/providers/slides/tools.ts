@@ -10,7 +10,7 @@ import { RESULT_BUDGET_BYTES, clampRedactedText, clampText, jsonBytes } from "..
 import { googleClient, googleOutcomeOf, googleFailureMessage, type GoogleClient } from "../_shared/google/kit.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 import { REQUEST_KINDS, COMMENT_KINDS, COMMENTS_UNSAVED } from "./lib/requests.js";
-import { SLIDES, SLIDES_INDEX } from "./api.js";
+import { SLIDES_INDEX } from "./api.js";
 import * as contracts from "./lib/schemas.js";
 import { read, write } from "../../http/tools.js";
 import { Operation } from "../../runtime/call.js";
@@ -1536,7 +1536,7 @@ function postToThread(
 }
 
 export function slidesTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, SLIDES.provider, { standard: true, index: SLIDES_INDEX });
+  const client = googleClient(connection, SLIDES_INDEX);
   const readOnly = { readOnlyHint: true } as const;
   const presentationPath = (id: string) => `/presentations/${encodeURIComponent(id)}`;
   const nextPage = (cursor: string | null) =>

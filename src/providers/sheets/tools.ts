@@ -9,7 +9,6 @@ import type { ConnectorContext } from "../../types.js";
 import { googleClient, googleFailureMessage, googleOutcomeOf } from "../_shared/google/kit.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { encodeForAgent, redactBeforeCut } from "../../sent-secrets.js";
-import { SHEETS } from "./api.js";
 import { read, write } from "../../http/tools.js";
 import { boundCursor } from "../../http/paging.js";
 import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
@@ -400,7 +399,7 @@ const SPREADSHEET_FIELDS = [
 // --- Tools ------------------------------------------------------------------------
 
 export function sheetsTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, SHEETS.provider, { standard: true, index: sheetsIndex });
+  const client = googleClient(connection, sheetsIndex);
   const readOnly = { readOnlyHint: true } as const;
   // Additive: nothing that existed is lost. Writes require a writable
   // endpoint: call_destructive_tool or a program. The host controls approval.

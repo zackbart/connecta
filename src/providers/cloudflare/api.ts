@@ -28,7 +28,7 @@ import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import { Integer } from "../../http/json-schema.js";
 import { cloudflarePage } from "../../http/hatch-paging.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
-import type { RestCall, RestFraming, RestPage, RestReadPost, RestResult } from "../_shared/rest/tools.js";
+import type { RestCall, RestFraming, RestPage, RestReadPost, RestResult } from "../_shared/rest/kit.js";
 import {
   valueSafety,
   withholdEmbeddedUrlsIn,

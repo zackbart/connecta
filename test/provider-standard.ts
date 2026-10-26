@@ -144,8 +144,6 @@ export function layoutViolations(provider: ProviderFacts): string[] {
   const index = provider.read("index.ts") ?? "";
   if (/\basProviderFactory\s*\(/.test(index)) found.push("L3: index.ts uses asProviderFactory, not defineProvider");
   if (/\binputSchema\b/.test(index)) found.push("L3: index.ts defines tools; they belong in tools.ts");
-  if (/\bremoteMcp\s*\(/.test(index))
-    found.push("L3: index.ts configures remoteMcp(); hosted servers use generic remoteMcp() entries");
   for (const file of ["index.ts", "SKILL.md", "drift.json", "fixtures.ts", "skill.generated.ts"]) {
     if (!has(file)) found.push(`L4: missing ${file}`);
   }

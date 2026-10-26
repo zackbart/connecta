@@ -73,7 +73,7 @@ import {
   type CallServices,
   type Dispatch,
 } from "../src/http/services.js";
-import { typedParams, indexedVendor, restKitTools } from "../src/providers/_shared/rest/kit.js";
+import { typedParams, indexedVendor } from "../src/providers/_shared/rest/kit.js";
 import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
 import { continuationKeys } from "../src/storage/keys.js";
 import { callMemo } from "../src/runtime/call.js";
@@ -995,7 +995,7 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     );
   });
 
-  it("INV-9 INV-11: keeps indexed contracts, named clients and frozen capacity exact", async () => {
+  it("INV-11: confines typed sends to named operations and preserves decoded argument order", async () => {
     const source = {
       source: "https://vendor.example/openapi.json",
       revision: "1",
@@ -1035,29 +1035,6 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       await runEdge(connection.send(bulk, {} as never).pipe(Effect.result, Effect.provideContext(services()))),
     ).toMatchObject({ _tag: "Failure", failure: { _tag: "RequestRefused" } });
     expect(sent).toEqual([]);
-    const steps: Record<string, "once"> = { lookup: "once", write: "once" };
-    let mode = "normal";
-    const tools = restKitTools({
-      vendor: "acme",
-      title: "Acme",
-      index,
-      valueSafety: valueSafety({ title: "Acme", operations: {} }, () => index),
-      connection,
-      writeSteps: steps,
-      send: () =>
-        Effect.gen(function* () {
-          if (mode === "extra") return yield* connection.sendPath(POST_ITEMS, { step: "extra" });
-          yield* connection.sendPath(LOOKUP, { effect: "read", step: "lookup" });
-          const answer = yield* connection.sendPath(POST_ITEMS);
-          if (mode === "repeat") yield* connection.sendPath(POST_ITEMS);
-          return answer;
-        }),
-    });
-    expect(tools.find((tool) => tool.name === "acme_api_write")?.inputSchema?.properties).toHaveProperty("method", {
-      type: "string",
-      enum: ["POST"],
-      description: "The operation's HTTP method.",
-    });
     const orderedInput = Schema.Struct({
       first: Schema.String,
       second: Schema.String,
@@ -1140,16 +1117,6 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       orderedConnector.callTool("ordered", { first: "one", second: "two", rows: [] }, context()),
     ).resolves.toEqual({ first: "one", second: "two", rows: [] });
     await expect(orderedConnector.callTool("passthrough_order", { value: deep }, context())).resolves.toBe(true);
-    delete steps["write"];
-    steps["extra"] = "once";
-    const connector = apiConnector("acme", { tools });
-    for (mode of ["normal", "extra", "repeat"]) {
-      sent = [];
-      const outcome = connector.callTool("acme_api_write", { method: "POST", path: "/items" }, context());
-      if (mode === "normal") await expect(outcome).resolves.toBeDefined();
-      else await expect(outcome).rejects.toBeInstanceOf(ConnectorCallError);
-      expect(sent.map((request) => request.method)).toEqual(mode === "extra" ? [] : ["GET", "POST"]);
-    }
   });
 
   it("renders every bound the decoder enforces: Integer has none past finiteness, Schema.Int says its own", () => {
