@@ -178,39 +178,36 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
   if (!config || typeof config !== "object") {
     throw new Error(`[connecta] connector "${id}" oauth must be an object.`);
   }
+  const invalid = (detail: string): never => {
+    throw new Error(`[connecta] connector "${id}" oauth.${detail}`);
+  };
   const authorizationEndpoint = configuredUrl(id, "authorizationEndpoint", config.authorizationEndpoint);
   const tokenEndpoint = configuredUrl(id, "tokenEndpoint", config.tokenEndpoint);
   const revocationEndpoint =
     config.revocationEndpoint === undefined
       ? undefined
       : configuredUrl(id, "revocationEndpoint", config.revocationEndpoint);
-  if (revocationEndpoint?.search)
-    throw new Error(`[connecta] connector "${id}" oauth.revocationEndpoint must not carry a query.`);
+  if (revocationEndpoint?.search) invalid(`revocationEndpoint must not carry a query.`);
   const revocationRequestFormat = config.revocationRequestFormat ?? "form";
   if (
     (revocationRequestFormat !== "form" && revocationRequestFormat !== "json") ||
     (config.revocationRequestFormat !== undefined && !revocationEndpoint)
   )
-    throw new Error(
-      `[connecta] connector "${id}" oauth.revocationRequestFormat requires an endpoint and form or json.`,
-    );
+    invalid(`revocationRequestFormat requires an endpoint and form or json.`);
   if (tokenEndpoint.search) {
-    throw new Error(`[connecta] connector "${id}" oauth.tokenEndpoint must not carry a query.`);
+    invalid(`tokenEndpoint must not carry a query.`);
   }
   if (typeof config.clientId !== "string" || config.clientId.trim() === "") {
-    throw new Error(`[connecta] connector "${id}" oauth.clientId must be a non-empty string.`);
+    invalid(`clientId must be a non-empty string.`);
   }
   if (config.clientSecret !== undefined && (typeof config.clientSecret !== "string" || config.clientSecret === "")) {
     // Usually an unset environment variable read as "". Never echo it.
-    throw new Error(`[connecta] connector "${id}" oauth.clientSecret must be a non-empty string when set.`);
+    invalid(`clientSecret must be a non-empty string when set.`);
   }
   const clientAuthentication =
     config.tokenEndpointAuthMethod ?? (config.clientSecret !== undefined ? "client_secret_basic" : "none");
   if (!CLIENT_AUTHENTICATION.has(clientAuthentication)) {
-    throw new Error(
-      `[connecta] connector "${id}" oauth.tokenEndpointAuthMethod must be ` +
-        '"client_secret_basic", "client_secret_post", or "none".',
-    );
+    invalid(`tokenEndpointAuthMethod must be ` + '"client_secret_basic", "client_secret_post", or "none".');
   }
   if (clientAuthentication === "none" && config.clientSecret !== undefined) {
     throw new Error(
@@ -219,21 +216,16 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
     );
   }
   if (clientAuthentication !== "none" && config.clientSecret === undefined) {
-    throw new Error(
-      `[connecta] connector "${id}" oauth.tokenEndpointAuthMethod ` + `"${clientAuthentication}" needs a clientSecret.`,
-    );
+    invalid(`tokenEndpointAuthMethod ` + `"${clientAuthentication}" needs a clientSecret.`);
   }
   assertOAuthScope(id, config.scope);
   const authorizationParams: Array<readonly [string, string]> = [];
   for (const [name, value] of Object.entries(config.authorizationParams ?? {})) {
     if (RESERVED_AUTHORIZATION_PARAMS.has(name)) {
-      throw new Error(
-        `[connecta] connector "${id}" oauth.authorizationParams may not set ` +
-          `"${name}"; the authorization request owns it.`,
-      );
+      invalid(`authorizationParams may not set ` + `"${name}"; the authorization request owns it.`);
     }
     if (typeof value !== "string") {
-      throw new Error(`[connecta] connector "${id}" oauth.authorizationParams.${name} must be a string.`);
+      invalid(`authorizationParams.${name} must be a string.`);
     }
     authorizationParams.push([name, value]);
   }
@@ -244,7 +236,7 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
       typeof config.expectedCallbackParameters !== "object" ||
       Array.isArray(config.expectedCallbackParameters))
   ) {
-    throw new Error(`[connecta] connector "${id}" oauth.expectedCallbackParameters must be a string record.`);
+    invalid(`expectedCallbackParameters must be a string record.`);
   }
   for (const [name, value] of Object.entries(config.expectedCallbackParameters ?? {})) {
     if (
@@ -253,8 +245,8 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
       typeof value !== "string" ||
       value === ""
     ) {
-      throw new Error(
-        `[connecta] connector "${id}" oauth.expectedCallbackParameters must use nonempty parameter names ` +
+      invalid(
+        `expectedCallbackParameters must use nonempty parameter names ` +
           "(ASCII letters, digits, dots, underscores or hyphens), nonempty string values, and no OAuth response fields.",
       );
     }
@@ -263,31 +255,26 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
   const tokenRequestHeaders: Array<readonly [string, string]> = [];
   for (const [name, value] of Object.entries(config.tokenRequestHeaders ?? {})) {
     if (!HEADER_NAME.test(name)) {
-      throw new Error(`[connecta] connector "${id}" oauth.tokenRequestHeaders has an invalid header name.`);
+      invalid(`tokenRequestHeaders has an invalid header name.`);
     }
     if (RESERVED_TOKEN_HEADERS.has(name.toLowerCase())) {
-      throw new Error(
-        `[connecta] connector "${id}" oauth.tokenRequestHeaders may not set ` + `"${name}"; the token request owns it.`,
-      );
+      invalid(`tokenRequestHeaders may not set ` + `"${name}"; the token request owns it.`);
     }
     if (typeof value !== "string" || value.includes("\r") || value.includes("\n") || value.includes("\0")) {
-      throw new Error(`[connecta] connector "${id}" oauth.tokenRequestHeaders.${name} must be a single-line string.`);
+      invalid(`tokenRequestHeaders.${name} must be a single-line string.`);
     }
     tokenRequestHeaders.push([name, value]);
   }
   const origins = Array.isArray(config.apiOrigins) ? config.apiOrigins : [];
   if (origins.length === 0) {
-    throw new Error(
-      `[connecta] connector "${id}" oauth.apiOrigins must name at least one ` +
-        "origin; ctx.oauth.fetch sends the access token nowhere else.",
-    );
+    invalid(`apiOrigins must name at least one ` + "origin; ctx.oauth.fetch sends the access token nowhere else.");
   }
   const apiOrigins = new Set<string>();
   for (const origin of origins) {
     const url = configuredUrl(id, "apiOrigins", origin);
     if (url.origin !== origin) {
-      throw new Error(
-        `[connecta] connector "${id}" oauth.apiOrigins entries must be exact ` +
+      invalid(
+        `apiOrigins entries must be exact ` +
           'origins, like "https://api.example.com", with no path or trailing slash.',
       );
     }
@@ -367,26 +354,27 @@ class StaticOAuthProvider extends KvOAuthProvider {
     };
   }
 
+  private configuredClientInformation(): StoredOAuthClientInformation {
+    const { settings } = this;
+    return {
+      client_id: settings.clientId,
+      ...(settings.clientSecret !== undefined ? { client_secret: settings.clientSecret } : {}),
+      redirect_uris: [this.redirectUrl],
+      token_endpoint_auth_method: settings.clientAuthentication,
+      issuer: settings.identity,
+    };
+  }
+
   protected override revocationSnapshot(body: MigratedGrantBody) {
     const { settings } = this;
-    if (!settings.revocationEndpoint) return { body };
     return {
       body: {
         ...body,
-        client: { value: { client_id: settings.clientId, issuer: settings.identity } },
+        client: { value: this.configuredClientInformation() },
         discovery: {
           authorizationServerUrl: settings.identity,
-          authorizationServerMetadata: {
-            revocation_endpoint: settings.revocationEndpoint.href,
-            revocation_endpoint_auth_methods_supported: [settings.clientAuthentication],
-          },
+          authorizationServerMetadata: { revocation_endpoint: settings.revocationEndpoint!.href },
         } as OAuthDiscoveryState,
-      },
-      client: {
-        issuer: settings.identity,
-        clientId: settings.clientId,
-        ...(settings.clientSecret !== undefined ? { clientSecret: settings.clientSecret } : {}),
-        tokenEndpointAuthMethod: settings.clientAuthentication,
       },
     };
   }
@@ -445,16 +433,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       StaticOAuthProvider.prototype,
       "clientInformation",
       function (this: StaticOAuthProvider) {
-        return authValue<StoredOAuthClientInformation>(() => {
-          const { settings } = this;
-          return {
-            client_id: settings.clientId,
-            ...(settings.clientSecret !== undefined ? { client_secret: settings.clientSecret } : {}),
-            redirect_uris: [this.redirectUrl],
-            token_endpoint_auth_method: settings.clientAuthentication,
-            issuer: settings.identity,
-          };
-        });
+        return authValue(() => this.configuredClientInformation());
       },
       StaticOAuthProvider.prototype.clientInformation,
     );
