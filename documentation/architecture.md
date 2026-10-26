@@ -2680,7 +2680,10 @@ for changes to the normalizer or summaries. This supersedes Decision 0011's
 retained-conversion requirement for deterministic Discovery evidence. Frozen
 measurements read those same provider-owned originals but validate the existing
 `test/fixtures/google-discovery/manifest.json` digests independently: a provider
-pin update must fail the historical measurement rather than silently rebase it. Full source method inventory
+pin update must fail the historical measurement rather than silently rebase it.
+That reviewed pin-change PR must re-measure and update the product's manifest
+entry and the Forms #1009 drift-check digests when applicable, or retire the
+measurement. Full source method inventory
 and canonical source-to-relative-path mappings survive normalization. Gmail's
 source `userId` becomes deployment-owned `me`; runtime paths are relative to
 the existing connection root. Reserved Slides ids remain one encoded segment.

@@ -141,9 +141,11 @@ bytes or a mismatched primary pin; the generated module separately records
 the conversion's digest, so normalizer or summary changes make it stale.
 This supersedes Decision 0011's retained-conversion requirement for Discovery.
 Frozen measurements read the provider-owned original and validate it against
-`test/fixtures/google-discovery/manifest.json`; never silently move those
-historical digests when updating a provider pin. No live URL
-is an immutable revision; the archived bytes and SHA-256 establish the pin.
+`test/fixtures/google-discovery/manifest.json`. A pin move fails these checks
+by design. In the same reviewed PR, re-measure and update the product's
+manifest entry and the Forms #1009 drift-check digests when applicable, or
+retire the measurement. Never update those baselines independently of a pin
+move. No live URL is an immutable revision; archived bytes and SHA-256 establish the pin.
 Use `options.formats: true` to retain parameter formats,
 `options.numericBounds: true` for numeric bounds, and `options.requestGraph: true` to retain a complete referenced request
 schema for details, independently of the bounded compact admission checker.

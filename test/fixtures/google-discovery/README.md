@@ -6,10 +6,13 @@ prerequisite. The exact official bytes have one owner:
 `src/providers/<name>/evidence/discovery.document.json`, pinned by each product's
 `discovery.json`. Original documents never enter runtime imports or the package.
 
-The measurement script and frozen inventory test validate those bytes against
-this manifest before normalizing. Keep these historical digests frozen when
-moving a provider pin: a mismatch must fail rather than silently change the
-measurement baseline. Historical originals remain recoverable from Git history.
+The measurement script and inventory test validate those bytes against this
+manifest before normalizing. The Forms #1009 drift-check case also pins its
+canonical digests. A provider pin move fails these checks by design. In the
+same reviewed PR, re-measure and update that product's manifest entry and
+the Forms canonical digests when applicable, or retire the measurement.
+Do not update these baselines independently of a reviewed pin move.
+Historical originals remain recoverable from Git history.
 The shared compiler derives deterministic OpenAPI in memory, separately from
 original evidence and reviewed execution admission.
 
