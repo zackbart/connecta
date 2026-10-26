@@ -65,7 +65,7 @@ A Node host serving `connecta.fetch` without `listen()` has no owned sender:
 every maintained-provider write, every reviewed POST read and every remote MCP
 write is refused before sending. Downstream OAuth credential POSTs also require
 that sender; discovery GETs retain native fetch. Resource writes worked in 0.34.1;
-credential POSTs used native fetch through 0.35.0. For example, an `assistant` using
+credential POSTs used native fetch through 0.34.1. For example, an `assistant` using
 `vercel_api_read` to POST `/v1/registrar/domains/availability` needs that
 transport even on a read-only endpoint. A Node deployment using only the root
 entry refuses those requests before sending them. Workers use their native
@@ -110,7 +110,7 @@ fingerprint rather than redeeming it twice. Once a refresh claim has been
 submitted, that protection remains conservative even if proxy setup later fails.
 Use a fresh authorization flow to reconcile. OAuth discovery remains on native
 fetch and needs its own host proxy policy. These credential POST requirements
-change the native-fetch behavior of 0.35.0.
+change the native-fetch behavior of 0.34.1.
 
 ## Start on Workers
 
@@ -322,12 +322,19 @@ For 0.35.0, serve Node with `listen` from `@zackbart/connecta/node`, as the
 current template does. Without `listen()`, a host serving `connecta.fetch` has
 no owned sender: every maintained-provider write, every reviewed POST read and
 every remote MCP write is refused before sending, although each worked in 0.34.1.
-With `listen()`, every maintained-provider request, reads included, and remote
-MCP writes use the direct sender, ignoring `NODE_USE_ENV_PROXY`, `HTTP_PROXY`,
-`HTTPS_PROXY` and host proxy dispatchers. Only remote MCP reads keep native
-fetch and its proxy settings. A deployment needing a proxy for maintained
-providers or remote MCP needs approved direct egress or the Workers shape
-before upgrading. Explicit proxy support is follow-up work. See [Start on Node](#start-on-node).
+Downstream OAuth token, registration and revocation POSTs also require that
+sender. With `listen()`, every maintained-provider request, reads included,
+remote MCP writes and those credential POSTs use the owned sender. Configure
+`listen(..., { proxy })` explicitly for HTTP(S) CONNECT proxy egress; ambient
+`NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY` and host proxy dispatchers do
+not configure it. Remote MCP reads and OAuth discovery GETs retain native fetch
+and need their own host proxy policy. An uncertain refresh requires fresh
+authorization rather than replaying the spent token. See [Start on Node](#start-on-node).
+
+Authenticated MCP bodies now default to 4 MiB through
+`admission.requests.maxBodyBytes`; Node's separate pre-auth buffer also defaults
+to 4 MiB. Configure both core and `listen(..., { maxBodyBytes })` if a deployment
+must accept larger bodies. Smaller platform or proxy limits still apply.
 
 After a dispatched write reports an unknown outcome, read the target before
 making another write. Programs retain that outcome even when guest code catches
