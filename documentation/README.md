@@ -12,6 +12,7 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Add or remove a connector                | [Change the connector roster](./integrating.md#add-or-remove-a-connector)                                                           |
 | Set up a maintained provider             | [Maintained provider setup](./providers.md)                                                                                         |
+| Inspect maintained API sources and tools | [API sources and tool inventory](./providers.md#api-sources-and-tool-inventory)                                                     |
 | Organize an agent's pools and tiers      | [Organizing an agent's pools](./auth.md#organizing-an-agents-pools)                                                                 |
 | Add a person (maintainer or pool member) | [Add a person](./auth.md#add-a-person), [member page](./operator-ui.md#use-the-member-page)                                         |
 | Connect a shared credential              | [Connect a shared credential](./auth.md#connect-a-shared-credential)                                                                |

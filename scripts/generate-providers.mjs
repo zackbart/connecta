@@ -121,6 +121,87 @@ function readmeList(source, providers) {
   return source.replace(existing[0], `${existing[1]}${start}${list}${end}${existing[3]}`);
 }
 
+/** The installed inventory uses the same offline catalogs as generated conventions. */
+async function providerInventory(source, providers) {
+  const start = "<!-- provider-inventory:start -->";
+  const end = "<!-- provider-inventory:end -->";
+  const entries = [];
+  for (const provider of providers) {
+    const { name, definition, tools, conventionToolBlocks = {}, driftData } = provider;
+    const display = definition.readme ?? definition.title;
+    const setup = display
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}_ -]/gu, "")
+      .replace(/ /g, "-");
+    const evidence = `https://github.com/zackbart/connecta/tree/main/src/providers/${name}`;
+    const readPin = async (file) => JSON.parse(await readFile(join(provider.directory, "evidence", file), "utf8"));
+    let pin;
+    try {
+      pin = await readPin("openapi.json");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const checks = driftData.checks ?? [];
+    const specifications = checks.flatMap((check) => (check.specification ? [check.specification] : []));
+    const link = (label, record) => `[${label}](${record.documentation ?? record.latest ?? record.url})`;
+    let provenance;
+    if (pin?.documents) {
+      const documents = await Promise.all(pin.documents.map(({ pin: file }) => readPin(file)));
+      provenance = `Composed upstream OpenAPI contracts: ${documents.map((record, i) => link(pin.documents[i].prefix, record)).join(", ")}.`;
+    } else if (pin) {
+      const conversion = specifications.some(({ url }) => url && !url.startsWith("https://"));
+      const kind = pin.discovery
+        ? "Google Discovery conversion"
+        : conversion
+          ? "Reviewed HTML/documentation conversion"
+          : "Upstream OpenAPI";
+      provenance = `${link(kind, pin)}.`;
+    } else {
+      provenance = `Hand-authored endpoint contracts; ${specifications.map((record) => link("upstream endpoint checks", record)).join(", ")}. No vendored OpenAPI document.`;
+    }
+    for (const specification of specifications) {
+      if (!specification.pin || specification.pin === pin?.discovery?.pin) continue;
+      provenance += ` ${link("Supplemental reviewed contract", await readPin(specification.pin))}.`;
+    }
+    const groups = new Map();
+    for (const tool of tools) {
+      const api = tool.name.startsWith(`${definition.kit?.hatch?.name}_api_`);
+      const read = tool.annotations?.readOnlyHint === true && tool.annotations?.destructiveHint !== true;
+      const group = `${api ? "API" : "Named"} ${read ? "reads" : "writes"}`;
+      const conditional = conventionToolBlocks[tool.name];
+      const label = `\`${tool.name}\`${conditional ? ` (${conditional} enabled)` : ""}`;
+      groups.set(group, [...(groups.get(group) ?? []), label]);
+    }
+    entries.push(
+      [
+        "<details>",
+        `<summary>${display} — ${tools.length} tools</summary>`,
+        "",
+        `[Setup](#${setup}). **API source:** ${provenance}`,
+        "",
+        ...["Named reads", "Named writes", "API reads", "API writes"].map(
+          (group) => `- **${group}:** ${groups.get(group)?.sort().join(", ") ?? "None"}.`,
+        ),
+        "",
+        `**Contributor evidence (optional):** [contracts, adapters and review](${evidence}).`,
+        "",
+        "</details>",
+      ].join("\n"),
+    );
+  }
+  const block = `${start}\n\n${entries.join("\n\n")}\n\n${end}`;
+  // Fixture roots and older pages may predate the bounded inventory.
+  if (!source.includes(start) && !source.includes(end)) return `${source.trimEnd()}\n\n${block}\n`;
+  if (
+    source.split(start).length !== 2 ||
+    source.split(end).length !== 2 ||
+    source.indexOf(end) < source.indexOf(start)
+  ) {
+    throw new Error("Provider inventory requires one ordered pair of provider-inventory:start/end markers");
+  }
+  return source.slice(0, source.indexOf(start)) + block + source.slice(source.indexOf(end) + end.length);
+}
+
 /** Import a TypeScript module's exports by bundling it; the generator runs under plain Node too. */
 async function importBundle(options) {
   const result = await build({
@@ -301,6 +382,7 @@ export async function generateProviders({ root = repositoryRoot, check = false }
     } catch {
       fail(provider.name, "drift.json must contain valid JSON");
     }
+    provider.driftData = drift;
     const keys = definition.blocks?.keys ?? [];
     if (provider.standard) {
       for (const key of provider.guide.keys) {
@@ -379,6 +461,8 @@ export async function generateProviders({ root = repositoryRoot, check = false }
   outputs.set(budgetPath, json(budgets));
   const readmePath = join(root, "README.md");
   outputs.set(readmePath, readmeList(await readFile(readmePath, "utf8"), providers));
+  if (documentation)
+    outputs.set(join(root, "documentation", "providers.md"), await providerInventory(documentation, providers));
   outputs.set(
     join(root, "test", "providers.generated.ts"),
     generated +
