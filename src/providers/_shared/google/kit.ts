@@ -5,14 +5,11 @@
 // This module adds what every product needs: the Google error
 // table, the delegated machine grant, a value-safety resolver over the
 // product's own operations, a request adapter that keeps the legacy request
-// bytes and write wording, and the step-1 catalog bridge.
+// bytes, and failure phases for product recovery.
 
-import { Effect, Option, Schema } from "effect";
-import type { ApiTool } from "../../../connectors/api-connector.js";
-import { callClassification } from "../../../call-classification.js";
+import { Effect, Option } from "effect";
 import { deriveContext } from "../../../derived-context.js";
 import { ConnectorCallError } from "../../../errors.js";
-import { attachFailureFacts } from "../../../operator-record.js";
 import {
   Refusal,
   StatusFailure,
@@ -23,11 +20,10 @@ import {
 import type { GrantRenewal } from "../../../http/oauth.js";
 import type { SafetyOptions } from "../../../http/safety.js";
 import { Classification, Dispatches, Signal, type CallServices, type Dispatch } from "../../../http/services.js";
-import { read, write } from "../../../http/tools.js";
 import type { Connection, Operation as VendorOperation } from "../../../http/vendor.js";
 import { callMemo, Operation } from "../../../runtime/call.js";
-import type { ConnectorContext, JsonSchema } from "../../../types.js";
-import { providerFailureMessage, unsentAfterUnauthorized } from "../../../write-outcome.js";
+import type { ConnectorContext } from "../../../types.js";
+import { providerFailureMessage } from "../../../write-outcome.js";
 import { delegatedToken, forgetDelegatedToken, type DelegatedTokenRequest } from "./service-account.js";
 import { subjectFor, workspaceConnection, type GoogleWorkspaceOptions, type WorkspaceConnection } from "./workspace.js";
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
@@ -429,7 +425,7 @@ type QueryValue = string | number | boolean | readonly (string | number | boolea
 export interface GoogleRequest {
   readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
-  /** Canonical pinned template when opting a named client into index confinement. */
+  /** Canonical pinned template for index confinement. */
   readonly template?: string;
   readonly query?: Readonly<Record<string, QueryValue>>;
   /** JSON body, serialized as the legacy transport did. */
@@ -492,21 +488,6 @@ function queryPairs(query: GoogleRequest["query"]): Array<[string, string]> {
   return pairs;
 }
 
-/**
- * Words the legacy client gave a served write whose answer proves nothing:
- * no answer, a 5xx, a redirect, or a 2xx whose reply could not be read. Only
- * the message and retry flag are its; the core still decides the outcome,
- * which for each of these is unknown.
- */
-function unknownWrite(message: string, status: number | undefined): Refusal {
-  return new Refusal({
-    error: attachFailureFacts(
-      new ConnectorCallError("connector_call_failed", message, { retryable: false }),
-      status === undefined ? {} : { httpStatus: status },
-    ),
-  });
-}
-
 /** A product's request path over its kit connection, keeping the legacy request and failure shapes. */
 export interface GoogleClient {
   /** One JSON request; the parsed body, `undefined` for an empty one. */
@@ -527,12 +508,8 @@ export interface GoogleClient {
   ) => ReturnType<Connection["sendPath"]>;
 }
 
-export function googleClient(
-  connection: Connection,
-  provider: string,
-  configuration: { readonly standard?: boolean; readonly index?: OperationIndex } = {},
-): GoogleClient {
-  if (configuration.standard || configuration.index) requireGoogleIndex(configuration.index);
+export function googleClient(connection: Connection, index: OperationIndex): GoogleClient {
+  requireGoogleIndex(index);
   const send = (
     request: GoogleRequest,
     accept: string,
@@ -540,28 +517,18 @@ export function googleClient(
     binary = false,
   ) =>
     Effect.gen(function* () {
-      if (configuration.index) {
-        yield* Effect.try({
-          try: () => {
-            if (!request.template)
-              throw new ConnectorCallError(
-                "invalid_args",
-                "This indexed Google named request needs its declared operation template.",
-              );
-            googleNamedOperation(configuration.index!, request.method, request.path, request.template);
-          },
-          catch: (error) => new Refusal({ error: error as ConnectorCallError }),
-        });
-      }
-      const active = yield* Effect.serviceOption(Operation);
-      const callWrite = (yield* Classification) === "write";
+      yield* Effect.try({
+        try: () => {
+          if (!request.template)
+            throw new ConnectorCallError(
+              "invalid_args",
+              "This indexed Google named request needs its declared operation template.",
+            );
+          googleNamedOperation(index, request.method, request.path, request.template);
+        },
+        catch: (error) => new Refusal({ error: error as ConnectorCallError }),
+      });
       const dispatches = yield* Dispatches;
-      const signal = yield* Signal;
-      // Match the legacy wording rule even for direct calls: their GET
-      // lookups have no served verdict. Physical write accounting stays the
-      // core's Classification; only these Google-specific words use this.
-      const served = Option.isSome(active) && active.value ? callClassification(active.value) : undefined;
-      const write = (served ?? (request.method === "GET" ? "read" : "write")) === "write";
       const operation = yield* connection.safety.resolve(request.method, request.path);
       return yield* connection
         .sendPath(
@@ -594,117 +561,31 @@ export function googleClient(
               settled(
                 failure,
                 dispatches.find((entry) => entry.failure === failure),
-                write,
-                callWrite,
-                signal,
               ),
             ),
           ),
         );
     });
 
-  function settled(
-    failure: HttpFailure,
-    own: Dispatch | undefined,
-    write: boolean,
-    callWrite: boolean,
-    signal: AbortSignal | undefined,
-  ): HttpFailure {
-    // A lookup inside a write call has not sent the write. Keep the lookup's
-    // own verdict; only a call-owned request gets uncertain-write wording.
-    write = write && own?.request?.auxiliary !== true;
+  function settled(failure: HttpFailure, own: Dispatch | undefined): HttpFailure {
     const status = own?.status;
     const dispatched = own?.request?.dispatched === true;
-    const at = (phase: GoogleOutcome["phase"], code = status) =>
-      ({ dispatched, phase, ...(code === undefined ? {} : { status: code }) }) as GoogleOutcome;
     if (!dispatched) return noted(failure, { dispatched: false, phase: "before-send" });
-    if (configuration.standard) {
-      // Preserve phase evidence for partial-create recovery; settlement and
-      // reconciliation wording belong to the kit in standard mode.
-      const phase: GoogleOutcome["phase"] =
-        failure._tag === "TransportFailure"
-          ? "awaiting-response"
-          : failure._tag === "UnreadableBody" || failure._tag === "ResponseTooLarge"
-            ? "reading-body"
-            : failure._tag === "RedirectRefused" || (status !== undefined && status >= 300 && status < 400)
-              ? "redirected"
-              : status === 401
-                ? "unauthorized"
-                : status !== undefined && status >= 500
-                  ? "server-error"
-                  : "refused";
-      return noted(failure, at(phase));
-    }
-    switch (failure._tag) {
-      case "StatusFailure": {
-        const code = failure.status;
-        if (code >= 300 && code < 400)
-          return noted(
-            write
-              ? unknownWrite(
-                  `${provider} answered HTTP ${code} with a redirect, which this connection does not follow, so whether the request was applied is unknown. Re-read its target before repeating it.`,
-                  status,
-                )
-              : failure,
-            at("redirected", code),
-          );
-        if (write && code >= 500)
-          return noted(
-            unknownWrite(
-              `${provider} answered HTTP ${code} after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.`,
-              status,
-            ),
-            at("server-error", code),
-          );
-        if (callWrite && own?.request?.auxiliary !== true && code === 401) {
-          // Never sent again (INV-9); the next call mints a fresh token.
-          const refusal = toConnectorCallError(failure, connection.errors, {
-            classification: "write",
-            dispatches: [own!],
-            withholds: connection.safety.withholdsErrors,
-            signal,
-          });
-          return noted(new Refusal({ error: unsentAfterUnauthorized(provider, refusal) }), at("unauthorized", 401));
-        }
-        return noted(failure, at("refused", code));
-      }
-      case "RedirectRefused":
-        return noted(
-          write
-            ? unknownWrite(
-                `${provider} answered HTTP ${failure.status} with a redirect, which this connection does not follow, so whether the request was applied is unknown. Re-read its target before repeating it.`,
-                status,
-              )
-            : failure,
-          at("redirected", failure.status),
-        );
-      case "TransportFailure":
-        return noted(
-          write
-            ? unknownWrite(
-                `${provider} was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.`,
-                status,
-              )
-            : failure,
-          at("awaiting-response", undefined),
-        );
-      case "ResponseTooLarge":
-      case "UnreadableBody":
-        // An error status keeps its meaning whatever went wrong reading it.
-        if (status !== undefined && status >= 400)
-          return noted(failure, at(write && status >= 500 ? "server-error" : "refused"));
-        return noted(
-          write
-            ? unknownWrite(
-                `${provider} accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.`,
-                status,
-              )
-            : failure,
-          at("reading-body"),
-        );
-      default:
-        return noted(failure, at("refused"));
-    }
+    // Preserve phase evidence for partial-create recovery; settlement and
+    // reconciliation wording belong to the kit.
+    const phase: GoogleOutcome["phase"] =
+      failure._tag === "TransportFailure"
+        ? "awaiting-response"
+        : failure._tag === "UnreadableBody" || failure._tag === "ResponseTooLarge"
+          ? "reading-body"
+          : failure._tag === "RedirectRefused" || (status !== undefined && status >= 300 && status < 400)
+            ? "redirected"
+            : status === 401
+              ? "unauthorized"
+              : status !== undefined && status >= 500
+                ? "server-error"
+                : "refused";
+    return noted(failure, { dispatched, phase, ...(status === undefined ? {} : { status }) });
   }
 
   return {
@@ -732,64 +613,5 @@ export function googleFailureMessage(
     const reworded = new Refusal({ error: providerFailureMessage(error, message(error.message)) });
     const outcome = googleOutcomeOf(failure);
     return yield* Effect.fail(outcome ? noted(reworded, outcome) : reworded);
-  });
-}
-
-// --- Tools -------------------------------------------------------------------------
-
-/** A legacy declaration: its catalog bytes, and its program over the call's own context. */
-export interface GoogleToolDeclaration {
-  readonly name: string;
-  readonly description: string;
-  readonly annotations: NonNullable<ApiTool["annotations"]>;
-  readonly inputSchema: JsonSchema;
-  readonly outputSchema: JsonSchema;
-  /** Fixed write steps; the kit snapshots and freezes them at construction. Absent keeps the single implicit step. */
-  readonly writeSteps?: Readonly<Record<string, "once">>;
-  readonly run: (args: Record<string, any>, ctx: ConnectorContext) => Effect.Effect<unknown, HttpFailure, CallServices>;
-}
-
-/** Arguments arrive validated against the exact legacy `inputSchema` by `api()` before any handler runs. */
-const ARGUMENTS = Schema.Record(Schema.String, Schema.Unknown);
-
-/**
- * The step-1 catalog bridge. The tool is a kit `read` or `write` (its
- * lease, write capacity, transport, failure mapping and result safety are
- * the kit's), but its catalog keeps the legacy declaration's bytes:
- * annotations, input and output schemas. `api()` validates every call, from
- * every entry path, against that exact input schema before the handler runs
- * (`callTool` in `src/connectors/api-connector.ts`, fail-closed), so the
- * decoder accepts whatever reaches it and keeps the caller's key order. Step
- * 2 replaces these schemas with Effect declarations (0011).
- */
-export function googleTool(connection: Connection, declaration: GoogleToolDeclaration): ApiTool {
-  const { annotations } = declaration;
-  const spec = {
-    name: declaration.name,
-    description: declaration.description,
-    input: ARGUMENTS,
-    output: Schema.Unknown,
-    ...(declaration.writeSteps ? { writeSteps: declaration.writeSteps } : {}),
-    run: (args: Record<string, unknown>) =>
-      Effect.gen(function* () {
-        const operation = yield* Effect.serviceOption(Operation);
-        const ctx = Option.isSome(operation) ? operation.value : undefined;
-        if (!ctx) return yield* Effect.die(new Error(`${declaration.name} needs the call's connector context.`));
-        return yield* declaration.run(args, ctx);
-      }).pipe(
-        // A product's own refusals are thrown ConnectorCallErrors, as on the legacy client.
-        Effect.catchDefect((defect) =>
-          defect instanceof ConnectorCallError ? Effect.fail(new Refusal({ error: defect })) : Effect.die(defect),
-        ),
-      ),
-  };
-  const built =
-    annotations.readOnlyHint === true && annotations.destructiveHint !== true
-      ? read(connection, spec)
-      : write(connection, { ...spec, destructive: annotations.destructiveHint === true });
-  return Object.assign(built, {
-    annotations: declaration.annotations,
-    inputSchema: declaration.inputSchema,
-    outputSchema: declaration.outputSchema,
   });
 }

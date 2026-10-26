@@ -12,7 +12,6 @@ import type { ConnectorContext } from "../../types.js";
 import { providerCallFailure } from "../../write-outcome.js";
 import { googleClient, googleFailureMessage, googleOutcomeOf, type GoogleClient } from "../_shared/google/kit.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
-import { DOCS } from "./api.js";
 import { DOCS_INDEX } from "./lib/discovery.js";
 import { Operation } from "../../runtime/call.js";
 import { boundCursor } from "../../http/paging.js";
@@ -636,7 +635,7 @@ function delivered(name: string, args: JsonRecord, result: unknown): unknown {
 }
 
 export function docsTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, DOCS.provider, { standard: true, index: DOCS_INDEX });
+  const client = googleClient(connection, DOCS_INDEX);
   return toolDefinitions(connection, client).map((tool) => {
     const isRead = tool.annotations.readOnlyHint === true;
     const spec = {

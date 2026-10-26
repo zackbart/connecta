@@ -2,7 +2,7 @@
 import { Effect, Schema } from "effect";
 import { read } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
-import type { RestCall } from "../_shared/rest/tools.js";
+import type { RestCall } from "../_shared/rest/kit.js";
 import { connectedAccount, record, text, sendStripe, stripeIndex } from "./api.js";
 import type { StripeApiKeyOptions } from "./index.js";
 const NullableText = Schema.Union([Schema.String, Schema.Null]);
