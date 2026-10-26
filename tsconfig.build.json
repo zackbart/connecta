@@ -6,12 +6,24 @@
     "outDir": "dist",
     "rootDir": "src"
   },
+  // Browser models are bundled into generated.ts, never standalone server JS.
+  // Shared contracts/model and the asset handler remain server inputs.
   "include": ["src/**/*.ts"],
   "exclude": [
     "node_modules",
     "test",
     "examples",
     "src/operator-ui/app",
+    "src/operator-ui/agents.ts",
+    "src/operator-ui/config-summary.ts",
+    "src/operator-ui/connection-map.ts",
+    "src/operator-ui/endpoints.ts",
+    "src/operator-ui/fix-prompts.ts",
+    "src/operator-ui/health.ts",
+    "src/operator-ui/member-page.ts",
+    "src/operator-ui/overview.ts",
+    "src/operator-ui/setup-commands.ts",
+    "src/operator-ui/view.ts",
     "src/providers/**/*.test.ts",
     "src/providers/*/fixtures.ts"
   ]

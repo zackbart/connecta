@@ -31,7 +31,7 @@ export {
 
 import { brandMark, escapeHtml, isSafeHttpsUrl, renderPage, resolveBranding } from "./branding.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
-export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
+export type OperatorPage = import("./operator-ui/contract.js").OperatorPage;
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
   overview: "Overview",
@@ -215,7 +215,6 @@ export function renderUiHtml(
       productName: brand.productName,
       brandMark: brandMark(branding, true),
       productDescription: brand.description,
-      productOperatorLabel: brand.productName + " operator",
     })}</script><script defer src="${OPERATOR_UI_SCRIPT_PATH}"></script>`,
   });
 }

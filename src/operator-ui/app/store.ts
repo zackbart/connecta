@@ -1,6 +1,4 @@
 import type { OperatorMemberManage, OperatorUiContractV2 } from "../contract.js";
-import { queryClient } from "./query.js";
-import { isCancelledError } from "@tanstack/react-query";
 import type { UiConnector, UiData } from "../model.js";
 import {
   actionFailedNotice,
@@ -42,6 +40,9 @@ import { auth, initialPage, productName, TOKEN_KEY } from "./config.js";
 // the shell; starting from its answer keeps the two routers agreeing on load.
 let state = initialState(initialPage as OperatorPage);
 const listeners = new Set<() => void>();
+// Superseded refreshes may finish behind their revision fence, but reads
+// belong to one identity and must physically stop when that identity leaves.
+let identityReads = new AbortController();
 
 export function getState(): OperatorState {
   return state;
@@ -130,7 +131,8 @@ export function navHint(): { activity: boolean } {
 
 function gate(notice: Notice | null = null, session: OperatorState["session"] = "gated"): void {
   cancelRecoveryRead();
-  queryClient.clear();
+  identityReads.abort();
+  identityReads = new AbortController();
   connectorPublications.clear();
   forgetNav();
   stopOAuthPolling();
@@ -734,6 +736,7 @@ async function refreshSnapshot(
     return;
   }
   if (!current()) return;
+  const signal = pollSignal ? AbortSignal.any([identityReads.signal, pollSignal]) : identityReads.signal;
   const outcomes = new Map<string, DetailOutcome>();
   let loadedContract: OperatorUiContractV2 | null | undefined = preloaded;
   const publish = () => {
@@ -791,7 +794,7 @@ async function refreshSnapshot(
   const worker = async () => {
     while (next < connectors.length && current()) {
       const connector = connectors[next++]!;
-      const outcome = await readConnector(connector.id, token, publication, pollSignal);
+      const outcome = await fetchConnector(connector.id, token, signal);
       if (current()) {
         outcomes.set(connector.id, outcome);
         publish();
@@ -800,34 +803,27 @@ async function refreshSnapshot(
   };
   const contractRead = preloaded
     ? Promise.resolve(publish())
-    : queryClient
-        .fetchQuery({
-          queryKey: ["operator-config", state.generation, publication],
-          queryFn: ({ signal }) =>
-            fetchContract(
-              connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
-              token,
-              pollSignal ? AbortSignal.any([signal, pollSignal]) : signal,
-            ),
-        })
-        .catch((): ContractOutcome => ({ kind: "network" }))
-        .then((outcome) => {
-          if (!current()) return;
-          if (outcome.kind === "session") {
-            gate(failure("Your session can't read this configuration. Retry."));
-            if (!connectorId) scheduleRecovery();
-          } else if (outcome.kind === "denied") {
-            gate(null, "denied");
-          } else if (outcome.kind === "contract" && resetOnRoleChange(outcome.contract)) {
-            // A different viewer: everything above was dropped and admission restarted.
-          } else {
-            // A failed read clears the old snapshot; the role it confirmed stays.
-            loadedContract = outcome.kind === "contract" ? outcome.contract : null;
-            // A full contract speaks for every agent's slot; a scoped OAuth poll's does not.
-            if (loadedContract && !connectorId) set(contractSlotsRefreshed(loadedContract));
-            publish();
-          }
-        });
+    : fetchContract(
+        connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
+        token,
+        signal,
+      ).then((outcome) => {
+        if (!current()) return;
+        if (outcome.kind === "session") {
+          gate(failure("Your session can't read this configuration. Retry."));
+          if (!connectorId) scheduleRecovery();
+        } else if (outcome.kind === "denied") {
+          gate(null, "denied");
+        } else if (outcome.kind === "contract" && resetOnRoleChange(outcome.contract)) {
+          // A different viewer: everything above was dropped and admission restarted.
+        } else {
+          // A failed read clears the old snapshot; the role it confirmed stays.
+          loadedContract = outcome.kind === "contract" ? outcome.contract : null;
+          // A full contract speaks for every agent's slot; a scoped OAuth poll's does not.
+          if (loadedContract && !connectorId) set(contractSlotsRefreshed(loadedContract));
+          publish();
+        }
+      });
   if (!preloaded && !state.contract) await contractRead;
   const workers = maintainerNow() ? Array.from({ length: Math.min(4, connectors.length) }, worker) : [];
   await Promise.all([contractRead, ...workers]);
@@ -1630,22 +1626,6 @@ type DetailOutcome =
   | { kind: "detail"; detail: UiConnector }
   | { kind: "local"; failure: ConnectorLoadFailure }
   | { kind: "downstream" };
-
-async function readConnector(
-  id: string,
-  token: string | null | undefined,
-  revision: number,
-  pollSignal?: AbortSignal,
-): Promise<DetailOutcome> {
-  try {
-    return await queryClient.fetchQuery({
-      queryKey: ["connector", state.generation, id, revision],
-      queryFn: ({ signal }) => fetchConnector(id, token, pollSignal ? AbortSignal.any([signal, pollSignal]) : signal),
-    });
-  } catch (error) {
-    return { kind: "local", failure: isCancelledError(error) ? "session" : "network" };
-  }
-}
 
 async function fetchConnector(
   id: string,

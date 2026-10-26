@@ -1,8 +1,6 @@
 import { createRoot } from "react-dom/client";
 import type { ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { queryClient } from "./query.js";
 import { AccountMenu, ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
 import { useEffect, useRef, useSyncExternalStore, useState } from "react";
@@ -472,10 +470,5 @@ function resolveLocation() {
   routeChanged(path);
 }
 router.subscribe("onResolved", resolveLocation);
-mount(
-  "operatorContent",
-  <QueryClientProvider client={queryClient}>
-    <RouterProvider router={router} />
-  </QueryClientProvider>,
-);
+mount("operatorContent", <RouterProvider router={router} />);
 void boot();

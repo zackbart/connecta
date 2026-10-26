@@ -5,6 +5,8 @@ import type { ConnectaConfigDescription } from "../describe-config.js";
 import type { ConnectorStatus, ConnectorToolDescription } from "../types.js";
 import type { UiProblem } from "./model.js";
 
+export type OperatorPage = "overview" | "endpoints" | "settings" | "connector" | "tokens" | "connections" | "activity";
+
 /** The registry's final verdict, independent of whether the viewer's endpoint is read-only. */
 export interface OperatorTool extends ConnectorToolDescription {
   address: string;

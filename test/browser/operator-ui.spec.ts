@@ -11,6 +11,7 @@ import { workloadBinding, workloadFixture } from "../fixtures/workload.js";
 import { fixtureContract } from "./operator-fixture.js";
 
 const TOKEN = "browser-operator-token";
+const NEXT_TOKEN = "browser-next-operator-token";
 interface RecordedRequest {
   method: string;
   path: string;
@@ -24,6 +25,8 @@ let requests: RecordedRequest[] = [];
 /** Held open until released to exercise identity changes during OAuth start. */
 let oauthStartBarrier: Promise<void> | undefined;
 let oauthStartUrl: string | undefined;
+let nextViewerData: UiData | undefined;
+let slowRead: { path: string; pending: Promise<void>; started: boolean; cancelled: boolean } | undefined;
 /**
  * A real deployment behind this fake one. While set, the paths it names are
  * forwarded to its `fetch` as a signed-in, same-origin operator, so the page
@@ -134,12 +137,23 @@ test.beforeAll(async () => {
       response.end(text.replaceAll(`${REAL_BASE}/connect/`, `${origin}/connect/`));
       return;
     }
-    if (request.headers.authorization !== `Bearer ${TOKEN}`) {
+    const nextViewer = nextViewerData && request.headers.authorization === `Bearer ${NEXT_TOKEN}`;
+    if (request.headers.authorization !== `Bearer ${TOKEN}` && !nextViewer) {
       sendJson(response, 401, { error: "unauthorized" });
       return;
     }
+    const served = nextViewer ? nextViewerData! : data();
+    const held = slowRead;
+    if (method === "GET" && url.pathname + url.search === held?.path && !held.started) {
+      held.started = true;
+      response.on("close", () => {
+        held.cancelled = !response.writableEnded;
+      });
+      await held.pending;
+      if (response.destroyed) return;
+    }
     if (method === "GET" && url.pathname === "/ui/data") {
-      const full = data();
+      const full = served;
       sendJson(response, 200, {
         ...full,
         connectors: full.connectors.map(({ id, title, permissions, oauth }) => ({
@@ -155,12 +169,12 @@ test.beforeAll(async () => {
       return;
     }
     if (method === "GET" && url.pathname === "/ui/api/config") {
-      sendJson(response, 200, await fixtureContract(data()));
+      sendJson(response, 200, await fixtureContract(served));
       return;
     }
     const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);
     if (method === "GET" && detailMatch) {
-      const connector = data().connectors.find((item) => item.id === detailMatch[1]);
+      const connector = served.connectors.find((item) => item.id === detailMatch[1]);
       if (!connector) {
         sendJson(response, 404, { error: "unknown connector" });
         return;
@@ -198,6 +212,8 @@ test.beforeEach(() => {
   requests = [];
   oauthStartBarrier = undefined;
   oauthStartUrl = undefined;
+  nextViewerData = undefined;
+  slowRead = undefined;
   realRoutes = undefined;
 });
 
@@ -241,6 +257,82 @@ test("closes the opened tab when the identity changes mid-request", async ({ pag
   release();
   // Nothing lands for the old identity, and nothing is left on "Opening…".
   await expect.poll(() => tab.isClosed()).toBe(true);
+});
+
+for (const path of ["/ui/api/config", "/ui/connectors/oauth"]) {
+  test(`INV-4 INV-7: switching identity aborts a slow ${path} and publishes only the next viewer`, async ({ page }) => {
+    await openAuthenticated(page);
+    await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
+    nextViewerData = {
+      ...data(),
+      serverInfo: { name: "Second viewer deployment", version: "next" },
+      connectors: data().connectors.map((c) => ({ ...c, title: "Second viewer CRM" })),
+    };
+    let release!: () => void;
+    const held = {
+      path,
+      pending: new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+      started: false,
+      cancelled: false,
+    };
+    slowRead = held;
+    try {
+      await page.getByRole("button", { name: "Refresh", exact: true }).click();
+      await expect.poll(() => held.started).toBe(true);
+      await page.getByRole("button", { name: "Account", exact: true }).click();
+      await page.getByRole("button", { name: "Change token" }).click();
+      await expect.poll(() => held.cancelled).toBe(true);
+      await page.getByLabel("Bearer token", { exact: true }).fill(NEXT_TOKEN);
+      await page.getByRole("button", { name: "Open operator pages" }).click();
+      await expect(page.getByRole("link", { name: "Second viewer CRM", exact: true })).toBeVisible();
+      await expect(page.locator(".deployment-name")).toHaveText("Second viewer deployment");
+      release();
+      await page.getByRole("link", { name: "Endpoints", exact: true }).click();
+      await page.getByRole("link", { name: "Connectors", exact: true }).click();
+      await expect(page.getByRole("link", { name: "Second viewer CRM", exact: true })).toBeVisible();
+      await expect(page.locator(".deployment-name")).toHaveText("Second viewer deployment");
+      await expect(page.getByRole("link", { name: "CRM", exact: true })).toHaveCount(0);
+      expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+}
+
+test("INV-7 INV-9: leaving a slow OAuth poll aborts it without replaying its start", async ({ page }) => {
+  await page.clock.install();
+  await openAuthenticated(page, "/connectors/oauth#connection");
+  let release!: () => void;
+  const held = {
+    path: "/ui/api/config?connector=oauth",
+    pending: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+    started: false,
+    cancelled: false,
+  };
+  slowRead = held;
+  try {
+    const popup = page.waitForEvent("popup");
+    await page.getByRole("button", { name: "Connect CRM", exact: true }).click();
+    await (await popup).close();
+    await expect(page.locator("#oauthNotice-oauth")).toHaveText("Finish in the new tab.");
+    await page.clock.runFor(2000);
+    await expect.poll(() => held.started).toBe(true);
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await expect.poll(() => held.cancelled).toBe(true);
+    release();
+    await page.clock.runFor(30_000);
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    expect(requests.filter((request) => request.path === held.path)).toHaveLength(1);
+    expect(
+      requests.filter((request) => request.method === "POST" && request.path.startsWith("/ui/oauth/")),
+    ).toHaveLength(1);
+  } finally {
+    release();
+  }
 });
 
 test("never sends the tab to a non-http authorization URL", async ({ page }) => {
