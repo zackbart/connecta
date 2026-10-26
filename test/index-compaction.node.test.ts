@@ -11,7 +11,7 @@ const { discoverProviders } = await import(new URL("../scripts/providers.mjs", i
 const { compactIndex } = (await import(new URL("../scripts/compact-index.mjs", import.meta.url).href)) as {
   compactIndex(data: OpenApiData): CompactIndex;
 };
-const { buildOperationIndex, readOpenApiSource, composeOpenApi } = await import(
+const { buildOperationIndex, readOpenApiSource, composeOpenApi, discoveryConversion } = await import(
   new URL("../scripts/generate-openapi.mjs", import.meta.url).href
 );
 const providers = await discoverProviders();
@@ -51,7 +51,9 @@ describe("lossless generated indexes", () => {
       if (source.vendored || source.documents) {
         const document = source.documents
           ? (await composeOpenApi(provider.directory, source)).document
-          : JSON.parse(await readFile(join(provider.directory, "evidence/openapi.document.json"), "utf8"));
+          : source.discovery
+            ? (await discoveryConversion(provider.directory, source)).document
+            : JSON.parse(await readFile(join(provider.directory, "evidence/openapi.document.json"), "utf8"));
         expect(canonicalJson(buildOperationIndex(document, source))).toBe(canonicalJson(logical));
       }
       const packed = compactIndex(logical);

@@ -161,6 +161,11 @@ The layout applies only to vendored API implementations (0012).
 
 ### E. Evidence
 
+Superseded for deterministic Google Discovery conversions by #1072: retain
+only the pinned original in `evidence/discovery.document.json` and derive
+OpenAPI in memory. The generated index still records the converted digest.
+The add-provider skill and architecture contract own the current rules.
+
 | Name                             | Format                                                                                            | Written by                      |
 | -------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------- |
 | `evidence/openapi.json`          | the pin: `{ url, revision, digest, latest?, options?, vendored? }`, today's `openapi.source.json` | `providers:spec --record`       |

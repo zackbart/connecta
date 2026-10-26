@@ -20,7 +20,6 @@
     "evidence": {
       "discovery.document.json": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
       "discovery.json": "sha256:a2bd789138a168bef6ba8a5e41b7fd29dec6f27ea179c014dfddbfdd51eeafb9",
-      "openapi.document.json": "sha256:f750e8716954bca4eaedbf1751d01faed58d73d6fc78dabdb7a6250e5f7bbdfb",
       "openapi.json": "sha256:46cd7752c7def702bcf3db91a4f77c063ba8791769bb0851b78abf4ecdf956ed",
       "value-safety.json": "sha256:0d7b5b81cbaf73d70b8c8a075521b4bb44d5e5df913bc5691c3121769054e3d2"
     }

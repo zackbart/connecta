@@ -95,13 +95,13 @@ must never silently select an API credential.
 
 ## Evidence (E)
 
-| Name                             | Holds                                                                                  |
-| -------------------------------- | -------------------------------------------------------------------------------------- |
-| `evidence/openapi.json`          | The OpenAPI pin: `url`, `revision`, `digest`, optional `latest`, `options`, `vendored` |
-| `evidence/openapi.document.json` | The reviewed document, only when the pin says `vendored: true`                         |
-| `evidence/value-safety.json`     | Candidates written by `providers:spec`; never edit                                     |
-| `evidence/pages/`                | `recording.json` and the public pages a drift parser reads offline                     |
-| `evidence/review.md`             | Contributor narrative: verdict reasons, gaps, documentation-derived facts              |
+| Name                             | Holds                                                                                        |
+| -------------------------------- | -------------------------------------------------------------------------------------------- |
+| `evidence/openapi.json`          | The OpenAPI pin: `url`, `revision`, `digest`, optional `latest`, `options`, `vendored`       |
+| `evidence/openapi.document.json` | The reviewed document for `vendored: true` pins without a deterministic Discovery conversion |
+| `evidence/value-safety.json`     | Candidates written by `providers:spec`; never edit                                           |
+| `evidence/pages/`                | `recording.json` and the public pages a drift parser reads offline                           |
+| `evidence/review.md`             | Contributor narrative: verdict reasons, gaps, documentation-derived facts                    |
 
 Supplemental vendored contracts use a simple `<slug>.json` pin and a sibling
 `<slug>.document.json` in the provider's `evidence/` directory. An `endpoints`
@@ -132,12 +132,17 @@ Google Discovery conversions declare `discovery: { pin: "discovery.json",
 format: "google-discovery-v1", summaries?: { [methodId]: summary } }` on the
 vendored OpenAPI pin. Retain exact official bytes in
 `evidence/discovery.document.json`, with their supplemental `discovery.json`
-pin. The primary pin repeats that source URL, revision and digest. Generate
-`openapi.document.json` with `normalizeDiscovery` from
-`scripts/google-discovery.mjs`, serialized with two-space indentation and a
-terminal newline. Generation and offline freshness reproduce that conversion
-and refuse a changed source, mismatched primary pin or edited conversion.
-The generated module separately records the conversion's digest. No live URL
+pin. The primary pin repeats that source URL, revision and digest. Generation
+and offline freshness derive the OpenAPI document in memory with
+`normalizeDiscovery` from `scripts/google-discovery.mjs`, serialized with
+two-space indentation and a terminal newline for its digest. Do not retain
+`openapi.document.json` for these pins. Both paths refuse changed original
+bytes or a mismatched primary pin; the generated module separately records
+the conversion's digest, so normalizer or summary changes make it stale.
+This supersedes Decision 0011's retained-conversion requirement for Discovery.
+Frozen measurements read the provider-owned original and validate it against
+`test/fixtures/google-discovery/manifest.json`; never silently move those
+historical digests when updating a provider pin. No live URL
 is an immutable revision; the archived bytes and SHA-256 establish the pin.
 Use `options.formats: true` to retain parameter formats,
 `options.numericBounds: true` for numeric bounds, and `options.requestGraph: true` to retain a complete referenced request
@@ -361,8 +366,9 @@ vendors"). The steps:
    `absent: { reason, operations?, resources? }`, keyed like the table. A
    vendor that publishes no JSON document pins its published bytes with
    `vendored: true` and keeps the reviewed JSON conversion in
-   `evidence/openapi.document.json`; `providers:spec` compiles that offline,
-   and the pin moves only by review, never by `--record`. The generated
+   `evidence/openapi.document.json`, except deterministic Discovery conversions
+   derived from their pinned originals as described above. `providers:spec`
+   compiles offline, and the pin moves only by review, never by `--record`. The generated
    index states that document's digest, so `check:providers-generated` reads
    it as stale once the document changes: rerun `providers:spec`.
 2. Write the table with the shared `refuse`, `redact`, and `safe` helpers

@@ -1049,10 +1049,8 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
     // Review #1009: Forms revision 20261022 was served with raw digests
     // afb96ccb…, 4e3e4e03…, 528344719…; canonical digest stayed d25147cc….
     // Canned order variants of that archived document require no network.
-    const { normalizeDiscovery, canonicalDiscovery } = await import(
-      new URL("../scripts/google-discovery.mjs", import.meta.url).href
-    );
-    const bytes = await readFile(new URL("./fixtures/google-discovery/forms.json", import.meta.url));
+    const { canonicalDiscovery } = await import(new URL("../scripts/google-discovery.mjs", import.meta.url).href);
+    const bytes = await readFile(new URL("../src/providers/forms/evidence/discovery.document.json", import.meta.url));
     const discovery = JSON.parse(bytes.toString());
     // The reviewer used Python's spaced JSON separators; drift uses compact
     // JSON. Both serialize the same sorted-key document reproducibly.
@@ -1084,10 +1082,6 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
     const evidence = join(directory, "vendor", "evidence");
     await writeFile(join(evidence, "discovery.document.json"), bytes);
     await writeFile(join(evidence, "discovery.json"), JSON.stringify(source));
-    await writeFile(
-      join(evidence, "openapi.document.json"),
-      JSON.stringify(normalizeDiscovery(discovery), null, 2) + "\n",
-    );
     await writeFile(
       join(evidence, "openapi.json"),
       JSON.stringify({ ...source, discovery: { pin: "discovery.json", format: "google-discovery-v1" } }),

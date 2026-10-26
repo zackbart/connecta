@@ -230,8 +230,11 @@ export function evidenceViolations(provider: ProviderFacts, _today: string): str
     ) {
       found.push("E3: evidence/openapi.json needs an https url, a revision, and a sha256 digest");
     }
-    if (record(pin) && (pin["vendored"] === true) !== has("evidence/openapi.document.json")) {
-      found.push("E3: evidence/openapi.document.json exists exactly when the pin says vendored: true");
+    if (
+      record(pin) &&
+      (pin["vendored"] === true && pin["discovery"] === undefined) !== has("evidence/openapi.document.json")
+    ) {
+      found.push("E3: evidence/openapi.document.json exists exactly for vendored pins without a Discovery conversion");
     }
   } else if (has("evidence/openapi.document.json")) {
     found.push("E3: evidence/openapi.document.json needs its pin in evidence/openapi.json");

@@ -1,6 +1,6 @@
 import { normalizeDiscovery, GOOGLE_DISCOVERY_FORMAT } from "./google-discovery.mjs";
 import { compactIndex } from "./compact-index.mjs";
-// Maintainer tooling, network-only: compile a provider's pinned OpenAPI
+// Maintainer tooling: compile a provider's pinned OpenAPI
 // document into the compact operation index its REST connector ships.
 //
 // A provider opts in with its pin, `evidence/openapi.json` under decision
@@ -14,8 +14,9 @@ import { compactIndex } from "./compact-index.mjs";
 // `"vendored": true` pins a document the vendor publishes only in another
 // format (for example, YAML): `digest` is still of the vendor's bytes, which
 // `providers:check` compares, and the index is compiled offline from the
-// reviewed JSON conversion in `evidence/openapi.document.json`. A vendored
-// pin moves by review, never by `--record`.
+// reviewed JSON conversion in `evidence/openapi.document.json`, or derived
+// in memory from pinned Discovery originals. A vendored pin moves by review,
+// never by `--record`.
 //
 // `options.versionHeader` names a header parameter (for example, `Api-Version`)
 // whose single value is the API version, for documents whose `info.version`
@@ -126,10 +127,10 @@ export async function readOpenApiSource(directory) {
   if (source.vendored !== undefined && (source.vendored !== true || names === LEGACY)) {
     throw new Error(`${path} vendored is true, beside ${STANDARD.document}, or absent`);
   }
-  if (source.vendored === true && !(await exists(join(directory, STANDARD.document)))) {
+  if (source.discovery !== undefined) await discoveryConversion(directory, source);
+  else if (source.vendored === true && !(await exists(join(directory, STANDARD.document)))) {
     throw new Error(`${path} is vendored but ${STANDARD.document} is missing`);
   }
-  if (source.discovery !== undefined) await discoveryConversion(directory, source);
   return source;
 }
 
@@ -150,9 +151,6 @@ export async function discoveryConversion(directory, source) {
     throw new Error("Discovery source bytes or primary pin do not match discovery.json.");
   const document = normalizeDiscovery(JSON.parse(bytes), { summaries: relation.summaries ?? {} });
   const normalized = JSON.stringify(document, null, 2) + "\n";
-  const retained = await readFile(join(directory, STANDARD.document), "utf8");
-  if (normalized !== retained)
-    throw new Error("Discovery conversion differs from the pinned source; regenerate openapi.document.json.");
   return { document, sourceDigest: pin.digest, documentDigest: sha256(normalized), format: GOOGLE_DISCOVERY_FORMAT };
 }
 
@@ -886,6 +884,7 @@ function generatedHeader(text) {
 /** The digest of a vendored pin's conversion document; undefined for any other pin. */
 async function documentDigest(directory, source) {
   if (source.documents) return sha256(JSON.stringify((await composeOpenApi(directory, source)).document));
+  if (source.discovery) return (await discoveryConversion(directory, source)).documentDigest;
   return source.vendored === true ? sha256(await readFile(join(directory, STANDARD.document))) : undefined;
 }
 
@@ -950,10 +949,14 @@ export async function specProvider(provider, { file, record = false } = {}) {
   } else if (source.vendored === true) {
     if (record || file) {
       throw new Error(
-        `providers/${provider.name}: a vendored pin moves by review; replace ${STANDARD.document} and the pin together`,
+        `providers/${provider.name}: a vendored pin moves by review; replace its source evidence and pin together`,
       );
     }
-    bytes = new Uint8Array(await readFile(join(provider.directory, STANDARD.document)));
+    bytes = source.discovery
+      ? new TextEncoder().encode(
+          JSON.stringify((await discoveryConversion(provider.directory, source)).document, null, 2) + "\n",
+        )
+      : new Uint8Array(await readFile(join(provider.directory, STANDARD.document)));
   } else {
     bytes = file ? new Uint8Array(await readFile(resolve(file))) : await fetchDocument(source.url);
     const digest = sha256(bytes);
