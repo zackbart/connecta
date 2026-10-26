@@ -629,7 +629,7 @@ function grantUse(name: "token" | "refresh" | "rejected"): Entry["create"] {
 }
 
 function closedEntry(
-  name: "api.listTools" | "api.verifyCallbackIssuer" | "remote.verifyCallbackIssuer",
+  name: "api.listTools" | "api.verifyCallbackParameters" | "api.verifyCallbackIssuer" | "remote.verifyCallbackIssuer",
 ): Entry["create"] {
   return async (held, owner) => {
     const connector =
@@ -638,7 +638,11 @@ function closedEntry(
         : api("tickets", { oauth: OAUTH, tools: [] });
     const { ctx } = view(connector, held, owner);
     return direct(ctx, () =>
-      name === "api.listTools" ? connector.listTools(ctx) : connector.verifyCallbackIssuer!(null, ctx),
+      name === "api.listTools"
+        ? connector.listTools(ctx)
+        : name === "api.verifyCallbackParameters"
+          ? connector.verifyCallbackParameters!(new URLSearchParams(), ctx)
+          : connector.verifyCallbackIssuer!(null, ctx),
     );
   };
 }
@@ -655,6 +659,13 @@ const CALLBACK_OWNERS = ["request"] as const;
 // line. No impossible Cartesian product (e.g. API prompts) is manufactured.
 export const ENTRIES: readonly Entry[] = [
   { name: "api.listTools", seams: ["closed-entry"], completions: ["resolve"], create: closedEntry("api.listTools") },
+  {
+    name: "api.verifyCallbackParameters",
+    seams: ["closed-entry"],
+    completions: ["resolve"],
+    owners: CALLBACK_OWNERS,
+    create: closedEntry("api.verifyCallbackParameters"),
+  },
   {
     name: "api.verifyCallbackIssuer",
     seams: ["closed-entry"],

@@ -623,6 +623,73 @@ unawaited host calls. Decision for #598: preserve normal-result semantics and
 the existing cancellation of outstanding work; reconsider a warning when a
 representative failed task shows that it would help. No warning was added.
 
+## Retired historical measurements
+
+The obsolete 0.24/0.25 main cluster and the removed `p2-refresh-weekly` task's
+batches are archived in Git history. No current runner or selftest loads these
+paths; documentation links to history. The retained 0.29 files, current task definitions and
+step-2/failure evidence remain local. The [REST notes](baselines/notes-rest-801.md)
+separately preserve the redundant regrades and invalid initial diagnostic batches.
+Historical scores below retain their original graders; they are not comparable
+to current outcomes or evidence of current product behavior.
+
+| File (immutable historical copy)                                                                                                                                                   | SHA-256 of exact file bytes                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [agent-main.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/agent-main.json)                                               | `a6d137f81cd042ba2ee9c51b3cb64f9c072daaef44c2ef61d6e3274e60453dfd` |
+| [agent-main-mcp100k.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/agent-main-mcp100k.json)                               | `76af4050c042ecf50a2aefbc2fa9bc3530fb7c916792547c19cf67904b673c40` |
+| [perf-main.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/perf-main.json)                                                 | `78703f822b9b487e64c6e7c77a654bf282e762c3f227831f2cd560fdef633530` |
+| [smoke-main.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/smoke-main.json)                                               | `b0fcd2ded71958101e8fea4efb0049e92ab85ff1f91df90faa6df357d2ec0078` |
+| [notes-main.txt](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/notes-main.txt)                                                 | `9ff5105e9c15e7718e3137a7410c6aa36f0d3716e0bcc00c68be475974d01dd0` |
+| [codex-weekly-2026-09-25-final.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/codex-weekly-2026-09-25-final.json)         | `4dfb3082a92b5889dd2c1d393ccbb74152011dc3b2b5d996798807727f9ba533` |
+| [codex-weekly-2026-09-25-prefreeze.json](https://github.com/zackbart/connecta/blob/eae53ce15cabca2887f5f5ccdb8872f2c56e5f58/eval/baselines/codex-weekly-2026-09-25-prefreeze.json) | `5567b76b930cadb2876d0898501ba91179d8177daa81066303863182c64fee2b` |
+
+The September 23 main agent/perf batches used package 0.24.4, Node v26.9.0,
+darwin-arm64, recorded commit `4f536a896daf` with a dirty checkout but clean
+runtime tree `b3c220c30044`. Claude Code 2.1.280 ran five tasks, three repeats
+per model: **34/45**, Sonnet 12/15, Opus 12/15 and Haiku 10/15, with no runner
+errors or rate-limit guard. The notes recorded $7.02 API-equivalent usage,
+not a subscription invoice. The `MAX_MCP_OUTPUT_TOKENS=100000` diagnostic ran
+only the two truncation tasks, **9/18** (3/6 for each model).
+
+Both main batches exposed Claude's own roughly 50 KB spill limit before
+Connecta's tail truncation notice could be seen. With no file tools, agents
+could not read spill files or the tail `resultId`/`get_result` next action.
+All 18 truncation trials in each batch hit this limit. All nine read trials
+passed by rereading inside `execute_code`; all nine export trials failed.
+In the main batch, each Sonnet and Haiku export trial dispatched two billable
+exports plus one chat post; Opus exported once then stopped to ask. In the
+higher-output diagnostic, Sonnet and Haiku dispatched two exports per export
+trial, except Haiku repeat 3, which dispatched six. Raising the host
+output-token setting did not help.
+Serialized content-envelope previews double-escaped JSON-lines payloads,
+inflating tokens. Sonnet asked permission for authorized writes in 4/15 main
+trials; the runner nudged it with “Yes, go ahead.” Opus and Haiku needed none.
+Haiku selected an open feature request instead of a bug for the top-MRR
+customer and delegated authorization back to the human. Its first programs
+often used `require('connecta')` or a bare function body and needed repair.
+These remain useful failure observations despite the retired tool surface.
+
+The old perf snapshot recorded 935,731 minified / 235,346 gzip bytes and
+40-sample loopback p50s of 1.43 ms (`tools/list`), 1.32 ms (search), 2.95 ms
+(one read) and 4.94 ms (program search/two reads/reduce). These are historical
+measurements, not current bundle caps or performance promises.
+The September 24 smoke snapshot used package 0.25.0, recorded commit
+`123765b88644`, dirty checkout and dirty runtime tree `f9aa9b68bfb0`.
+It passed Node template/fakes and Worker example/fakes targets with the old
+eight-tool inventory and Chromium UI loads. The fake targets observed one
+issue close / one message; template/example checks exercised the destructive
+route but could not verify a write because their available tools were reads.
+It does not establish current deployment health.
+
+The September 25 weekly trials used Codex CLI 0.156.1, `gpt-6-sol`, package
+0.25.0, one task, three repeats and concurrency one. Prefreeze scored **1/3**
+with `one-refresh-run` failing twice, from dirty commit `75893c30093a` and dirty
+runtime tree `cc32f2a125ef`. Final scored **3/3** from clean commit
+`52f7df8f969b`, clean tree `106c76d20009`. The built-in artifact feature and
+its `p2-refresh-weekly` task were removed in
+[#766](https://github.com/zackbart/connecta/pull/766); there is no current grader
+for those interactions. Their traces remain recoverable through the links above.
+
 ## Final 0.29 baselines and offline regrading
 
 [The baseline notes](baselines/notes-0.29.md) classify the final live trials
