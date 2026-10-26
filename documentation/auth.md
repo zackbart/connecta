@@ -2400,6 +2400,13 @@ need `consumeAuthError` to accept error callbacks, sharing `finishAuth`'s atomic
 consent claim. Reissue
 pending consent links after upgrading; callbacks without a saved initiating user cannot complete.
 
+Custom connectors may implement `verifyCallbackParameters(params, ctx)` for
+provider-specific callback assertions. The route calls it after successful
+state verification and before issuer validation, handoff consumption, error
+handling, or code exchange. Returning false or throwing produces the generic
+invalid-callback refusal. Apply the same assertions inside `finishAuth` when
+supporting direct programmatic completion.
+
 `compareAndSet` atomically claims link nonces, callback handoffs, and consents, with one concurrent winner,
 so each completes once.
 [Meta-tools](./meta-tools.md#authorization-recovery) describes recovery.
@@ -2506,15 +2513,26 @@ api("church", {
 No discovery or registration occurs; all URLs are configuration, so the
 [advertised-URL rule](#urls-a-downstream-advertises) does not apply.
 
-| Option or binding         | Contract                                                                                                                                                                                                                                                                            |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Endpoints                 | Checked at construction: HTTPS, HTTP only on loopback, no credentials or fragment.                                                                                                                                                                                                  |
-| `pkce`                    | S256 by default; `false` omits challenge and verifier.                                                                                                                                                                                                                              |
-| `authorizationParams`     | Adds provider parameters; cannot restate the grant's own.                                                                                                                                                                                                                           |
-| `tokenRequestHeaders`     | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`.                                                                                                                                                  |
-| `tokenEndpointAuthMethod` | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction.                                                                                                                                                                           |
-| Issuer/resource           | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; after it changes, old tokens are never sent and the next consent replaces them.                                                                           |
-| Client                    | One deployment-config identity, never written or sealed to storage; no owner vault slot. Store leaks contain no client secret; Disconnect deletes none and Restart carries none. Read from environment or Worker secrets; empty strings refuse construction without quoting values. |
+| Option or binding            | Contract                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Endpoints                    | Checked at construction: HTTPS, HTTP only on loopback, no credentials or fragment.                                                                                                                                                                                                                                                                                                                                             |
+| `pkce`                       | S256 by default; `false` omits challenge and verifier.                                                                                                                                                                                                                                                                                                                                                                         |
+| `authorizationParams`        | Adds provider parameters; cannot restate the grant's own.                                                                                                                                                                                                                                                                                                                                                                      |
+| `expectedCallbackParameters` | Optional `Readonly<Record<string, string>>` of fixed provider response values. Each configured parameter must occur exactly once with its exact decoded value, after pending-state verification and before issuer validation, flow claims, code exchange, or grant persistence. Missing, duplicate, or mismatched values refuse without exchanging a code or returning parameter values. Omission preserves existing behavior. |
+| `tokenRequestHeaders`        | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`.                                                                                                                                                                                                                                                                                             |
+| `tokenEndpointAuthMethod`    | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction.                                                                                                                                                                                                                                                                                                                      |
+| Issuer/resource              | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; after it changes, old tokens are never sent and the next consent replaces them.                                                                                                                                                                                                                      |
+| Client                       | One deployment-config identity, never written or sealed to storage; no owner vault slot. Store leaks contain no client secret; Disconnect deletes none and Restart carries none. Read from environment or Worker secrets; empty strings refuse construction without quoting values.                                                                                                                                            |
+
+For a connector bound to a fixed company, set
+`expectedCallbackParameters: { realmId: "company_alice" }`. This checks all
+callbacks, including errors, and direct `finishAuth` calls. Names must be
+nonempty ASCII letters, digits, dots, underscores, or hyphens; values must be
+nonempty strings. The protocol fields `code`, `state`, `iss`, `error`,
+`error_description`, and `error_uri` are reserved. Malformed expectations throw
+at construction without quoting values. Unconfigured provider parameters are
+ignored. Expectations are deployment configuration, never grant metadata or
+dynamic company selection; they do not inspect or rebind an existing grant.
 
 Handlers never see the grant. `ctx.oauth.fetch(url, init)` sends the calling
 owner's access token as `Authorization: Bearer` with these rules:

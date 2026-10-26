@@ -437,6 +437,8 @@ export interface Connector {
    * pending URL could complete consent with their own account.
    */
   verifyState?(state: string | null, ctx: ConnectorContext): Promise<boolean>;
+  /** Validate provider callback parameters after state verification and before issuer validation, including errors. */
+  verifyCallbackParameters?(params: URLSearchParams, ctx: ConnectorContext): Promise<boolean>;
   /** Validate a callback issuer against its verified consent, including error responses. */
   verifyCallbackIssuer?(issuer: string | null, ctx: ConnectorContext): Promise<boolean>;
   /**

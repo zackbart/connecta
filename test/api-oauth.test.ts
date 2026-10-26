@@ -346,6 +346,29 @@ describe("api() oauth construction", () => {
     () =>
       api("ccb", { oauth: { ...OAUTH, ...oauth } as ApiOAuthConfig, tools: [], ...extra });
 
+  it("INV-11: refuses malformed callback expectations and protocol fields without quoting values", () => {
+    for (const expectedCallbackParameters of [
+      null,
+      "",
+      7,
+      [],
+      { "": "do-not-print" },
+      { "bad name": "do-not-print" },
+      { realmId: "" },
+      { realmId: 7 },
+      ...["code", "state", "iss", "error", "error_description", "error_uri"].map((name) => ({
+        [name]: "do-not-print",
+      })),
+    ]) {
+      expect(build({ expectedCallbackParameters })).toThrow(/expectedCallbackParameters/);
+      try {
+        build({ expectedCallbackParameters })();
+      } catch (error) {
+        expect(String(error)).not.toContain("do-not-print");
+      }
+    }
+  });
+
   it.each([
     [
       "a cleartext authorization endpoint",
@@ -405,6 +428,7 @@ describe("api() oauth construction", () => {
       "startAuth",
       "disconnectAuth",
       "verifyState",
+      "verifyCallbackParameters",
       "verifyCallbackIssuer",
       "consumeAuthError",
       "finishAuth",
@@ -523,6 +547,149 @@ describe("api() oauth agent recovery", () => {
 });
 
 describe("api() oauth callback exchange", () => {
+  it("INV-4 INV-5: direct PKCE-less completion verifies state then company before issuer or exchange", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({
+      oauth: { ...OAUTH, pkce: false, expectedCallbackParameters: { realmId: "company-alice" } },
+    });
+    const storage = memoryStorage();
+    const registry = makeRegistry([connector], { storage });
+    const ctx = () => registry.contextFor("ccb", BASE);
+    const begun = await connector.startAuth!(ctx());
+    const state = new URL(begun.authorizationUrl!).searchParams.get("state")!;
+    const code = provider.consent(begun.authorizationUrl!);
+    const callback = ctx();
+    expect(await connector.verifyState!(state, callback)).toBe(true);
+    await expect(
+      connector.finishAuth!(
+        code,
+        callback,
+        new URLSearchParams({
+          state: "forged",
+          code,
+          realmId: "wrong-company",
+          iss: "https://wrong.example",
+        }),
+      ),
+    ).rejects.toThrow(/matches no pending consent/);
+    await expect(
+      connector.finishAuth!(
+        code,
+        callback,
+        new URLSearchParams({
+          state,
+          code,
+          realmId: "wrong-company",
+          iss: "https://wrong.example",
+        }),
+      ),
+    ).rejects.toThrow(/did not match its configured parameters/);
+    expect(provider.tokenRequests).toHaveLength(0);
+    expect((await storedGrant(storage, scopes.connector("ccb")))?.body?.tokens).toBeUndefined();
+    expect((await connector.status!(ctx())).state).toBe("auth_required");
+  });
+
+  it("INV-4 INV-5: connects only the configured company after valid state, with no exchange on refused callbacks", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const expectedCallbackParameters: Readonly<Record<string, string>> = Object.freeze({
+      realmId: "company+/alice",
+      tenantId: "tenant-alice",
+    });
+    const connector = ccb({ oauth: { ...OAUTH, expectedCallbackParameters } });
+    const parameters = vi.spyOn(connector, "verifyCallbackParameters");
+    const issuer = vi.spyOn(connector, "verifyCallbackIssuer");
+    const storage = memoryStorage();
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      publicUrl: BASE,
+      auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
+      vault: new CredentialVault(storage, SEAL_KEY),
+      logger: "silent",
+    });
+    try {
+      const issued = await app.fetch(
+        new Request(`${BASE}/ui/oauth/ccb`, { method: "POST", headers: { Origin: BASE } }),
+      );
+      expect(issued.status).toBe(200);
+      const { authorizationUrl } = (await issued.json()) as { authorizationUrl: string };
+      const begun = await app.fetch(new Request(authorizationUrl));
+      expect(begun.status).toBe(302);
+      const consent = begun.headers.get("Location")!;
+      const state = new URL(consent).searchParams.get("state")!;
+      const code = provider.consent(consent);
+      expect(JSON.stringify(app.describeConfig())).not.toContain(expectedCallbackParameters.realmId);
+      const ctx = () => app.registry.contextFor("ccb", BASE);
+      const pending = await storedGrant(storage, scopes.connector("ccb"));
+      const callback = (params: URLSearchParams) => app.fetch(new Request(`${BASE}/oauth/callback/ccb?${params}`));
+
+      // Give forged state a real browser handoff so the real pending-consent
+      // verification, rather than the handoff lookup, decides precedence.
+      await bindCallback(app, "ccb", "forged");
+      const forged = await callback(
+        new URLSearchParams({ state: "forged", code, realmId: "wrong-company", iss: "https://wrong.example" }),
+      );
+      expect(forged.status).toBe(400);
+      expect(parameters).not.toHaveBeenCalled();
+      expect(issuer).not.toHaveBeenCalled();
+
+      const denied = await callback(new URLSearchParams({ state, error: "access_denied" }));
+      expect(denied.status).toBe(400);
+      expect(await denied.text()).toContain('data-oauth-callback="invalid_callback"');
+      expect(issuer).not.toHaveBeenCalled();
+
+      for (const entries of [
+        [["tenantId", "tenant-alice"]],
+        [
+          ["realmId", "wrong-company"],
+          ["tenantId", "tenant-alice"],
+        ],
+        [
+          ["realmId", "company+/alice"],
+          ["realmId", "company+/alice"],
+          ["tenantId", "tenant-alice"],
+        ],
+        [["realmId", "company+/alice"]],
+      ]) {
+        parameters.mockClear();
+        const refused = await callback(new URLSearchParams([["state", state], ["code", code], ...entries]));
+        expect(refused.status).toBe(400);
+        const text = await refused.text();
+        expect(text).toContain('data-oauth-callback="invalid_callback"');
+        for (const value of [
+          code,
+          state,
+          "wrong-company",
+          ...Object.values(expectedCallbackParameters),
+          "church-secret",
+        ]) {
+          expect(text).not.toContain(value);
+        }
+        expect(parameters).toHaveBeenCalledOnce();
+        expect(issuer).not.toHaveBeenCalled();
+        expect(provider.tokenRequests).toHaveLength(0);
+        expect(await storedGrant(storage, scopes.connector("ccb"))).toEqual(pending);
+        expect((await connector.status!(ctx())).state).toBe("auth_required");
+      }
+
+      const connected = await callback(
+        new URLSearchParams({ state, code, ...expectedCallbackParameters, unrelated: "ignored" }),
+      );
+      expect(connected.status).toBe(200);
+      expect(await connected.text()).toContain('data-oauth-callback="connected"');
+      expect(provider.tokenRequests).toHaveLength(1);
+      expect(provider.tokenRequests[0]!.params.get("code")).toBe(code);
+      expect((await storedGrant(storage, scopes.connector("ccb")))?.sealed).toBeDefined();
+      expect(await connector.status!(ctx())).toEqual({ state: "ok" });
+      expect(await connector.callTool("whoami", {}, ctx())).toEqual({ status: 200, body: { owner: "alice" } });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("completes consent through /oauth/callback and sends the token as a bearer", async () => {
     const provider = fakeProvider();
     install(provider);
