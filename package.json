@@ -185,6 +185,8 @@
     "eval:selftest": "tsx eval/selftest.ts",
     "eval:agent": "tsx eval/run-agent.ts",
     "eval:smoke": "tsx eval/run-smoke.ts",
+    "eval:outcomes": "tsx eval/run-outcomes.ts",
+    "preeval:outcomes": "node scripts/generate-version.mjs && pnpm run build:operator-ui",
     "eval:perf": "tsx eval/run-perf.ts",
     "eval:report": "tsx eval/report.ts",
     "check:static": "node --test scripts/check-provider-exemptions.test.mjs && pnpm run format:check && pnpm run check:providers-generated && pnpm run check:docs && pnpm run check:changes && pnpm run check:operator-ui && pnpm run check:clerk-sdk && pnpm run check:lint && pnpm run check:unused && pnpm run typecheck",

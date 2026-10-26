@@ -14,7 +14,8 @@
  *
  * Both runners use existing CLI sign-ins. Codex isolates its home; Claude
  * isolates settings and tools with CLI flags. Only the fake MCP endpoint loads. Completed trials are written
- * atomically as they finish.
+ * atomically as they finish. The exit status is nonzero unless every declared
+ * trial ran once, completed normally and passed.
  */
 import { parseSurface } from "./agent/surface.js";
 import { parseGrading } from "./tasks/grading.js";
@@ -23,6 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { claudeVersion, CLAUDE_MODELS } from "./agent/claude.js";
 import { codexVersion } from "./agent/codex.js";
 import { runBatch } from "./agent/run.js";
+import { batchFailures } from "./agent/verdict.js";
 import { renderReport } from "./report/html.js";
 import { summarize, type AgentResultFile, type ResultFile } from "./report/summary.js";
 import { flags, ROOT, runMeta, runProtocol, stamp } from "./support/meta.js";
@@ -149,6 +151,14 @@ for (const cell of summarize(trials)) {
       `${cell.errored ? ` (${cell.errored} error)` : ""}${cell.skipped ? ` (${cell.skipped} N/A)` : ""}`,
   );
 }
+const problems = batchFailures(file);
+for (const problem of problems) console.error(`[eval] FAIL ${problem}`);
+console.error(
+  problems.length
+    ? `[eval] batch FAILED: ${problems.length} problem(s); diagnostics in ${out}`
+    : `[eval] batch passed: ${file.trials.length} trial(s)`,
+);
+if (problems.length) process.exitCode = 1;
 const reportPath = args.get("report");
 if (reportPath) {
   const baselinePath = args.get("baseline");

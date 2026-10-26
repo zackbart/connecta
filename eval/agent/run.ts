@@ -373,7 +373,14 @@ export async function runBatch(
   const worker = async () => {
     while (queue.length && !stopped && !options.signal?.aborted) {
       const next = queue.shift()!;
-      const trial = await runTrial(next.task, next.model, next.repeat, options);
+      let trial: TrialResult;
+      try {
+        trial = await runTrial(next.task, next.model, next.repeat, options);
+      } catch (error) {
+        // A harness failure leaves this and every unscheduled trial missing.
+        stopped ??= `harness error in ${next.task} ${next.model} #${next.repeat}: ${error instanceof Error ? error.message : String(error)}`;
+        return;
+      }
       trials.push(trial);
       await options.onTrial?.(trial, trials.length, total);
       if (trial.status === "error" && stopsBatch(trial.error)) {

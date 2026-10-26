@@ -70,6 +70,9 @@ for focused runs.
 
 `pnpm run check` runs the unconditional PR checks and must pass before claiming work is
 done. Run `test:browser` and `check:security` too when their CI paths apply.
+`pnpm run eval:outcomes` and `pnpm run eval:smoke` are the required behavioral
+checks ([eval/README.md](./eval/README.md)); run them for changes to `src/`,
+`eval/`, `templates/`, `examples/` or `bin/`.
 It runs `check:static` (format, generated providers, documentation links,
 changelog fragments and their tests, operator UI and Clerk SDK freshness,
 Oxlint, Knip, typecheck), `test` (all Node suites and the selected workerd
@@ -89,9 +92,10 @@ that package or the agent-endpoint contract (any `src/` change selects its CI
 job), run `pnpm --filter @zackbart/connecta-eve run check` and
 `pnpm run check:eve-package` on Node 24.
 
-CI runs `static`, `node`, and `workers` in parallel on every PR, main push,
-and nightly. `static` runs `check:static` and `check:build` with one install;
-`node` runs `test:node`; `workers` runs `test:workers`. Runtime jobs use four
+CI runs `static`, `node`, `workers`, and `behavior` in parallel on every PR,
+main push, and nightly. `static` runs `check:static` and `check:build` with one install;
+`node` runs `test:node`; `workers` runs `test:workers`; `behavior` runs
+`eval:outcomes` and `eval:smoke`, uploading `eval/results/` on failure. Runtime jobs use four
 Vitest workers on the four-core runner. Installs use the frozen lockfile and
 shared pnpm store cache. Core jobs install only `@zackbart/connecta`; the
 conditional `eve` job installs both workspaces and runs the helper's typecheck,
@@ -115,7 +119,7 @@ use Vitest tags: `workers` marks native cases, while the Workers project skips
 files; portable filenames alone do not enroll a new suite in workerd.
 
 `check` is the single required status, with `needs: [static, node, workers,
-browser, audit, eve]` and `if: always()`. Core jobs and the changed-files step must
+behavior, browser, audit, eve]` and `if: always()`. Core jobs and the changed-files step must
 succeed. Browser/audit/Eve must succeed when selected, and must be skipped when
 explicitly unselected. Missing or invalid outputs, failures, cancellations,
 and unexpected skips fail the gate. Build failures fail `static` and hence

@@ -117,6 +117,33 @@ jobs:
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run test:workers
 
+  # Outcome references, then the Node template, Node eval and native workerd
+  # deployments with the operator page. No model, login or network service.
+  behavior:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
+      - run: pnpm run eval:outcomes
+      - name: Install Chromium and system dependencies
+        timeout-minutes: 16
+        uses: ./.github/actions/install-chromium
+      - run: pnpm run eval:smoke --out eval/results/smoke.json
+      - name: Upload eval diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: eval-diagnostics
+          path: eval/results/
+          if-no-files-found: warn
+          retention-days: 14
+
   eve:
     needs: static
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.eve == 'true') }}
@@ -185,7 +212,7 @@ jobs:
   # Branch protection requires this name. Core jobs and classification must
   # succeed; browser/audit/Eve may skip only when explicitly inapplicable.
   check:
-    needs: [static, node, workers, browser, audit, eve]
+    needs: [static, node, workers, behavior, browser, audit, eve]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -197,7 +224,7 @@ jobs:
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
           jq -e '
             . as $jobs |
-            all(["static", "node", "workers"][]; $jobs[.].result == "success") and
+            all(["static", "node", "workers", "behavior"][]; $jobs[.].result == "success") and
             .static.outputs["changed-files"] == "success" and
             all(["browser", "audit", "eve"][];
               . as $job | $jobs.static.outputs[$job] as $applies |

@@ -3,23 +3,27 @@
  * deployment shapes from this checkout and drive them over MCP and a browser.
  *
  * Targets:
- *   node-template   `connecta init` output, run with tsx against this build
+ *   node-template   `connecta init` output, its agent token from `rotate-token`,
+ *                   run with tsx against this build and checked by `connecta doctor`
  *   node-fakes      the Node shape the agent evals use, over loopback fakes
- *   worker-example  examples/worker, unmodified, under `wrangler dev`
+ *   worker-example  examples/worker, unmodified, natively under `wrangler dev`
  *   worker-fakes    the Worker example's composition over loopback fakes
  *
  * Each target: /health, MCP initialize, the exact six-tool list, a read
- * through execute_code, a call through call_destructive_tool (a verified
- * downstream write where the target has a write-capable tool), and the
- * operator UI loading in headless Chromium with a screenshot.
+ * through execute_code, one call_destructive_tool write verified in the fake's
+ * state and ledger where the target has a write-capable tool, and the
+ * operator UI loading in headless Chromium with a screenshot. The Worker
+ * targets run workerd with the example's own compatibility date and flags.
  *
  * `pnpm run build` runs first: the template and the Worker import the package
- * by name, which resolves to dist/. No LLM; needs no network.
+ * by name, which resolves to dist/. No LLM; needs no network. Every step is
+ * time-bounded and every child process group is stopped on exit or signal.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { experimental_readRawConfig } from "wrangler";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { startNodeDeployment } from "./deploy/node.js";
@@ -36,10 +40,18 @@ const args = flags(process.argv.slice(2));
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `smoke-${stamp()}.json`));
 const selected = (args.get("targets") ?? "node-template,node-fakes,worker-example,worker-fakes").split(",");
 
+const STEP_MS = 120_000;
+
 async function step(checks: SmokeCheck[], name: string, run: () => Promise<string | void>): Promise<boolean> {
   const started = performance.now();
+  let timer: NodeJS.Timeout | undefined;
   try {
-    const detail = await run();
+    const detail = await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`exceeded ${STEP_MS}ms`)), STEP_MS);
+      }),
+    ]);
     checks.push({ name, pass: true, ms: Math.round(performance.now() - started), ...(detail ? { detail } : {}) });
     return true;
   } catch (error) {
@@ -50,8 +62,24 @@ async function step(checks: SmokeCheck[], name: string, run: () => Promise<strin
       detail: (error instanceof Error ? error.message : String(error)).slice(0, 600),
     });
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
+
+const children = new Set<ChildProcess>();
+function killGroup(child: ChildProcess, signal: NodeJS.Signals) {
+  try {
+    process.kill(-child.pid!, signal);
+  } catch {
+    child.kill(signal);
+  }
+}
+for (const signal of ["SIGINT", "SIGTERM"] as const)
+  process.once(signal, () => {
+    for (const child of children) killGroup(child, "SIGKILL");
+    process.exit(130);
+  });
 
 function startProcess(command: string, argv: string[], options: { cwd: string; env?: Record<string, string> }) {
   const child = spawn(command, argv, {
@@ -60,6 +88,8 @@ function startProcess(command: string, argv: string[], options: { cwd: string; e
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
+  children.add(child);
+  child.once("exit", () => children.delete(child));
   let output = "";
   child.stdout?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
   child.stderr?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
@@ -69,18 +99,8 @@ function startProcess(command: string, argv: string[], options: { cwd: string; e
 async function stopProcess(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.pid === undefined) return;
   // wrangler and tsx both fork; signal the whole group.
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
-    child.kill("SIGTERM");
-  }
-  const timer = setTimeout(() => {
-    try {
-      process.kill(-child.pid!, "SIGKILL");
-    } catch {
-      // already gone
-    }
-  }, 5_000);
+  killGroup(child, "SIGTERM");
+  const timer = setTimeout(() => killGroup(child, "SIGKILL"), 5_000);
   await once(child, "exit").catch(() => undefined);
   clearTimeout(timer);
 }
@@ -107,7 +127,8 @@ interface Battery {
   headers: Record<string, string>;
   readCode: string;
   expectRead(result: unknown): string;
-  write: { address: string; args: Record<string, unknown>; verify(): string };
+  /** Absent when the target ships no write-capable tool; nothing is claimed then. */
+  write?: { address: string; args: Record<string, unknown>; verify(): string };
 }
 
 async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void> {
@@ -139,15 +160,17 @@ async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void>
       const parsed = parseJson(result.text) as { result?: unknown } | undefined;
       return battery.expectRead(parsed?.result);
     });
-    await step(checks, `call_destructive_tool ${battery.write.address}`, async () => {
-      const result = await live.call("call_destructive_tool", {
-        address: battery.write.address,
-        args: battery.write.args,
-        reason: "deployment smoke",
+    const write = battery.write;
+    if (write)
+      await step(checks, `one write through call_destructive_tool ${write.address}`, async () => {
+        const result = await live.call("call_destructive_tool", {
+          address: write.address,
+          args: write.args,
+          reason: "deployment smoke",
+        });
+        if (result.isError) throw new Error(result.text.slice(0, 400));
+        return write.verify();
       });
-      if (result.isError) throw new Error(result.text.slice(0, 400));
-      return battery.write.verify();
-    });
   } finally {
     await live.close();
   }
@@ -215,16 +238,18 @@ async function nodeTemplate(): Promise<SmokeTarget> {
     const origin = `http://127.0.0.1:${port}`;
     const database = join(work, "connecta.sqlite");
     let token = "";
-    const provisioned = await step(checks, "provision stored machine token", async () => {
-      const result = spawnSync(join(ROOT, "node_modules", ".bin", "tsx"), ["src/provision-token.ts", "smoke-machine"], {
+    const provisioned = await step(checks, "rotate-token local-machine", async () => {
+      const result = spawnSync(join(ROOT, "node_modules", ".bin", "tsx"), ["src/rotate-token.ts", "local-machine"], {
         cwd: app,
         encoding: "utf8",
+        timeout: 60_000,
         env: { ...process.env, CONNECTA_DATABASE: database },
       });
-      if (result.status !== 0) throw new Error("trusted token provisioning failed");
+      // stderr only: stdout carries the secret.
+      if (result.status !== 0) throw new Error(`rotate-token failed: ${result.stderr.slice(-400)}`);
       token = result.stdout.trim();
-      if (!/^cta_[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("provisioning did not return a cta_ token");
-      return "stored token in the deployment's SQLite database";
+      if (!/^cta_[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("rotate-token did not return a cta_ token");
+      return "agent token stored in the deployment's SQLite database";
     });
     if (!provisioned) return target;
     proc = startProcess(join(ROOT, "node_modules", ".bin", "tsx"), ["src/index.ts"], {
@@ -238,21 +263,31 @@ async function nodeTemplate(): Promise<SmokeTarget> {
     const running = proc;
     const booted = await step(checks, "boot", () => waitForHealth(origin, running.child, running.output));
     if (!booted) return target;
+    await step(checks, "/agent/local-machine refuses a request without the token", async () => {
+      const response = await fetch(`${origin}/agent/local-machine`, { method: "POST" });
+      await response.body?.cancel();
+      if (response.status !== 401) throw new Error(`HTTP ${response.status}`);
+      return "HTTP 401";
+    });
+    await step(checks, "connecta doctor --pool local-machine", async () => {
+      const result = spawnSync(
+        process.execPath,
+        [join(ROOT, "bin", "connecta.mjs"), "doctor", "--url", origin, "--pool", "local-machine"],
+        { cwd: app, encoding: "utf8", timeout: 60_000, env: { ...process.env, CONNECTA_TOKEN: token } },
+      );
+      if (result.status !== 0) throw new Error((result.stderr || result.stdout).slice(-600));
+      return result.stdout.trim().split("\n").at(-1);
+    });
     const headers = { Authorization: `Bearer ${token}` };
     await mcpBattery(checks, {
       origin,
-      mcpPath: "/mcp/local",
+      mcpPath: "/agent/local-machine",
       headers,
       readCode: `async () => (await connecta.call("time.get_now", {})).data.now`,
       expectRead: (result) => {
         if (typeof result !== "string" || Number.isNaN(Date.parse(result)))
           throw new Error(`unexpected ${JSON.stringify(result)}`);
         return `time.get_now → ${result}`;
-      },
-      write: {
-        address: "time.get_now",
-        args: {},
-        verify: () => "route exercised; the template ships no write-capable tool, so there is no write to verify",
       },
     });
     // The operator UI serves maintainers only (#837), so the agent token stays out.
@@ -323,6 +358,23 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
   const world = kind === "worker-fakes" ? new World() : undefined;
   await world?.start();
   const persist = await mkdtemp(join(tmpdir(), "connecta-smoke-wrangler-"));
+  // The example's own compatibility date, flags and bindings, so workerd
+  // behaves as a deployment would. Only the entry differs: the Access stand-in.
+  const { rawConfig: example } = experimental_readRawConfig({
+    config: join(ROOT, "examples", "worker", "wrangler.jsonc"),
+  });
+  const config = join(persist, "wrangler.json");
+  await writeFile(
+    config,
+    JSON.stringify({
+      name: `connecta-smoke-${kind}`,
+      main: join(ROOT, "eval", "deploy", `${kind}.ts`),
+      compatibility_date: example.compatibility_date,
+      compatibility_flags: example.compatibility_flags,
+      d1_databases: example.d1_databases,
+      worker_loaders: example.worker_loaders,
+    }),
+  );
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const vars = [
@@ -338,7 +390,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
     [
       "dev",
       "--config",
-      join(ROOT, "eval", "deploy", `wrangler.${kind}.jsonc`),
+      config,
       "--ip",
       "127.0.0.1",
       "--port",
@@ -367,12 +419,6 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
               if (result !== "HELLO") throw new Error(`unexpected ${JSON.stringify(result)}`);
               return "echo.shout → HELLO (Dynamic Worker executor)";
             },
-            write: {
-              address: "echo.shout",
-              args: { text: "route" },
-              verify: () =>
-                "route exercised; the example ships no write-capable tool (the hosted notes connection needs a real token)",
-            },
           }
         : {
             origin,
@@ -388,8 +434,10 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
               args: { channel: "eng", text: "smoke from workerd" },
               verify: () => {
                 const posts = world!.posts("eng");
-                if (posts.length !== 1) throw new Error(`${posts.length} posts landed`);
-                return "one message landed in the fake #eng";
+                const calls = world!.ledger.calls.filter((call) => call.kind === "write");
+                if (posts.length !== 1 || calls.length !== 1)
+                  throw new Error(`${posts.length} posts landed from ${calls.length} downstream writes`);
+                return "one message landed in the fake #eng; exactly one downstream write";
               },
             },
           },
@@ -399,9 +447,8 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
   } finally {
     await stopProcess(proc.child);
     await world?.stop();
+    // wrangler's bundle scratch lands beside the config, inside this directory.
     await rm(persist, { recursive: true, force: true });
-    // wrangler leaves its bundle scratch beside the config.
-    await rm(join(ROOT, "eval", "deploy", ".wrangler"), { recursive: true, force: true });
     target.status = checks.every((item) => item.pass) ? "pass" : "fail";
   }
 }
@@ -436,4 +483,5 @@ const file: SmokeResultFile = { kind: "connecta-eval/smoke", version: 1, meta: r
 await mkdir(dirname(out), { recursive: true });
 await writeFile(out, `${JSON.stringify(file, null, 1)}\n`);
 console.error(`[smoke] results: ${out}`);
-if (targets.some((target) => target.status === "fail")) process.exitCode = 1;
+// Lingering sockets or a stuck child must not hold the result open.
+process.exit(targets.some((target) => target.status === "fail") ? 1 : 0);

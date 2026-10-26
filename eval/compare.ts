@@ -1,10 +1,10 @@
 /** Offline paired A/B report. Route-only verdicts never enter the decision rule. */
 import { z } from "zod";
-import { passes } from "./tasks/grading.js";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { regradeTrial } from "./agent/regrade.js";
+import { observation, trialOutcome } from "./agent/verdict.js";
 import type { TrialResult } from "./agent/run.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
@@ -74,10 +74,6 @@ const trialSchema = z
   })
   .strict();
 
-function observation(trial: TrialResult, runner: "codex" | "claude") {
-  return runner === "claude" ? trial.claude : trial.codex;
-}
-
 /** The only exclusion is an unexecuted, explicitly recorded Claude rich-output N/A. */
 function isNA(trial: TrialResult, runner: "codex" | "claude"): boolean {
   const skip = ACTIVE_TASKS.find((t) => t.id === trial.task)?.runnerSkips?.[runner];
@@ -95,42 +91,6 @@ function isNA(trial: TrialResult, runner: "codex" | "claude"): boolean {
     trial.transcript.length === 0 &&
     !trial.saved?.trace.resultSubtypes.length
   );
-}
-
-/** One outcome predicate supplies rates, paired deltas, and infrastructure vetoes. */
-function trialOutcome(trial: TrialResult, runner: "codex" | "claude") {
-  const observed = observation(trial, runner);
-  const timeout = observed?.timedOut === true;
-  const interruption = observed?.aborted === true;
-  const error =
-    trial.status === "error" ||
-    trial.error !== undefined ||
-    (Array.isArray(observed?.resultSubtypes) && observed.resultSubtypes.some((s) => s !== "success")) ||
-    trial.saved?.trace.transcript.some((e) => e.kind === "turn_end" && e.isError === true) === true;
-  const completion =
-    !["pass", "fail"].includes(trial.status) ||
-    !Array.isArray(observed?.resultSubtypes) ||
-    !observed.resultSubtypes.length ||
-    observed.resultSubtypes.some((s) => s !== "success") ||
-    !trial.checks.some((c) => c.id === "conversation-completed" && c.pass);
-  // Older Claude observations predate the explicit cleanup marker. Their 143
-  // is accepted only with successful completion evidence and no failure flags.
-  const expectedTermination =
-    runner === "claude" &&
-    !timeout &&
-    !interruption &&
-    !error &&
-    !completion &&
-    (trial.claude?.terminatedAfterCompletion === true
-      ? observed.exitCode === null || observed.exitCode === 143
-      : trial.claude?.terminatedAfterCompletion === undefined && observed?.exitCode === 143);
-  const runnerExit = observed?.exitCode !== 0 && !expectedTermination;
-  const outcome = !passes(trial.checks, "outcome");
-  return {
-    pass: !timeout && !interruption && !runnerExit && !error && !completion && !outcome,
-    infrastructure: timeout || interruption || runnerExit || error,
-    failures: { timeout, interruption, runnerExit, error, completion, outcome },
-  };
 }
 
 function validate(file: AgentResultFile, surface: "six" | "code"): Map<string, TrialResult> {
