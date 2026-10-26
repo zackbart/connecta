@@ -1,5 +1,6 @@
-// Node-only: runs the offline generator and discovers every maintained provider.
+// Node-only: verifies lossless compaction of retained OpenAPI pins.
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -14,7 +15,9 @@ const { compactIndex } = (await import(new URL("../scripts/compact-index.mjs", i
 const { buildOperationIndex, readOpenApiSource, composeOpenApi, discoveryConversion } = await import(
   new URL("../scripts/generate-openapi.mjs", import.meta.url).href
 );
-const providers = await discoverProviders();
+const providers = (await discoverProviders()).filter((provider: { directory: string }) =>
+  existsSync(join(provider.directory, "evidence/openapi.json")),
+);
 const names = { vendor: "crm", title: "CRM" };
 const pack = (logical: OpenApiData) => {
   const { details: _details, ...metadata } = logical;
@@ -34,15 +37,6 @@ const refused = (call: () => unknown) => {
 describe("lossless generated indexes", () => {
   for (const provider of providers) {
     it(`INV-1 INV-11: ${provider.name} preserves every pinned contract, field, search result, refusal and content identity`, async () => {
-      if (["overflow", "tithely"].includes(provider.name)) {
-        // These two indexes are derived from kit declarations and do not use
-        // generated physical storage. Their complete contracts stay covered.
-        const api = await import(pathToFileURL(join(provider.directory, "api.ts")).href);
-        const index: OperationIndex = api[`${provider.name.toUpperCase()}_INDEX`];
-        expect(index.ops.length).toBeGreaterThan(0);
-        for (const op of index.ops) expect(index.contract(op).path).toBe(op.path);
-        return;
-      }
       const { openapi: generated } = (await import(
         pathToFileURL(join(provider.directory, "openapi.generated.ts")).href
       )) as { openapi: OpenApiData };

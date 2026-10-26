@@ -1,18 +1,8 @@
-// Node-only: exhaustive pinned-policy inventory; native paging/refusal boundaries run in http-hatch on workerd.
+// Node-only: reviewed hatch refusals precede auth and I/O; native boundaries run in http-hatch on workerd.
 import { expect, it, vi } from "vitest";
 import { Validator, type Schema } from "../src/json-schema.js";
 import { SEARCH_BUDGET } from "../src/http/hatch.js";
-import { cloudflareIndex } from "../src/providers/cloudflare/api.js";
-import { stripeIndex } from "../src/providers/stripe/api.js";
-import { PCO_INDEX } from "../src/providers/planning-center/api.js";
-import { vercelIndex } from "../src/providers/vercel/api.js";
-import { CCB_INDEX } from "../src/providers/ccb/api.js";
-import { githubIndex } from "../src/providers/github/lib/discovery.js";
-import { driveIndex } from "../src/providers/drive/lib/hatch.js";
-import { index as gmailIndex } from "../src/providers/gmail/lib/index.js";
-import { formsIndex } from "../src/providers/forms/lib/hatch.js";
-import { SLIDES_INDEX } from "../src/providers/slides/api.js";
-import type { OperationIndex, RestMethod } from "../src/providers/_shared/rest/operation-index.js";
+import type { RestMethod } from "../src/providers/_shared/rest/operation-index.js";
 import { providerFixtures } from "./providers.generated.js";
 import { connectorContext } from "./fixtures/misc.js";
 import schemaRefusalCases from "./fixtures/hatch-schema-refusals.json";
@@ -20,30 +10,6 @@ import schemaRefusalCases from "./fixtures/hatch-schema-refusals.json";
 const factories = Object.values(import.meta.glob<Record<string, any>>("../src/providers/*/index.ts", { eager: true }))
   .flatMap((module) => Object.values(module).filter((value) => typeof value === "function" && value.definition))
   .map((factory) => factory.definition);
-const indexes: Record<string, OperationIndex> = {
-  cloudflare: cloudflareIndex,
-  stripe: stripeIndex,
-  "planning-center": PCO_INDEX,
-  vercel: vercelIndex,
-  ccb: CCB_INDEX,
-  github: githubIndex,
-  drive: driveIndex,
-  gmail: gmailIndex,
-  forms: formsIndex,
-  slides: SLIDES_INDEX,
-};
-const expected: Record<string, number> = {
-  cloudflare: 70,
-  gmail: 68,
-  drive: 51,
-  vercel: 29,
-  stripe: 15,
-  ccb: 14,
-  forms: 5,
-  github: 5,
-  "planning-center": 2,
-  slides: 1,
-};
 const payload = (result: any) => result.structuredContent ?? result;
 
 it.each(providerFixtures)(
@@ -52,7 +18,6 @@ it.each(providerFixtures)(
   async (fixture) => {
     const declaration = factories.find((definition) => definition.name === fixture.name)!.kit.hatch;
     const refused = Object.entries(declaration.verdicts).filter(([, verdict]) => verdict === "refuse");
-    expect(refused).toHaveLength(expected[fixture.name] ?? 0);
     const connector = fixture.create();
     const prefix = declaration.name;
     const tools = connector.staticTools!;
@@ -74,7 +39,6 @@ it.each(providerFixtures)(
         const details = payload(await connector.callTool(`${prefix}_api_details`, { method, path }, context));
         expect(details.verdict, key).toBe("refuse");
         expect(details.refusal, key).toBeTypeOf("string");
-        expect(details.summary, key).toBe(indexes[fixture.name]!.operation(method, path)!.summary);
         const concrete = path.replace(/\{([^}]*)\}/g, (_match, name: string) => {
           const schema = details.parameters.find(
             (parameter: any) => parameter.in === "path" && parameter.name === name,

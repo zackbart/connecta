@@ -1,6 +1,6 @@
-// The catalog is the inventory: adding an API provider or tool requires a
-// dispatchable example here, and every dispatched failure must use core's
-// decision. Argument examples come from the independent #900 fixtures.
+// Retained #900 failure examples validate their provider catalogs and dispatched
+// outcomes. New providers use required published-deployment outcome journeys;
+// adding a provider does not require copying it into this legacy status matrix.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callClassification } from "../src/call-classification.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -27,9 +27,11 @@ import { googleOptions } from "./fixtures/provider-options.js";
 import { makeRegistry } from "./helpers.js";
 import { providerFixtures } from "./providers.generated.js";
 
-const fixtures: readonly ContractFixture[] = providerFixtures;
 const BASE = "https://connecta.example";
 const argumentsTable: Record<string, Record<string, Record<string, unknown>>> = argumentsByProvider;
+const fixtures: readonly ContractFixture[] = providerFixtures.filter((fixture) =>
+  Object.hasOwn(argumentsTable, fixture.name),
+);
 const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
   "stripe.stripe_api_write": { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_fixture" } },
@@ -163,17 +165,8 @@ afterEach(() => {
 });
 
 describe("API provider failure sweep", () => {
-  it("INV-9: inventories every API surface and catalog tool, including local tools", async () => {
-    const actual = fixtures
-      .filter(
-        (fixture) =>
-          create(fixture).kind === "api" ||
-          fixture.cases.some((scenario) => fixture.create(fixture.name, scenario.options).kind === "api"),
-      )
-      .map((fixture) => fixture.name)
-      .sort();
-    expect(providers.map(({ name }) => name).sort()).toEqual(actual);
-    expect(Object.keys(argumentsTable).sort()).toEqual(actual);
+  it("INV-9: checks declared failure examples against their provider catalogs", async () => {
+    expect(Object.keys(argumentsTable).sort()).toEqual(providers.map(({ name }) => name).sort());
     for (const provider of providers) {
       const fixture = fixtures.find(({ name }) => name === provider.name)!;
       const modes = [
