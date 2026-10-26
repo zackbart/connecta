@@ -7,7 +7,6 @@ import type { ConnectorContext } from "../../types.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { googleClient, googleFailureMessage, googleOutcomeOf } from "../_shared/google/kit.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
-import { FORMS } from "./api.js";
 import { Integer, isMaxChars, isMinChars } from "../../http/json-schema.js";
 import { boundCursor, StandardPage } from "../../http/paging.js";
 import { read, write } from "../../http/tools.js";
@@ -693,7 +692,7 @@ function standardResult(value: JsonRecord): JsonRecord {
 }
 
 export function formsTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, FORMS.provider, { standard: true, index: formsIndex });
+  const client = googleClient(connection, formsIndex);
   const formPath = (formId: string) => `/forms/${encodeURIComponent(formId)}`;
   const readForm = (formId: string, step?: string) =>
     client.json({ method: "GET", path: formPath(formId), template: "/forms/{formId}" }, step ? { step } : undefined);

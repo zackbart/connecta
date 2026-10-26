@@ -2,7 +2,6 @@ import { keys, optionsOf, variants } from "../../config-schema.js";
 import { defineApiProvider } from "../../http/provider.js";
 import { CALL_ADMISSION } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
-import { removedHostedMcp } from "../_shared/rest/dispatch.js";
 import {
   authenticate,
   MAX_RESPONSE_BYTES,
@@ -97,7 +96,10 @@ export const vercel = defineApiProvider<VercelOptions>({
   options: VERCEL_OPTIONS,
   vendor: VercelApi,
   baseUrl: (options) => {
-    if (options.auth.type !== "token") removedHostedMcp();
+    if (options.auth.type !== "token")
+      throw new Error(
+        "remoteMcp() with ConnectaConfig.classification for hosted MCP connections; use a distinct id beside the API connector.",
+      );
     pinOptions(options);
     return options.baseUrl ?? VERCEL_API_BASE_URL;
   },

@@ -1324,10 +1324,10 @@ A composition moves only by explicit review of its source pins/documents;
 `--record` and `--file` cannot replace it. `providers:check` compares the actual
 public documents independently; it never fetches a synthetic combined URL.
 
-The generic REST connector (`src/providers/_shared/rest/`) serves
+The indexed hatch (`src/http/hatch.ts`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the
-provider's pin (`evidence/openapi.json`; `openapi.source.json` until its step 1)
+provider's pin (`evidence/openapi.json`)
 into `openapi.generated.ts`. A `vendored: true` pin compiles offline from
 the reviewed conversion in `evidence/openapi.document.json`, or derives a
 deterministic Discovery conversion from its pinned original as described below.
@@ -1341,16 +1341,16 @@ canonical ASCII decimal safe integers: `0`, positive decimals without leading
 zeros, or negative decimals without leading zeros. `-0`, leading `+`, whitespace,
 exponents, decimal points and non-ASCII digits are refused. Negative integers
 remain valid when the pin has no minimum excluding them. String-valued ids keep
-their declared string contract; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
-its handler, since classification is per tool name. Vendors configure only a
-transport, failure mapper, scope, framing, cursor extraction, a reviewed
-value-safety table (required; see below), argument-dependent refusals, and an
-idempotency header, plus optional hooks: `path` (fill default ids before
-matching), `admit` (an awaited check in `callRest` every tool passes, such as
-Cloudflare's account and zone pin), `result` (unwrap a vendor envelope;
-redaction runs after it and before cursors and `select`), a reviewed
-request-header allowlist, text bodies, and index `slashParams` that admit an
-encoded `/` in a final key segment (`test/rest-connector.test.ts`).
+their declared string contract. `_api_read` admits only operations with explicit
+reviewed read verdicts, including GET/HEAD and read-only POSTs where declared;
+classification is per tool name. Providers declare a confined kit connection,
+a value-safety table (required;
+see below), and any framing, scope, paging or refusal hooks through the hatch
+binding. The connection owns authentication, transport, failure mapping and
+result safety. An index's `slashParams` can admit an encoded `/` in a reviewed
+final key segment. Current hatch admission, paging, privacy and one-send
+outcomes are exercised in `test/http-hatch.test.ts` and maintained provider
+suites; no legacy REST tool adapter remains.
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
 `numericBounds: true` preserves documented numeric minimum/maximum constraints
@@ -1365,8 +1365,7 @@ levels, 256 paths or 200 characters per path; overflow or an unresolved
 reference omits that operation's whole response-field contract. Explicitly open
 roots (including root-array items) also leave fields absent. Empty,
 schemaless and non-JSON responses declare no fields. Request shrinking and
-endpoint contract digests do not depend on this metadata. Legacy REST tools
-retain their catalog and discovery behavior until each provider's step 2.
+endpoint contract digests do not depend on this metadata.
 Fields remain optional additive metadata, so a previously compiled
 index without the source bytes remains usable without inventing a response
 contract. Vercel's step-2 pin review restores response metadata from the reviewed public
@@ -1456,8 +1455,8 @@ every vendor ships one reviewed table through one mechanism
    otherwise. `providers:spec` derives the binding fields from the pinned
    schema, and the harness fails until the condition lists each one. Argument-dependent refusals (Stripe expansions,
    Vercel `decrypt`) stay in the vendor's `refuse` hook.
-3. **Redaction on every success body**, in `callRest` after `result` and
-   before cursors and `select`, so named tools, HEAD data, and uploads pass
+3. **Redaction on every success body**, in the kit connection after `result`
+   and before cursors and `fields`, so named tools, HEAD data, and uploads pass
    through it too: the operation's reviewed paths, then the key-name
    heuristic as defense in depth. The heuristic is the union of the former
    vendor engines: a credential word anywhere in a non-metadata name removes
@@ -2705,13 +2704,13 @@ independent batch-kind, revision and resource guards. Google indexes explicitly
 set `pathMatching: "uri-template"` on `OperationIndex` to handle encoded literal
 collisions and parameter action suffixes. Other indexes retain exact literal
 segments and their existing refusal ordering. The matching mode also binds
-discovery cursors. An indexed `googleClient` requires each named request's declared
-template and refuses a substituted id resolving to another operation before
-grant evaluation. Products opt in with `googleClient(connection, title,
-{ standard: true, index })`; their requests carry `template`.
+discovery cursors. `googleClient(connection, index)` requires each named request's
+declared `template` and refuses a substituted id resolving to another operation
+before grant evaluation. Every maintained Google product uses this indexed
+client; there is no unindexed settlement mode.
 Both the client and `googleHatchBinding(connection, { index, review })` require
 the explicit URI-template mode at construction. The hatch requires the binding's
-exact index identity. Standard clients and Google bindings reject a missing
+exact index identity. Clients and Google bindings reject a missing
 index with an explicit construction error. The provider-standard suite checks
 actual hatch construction through every Google product fixture, requiring its
 Google binding with the same connection and index. The Google binding
@@ -2752,12 +2751,12 @@ provider, not a claim that the Forms migration has shipped.
 
 `googleErrors(product, { standard: true })` declares the product's 404 meaning
 and uses common status fallbacks; revision-conflict meanings require a
-separate declaration. Standard-mode `googleClient` preserves failure phase
+separate declaration. `googleClient` preserves failure phase
 metadata for partial-create recovery while leaving settlement and wording to
 the kit. Its incomplete-body wording covers JSON and binary reads without
-claiming that binary success was expected to be JSON. Legacy mode retains
-its catalog and failure bytes. No shared-core auxiliary-write outcome change
-is part of this opt-in support.
+claiming that binary success was expected to be JSON. `googleGrant` still uses
+the nonstandard `googleErrors(product)` mapping for delegated-token rejection;
+that grant contract is separate from resource-request settlement.
 
 Drive's two-request reads also declare fixed steps: `get_file_content` uses
 `metadata` and `content`, and non-root `list_folder_items` uses `folder` and
@@ -2768,10 +2767,8 @@ Gmail declares separate initial and body-download steps for `get_message`,
 each of up to 25 summary reads, and `get_thread` names each stored body in
 Gmail's 100-message conversation limit. Serving these reads as writes keeps
 every request available once.
-The layer's request adapter keeps the legacy wording of a served write whose
-answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
-reports how far a failed request got. The core still decides every write's
-outcome. Gmail's auxiliary draft and reply lookups pass both `effect: "read"`
+The request adapter reports how far a failed request got; the kit maps the
+failure and the core decides every write's outcome. Gmail's auxiliary draft and reply lookups pass both `effect: "read"`
 and a construction-declared step: the guarded client's early reservation uses
 that named slot, while the ledger marks the request auxiliary. A failed lookup
 keeps its read verdict and cannot make an unsent draft write unknown.
@@ -2814,10 +2811,8 @@ Every defect from a run probe or its hooks uses the generic withheld notice,
 even without a kit dispatch, because a private transport leaves no kit visibility
 evidence. An open operation probe retains its original defect.
 
-The REST bridge in `src/providers/_shared/rest/kit.ts` retains pinned index
-validation and legacy hatch schemas while the kit owns tool leases, fixed write
-capacity, transport, failures and result safety. It verifies schema equality
-before restoring legacy catalog key order. `indexedVendor` derives operation
+`src/providers/_shared/rest/kit.ts` owns the shared REST call shapes, pinned
+schema conversion and indexed vendor declarations. `indexedVendor` derives operation
 metadata from the index and builds the full manifest lazily; the typed client
 contains only named operations and probes. Bulk indexed declarations preserve
 the OpenAPI brace paths verbatim and carry explicit parameter Schemas. They
@@ -2841,7 +2836,7 @@ transport idempotency key. These hints describe behavior; write routing and
 endpoint restrictions still apply. For example, a tool that only creates a new
 note can declare `destructive:false` without promising idempotency.
 
-`restKitTools` may declare a `writeSteps` map whose values are `"once"`.
+Kit tools and the indexed hatch may declare a `writeSteps` map whose values are `"once"`.
 Construction freezes the map; every named step sends at most once and an
 undeclared step is refused before dispatch. Omitting it retains the single
 implicit write step. Auxiliary ownership reads in a write call retain that
@@ -3479,7 +3474,7 @@ compiling and configuring the real thing.
   (`keyProtectsLogicalCall`). Every resource request dispatched under the
   logical call, from any ledger, is recorded on it once per dispatch with
   its method and the genuine key it carried (`ProviderRequest.key`, set by
-  `callRest` only for a key fetch sends as given). The advice stands only when
+  the kit's guarded transport only for a key fetch sends as given). The advice stands only when
   exactly one boundary was entered, the invocation's object owns it as for
   `knownForLogicalCall`, that boundary tracks every request, and exactly one
   dispatched request was a write, carrying the named key; a request counts as
@@ -3524,10 +3519,10 @@ compiling and configuring the real thing.
   reconciliation even with an idempotency key; direct transport calls
   without a served verdict can still prove repeatability, but only with a
   genuine key sent to a vendor that honors it (Stripe today, through
-  `idempotencyHeader`): the REST write tool refuses an `idempotencyKey` that fetch
+  `hatch.idempotency`): the REST write tool refuses an `idempotencyKey` that fetch
   would send empty after trimming or would not send at all (CR, LF, NUL, any
   other control character but tab, DEL, or a code point past Latin-1), as
-  `invalid_args` before recovery is recorded, and `callRest` marks a request
+  `invalid_args` before recovery is recorded, and the guarded transport marks a request
   repeatable only for a key fetch sends as given.
   `providerCallFailure` (`src/write-outcome.ts`) is the one finalizer for a
   direct write's failure: the `api()` handler boundary, a guarded transport

@@ -2,7 +2,7 @@ import { codePoints } from "../../../http/json-schema.js";
 import type { Connection } from "../../../http/vendor.js";
 import { googleBatchGuard, googleHatchBinding } from "../../_shared/google/hatch.js";
 import { OperationIndex } from "../../_shared/rest/operation-index.js";
-import type { RestCall } from "../../_shared/rest/tools.js";
+import type { RestCall } from "../../_shared/rest/kit.js";
 import { openapi } from "../openapi.generated.js";
 import { SHEETS_ADMITTED_KINDS, SHEETS_REFUSED_KINDS, sheetsExternalDataProblem } from "./requests.js";
 
