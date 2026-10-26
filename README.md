@@ -26,9 +26,13 @@ Connecta supplies the service credentials, so the agent doesn't need them.
 
 Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Overflow, Planning Center, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
 
-You can also connect another hosted MCP tool server, or describe an API
-Connecta should call. Hosted connections use the server's current tools;
-maintained integrations come with tools built by Connecta.
+Maintained API providers pair reviewed vendor contracts with tools built by
+Connecta. See the [API sources and tool inventory](./documentation/providers.md#api-sources-and-tool-inventory)
+for each provider's named workflows and reviewed API tools.
+
+You can also connect another hosted MCP tool server through `remoteMcp()`,
+which discovers the server's live tool catalog, or describe an API Connecta
+should call.
 
 ## What it protects
 

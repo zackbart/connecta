@@ -7,6 +7,241 @@ roster](./integrating.md#add-or-remove-a-connector) covers the general
 procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
+## API sources and tool inventory
+
+Maintained providers pair reviewed API contracts and indexes with Connecta's
+adapters and tools. Sources include upstream OpenAPI,
+Google Discovery conversions, reviewed HTML/documentation conversions and
+hand-authored endpoint contracts. Tithe.ly and Overflow use endpoint checks
+without vendored OpenAPI documents. `remoteMcp()` discovers live server tools
+instead.
+
+These generated reference catalogs separate named workflows from API tools
+and reads from writes. API search/details inspect indexed contracts, including
+refused operations. Raw read/write calls accept only reviewed operations within
+configured scope and safety rules. Gmail has no generic write tool.
+
+Addresses use your connector ID: Stripe configured as `billing` exposes
+`billing.stripe_api_read`. Configuration, credentials and read-only policy affect
+availability. Planning Center labels identify required products. Use live
+discovery for your deployment's catalog.
+
+<!-- provider-inventory:start -->
+
+<details>
+<summary>Breeze ChMS (15 tools)</summary>
+
+[Setup](#breeze-chms). **API source:** [Reviewed HTML/documentation conversion](https://app.breezechms.com/api).
+
+- **Named reads:** `get_account_summary`, `get_person`, `list_attendance`, `list_contributions`, `list_events`, `list_funds`, `list_people`, `list_profile_fields`, `list_tags`.
+- **Named writes:** `add_person`, `update_person`.
+- **API reads:** `breeze_api_details`, `breeze_api_read`, `breeze_api_search`.
+- **API writes:** `breeze_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/breeze).
+
+</details>
+
+<details>
+<summary>Church Community Builder (20 tools)</summary>
+
+[Setup](#church-community-builder). **API source:** [Upstream OpenAPI](https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json?download=1).
+
+- **Named reads:** `get_event_attendance`, `get_event`, `get_family`, `get_giving_metrics`, `get_group`, `get_individual`, `get_me`, `list_event_attendees`, `list_events`, `list_families`, `list_group_members`, `list_groups`, `list_individual_groups`, `list_individual_notes`, `list_individuals`, `search_records`.
+- **Named writes:** None.
+- **API reads:** `ccb_api_details`, `ccb_api_read`, `ccb_api_search`.
+- **API writes:** `ccb_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/ccb).
+
+</details>
+
+<details>
+<summary>Cloudflare (9 tools)</summary>
+
+[Setup](#cloudflare). **API source:** [Upstream OpenAPI](https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json). [Supplemental reviewed contract](https://developers.cloudflare.com/analytics/graphql-api/).
+
+- **Named reads:** `graphql_query`, `list_accounts`, `list_zones`, `verify_credential`.
+- **Named writes:** None.
+- **API reads:** `cloudflare_api_details`, `cloudflare_api_read`, `cloudflare_api_search`.
+- **API writes:** `cloudflare_api_upload`, `cloudflare_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/cloudflare).
+
+</details>
+
+<details>
+<summary>Google Docs (10 tools)</summary>
+
+[Setup](#google-docs). **API source:** [Google Discovery conversion](https://docs.googleapis.com/$discovery/rest?version=v1).
+
+- **Named reads:** `get_document`.
+- **Named writes:** `append_text`, `batch_update_document`, `create_document`, `insert_text`, `replace_all_text`.
+- **API reads:** `docs_api_details`, `docs_api_read`, `docs_api_search`.
+- **API writes:** `docs_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/docs).
+
+</details>
+
+<details>
+<summary>Google Drive (21 tools)</summary>
+
+[Setup](#google-drive). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/drive/api/reference/rest/v3).
+
+- **Named reads:** `get_file_content`, `get_file`, `list_folder_items`, `list_permissions`, `list_shared_drives`, `search_files`.
+- **Named writes:** `copy_file`, `create_file`, `create_folder`, `delete_permission`, `move_file`, `restore_file`, `share_file`, `trash_file`, `update_file_content`, `update_file`, `update_permission`.
+- **API reads:** `drive_api_details`, `drive_api_read`, `drive_api_search`.
+- **API writes:** `drive_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/drive).
+
+</details>
+
+<details>
+<summary>Google Forms (10 tools)</summary>
+
+[Setup](#google-forms). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/forms/api/reference/rest).
+
+- **Named reads:** `get_form`, `get_response`, `list_responses`.
+- **Named writes:** `batch_update_form`, `create_form`, `update_form_info`.
+- **API reads:** `forms_api_details`, `forms_api_read`, `forms_api_search`.
+- **API writes:** `forms_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/forms).
+
+</details>
+
+<details>
+<summary>GitHub (7 tools)</summary>
+
+[Setup](#github). **API source:** [Upstream OpenAPI](https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json).
+
+- **Named reads:** `list_scopes`, `search_scoped`.
+- **Named writes:** `merge_pull_request`.
+- **API reads:** `github_api_details`, `github_api_read`, `github_api_search`.
+- **API writes:** `github_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/github).
+
+</details>
+
+<details>
+<summary>Gmail (12 tools)</summary>
+
+[Setup](#gmail). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/gmail/api/reference/rest).
+
+- **Named reads:** `get_attachment`, `get_draft`, `get_message`, `get_thread`, `list_drafts`, `list_labels`, `search_threads`.
+- **Named writes:** `create_draft`, `update_draft`.
+- **API reads:** `gmail_api_details`, `gmail_api_read`, `gmail_api_search`.
+- **API writes:** None.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/gmail).
+
+</details>
+
+<details>
+<summary>Overflow (17 tools)</summary>
+
+[Setup](#overflow). **API source:** Hand-authored endpoint contracts; [upstream endpoint checks](https://server.stage.overflow.co/api/docs/openapi.json). No vendored OpenAPI document.
+
+- **Named reads:** `get_contribution`, `get_deposit_summary`, `get_deposit`, `get_donor`, `list_campaigns`, `list_chargebacks`, `list_contributions`, `list_deposits`, `list_donors`, `list_locations`, `list_payment_methods`, `list_refunds`, `list_subscriptions`.
+- **Named writes:** None.
+- **API reads:** `overflow_api_details`, `overflow_api_read`, `overflow_api_search`.
+- **API writes:** `overflow_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/overflow).
+
+</details>
+
+<details>
+<summary>Planning Center (27 tools)</summary>
+
+[Setup](#planning-center). **API source:** Composed upstream OpenAPI contracts: [/people/v2](https://developer.planning.center/docs/#/people/2026-06-04), [/services/v2](https://developer.planning.center/docs/#/services/2018-11-01), [/groups/v2](https://developer.planning.center/docs/#/groups/2023-07-10), [/check-ins/v2](https://developer.planning.center/docs/#/check-ins/2025-05-28), [/calendar/v2](https://developer.planning.center/docs/#/calendar/2026-06-22), [/registrations/v2](https://developer.planning.center/docs/#/registrations/2025-05-01), [/giving/v2](https://developer.planning.center/docs/#/giving/2019-10-18), [/publishing/v2](https://developer.planning.center/docs/#/publishing/2024-03-25), [/webhooks/v2](https://developer.planning.center/docs/#/webhooks/2022-10-20), [/api/v2](https://developer.planning.center/docs/#/api/2026-09-24).
+
+- **Named reads:** `get_me`, `get_person`, `get_plan` (services enabled), `list_donations` (giving enabled), `list_funds` (giving enabled), `list_group_memberships` (groups enabled), `list_groups` (groups enabled), `list_person_field_data`, `list_person_notes`, `list_person_schedules` (services enabled), `list_plans` (services enabled), `list_service_types` (services enabled), `list_teams` (services enabled), `list_workflow_cards`, `list_workflows`, `search_people`.
+- **Named writes:** `add_group_member` (groups enabled), `add_person_note`, `add_workflow_card`, `apply_workflow_card_action`, `create_person`, `schedule_plan_person` (services enabled), `update_person`.
+- **API reads:** `pco_api_details`, `pco_api_read`, `pco_api_search`.
+- **API writes:** `pco_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/planning-center).
+
+</details>
+
+<details>
+<summary>Google Sheets (13 tools)</summary>
+
+[Setup](#google-sheets). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/sheets/api/reference/rest).
+
+- **Named reads:** `get_spreadsheet`, `get_values`.
+- **Named writes:** `add_sheet`, `append_values`, `batch_update_spreadsheet`, `batch_update_values`, `clear_values`, `create_spreadsheet`, `update_values`.
+- **API reads:** `sheets_api_details`, `sheets_api_read`, `sheets_api_search`.
+- **API writes:** `sheets_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/sheets).
+
+</details>
+
+<details>
+<summary>Google Slides (19 tools)</summary>
+
+[Setup](#google-slides). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/slides/api/reference/rest).
+
+- **Named reads:** `get_page`, `get_presentation`, `get_slide_thumbnail`, `list_comments`, `list_layouts`.
+- **Named writes:** `batch_update_presentation`, `create_comment_reply`, `create_comment`, `create_presentation`, `create_slide`, `delete_comment_reply`, `delete_comment`, `replace_all_text`, `update_comment_post`, `update_comment_thread`.
+- **API reads:** `slides_api_details`, `slides_api_read`, `slides_api_search`.
+- **API writes:** `slides_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/slides).
+
+</details>
+
+<details>
+<summary>Stripe (6 tools)</summary>
+
+[Setup](#stripe). **API source:** [Upstream OpenAPI](https://raw.githubusercontent.com/stripe/openapi/master/latest/openapi.spec3.json).
+
+- **Named reads:** `get_balance_summary`, `get_stripe_account_info`.
+- **Named writes:** None.
+- **API reads:** `stripe_api_details`, `stripe_api_read`, `stripe_api_search`.
+- **API writes:** `stripe_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/stripe).
+
+</details>
+
+<details>
+<summary>Tithe.ly (11 tools)</summary>
+
+[Setup](#tithely). **API source:** Hand-authored endpoint contracts; [upstream endpoint checks](https://docs.tithe.ly/reference/). No vendored OpenAPI document.
+
+- **Named reads:** `get_charge`, `get_recurring_charge`, `list_accounts`, `list_charges`, `list_organizations`, `list_payment_methods`, `list_recurring_charges`.
+- **Named writes:** None.
+- **API reads:** `tithely_api_details`, `tithely_api_read`, `tithely_api_search`.
+- **API writes:** `tithely_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/tithely).
+
+</details>
+
+<details>
+<summary>Vercel (11 tools)</summary>
+
+[Setup](#vercel). **API source:** [Upstream OpenAPI](https://openapi.vercel.sh/).
+
+- **Named reads:** `get_deployment_build_logs`, `get_runtime_logs`, `list_project_env_vars`, `list_teams`.
+- **Named writes:** `update_project_env_var`, `upsert_project_env_var`.
+- **API reads:** `vercel_api_details`, `vercel_api_read`, `vercel_api_search`.
+- **API writes:** `vercel_api_upload`, `vercel_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/vercel).
+
+</details>
+
+<!-- provider-inventory:end -->
+
+## API operation discovery and boundaries
+
 Standard API operation search accepts resource nouns, actions and conversational
 phrasing. A leading create/add/update/edit/make/set/apply/change/rename/send/delete/remove/cancel/stop
 with an object prefers reviewed writes and keeps later read words as nouns, as in

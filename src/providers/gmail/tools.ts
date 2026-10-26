@@ -9,7 +9,7 @@ import type { ConnectorContext } from "../../types.js";
 import { googleClient, type GoogleClient } from "../_shared/google/kit.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
-import { errors, GMAIL, gmailBodyProvenance } from "./api.js";
+import { errors, gmailBodyProvenance } from "./api.js";
 import { read, write } from "../../http/tools.js";
 import { boundCursor } from "../../http/paging.js";
 import { fieldsProblem, selectFields } from "../../http/fields.js";
@@ -1657,7 +1657,7 @@ function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
 
 /** Gmail only reads mail and saves drafts. Sending has no dispatch path. */
 export function gmailTools({ connection }: { connection: Connection }): ApiTool[] {
-  return declarations(googleClient(connection, GMAIL.provider, { standard: true, index })).map((declaration) => {
+  return declarations(googleClient(connection, index)).map((declaration) => {
     const name = declaration.name;
     const isList = name === "search_threads" || name === "list_labels" || name === "list_drafts";
     const spec = {

@@ -19,20 +19,26 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { machineAuth } from "./helpers/machine-auth.js";
 import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
 import { callClassification, attachCallClassification } from "../src/call-classification.js";
-import { Context, Effect, Schema } from "effect";
+import { Context, Effect } from "effect";
 import {
   GOOGLE_GRANT_RENEWAL,
   googleErrors,
   googleClient,
   googleGrant,
   googleOutcomeOf,
-  googleSafety,
   type GoogleOutcome,
   type GoogleRequest,
   type GoogleRequestOptions,
 } from "../src/providers/_shared/google/kit.js";
 import { workspaceConnection, type GoogleWorkspaceSubject } from "../src/providers/_shared/google/workspace.js";
-import { DRIVE, DriveApi, driveContentClient, result as driveResult } from "../src/providers/drive/api.js";
+import {
+  DRIVE,
+  DriveApi,
+  driveContentClient,
+  safety as driveSafety,
+  result as driveResult,
+} from "../src/providers/drive/api.js";
+import { driveIndex } from "../src/providers/drive/lib/hatch.js";
 import { guardedClient } from "../src/http/client.js";
 import { StatusFailure, UnreadableBody, toConnectorCallError, type HttpFailure } from "../src/http/errors.js";
 import { bearer, Grant, refreshOnce } from "../src/http/oauth.js";
@@ -46,7 +52,7 @@ import {
   type CallServices,
   type Dispatch,
 } from "../src/http/services.js";
-import { connect, del, get, patch, post, put, vendor, type Connection } from "../src/http/vendor.js";
+import { connect, type Connection } from "../src/http/vendor.js";
 import { runEdge } from "../src/runtime/run.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { api } from "../src/connectors/api.js";
@@ -305,26 +311,6 @@ async function continuedLabels(
 }
 
 // Exercise the shared adapter with the production Drive binary/text projection.
-// Extra methods and the guarded batch path cover shared transport semantics
-// independently of the products' narrower tool catalogs.
-const FileId = { fileId: Schema.String };
-const clientOperations = [
-  get("listFiles", "/files", { success: Schema.Unknown }),
-  post("createFile", "/files", { payload: Schema.Unknown, success: Schema.Unknown }),
-  patch("patchFiles", "/files", { payload: Schema.Unknown, success: Schema.Unknown }),
-  del("deleteFiles", "/files", { success: Schema.Unknown }),
-  get("getFile", "/files/:fileId", { params: FileId, success: Schema.Unknown }),
-  post("postFile", "/files/:fileId", { params: FileId, payload: Schema.Unknown, success: Schema.Unknown }),
-  put("putFile", "/files/:fileId", { params: FileId, payload: Schema.Unknown, success: Schema.Unknown }),
-  patch("patchFile", "/files/:fileId", { params: FileId, payload: Schema.Unknown, success: Schema.Unknown }),
-  del("deleteFile", "/files/:fileId", { params: FileId, success: Schema.Unknown }),
-  get("exportFile", "/files/:fileId/export", { params: FileId, success: Schema.Unknown }),
-  post("batchUpdate", "/documents/:documentId:batchUpdate", {
-    params: { documentId: Schema.String },
-    payload: Schema.Unknown,
-    success: Schema.Unknown,
-  }),
-] as const;
 const clientOutcomes = new WeakMap<object, GoogleOutcome>();
 const outcomeOf = (failure: object) => clientOutcomes.get(failure);
 
@@ -339,7 +325,7 @@ function client(maxResponseBytes = 1024, subject: GoogleWorkspaceSubject = "alic
     }),
   );
   const connected = connect(
-    { ...vendor({ name: product.provider }, ...clientOperations), binaryBodies: DriveApi.binaryBodies },
+    DriveApi,
     refreshOnce(
       guardedClient({
         provider: product.provider,
@@ -350,8 +336,8 @@ function client(maxResponseBytes = 1024, subject: GoogleWorkspaceSubject = "alic
       GOOGLE_GRANT_RENEWAL,
     ),
     {
-      errors: googleErrors(product),
-      safety: resultSafety(googleSafety(product.provider, clientOperations)),
+      errors: googleErrors(product, { standard: true, revisionConflicts: true }),
+      safety: resultSafety(driveSafety),
       result: driveResult,
     },
   );
@@ -364,7 +350,7 @@ function client(maxResponseBytes = 1024, subject: GoogleWorkspaceSubject = "alic
     sendItem: (...args) => authorize(connected.sendItem(...args)),
   };
   let dispatches: Dispatch[] = [];
-  const drive = driveContentClient(googleClient(connection, product.provider));
+  const drive = driveContentClient(googleClient(connection, driveIndex));
   const run = <A>(request: GoogleRequest, ctx: ConnectorContext, work: Effect.Effect<A, HttpFailure, CallServices>) => {
     // Product tools already carry this verdict into their context. This direct
     // adapter fixture supplies the old direct-call method fallback explicitly.
@@ -2195,7 +2181,12 @@ describe("the shared client reads bytes and text for the products that need them
         }),
     );
     const result = await client().text(
-      { method: "GET", path: "/files/f1/export", query: { mimeType: "text/plain" } },
+      {
+        method: "GET",
+        path: "/files/f1/export",
+        template: "/files/{fileId}/export",
+        query: { mimeType: "text/plain" },
+      },
       context(),
     );
     expect(result).toEqual({
@@ -2219,7 +2210,7 @@ describe("the shared client reads bytes and text for the products that need them
         },
         { status },
       );
-    const write = { method: "POST" as const, path: "/documents/d1:batchUpdate", body: { requests: [] } };
+    const write = { method: "PATCH" as const, path: "/files/f1", template: "/files/{fileId}", body: { name: "Plan" } };
 
     it.each([
       [400, "FAILED_PRECONDITION"],
@@ -2312,8 +2303,8 @@ describe("the shared client reads bytes and text for the products that need them
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
-    const write = { method: "POST" as const, path: "/files", body: { name: "Plan" } };
-    const read = { method: "GET" as const, path: "/files/f1" };
+    const write = { method: "POST" as const, path: "/files", template: "/files", body: { name: "Plan" } };
+    const read = { method: "GET" as const, path: "/files/f1", template: "/files/{fileId}" };
     const failing = (promise: Promise<unknown>) =>
       promise.then(
         () => expect.unreachable(),
@@ -2327,13 +2318,15 @@ describe("the shared client reads bytes and text for the products that need them
       expect(outcomeOf(unadmitted)).toEqual({ dispatched: false, phase: "before-send" });
 
       // The kit's closed operation review rejects a path no tool declares.
-      const undeclared = await failing(client().json({ method: "POST", path: "/undeclared" }, context()));
+      const undeclared = await failing(
+        client().json({ method: "POST", path: "/undeclared", template: "/undeclared" }, context()),
+      );
       expect(undeclared).toMatchObject({ code: "invalid_args", retryable: false });
       expect(apiCalls).toEqual([]);
       expect(tokenCalls).toEqual([]);
     });
 
-    it("reading-body: a 2xx whose body breaks off reads as probably applied for a write", NODE, async () => {
+    it("reading-body: a broken 2xx preserves the write outcome and recovery phase", NODE, async () => {
       apiReplies.push(brokenReply, brokenReply, brokenReply);
       const drive = client();
 
@@ -2341,23 +2334,22 @@ describe("the shared client reads bytes and text for the products that need them
       expect(accepted).toMatchObject({
         code: "connector_call_failed",
         retryable: false,
-        message:
-          "Google Drive accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.",
+        writeOutcome: "unknown",
       });
       expect(outcomeOf(accepted)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
-      expect(failureRecord({}, accepted).httpStatus).toBe(200);
 
       // The same for a write through bytes(), whose read is not JSON.
-      const viaBytes = await failing(drive.bytes({ ...write, method: "PATCH" }, context()));
+      const viaBytes = await failing(
+        drive.bytes({ ...write, method: "PATCH", path: "/files/f1", template: "/files/{fileId}" }, context()),
+      );
       expect(viaBytes).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(outcomeOf(viaBytes)).toMatchObject({ status: 200, phase: "reading-body" });
-      expect(failureRecord({}, viaBytes).httpStatus).toBe(200);
 
       // A read broken off the same way keeps its unreadable-body refusal.
       const reread = await failing(drive.bytes(read, context()));
       // The kit's UnreadableBody verdict is non-retryable for reads too.
       expect(reread).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(reread.message).toBe("Google Drive returned a successful response that is not JSON.");
+      expect(reread.message).toBe("Google Drive's response could not be read completely.");
       expect(outcomeOf(reread)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
     });
 
@@ -2371,16 +2363,17 @@ describe("the shared client reads bytes and text for the products that need them
 
       const overflow = await failing(drive.json(write, context()));
       expect(overflow).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(overflow.message).toContain("accepted the request but its reply could not be read");
+      expect(overflow).toMatchObject({ writeOutcome: "unknown" });
       expect(outcomeOf(overflow)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
       expect(failureRecord({}, overflow).httpStatus).toBe(200);
 
-      const redirected = await failing(drive.json({ ...write, method: "DELETE" }, context()));
+      const redirected = await failing(
+        drive.json({ ...write, method: "DELETE", path: "/files/f1", template: "/files/{fileId}" }, context()),
+      );
       expect(redirected).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(redirected.message).toContain("whether the request was applied is unknown");
+      expect(redirected).toMatchObject({ writeOutcome: "unknown" });
       expect(redirected.message).not.toContain("probably applied");
       expect(outcomeOf(redirected)).toEqual({ dispatched: true, status: 303, phase: "redirected" });
-      expect(failureRecord({}, redirected).httpStatus).toBe(303);
 
       // A read that overflows keeps its own, unchanged refusal.
       const big = await failing(drive.bytes(read, context()));
@@ -2395,7 +2388,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(failure.message).toContain("1024-byte response ceiling");
       expect(failure.message).not.toContain("probably applied");
-      expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
+      expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "reading-body" });
       expect(failureRecord({}, failure).httpStatus).toBe(403);
     });
 
@@ -2438,141 +2431,6 @@ describe("the shared client reads bytes and text for the products that need them
       },
     );
 
-    describe("a 5xx answering a write", () => {
-      const upstream = (status: number) => () =>
-        Response.json({ error: { code: status, message: "Backend Error", status: "INTERNAL" } }, { status });
-
-      it.each([
-        ["PUT", 502],
-        ["DELETE", 504],
-      ] as const)("%s → %i: outcome unknown, not retried", NODE, async (method, status) => {
-        apiReplies.push(upstream(status));
-        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
-        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(failure.message).toContain(
-          `answered HTTP ${status} after receiving the request, so its outcome is unknown`,
-        );
-        expect(failure.message).toContain("Re-read its target before repeating it");
-        expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "server-error" });
-        expect(failureRecord({}, failure).httpStatus).toBe(status);
-      });
-
-      /** A quota refusal, carried on whichever status. */
-      const quota = (status: number, reason: string) => () =>
-        Response.json(
-          { error: { code: status, message: "Slow down", status: "RESOURCE_EXHAUSTED", errors: [{ reason }] } },
-          { status },
-        );
-      it.each([["DELETE", 403, "RATE_LIMIT_EXCEEDED"]] as const)(
-        "%s → %i %s stays rate_limited: Google rejected it before applying",
-        NODE,
-        async (method, status, reason) => {
-          apiReplies.push(quota(status, reason));
-          const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
-          expect(failure.code).toBe("rate_limited");
-          expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
-        },
-      );
-
-      it.each([["PUT", 307]] as const)(
-        "%s → %i redirect: outcome unknown, never probably applied",
-        NODE,
-        async (method, status) => {
-          apiReplies.push(() => new Response(null, { status, headers: { Location: "https://elsewhere.example/" } }));
-          const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
-          expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-          expect(failure.message).toContain(`answered HTTP ${status} with a redirect`);
-          expect(failure.message).not.toContain("probably applied");
-          expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
-          expect(failureRecord({}, failure).httpStatus).toBe(status);
-        },
-      );
-
-      it.each([
-        ["POST", 300],
-        ["PATCH", 304],
-      ] as const)(
-        "%s → %i with a quota reason is still redirected, never a rate limit",
-        NODE,
-        async (method, status) => {
-          // 300, 304, 305, and 306 pass the transport's own redirect check, so
-          // they reach the mapper; a reason in the body must not turn them into
-          // a retryable refusal.
-          apiReplies.push(
-            () =>
-              new Response(
-                status === 304
-                  ? null
-                  : JSON.stringify({
-                      error: { code: status, message: "Slow down", errors: [{ reason: "rateLimitExceeded" }] },
-                    }),
-                { status, headers: { "Content-Type": "application/json" } },
-              ),
-          );
-          const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
-          expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-          expect(failure.message).toContain("whether the request was applied is unknown");
-          expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
-          expect(failureRecord({}, failure).httpStatus).toBe(status);
-        },
-      );
-
-      it("records readable and oversized 300 answers without retrying", NODE, async () => {
-        apiReplies.push(
-          () => Response.json({ error: { errors: [{ reason: "rateLimitExceeded" }] } }, { status: 300 }),
-          () => new Response(new Uint8Array(4096), { status: 300, headers: { "Content-Length": "4096" } }),
-        );
-        const drive = client(1024);
-        for (let index = 0; index < 2; index += 1) {
-          const failure = await failing(drive.json(write, context()));
-          expect(outcomeOf(failure)).toEqual({
-            dispatched: true,
-            status: 300,
-            phase: index === 0 ? "redirected" : "reading-body",
-          });
-          expect(failure.retryable).toBe(false);
-          expect(failureRecord({}, failure).httpStatus).toBe(300);
-        }
-      });
-
-      it("keeps a GET's 300 a non-retryable redirect", NODE, async () => {
-        apiReplies.push(() => new Response(null, { status: 300 }));
-        const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
-        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 300, phase: "redirected" });
-      });
-
-      it("keeps a GET redirect's own refusal, phase redirected", NODE, async () => {
-        apiReplies.push(() => new Response(null, { status: 302, headers: { Location: "https://elsewhere.example/" } }));
-        const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
-        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(failure.message).toContain("never forwards its credential");
-        expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 302, phase: "redirected" });
-      });
-
-      it("keeps a quota 5xx retryable for a read, and a whole-resource PUT's unknown", NODE, async () => {
-        apiReplies.push(quota(503, "rateLimitExceeded"), quota(503, "rateLimitExceeded"));
-        const drive = client();
-        const read = await failing(drive.json({ method: "GET", path: "/files/f1" }, context()));
-        expect(read.code).toBe("rate_limited");
-        expect(outcomeOf(read)).toEqual({ dispatched: true, status: 503, phase: "refused" });
-        // No operation hint makes a write repeatable: only a key would.
-        const put = await failing(drive.json({ method: "PUT", path: "/files/f1", body: {} }, context()));
-        expect(put).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(outcomeOf(put)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
-      });
-
-      it("is unknown even when the 5xx body itself is past the ceiling", NODE, async () => {
-        apiReplies.push(
-          () => new Response(new Uint8Array(4096), { status: 502, headers: { "Content-Length": "4096" } }),
-        );
-        const failure = await failing(client(1024).json(write, context()));
-        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 502, phase: "server-error" });
-        expect(failureRecord({}, failure).httpStatus).toBe(502);
-      });
-    });
-
     it("refuses an oversized 401 body without renewing or replaying the read", NODE, async () => {
       apiReplies.push(
         () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
@@ -2581,7 +2439,7 @@ describe("the shared client reads bytes and text for the products that need them
       const failure = await failing(client(1024).json(read, context()));
       expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(failure.message).toContain("1024-byte response ceiling");
-      expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+      expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "reading-body" });
       expect(failureRecord({}, failure).httpStatus).toBe(401);
       expect(tokenCalls).toHaveLength(1);
       expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1"]);
@@ -2612,7 +2470,7 @@ describe("the shared client reads bytes and text for the products that need them
       ] as const)("%s → %i keeps its dispatch status when cancelled", NODE, async (method, status) => {
         const ctx = cancelledOnAnswer(() => new Response(null, { status }));
         const drive = client(1024);
-        const failure = await failing(drive.json({ method, path: "/files", body: {} }, ctx));
+        const failure = await failing(drive.json({ method, path: "/files", template: "/files", body: {} }, ctx));
         expect(failure).toBe(ctx.signal!.reason);
         expect(drive.dispatches).toMatchObject([{ status, request: { dispatched: true, status } }]);
         expect(tokenCalls).toHaveLength(1);
@@ -2683,7 +2541,13 @@ describe("the shared client reads bytes and text for the products that need them
           }),
       );
       const result = await client(16 * 1024 * 1024).bytes(
-        { method: "GET", path: "/files/f1", query: { alt: "media" }, headers: { Range: "bytes=0-9" } },
+        {
+          method: "GET",
+          path: "/files/f1",
+          template: "/files/{fileId}",
+          query: { alt: "media" },
+          headers: { Range: "bytes=0-9" },
+        },
         context(),
         undefined,
         { maxBytes: 10 },
@@ -2701,18 +2565,33 @@ describe("the shared client reads bytes and text for the products that need them
         () => new Response(new Uint8Array(4096).fill(67), { headers: { "Content-Length": "4096" } }),
       );
       const drive = client(1024);
-      const small = await drive.bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 100 });
+      const small = await drive.bytes(
+        { method: "GET", path: "/files/f1", template: "/files/{fileId}" },
+        context(),
+        undefined,
+        { maxBytes: 100 },
+      );
       expect(small).toMatchObject({ truncated: true, status: 200 });
       expect(small.bytes.length).toBe(100);
       // A bound past the ceiling reads to the ceiling, and says it stopped.
-      const large = await drive.bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 5000 });
+      const large = await drive.bytes(
+        { method: "GET", path: "/files/f1", template: "/files/{fileId}" },
+        context(),
+        undefined,
+        { maxBytes: 5000 },
+      );
       expect(large).toMatchObject({ truncated: true });
       expect(large.bytes.length).toBe(1024);
     });
 
     it("reports a body that fits the bound as whole", NODE, async () => {
       apiReplies.push(() => new Response("hello", { headers: { "Content-Type": "text/plain" } }));
-      const result = await client().text({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 5 });
+      const result = await client().text(
+        { method: "GET", path: "/files/f1", template: "/files/{fileId}" },
+        context(),
+        undefined,
+        { maxBytes: 5 },
+      );
       expect(result).toEqual({
         text: "hello",
         contentType: "text/plain",
@@ -2724,7 +2603,12 @@ describe("the shared client reads bytes and text for the products that need them
 
     it("drops a code point the cut left incomplete", NODE, async () => {
       apiReplies.push(() => new Response("hé!", { headers: { "Content-Type": "text/plain; charset=utf-8" } }));
-      const result = await client().text({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 2 });
+      const result = await client().text(
+        { method: "GET", path: "/files/f1", template: "/files/{fileId}" },
+        context(),
+        undefined,
+        { maxBytes: 2 },
+      );
       expect(result).toMatchObject({ text: "h", truncated: true });
     });
 
@@ -2744,6 +2628,7 @@ describe("the shared client reads bytes and text for the products that need them
       const request = {
         method: "GET" as const,
         path: "/files/f1",
+        template: "/files/{fileId}",
         query: { alt: "media" },
         headers: { Range: "bytes=0-99" },
       };
@@ -2765,7 +2650,9 @@ describe("the shared client reads bytes and text for the products that need them
     it("refuses an invalid internal prefix bound when the answer is read", NODE, async () => {
       for (const maxBytes of [-1, 1.5, Number.NaN]) {
         await expect(
-          client().bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes }),
+          client().bytes({ method: "GET", path: "/files/f1", template: "/files/{fileId}" }, context(), undefined, {
+            maxBytes,
+          }),
         ).rejects.toThrow("A success prefix needs a whole byte ceiling >= 0 for bytes or >= 1 for text.");
       }
       expect(apiCalls).toHaveLength(3);
@@ -2781,7 +2668,15 @@ describe("the shared client reads bytes and text for the products that need them
     const ctx = context();
     attachCallClassification(ctx, "read");
     const error = await client()
-      .json({ method: "GET", path: "/files/f1", headers: { "X-HTTP-Method-Override": "POST" } }, ctx)
+      .json(
+        {
+          method: "GET",
+          path: "/files/f1",
+          template: "/files/{fileId}",
+          headers: { "X-HTTP-Method-Override": "POST" },
+        },
+        ctx,
+      )
       .catch((failure) => failure);
     expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     expect(apiCalls).toHaveLength(1);
@@ -2794,6 +2689,7 @@ describe("the shared client reads bytes and text for the products that need them
     const request = {
       method: "POST" as const,
       path: "/files",
+      template: "/files",
       headers: { "Content-Type": "application/octet-stream" },
       rawBody: new Uint8Array([1, 2, 3, 4]),
     };

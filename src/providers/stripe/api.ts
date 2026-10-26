@@ -11,7 +11,7 @@ import { stripePage, stripeBackwardPage, stripeSearchPage, stripeV2Page } from "
 import { responseMedia } from "../_shared/rest/response-media.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
-import type { RestCall, RestReadPost } from "../_shared/rest/tools.js";
+import type { RestCall, RestReadPost } from "../_shared/rest/kit.js";
 import { valueSafety, refuseWithheldLinks } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { STRIPE_VALUE_SAFETY } from "./safety.js";

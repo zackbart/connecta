@@ -170,7 +170,7 @@ export interface DriveClient {
 
 /** Named requests keep their declared endpoint even when an id collides with a literal route. */
 export function driveClient(connection: Connection): DriveClient {
-  const client = googleClient(connection, DRIVE.provider, { standard: true, index: driveIndex });
+  const client = googleClient(connection, driveIndex);
   const named = (request: GoogleRequest): GoogleRequest => ({
     ...request,
     template: request.path

@@ -25,7 +25,7 @@ import {
   type RestMethod,
 } from "../providers/_shared/rest/operation-index.js";
 import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
-import type { RestCall } from "../providers/_shared/rest/tools.js";
+import type { RestCall } from "../providers/_shared/rest/kit.js";
 import { Refusal, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import type { HatchPageAdapter } from "./hatch-paging.js";
