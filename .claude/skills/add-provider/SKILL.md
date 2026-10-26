@@ -123,7 +123,7 @@ of an opt-in index's discovery cursor binding.
 construction. Pass that same index to the binding; a hatch refuses a binding
 constructed for another index. Google bindings also reject encoded unreserved
 characters and encoded action separators before dispatch.
-Standard Google clients require an index. Each product's hatch uses
+`googleClient(connection, index)` always requires an index. Each product's hatch uses
 `googleHatchBinding(connection, { index, review })` with the same connection
 and index as the hatch; the provider-standard suite checks actual hatch
 construction through every Google product fixture, including those awaiting step 2.
@@ -310,8 +310,8 @@ Redact downstream values before cutting, trimming, collapsing whitespace,
 normalizing, or extracting text from them. Use `redactBeforeCut(ctx, …)` from
 `src/sent-secrets.ts`; Workspace products use `clampText(ctx, …)` for bounded
 fields. Redact a joined text value before deriving titles, summaries, previews,
-or other copies. A failure mapper behind `restTools()` receives a redacted
-body; a `result` hook that throws one redacts it with `ctx`.
+or other copies. The kit's failure mapper and `result` hook receive a
+redacted body; preserve that ordering in vendor hooks.
 
 Text read only up to a bound, or that the vendor stopped listing, takes
 `redactBoundedRead(ctx, …)` on the original text. It merges complete matches
@@ -498,32 +498,26 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
 - Legacy `drift.json` (version 1) keeps reviewed endpoint digests, revisions,
   product pins, inventories, and source URLs. A `manual` check declares its
   `source` and `rationale` and must not disappear from reporting.
-- A legacy REST provider may dispatch API credential kinds with
-  `variants(["auth", "type"], …)` and `create: byAuth({ … })`. Rejected hosted
-  selectors are construction guards only. It uses `restTools()` from
-  `src/providers/_shared/rest/` with an operator-managed credential and a
-  `testCredential`. Supply vendor configuration only: transport, failure
-  mapper, `scope`, `encode`, `page`, `refuse`, `redact` (secrets a successful
-  body embeds), `readPosts` (each with a reason), and an idempotency header.
-  Optional hooks: `path` (default ids), `admit` (awaited pins every tool
-  passes), `result` (envelope unwrapping), a reviewed `headers` allowlist,
-  `textBodies`, and `OperationIndex` `slashParams` for keys that carry `/`.
-- The REST connector reads `openapi.generated.ts`. Pin the vendor's document in
-  `openapi.source.json` (`url`, `revision`, `digest`, optional `latest` and
-  generation `options`), run `pnpm run providers:spec --provider <name>
-  --record` to accept a pin, and add `{ "type": "openapi-index", "source":
-  "openapi.source.json" }` to `drift.json`. Shrink details (depth,
-  descriptions, long enums; for very large documents `operationIds: false`,
-  `pathParams: "typed"`, and an `opBudget`) before accepting a larger bundle;
-  `providers:spec` prints the largest operation.
+- Every maintained API provider uses the current kit and indexed hatch. Shared
+  REST call shapes and pinned-schema conversion live in
+  `src/providers/_shared/rest/kit.ts`; do not recreate the retired `restTools`,
+  `restKitTools`, Google catalog bridge or auth-case dispatcher. Rejected hosted
+  selectors remain construction guards that point operators to generic
+  `remoteMcp()` connections.
+- Pin the vendor's document in `evidence/openapi.json`, compile
+  `openapi.generated.ts` with `pnpm run providers:spec --provider <name>`,
+  and record its digest in `drift.json`. Shrink details (depth, descriptions,
+  long enums; for very large documents `operationIds: false`,
+  `pathParams: "typed"`, and an `opBudget`) before accepting a larger bundle.
+  `providers:spec` prints the largest operation. Use `--record` only when
+  deliberately accepting a new pin.
 - Before sending a sequential auxiliary request inside an admitted tool call,
   await `chargeConnectorCall(ctx)` from `src/call-admission-context.ts` and
   propagate its refusal. It charges the enclosing call's admission partition
   and rolling budget while keeping its concurrency slot, and does nothing
   outside registry invocation. Keep any narrower provider limits.
-- Once A.2 ([#902](https://github.com/zackbart/connecta/pull/902)) merges,
-  write tools go through its `sendingOnce`, so a write is never resent or
-  advertised as retryable.
+- Writes use the owned transport and kit write capacity, so a dispatched
+  write is never resent or advertised as retryable.
 - A write answered 401 is an unknown outcome that keeps its auth code and
   handoff. Declare `authBeforeExecution` on the provider's `guardedFetch` only
   where the vendor's documentation says it authenticates a request before

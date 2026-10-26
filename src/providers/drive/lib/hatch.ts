@@ -3,7 +3,7 @@ import { googlePageToken } from "../../../http/hatch-paging.js";
 import { googleHatchBinding } from "../../_shared/google/hatch.js";
 import { OperationIndex } from "../../_shared/rest/operation-index.js";
 import type { Connection } from "../../../http/vendor.js";
-import type { RestCall } from "../../_shared/rest/tools.js";
+import type { RestCall } from "../../_shared/rest/kit.js";
 import { openapi } from "../openapi.generated.js";
 
 export const driveIndex = new OperationIndex(openapi, {

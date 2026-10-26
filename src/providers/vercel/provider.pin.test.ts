@@ -8,7 +8,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { Budget, ContinuationBinding, setViewService } from "../../runtime/call.js";
 import { vercelIndex, VERCEL_VERDICTS, transformGuide } from "./api.js";
 import { MAX_PIN_LOOKUPS, pinQuery, pinRoute } from "./lib/pin.js";
-import type { RestCall } from "../_shared/rest/tools.js";
+import type { RestCall } from "../_shared/rest/kit.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { SkillsRegistry } from "../../skills.js";

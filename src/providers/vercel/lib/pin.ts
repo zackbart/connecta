@@ -5,7 +5,7 @@ import { Refusal, type HttpFailure } from "../../../http/errors.js";
 import { Budget, type CallServices } from "../../../http/services.js";
 import type { Connection } from "../../../http/vendor.js";
 import type { Operation, OperationIndex } from "../../_shared/rest/operation-index.js";
-import type { RestCall } from "../../_shared/rest/tools.js";
+import type { RestCall } from "../../_shared/rest/kit.js";
 import { checked } from "../../_shared/rest/kit.js";
 import type { VercelTokenOptions, VercelTeamPin } from "../index.js";
 export type { VercelTeamPin } from "../index.js";

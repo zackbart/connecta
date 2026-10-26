@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { ConnectorCallError } from "../../../errors.js";
 import type { HatchBinding } from "../../../http/hatch.js";
 import type { Connection } from "../../../http/vendor.js";
-import type { RestCall } from "../rest/tools.js";
+import type { RestCall } from "../rest/kit.js";
 import type { OperationIndex } from "../rest/operation-index.js";
 
 export function requireGoogleIndex(index: OperationIndex | undefined): void {
