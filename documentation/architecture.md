@@ -1832,9 +1832,13 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
 Object keys keep the order the provider produced. A migration changes the
 provider, never the spec or harness.
 
-`test/goldens.test.ts` compares every provider on Node and workerd. It fails
-if a provider folder is neither covered nor listed as remote-MCP-only, a tool
-has no call, or a golden file is missing or extra. Ordinary checks never write.
+`test/goldens.test.ts` compares the existing characterization fixtures on Node
+and workerd. It checks spec/folder consistency, uncovered tools within those
+specs, and missing or extra golden files. New providers use executable outcome
+journeys required by `eval:outcomes` and `eval:smoke` (see the repository
+[eval guide](https://github.com/zackbart/connecta/blob/main/eval/README.md));
+there is no universal provider roster assertion or exemption roster under
+#1072. Ordinary golden checks never write.
 Node compares forward and reverse observations byte for byte; workerd compares
 canonical observations. Each order starts a fresh module graph. Workers projection
 removes variants only at harness observation positions, never from vendor fields
@@ -1847,7 +1851,7 @@ early or twice, and missing secret-encoding redaction must alter a capture or
 fail it. Mutation probes capture the affected call rather than repeating an
 entire provider catalog. Redaction negative controls use Forms, GitHub, Breeze
 and Tithe.ly to cover OAuth/Bearer, app-token, query-key and provider-kit lanes;
-the ordinary goldens still check every provider's complete secret echoes.
+the ordinary goldens still check their existing providers' complete secret echoes.
 The native-extension budget is checked directly at its 100-extension boundary,
 and a gated closed-epoch continuation must fail before entering the next
 capture's network. Genuine crypto completion, rejection, late dispatch and

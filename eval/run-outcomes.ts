@@ -33,6 +33,7 @@ const SCENARIOS: Record<string, string> = {
   "p5-read-only-program-refusal": "a read-only pool refuses the write and the agent says so",
   "p5-auth-connect-incapable": "identity-checked /connect handoff through an incapable host",
   "801-vercel-env-value-safety": "rotate a secret without ever reading or echoing a value",
+  "quickbooks-accounting-journey": "actual company accounting, consent, restart, rotation, privacy and isolation",
 };
 
 const args = flags(process.argv.slice(2));
@@ -138,7 +139,10 @@ const failedChecks = (t: TrialResult) =>
 
 async function run() {
   const references: TrialResult[] = [];
-  for (const [id, what] of Object.entries(SCENARIOS)) {
+  const selected = args.get("tasks")?.split(",");
+  if (selected?.some((id) => !(id in SCENARIOS))) throw new Error("Unknown required outcome task");
+  const scenarios = Object.fromEntries(Object.entries(SCENARIOS).filter(([id]) => !selected || selected.includes(id)));
+  for (const [id, what] of Object.entries(scenarios)) {
     const reference = await trial(task(id), "reference");
     references.push(reference);
     record(
@@ -150,6 +154,20 @@ async function run() {
     const noop = await trial(task(id), "noop");
     record(`${id}: doing nothing fails`, !passed(noop), undefined, noop);
   }
+
+  const quickbooks = references.find((t) => t.task === "quickbooks-accounting-journey");
+  if (quickbooks) {
+    const fabricated = structuredClone(quickbooks);
+    fabricated.saved!.world.calls = [];
+    const fakeGrade = regradeTrial(task(quickbooks.task), fabricated, "codex", "outcome");
+    record(
+      "control: fabricated QuickBooks answer without vendor reads fails",
+      !passed(fakeGrade),
+      failedChecks(fakeGrade),
+      fakeGrade,
+    );
+  }
+  if (selected) return;
 
   // ----------------------------------------------- no-false-pass controls
 
@@ -254,7 +272,7 @@ async function run() {
       grading: "outcome",
       models: ["reference"],
       repeats: 1,
-      tasks: Object.keys(SCENARIOS),
+      tasks: Object.keys(scenarios),
       concurrency: 1,
       timeoutMs: 1,
     },

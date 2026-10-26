@@ -28,10 +28,17 @@ let previousKitTransport: GuardedTransport | undefined;
 let kitInstalled = false;
 
 /** listen() installs Node's sender; evals route kit calls through the fake-credential guard too. */
-export function installRestKitTransport(): void {
+export function installRestKitTransport(): () => void {
+  const wasInstalled = kitInstalled;
+  const priorTransport = previousKitTransport;
   const previous = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   if (!kitInstalled) previousKitTransport = previous;
   kitInstalled = true;
+  return () => {
+    configureGuardedTransport(previous);
+    kitInstalled = wasInstalled;
+    previousKitTransport = priorTransport;
+  };
 }
 
 /** Keep the providers' production host guards; route only fresh fake credentials. */
