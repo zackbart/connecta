@@ -205,16 +205,21 @@ optional and composes with endpoint policy.
 On Node, serve with `listen` from `@zackbart/connecta/node`: it installs the
 owned transport that prevents native fetch or a host-configured dispatcher
 from silently resending a remote MCP write. Without that transport, Node
-refuses remote writes before dispatch. Read calls keep native fetch. Workers
+refuses remote writes before dispatch. Downstream OAuth token, registration and
+revocation POSTs also require the owned sender. Read calls and OAuth discovery
+GETs keep native fetch. Workers
 use their native fetch with manual redirects; transport failures after
 dispatch remain unknown and non-retryable.
 
-Like kit writes, Node remote MCP writes connect directly: the owned transport
-ignores `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, and host proxy
-dispatchers. Remote MCP reads retain native fetch's proxy behavior. Operators
-behind a mandatory outbound proxy must run writes on a host with approved direct
-egress or an approved Workers deployment; the owned sender has no supported proxy
-override. Keep affected connectors `readOnly` until that egress is available.
+The owned sender connects directly by default. For HTTP(S) CONNECT proxy egress,
+configure `listen(connecta, { port: 3000, proxy: "http://proxy.example.com:8080" })`.
+This controls maintained-provider requests, remote MCP writes and OAuth
+credential POSTs; it ignores `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`
+and host proxy dispatchers. Remote MCP reads and OAuth discovery GETs retain
+native fetch and need their own host proxy policy. An uncertain refresh requires
+fresh authorization rather than replaying the spent token. See
+[Node startup](./deploying.md#start-on-node) for the proxy URL, credentials and
+TLS trust rules.
 
 Remote catalogs evolve. Discovery, direct calls, and programs enforce the
 current annotations and `ConnectaConfig.classification` overrides. A leftover
