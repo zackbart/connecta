@@ -16,9 +16,11 @@ go-ahead for this release.
 - Every merged PR left a fragment in `.changes/<pr-or-slug>.md`:
   `type: added|changed|fixed|removed|security`, optional `breaking: true`.
   `pnpm run check:changes` validates them.
-- A hand-written narrative: paragraphs, no headings. Say what changes, what
-  breaks, and what deployments can ignore. The 0.35.0 draft is
-  [release-notes/0.35.0.md](../../../release-notes/0.35.0.md).
+- A hand-written narrative for the upcoming release: paragraphs, no headings.
+  Say what changes, what breaks, and what deployments can ignore. Write it to
+  a temporary file outside the repository and pass its path to `--narrative`.
+  Assembly keeps the final text in `CHANGELOG.md`; do not commit a duplicate
+  release-note input.
 
 ## First helper publish: owner action at Phase 5
 
@@ -70,7 +72,8 @@ the next release; time its configuration for that publish instead.
    and its complete dependency audit).
    Open the PR and merge it like any other.
 7. After merge, tag the merge commit `v<version>` (must equal `package.json`;
-   publish.yml verifies) and publish a GitHub Release with the narrative.
+   publish.yml verifies) and publish a GitHub Release with the narrative from
+   that version's `CHANGELOG.md` section.
    publish.yml reruns the two checks on their respective Node versions, then
    publishes the helper first and core second with provenance. Each step checks
    `npm view "$name@$version" version` and skips versions already on npm, so a

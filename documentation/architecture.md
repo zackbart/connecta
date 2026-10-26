@@ -426,7 +426,7 @@ client. A raw Worker stream established the runtime behavior; a custom auth
 provider returning a synthetic streaming 401 exercised Connecta's real admission
 wrapper. Each case had its own Connecta instance with one request permit and no
 queue. Health checks and subsequent MCP requests confirmed the same isolate ID.
-The [recorded observations](https://github.com/zackbart/connecta/blob/a0ac904513fac735582b4bc9c817a48300134328/scripts/probes/worker-disconnect-2026-09-25.json)
+The [recorded observations](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect-2026-09-25.json)
 contain all twelve cases, including served flags and client-end timing.
 
 | Response and flag                                     | Raw stream abort / cancel | Connecta source abort / cancel | Admission after response; next request |
@@ -486,23 +486,23 @@ MCP requests still rejected a competing request with 503 before the deadline;
 the first MCP request after the deadline returned all eight tools with 200 in
 the original isolate. Admission then reported zero active requests. Without the
 flag, the source still recorded no abort or cancellation, so recovery did not
-rely on runtime cleanup. The [recovery observations](https://github.com/zackbart/connecta/blob/32d8e94/scripts/probes/worker-disconnect-recovered-2026-09-25.json)
+rely on runtime cleanup. The [recovery observations](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect-recovered-2026-09-25.json)
 also retain two inconclusive queue-handoff cases: concurrent client connections
 reached different isolates and could not establish an abandoned queued waiter.
-A [second trial using HTTP/2](https://github.com/zackbart/connecta/blob/b174812/scripts/probes/worker-disconnect-h2-2026-09-25.json)
+A [second trial using HTTP/2](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect-h2-2026-09-25.json)
 repeated the twelve passing core cases and verified queued cancellation with
 request signals enabled. Even on one HTTP/2 connection, the no-signal queue case
 crossed isolates and remained inconclusive. The Node and workerd regression
 suites cover expired waiters, orphaned handoffs, and identity-safe late release
 deterministically.
 
-To repeat from a repository checkout, run
-`node scripts/probes/worker-disconnect.mjs` with an authenticated Wrangler.
-The script is not in the npm package. It deploys a disposable Worker containing
-only synthetic data, verifies the served configuration, saves observations under `eval/results/`,
-and deletes the Worker in `finally`. It uses no `waitUntil`, which would change
-the lifetime being measured. The production runtime build number was not
-exposed by the deployment; these findings are tied to the date and flags above.
+The [historical probe source](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect.mjs)
+and observations are retained in Git history, outside the current checkout and
+npm package. The probe deployed a disposable Worker containing only synthetic
+data, verified the served configuration, saved observations, and deleted the
+Worker in `finally`. It used no `waitUntil`, which would change the lifetime
+being measured. The production runtime build number was not exposed by the
+deployment; these findings are tied to the date and flags above.
 
 ### Production Access bypass for agent endpoints
 
@@ -3089,10 +3089,10 @@ same version to resolve a single copy. Connecta's own lockfile and packed
 install are checked for one copy (`test/package-surface.node.test.ts` and
 `scripts/check-package.mjs`).
 
-The stable `4.0.0` release was re-evaluated on 2026-10-01 with
-[`scripts/probes/effect-v4-evaluation.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation.mjs).
-Run `pnpm run build`, then `node scripts/probes/effect-v4-evaluation.mjs output.json`.
-The [raw observations](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation-2026-10-01.json)
+The stable `4.0.0` release was re-evaluated on 2026-10-01 with this
+[historical probe source](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/effect-v4-evaluation.mjs),
+retained in Git history rather than the current checkout.
+The [raw observations](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/effect-v4-evaluation-2026-10-01.json)
 are synthetic Node requests and neutral esbuild bundles, not live-client or
 workerd lifetime verification. Bundle figures add representative prototypes
 alongside the current code; they do not claim savings from removing old code.
