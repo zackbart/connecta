@@ -9,8 +9,8 @@ provider ships with its connection's usage guide, not here.
 
 ## API sources and tool inventory
 
-Connecta keeps reviewed API contracts and indexes plus its own adapters and
-tools, not third-party servers or SDKs. Sources include upstream OpenAPI,
+Maintained providers pair reviewed API contracts and indexes with Connecta's
+adapters and tools. Sources include upstream OpenAPI,
 Google Discovery conversions, reviewed HTML/documentation conversions and
 hand-authored endpoint contracts. Tithe.ly and Overflow use endpoint checks
 without vendored OpenAPI documents. `remoteMcp()` discovers live server tools
@@ -29,7 +29,7 @@ discovery for your deployment's catalog.
 <!-- provider-inventory:start -->
 
 <details>
-<summary>Breeze ChMS — 15 tools</summary>
+<summary>Breeze ChMS (15 tools)</summary>
 
 [Setup](#breeze-chms). **API source:** [Reviewed HTML/documentation conversion](https://app.breezechms.com/api).
 
@@ -43,7 +43,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Church Community Builder — 20 tools</summary>
+<summary>Church Community Builder (20 tools)</summary>
 
 [Setup](#church-community-builder). **API source:** [Upstream OpenAPI](https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json?download=1).
 
@@ -57,7 +57,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Cloudflare — 9 tools</summary>
+<summary>Cloudflare (9 tools)</summary>
 
 [Setup](#cloudflare). **API source:** [Upstream OpenAPI](https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json). [Supplemental reviewed contract](https://developers.cloudflare.com/analytics/graphql-api/).
 
@@ -71,7 +71,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Google Docs — 10 tools</summary>
+<summary>Google Docs (10 tools)</summary>
 
 [Setup](#google-docs). **API source:** [Google Discovery conversion](https://docs.googleapis.com/$discovery/rest?version=v1).
 
@@ -85,7 +85,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Google Drive — 21 tools</summary>
+<summary>Google Drive (21 tools)</summary>
 
 [Setup](#google-drive). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/drive/api/reference/rest/v3).
 
@@ -99,7 +99,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Google Forms — 10 tools</summary>
+<summary>Google Forms (10 tools)</summary>
 
 [Setup](#google-forms). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/forms/api/reference/rest).
 
@@ -113,7 +113,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>GitHub — 7 tools</summary>
+<summary>GitHub (7 tools)</summary>
 
 [Setup](#github). **API source:** [Upstream OpenAPI](https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json).
 
@@ -127,7 +127,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Gmail — 12 tools</summary>
+<summary>Gmail (12 tools)</summary>
 
 [Setup](#gmail). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/gmail/api/reference/rest).
 
@@ -141,7 +141,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Overflow — 17 tools</summary>
+<summary>Overflow (17 tools)</summary>
 
 [Setup](#overflow). **API source:** Hand-authored endpoint contracts; [upstream endpoint checks](https://server.stage.overflow.co/api/docs/openapi.json). No vendored OpenAPI document.
 
@@ -155,7 +155,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Planning Center — 27 tools</summary>
+<summary>Planning Center (27 tools)</summary>
 
 [Setup](#planning-center). **API source:** Composed upstream OpenAPI contracts: [/people/v2](https://developer.planning.center/docs/#/people/2026-06-04), [/services/v2](https://developer.planning.center/docs/#/services/2018-11-01), [/groups/v2](https://developer.planning.center/docs/#/groups/2023-07-10), [/check-ins/v2](https://developer.planning.center/docs/#/check-ins/2025-05-28), [/calendar/v2](https://developer.planning.center/docs/#/calendar/2026-06-22), [/registrations/v2](https://developer.planning.center/docs/#/registrations/2025-05-01), [/giving/v2](https://developer.planning.center/docs/#/giving/2019-10-18), [/publishing/v2](https://developer.planning.center/docs/#/publishing/2024-03-25), [/webhooks/v2](https://developer.planning.center/docs/#/webhooks/2022-10-20), [/api/v2](https://developer.planning.center/docs/#/api/2026-09-24).
 
@@ -169,7 +169,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Google Sheets — 13 tools</summary>
+<summary>Google Sheets (13 tools)</summary>
 
 [Setup](#google-sheets). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/sheets/api/reference/rest).
 
@@ -183,7 +183,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Google Slides — 19 tools</summary>
+<summary>Google Slides (19 tools)</summary>
 
 [Setup](#google-slides). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/slides/api/reference/rest).
 
@@ -197,7 +197,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Stripe — 6 tools</summary>
+<summary>Stripe (6 tools)</summary>
 
 [Setup](#stripe). **API source:** [Upstream OpenAPI](https://raw.githubusercontent.com/stripe/openapi/master/latest/openapi.spec3.json).
 
@@ -211,7 +211,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Tithe.ly — 11 tools</summary>
+<summary>Tithe.ly (11 tools)</summary>
 
 [Setup](#tithely). **API source:** Hand-authored endpoint contracts; [upstream endpoint checks](https://docs.tithe.ly/reference/). No vendored OpenAPI document.
 
@@ -225,7 +225,7 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Vercel — 11 tools</summary>
+<summary>Vercel (11 tools)</summary>
 
 [Setup](#vercel). **API source:** [Upstream OpenAPI](https://openapi.vercel.sh/).
 

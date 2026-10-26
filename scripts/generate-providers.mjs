@@ -175,7 +175,7 @@ async function providerInventory(source, providers) {
     entries.push(
       [
         "<details>",
-        `<summary>${display} — ${tools.length} tools</summary>`,
+        `<summary>${display} (${tools.length} tools)</summary>`,
         "",
         `[Setup](#${setup}). **API source:** ${provenance}`,
         "",
