@@ -101,7 +101,7 @@ function startProcess(command: string, argv: string[], options: { cwd: string; e
 }
 
 async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.pid === undefined) return;
+  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
   // wrangler and tsx both fork; signal the whole group.
   killGroup(child, "SIGTERM");
   const timer = setTimeout(() => killGroup(child, "SIGKILL"), 5_000);
@@ -591,5 +591,7 @@ const file: SmokeResultFile = { kind: "connecta-eval/smoke", version: 1, meta: r
 await mkdir(dirname(out), { recursive: true });
 await writeFile(out, `${JSON.stringify(file, null, 1)}\n`);
 console.error(`[smoke] results: ${out}`);
+// A whole-journey timeout may return before its deployment's finally runs.
+await Promise.all([...children].map(stopProcess));
 // Lingering sockets or a stuck child must not hold the result open.
 process.exit(targets.some((target) => target.status === "fail") ? 1 : 0);

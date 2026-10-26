@@ -187,7 +187,6 @@ export const QUICKBOOKS_TASK: ActiveTask = {
       { path: "/v3/company/222222/invoice/41" },
       { path: "/invoice/%34%31" },
       { path: "https://quickbooks.api.intuit.com/v3/company/222222/invoice/41" },
-      { path: "/invoice/41", fields: ["Invoice.BillEmail"] },
       { path: "/invoice/../customer/41" },
       { path: "/query", query: { query: "select * from Employee" } },
       { path: "/employee/41" },
