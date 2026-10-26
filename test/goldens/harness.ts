@@ -410,7 +410,10 @@ const MAX_CLOCK_ADVANCES = 1_000;
 const MAX_NATIVE_EXTENSIONS = 100;
 
 /** Only genuinely native operations may extend a bounded polling window. */
-function nativeExtensions(real: RealWork, where: string): () => Promise<boolean> {
+export function nativeExtensions(
+  real: Pick<RealWork, "nativePending" | "waitForNative">,
+  where: string,
+): () => Promise<boolean> {
   let extensions = 0;
   return async () => {
     if (real.nativePending.size === 0) return false;

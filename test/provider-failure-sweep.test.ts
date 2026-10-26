@@ -302,147 +302,177 @@ describe("API provider failure sweep", () => {
         for (const classification of [classifyTool(tool)]) {
           // Network loss crosses the same transport boundary for every tool.
           // Keep one probe per provider/verdict alongside every tool's HTTP refusals.
-          it.each(
-            provider.catalog.find(
-              (candidate) =>
-                !LOCAL.has(`${provider.name}.${candidate.name}`) &&
-                !(provider.name === "forms" && candidate.name.startsWith("forms_api_")) &&
-                classifyTool(candidate) === classification,
-            )?.name === tool.name
-              ? (["503", "network-after-send"] as const)
-              : (["503"] as const),
-          )(`INV-9: ${address}${suffix} served ${classification} → %s`, async (failure) => {
-            const decision =
-              typeof outcomes.providerCallFailure === "function"
-                ? vi.spyOn(outcomes, "providerCallFailure")
-                : undefined;
-            const requests: string[] = [];
-            const fail = (request: Request): Response => {
-              requests.push(`${request.method} ${request.url}`);
-              if (failure === "network-after-send")
-                throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
-              return Response.json(
-                { error: { code: 503, message: "Service unavailable" }, errors: [{ message: "Service unavailable" }] },
-                { status: 503 },
+          const representative =
+            examples.find(
+              ({ tool: candidate }) =>
+                !LOCAL.has(`${provider.name}.${candidate.name}`) && classifyTool(candidate) === classification,
+            )?.tool.name === tool.name;
+          it.each(representative ? (["503", "network-after-send"] as const) : (["503"] as const))(
+            `INV-9: ${address}${suffix} served ${classification} → %s`,
+            async (failure) => {
+              const decision =
+                typeof outcomes.providerCallFailure === "function"
+                  ? vi.spyOn(outcomes, "providerCallFailure")
+                  : undefined;
+              const requests: string[] = [];
+              const fail = (request: Request): Response => {
+                requests.push(`${request.method} ${request.url}`);
+                if (failure === "network-after-send")
+                  throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+                return Response.json(
+                  {
+                    error: { code: 503, message: "Service unavailable" },
+                    errors: [{ message: "Service unavailable" }],
+                  },
+                  { status: 503 },
+                );
+              };
+              const result = await sweepCall(provider, tool.name, address, args, classification, fail);
+              if (LOCAL.has(address) && !suffix) {
+                expect(requests).toEqual([]);
+                expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+                return;
+              }
+              expect(requests.length, JSON.stringify(result.structuredContent)).toBe(
+                address === "planning-center.get_plan"
+                  ? 3
+                  : ["forms.list_responses", "forms.get_response"].includes(address)
+                    ? 2
+                    : 1,
               );
-            };
-            const result = await sweepCall(provider, tool.name, address, args, classification, fail);
-            if (LOCAL.has(address) && !suffix) {
-              expect(requests).toEqual([]);
-              expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
-              return;
-            }
-            expect(requests.length, JSON.stringify(result.structuredContent)).toBe(
-              address === "planning-center.get_plan"
-                ? 3
-                : ["forms.list_responses", "forms.get_response"].includes(address)
-                  ? 2
-                  : 1,
-            );
-            // Composite tools may send independent requests concurrently (e.g.
-            // get_plan). Every request, including the first, must leave once.
-            expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
-            expect(result.structuredContent).toMatchObject({
-              ok: false,
-              error: classification === "write" ? { retryable: false, writeOutcome: "unknown" } : { retryable: true },
-            });
-            if (classification === "read")
-              expect((result.structuredContent as { error: object }).error).not.toHaveProperty("writeOutcome");
-            // One unknown-outcome advice: a provider's own is never followed by the shared one.
-            const { message } = (result.structuredContent as { error: { message: string } }).error;
-            if (GOOGLE.has(provider.name) && failure === "503") expect(message).toContain("Service unavailable.");
-            if (/so its outcome is unknown|may or may not have been applied/.test(message))
-              expect(message).not.toContain("Whether the write took effect at");
-            if (decision) {
-              expect(
-                decision.mock.calls.some(
-                  ([ctx, , , facts]) => facts.dispatched && callClassification(ctx) === classification,
-                ),
-              ).toBe(true);
-              // The declaration is what lets an empty ledger prove a write
-              // unsent: the call's ledger recorded every resource request.
-              const finals = decision.mock.calls.filter(([, , , facts]) => facts.finalize === true);
-              expect(finals).toHaveLength(1);
-              expect(
-                providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
-              ).toHaveLength(requests.length);
-            }
-            const unreadableArgs = UNREADABLE_WRITES[address] ?? (tool.name.endsWith("_api_write") ? args : undefined);
-            if (failure === "503" && unreadableArgs) {
-              let vendorMessage: string | undefined;
-              for (const [body, type] of [
-                ["{broken", "application/json"],
-                ["<html>ok</html>", "application/json"],
-                ["{broken", "application/problem+json"],
-                ["{broken", undefined],
-                ["{broken", "text/plain"],
-                ["[broken", "text/plain"],
-                ["not JSON", "text/plain"],
-                ["{broken", "text/html"],
-                ["<html>ok</html>", "text/html"],
-              ] as const) {
-                const sent: string[] = [];
-                const unreadable = await sweepCall(provider, tool.name, address, unreadableArgs, "write", (request) => {
-                  sent.push(request.method);
-                  return new Response(new TextEncoder().encode(body), {
-                    status: 200,
-                    ...(type ? { headers: { "content-type": type } } : {}),
+              // Composite tools may send independent requests concurrently (e.g.
+              // get_plan). Every request, including the first, must leave once.
+              expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
+              expect(result.structuredContent).toMatchObject({
+                ok: false,
+                error: classification === "write" ? { retryable: false, writeOutcome: "unknown" } : { retryable: true },
+              });
+              if (classification === "read")
+                expect((result.structuredContent as { error: object }).error).not.toHaveProperty("writeOutcome");
+              // One unknown-outcome advice: a provider's own is never followed by the shared one.
+              const { message } = (result.structuredContent as { error: { message: string } }).error;
+              if (GOOGLE.has(provider.name) && failure === "503") expect(message).toContain("Service unavailable.");
+              if (/so its outcome is unknown|may or may not have been applied/.test(message))
+                expect(message).not.toContain("Whether the write took effect at");
+              if (decision) {
+                expect(
+                  decision.mock.calls.some(
+                    ([ctx, , , facts]) => facts.dispatched && callClassification(ctx) === classification,
+                  ),
+                ).toBe(true);
+                // The declaration is what lets an empty ledger prove a write
+                // unsent: the call's ledger recorded every resource request.
+                const finals = decision.mock.calls.filter(([, , , facts]) => facts.finalize === true);
+                expect(finals).toHaveLength(1);
+                expect(
+                  providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
+                ).toHaveLength(requests.length);
+              }
+              const unreadableArgs =
+                UNREADABLE_WRITES[address] ?? (tool.name.endsWith("_api_write") ? args : undefined);
+              if (failure === "503" && unreadableArgs) {
+                let vendorMessage: string | undefined;
+                for (const [body, type] of [
+                  ["{broken", "application/json"],
+                  ["<html>ok</html>", "application/json"],
+                  ["{broken", "application/problem+json"],
+                  ["{broken", undefined],
+                  ["{broken", "text/plain"],
+                  ["[broken", "text/plain"],
+                  ["not JSON", "text/plain"],
+                  ["{broken", "text/html"],
+                  ["<html>ok</html>", "text/html"],
+                ] as const) {
+                  const sent: string[] = [];
+                  const unreadable = await sweepCall(
+                    provider,
+                    tool.name,
+                    address,
+                    unreadableArgs,
+                    "write",
+                    (request) => {
+                      sent.push(request.method);
+                      return new Response(new TextEncoder().encode(body), {
+                        status: 200,
+                        ...(type ? { headers: { "content-type": type } } : {}),
+                      });
+                    },
+                  );
+                  expect(sent).toEqual([unreadableArgs["method"] ?? "PATCH"]);
+                  expect(unreadable.structuredContent).toMatchObject({
+                    ok: false,
+                    error: {
+                      code: "connector_call_failed",
+                      retryable: false,
+                      writeOutcome: "unknown",
+                    },
                   });
-                });
-                expect(sent).toEqual([unreadableArgs["method"] ?? "PATCH"]);
-                expect(unreadable.structuredContent).toMatchObject({
+                  const { message } = (unreadable.structuredContent as { error: CallErrorDetails }).error;
+                  // Each Stripe call gets a fresh recovery key; compare the wording around it.
+                  const wording = message.replace(/(Idempotency-Key: )[0-9a-f-]{36}/, "$1<generated>");
+                  vendorMessage ??= wording;
+                  if (type === "text/html" && body.startsWith("<")) expect(wording).toContain("unexpected text/HTML");
+                  else expect(wording).toBe(vendorMessage);
+                  expect(message).toMatch(/unknown[\s\S]*check[\s\S]*before repeating/);
+                  expect(message).not.toContain("..");
+                }
+              }
+              if (failure === "503" && address === "gmail.update_draft") {
+                const sent: string[] = [];
+                const lookup = await sweepCall(
+                  provider,
+                  tool.name,
+                  address,
+                  args,
+                  "write",
+                  (request) => {
+                    sent.push(request.method);
+                    return new Response("<html>ok</html>", { status: 200, headers: { "content-type": "text/html" } });
+                  },
+                  {},
+                  { failAuxiliary: true },
+                );
+                expect(sent).toEqual(["GET"]);
+                expect(lookup.structuredContent).toMatchObject({
                   ok: false,
                   error: {
                     code: "connector_call_failed",
                     retryable: false,
-                    writeOutcome: "unknown",
+                    message: "Gmail returned unexpected text/HTML for a JSON response.",
                   },
                 });
-                const { message } = (unreadable.structuredContent as { error: CallErrorDetails }).error;
-                // Each Stripe call gets a fresh recovery key; compare the wording around it.
-                const wording = message.replace(/(Idempotency-Key: )[0-9a-f-]{36}/, "$1<generated>");
-                vendorMessage ??= wording;
-                if (type === "text/html" && body.startsWith("<")) expect(wording).toContain("unexpected text/HTML");
-                else expect(wording).toBe(vendorMessage);
-                expect(message).toMatch(/unknown[\s\S]*check[\s\S]*before repeating/);
-                expect(message).not.toContain("..");
+                expect((lookup.structuredContent as { error: CallErrorDetails }).error).not.toHaveProperty(
+                  "writeOutcome",
+                );
               }
-            }
-            if (failure === "503" && address === "gmail.update_draft") {
-              const sent: string[] = [];
-              const lookup = await sweepCall(
-                provider,
-                tool.name,
-                address,
-                args,
-                "write",
-                (request) => {
-                  sent.push(request.method);
-                  return new Response("<html>ok</html>", { status: 200, headers: { "content-type": "text/html" } });
-                },
-                {},
-                { failAuxiliary: true },
-              );
-              expect(sent).toEqual(["GET"]);
-              expect(lookup.structuredContent).toMatchObject({
-                ok: false,
-                error: {
-                  code: "connector_call_failed",
-                  retryable: false,
-                  message: "Gmail returned unexpected text/HTML for a JSON response.",
-                },
-              });
-              expect((lookup.structuredContent as { error: CallErrorDetails }).error).not.toHaveProperty(
-                "writeOutcome",
-              );
-            }
-            await sweepSheetsHatch(provider, tool.name, failure);
-            await docsHatchFailure(provider, tool.name, classification, failure);
-          });
+              await sweepSheetsHatch(provider, tool.name, failure);
+              await docsHatchFailure(provider, tool.name, classification, failure);
+            },
+          );
           // A write answered 401 is an unknown outcome unless its provider
           // declares reviewed authBeforeExecution evidence; a read keeps its
           // refusal. Either way authorization is still needed, so the handoff
           // stays, and a renewal that succeeded never resends a write.
+          // Authentication/recovery is shared within each provider and verdict.
+          // Keep composite/auxiliary and POST-as-read paths as distinct mechanisms;
+          // every remaining tool still dispatches through the exhaustive 503 row.
+          if (
+            !representative &&
+            !suffix &&
+            ![
+              "ccb.search_records",
+              "planning-center.get_plan",
+              "forms.list_responses",
+              "forms.get_response",
+              "sheets.get_spreadsheet",
+              "sheets.update_values",
+              "docs.get_document",
+              "docs.batch_update_document",
+              "gmail.update_draft",
+              "drive.move_file",
+            ].includes(address)
+          )
+            continue;
           it(`INV-9: ${address}${suffix} served ${classification} → 401`, async () => {
             const requests: string[] = [];
             let oneAttempt = false;

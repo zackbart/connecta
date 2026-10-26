@@ -15,6 +15,7 @@ import {
   errorEchoForms,
   LEAK_RUN_UNITS,
   leakedSecret,
+  nativeExtensions,
   secretEncodings,
   type FetchSeam,
   type GoldenSpec,
@@ -39,6 +40,11 @@ const specs = Object.values(import.meta.glob<GoldenSpec>("./goldens/*/spec.ts", 
   .sort((a, b) => a.provider.localeCompare(b.provider));
 const stored = import.meta.glob<string>("./goldens/*/*.json", { query: "?raw", import: "default", eager: true });
 const storedFormsCalls = canonicalGolden(stored["./goldens/forms/calls.json"]!);
+// Negative controls exercise shared redaction through OAuth/Bearer, app-token,
+// query-key and provider-kit lanes. The ordinary goldens still check every provider.
+const echoWitnesses = ["forms", "github", "breeze", "tithely"].map((name) =>
+  specs.find((spec) => spec.provider === name)!,
+);
 
 interface Row {
   label: string;
@@ -304,19 +310,19 @@ function withoutForms(forms: (value: string) => string[]): void {
   });
 }
 
-/** Every provider's echo observation, captured before any mutation. */
+/** Representative echo observations, captured before any mutation. */
 async function echoBaselines(): Promise<Map<string, string>> {
   const baselines = new Map<string, string>();
-  for (const spec of specs) baselines.set(spec.provider, await captureCall(spec, "echo"));
+  for (const spec of echoWitnesses) baselines.set(spec.provider, await captureCall(spec, "echo"));
   return baselines;
 }
 
-/** Every provider whose echo fixture neither fails with a leak nor, given unmutated baselines,
+/** Every witness whose echo fixture neither fails with a leak nor, given unmutated baselines,
  * changes. Redaction's fragment matching can cover part of a dropped form through the forms
  * that remain, so the rest of the echo then shows in the observation instead of a leak. */
 async function echoesThatPass(baselines?: Map<string, string>): Promise<string[]> {
   const passed: string[] = [];
-  for (const spec of specs) {
+  for (const spec of echoWitnesses) {
     const leak = new RegExp(`^${spec.provider} .* echoes sent secrets: the caller-visible result leaks <secret:`);
     const outcome = await captureCall(spec, "echo").then(
       (observation) => ({ observation }),
@@ -343,8 +349,8 @@ describe(suiteName, { timeout: 120_000 }, () => {
     "INV-5: records init.headers replacing a Request's headers, so a dropped Authorization changes the goldens",
     NODE,
     async () => {
-      const baseline = (await captureGoldens(forms)).calls!;
-      const { calls } = await captureGoldens(forms, { seam: authorizationOnRequestOnly });
+      const baseline = await captureCall(forms, "create_form");
+      const calls = await captureCall(forms, "create_form", { seam: authorizationOnRequestOnly });
       expect(baseline).toContain('"authorization": "Bearer <secret:accessToken>"');
       expect(calls).not.toContain('"authorization": "Bearer <secret:accessToken>"');
       expect(calls).not.toBe(baseline);
@@ -352,8 +358,8 @@ describe(suiteName, { timeout: 120_000 }, () => {
   );
 
   it("INV-5: records auxiliary request bodies, so an emptied Forms login changes the goldens", NODE, async () => {
-    const baseline = (await captureGoldens(forms)).calls!;
-    const { calls } = await captureGoldens(forms, { seam: emptyLoginBody });
+    const baseline = await captureCall(forms, "create_form");
+    const calls = await captureCall(forms, "create_form", { seam: emptyLoginBody });
     expect(baseline).toContain('"grant_type"');
     expect(calls).not.toContain('"grant_type"');
     expect(calls).not.toBe(baseline);
@@ -363,22 +369,18 @@ describe(suiteName, { timeout: 120_000 }, () => {
     "records a JSON body's exact bytes, so respacing or reordering the Forms create body changes the goldens",
     NODE,
     async () => {
-      const baseline = (await captureGoldens(forms)).calls!;
+      const baseline = await captureCall(forms, "create_form");
       expect(baseline).not.toContain('"text": "{');
-      const spaced = (
-        await captureGoldens(forms, {
-          seam: reshapedLogin((fields) => JSON.stringify(fields, null, 1)),
-        })
-      ).calls!;
+      const spaced = await captureCall(forms, "create_form", {
+        seam: reshapedLogin((fields) => JSON.stringify(fields, null, 1)),
+      });
       expect(spaced).toContain('"text": "{\\n');
       expect(spaced).not.toBe(baseline);
-      const reordered = (
-        await captureGoldens(forms, {
-          seam: reshapedLogin((fields) =>
-            JSON.stringify({ ...fields, info: Object.fromEntries(Object.entries(fields["info"] as object).reverse()) }),
-          ),
-        })
-      ).calls!;
+      const reordered = await captureCall(forms, "create_form", {
+        seam: reshapedLogin((fields) =>
+          JSON.stringify({ ...fields, info: Object.fromEntries(Object.entries(fields["info"] as object).reverse()) }),
+        ),
+      });
       expect(reordered).not.toBe(baseline);
       expect(reordered).not.toBe(spaced);
     },
@@ -1093,82 +1095,60 @@ describe(suiteName, { timeout: 120_000 }, () => {
     }
   });
 
-  it(
-    "isolates late work after 102 delayed digests exhaust the native extension cap",
-    { ...WORKERS, timeout: 600_000 },
-    async () => {
-      const sources = goldenSources();
-      const start = sources.start;
-      let owner: ReturnType<typeof start>;
-      const sourceStart = vi.spyOn(sources, "start").mockImplementation(() => (owner = start()));
-      // Model captured native completions delayed by 11,000 native turns without
-      // adding a production injection hook. Counters stay bound to their owner.
-      const digest = (state: ReturnType<typeof start>) => {
-        state.inFlight++;
-        state.events++;
-        const pending = (async () => {
-          await crypto.subtle.digest("SHA-256", new Uint8Array([1]));
-          for (let turn = 0; turn < 11_000; turn++) await sources.turn();
-        })().finally(() => {
-          state.inFlight--;
-          state.events++;
-          state.nativePending.delete(pending);
-        });
-        state.nativePending.add(pending);
-        return pending;
-      };
-      let late: Promise<void> | undefined;
-      let requestFailure: unknown;
-      try {
-        const rejected = probeSpec(async () => "unused");
-        rejected.create = () => {
-          const previous = owner;
-          late = (async () => {
-            try {
-              for (let operation = 0; operation < 102; operation++) await digest(previous);
-            } catch {
-              // Even a continuation that catches a closed-source error must not
-              // enter the next capture by looking up its new global fetch.
-            }
-            try {
-              await fetch("https://probe.example/from-previous-capture");
-            } catch (error) {
-              requestFailure = error;
-            }
-          })();
-          throw new Error("construction rejected");
-        };
-        await expect(captureCall(rejected, "probe")).rejects.toThrow(
-          "native completion wait budget exceeded (100 extensions)",
-        );
-        let enteredNextNetwork = 0;
-        const next = JSON.parse(
-          await captureCall(
-            probeSpec(async () => {
-              const current = owner;
-              for (let operation = 0; operation < 3; operation++) await digest(current);
-              return "clean";
-            }),
-            "probe",
-            {
-              seam: (send) => (input, init) => {
-                enteredNextNetwork++;
-                return send(input, init);
-              },
-            },
-          ),
-        ) as Row;
-        await late;
-        expect(next.steps).toEqual([]);
-        expect(enteredNextNetwork).toBe(0);
-        expect(next.result).toMatchObject({ ok: true, value: "clean" });
-        expect(requestFailure).toMatchObject({ message: "Golden capture epoch is closed" });
-        await expectCleanCapture();
-      } finally {
-        sourceStart.mockRestore();
-      }
-    },
-  );
+  it("bounds native settlement extensions and refuses a wait that leaves its snapshot unsettled", NODE, async () => {
+    const nativePending = new Set<Promise<unknown>>();
+    const waitForNative = vi.fn(async () => {
+      nativePending.clear();
+    });
+    const extend = nativeExtensions({ nativePending, waitForNative }, "probe");
+    expect(await extend()).toBe(false);
+    expect(waitForNative).not.toHaveBeenCalled();
+    // Exercise the real cap directly; no million-turn synthetic crypto delay.
+    for (let extension = 0; extension < 100; extension++) {
+      nativePending.add(Promise.resolve(extension));
+      expect(await extend()).toBe(true);
+    }
+    nativePending.add(Promise.resolve("over cap"));
+    await expect(extend()).rejects.toThrow("native completion wait budget exceeded (100 extensions)");
+    expect(waitForNative).toHaveBeenCalledTimes(100);
+    const unsettled = nativeExtensions({ nativePending, waitForNative: async () => {} }, "probe");
+    await expect(unsettled()).rejects.toThrow("native completion wait returned with unsettled operations");
+  });
+
+  it("rejects a closed epoch's late fetch while the next capture owns the network", WORKERS, async () => {
+    const sources = goldenSources();
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    let late!: Promise<unknown>;
+    await sources.capture(async () => {
+      const owner = sources.start();
+      late = gate.then(() => fetch("https://probe.example/from-previous-capture")).catch((error: unknown) => error);
+      owner.stop();
+    });
+    let enteredNextNetwork = 0;
+    const next = JSON.parse(
+      await captureCall(
+        probeSpec(async () => {
+          resume();
+          expect(await late).toMatchObject({ message: "Golden capture epoch is closed" });
+          return "clean";
+        }),
+        "probe",
+        {
+          seam: (send) => (input, init) => {
+            enteredNextNetwork++;
+            return send(input, init);
+          },
+        },
+      ),
+    ) as Row;
+    expect(next.steps).toEqual([]);
+    expect(next.result).toMatchObject({ ok: true, value: "clean" });
+    expect(enteredNextNetwork).toBe(0);
+    await expectCleanCapture();
+  });
 
   it("observes requests issued by native crypto after the handler returns", CONTROLLED_IO, async () => {
     const captured = JSON.parse(
@@ -1388,7 +1368,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
   });
 
   it(
-    "INV-5: fails every provider's echo fixture, before placeholders, when sent-secret redaction is disabled",
+    "INV-5: fails representative echo fixtures, before placeholders, when sent-secret redaction is disabled",
     NODE,
     async () => {
       vi.doMock("../src/sent-secrets.js", async () => {
@@ -1401,13 +1381,12 @@ describe(suiteName, { timeout: 120_000 }, () => {
         vi.spyOn(module.SentSecrets.prototype, "redactOpenTail").mockImplementation((value) => value);
         return module;
       });
-      await expect(captureGoldens(forms)).rejects.toThrow(/the caller-visible result leaks <secret:/);
       expect(await echoesThatPass()).toEqual([]);
     },
   );
 
   it(
-    "INV-5: fails or changes every provider's echo fixture when redaction stops registering percent-encoded forms",
+    "INV-5: fails or changes representative echo fixtures when redaction stops registering percent-encoded forms",
     NODE,
     async () => {
       const baselines = await echoBaselines();
@@ -1421,7 +1400,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
   );
 
   it(
-    "INV-5: fails or changes every provider's echo fixture when redaction stops registering base64 forms",
+    "INV-5: fails or changes representative echo fixtures when redaction stops registering base64 forms",
     NODE,
     async () => {
       const baselines = await echoBaselines();
@@ -1431,7 +1410,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
   );
 
   it(
-    "INV-5: fails or changes every provider's echo fixture when redaction stops registering the base64url form alone",
+    "INV-5: fails or changes representative echo fixtures when redaction stops registering the base64url form alone",
     NODE,
     async () => {
       const baselines = await echoBaselines();

@@ -1844,7 +1844,15 @@ There are no characterization tiers, path classifiers, or planning-only runs.
 `test/goldens-harness.test.ts` keeps the source and mutation guards on Node:
 replaced Authorization headers, changed auxiliary/login bytes, writes sent
 early or twice, and missing secret-encoding redaction must alter a capture or
-fail it. Ordinary runs use one source-probe schedule. Nightly Node runs set
+fail it. Mutation probes capture the affected call rather than repeating an
+entire provider catalog. Redaction negative controls use Forms, GitHub, Breeze
+and Tithe.ly to cover OAuth/Bearer, app-token, query-key and provider-kit lanes;
+the ordinary goldens still check every provider's complete secret echoes.
+The native-extension budget is checked directly at its 100-extension boundary,
+and a gated closed-epoch continuation must fail before entering the next
+capture's network. Genuine crypto completion, rejection, late dispatch and
+producer-fed stream probes retain their native settlement coverage without
+repeating a million-turn synthetic delay. Ordinary runs use one source-probe schedule. Nightly Node runs set
 `CONNECTA_GOLDENS_DETERMINISM=1` for an identical repeat, provider jitter seeds
 1 and 2, and the complete source-probe jitter matrix. Small native-source probes also run on
 workerd: `scheduler.wait`, CompressionStream, saved timers/microtasks and
@@ -3040,15 +3048,18 @@ host/transport additions. Root and all other caps and historical baselines are
 unchanged by D3. Separate-input costs are not a combined gzip measurement;
 the integrated deployment must be measured again.
 
-`test/effect-core-proof.node.test.ts` compares production against the hash-pinned
-legacy dispatcher in a test-only fixture, on Node and real workerd. It retains
-the original 245 exchanges and adds 440 raw-path/extension-method exchanges,
-request isolation, actual public router construction counts, error identity,
-silence, body lifetime and waiting-request I/O evidence. Build-count probes
-instrument public router construction only in test bundles. Mutation probes
-reject baseline drift, missed graphs, bypassed production dispatch, removed
-route selection and broken unmatched fallthrough. No legacy dispatcher ships
-in production; no proof instrumentation is included in deployment bundles.
+`test/server.test.ts` asserts production routing directly on Node and workerd:
+raw prefixes and malformed suffixes, extension methods, CIMD before auth/UI/body
+reads, Response/error identity, unmatched fallthrough, concurrent request
+isolation, and body-held permits through end/failure/cancel/abort/abandonment.
+`test/node.node.test.ts` bundles one unmodified production Worker and
+verifies that a queued request owns its native I/O after the preceding response
+ends. Server-route, request-admission and request-pipeline suites retain ingress
+ordering, security headers, overload/shutdown and cancellation regressions.
+Root purity, declaration and bundle checks own import boundaries and size caps.
+The frozen legacy dispatcher, source transforms, diagnostic latency loops and
+rejected Effect MCP adapters were migration evidence; their historical source
+is linked from decision 0016 rather than rebuilt by ordinary tests.
 The upward MCP protocol leaves remain SDK implementations, with D7's separate
 native-orchestration work and compatibility evidence unchanged.
 
@@ -3528,7 +3539,12 @@ compiling and configuring the real thing.
   The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
   provider/tool on Node, fails on missing provider/tool examples or a
   dispatched failure bypassing the helper, and covers served write/read
-  overrides with HTTP 503 and a connection reset after send. Local metadata
+  overrides with HTTP 503 for every tool and a connection reset after send
+  for each provider/verdict representative. HTTP 401 recovery uses those
+  representatives plus the distinct composite, auxiliary, owner-lookup and
+  POST-as-read paths; every provider's full golden failure matrix still runs.
+  Shared sender and real-socket evidence below own status/reset permutations.
+  Local metadata
   tools prove zero sends; composite calls prove each distinct request leaves
   once. The round-5 cases additionally cover Docs creation with initial text,
   composite success followed by refusal, GitHub preflight failures, typed

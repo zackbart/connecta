@@ -1,3 +1,12 @@
+import { Effect, Scheduler } from "effect";
+import * as HttpServerError from "effect/http/HttpServerError";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { createRouteDispatcher } from "../src/routes/dispatch.js";
+import type { RouteContext } from "../src/routes/shared.js";
+import { runEdge } from "../src/runtime/run.js";
+import { operatorUi } from "../src/ui.js";
+
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { activityHistory } from "../src/activity.js";
@@ -739,4 +748,280 @@ it("serves /health over HTTP without redirecting to the public URL", async () =>
   const res = await c.fetch(new Request("http://127.0.0.1:8787/health"));
   expect(res.status).toBe(200);
   expect(((await res.json()) as { status: string }).status).toBe("ok");
+});
+
+function context(path: string, init?: RequestInit): RouteContext {
+  const request = new Request(BASE + path, init);
+  return { request, url: new URL(request.url), path, baseUrl: BASE, opts: { config: {} } } as RouteContext;
+}
+
+describe("production HTTP dispatcher", () => {
+  it("preserves Response/body identity and falls through only before handler entry", async () => {
+    const response = new Response("owned", { status: 405, headers: { allow: "PUT", "set-cookie": "a=1; Path=/" } });
+    let failure: unknown;
+    const mcp = vi.fn(() => (failure ? Effect.fail(failure) : Effect.succeed(null)));
+    const route = createRouteDispatcher(
+      mcp,
+      () => Effect.succeed(null),
+      async () => response,
+    );
+    expect(await runEdge(route(context("/health")))).toBe(response);
+    expect(response.bodyUsed).toBe(false);
+    expect(response.headers.get("allow")).toBe("PUT");
+    expect(response.headers.get("set-cookie")).toBe("a=1; Path=/");
+    expect(mcp).not.toHaveBeenCalled();
+    for (const path of ["/missing", "/connect", "/agent/missing"]) {
+      const missing = await runEdge(route(context(path)));
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toBe("Not Found");
+    }
+    const typed = new HttpServerError.HttpServerError({
+      reason: new HttpServerError.RouteNotFound({ request: HttpServerRequest.fromWeb(context("/mcp").request) }),
+    });
+    for (const error of [new Error("private"), { reason: { _tag: "RouteNotFound" } }, typed]) {
+      failure = error;
+      for (const path of ["/mcp", "/missing", "/agent/native"]) {
+        mcp.mockClear();
+        await expect(runEdge(route(context(path)))).rejects.toBe(error);
+        expect(mcp).toHaveBeenCalledTimes(1);
+      }
+    }
+    expect(await response.text()).toBe("owned");
+  });
+
+  it("INV-7: concurrent first and later requests retain their own body, signal and services", async () => {
+    const route = createRouteDispatcher(
+      (ctx) =>
+        Effect.gen(function* () {
+          const preventYield = yield* Scheduler.PreventSchedulerYield;
+          yield* Effect.promise(() => Promise.resolve());
+          const body = yield* Effect.promise(() => ctx.request.text());
+          ctx.defer?.(Promise.resolve());
+          return Response.json({
+            body,
+            id: ctx.request.headers.get("x-request-id"),
+            path: ctx.path,
+            preventYield,
+            aborted: ctx.request.signal.aborted,
+          });
+        }),
+      () => Effect.succeed(null),
+      async () => new Response("health"),
+    );
+    for (const offset of [0, 8]) {
+      await Promise.all(
+        Array.from({ length: 8 }, async (_, index) => {
+          const id = String(offset + index);
+          const path = index % 2 ? "/agent/native" : "/mcp/native";
+          const caller = new AbortController();
+          const ctx = context(path, {
+            method: "POST",
+            headers: { "x-request-id": id },
+            body: `body-${id}`,
+            signal: caller.signal,
+          });
+          let deferred = 0;
+          ctx.defer = () => {
+            deferred++;
+          };
+          const response = await runEdge(route(ctx).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 16)), {
+            signal: caller.signal,
+          });
+          expect(await response.json()).toEqual({ body: `body-${id}`, id, path, preventYield: false, aborted: false });
+          expect(deferred).toBe(1);
+          caller.abort();
+        }),
+      );
+    }
+    expect(await (await runEdge(route(context("/health")))).text()).toBe("health");
+  });
+
+  it("INV-4 INV-10: keeps raw prefixes, malformed suffixes, extension methods and public CIMD in their owning routes", async () => {
+    const trace: string[] = [];
+    const ui = operatorUi();
+    const storage = memoryStorage();
+    const storageCalls = (["get", "set", "delete", "list", "compareAndSet"] as const).map((method) =>
+      vi.spyOn(storage, method),
+    );
+    const outbound = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No outbound I/O expected"));
+    const app = createTestConnecta({
+      storage,
+      connectors: [
+        remoteMcp("oauth", {
+          url: "https://remote.example/mcp",
+          versionNegotiation: "legacy",
+          auth: { type: "oauth", scope: "read" },
+        }),
+      ],
+      logger: "silent",
+      publicUrl: BASE,
+      maintainers: [{ namespace: "fixture", id: "alice" }],
+      auth: {
+        kind: "router",
+        authorize: (request) => {
+          expect(request.bodyUsed).toBe(false);
+          trace.push("auth");
+          return { ok: false, response: new Response(null, { status: 401 }) };
+        },
+        handleMetadata: async (request) => {
+          trace.push("metadata");
+          return new URL(request.url).pathname === "/.well-known/example" ? new Response("metadata") : null;
+        },
+      },
+      ui: {
+        ...ui,
+        handle: async () => {
+          trace.push("ui");
+          return null;
+        },
+      },
+    });
+    try {
+      const cases: Array<[string, string, number, string[]]> = [
+        ["/health", "PROPFIND", 200, ["ui"]],
+        ["/health/", "GET", 404, ["ui"]],
+        ["/health;tail", "GET", 404, ["ui"]],
+        ["/%68ealth", "GET", 404, ["ui"]],
+        ["/HEALTH", "GET", 404, ["ui"]],
+        ["/mcp/%", "POST", 401, ["ui", "auth", "metadata"]],
+        ["/mcp/%FF", "PROPFIND", 401, ["ui", "auth", "metadata"]],
+        ["/mcp/a;b", "POST", 401, ["ui", "auth", "metadata"]],
+        ["/mcp/" + "x".repeat(200), "POST", 401, ["ui", "auth", "metadata"]],
+        ["/connect/%", "POST", 405, ["ui"]],
+        ["/connect/%FF", "GET", 403, ["ui"]],
+        ["/oauth/callback/%", "PROPFIND", 405, ["ui"]],
+        ["/.well-known/example", "GET", 200, ["ui", "metadata"]],
+        ["/%2ewell-known/example", "GET", 404, ["ui"]],
+        ["/agent/native", "POST", 401, []],
+        ["/%61gent/native", "GET", 404, []],
+        ["//agent/native", "GET", 404, []],
+        ["/missing%FF", "OPTIONS", 204, ["ui", "metadata"]],
+        ["/oauth/client-metadata/oauth", "GET", 200, []],
+        ["/oauth/client-metadata/oauth", "HEAD", 405, []],
+        ["/oauth/client-metadata/oauth", "PROPFIND", 405, []],
+        ["/oauth/client-metadata/oauth", "POST", 405, []],
+        ["/oauth/client-metadata/oauth", "OPTIONS", 405, []],
+        ["/oauth/client-metadata/%6fauth", "GET", 404, []],
+        ["/oauth/client-metadata/oauth/", "GET", 404, []],
+        ["/oauth/client-metadata/oauth;tail", "GET", 404, []],
+        ["/oauth/%63lient-metadata/oauth", "GET", 404, ["ui"]],
+        ["//oauth/client-metadata/oauth", "GET", 404, ["ui"]],
+        ["/oauth//client-metadata/oauth", "GET", 404, ["ui"]],
+      ];
+      const admission = async () => {
+        const response = await app.fetch(new Request(BASE + "/health"));
+        const health = (await response.json()) as {
+          admission: { requests: { active: number; queued: number; totals: { admitted: number } } };
+        };
+        const { active, queued, totals } = health.admission.requests;
+        return { active, queued, admitted: totals.admitted };
+      };
+      for (const [path, method, status, expectedTrace] of cases) {
+        const publicCimd = path.startsWith("/oauth/client-metadata/");
+        const before = publicCimd ? await admission() : undefined;
+        trace.length = 0;
+        storageCalls.forEach((spy) => spy.mockClear());
+        const request = new Request(BASE + path, { method, ...(method === "POST" ? { body: "unread" } : {}) });
+        const response = await app.fetch(request);
+        expect(response.status, `${method} ${path}`).toBe(status);
+        expect(trace, `${method} ${path}`).toEqual(expectedTrace);
+        if (publicCimd) {
+          expect(request.bodyUsed).toBe(false);
+          expect(await admission()).toEqual(before);
+          for (const spy of storageCalls) expect(spy).not.toHaveBeenCalled();
+          expect(outbound).not.toHaveBeenCalled();
+        }
+        if (path === "/oauth/client-metadata/oauth") {
+          if (method === "GET") {
+            expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+            expect(await response.json()).toEqual({
+              client_id: `${BASE}${path}`,
+              client_name: "connecta",
+              application_type: "web",
+              redirect_uris: [`${BASE}/oauth/callback/oauth`],
+              grant_types: ["authorization_code", "refresh_token"],
+              response_types: ["code"],
+              token_endpoint_auth_method: "none",
+              scope: "read",
+            });
+          } else {
+            expect(response.headers.get("allow")).toBe("GET");
+            expect(await response.text()).toBe("");
+          }
+        } else await response.body?.cancel();
+      }
+    } finally {
+      outbound.mockRestore();
+      storageCalls.forEach((spy) => spy.mockRestore());
+      await app.close();
+    }
+  });
+
+  it.each(["end", "failure", "cancel", "abort", "abandon"] as const)(
+    "INV-7: keeps a response permit until %s and releases it exactly once",
+    async (mode) => {
+      let source!: ReadableStreamDefaultController<Uint8Array>;
+      let cancels = 0;
+      let localSignal: AbortSignal | undefined;
+      const app = createTestConnecta({
+        connectors: [],
+        logger: "silent",
+        maintainers: [{ namespace: "fixture", id: "alice" }],
+        admission: { requests: { concurrency: 1, maxQueueSize: 0, maxDurationMs: mode === "abandon" ? 50 : 2000 } },
+        auth: {
+          kind: "stream",
+          authorize: (request) => {
+            localSignal = request.signal;
+            return {
+              ok: false,
+              response: new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    source = controller;
+                    controller.enqueue(new TextEncoder().encode("slow"));
+                  },
+                  cancel() {
+                    cancels++;
+                  },
+                }),
+                { status: 401 },
+              ),
+            };
+          },
+        },
+      });
+      const active = async () =>
+        (
+          (await (await app.fetch(new Request(BASE + "/health"))).json()) as {
+            admission: { requests: { active: number } };
+          }
+        ).admission.requests.active;
+      const caller = new AbortController();
+      try {
+        const response = await app.fetch(new Request(BASE + "/mcp", { signal: caller.signal }));
+        expect(await active()).toBe(1);
+        if (mode === "end") {
+          source.close();
+          expect(await response.text()).toBe("slow");
+        }
+        if (mode === "failure") {
+          const error = new Error("stream failed");
+          source.error(error);
+          await expect(response.text()).rejects.toBe(error);
+        }
+        if (mode === "cancel") await response.body?.cancel("cancelled");
+        if (mode === "abort") caller.abort(new Error("caller left"));
+        if (mode === "abandon") await new Promise((resolve) => setTimeout(resolve, 100));
+        await Promise.resolve();
+        expect(await active()).toBe(0);
+        expect(localSignal?.aborted).toBe(true);
+        const expectedCancels = ["cancel", "abort", "abandon"].includes(mode) ? 1 : 0;
+        expect(cancels).toBe(expectedCancels);
+        await response.body?.cancel().catch(() => {});
+        expect(cancels).toBe(expectedCancels);
+      } finally {
+        await app.close();
+      }
+    },
+  );
 });
