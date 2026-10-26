@@ -581,8 +581,11 @@ Connecta's tail truncation notice could be seen. With no file tools, agents
 could not read spill files or the tail `resultId`/`get_result` next action.
 All 18 truncation trials in each batch hit this limit. All nine read trials
 passed by rereading inside `execute_code`; all nine export trials failed.
-Sonnet and Haiku dispatched three billable exports per trial; Opus exported
-once then stopped to ask. Raising the host output-token setting did not help.
+In the main batch, each Sonnet and Haiku export trial dispatched two billable
+exports plus one chat post; Opus exported once then stopped to ask. In the
+higher-output diagnostic, Sonnet and Haiku dispatched two exports per export
+trial, except Haiku repeat 3, which dispatched six. Raising the host
+output-token setting did not help.
 Serialized content-envelope previews double-escaped JSON-lines payloads,
 inflating tokens. Sonnet asked permission for authorized writes in 4/15 main
 trials; the runner nudged it with “Yes, go ahead.” Opus and Haiku needed none.
