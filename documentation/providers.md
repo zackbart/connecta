@@ -9,32 +9,22 @@ provider ships with its connection's usage guide, not here.
 
 ## API sources and tool inventory
 
-Maintained API providers retain reviewed vendor API contracts/indexes and
-Connecta's adapters and workflow tools. They do not vendor the vendor's MCP
-server or SDK. Sources vary: upstream OpenAPI documents, Google Discovery
-documents converted to OpenAPI, locally reviewed HTML/documentation conversions,
-and hand-authored endpoint contracts checked against upstream references.
-Tithe.ly and Overflow use endpoint checks rather than vendored OpenAPI documents.
-Generic `remoteMcp()` connections instead discover their server's live tool
-catalog; that catalog is outside this maintained API inventory.
+Connecta keeps reviewed API contracts and indexes plus its own adapters and
+tools, not third-party servers or SDKs. Sources include upstream OpenAPI,
+Google Discovery conversions, reviewed HTML/documentation conversions and
+hand-authored endpoint contracts. Tithe.ly and Overflow use endpoint checks
+without vendored OpenAPI documents. `remoteMcp()` discovers live server tools
+instead.
 
-The generated lists below contain the Connecta-authored tools from each
-provider's offline reference configuration. **Named** tools implement workflows;
-**API** tools inspect or call the reviewed contract. API `*_search` and
-`*_details` read supported/indexed contracts, not account data. An indexed
-operation may be refused or require a named tool. Raw `*_read` and `*_write`
-calls are confined to reviewed operations, configured scope and value-safety
-rules; they do not grant unrestricted API access. Gmail has no generic API
-write tool; its named draft writes remain available.
+These generated reference catalogs separate named workflows from API tools
+and reads from writes. API search/details inspect indexed contracts, including
+refused operations. Raw read/write calls accept only reviewed operations within
+configured scope and safety rules. Gmail has no generic write tool.
 
-Names here are local tool names. An address uses the **configured connector
-ID**, which is distinct from the provider/tool prefix: a Stripe connector
-configured as `billing` exposes `billing.stripe_api_read`. Configuration can
-remove tools or narrow their operations: Planning Center tools labelled with a
-product require that product to be enabled, and connector/endpoint `readOnly`
-omits writes. Credentials, scopes, exclusions and deployment classification
-also constrain access. Use live discovery for a deployment's effective catalog
-and its connection's usage guide for inputs and workflow guidance.
+Addresses use your connector ID: Stripe configured as `billing` exposes
+`billing.stripe_api_read`. Configuration, credentials and read-only policy affect
+availability. Planning Center labels identify required products. Use live
+discovery for your deployment's catalog.
 
 <!-- provider-inventory:start -->
 
