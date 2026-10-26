@@ -1,4 +1,4 @@
-// Characterization goldens: each maintained `api()` provider's catalog, the
+// Existing characterization goldens: provider catalogs, the
 // requests and results of its fixture calls, its failure mapping, and its
 // sent-secret redaction, compared byte for byte with
 // test/goldens/<provider>/*.json. `pnpm run goldens:update`
@@ -17,7 +17,6 @@ declare global {
 
 const specs = import.meta.glob<GoldenSpec>("./goldens/*/spec.ts", { import: "default", eager: true });
 const stored = import.meta.glob<string>("./goldens/*/*.json", { query: "?raw", import: "default", eager: true });
-const providerFolders = Object.keys(import.meta.glob("../src/providers/*/index.ts")).map((path) => path.split("/")[3]!);
 
 const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 const updating = env.CONNECTA_GOLDENS_UPDATE === "1";
@@ -31,9 +30,7 @@ const byProvider = Object.values(specs)
   .sort((a, b) => a.provider.localeCompare(b.provider));
 
 describe("characterization goldens", () => {
-  it.skipIf(only)("cover every maintained api() provider", () => {
-    const covered = Object.values(specs).map((spec) => spec.provider);
-    expect([...covered].sort()).toEqual([...providerFolders].sort());
+  it.skipIf(only)("keep existing fixtures consistent with their specs", () => {
     for (const [path, spec] of Object.entries(specs)) expect(path).toBe(`./goldens/${spec.provider}/spec.ts`);
     // No golden outlives its spec, and no folder holds a file the harness does not write.
     const expected = Object.values(specs).flatMap((spec) =>

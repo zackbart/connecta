@@ -10,12 +10,13 @@ pnpm run eval:outcomes
 pnpm run eval:smoke
 ```
 
-`eval:outcomes` plays the scripted references of seven existing tasks against
+`eval:outcomes` plays the scripted references of eight tasks against
 fresh fake vendors and the published-edge Node deployment (SQLite, QuickJS,
 stored agent tokens): a two-source join with one post, retained-result
 paging, one Stripe refund, reconciliation after a committed refund answered
 HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
-and a secret rotation that never reads a value. Each is graded on outcome:
+a secret rotation that never reads a value, and the actual QuickBooks provider
+accounting journey. Each is graded on outcome:
 downstream state, the physical write ledger and the final answer, not the
 route. Paging must deliver the actual failing test and HTTP status through a
 service or guest bridge. Each reference must pass and doing nothing must fail.
@@ -28,13 +29,13 @@ duplicated, interrupted or cached-pass-only trial or an early stop. Grading
 goes through saved inputs and `regradeTrial`, so a failure's diagnostics are
 regradable. Failures exit nonzero and write `eval/results/outcomes-<time>.json`.
 
-`eval:smoke` builds the package and boots four deployments: the
+`eval:smoke` builds the package and boots six deployments: the
 `connecta init` Node template with its agent token from `rotate-token` and
 `connecta doctor --pool local-machine`, the Node eval deployment, the
-unmodified Worker example, and the Worker example's composition over loopback
-fakes. The Worker targets run natively in workerd under `wrangler dev`, with the
+unmodified Worker example, the Worker example's composition over loopback
+fakes, and the two QuickBooks compositions described below. The Worker targets run natively in workerd under `wrangler dev`, with the
 compatibility date, flags and bindings read from `examples/worker/wrangler.jsonc`;
-only the entry is wrapped by a local Access stand-in. Each target checks
+the original two Worker entries use a local Access stand-in. The original four targets check
 `/health`, MCP initialize, the six-tool list, an `execute_code` read and the
 operator page in headless Chromium. Targets with a write-capable fake make
 one `call_destructive_tool` write and verify exactly one downstream write and
@@ -42,6 +43,29 @@ the resulting fake state; targets without one claim no write. Steps are bounded
 to two minutes, child process groups stop on exit or signal, and any failed
 check exits nonzero with the results JSON. Install Chromium once with
 `pnpm run test:browser:install`.
+
+The QuickBooks task (`quickbooks-accounting-journey`) runs through the actual
+published provider on Node; smoke targets `node-quickbooks` and
+`worker-quickbooks` run that same reference and independent grader with SQLite /
+QuickJS and native workerd / D1 / Dynamic Worker execution. Eval-only fetch
+interception confines fixed Intuit hosts to the local stateful fake. It follows
+real consent/callback routes, refuses a wrong realm and callback owner, checks
+company/owner isolation, and coordinates consecutive vendor-hour renewals with
+identical refresh bytes,
+then rotates and persists new bytes across application reconstruction.
+Disconnecting Alice must revoke the fake Intuit grant and invalidate its old
+access token while Bob keeps working. Accounting evidence
+includes exact lookahead pages, customer joins, nested report rows and empty
+cells, plus named/hatch/fields secrecy while retaining public SyncToken.
+Hostile paths, raw SQL and unreviewed writes must send no vendor request.
+Compact provider fault probes reject null/malformed report rows and nonempty
+metadata-only queries while preserving valid empty results and blank amounts.
+The reference and no-op are required outcomes; a correct-looking dossier with
+its physical read ledger removed must fail. No vendor account or model is used.
+For a focused run use `pnpm run eval:outcomes --tasks quickbooks-accounting-journey`
+and `pnpm run eval:smoke --targets node-quickbooks,worker-quickbooks`.
+These executable outcomes replace a universal requirement for new provider
+characterization goldens under #1072; existing fixtures remain internally checked.
 
 `eval:agent` exits nonzero unless every declared task × model × repeat trial
 appears exactly once, completed normally and passed under the batch's grading.

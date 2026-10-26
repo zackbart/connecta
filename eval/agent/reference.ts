@@ -45,6 +45,7 @@ export interface Played {
 
 interface PlayOptions {
   mode: "reference" | "noop";
+  deploy?(world: World): Promise<Deployment>;
   surface?: Surface;
   /** Runs after the surface check and before the reference, on the same session. */
   before?(ctx: { session: McpSession; world: World; toolUses: ToolUse[] }): Promise<void>;
@@ -64,12 +65,14 @@ export async function playReference<T>(
   try {
     await world.start();
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-    deployment = await startNodeDeployment(
-      world.connectorSpecs(),
-      task.deployment,
-      task.world?.oauth ? world.oauth : undefined,
-      surface,
-    );
+    deployment = options.deploy
+      ? await options.deploy(world)
+      : await startNodeDeployment(
+          world.connectorSpecs(),
+          task.deployment,
+          task.world?.oauth ? world.oauth : undefined,
+          surface,
+        );
     const hostEvents: StreamEvent[] = [];
     host = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))

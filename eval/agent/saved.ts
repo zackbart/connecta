@@ -10,6 +10,7 @@ export interface SavedGradeInputs {
   version: 1;
   trace: AgentTrace;
   world: {
+    quickbooks?: World["quickbooks"]["state"];
     google?: World["google"]["state"];
     rest?: World["rest"];
     github?: World["github"];
@@ -33,6 +34,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
     version: 1,
     trace,
     world: {
+      ...(world.options.quickbooks ? { quickbooks: world.quickbooks.state } : {}),
       ...(world.options.google ? { google: world.google.state } : {}),
       rest: world.rest,
       ...(world.options.github ? { github: world.github } : {}),
@@ -120,6 +122,11 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
       ).length === 1,
       `ci.${run.runId}`,
     );
+  if (state.quickbooks) {
+    requireEvidence(state.quickbooks.companies && Array.isArray(state.quickbooks.grants), "quickbooks");
+    Object.assign(world.quickbooks.state, structuredClone(state.quickbooks));
+  } else if (state.calls.some((c) => c.service === "quickbooks"))
+    throw new Error("Incomplete saved grading evidence: quickbooks");
   if (state.google) {
     requireEvidence(state.google.accounts && Array.isArray(state.google.mints), "google");
     for (const subject of ["alice@example.com", "bob@example.com"]) {

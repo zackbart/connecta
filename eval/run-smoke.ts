@@ -1,3 +1,5 @@
+import { playReference } from "./agent/reference.js";
+import { QUICKBOOKS_TASK } from "./tasks/quickbooks.js";
 /**
  * `pnpm run eval:smoke [--targets a,b] [--no-build] [--out path]` — boot both
  * deployment shapes from this checkout and drive them over MCP and a browser.
@@ -38,7 +40,9 @@ const SIX = META_TOOLS;
 
 const args = flags(process.argv.slice(2));
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `smoke-${stamp()}.json`));
-const selected = (args.get("targets") ?? "node-template,node-fakes,worker-example,worker-fakes").split(",");
+const selected = (
+  args.get("targets") ?? "node-template,node-fakes,worker-example,worker-fakes,node-quickbooks,worker-quickbooks"
+).split(",");
 
 const STEP_MS = 120_000;
 
@@ -453,6 +457,108 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
   }
 }
 
+/** The same task and independent grader run against both real executors/stores. */
+async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promise<SmokeTarget> {
+  const checks: SmokeCheck[] = [];
+  const target: SmokeTarget = {
+    target: kind,
+    description: "Actual QuickBooks provider accounting and durable OAuth journey",
+    status: "fail",
+    checks,
+  };
+  await step(checks, "company accounting outcome and OAuth lifecycle", async () => {
+    await playReference(
+      QUICKBOOKS_TASK,
+      {
+        mode: "reference",
+        ...(kind === "worker-quickbooks"
+          ? {
+              deploy: async (world: World) => {
+                const persist = await mkdtemp(join(tmpdir(), "connecta-qb-workerd-"));
+                const { rawConfig: example } = experimental_readRawConfig({
+                  config: join(ROOT, "examples/worker/wrangler.jsonc"),
+                });
+                const config = join(persist, "wrangler.json");
+                await writeFile(
+                  config,
+                  JSON.stringify({
+                    name: "connecta-qb-smoke",
+                    main: join(ROOT, "eval/deploy/worker-quickbooks.ts"),
+                    compatibility_date: example.compatibility_date,
+                    compatibility_flags: example.compatibility_flags,
+                    d1_databases: example.d1_databases,
+                    worker_loaders: example.worker_loaders,
+                  }),
+                );
+                const origin = `http://127.0.0.1:${await freePort()}`;
+                const proc = startProcess(
+                  join(ROOT, "node_modules/.bin/wrangler"),
+                  [
+                    "dev",
+                    "--config",
+                    config,
+                    "--ip",
+                    "127.0.0.1",
+                    "--port",
+                    new URL(origin).port,
+                    "--persist-to",
+                    persist,
+                    "--show-interactive-dev-session=false",
+                    "--var",
+                    `PUBLIC_URL:${origin}`,
+                    "--var",
+                    `QUICKBOOKS_URL:${world.quickbooks.url}`,
+                    "--var",
+                    `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
+                  ],
+                  { cwd: ROOT, env: { WRANGLER_SEND_METRICS: "false", CI: "1" } },
+                );
+                const close = async () => {
+                  await stopProcess(proc.child);
+                  await rm(persist, { recursive: true, force: true });
+                };
+                try {
+                  await waitForHealth(origin, proc.child, proc.output, 90_000);
+                  const { token } = (await (await fetch(`${origin}/__eval/token`)).json()) as { token: string };
+                  return {
+                    kind,
+                    origin,
+                    mcpUrl: `${origin}/agent/eval`,
+                    token,
+                    programs: [],
+                    openConnect: async () => {
+                      throw new Error("Use real OAuth routes");
+                    },
+                    setCredential: async () => {
+                      throw new Error("No imported tokens");
+                    },
+                    restart: async () => {
+                      const response = await fetch(`${origin}/__eval/restart`, { method: "POST" });
+                      if (response.status !== 204) throw new Error("Worker app restart failed");
+                    },
+                    close,
+                  };
+                } catch (error) {
+                  await close();
+                  throw error;
+                }
+              },
+            }
+          : {}),
+      },
+      ({ world, trace }) => {
+        const failures = QUICKBOOKS_TASK.grade({ world, trace }).filter((c) => !c.pass);
+        if (failures.length) throw new Error(failures.map((c) => c.id).join(", "));
+      },
+    );
+    return kind === "node-quickbooks"
+      ? "SQLite + QuickJS + managed agent token"
+      : "native workerd + D1 + Dynamic Worker executor + managed agent token";
+  });
+  target.status = checks.every((c) => c.pass) ? "pass" : "fail";
+  return target;
+}
+
 // ---------------------------------------------------------------------- run
 
 if (!args.has("no-build")) {
@@ -461,6 +567,8 @@ if (!args.has("no-build")) {
   if (built.status !== 0) throw new Error("pnpm run build failed");
 }
 const runners: Record<string, () => Promise<SmokeTarget>> = {
+  "node-quickbooks": () => quickBooks("node-quickbooks"),
+  "worker-quickbooks": () => quickBooks("worker-quickbooks"),
   "node-template": nodeTemplate,
   "node-fakes": nodeFakes,
   "worker-example": () => worker("worker-example"),
