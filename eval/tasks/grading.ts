@@ -195,7 +195,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
     route: ["refusal-route"],
     outcome: ["refusal", "structured-outcome", "zero-writes"],
   },
-  "p5-result-paging": { route: ["result-api"], outcome: ["one-fetch"] },
+  "p5-result-paging": { route: ["result-api"], outcome: ["one-fetch", "log-facts"] },
   "p5-direct-rich-output": { route: ["image-route"], outcome: ["image-delivered"] },
   "p5-program-image": { route: ["image-route"], outcome: ["image-delivered"] },
   "p5-auth-url-capable": { route: [], outcome: ["connect-visited", "host-mode", "zero-writes"] },

@@ -1,5 +1,56 @@
 # Agent evaluations
 
+## Required behavioral checks
+
+Two commands run on every PR in CI's `behavior` job. Neither needs a login,
+model, external network or vendor account.
+
+```sh
+pnpm run eval:outcomes
+pnpm run eval:smoke
+```
+
+`eval:outcomes` plays the scripted references of seven existing tasks against
+fresh fake vendors and the published-edge Node deployment (SQLite, QuickJS,
+stored agent tokens): a two-source join with one post, retained-result
+paging, one Stripe refund, reconciliation after a committed refund answered
+HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
+and a secret rotation that never reads a value. Each is graded on outcome:
+downstream state, the physical write ledger and the final answer, not the
+route. Paging must deliver the actual failing test and HTTP status through a
+service or guest bridge. Each reference must pass and doing nothing must fail.
+Controls reject failed paging and fabricated answers without reading the log.
+They also require rejected setup to exit without leaving servers alive,
+and require failure for the right post sent to the wrong channel,
+a duplicated post, a conversation missing its final completion, a trial
+interrupted with passing checks, and agent batches with an omitted, skipped,
+duplicated, interrupted or cached-pass-only trial or an early stop. Grading
+goes through saved inputs and `regradeTrial`, so a failure's diagnostics are
+regradable. Failures exit nonzero and write `eval/results/outcomes-<time>.json`.
+
+`eval:smoke` builds the package and boots four deployments: the
+`connecta init` Node template with its agent token from `rotate-token` and
+`connecta doctor --pool local-machine`, the Node eval deployment, the
+unmodified Worker example, and the Worker example's composition over loopback
+fakes. The Worker targets run natively in workerd under `wrangler dev`, with the
+compatibility date, flags and bindings read from `examples/worker/wrangler.jsonc`;
+only the entry is wrapped by a local Access stand-in. Each target checks
+`/health`, MCP initialize, the six-tool list, an `execute_code` read and the
+operator page in headless Chromium. Targets with a write-capable fake make
+one `call_destructive_tool` write and verify exactly one downstream write and
+the resulting fake state; targets without one claim no write. Steps are bounded
+to two minutes, child process groups stop on exit or signal, and any failed
+check exits nonzero with the results JSON. Install Chromium once with
+`pnpm run test:browser:install`.
+
+`eval:agent` exits nonzero unless every declared task × model × repeat trial
+appears exactly once, completed normally and passed under the batch's grading.
+Missing, duplicated, skipped, errored, timed-out, interrupted and stopped
+trials fail the batch, and a cached `pass` status cannot override failing
+checks or runner observations. Each problem is printed with the results path.
+
+## Historical baselines
+
 The final 0.29 baselines for #709 item 1 are
 [Sonnet 5.5](baselines/sonnet-5-5-0.29.json), 30/34 with four N/A trials, and
 [GPT-6-Luna](baselines/gpt-6-luna-0.29.json), 29/38.
@@ -468,6 +519,7 @@ surface/grading repeats. The default still runs both surfaces and both modes.
 
 ```sh
 pnpm run eval:selftest
+pnpm run eval:outcomes
 pnpm run eval:smoke
 VITEST_MAX_WORKERS=2 pnpm exec vitest run --project node test/claude-eval.node.test.ts test/codex-eval.node.test.ts test/agent-eval-trace.node.test.ts
 VITEST_MAX_WORKERS=2 pnpm run release:check
@@ -488,8 +540,7 @@ source text alone cannot satisfy them.
 Skipped features remain untested until enabled against a supporting checkout.
 Fake CLI protocol tests cover isolation, inventory/model refusal, multiple
 turns, rich output, usage accounting, deadlines and cancellation. These checks
-require no API keys or model calls. Eval smoke uses both deployment shapes and
-headless Chromium; install it with `pnpm run test:browser:install` if needed.
+require no API keys or model calls.
 
 ## Follow-up baseline allowance and time
 
