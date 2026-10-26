@@ -96,6 +96,16 @@ const RESERVED_AUTHORIZATION_PARAMS: ReadonlySet<string> = new Set([
   "resource",
 ]);
 
+/** Protocol response fields have their own validation, never static assertions. */
+const RESERVED_CALLBACK_PARAMS: ReadonlySet<string> = new Set([
+  "code",
+  "state",
+  "iss",
+  "error",
+  "error_description",
+  "error_uri",
+]);
+
 /** Token-request headers the grant owns: client authentication and framing. */
 const RESERVED_TOKEN_HEADERS: ReadonlySet<string> = new Set([
   "authorization",
@@ -146,6 +156,7 @@ interface StaticOAuthSettings {
   scope?: string;
   pkce: boolean;
   authorizationParams: ReadonlyArray<readonly [string, string]>;
+  expectedCallbackParameters: ReadonlyArray<readonly [string, string]>;
   tokenRequestHeaders: ReadonlyArray<readonly [string, string]>;
   apiOrigins: ReadonlySet<string>;
   /** Where the SDK's `serverUrl` points: the first API origin. */
@@ -209,6 +220,29 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
     }
     authorizationParams.push([name, value]);
   }
+  const expectedCallbackParameters: Array<readonly [string, string]> = [];
+  if (
+    config.expectedCallbackParameters !== undefined &&
+    (!config.expectedCallbackParameters ||
+      typeof config.expectedCallbackParameters !== "object" ||
+      Array.isArray(config.expectedCallbackParameters))
+  ) {
+    throw new Error(`[connecta] connector "${id}" oauth.expectedCallbackParameters must be a string record.`);
+  }
+  for (const [name, value] of Object.entries(config.expectedCallbackParameters ?? {})) {
+    if (
+      !/^[A-Za-z0-9_.-]+$/.test(name) ||
+      RESERVED_CALLBACK_PARAMS.has(name) ||
+      typeof value !== "string" ||
+      value === ""
+    ) {
+      throw new Error(
+        `[connecta] connector "${id}" oauth.expectedCallbackParameters must use nonempty parameter names ` +
+          "(ASCII letters, digits, dots, underscores or hyphens), nonempty string values, and no OAuth response fields.",
+      );
+    }
+    expectedCallbackParameters.push([name, value]);
+  }
   const tokenRequestHeaders: Array<readonly [string, string]> = [];
   for (const [name, value] of Object.entries(config.tokenRequestHeaders ?? {})) {
     if (!HEADER_NAME.test(name)) {
@@ -251,6 +285,7 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
     ...(config.scope !== undefined ? { scope: config.scope } : {}),
     pkce: config.pkce ?? true,
     authorizationParams,
+    expectedCallbackParameters,
     tokenRequestHeaders,
     apiOrigins,
     serverUrl: new URL(origins[0]!),
@@ -511,6 +546,11 @@ const readChallengeNative = /* @__PURE__ */ registerAuth(
 /** The grant behind one `api()` connector's `oauth`, as the hooks it exposes. */
 export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const settings = settingsFor(id, config);
+  const callbackParametersMatch = (params?: URLSearchParams): boolean =>
+    settings.expectedCallbackParameters.every(([name, expected]) => {
+      const values = params?.getAll(name);
+      return values?.length === 1 && values[0] === expected;
+    });
   const issuerContext: OAuthClientInformationContext = { issuer: settings.identity };
   const coordinatorFor = refreshCoordinatorsByPartition();
   // Keyed by request scope, so nothing here outlives the request that set it.
@@ -1151,6 +1191,12 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
             );
           }
+          if (!callbackParametersMatch(callbackParams)) {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              `Connector "${id}" authorization callback did not match its configured parameters; nothing was exchanged.`,
+            );
+          }
           provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
           provider.exchanging(authorizationCode);
           (yield authInvoke(provider, "bindFlow", [])) as void;
@@ -1177,6 +1223,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     startAuth: retainAuthPartition(startAuth, 0),
     disconnectAuth: retainAuthPartition(disconnectAuth, 0),
     verifyState: retainAuthPartition(verifyState, 1),
+    verifyCallbackParameters: retainAuthPartition(
+      authMethod((params: URLSearchParams, _ctx: ConnectorContext) => authValue(() => callbackParametersMatch(params))),
+      1,
+    ),
     verifyCallbackIssuer: retainAuthPartition(
       authMethod((issuer: string | null, ctx: ConnectorContext) => {
         return authValue<boolean>(() => {

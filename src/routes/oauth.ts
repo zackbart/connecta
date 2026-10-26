@@ -248,6 +248,11 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
     // interpreted until the state and the consent's issuer have been validated.
     if (["state", "iss", "code", "error"].some((name) => url.searchParams.getAll(name).length > 1)) return refused();
     try {
+      if (
+        connector.verifyCallbackParameters &&
+        !(await connector.verifyCallbackParameters(url.searchParams, connectorContext))
+      )
+        return refused();
       const issuer = url.searchParams.get("iss");
       if (connector.verifyCallbackIssuer) {
         if (!(await connector.verifyCallbackIssuer(issuer, connectorContext))) return refused();

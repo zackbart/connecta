@@ -113,6 +113,15 @@ export interface ApiOAuthConfig {
    */
   authorizationParams?: Record<string, string>;
   /**
+   * Fixed provider callback parameters, such as a configured company id.
+   * After pending-state verification, each must occur exactly once with this
+   * exact value, before issuer validation or code exchange. OAuth response
+   * fields (code, state, iss, error, error_description, error_uri) are reserved.
+   * Names must be nonempty ASCII letters, digits, dots, underscores or hyphens;
+   * values must be nonempty strings. Values are never described or returned.
+   */
+  expectedCallbackParameters?: Readonly<Record<string, string>>;
+  /**
    * Headers added to every token-endpoint request — the code exchange and
    * each refresh — for a provider whose token endpoint demands its own
    * framing, such as Church Community Builder's
@@ -251,6 +260,7 @@ export const API_OPTIONS = optionsOf<ApiOptions>()({
       "apiOrigins",
     ),
     authorizationParams: strings(),
+    expectedCallbackParameters: strings(),
     tokenRequestHeaders: strings(),
   }),
   // A tool's annotations stay open: MCP lets a tool carry hints Connecta
@@ -302,6 +312,7 @@ export interface ApiOAuthHooks {
   startAuth(ctx: ConnectorContext, opts?: { force?: boolean }): Promise<ConnectorStatus>;
   disconnectAuth(ctx: ConnectorContext): Promise<void>;
   verifyState(state: string | null, ctx: ConnectorContext): Promise<boolean>;
+  verifyCallbackParameters(params: URLSearchParams, ctx: ConnectorContext): Promise<boolean>;
   verifyCallbackIssuer(issuer: string | null, ctx: ConnectorContext): Promise<boolean>;
   consumeAuthError(ctx: ConnectorContext): Promise<void>;
   /** Requires callbackParams with a nonempty state, including without PKCE. */
@@ -379,6 +390,8 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
           // uninterruptible exchange, rather than any resource call.
           verifyState: (state: string | null, ctx: ConnectorContext) =>
             settleOnClose(ctx, () => oauth.verifyState(state, ctx), true),
+          verifyCallbackParameters: (params: URLSearchParams, ctx: ConnectorContext) =>
+            settleOnClose(ctx, () => oauth.verifyCallbackParameters(params, ctx), true),
           verifyCallbackIssuer: (issuer: string | null, ctx: ConnectorContext) =>
             settleOnClose(ctx, () => oauth.verifyCallbackIssuer(issuer, ctx), true),
           consumeAuthError: (ctx: ConnectorContext) => settleOnClose(ctx, () => oauth.consumeAuthError(ctx), true),
