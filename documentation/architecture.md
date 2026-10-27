@@ -1766,8 +1766,7 @@ evidence files in `spec/coverage.json`; the invariant contracts above are defend
 by the actual behavior assertions in these journeys and focused probes.
 The required CI gate includes build/declarations, Node and Workers probes,
 outcomes, browser flows, installed consumers and Docker, audits and real Eve
-compatibility. Lower-layer operator/config/storage replacement and stale
-documentation/adapters remain planned work under #1072.
+compatibility. Further contributor cleanup is tracked in #1072.
 
 Add a compact fault journey only for a meaningful outcome those suites cannot
 observe. Reuse their fixtures and adapters; do not reintroduce a snapshot
