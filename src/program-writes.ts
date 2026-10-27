@@ -8,8 +8,6 @@ import type { InvocationOutcome } from "./invocation.js";
 import { jsonResult, type ToolResult } from "./meta-tools.js";
 import { classifyWriteOutcome, type WriteState } from "./write-outcome.js";
 
-export { classifyWriteOutcome } from "./write-outcome.js";
-
 /** Writes one program may send (`execute.maxWrites`), unless configured. */
 export const DEFAULT_MAX_WRITES = CONFIG_DEFAULTS.execute.maxWrites;
 

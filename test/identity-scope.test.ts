@@ -5,12 +5,11 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { identityStorageKey } from "../src/identity.js";
 import { createConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
-import { InvocationFailure } from "../src/invocation.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
-import { createTestConnecta, fetchTestUiDetails, silentLogger } from "./helpers.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const NAMESPACE = "https://identity.test";
@@ -67,15 +66,6 @@ async function wire(response: Response) {
   };
 }
 
-const listTools = (c: { fetch: (request: Request) => Promise<Response> }, path: string, user: string) =>
-  c.fetch(
-    request(path, user, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-    }),
-  );
-
 const READ = { annotations: { readOnlyHint: true }, handler: async () => ({ ok: true }) };
 
 function teamConnectors(onDelete: () => void = () => {}): Connector[] {
@@ -115,9 +105,6 @@ function deployment(options: Partial<Parameters<typeof createTestConnecta>[0]> =
     ...options,
   });
 }
-
-const searchText = async (c: ReturnType<typeof deployment>, path: string, user: User) =>
-  JSON.stringify(await rpc(c, path, user, "search_tools", { query: "team data", limit: 50 }));
 
 describe("maintainers and plain /mcp", () => {
   it("INV-4: an open deployment keeps anonymous /mcp and answers every pool with the 404", async () => {
@@ -265,56 +252,6 @@ describe("maintainers and plain /mcp", () => {
       expect(paged.isError, path).toBe(true);
     }
     await c.close();
-  });
-
-  it("INV-5: isolates personal vault entries while shared auth stays editable", async () => {
-    const personal = api("personal", {
-      description: "Personal connection",
-      authScope: "personal",
-      credential: { label: "Personal token" },
-      tools: [],
-    });
-    personal.status = async (ctx) => {
-      const value = await ctx.credential?.get();
-      return value ? { state: "ok", message: value.slice(-4) } : { state: "auth_required" };
-    };
-    const shared = api("shared", {
-      description: "Shared connection",
-      credential: { label: "Shared token" },
-      tools: [],
-    });
-    const connecta = createTestConnecta({
-      connectors: [personal, shared],
-      auth: users(),
-      maintainers: ["alice", "bob"],
-      vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const put = (connector: string, user: "alice" | "bob", value: string) =>
-      connecta.fetch(
-        request(`/ui/credentials/${connector}`, user, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", Origin: BASE },
-          body: JSON.stringify({ value }),
-        }),
-      );
-
-    expect((await put("personal", "alice", "alice-secret-1111")).status).toBe(200);
-    expect((await put("personal", "bob", "bob-secret-2222")).status).toBe(200);
-    expect((await put("shared", "bob", "shared-secret-3333")).status).toBe(200);
-    expect((await put("shared", "alice", "shared-secret-4444")).status).toBe(200);
-
-    const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
-    const bob = await fetchTestUiDetails(connecta, request("/ui/data", "bob"));
-    const aliceData = (await alice.json()) as any;
-    const bobData = (await bob.json()) as any;
-    expect(aliceData.connectors.find((item: any) => item.id === "personal").credential.lastFour).toBe("1111");
-    expect(bobData.connectors.find((item: any) => item.id === "personal").credential.lastFour).toBe("2222");
-    expect(bobData.connectors.find((item: any) => item.id === "shared").credential.lastFour).toBe("4444");
-
-    const retired = await connecta.fetch(request("/ui/access-tokens", "alice"));
-    expect(retired.status).toBe(404);
   });
 });
 
@@ -487,87 +424,6 @@ describe("pool members connect their own personal connectors", () => {
 });
 
 describe("pools serve exactly their tools", () => {
-  it("INV-4: a member gets exactly the pool's tools, with no intersection or widening", async () => {
-    const deleted = { count: 0 };
-    const c = deployment({
-      connectors: teamConnectors(() => {
-        deleted.count++;
-      }),
-      pools: {
-        support: { tools: ["notes.search", "notes.fetch", "wiki"], members: ["alice", "bob"] },
-        whole: { tools: ["notes.search", "notes"], members: ["bob"] },
-      },
-    });
-    for (const user of ["alice", "bob"] as const) {
-      const pooled = await searchText(c, "/mcp/support", user);
-      expect(pooled).toContain("notes.search");
-      expect(pooled).toContain("notes.fetch");
-      expect(pooled).toContain("wiki.read");
-      expect(pooled).not.toContain("notes.delete");
-      expect(pooled).not.toContain("billing.invoices");
-    }
-    // A maintainer's own plain /mcp view never leaks into a pool.
-    const ungranted = await rpc(c, "/mcp/support", "alice", "call_destructive_tool", {
-      address: "notes.delete",
-      args: {},
-    });
-    const absent = await rpc(c, "/mcp/support", "alice", "call_destructive_tool", { address: "notes.purge", args: {} });
-    const code = (body: any) =>
-      body.result.structuredContent?.error?.code ?? JSON.parse(body.result.content[0].text).error.code;
-    expect(code(ungranted)).toBe("unknown_tool");
-    expect(code(absent)).toBe("unknown_tool");
-    expect(deleted.count).toBe(0);
-    // A bare id beside addresses for the same connector is the whole connector.
-    expect(await searchText(c, "/mcp/whole", "bob")).toContain("notes.delete");
-    expect(
-      (await rpc(c, "/mcp/whole", "bob", "call_destructive_tool", { address: "notes.delete", args: {} })).result
-        .isError,
-    ).toBeFalsy();
-    expect(deleted.count).toBe(1);
-    // Arguments never name a scope.
-    const forged = await rpc(c, "/mcp/support", "bob", "search_tools", {
-      query: "team data",
-      limit: 50,
-      pool: "whole",
-      connector: "billing",
-    });
-    expect(JSON.stringify(forged)).not.toContain("billing.invoices");
-    await c.close();
-  });
-
-  it("INV-3 INV-4: scopes a program's search and call through the pool's view", async () => {
-    const outcomes: Record<string, unknown> = {};
-    const deleted = { count: 0 };
-    const c = deployment({
-      connectors: teamConnectors(() => {
-        deleted.count++;
-      }),
-      pools: { support: { tools: ["notes.search", "notes.fetch", "wiki"], members: ["bob"] } },
-      executor: {
-        async execute(
-          _code: string,
-          providers: Array<{ name: string; fns: Record<string, (...args: any[]) => Promise<unknown>> }>,
-        ) {
-          const fns = providers.find((provider) => provider.name === "connecta")!.fns;
-          outcomes.search = await fns.search!({ query: "notes", limit: 20 });
-          try {
-            outcomes.call = await fns.call!("notes.delete", {});
-          } catch (error) {
-            outcomes.call = error instanceof InvocationFailure ? error.details : String(error);
-          }
-          return { result: null };
-        },
-      },
-    });
-    await rpc(c, "/mcp/support", "bob", "execute_code", { code: "return 1" });
-    const searched = JSON.stringify(outcomes.search);
-    expect(searched).toContain("notes.search");
-    expect(searched).not.toContain("notes.delete");
-    expect(outcomes.call).toMatchObject({ code: "unknown_tool" });
-    expect(deleted.count).toBe(0);
-    await c.close();
-  });
-
   it("keeps an exact pool grant across catalog drift, including a read-to-write change", async () => {
     let tools: ToolDef[] = [{ name: "read", annotations: { readOnlyHint: true } }];
     const calls: string[] = [];
@@ -599,32 +455,6 @@ describe("pools serve exactly their tools", () => {
     expect((await call("call_tool", "notes.read")).result.isError).toBe(true);
     expect((await call("call_destructive_tool", "notes.read")).result.isError).toBeFalsy();
     expect(calls).toEqual(["read", "read"]);
-    await c.close();
-  });
-
-  it("INV-4: answers a non-member, an undeclared pool, and a non-maintainer at /mcp identically after auth", async () => {
-    const c = deployment({
-      pools: {
-        closed: { tools: ["wiki"], members: ["carol"] },
-        open: { tools: ["wiki"], members: ["bob"] },
-      },
-    });
-    const bodies = new Set<string>();
-    for (const path of ["/mcp/missing", "/mcp/closed", "/mcp"]) {
-      const response = await listTools(c, path, "bob");
-      expect(response.status, path).toBe(404);
-      bodies.add(JSON.stringify(await wire(response)));
-    }
-    expect(bodies.size).toBe(1);
-    expect((await listTools(c, "/mcp/open", "bob")).status).toBe(200);
-    const unauthenticated = await c.fetch(
-      new Request(`${BASE}/mcp/closed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      }),
-    );
-    expect(unauthenticated.status).toBe(401);
     await c.close();
   });
 });

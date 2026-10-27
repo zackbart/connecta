@@ -2698,8 +2698,10 @@ The encoding lattice is exactly this, and anything outside it is out of scope:
 
 [Decision 0007](https://github.com/zackbart/connecta/blob/main/decisions/0007-agent-pool-layout.md)
 explains the pool layout; [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)
-explains pools as the access model. `test/identity-scope.test.ts` checks identity
-boundaries, and `src/storage/keys.ts` owns credential key families.
+explains pools as the access model. `test/identity-write-journey.node.test.ts`
+checks real HTTP identity, pool and personal credential isolation;
+`test/identity-scope.test.ts` retains handoff, callback and admission-revocation
+fault probes. `src/storage/keys.ts` owns credential key families.
 
 Inbound adapters live in [src/auth](https://github.com/zackbart/connecta/tree/main/src/auth);
 [auth routes](https://github.com/zackbart/connecta/blob/main/src/routes/oauth.ts)

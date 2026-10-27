@@ -186,8 +186,8 @@
           "title": "uses the trusted Worker identity as ambient operator auth"
         },
         {
-          "file": "test/identity-scope.test.ts",
-          "title": "INV-4: answers a non-member, an undeclared pool, and a non-maintainer at /mcp identically after auth"
+          "file": "test/identity-write-journey.node.test.ts",
+          "title": "INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only their pool, write once, reconcile and keep payloads private"
         },
         {
           "file": "test/maintainers.test.ts",
@@ -340,12 +340,12 @@
           "title": "INV-1: fails closed for unannotated and contradictory tool definitions"
         },
         {
-          "file": "test/program-writes.test.ts",
-          "title": "INV-2: runs a program write on a writable endpoint, recorded as an ordinary call"
+          "file": "test/identity-write-journey.node.test.ts",
+          "title": "INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only their pool, write once, reconcile and keep payloads private"
         },
         {
-          "file": "test/program-writes.test.ts",
-          "title": "INV-2 INV-4 INV-9: a read-only deployment omits writes from search and refuses them, and a pool can reopen them"
+          "file": "test/identity-write-journey.node.test.ts",
+          "title": "INV-2 INV-4 INV-9: an explicitly writable pool reopens a read-only deployment while connector policy still refuses sends"
         },
         {
           "file": "test/connector-read-only.test.ts",
@@ -376,8 +376,8 @@
           "title": "INV-5 INV-6 INV-9: protects oneOf disagreeing sensitivity in MCP approval and uncertainty envelopes"
         },
         {
-          "file": "test/program-writes.test.ts",
-          "title": "INV-5 INV-6 INV-9: caught writes retain safe nested properties echoes and original-argument guidance"
+          "file": "test/identity-write-journey.node.test.ts",
+          "title": "INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only their pool, write once, reconcile and keep payloads private"
         }
       ]
     },

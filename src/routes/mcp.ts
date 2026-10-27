@@ -312,7 +312,7 @@ function scopedToBody(
  * The request's admission permit, owned by its Scope.
  *
  * Admission goes through the controller's Promise rather than its Effect
- * program (`acquireScoped`), on purpose. The pool is shared by every request
+ * program, on purpose. The pool is shared by every request
  * in the isolate, and a queued request is handed its permit from inside the
  * request whose body just ended. A fiber resumed there would authorize and
  * serve this request in that one's I/O context, which workerd refuses;
