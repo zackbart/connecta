@@ -1,10 +1,6 @@
 // Node-only: reads provider folders and documentation/providers.md from disk.
 import { generatedProblems } from "../scripts/drift-validate.mjs";
-//
-// Applies decision 0011's provider standard to every provider folder. A
-// provider listed in `PENDING` (test/provider-standard.ts) is exempt from the
-// step it has not landed, and must still fail that step. Every other folder,
-// including any created after the list, meets the whole standard.
+// Applies the current provider standard to every maintained provider folder.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13,9 +9,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { VendorErrors } from "../src/http/errors.js";
 import type { ConnectorContext } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
-import baseline from "./provider-pending-baseline.json";
 import {
-  PENDING,
   authoredTools,
   driftViolations,
   evidenceViolations,
@@ -27,7 +21,7 @@ import {
 import { authoredFixtures } from "./providers.generated.js";
 
 // Check the actual hatch constructor reached by every Google product fixture,
-// including products still awaiting step 2 and declarations through the kit.
+// through declarations in the kit.
 const googleBindings = vi.hoisted(() => {
   type Declaration = { connection: { provider: string }; index: object; binding?: { send?: object; index?: object } };
   const bindings = new WeakMap<object, { connection: object; index: object }>();
@@ -116,33 +110,25 @@ const folders = await Promise.all(
       read: (path) => (files.includes(path) ? readFileSync(join(directory, path), "utf8") : undefined),
       ...(factory?.definition.blocks ? { blockKeys: factory.definition.blocks.keys } : {}),
     };
-    // Hosted tools are the vendor's (P1); the S rules read surfaces connecta authors.
+    // The S rules read the tools Connecta authors.
     const createAuthored = authoredFixtures[name];
     const tools = await authoredTools(facts.kind, { name, ...(createAuthored ? { createAuthored } : {}) }, CONTEXT);
     return { facts, tools, vendors };
   }),
 );
 
-const stepOne = ({ facts }: (typeof folders)[number]) =>
+const folderViolations = ({ facts }: (typeof folders)[number]) =>
   [...layoutViolations(facts), ...evidenceViolations(facts, today), ...driftViolations(facts, today)].map(
     (finding) => `${facts.name} ${finding}`,
   );
-const stepTwo = ({ facts, tools }: (typeof folders)[number]) =>
+const guideAndSurfaceViolations = ({ facts, tools }: (typeof folders)[number]) =>
   [...guideViolations(facts, documentation), ...(tools ? surfaceViolations(tools) : [])].map(
     (finding) => `${facts.name} ${finding}`,
   );
 
 describe("the provider standard (decision 0011)", () => {
-  it("keeps the exemption inventory consistent with the pending providers", () => {
-    expect(baseline).toEqual({ step1: [...PENDING.step1].sort(), step2: [...PENDING.step2].sort() });
-  });
-  it("keeps one shrinking list of providers that have not landed a step", () => {
-    for (const name of PENDING.step1) expect(PENDING.step2.has(name), `${name} pending step 1`).toBe(true);
-    for (const name of PENDING.step2) expect(names, `${name} is listed but has no folder`).toContain(name);
-  });
-
-  it("holds every provider past step 1 to layout, evidence, drift and declared Retry-After facts", () => {
-    const found = folders.filter((folder) => !PENDING.step1.has(folder.facts.name)).flatMap(stepOne);
+  it("holds every provider to layout, evidence, drift and declared Retry-After facts", () => {
+    const found = folders.flatMap(folderViolations);
     expect(found).toEqual([]);
     for (const { facts, vendors } of folders) {
       expect(vendors.length, `${facts.name} exports its kit vendor error table`).toBeGreaterThan(0);
@@ -154,8 +140,8 @@ describe("the provider standard (decision 0011)", () => {
     }
   });
 
-  it("holds every provider past step 2 to the guide and surface rules (G, S)", () => {
-    const found = folders.filter((folder) => !PENDING.step2.has(folder.facts.name)).flatMap(stepTwo);
+  it("holds every provider to the guide and surface rules (G, S)", () => {
+    const found = folders.flatMap(guideAndSurfaceViolations);
     expect(found).toEqual([]);
     const index = {},
       other = {},
@@ -173,46 +159,7 @@ describe("the provider standard (decision 0011)", () => {
     ])
       expect(() => googleBindings.check(options)).toThrow("googleHatchBinding");
   });
-
-  it("fails while a listed provider already meets the step it is excused from", () => {
-    const stale: string[] = [];
-    for (const folder of folders) {
-      const { name } = folder.facts;
-      if (PENDING.step1.has(name) && stepOne(folder).length === 0) stale.push(`${name}: remove from PENDING.step1`);
-      if (PENDING.step2.has(name) && !PENDING.step1.has(name) && stepTwo(folder).length === 0) {
-        stale.push(`${name}: remove from PENDING.step2`);
-      }
-    }
-    expect(stale).toEqual([]);
-  });
 });
-
-/** A provider folder written to today's legacy shapes, as a new provider might copy them. */
-function legacy(): ProviderFacts {
-  const files: Record<string, string> = {
-    "index.ts": 'export const acme = asProviderFactory({ kind: "composed", create: () => api({ inputSchema }) });',
-    "SKILL.md":
-      '---\n{ "name": "acme", "instructionsHeading": "Acme instructions", "content": "guide" }\n---\n' +
-      "<!-- fragment: guide -->\n# Acme usage\n\nImport `acme` from `@zackbart/connecta/providers/acme`.\n<!-- endfragment -->\n",
-    "drift.json": JSON.stringify({
-      version: 1,
-      provider: "acme",
-      checks: [{ type: "manual", source: "https://acme.example/api", rationale: "Hand-written HTML." }],
-    }),
-    "fixtures.ts": "",
-    "skill.generated.ts": "",
-    "provider.test.ts": "",
-    "catalog.fixture.json": "[]",
-    "value-safety.candidates.json": "{}",
-  };
-  return {
-    name: "acme",
-    kind: "composed",
-    display: "Acme",
-    files: Object.keys(files).sort(),
-    read: (path) => files[path],
-  };
-}
 
 const DIGEST = `sha256:${"0".repeat(64)}`;
 
@@ -268,25 +215,7 @@ function standard(): ProviderFacts {
 }
 
 describe("the provider standard's rules", () => {
-  it("excuses no provider created after the list", () => {
-    expect(PENDING.step1.has("acme")).toBe(false);
-    expect(PENDING.step2.has("acme")).toBe(false);
-  });
-
-  it("rejects a new provider written to legacy shapes, in every rule family", () => {
-    const folder = legacy();
-    const found = [
-      ...layoutViolations(folder),
-      ...evidenceViolations(folder, today),
-      ...driftViolations(folder, today),
-      ...guideViolations(folder, ""),
-    ];
-    for (const rule of ["L1", "L2", "L3", "D1", "G1", "G2", "G3", "G4", "G7"]) {
-      expect(
-        found.some((finding) => finding.startsWith(`${rule}:`)),
-        rule,
-      ).toBe(true);
-    }
+  it("validates composed and Discovery evidence against its pins", () => {
     const base = standard();
     for (const [label, source, pin] of [
       [

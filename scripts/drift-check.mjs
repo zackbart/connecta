@@ -4,7 +4,7 @@ import { contractDigest } from "./drift-contract.mjs";
 // versioned drift.json records; no deployment module reads these records.
 // Version 2 (decision 0011, D; scripts/drift-record.mjs) reads
 // endpoint rows keyed by an `operation` from `generated.operations`. Version 1
-// stays readable for providers that have not landed their step 1.
+// endpoint/manual rows stay readable for historical drift records.
 // Reports are advisory (exit 0), including parser/network failures and required
 // manual reviews. --strict exits 1 for findings; invocation errors exit 2.
 // Only --record with an explicit --provider selection updates endpoint digests,
@@ -36,7 +36,7 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
  * @typedef {{type: "endpoints", specification: object, endpoints: object[], scopes?: string[]} |
  * {type: "versioned-endpoints", specifications: object, endpoints: object[]} |
  * {type: "manual", source: string, rationale: string, evidence?: object} |
- * {type: "openapi-index", source: "openapi.source.json"}} DriftCheck
+ * {type: "openapi-index", source: "evidence/openapi.json"}} DriftCheck
  * @typedef {{version: 1, provider: string, checks: DriftCheck[]}} DriftRecord
  *
  * Version 2 changes these, and every checker reads a v2 check through

@@ -1,5 +1,5 @@
-// Internal opt-in adapters for the standard hatch. No maintained provider opts
-// in until its separate step-2 migration. Inputs have crossed connection safety.
+// Internal opt-in adapters for the standard hatch. Inputs have crossed
+// connection safety.
 import { ConnectorCallError } from "../errors.js";
 
 export interface HatchPageAdapter {

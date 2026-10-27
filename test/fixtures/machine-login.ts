@@ -61,7 +61,7 @@ export function machineLogin(id: string) {
     },
     safety: () => ({ review: "Synthetic fixture items contain no stored secrets.", sensitiveFields: { names: [], choice: "drop" } }),
     probe: { operation: listItems, request: {}, describe: () => "Connected" },
-    guide: () => ({ content: "Read and create fixture items.", summary: "Fixture items" }),
+    guide: () => ({ context: [], summary: "Fixture items" }),
     tools: ({ connection }) => [
       read(connection, { name: "list_items", description: "List fixture items", input: Schema.Struct({}), output: Schema.Unknown,
         run: () => connection.send(listItems, {}).pipe(Effect.map(({ data }) => data)) }),

@@ -1,5 +1,5 @@
 // The shared value-safety harness (decision 0005, "Value safety"). Every REST
-// vendor runs it from its own `value-safety.node.test.ts` over its reviewed
+// vendor runs it from its own `provider.safety.node.test.ts` over its reviewed
 // table, its pinned index, and the candidates `providers:spec` derived from
 // the pinned spec. `reviewProblems` is pure, so `test/value-safety-harness`
 // can prove that a wrong table fails it. It fails on:
@@ -10,8 +10,8 @@
 // - a verdict without a reason, a redact verdict without paths, or a path
 //   outside the path language;
 // - a reviewed path the pinned response schema does not have (`providers:spec`
-//   stamps the paths that resolve; the table's `absent` field, or a legacy
-//   `value-safety.absent.json`, acknowledges shared paths an operation's
+//   stamps the paths that resolve; the table's `absent` field acknowledges
+//   shared paths an operation's
 //   schema lacks), or a stale stamp;
 // - a flagged response field no `redact` path, `keep`, vendor-wide field
 //   review, or scope map accounts for;
@@ -76,7 +76,7 @@ export interface Candidates {
   };
 }
 
-/** Table paths an operation's (or resource's) pinned schema lacks: the table's `absent`, or a legacy `value-safety.absent.json`. */
+/** Table paths an operation's (or resource's) pinned schema lacks: the table's `absent` field. */
 export interface Absent {
   operations?: Record<string, string[]>;
   resources?: Record<string, string[]>;
@@ -85,11 +85,11 @@ export interface Absent {
 export interface ValueSafetyReview {
   readonly table: ValueSafetyTable;
   readonly index: OperationIndex;
-  /** The provider's `openapi.source.json`. */
+  /** The provider's `evidence/openapi.json`. */
   readonly source: { digest: string; options?: { valueSafety?: unknown } };
-  /** The provider's `value-safety.candidates.json`. */
+  /** The provider's `evidence/value-safety.json`. */
   readonly candidates: Candidates;
-  /** A legacy `value-safety.absent.json`; defaults to the table's own `absent` field. */
+  /** Optional fault-probe override; defaults to the table's own `absent` field. */
   readonly absent?: Absent;
   /**
    * A flagged spec field as the path into the data a tool returns ("" for

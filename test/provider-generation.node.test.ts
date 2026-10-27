@@ -89,55 +89,6 @@ function repository() {
   return root;
 }
 
-/** Excuse a provider from both steps, as PENDING excuses the legacy providers. */
-function excuse(root: string, name: string, steps: readonly ("step1" | "step2")[] = ["step1", "step2"]) {
-  const path = join(root, "test/provider-pending-baseline.json");
-  let baseline = { step1: [] as string[], step2: [] as string[] };
-  try {
-    baseline = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    // The first excused provider creates the baseline.
-  }
-  for (const step of steps) baseline[step] = [...new Set([...baseline[step], name])].sort();
-  writeFileSync(path, JSON.stringify(baseline));
-}
-
-/** A provider written to the legacy shapes, excused from both steps. */
-function provider(root: string, name: string, node = false) {
-  excuse(root, name);
-  const folder = `src/providers/${name}`;
-  mkdirSync(join(root, folder));
-  write(
-    root,
-    `${folder}/index.ts`,
-    `import { skill } from "./skill.generated.js";
-export const factory = Object.assign((id: string, options: object) => ({ id, kind: "api", options, staticTools: [{ name: "list_items" }] }), {
-  definition: { name: ${JSON.stringify(name)}, title: ${JSON.stringify(name.toUpperCase())}, readme: ${JSON.stringify(`Vendor ${name}`)}, kind: "api", skill,
-    bundle: { baselineGzip: 17, note: ${JSON.stringify(`./providers/${name} reviewed baseline`)} } }
-});\n`,
-  );
-  write(
-    root,
-    `${folder}/SKILL.md`,
-    `---\n${JSON.stringify({ name, instructionsHeading: "Deployment instructions" })}\n---\n\n<!-- fragment: content -->\n  Keep spaces.\n\n<!-- endfragment -->\n\n<!-- fragment: footer -->\nTail without final newline<!-- endfragment -->\n`,
-  );
-  write(
-    root,
-    `${folder}/fixtures.ts`,
-    `import { factory } from "./index.js";
-export const fixture = { name: ${JSON.stringify(name)}, options: { purpose: "fixture" }, cases: [{ label: "default", options: {} }],
-  create(id = "fixture", overrides = {}) { return factory(id, { purpose: "fixture", ...overrides }); }
-};
-export const createAuthored = () => factory("fixture", {});\n`,
-  );
-  write(root, `${folder}/drift.json`, '{"kind":"manual","reason":"fixture"}\n');
-  write(
-    root,
-    `${folder}/provider${node ? ".node" : ""}.test.ts`,
-    node ? "// Node-only: fixture.\n" : "// Portable fixture.\n",
-  );
-}
-
 function snapshot(root: string, prefix = ""): Record<string, { content: string; mtime: number }> {
   const files: Record<string, { content: string; mtime: number }> = {};
   for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
@@ -172,7 +123,7 @@ describe("provider folder generation", () => {
   }
 }\n`,
     );
-    provider(root, "alpha");
+    standardProvider(root, "alpha");
     const result = run(root);
     expect(result.status, result.stderr).toBe(0);
     expect(read(root, "knip.jsonc")).toContain('        "src/providers/alpha/index.ts",');
@@ -183,10 +134,10 @@ describe("provider folder generation", () => {
 
   it("adds a provider to every generated membership without central edits and excludes _shared", () => {
     const root = repository();
-    provider(root, "alpha");
+    standardProvider(root, "alpha");
     const first = run(root);
     expect(first.status, first.stderr).toBe(0);
-    provider(root, "beta", true);
+    standardProvider(root, "beta", { node: true });
     const second = run(root);
     expect(second.status, second.stderr).toBe(0);
     const manifest = json(root, "package.json");
@@ -260,35 +211,34 @@ describe("provider folder generation", () => {
 
   it.each(["index.ts", "drift.json"])("rejects a missing required %s with a provider-specific error", (file) => {
     const root = repository();
-    provider(root, "alpha");
+    standardProvider(root, "alpha");
     unlinkSync(join(root, "src/providers/alpha", file));
     const before = snapshot(root);
     const result = run(root);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      `src/providers/alpha: missing required file ${file === "provider.test.ts" ? "provider.node.test.ts" : file}`,
-    );
+    expect(result.stderr).toContain(`src/providers/alpha: missing required file ${file}`);
     expect(snapshot(root)).toEqual(before);
   });
 
   it("checks each operation index against its pinned source offline and never regenerates it", async () => {
     const { buildOperationIndex, renderOpenApiModule, sha256 } = await generator();
     const root = repository();
-    provider(root, "alpha");
+    standardProvider(root, "alpha");
     expect(run(root).status).toBe(0);
     const document = JSON.stringify({ openapi: "3.0.0", info: { version: "1" }, paths: { "/v1/items": { get: {} } } });
     const source = { url: "https://vendor.example/openapi.json", revision: "r1", digest: sha256(document) };
-    write(root, "src/providers/alpha/openapi.source.json", JSON.stringify(source));
+    write(root, "src/providers/alpha/evidence/openapi.json", JSON.stringify(source));
     const stale = run(root, true);
     expect(stale.status).toBe(1);
     expect(stale.stderr).toContain("Operation indexes differ from their OpenAPI pins (run providers:spec)");
     expect(stale.stderr).toContain("src/providers/alpha/openapi.generated.ts");
     const generated = renderOpenApiModule(buildOperationIndex(JSON.parse(document), source), source);
     write(root, "src/providers/alpha/openapi.generated.ts", generated);
+    expect(run(root).status).toBe(0);
     expect(run(root, true).status).toBe(0);
-    write(root, "src/providers/alpha/openapi.source.json", JSON.stringify({ ...source, options: { depth: 1 } }));
+    write(root, "src/providers/alpha/evidence/openapi.json", JSON.stringify({ ...source, options: { depth: 1 } }));
     expect(run(root, true).stderr).toContain("src/providers/alpha/openapi.generated.ts");
-    write(root, "src/providers/alpha/openapi.source.json", JSON.stringify({ ...source, revision: "r2" }));
+    write(root, "src/providers/alpha/evidence/openapi.json", JSON.stringify({ ...source, revision: "r2" }));
     const before = snapshot(root);
     const moved = run(root, true);
     expect(moved.status).toBe(1);
@@ -301,7 +251,7 @@ describe("provider folder generation", () => {
 });
 
 interface StandardOptions {
-  kind?: "api";
+  node?: boolean;
   /** TypeScript spread into the definition: blocks and kit. */
   definition?: string;
   skill?: string;
@@ -309,7 +259,7 @@ interface StandardOptions {
   files?: Record<string, string>;
 }
 
-/** A provider past both steps: a standard guide, a version-2 drift record, and its providers.md section. */
+/** One current-format provider fixture for discovery, guide, drift and package generation. */
 // Standard providers declare their error meanings and idempotency fact for the Conventions.
 const KIT_FACTS = `errors: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] }, idempotencyKey: false`;
 const DEFAULT_KIT = `kit: { operations: [], ${KIT_FACTS} },`;
@@ -323,7 +273,7 @@ function standardProvider(root: string, name: string, options: StandardOptions =
     `import { skill } from "./skill.generated.js";
 export const factory = Object.assign((id: string) => ({ id }), {
   definition: { name: ${JSON.stringify(name)}, title: ${JSON.stringify(name.toUpperCase())}, readme: ${JSON.stringify(`Vendor ${name}`)},
-    kind: ${JSON.stringify(options.kind ?? "api")}, skill, bundle: { baselineGzip: 17 }, ${options.definition ?? DEFAULT_KIT} }
+    kind: "api", skill, bundle: { baselineGzip: 17, note: ${JSON.stringify(`./providers/${name} reviewed baseline`)} }, ${options.definition ?? DEFAULT_KIT} }
 });\n`,
   );
   write(
@@ -358,7 +308,13 @@ export const createAuthored = () => ({ staticTools: [{ name: "get_item", inputSc
       ],
     }),
   );
-  write(root, `${folder}/provider.test.ts`, "// Portable fixture.\n");
+  write(root, `${folder}/api.ts`, "");
+  write(root, `${folder}/tools.ts`, "");
+  write(
+    root,
+    `${folder}/provider${options.node ? ".node" : ""}.test.ts`,
+    options.node ? "// Node-only: fixture.\n" : "// Portable fixture.\n",
+  );
   for (const [path, content] of Object.entries(options.files ?? {})) write(root, `${folder}/${path}`, content);
   mkdirSync(join(root, "documentation"), { recursive: true });
   const docs = join(root, "documentation/providers.md");
@@ -400,7 +356,7 @@ describe("decision 0011 guides and drift records", () => {
       },
       "D4: checks[0] entries are keyed by an operation in generated.operations",
     ],
-  ])("refuses %s past its step before writing anything", (_label, options, finding) => {
+  ])("refuses %s before writing anything", (_label, options, finding) => {
     const root = repository();
     standardProvider(root, "alpha", options);
     const before = snapshot(root);
@@ -581,35 +537,27 @@ export const createAuthored = () => ({ staticTools: [
     expect(run(root, true).status).toBe(0);
   });
 
-  it("refuses a version-1 record past step 1, and excuses G only while step 2 is pending", () => {
+  it("refuses invalid drift and guide inputs for every provider before writing", () => {
     const root = repository();
     standardProvider(root, "alpha");
-    write(root, "src/providers/alpha/drift.json", '{"version":1,"provider":"alpha","checks":[]}\n');
-    const result = run(root);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("providers/alpha: D1: drift.json needs version 2 and this provider's name");
-    // Excused from step 1 only: D waits, and a legacy guide is still G's business.
-    excuse(root, "alpha", ["step1"]);
-    expect(run(root).status).toBe(0);
-    write(
-      root,
-      "src/providers/alpha/SKILL.md",
-      read(root, "src/providers/alpha/SKILL.md").replace("## Identity", "# Identity"),
-    );
-    expect(run(root).stderr).toContain("providers/alpha: G3: SKILL.md headings start at ##");
-    // Excused from step 2 as well: the fragment guide and its parser stay.
-    excuse(root, "alpha", ["step2"]);
-    write(
-      root,
-      "src/providers/alpha/SKILL.md",
-      `---\n${JSON.stringify({ name: "alpha", instructionsHeading: "Notes" })}\n---\n<!-- fragment: content -->\n# Legacy\n<!-- endfragment -->\n`,
-    );
-    expect(run(root).status).toBe(0);
-    expect(generatedSkill(root, "alpha")).toEqual({
-      content: "# Legacy\n",
-      instructionsHeading: "Notes",
-      fragments: { content: "# Legacy\n" },
-    });
+    const drift = read(root, "src/providers/alpha/drift.json");
+    const guide = read(root, "src/providers/alpha/SKILL.md");
+    for (const [file, content, finding] of [
+      ["drift.json", "broken", "drift.json must contain valid JSON"],
+      ["drift.json", JSON.stringify({ version: 1, provider: "alpha", checks: [] }), "D1: drift.json needs version 2"],
+      ["SKILL.md", guide.replace("## Identity", "# Identity"), "G3: SKILL.md headings start at ##"],
+    ]) {
+      write(root, `src/providers/alpha/${file}`, content!);
+      const before = snapshot(root);
+      for (const check of [false, true]) {
+        const result = run(root, check);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain(`providers/alpha: ${finding}`);
+        expect(snapshot(root)).toEqual(before);
+      }
+      write(root, "src/providers/alpha/drift.json", drift);
+      write(root, "src/providers/alpha/SKILL.md", guide);
+    }
   });
 });
 
@@ -1544,7 +1492,6 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     );
     const candidates = JSON.parse(readFileSync(join(directory, "evidence/value-safety.json"), "utf8"));
     expect(candidates).toMatchObject({ digest: pin.digest, reviewed: { operations: { "GET /v1/keys": ["secret"] } } });
-    expect(readdirSync(directory)).not.toContain("value-safety.candidates.json");
     expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
     // Without its absent acknowledgement, a path the schema lacks fails the review.
     const unacknowledged = folder({ "evidence/openapi.json": JSON.stringify(pin), "safety.ts": table(false) });
@@ -1556,7 +1503,6 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     await expect(specProvider(provider, { file })).rejects.toThrow("does not match the pinned");
     await specProvider(provider, { file, record: true });
     expect(JSON.parse(readFileSync(join(directory, "evidence/openapi.json"), "utf8")).digest).toBe(sha256(moved));
-    expect(readdirSync(directory)).not.toContain("openapi.source.json");
   });
 
   it("compiles a vendored document offline and moves its pin only by review", async () => {
@@ -1614,8 +1560,6 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     await expect(specProvider(provider, { record: true })).rejects.toThrow("a vendored pin moves by review");
     unlinkSync(join(directory, "evidence/openapi.document.json"));
     await expect(readOpenApiSource(directory)).rejects.toThrow("evidence/openapi.document.json is missing");
-    const legacy = folder({ "openapi.source.json": JSON.stringify(pin) });
-    await expect(readOpenApiSource(legacy.directory)).rejects.toThrow("vendored is true, beside");
   });
 
   it("reads a vendored index as stale once its conversion document changes", async () => {

@@ -1,15 +1,19 @@
 ---
 name: release
-description: Cut a connecta release - assemble .changes/ fragments into CHANGELOG.md, run release:check, tag, and publish a GitHub Release. Use when asked to release, bump the version, or assemble the changelog. Nothing publishes until 0.35.0 is complete.
+description: Cut a connecta release - assemble .changes/ fragments into CHANGELOG.md, run release:check, tag, and publish a GitHub Release. Use when asked to release, bump the version, or assemble the changelog.
 ---
 
 # Release connecta
 
-**Stop first.** Under the [#703 rework](https://github.com/zackbart/connecta/issues/703),
-deployments, advisory publication, and npm publishing wait until Phase 5 ends.
+Publishing requires the owner's explicit authorization for the selected release.
+Authorization already given in the session remains valid; do not request it
+again. The completed [#703 rework](https://github.com/zackbart/connecta/issues/703)
+is historical, not a current phase gate. Keep release, deployment and advisory
+publication within the scope the owner authorized.
+
 Publishing a GitHub Release runs [publish.yml](../../../.github/workflows/publish.yml),
-which publishes to npm. Do not tag or publish without the owner's explicit
-go-ahead for this release.
+which publishes both `@zackbart/connecta-eve` and `@zackbart/connecta` to npm.
+They are already published packages and share every release version and tag.
 
 ## Inputs
 
@@ -22,21 +26,14 @@ go-ahead for this release.
   Assembly keeps the final text in `CHANGELOG.md`; do not commit a duplicate
   release-note input.
 
-## First helper publish: owner action at Phase 5
+## Publishing prerequisite
 
-Do this only at release time, after Phase 5 and the owner's explicit release
-go-ahead. A brand-new package cannot have a trusted publisher until it exists
-on npm. The owner must first publish `@zackbart/connecta-eve` manually using
-npm login and 2FA; a placeholder such as `0.0.0`, deprecated afterwards, avoids
-consuming the intended joint release version. Then add its trusted publisher
-for `zackbart/connecta`, workflow filename `publish.yml`, no more than two days
-before its first workflow publish. npm requires a new configuration's first
-successful publish within two days; see [trusted publisher setup and expiry](https://docs.npmjs.com/trusted-publishers/).
-Confirm core's trusted publisher is configured for that workflow too.
-
-If the manual bootstrap publishes the intended release version itself, the
-workflow skips it. The helper's trusted publisher will first be exercised at
-the next release; time its configuration for that publish instead.
+Both packages need npm trusted publishing configured for `zackbart/connecta`,
+workflow `publish.yml`. Confirm that configuration when preparing a release;
+initial package creation and the first-helper bootstrap are complete. If a
+publish reports a trusted-publisher configuration problem, the owner must repair
+that account setting before retrying the same release. Do not create a placeholder
+version or bump either package to work around a failed publish.
 
 ## Steps
 

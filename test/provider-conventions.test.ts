@@ -44,9 +44,8 @@
 //       program can project a result without first fetching one to look at.
 //   H9  Every read projects — the payload flattened, renamed, plan and
 //       presentation noise dropped — and surfaces what it dropped, including a
-//       provider's own truncation and the id needed to fetch the rest. `raw:
-//       true` exists wherever the projection loses something recoverable.
-//       After step 2, S6 replaces raw with a wider projection or S1 hatch.
+//       provider's own truncation and the id needed to fetch the rest. S6
+//       recovers omitted data through a wider projection or S1 hatch.
 //   H10 One pagination convention per connector: an explicit page argument, an
 //       opaque cursor passed back verbatim, a default page size below the
 //       provider maximum, and exactly one branchable `hasMore`-shaped signal.
@@ -72,11 +71,11 @@
 //       fallback), and nothing restating a schema.
 //   H14 Guarded raw access is accepted, not required — a finite surface may
 //       deliberately have none and say so. Where it exists it splits by safety
-//       class: read-only GET, always-destructive JSON mutation, and
+//       class: reviewed reads, always-destructive JSON mutation, and
 //       always-destructive upload, with connecta owning the method, host, auth,
 //       and framing. A *named* tool earns its permanent catalog bytes only by
-//       beating the hatch on schema, projection, or safety routing. After step
-//       2, S1 permits reviewed read-only POST too. The split is
+//       beating the hatch on schema, projection, or safety routing. S1 permits
+//       reviewed read-only POST. The split is
 //       mechanical, that judgment is review-only.
 //
 // Hosted-MCP proxies (the downstream owns names, descriptions, schemas, result
@@ -162,16 +161,15 @@
 // Decision 0011's provider standard adds S1–S6, one agent-facing shape across
 // api() surfaces (hatch names, paging, result envelope, errors, `fields`, and
 // privacy as deployment config), defined in `test/provider-standard.ts`. A
-// provider is held to them from its step-2 PR on; `PENDING.step2` lists those
-// still owed, and the Node-only `provider-standard.node.test.ts` holds the
-// folder rules and keeps that list shrinking.
+// provider meets these rules, and the Node-only
+// `provider-standard.node.test.ts` enforces the folder rules.
 import { describe, expect, it } from "vitest";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, compactDiscoverySchema } from "../src/catalog.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
-import { PENDING, authoredTools, surfaceViolations } from "./provider-standard.js";
+import { authoredTools, surfaceViolations } from "./provider-standard.js";
 import { authoredFixtures, providerFixtures, providerKinds } from "./providers.generated.js";
 
 const CONTEXT: ConnectorContext = {
@@ -377,11 +375,10 @@ const authoredProviders = await Promise.all(
 );
 
 describe("standard api() surfaces share one agent-facing shape (decision 0011, S1–S6)", () => {
-  it("holds every provider past its step-2 PR to the S rules, on this runtime", () => {
-    // Empty until the first step-2 PR lands; each later one joins by leaving PENDING.step2.
-    const found = authoredProviders
-      .filter(({ name, tools }) => tools !== undefined && !PENDING.step2.has(name))
-      .flatMap(({ name, tools }) => surfaceViolations(tools!).map((finding) => `${name} ${finding}`));
+  it("holds every provider to the S rules, on this runtime", () => {
+    const found = authoredProviders.flatMap(({ name, tools }) =>
+      surfaceViolations(tools!).map((finding) => `${name} ${finding}`),
+    );
     expect(found).toEqual([]);
   });
 });

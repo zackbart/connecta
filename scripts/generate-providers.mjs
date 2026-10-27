@@ -1,7 +1,7 @@
 // Folder discovery derives every provider list, and decision 0011's
 // generated artifacts: `skill.generated.ts` (the guide and its Conventions)
-// and `drift.json`'s `generated` block. A provider past step 1 must meet D,
-// and one past step 2 must meet G; this refuses a violation before writing.
+// and `drift.json`'s `generated` block. Every provider must meet D and G;
+// violations are refused before writing any output.
 import { readdirSync, readFileSync } from "node:fs";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -20,52 +20,6 @@ const STANDARD_RULES = fileURLToPath(new URL("../test/provider-standard.ts", imp
 
 function fail(name, message) {
   throw new Error(`providers/${name}: ${message}`);
-}
-
-/** A legacy fragment guide, read only for providers in PENDING.step2. */
-export function parseSkill(source, name) {
-  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
-  if (!frontmatter) fail(name, "SKILL.md requires JSON frontmatter between --- lines");
-  let metadata;
-  try {
-    metadata = JSON.parse(frontmatter[1]);
-  } catch {
-    fail(name, "SKILL.md frontmatter must be JSON (valid YAML)");
-  }
-  if (
-    metadata.name !== name ||
-    typeof metadata.instructionsHeading !== "string" ||
-    !metadata.instructionsHeading.trim()
-  ) {
-    fail(name, "SKILL.md frontmatter requires matching name and non-empty instructionsHeading");
-  }
-  const body = source.slice(frontmatter[0].length);
-  const fragments = {};
-  const pattern = /<!-- fragment: ([a-zA-Z][\w-]*) -->\r?\n([\s\S]*?)<!-- endfragment -->/g;
-  let cursor = 0;
-  for (const match of body.matchAll(pattern)) {
-    if (body.slice(cursor, match.index).trim()) fail(name, "SKILL.md text must be inside fragments");
-    if (Object.hasOwn(fragments, match[1])) fail(name, `duplicate skill fragment ${match[1]}`);
-    // Do not trim: these bytes are embedded in the existing rendered guides.
-    Object.defineProperty(fragments, match[1], { value: match[2], enumerable: true });
-    cursor = match.index + match[0].length;
-  }
-  if (!Object.keys(fragments).length || body.slice(cursor).trim()) {
-    fail(name, "SKILL.md requires well-formed fragments with no text outside them");
-  }
-  // A guide whose fragments serve different implementations names the one
-  // published as its content, so the published skill never mixes them.
-  if (
-    metadata.content !== undefined &&
-    (typeof metadata.content !== "string" || !Object.hasOwn(fragments, metadata.content))
-  ) {
-    fail(name, "SKILL.md frontmatter content must name one of its fragments");
-  }
-  return {
-    content: fragments[metadata.content ?? "content"] ?? Object.values(fragments).join(""),
-    instructionsHeading: metadata.instructionsHeading,
-    fragments,
-  };
 }
 
 function replaceEntries(entries, providers, makeEntry) {
@@ -219,21 +173,6 @@ async function importBundle(options) {
   return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`);
 }
 
-/**
- * The providers excused from each step: the committed baseline
- * `test/provider-standard.node.test.ts` holds equal to `PENDING`. A tree
- * without one excuses nothing.
- */
-async function pendingProviders(root) {
-  let baseline = { step1: [], step2: [] };
-  try {
-    baseline = JSON.parse(await readFile(join(root, "test", "provider-pending-baseline.json"), "utf8"));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  return { step1: new Set(baseline.step1), step2: new Set(baseline.step2) };
-}
-
 function walk(directory, prefix = "") {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory() ? walk(join(directory, entry.name), `${prefix}${entry.name}/`) : [`${prefix}${entry.name}`],
@@ -348,7 +287,6 @@ const skillModule = (skill) => `${generated}export const skill = ${JSON.stringif
 export async function generateProviders({ root = repositoryRoot, check = false } = {}) {
   root = await realpath(resolve(root));
   const providers = await discoverProviders(root);
-  const pending = await pendingProviders(root);
   const outputs = new Map();
   const skills = new Map();
   // Finish every skill before any provider definition is imported. A
@@ -356,14 +294,11 @@ export async function generateProviders({ root = repositoryRoot, check = false }
   // in until the definitions load.
   for (const provider of providers) {
     const source = await readFile(provider.skill, "utf8");
-    provider.standard = !pending.step2.has(provider.name);
-    if (provider.standard) {
-      provider.guide = parseGuide(source, provider.name);
-      provider.skillData = {
-        content: [provider.guide.body, "## Conventions"].filter(Boolean).join("\n\n"),
-        instructionsHeading: provider.guide.instructionsHeading,
-      };
-    } else provider.skillData = parseSkill(source, provider.name);
+    provider.guide = parseGuide(source, provider.name);
+    provider.skillData = {
+      content: [provider.guide.body, "## Conventions"].filter(Boolean).join("\n\n"),
+      instructionsHeading: provider.guide.instructionsHeading,
+    };
     const path = join(provider.directory, "skill.generated.ts");
     skills.set(path, skillModule(provider.skillData));
     outputs.set(path, skills.get(path));
@@ -387,25 +322,22 @@ export async function generateProviders({ root = repositoryRoot, check = false }
     }
     provider.driftData = drift;
     const keys = definition.blocks?.keys ?? [];
-    if (provider.standard) {
-      for (const key of provider.guide.keys) {
-        if (!keys.includes(key))
-          fail(provider.name, `G2: SKILL.md uses the when-block ${key}, which blocks.keys omits`);
-      }
-      const conventions = renderConventions({
-        name: provider.name,
-        kind: definition.kind,
-        kit: definition.kit,
-        tools: provider.tools,
-        keys,
-        toolBlocks: provider.conventionToolBlocks,
-      });
-      const skill = {
-        content: [provider.guide.body, conventions].filter(Boolean).join("\n\n"),
-        instructionsHeading: provider.guide.instructionsHeading,
-      };
-      outputs.set(join(provider.directory, "skill.generated.ts"), skillModule(skill));
+    for (const key of provider.guide.keys) {
+      if (!keys.includes(key)) fail(provider.name, `G2: SKILL.md uses the when-block ${key}, which blocks.keys omits`);
     }
+    const conventions = renderConventions({
+      name: provider.name,
+      kind: definition.kind,
+      kit: definition.kit,
+      tools: provider.tools,
+      keys,
+      toolBlocks: provider.conventionToolBlocks,
+    });
+    const skill = {
+      content: [provider.guide.body, conventions].filter(Boolean).join("\n\n"),
+      instructionsHeading: provider.guide.instructionsHeading,
+    };
+    outputs.set(join(provider.directory, "skill.generated.ts"), skillModule(skill));
     // drift.json version 2: tools write the lists and digests (D2).
     let driftText;
     if (drift?.version === DRIFT_VERSION) {
@@ -417,7 +349,7 @@ export async function generateProviders({ root = repositoryRoot, check = false }
       driftText = serializeDrift({ ...drift, generated: block });
       outputs.set(provider.drift, driftText);
     }
-    // Decision 0011's Enforcement: refuse D past step 1 and G past step 2.
+    // Every provider must meet the drift and guide rules (D, G).
     // D includes what providers:check cannot read (drift-validate.mjs); a new
     // endpoint row may await the contract `providers:check --record` writes.
     const files = walk(provider.directory).sort();
@@ -435,8 +367,8 @@ export async function generateProviders({ root = repositoryRoot, check = false }
       blockKeys: keys,
     };
     const found = [
-      ...(pending.step1.has(provider.name) ? [] : rules.driftViolations(facts, today, { recording: true })),
-      ...(provider.standard ? rules.guideViolations(facts, documentation) : []),
+      ...rules.driftViolations(facts, today, { recording: true }),
+      ...rules.guideViolations(facts, documentation),
     ];
     violations.push(...found.map((finding) => `providers/${provider.name}: ${finding}`));
   }

@@ -421,18 +421,20 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       const document = JSON.stringify({ openapi: "3.0.0", info: { version: "2026-01-01" }, paths: {} });
       const { createHash } = await import("node:crypto");
       const digest = `sha256:${createHash("sha256").update(document).digest("hex")}`;
-      await mkdir(join(directory, "acme"));
+      await mkdir(join(directory, "acme", "evidence"), { recursive: true });
+      const pin = JSON.stringify({ url: "https://vendor.example/v1/openapi.json", revision: "v1", digest });
+      await writeFile(join(directory, "acme", "evidence", "openapi.json"), pin);
       await writeFile(
         join(directory, "acme", "drift.json"),
         JSON.stringify({
-          version: 1,
+          version: 2,
           provider: "acme",
-          checks: [{ type: "openapi-index", source: "openapi.source.json" }],
+          generated: {
+            operations: [],
+            evidence: { "openapi.json": `sha256:${createHash("sha256").update(pin).digest("hex")}` },
+          },
+          checks: [{ type: "openapi-index", source: "evidence/openapi.json" }],
         }),
-      );
-      await writeFile(
-        join(directory, "acme", "openapi.source.json"),
-        JSON.stringify({ url: "https://vendor.example/v1/openapi.json", revision: "v1", digest }),
       );
       const spec = join(directory, "live.json");
       const run = () =>

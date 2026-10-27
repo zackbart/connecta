@@ -1266,20 +1266,16 @@ removed. Legacy hosted selectors fail at construction with the generic migration
 path. GitHub retains its scope-enforced App identity and exposes a bounded repository-read and release-write hatch plus local scope discovery, scoped data search and guarded merge.
 
 [Decision 0011](https://github.com/zackbart/connecta/blob/main/decisions/0011-provider-standard.md)
-records the provider standard now implemented by all 15 maintained providers. It fixes
+records the provider standard implemented by every maintained provider. It fixes
 one folder layout per kind and fixed evidence names. `drift.json` gets a
 generated block and the guide a generated Conventions section, and every
-`api()` surface gets one agent-facing shape. Providers completed two migration
-steps: onto the kit with unchanged output, then onto the standard surface.
-Both `PENDING.step1` and `PENDING.step2` in `test/provider-standard.ts` are empty;
-every maintained provider now meets the standard without a migration exemption.
-`test/provider-standard.node.test.ts` holds every maintained provider folder to the
-standard, and `test/provider-conventions.test.ts` checks the surface rules on
-Node. `providers:generate` writes the standard's derived parts and
-refuses a provider past step 1 that breaks the `drift.json` rules, or one past
-step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
-(operations from the kit's `ProviderKitFacts` and evidence digests), and a guide's `## Conventions`, rendered
-from the definition's declarations into `skill.generated.ts`.
+`api()` surface gets one agent-facing shape. Every maintained provider meets the
+standard without a migration exemption. `test/provider-standard.node.test.ts`
+holds every provider folder to it, and `test/provider-conventions.test.ts`
+checks the surface rules on Node. `providers:generate` refuses drift (D) and
+guide (G) violations before writing. It derives `drift.json` version 2's
+`generated` block from kit operations and evidence digests, and the guide's
+`## Conventions` from definition declarations into `skill.generated.ts`.
 The generator requires `fixtures.ts` to export `createAuthored()` with a
 nonempty offline `staticTools` catalog. Its input/output schemas derive one
 paging convention, including `get_*`, hatch search and details, excluding
@@ -1291,8 +1287,9 @@ reports a nonzero explicit refusal count with singular/plural wording and
 points to the actual prefixed details tool with method/path lookup; it never
 embeds the refusal table. Unreviewed operations remain refused.
 `ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
-with the definition's `blocks`. `providers:check` reads both record versions,
-reports a manifest operation no endpoint row records at the provider's level,
+with the definition's `blocks`. Maintained drift records use version 2;
+`providers:check` retains version-1 endpoint/manual record parsing for historical
+reports, while OpenAPI generation and checks use `evidence/openapi.json`. It reports a manifest operation no endpoint row records at the provider's level,
 and lists manual checks last verified more than 180 days ago. Its offline
 record validator, `scripts/drift-validate.mjs`, also gates `providers:generate`
 and the standard suite, so a record they accept is one `providers:check` reads.
@@ -1378,7 +1375,7 @@ schemaless and non-JSON responses declare no fields. Request shrinking and
 endpoint contract digests do not depend on this metadata.
 Fields remain optional additive metadata, so a previously compiled
 index without the source bytes remains usable without inventing a response
-contract. Vercel's step-2 pin review restores response metadata from the reviewed public
+contract. Vercel's pin includes response metadata from the reviewed public
 document; operations without declared response properties still refuse fields. Breeze's pin declares no response
 properties. GitHub's immutable official OpenAPI pin supplies its complete index and response fields; a reviewed repository allowlist controls dispatch. Natural queries with reviewed matches scope discovery to those matches and named-only operations; explicit paths and unmatched queries retain full-pin refusal discovery.
 `check:providers-generated` checks each index header against its source record
@@ -1437,14 +1434,12 @@ every vendor ships one reviewed table through one mechanism
    signing, webhooks, drains, transfer, claim, and invite codes). It is the
    union of the detectors Cloudflare and Vercel shipped first, and
    deliberately over-inclusive. `providers:spec` writes
-   `evidence/value-safety.json` (`value-safety.candidates.json` until the
-   provider's step 1) when the source record sets
+   `evidence/value-safety.json` when the source record sets
    `options.valueSafety` (vendor `operationWords`; Stripe's `expansions: false`
    skips id-or-object expansions, which are their own operations' candidates),
    stamped with the pinned digest, the detector format, and its options. The
    file is test evidence and never ships.
-2. **One reviewed verdict per candidate**, in the vendor's `safety.ts`
-   (`value-safety.ts` until its step 1):
+2. **One reviewed verdict per candidate**, in the vendor's `safety.ts`:
    `refuse` (the generic tools refuse it before transport, naming the
    operation and the reason), `redact` (reviewed field paths), or `safe`, each
    with a reason. Paths are dot paths into the data a tool returns: a list on
@@ -1629,14 +1624,13 @@ response schema can return (through `options.valueSafety.dataRoot` for an
 envelope such as Cloudflare's `result`), and every resource rule path
 something the resource's schema can return. It stamps the paths that resolve
 into the candidates file and fails on the rest, unless the table's `absent`
-field (`value-safety.absent.json` until the provider's step 1) acknowledges
+field acknowledges
 them with a reason (shared verdicts applied to operations whose schema lacks a
 path, or fields a schema leaves undeclared; such paths still apply at
 runtime).
 
 `test/fixtures/value-safety.ts` is the shared harness each vendor's
-`value-safety.node.test.ts` (`provider.safety.node.test.ts` after its step 1)
-runs; `reviewProblems` is pure, and
+`provider.safety.node.test.ts` runs; `reviewProblems` is pure, and
 `test/value-safety-harness.node.test.ts` proves wrong paths fail it. It fails
 on candidates from another pin, format, or option set; an unreviewed
 candidate; a verdict for an operation the index lacks; a table path the stamp
@@ -2266,8 +2260,7 @@ ordinary Promise-based Connector factory. The kit stays outside the root
 graph and its Effect types are internal. In each provider, `api.ts` declares
 the vendor and `tools.ts` the tools.
 
-Decision 0011's standard surface (Tithe.ly's step 2) adds four kit pieces.
-A `list` without the legacy `key` returns `{ items, page }`, with
+The standard `list` builder returns `{ items, page }`, with
 `page.nextCursor` only while `hasMore`, and the kit appends `limit` (the
 declared default and maximum), `cursor` and `fields` to the tool's filters;
 `read` and `get` take `fields: true`. `src/http/fields.ts` narrows after every
@@ -2509,8 +2502,8 @@ after repairing/deleting a corrupt key, restart every process/isolate to clear
 cached keys. Pre-upgrade cursors require a new first page.
 
 The helper derives connection metadata and probe messages from
-validated options and still accepts complete legacy usage guides for compatibility.
-All maintained providers have completed the standard-surface migration.
+validated options and renders every maintained guide through
+`ProviderContext.usageGuide`.
 Candidate checks can refuse before authentication while
 preserving the provider's exact diagnostic. Its optional `authScope(options)`
 selector fixes OAuth grant ownership from deployment mode at construction;
@@ -2612,7 +2605,7 @@ dispatch.
 
 The generator's `allSuccessResponses: true` option unions JSON response fields
 from every 2xx. Existing providers keep the first JSON success contract until
-their own reviewed regeneration; no committed provider index changes here.
+their own reviewed regeneration.
 
 `src/providers/_shared/google/hatch.ts` supplies JSON framing over the existing
 confined `Connection.sendPath`. It retains the hatch's origin/media guards,
@@ -2639,8 +2632,7 @@ For example, a direct value-mode result has outer `result.data`, the hatch's
 `result.data.page.nextCursor`, and vendor JSON at `result.data.data`:
 `call_tool({ address: "crm.forms_api_read", args: { path:
 "/forms/form_1/responses", cursor: previous.data.page.nextCursor },
-resultMode: "value" })`. This is an envelope illustration for an opted-in
-provider, not a claim that the Forms migration has shipped.
+resultMode: "value" })`. Google Forms uses this continuation envelope.
 
 `googleErrors(product, { standard: true })` declares the product's 404 meaning
 and uses common status fallbacks; revision-conflict meanings require a
@@ -2670,7 +2662,7 @@ Sheets declares its seven API methods in `src/providers/sheets/api.ts`; its
 kit tools retain the private digest-bound cell cursor, legacy A1 path encoding,
 and create/append recovery advice. Its projections and the Google failure
 classifier read fields by the names Google gave them, which the kit's parse pass
-keeps. Its catalog and guide stay unchanged in step 1.
+keeps.
 
 Google's request adapter also offers a reviewed binary send. It marks the
 operation `googleBytes` for the product's `binaryBodies` selector and forwards
@@ -2882,8 +2874,8 @@ result handling, reviewed value safety and the deployment privacy projection
 before paging or provider projections can read it. Read methods beyond GET
 and HEAD require a review. Construction fixes each write step's capacity;
 the guarded transport reserves it before preparation and the shared core
-decides the whole call's write outcome. Dedicated upload builders wait for
-the Google Drive migration in C.7.
+decides the whole call's write outcome. Drive uploads use write builders over
+reviewed raw-body sends.
 
 Reviewed path calls resolve their actual method and path through an indexed
 safety adapter; a provider-supplied template cannot bypass the policy.

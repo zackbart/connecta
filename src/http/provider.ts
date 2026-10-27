@@ -74,7 +74,7 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly idempotencyKey?: boolean;
   readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
-  /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
+  /** Preserve the static OAuth grant's write-401 diagnostic. */
   readonly oauthWrite401?: "grant";
   /** Renewable machine login, constructed outside every caller context. Exclusive with static OAuth. */
   readonly grant?: (
@@ -110,8 +110,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
         readonly request: unknown | ((options: Readonly<O>) => unknown);
       }
   );
-  /** Complete guides preserve legacy fragments and option-dependent lines. */
-  readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
+  /** Connection context rendered with the maintained guide and selected when-blocks. */
+  readonly guide: (options: Readonly<O>) => ProviderGuideInput;
   /** Pure construction-owned adjustment after the normal guide renderer; absent preserves its exact result. */
   readonly transformGuide?: (guide: ConnectorUsageGuide, options: Readonly<O>) => ConnectorUsageGuide;
   /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */
@@ -391,8 +391,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         throw new Error(
           `${metadata.title} declares idempotencyKey: ${idempotencyKey}, but its write tools ${idempotencyKey ? "send no" : "send an"} idempotency key.`,
         );
-      const usageGuide = guide(options);
-      const renderedGuide = "content" in usageGuide ? usageGuide : provider.usageGuide(usageGuide);
+      const renderedGuide = provider.usageGuide(guide(options));
       const connector = tracksEveryRequest(
         api(id, {
           ...(defaultCallAdmission
