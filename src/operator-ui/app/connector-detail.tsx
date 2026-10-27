@@ -14,7 +14,7 @@ import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
 import { ActivityPage } from "./activity.js";
 import { AuthScopeBadge, ToolSplit } from "./connectors.js";
 import { verdictFor } from "./problems.js";
-import { loadOperatorContract, stopConnectorReads } from "./store.js";
+import { refreshConnector, stopConnectorReads } from "./store.js";
 
 const TABS = ["tools", "connection", "activity"];
 export function ConnectorDetailPage({ state }: { state: OperatorState }) {
@@ -55,14 +55,21 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
           ) : null}
           {config?.description ? <p className="conn-description">{config.description}</p> : null}
         </div>
-        <Button onClick={() => void loadOperatorContract()} disabled={state.contractPhase === "loading"}>
+        <Button
+          onClick={() => void refreshConnector(id)}
+          disabled={!state.admissionValid || rawAuth?.status === "loading"}
+        >
           Refresh catalog
         </Button>
       </div>
       {!contract ? (
         <ContractState state={state} />
-      ) : !config || !live ? (
+      ) : !config ? (
         <StateBlock title="Connector unavailable">Not visible to you.</StateBlock>
+      ) : !live ? (
+        <StateBlock busy title="Loading connection…">
+          Waiting for connection details.
+        </StateBlock>
       ) : (
         <>
           <Tabs

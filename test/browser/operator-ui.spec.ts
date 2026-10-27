@@ -179,7 +179,11 @@ test.beforeAll(async () => {
         sendJson(response, 404, { error: "unknown connector" });
         return;
       }
-      sendJson(response, 200, connector);
+      const contract = await fixtureContract(served);
+      sendJson(response, 200, {
+        ...connector,
+        overlay: contract.live.connectors.find((row) => row.id === connector.id),
+      });
       return;
     }
     if (url.pathname === "/ui/oauth/oauth" && method === "POST") {
@@ -259,7 +263,7 @@ test("closes the opened tab when the identity changes mid-request", async ({ pag
   await expect.poll(() => tab.isClosed()).toBe(true);
 });
 
-for (const path of ["/ui/api/config", "/ui/connectors/oauth"]) {
+for (const path of ["/ui/api/config?live=cached", "/ui/connectors/oauth"]) {
   test(`INV-4 INV-7: switching identity aborts a slow ${path} and publishes only the next viewer`, async ({ page }) => {
     await openAuthenticated(page);
     await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
@@ -306,7 +310,7 @@ test("INV-7 INV-9: leaving a slow OAuth poll aborts it without replaying its sta
   await openAuthenticated(page, "/connectors/oauth#connection");
   let release!: () => void;
   const held = {
-    path: "/ui/api/config?connector=oauth",
+    path: "/ui/connectors/oauth",
     pending: new Promise<void>((resolve) => {
       release = resolve;
     }),
@@ -326,7 +330,7 @@ test("INV-7 INV-9: leaving a slow OAuth poll aborts it without replaying its sta
     release();
     await page.clock.runFor(30_000);
     await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-    expect(requests.filter((request) => request.path === held.path)).toHaveLength(1);
+    expect(requests.filter((request) => request.path === held.path)).toHaveLength(3);
     expect(
       requests.filter((request) => request.method === "POST" && request.path.startsWith("/ui/oauth/")),
     ).toHaveLength(1);
@@ -433,108 +437,51 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
   }
 });
 
-for (const ordering of ["late failure", "stalled detail"] as const) {
-  test(`INV-4 INV-10: OAuth poll preserves unrelated ${ordering} and bounded recovery`, async ({ page }) => {
-    const initial: UiData = {
-      ...data(),
-      connectors: [
-        ...data().connectors,
-        ...["tickets", "notes"].map((id) => ({
-          id,
-          title: id,
-          status: "ok" as const,
-          toolCount: 0,
-          tools: [],
-          oauth: false,
-        })),
-      ],
-    };
-    const contract = await fixtureContract(initial);
-    let active = false;
-    let polled = false;
-    let release!: () => void;
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let notesReads = 0;
-    let fullReads = 0;
-    let summaryReads = 0;
-    await page.clock.install();
-    await page.route("**/ui/api/config*", async (route) => {
-      const scoped = new URL(route.request().url()).searchParams.has("connector");
-      if (scoped) polled = true;
-      else if (active) fullReads++;
-      await route.fulfill({
-        json: {
-          ...contract,
-          live: {
-            ...contract.live,
-            connectors: contract.live.connectors
-              .filter((row) => !scoped || row.id === "oauth")
-              .map((row) => (row.id === "oauth" && polled ? { ...row, status: "ok", problem: undefined } : row)),
-          },
-        },
-      });
-    });
-    await page.route("**/ui/data", async (route) => {
-      if (active) summaryReads++;
-      await route.fulfill({ json: initial });
-    });
-    await page.route("**/ui/connectors/*", async (route) => {
-      const id = new URL(route.request().url()).pathname.split("/").at(-1)!;
-      if (active && id === "notes" && ++notesReads === 1) await pending;
-      if (active && (id === "tickets" || id === "notes")) {
-        await route.fulfill({ status: 503, json: { error: "unavailable" } });
-      } else {
-        const row = initial.connectors.find((row) => row.id === id)!;
-        await route.fulfill({ json: id === "oauth" && polled ? { ...row, status: "ok" } : row });
-      }
-    });
-    try {
-      await openAuthenticated(page, "/connectors/oauth#connection");
-      await expect(page.getByRole("button", { name: "Connect CRM" })).toBeVisible();
-      active = true;
-      const popup = page.waitForEvent("popup");
-      await page.getByRole("button", { name: "Connect CRM" }).click();
-      await (await popup).close();
-      await expect.poll(() => notesReads).toBe(1);
-      await page.clock.runFor(2000);
-      await expect(page.locator("#connectorView .conn-head")).toContainText("Connected");
-      if (ordering === "stalled detail") {
-        await page.clock.runFor(13_000);
-        await expect(page.locator("#recoveryBanner")).toBeVisible();
-        await expect(page.locator("#recoveryRetry")).toHaveText("Retry");
-        await page.clock.runFor(60_000);
-        expect(fullReads).toBe(1);
-        expect(summaryReads).toBe(0);
-      } else {
-        const settled = page.waitForResponse((response) => response.url().endsWith("/ui/connectors/notes"));
-        release();
-        await (await settled).finished();
-        await page.title();
-        for (const [index, delay] of [2000, 2000, 4000, 8000].entries()) {
-          const next = page.waitForResponse((response) => response.url().endsWith("/ui/connectors/notes"));
-          await page.clock.runFor(delay);
-          await expect.poll(() => summaryReads).toBe(index + 1);
-          await (await next).finished();
-          await page.title();
-        }
-        await page.clock.runFor(60_000);
-        expect(summaryReads).toBe(4);
-        expect(fullReads).toBe(5);
-        await page.getByRole("link", { name: "Connectors", exact: true }).click();
-        for (const id of ["tickets", "notes"]) {
-          await expect(
-            page.locator(`.connector-card`).filter({ has: page.getByRole("link", { name: id, exact: true }) }),
-          ).toContainText("Unavailable");
-        }
-      }
-      expect(requests.filter((r) => r.method === "POST" && r.path.startsWith("/ui/oauth/"))).toHaveLength(1);
-    } finally {
-      release();
-    }
+test("INV-4 INV-10: OAuth polling publishes only its connector and leaves siblings alone", async ({ page }) => {
+  const initial = {
+    ...data(),
+    connectors: [
+      ...data().connectors,
+      { id: "tickets", title: "Tickets", status: "ok" as const, toolCount: 0, tools: [] },
+    ],
+  };
+  const contract = await fixtureContract(initial);
+  let active = false;
+  let detailReads = 0;
+  const reads: string[] = [];
+  await page.clock.install();
+  await page.route("**/ui/api/config*", (route) => {
+    if (active) reads.push("config");
+    return route.fulfill({ json: { ...contract, live: { ...contract.live, connectors: [] } } });
   });
-}
+  await page.route("**/ui/data", (route) => route.fulfill({ json: initial }));
+  await page.route("**/ui/connectors/*", (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-1)!;
+    if (active) reads.push(id);
+    const row = initial.connectors.find((c) => c.id === id)!;
+    const connected = active && id === "oauth" && ++detailReads >= 2;
+    const overlay = contract.live.connectors.find((c) => c.id === id)!;
+    return route.fulfill({
+      json: {
+        ...row,
+        ...(connected ? { status: "ok" } : {}),
+        overlay: { ...overlay, ...(connected ? { status: "ok", problem: undefined } : {}) },
+      },
+    });
+  });
+  await openAuthenticated(page, "/connectors/oauth#connection");
+  await expect(page.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
+  active = true;
+  const popup = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Connect CRM", exact: true }).click();
+  await (await popup).close();
+  await expect.poll(() => detailReads).toBe(1);
+  await page.clock.runFor(2000);
+  await expect(page.locator("#connectorView .conn-head")).toContainText("Connected");
+  await page.clock.runFor(60_000);
+  expect(reads).toEqual(["oauth", "oauth"]);
+  expect(requests.filter((r) => r.method === "POST" && r.path.startsWith("/ui/oauth/"))).toHaveLength(1);
+});
 
 for (const kind of ["oidc-only", "token-only", "both"] as const) {
   test(`INV-4 INV-6 INV-10: declared ${kind} agents show pools, credentials and admitted last-seen`, async ({

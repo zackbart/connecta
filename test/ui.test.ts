@@ -1,3 +1,4 @@
+import { ownStatus } from "../src/operator-record.js";
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityReadPage, ToolCallActivityEvent } from "../src/activity.js";
 import { activityHistory } from "../src/activity.js";
@@ -819,4 +820,65 @@ describe("isSafeIconHref", () => {
     expect(isSafeIconHref("//connecta.invalid:443/x")).toBe(false);
     expect(isSafeIconHref("//user@connecta.invalid/x")).toBe(false);
   });
+});
+
+it("INV-7: detail scopes finish independently and carry complete schemas and catalog facts", async () => {
+  let slowClosed = 0;
+  let fastClosed = 0;
+  const slow: Connector = {
+    id: "slow",
+    listTools: async () => [],
+    callTool: async () => null,
+    status: (ctx) =>
+      new Promise((_resolve, reject) =>
+        ctx.signal!.addEventListener("abort", () => reject(ctx.signal!.reason), { once: true }),
+      ),
+    closeScope: async () => {
+      slowClosed++;
+    },
+  };
+  const fast: Connector = {
+    id: "fast",
+    callTool: async () => null,
+    status: async () => ownStatus({ state: "ok", registrationPath: "static" }),
+    listTools: async () => [
+      {
+        name: "read",
+        annotations: { readOnlyHint: true },
+        inputSchema: { type: "object", properties: { id: { type: "string" } } },
+        outputSchema: { type: "object", properties: { found: { type: "boolean" } } },
+      },
+    ],
+    closeScope: async () => {
+      fastClosed++;
+    },
+  };
+  const app = createTestConnecta({ connectors: [slow, fast], discovery: { probeTimeoutMs: 100 }, logger: "silent" });
+  try {
+    const blocked = app.fetch(new Request(`${BASE}/ui/connectors/slow`));
+    const response = await app.fetch(new Request(`${BASE}/ui/connectors/fast`));
+    expect(response.status).toBe(200);
+    const detail = (await response.json()) as { overlay: unknown };
+    expect(detail.overlay).toMatchObject({
+      id: "fast",
+      status: "ok",
+      auth: { registrationPath: "static" },
+      tools: [
+        {
+          address: "fast.read",
+          classification: "read",
+          inputSchema: { properties: { id: { type: "string" } } },
+          outputSchema: { properties: { found: { type: "boolean" } } },
+        },
+      ],
+      lastCall: null,
+    });
+    expect(fastClosed).toBe(1);
+    const failed = (await (await blocked).json()) as { status: string };
+    expect(failed.status).toBe("error");
+    expect(slowClosed).toBe(1);
+    expect(fastClosed).toBe(1);
+  } finally {
+    await app.close();
+  }
 });

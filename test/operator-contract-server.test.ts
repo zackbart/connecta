@@ -1,3 +1,6 @@
+import type { UiConnector } from "../src/operator-ui/model.js";
+import { z } from "zod";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
 // Operator contract v2 as the server serves it (#837 P6b,
 // decisions/0006-pools-are-the-access-model.md). Every member assertion runs
 // against a real `GET /ui/api/config` body, checked by
@@ -572,4 +575,124 @@ describe("operator contract v2 server", () => {
     expect((await send("bob", "/ui/oauth/wiki?mode=continue", { method: "POST" })).status).toBe(404);
     expect((await send("bob", "/ui/oauth/wiki", { method: "DELETE" })).status).toBe(404);
   });
+});
+
+describe("cached maintainer admission", () => {
+  it("INV-7 INV-10: admits without probing even a blocked personal connector or any person's status", async () => {
+    let probes = 0;
+    const connector = oauthConnector("crm", "personal");
+    connector.status = async () => {
+      probes++;
+      return stalled();
+    };
+    connector.listTools = async () => {
+      probes++;
+      return stalled();
+    };
+    const app = deploy({
+      connectors: [connector, wiki()],
+      auth: [people()],
+      maintainers: ["alice"],
+      pools: { team: { tools: ["crm"], members: ["bob", "lin"] } },
+    });
+    const send = sender(app);
+    const response = await send("alice", "/ui/api/config?live=cached");
+    expect(response.status).toBe(200);
+    const view = (await response.json()) as OperatorUiContract;
+    expect(view.live.connectors).toEqual([]);
+    expect(view.matrix.filter((cell) => cell.connectorId === "crm").map((cell) => cell.runsAs)).toEqual([
+      { kind: "personal", connectedMembers: 0, members: 1 },
+      { kind: "personal", connectedMembers: 0, members: 2 },
+    ]);
+    expect(probes).toBe(0);
+    const detail = await send("alice", "/ui/connectors/wiki");
+    expect(((await detail.json()) as { overlay: { tools: unknown[] } }).overlay.tools).toHaveLength(2);
+    expect(probes).toBe(0);
+  });
+
+  it("keeps the default v2 shape and the member projection unchanged", async () => {
+    const { send } = await team();
+    const normal = await read(send, "alice");
+    const cached = (await (await send("alice", "/ui/api/config?live=cached")).json()) as OperatorUiContract;
+    expect(Object.keys(cached)).toEqual(Object.keys(normal));
+    expect(cached.schemaVersion).toBe(2);
+    expect(normal.live.connectors).not.toHaveLength(0);
+    expect(cached.live.connectors).toEqual([]);
+    const member = await read(send, "bob");
+    expect(await (await send("bob", "/ui/api/config?live=cached")).json()).toEqual(member);
+  });
+
+  it("bounds essential token slots below the browser deadline and retains 503", async () => {
+    const memory = memoryStorage();
+    let broken = false;
+    const storage: KVStorage = {
+      ...memory,
+      get: (key) => (broken && key === accessTokenKeys.agent("assistant") ? stalled() : memory.get(key)),
+    };
+    const tokens = accessTokens(storage);
+    const app = deploy({
+      connectors: [],
+      auth: [people()],
+      maintainers: ["alice"],
+      agents: ["assistant"],
+      accessTokens: tokens,
+      storage,
+    });
+    broken = true;
+    const before = Date.now();
+    expect((await sender(app)("alice", "/ui/api/config?live=cached")).status).toBe(503);
+    expect(Date.now() - before).toBeLessThan(3000);
+  });
+});
+
+it("INV-7 INV-8: one legacy session and complete listing per connector per browser load", async () => {
+  const counts = new Map<string, number>();
+  const downstream = httpDownstream(
+    (server) =>
+      server.registerTool(
+        "search",
+        {
+          inputSchema: z.object({ query: z.string() }),
+          outputSchema: z.object({ found: z.boolean() }),
+          annotations: { readOnlyHint: true },
+        },
+        async () => ({ content: [], structuredContent: { found: true } }),
+      ),
+    {
+      capture: async (request) => {
+        const method =
+          request.method === "POST" ? ((await request.json()) as { method: string }).method : request.method;
+        counts.set(method, (counts.get(method) ?? 0) + 1);
+      },
+    },
+  );
+  const app = deploy({
+    connectors: Array.from({ length: 6 }, (_, i) =>
+      remoteMcp(`crm${i}`, {
+        url: downstream.url,
+        _transportFactory: downstream.transport,
+        versionNegotiation: "legacy",
+      }),
+    ),
+  });
+  const send = sender(app);
+  expect((await send(null, "/ui/api/config?live=cached")).status).toBe(200);
+  expect(counts.size).toBe(0);
+  expect((await send(null, "/ui/data")).status).toBe(200);
+  const details = await Promise.all(
+    Array.from(
+      { length: 6 },
+      async (_, i) => (await send(null, `/ui/connectors/crm${i}`)).json() as Promise<UiConnector>,
+    ),
+  );
+  for (const detail of details)
+    expect(detail.overlay!.tools[0]).toMatchObject({
+      classification: "read",
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      outputSchema: { type: "object", properties: { found: { type: "boolean" } } },
+    });
+  expect(counts.get("initialize")).toBe(6);
+  expect(counts.get("notifications/initialized")).toBe(6);
+  expect(counts.get("GET")).toBe(6);
+  expect(counts.get("tools/list")).toBe(6);
 });

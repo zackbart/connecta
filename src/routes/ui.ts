@@ -1,3 +1,4 @@
+import { withDeadlineEffect } from "../runtime/run.js";
 import { operatorAsset } from "../operator-ui/assets.js";
 import { operatorActivityContext } from "./activity-context.js";
 import { isSafeHttpsUrl } from "../branding.js";
@@ -20,7 +21,7 @@ import {
   type Authorized,
 } from "./operator.js";
 import { managesAgentTokens, mayManageConnector, privateJson, readsActivity, type RouteContext } from "./shared.js";
-import { routeUiConfig } from "./ui-config.js";
+import { routeUiConfig, scanOperatorActivity } from "./ui-config.js";
 import { uiData } from "./ui-data.js";
 
 /**
@@ -181,7 +182,14 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
       timeoutMs: opts.config.discovery.probeTimeoutMs,
       signal: request.signal,
     });
-    return privateJson({ ...data.connectors[0], permissions: permissions(connector) });
+    const detail = data.connectors[0]!;
+    if (detail.overlay)
+      yield* withDeadlineEffect(() => scanOperatorActivity(context, authz, registry, [detail.overlay!], []), {
+        timeoutMs: 500,
+        signal: request.signal,
+        timeoutError: new Error("Activity observation timed out."),
+      }).pipe(Effect.catch(() => Effect.succeed("unavailable" as const)));
+    return privateJson({ ...detail, permissions: permissions(connector) });
   });
 }
 

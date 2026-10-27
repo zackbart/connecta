@@ -1,3 +1,4 @@
+import { storedAuthObservation, withStoredAuth } from "../auth/stored-observation.js";
 import { Effect, Exit } from "effect";
 import { registerConnectorVocabulary } from "../operation-vocabulary.js";
 import { causeError, runEdge } from "../runtime/run.js";
@@ -571,5 +572,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       }
     });
   registerConnectorVocabulary(connector, opts.tools);
+  const storedAuth = oauth && storedAuthObservation(oauth);
+  if (storedAuth) withStoredAuth(connector, storedAuth);
   return connector;
 }

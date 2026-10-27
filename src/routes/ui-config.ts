@@ -1,3 +1,4 @@
+import { storedAuthObservation } from "../auth/stored-observation.js";
 import { agentDescriptions } from "../agent-description.js";
 import { readAgentAdmission } from "../agent-observation.js";
 // `GET /ui/api/config`: operator contract v2 (#837, decisions/0006), the
@@ -41,6 +42,9 @@ import { workspaceSubjectOf } from "../workspace-subject.js";
 import { authorized, refuse, scopeFor, serveOperator, type Answer, type Authorized } from "./operator.js";
 import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
 import { admitsMaintainer, mayManageConnector, privateJson, readsActivity, type RouteContext } from "./shared.js";
+
+const cachedMaintainers = new WeakSet<RouteContext>();
+const cachedMode = (context: RouteContext) => context.url.searchParams.get("live") === "cached";
 
 const attempt = <A>(operation: () => Promise<A>) => Effect.tryPromise({ try: operation, catch: (error) => error });
 const validName = (name: string) => recordedToolName({ name }) === name;
@@ -108,7 +112,7 @@ function bounded<A, B, E = never>(
   fallback: (error: unknown) => Effect.Effect<B, E>,
 ): Effect.Effect<A | B, E> {
   return withDeadlineEffect(() => read(), {
-    timeoutMs: context.opts.config.discovery.probeTimeoutMs,
+    timeoutMs: cachedMaintainers.has(context) ? 500 : context.opts.config.discovery.probeTimeoutMs,
     signal: context.request.signal,
     timeoutError: new Error("Operator config read timed out."),
   }).pipe(
@@ -214,7 +218,7 @@ const isTimestamp = (value: string) =>
  * declared agent's `lastSeenAt` from the rows this maintainer may see. Agent
  * rows are recorded under the access-token directory with the agent's name.
  */
-function scanActivity(
+export function scanOperatorActivity(
   context: RouteContext,
   authz: Authorized,
   registry: RegistryView,
@@ -332,6 +336,19 @@ function sharedSource(
     // Only a connector asking to be authorized has no grant; any other
     // state, a credential prompt or an error included, has one. A grant
     // carries no saved-at time of its own.
+    if (cachedMode(context)) {
+      const observe = storedAuthObservation(connector);
+      return observe
+        ? bounded(
+            context,
+            () =>
+              attempt(() => observe(opts.registry.contextFor(connector.id, context.baseUrl, {}))).pipe(
+                Effect.map((ok): SharedRunsAs => (ok ? { kind: "shared", source: "oauth", savedAt: null } : MISSING)),
+              ),
+            () => Effect.succeed(MISSING),
+          )
+        : Effect.succeed(MISSING);
+    }
     return Effect.succeed(
       row?.status === "auth_required" ? MISSING : { kind: "shared", source: "oauth", savedAt: null },
     );
@@ -373,6 +390,16 @@ function connectedPeople(
                       (metadata) => storedCredentialShape(credential, metadata?.fields ?? null).state === "valid",
                     ),
                   ),
+                () => Effect.succeed(false),
+              )
+            : false;
+        } else if (cachedMode(context)) {
+          const registry = opts.registry.scoped({ connectorIds: [connector.id], principalKey });
+          const observe = storedAuthObservation(connector);
+          ok = observe
+            ? yield* bounded(
+                context,
+                () => attempt(() => observe(registry.contextFor(connector.id, baseUrl, {}))),
                 () => Effect.succeed(false),
               )
             : false;
@@ -501,12 +528,19 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
     for (const person of [...opts.maintainers, ...[...opts.pools.values()].flatMap(humansOf)])
       people.set(referenceKey(person), person);
     const requestActivity = operatorActivityContext(context, authz);
+    const cached = cachedMode(context);
     const [rows, label, slots] = yield* Effect.all(
       [
-        Effect.forEach(visible, (c) => observe(context, registry, c, requestActivity), {
-          concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency),
-        }),
-        humanLabels(context, authz, [...people.values()]),
+        cached
+          ? Effect.succeed<OperatorConnectorOverlay[]>([])
+          : Effect.forEach(visible, (c) => observe(context, registry, c, requestActivity), {
+              concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency),
+            }),
+        bounded(
+          context,
+          () => humanLabels(context, authz, [...people.values()]),
+          () => Effect.succeed(() => null),
+        ),
         // Every declared agent's slot, exactly as GET /ui/access-tokens lists
         // it. Without them the agents list cannot be whole, so a failed read
         // fails the view rather than dropping agents from it.
@@ -555,7 +589,7 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
       token: tokenSlots.get(name) ?? null,
       lastSeenAt: null,
     }));
-    const activity = yield* scanActivity(context, authz, registry, rows, agents);
+    const activity = yield* scanOperatorActivity(context, authz, registry, rows, agents);
     let admissionsVisible = readsActivity(opts, authz) && activity !== "forbidden";
     // A configured read gate still applies when the history store has no list.
     if (admissionsVisible && activity === "unconfigured" && opts.config.activity?.readGate) {
@@ -789,7 +823,17 @@ function memberRead(
 function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
   return Effect.gen(function* () {
     const authz = yield* authorized(context);
-    if (admitsMaintainer(context.opts, authz)) return yield* maintainerRead(context, authz);
+    if (admitsMaintainer(context.opts, authz)) {
+      if (!cachedMode(context)) return yield* maintainerRead(context, authz);
+      cachedMaintainers.add(context);
+      // The entire metadata build stays below the browser admission deadline,
+      // even for a store that ignores cancellation or an unusually large roster.
+      return yield* withDeadlineEffect(() => maintainerRead(context, authz), {
+        timeoutMs: 5000,
+        signal: context.request.signal,
+        timeoutError: new Error("Operator metadata timed out."),
+      }).pipe(Effect.catch(() => refuse("operator metadata could not be read", 503)));
+    }
     const pools = memberPools(context, authz);
     if (pools.length > 0) return yield* memberRead(context, authz, pools);
     return yield* refuse("not found", 404);

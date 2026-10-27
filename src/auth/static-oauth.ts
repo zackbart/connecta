@@ -1,3 +1,4 @@
+import { withStoredAuth } from "./stored-observation.js";
 import type {
   AuthorizationServerMetadata,
   OAuthClientInformationContext,
@@ -1255,51 +1256,56 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     ) as Effect.Effect<void, unknown>;
   });
 
-  return {
-    status: retainAuthPartition(status, 0),
-    startAuth: retainAuthPartition(startAuth, 0),
-    disconnectAuth: retainAuthPartition(disconnectAuth, 0),
-    verifyState: retainAuthPartition(verifyState, 1),
-    verifyCallbackParameters: retainAuthPartition(
-      authMethod((params: URLSearchParams, _ctx: ConnectorContext) => authValue(() => callbackParametersMatch(params))),
-      1,
-    ),
-    verifyCallbackIssuer: retainAuthPartition(
-      authMethod((issuer: string | null, ctx: ConnectorContext) => {
-        return authValue<boolean>(() => {
-          const provider = callbackProviders.get(scopeOf(ctx));
-          if (!provider) return false;
-          provider.validateCallbackIssuer(issuer);
-          return true;
-        });
-      }),
-      1,
-    ),
-    consumeAuthError: retainAuthPartition(
-      authMethod((ctx: ConnectorContext) => {
-        return authFlow<void>(function* () {
-          const provider = callbackProviders.get(scopeOf(ctx));
-          callbackProviders.delete(scopeOf(ctx));
-          if (!provider)
-            throw new ConnectorCallError("connector_call_failed", "OAuth error callback matches no pending consent.");
-          (yield authInvoke(provider, "consumeAuthError", [])) as void;
-        });
-      }),
-      0,
-    ),
-    finishAuth: retainAuthPartition(finishAuth, 1),
-    access: (ctx) =>
-      bindRenewableGrant(
-        {
-          fetch: recordingFetch(
-            authMethod((input: string | URL, init?: RequestInit) => {
-              return authCall(authorizedFetch, [ctx, input, init]) as Effect.Effect<Response, unknown>;
-            }),
-          ),
-        },
-        grantFor(ctx),
+  return withStoredAuth(
+    {
+      status: retainAuthPartition(status, 0),
+      startAuth: retainAuthPartition(startAuth, 0),
+      disconnectAuth: retainAuthPartition(disconnectAuth, 0),
+      verifyState: retainAuthPartition(verifyState, 1),
+      verifyCallbackParameters: retainAuthPartition(
+        authMethod((params: URLSearchParams, _ctx: ConnectorContext) =>
+          authValue(() => callbackParametersMatch(params)),
+        ),
+        1,
       ),
-  };
+      verifyCallbackIssuer: retainAuthPartition(
+        authMethod((issuer: string | null, ctx: ConnectorContext) => {
+          return authValue<boolean>(() => {
+            const provider = callbackProviders.get(scopeOf(ctx));
+            if (!provider) return false;
+            provider.validateCallbackIssuer(issuer);
+            return true;
+          });
+        }),
+        1,
+      ),
+      consumeAuthError: retainAuthPartition(
+        authMethod((ctx: ConnectorContext) => {
+          return authFlow<void>(function* () {
+            const provider = callbackProviders.get(scopeOf(ctx));
+            callbackProviders.delete(scopeOf(ctx));
+            if (!provider)
+              throw new ConnectorCallError("connector_call_failed", "OAuth error callback matches no pending consent.");
+            (yield authInvoke(provider, "consumeAuthError", [])) as void;
+          });
+        }),
+        0,
+      ),
+      finishAuth: retainAuthPartition(finishAuth, 1),
+      access: (ctx) =>
+        bindRenewableGrant(
+          {
+            fetch: recordingFetch(
+              authMethod((input: string | URL, init?: RequestInit) => {
+                return authCall(authorizedFetch, [ctx, input, init]) as Effect.Effect<Response, unknown>;
+              }),
+            ),
+          },
+          grantFor(ctx),
+        ),
+    },
+    (ctx) => providerFor(ctx).storedAuthorization(settings.identity),
+  );
 }
 
 // Hook calls keep the existing owner partition pinned while their native

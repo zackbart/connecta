@@ -264,6 +264,12 @@ describe("operator config contract", () => {
       { at: "2026-10-08T01:00:00.000Z", outcome: "success" },
     ]);
     expect(data.live.activity).toBe("available");
+    for (const row of data.live.connectors) {
+      const response = await app.fetch(new Request(`${BASE}/ui/connectors/${row.id}`));
+      const detail = (await response.json()) as { overlay: { lastCall: unknown } };
+      expect(detail.overlay.lastCall).toEqual(row.lastCall);
+      expect(JSON.stringify(detail)).not.toContain("SENTINEL");
+    }
     expect(JSON.stringify(data)).not.toContain("SENTINEL");
   });
 

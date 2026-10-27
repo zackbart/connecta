@@ -18,6 +18,8 @@ let persistIdentityFailure = false;
 let reads: string[] = [];
 let failMetadata = false;
 let oauthFailed = false;
+let stalledConnector = false;
+let releaseConnector: (() => void) | undefined;
 
 test.beforeAll(async () => {
   server = createServer(async (incoming, outgoing) => {
@@ -66,6 +68,8 @@ test.beforeEach(async () => {
   rejectIdentity = false;
   persistIdentityFailure = false;
   oauthFailed = false;
+  stalledConnector = false;
+  releaseConnector = undefined;
   const storage = memoryStorage();
   const key = Buffer.alloc(32, 7).toString("base64");
   await new CredentialVault(storage, key).set("key", "saved-test-key", "operator");
@@ -83,6 +87,19 @@ test.beforeEach(async () => {
     storage,
     vault,
     connectors: [
+      {
+        id: "slow",
+        title: "Slow service",
+        listTools: async () => [],
+        callTool: async () => null,
+        status: async () => {
+          if (stalledConnector)
+            await new Promise<void>((resolve) => {
+              releaseConnector = resolve;
+            });
+          return { state: "ok" };
+        },
+      },
       {
         id: "key",
         title: "Key service",
@@ -108,7 +125,10 @@ test.beforeEach(async () => {
   });
 });
 
-test.afterEach(async () => app.close());
+test.afterEach(async () => {
+  releaseConnector?.();
+  await app.close();
+});
 test.afterAll(async () => new Promise<void>((resolve) => server.close(() => resolve())));
 
 async function open(page: Page) {
@@ -140,4 +160,22 @@ test("INV-4 INV-9: explicit Access Retry recovers and navigation sends only read
   expect(page.url()).toBe(document);
   expect(reads.filter((path) => path === "/connectors/oauth")).toHaveLength(documents);
   expect(reads.some((path) => path.startsWith("/ui/oauth/"))).toBe(false);
+});
+
+test("cached admission keeps the shell usable while one connector stalls; Refresh stays scoped", async ({ page }) => {
+  stalledConnector = true;
+  await page.goto(`${origin}/connectors`);
+  await expect(page.getByRole("link", { name: "Key service", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Slow service", exact: true })).toBeVisible();
+  await expect(page.locator("#recoveryBanner")).toHaveCount(0);
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  await page.getByRole("link", { name: "CRM", exact: true }).click();
+  await expect(page.locator("#connectorView .conn-head")).toContainText("Authorization needed");
+  const before = reads.length;
+  await page.getByRole("button", { name: "Refresh catalog", exact: true }).click();
+  await expect.poll(() => reads.slice(before).filter((p) => p === "/ui/connectors/oauth").length).toBe(1);
+  expect(reads.slice(before).filter((p) => p.startsWith("/ui/"))).toEqual(["/ui/connectors/oauth"]);
+  releaseConnector?.();
 });

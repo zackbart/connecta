@@ -134,6 +134,10 @@ function gate(notice: Notice | null = null, session: OperatorState["session"] = 
   identityReads.abort();
   identityReads = new AbortController();
   connectorPublications.clear();
+  for (const read of connectorReads.values()) read.controller.abort();
+  connectorReads.clear();
+  for (const retry of connectorRetries.values()) clearTimeout(retry.timer);
+  connectorRetries.clear();
   forgetNav();
   stopOAuthPolling();
   clearTimeout(returnTimer);
@@ -246,7 +250,7 @@ function connectionWrite(
  */
 function connectionWriteAllowed(write: NonNullable<ReturnType<typeof connectionWrite>>): boolean {
   const contract = state.contract;
-  if (!contract || state.role !== contract.role) return false;
+  if (!state.admissionValid || !contract || state.role !== contract.role) return false;
   if (contract.role === "maintainer") {
     return Boolean(contract.config?.connectors.some((connector) => connector.id === write.connectorId));
   }
@@ -388,7 +392,7 @@ async function fetchContract(
  * never runs for a member or while the role is unknown.
  */
 function maintainerNow(): boolean {
-  return state.role === "maintainer" && state.contract?.role === "maintainer";
+  return state.admissionValid && state.role === "maintainer" && state.contract?.role === "maintainer";
 }
 
 /**
@@ -420,6 +424,7 @@ function contractUnavailable(outcome: "network" | "refused"): void {
       gate: null,
       refreshing: false,
       contract: null,
+      admissionValid: false,
       contractPhase: "error",
       loadFailure: outcome === "network" ? "network" : null,
       ...(state.role === "member" ? memberUnavailable() : {}),
@@ -437,6 +442,7 @@ function contractUnavailable(outcome: "network" | "refused"): void {
 function memberUnavailable(): Partial<OperatorState> {
   return {
     contract: null,
+    admissionValid: false,
     contractPhase: "error",
     confirming: null,
     credentialEditing: null,
@@ -473,7 +479,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
   }
   if (!current()) return;
   if (!token && auth.kind !== "cloudflare-access") return gate(null);
-  const outcome = await fetchContract("/ui/api/config", token, signal);
+  const outcome = await fetchContract("/ui/api/config?live=cached", token, signal);
   if (!current()) return;
   if (outcome.kind === "session") return refuseSession(outcome.status);
   if (outcome.kind === "denied") return gate(null, "denied");
@@ -485,6 +491,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
       ...memberRefreshed(contract),
       contract,
       role: "member",
+      admissionValid: true,
       contractPhase: "ready",
       session: "ready",
       gate: null,
@@ -497,9 +504,10 @@ async function loadData(signal: AbortSignal): Promise<void> {
   // A maintainer's page waits for `/ui/data` too.
   set({
     ...contractSlotsRefreshed(contract),
-    contract: preservePolledRows(contract, publication),
+    contract: preserveDetailRows(contract),
     role: "maintainer",
-    contractPhase: "loading",
+    admissionValid: true,
+    contractPhase: "ready",
   });
   // Withheld: the role became unknown or changed; its own state says so.
   const sent = send("/ui/data", { signal, headers: requestHeaders(token), credentials: "same-origin" });
@@ -537,10 +545,13 @@ async function loadData(signal: AbortSignal): Promise<void> {
     gate: null,
     refreshing: false,
     loadFailure: null,
+    admissionValid: true,
+    contractPhase: "ready",
   });
-  // A passive recovery owns the whole matching catalog/auth cycle. Releasing
-  // its in-flight guard at the summary would let focus supersede slow reads.
-  await refreshSnapshot(false, undefined, signal, contract, publication);
+  // Admission is complete. Connector deadlines and coalescing now own the
+  // remaining reads, so a slow provider cannot make the shell stale.
+  resetRecovery(false);
+  await refreshSnapshot(undefined, signal, contract, publication);
 }
 
 /* Member actions, validated at dispatch ------------------------------------- */
@@ -672,22 +683,15 @@ let snapshotRevision = 0;
 // Full cycles own admission/recovery. Polls only supersede one connector's
 // publication, including a summary or detail that was already in flight.
 let snapshotReadRevision = 0;
-const connectorPublications = new Map<
-  string,
-  { revision: number; live: OperatorUiContractV2["live"]["connectors"][number] | undefined }
->();
+const connectorPublications = new Map<string, { revision: number }>();
 
-function preservePolledRows(contract: OperatorUiContractV2, publication: number): OperatorUiContractV2 {
+function preserveDetailRows(contract: OperatorUiContractV2): OperatorUiContractV2 {
+  const ids = new Set(contract.config?.connectors.map((c) => c.id));
+  const previous = new Map(state.contract?.live.connectors.map((row) => [row.id, row]));
+  for (const row of contract.live.connectors) if (!previous.has(row.id)) previous.set(row.id, row);
   return {
     ...contract,
-    live: {
-      ...contract.live,
-      connectors: contract.live.connectors.map((row) =>
-        (connectorPublications.get(row.id)?.revision ?? 0) > publication
-          ? (connectorPublications.get(row.id)?.live ?? row)
-          : row,
-      ),
-    },
+    live: { ...contract.live, connectors: [...previous.values()].filter((row) => ids.has(row.id)) },
   };
 }
 /**
@@ -696,8 +700,8 @@ function preservePolledRows(contract: OperatorUiContractV2, publication: number)
  * refresh: admit again from the top instead.
  */
 export function loadOperatorContract(): Promise<void> {
-  if (state.role !== "maintainer" || !state.data) return loadCurrent(true);
-  return guardedRecoveryRead((signal) => refreshSnapshot(false, undefined, signal), true);
+  if (!maintainerNow() || !state.data) return loadCurrent(true);
+  return guardedRecoveryRead((signal) => refreshSnapshot(undefined, signal), true);
 }
 
 /**
@@ -708,7 +712,6 @@ export function loadOperatorContract(): Promise<void> {
  * for it instead of running alongside.
  */
 async function refreshSnapshot(
-  quiet = false,
   connectorId?: string,
   pollSignal?: AbortSignal,
   preloaded?: OperatorUiContractV2,
@@ -723,138 +726,144 @@ async function refreshSnapshot(
   const identityCurrent = fence();
   const revision = snapshotRevision;
   const current = () => identityCurrent() && revision === snapshotRevision && !pollSignal?.aborted;
-  const data = state.data;
-  if (!data) return;
-  if (!quiet) set({ contractPhase: "loading" });
+  if (!state.data) return;
   let token;
   try {
     token = await sessionToken();
   } catch {
-    if (!current()) return;
-    gate(failure("Couldn't read your session. Retry."));
-    if (!connectorId) scheduleRecovery();
+    if (current()) gate(failure("Couldn't read your session. Retry."));
     return;
   }
   if (!current()) return;
   const signal = pollSignal ? AbortSignal.any([identityReads.signal, pollSignal]) : identityReads.signal;
-  const outcomes = new Map<string, DetailOutcome>();
-  let loadedContract: OperatorUiContractV2 | null | undefined = preloaded;
-  const publish = () => {
-    if (!current() || loadedContract === undefined) return;
-    if (connectorId && loadedContract && !outcomes.has(connectorId)) return;
-    // Publish each completed connector with its matching catalog facts. A slow
-    // provider leaves other rows usable; pending rows retain their last pair.
-    const publishable = new Map(
-      [...outcomes].filter(([id]) => (connectorPublications.get(id)?.revision ?? 0) <= publication),
-    );
-    const refreshed = connectorId
-      ? loadedContract
-        ? mergeConnectorContract(loadedContract, connectorId)
-        : state.contract
-      : loadedContract
-        ? preservePolledRows(loadedContract, publication)
-        : null;
-    const contract = refreshed
-      ? {
-          ...refreshed,
-          live: {
-            ...refreshed.live,
-            connectors: refreshed.live.connectors.map((live) =>
-              publishable.has(live.id)
-                ? live
-                : (state.contract?.live.connectors.find((previous) => previous.id === live.id) ?? live),
-            ),
-          },
-        }
-      : null;
+  if (!connectorId && !preloaded) {
+    set({ contractPhase: "loading" });
+    const outcome = await fetchContract("/ui/api/config?live=cached", token, signal);
+    if (!current()) return;
+    if (outcome.kind === "session") return refuseSession(outcome.status);
+    if (outcome.kind === "denied") return gate(null, "denied");
+    if (outcome.kind !== "contract") return contractUnavailable(outcome.kind);
+    if (resetOnRoleChange(outcome.contract)) return;
     set({
-      ...detailsPatch(publishable, quiet && !connectorId, contract),
-      contract,
-      contractPhase: contract ? "ready" : "error",
+      ...contractSlotsRefreshed(outcome.contract),
+      contract: preserveDetailRows(outcome.contract),
+      admissionValid: true,
+      contractPhase: "ready",
     });
-    if (connectorId) {
-      connectorPublications.set(connectorId, {
-        revision: publication,
-        live:
-          loadedContract?.live.connectors.find((row) => row.id === connectorId) ??
-          state.contract?.live.connectors.find((row) => row.id === connectorId),
-      });
-      const outcome = outcomes.get(connectorId);
+    // Only admission owns the page deadline. Each connector below owns its
+    // own timeout; a slow detail cannot withdraw successful admission.
+    resetRecovery(false);
+  }
+  if (!maintainerNow()) return;
+  const connectors = state.data.connectors.filter(
+    (c) =>
+      (!connectorId || c.id === connectorId) &&
+      state.contract?.config?.connectors.some((configured) => configured.id === c.id),
+  );
+  await Promise.all(
+    connectors.map(async (connector) => {
+      const outcome = await coalescedConnector(connector.id, token, signal);
       if (
-        !contract ||
-        outcome?.kind !== "detail" ||
-        outcome.detail.status === "error" ||
-        contract.live.connectors.find((row) => row.id === connectorId)?.status === "error"
+        !current() ||
+        signal.aborted ||
+        state.role !== "maintainer" ||
+        state.contract?.role !== "maintainer" ||
+        (connectorPublications.get(connector.id)?.revision ?? 0) > publication
       )
-        stopOAuthPolling(connectorId);
-    }
-  };
-  const connectors = data.connectors.filter((connector) => !connectorId || connector.id === connectorId);
-  let next = 0;
-  const worker = async () => {
-    while (next < connectors.length && current()) {
-      const connector = connectors[next++]!;
-      const outcome = await fetchConnector(connector.id, token, signal);
-      if (current()) {
-        outcomes.set(connector.id, outcome);
-        publish();
+        return;
+      if (outcome.kind === "local" && outcome.failure === "session") return refuseSession(401);
+      const outcomes = new Map([[connector.id, outcome]]);
+      let contract = state.contract;
+      const overlay = outcome.kind === "detail" ? outcome.detail.overlay : undefined;
+      if (contract && (overlay || outcome.kind !== "detail")) {
+        const rows = contract.live.connectors.filter((row) => row.id !== connector.id);
+        contract = {
+          ...contract,
+          live: {
+            ...contract.live,
+            connectors: [
+              ...rows,
+              overlay ?? {
+                id: connector.id,
+                status: "error",
+                problem: "connector_unavailable",
+                tools: [],
+                catalogAgeMs: null,
+                lastCall: state.contract?.live.connectors.find((row) => row.id === connector.id)?.lastCall ?? null,
+              },
+            ],
+          },
+        };
       }
-    }
-  };
-  const contractRead = preloaded
-    ? Promise.resolve(publish())
-    : fetchContract(
-        connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
-        token,
-        signal,
-      ).then((outcome) => {
-        if (!current()) return;
-        if (outcome.kind === "session") {
-          gate(failure("Your session can't read this configuration. Retry."));
-          if (!connectorId) scheduleRecovery();
-        } else if (outcome.kind === "denied") {
-          gate(null, "denied");
-        } else if (outcome.kind === "contract" && resetOnRoleChange(outcome.contract)) {
-          // A different viewer: everything above was dropped and admission restarted.
-        } else {
-          // A failed read clears the old snapshot; the role it confirmed stays.
-          loadedContract = outcome.kind === "contract" ? outcome.contract : null;
-          // A full contract speaks for every agent's slot; a scoped OAuth poll's does not.
-          if (loadedContract && !connectorId) set(contractSlotsRefreshed(loadedContract));
-          publish();
-        }
-      });
-  if (!preloaded && !state.contract) await contractRead;
-  const workers = maintainerNow() ? Array.from({ length: Math.min(4, connectors.length) }, worker) : [];
-  await Promise.all([contractRead, ...workers]);
-  if (!current()) return;
-  // OAuth recovery has its own cap and cancellation. Never turn a failed poll
-  // into a deployment-wide retry through the general recovery backoff.
-  if (connectorId) return;
-  const needsRecovery =
-    !loadedContract ||
-    Object.keys(state.connectorFailures).length > 0 ||
-    [...outcomes].some(
-      ([id, outcome]) =>
-        (connectorPublications.get(id)?.revision ?? 0) <= publication &&
-        (outcome.kind !== "detail" || outcome.detail.credential?.problem === "credential_unreadable"),
-    );
-  if (needsRecovery) scheduleRecovery();
-  else resetRecovery(false);
+      connectorPublications.set(connector.id, { revision: publication });
+      set({ ...detailsPatch(outcomes, contract), contract });
+      const unhealthy =
+        outcome.kind !== "detail" ||
+        outcome.detail.status === "error" ||
+        outcome.detail.credential?.problem === "credential_unreadable";
+      if (unhealthy) {
+        stopOAuthPolling(connector.id);
+        scheduleConnectorRecovery(connector.id);
+      } else {
+        const retry = connectorRetries.get(connector.id);
+        if (retry) clearTimeout(retry.timer);
+        connectorRetries.delete(connector.id);
+      }
+    }),
+  );
+  if (!current() || connectorId) return;
+  set({ contractPhase: state.admissionValid ? "ready" : "error" });
 }
 
-/** A scoped poll replaces one live row; all unrelated contract facts stay put. */
-function mergeConnectorContract(next: OperatorUiContractV2, id: string): OperatorUiContractV2 | null {
-  const previous = state.contract;
-  const live = next.live.connectors.find((connector) => connector.id === id);
-  if (!previous || !live) return null;
-  return {
-    ...previous,
-    live: {
-      ...previous.live,
-      connectors: previous.live.connectors.map((connector) => (connector.id === id ? live : connector)),
-    },
-  };
+const connectorRetries = new Map<string, { attempt: number; timer: ReturnType<typeof setTimeout> | undefined }>();
+function scheduleConnectorRecovery(id: string): void {
+  const previous = connectorRetries.get(id) ?? { attempt: 0, timer: undefined };
+  if (previous.timer || previous.attempt >= RECOVERY_DELAYS_MS.length) return;
+  const current = fence();
+  const retry = { attempt: previous.attempt + 1, timer: undefined as ReturnType<typeof setTimeout> | undefined };
+  retry.timer = setTimeout(() => {
+    retry.timer = undefined;
+    if (current() && maintainerNow()) void refreshSnapshot(id);
+  }, RECOVERY_DELAYS_MS[previous.attempt]);
+  connectorRetries.set(id, retry);
+}
+
+// One shared, bounded queue for initial load, refresh, focus and OAuth polls.
+// Only plain detail results are coalesced; transports remain request-owned.
+const connectorReads = new Map<
+  string,
+  { controller: AbortController; signal: AbortSignal; promise: Promise<DetailOutcome> }
+>();
+let activeConnectorReads = 0;
+const connectorWaiters: Array<() => void> = [];
+async function coalescedConnector(
+  id: string,
+  token: string | null | undefined,
+  signal: AbortSignal,
+): Promise<DetailOutcome> {
+  const existing = connectorReads.get(id);
+  if (existing && !existing.signal.aborted) return existing.promise;
+  const controller = new AbortController();
+  const combined = AbortSignal.any([signal, controller.signal]);
+  const promise = (async () => {
+    if (activeConnectorReads >= 4) await new Promise<void>((resolve) => connectorWaiters.push(resolve));
+    else activeConnectorReads++;
+    try {
+      if (combined.aborted) return { kind: "local", failure: "network" } as const;
+      return await fetchConnector(id, token, combined);
+    } finally {
+      const next = connectorWaiters.shift();
+      if (next) next();
+      else activeConnectorReads--;
+    }
+  })();
+  const read = { controller, signal: combined, promise };
+  connectorReads.set(id, read);
+  try {
+    return await promise;
+  } finally {
+    if (connectorReads.get(id) === read) connectorReads.delete(id);
+  }
 }
 
 /**
@@ -874,9 +883,8 @@ async function mutate(options: {
 }): Promise<void> {
   const current = fence();
   if (options.reload) {
-    ++snapshotRevision;
-    ++dataRevision;
-    releaseRecoveryRead();
+    connectorReads.get(options.reload)?.controller.abort();
+    connectorPublications.set(options.reload, { revision: ++snapshotReadRevision });
   }
   set(options.busy);
   try {
@@ -1018,28 +1026,39 @@ function oauthStartPath(connector: string, mode: OAuthStartMode): string {
  */
 const awaitingAuthorization = new Map<string, number>();
 let oauthPollTimer: ReturnType<typeof setTimeout> | undefined;
-let oauthDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
-let oauthPollController: AbortController | undefined;
+const oauthDeadlineTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const oauthPollControllers = new Map<string, AbortController>();
+const oauthConnectorGeneration = new Map<string, number>();
 let oauthPollGeneration = 0;
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_WINDOW_MS = 30_000;
 
 /** Navigation, unmount and identity resets also cancel in-flight poll reads. */
 function stopOAuthPolling(connector?: string): void {
-  ++oauthPollGeneration;
-  if (connector && !awaitingAuthorization.has(connector)) return;
-  if (connector) awaitingAuthorization.delete(connector);
-  else awaitingAuthorization.clear();
-  clearTimeout(oauthPollTimer);
-  clearTimeout(oauthDeadlineTimer);
-  oauthPollTimer = undefined;
-  oauthDeadlineTimer = undefined;
-  oauthPollController?.abort();
-  oauthPollController = undefined;
+  if (connector) {
+    oauthConnectorGeneration.set(connector, (oauthConnectorGeneration.get(connector) ?? 0) + 1);
+    awaitingAuthorization.delete(connector);
+    clearTimeout(oauthDeadlineTimers.get(connector));
+    oauthDeadlineTimers.delete(connector);
+    oauthPollControllers.get(connector)?.abort();
+    oauthPollControllers.delete(connector);
+  } else {
+    ++oauthPollGeneration;
+    awaitingAuthorization.clear();
+    for (const timer of oauthDeadlineTimers.values()) clearTimeout(timer);
+    oauthDeadlineTimers.clear();
+    for (const controller of oauthPollControllers.values()) controller.abort();
+    oauthPollControllers.clear();
+  }
+  if (awaitingAuthorization.size === 0) {
+    clearTimeout(oauthPollTimer);
+    oauthPollTimer = undefined;
+  }
 }
 
 /** Connector-page unmount cancels any read still owned by that view. */
 export function stopConnectorReads(id: string): void {
+  connectorReads.get(id)?.controller.abort();
   cancelRecoveryRead();
   stopOAuthPolling(id);
 }
@@ -1060,20 +1079,18 @@ function scheduleOAuthPoll(): void {
       state.session === "ready" &&
       !state.oauthBusy
     ) {
-      for (const id of awaitingAuthorization.keys()) {
-        await pollOAuthConnector(id);
-      }
+      await Promise.all([...awaitingAuthorization.keys()].map(pollOAuthConnector));
     }
     scheduleOAuthPoll();
   }, OAUTH_POLL_INTERVAL_MS);
 }
 
 async function pollOAuthConnector(id: string): Promise<void> {
-  if (oauthPollController || !awaitingAuthorization.has(id)) return;
+  if (oauthPollControllers.has(id) || !awaitingAuthorization.has(id)) return;
   const controller = new AbortController();
-  oauthPollController = controller;
-  await refreshSnapshot(true, id, controller.signal);
-  if (oauthPollController === controller) oauthPollController = undefined;
+  oauthPollControllers.set(id, controller);
+  await refreshSnapshot(id, controller.signal);
+  if (oauthPollControllers.get(id) === controller) oauthPollControllers.delete(id);
 }
 
 /**
@@ -1116,9 +1133,10 @@ function oauthNoticePatch(connector: string, notice: Notice): Partial<OperatorSt
 export function startOAuth(connector: string, mode: OAuthStartMode): Promise<void> {
   const valid = memberDispatch(connector, mode === "continue" ? "connect" : "restart");
   if (valid === null) return memberRefused(connector, "oauth");
-  stopOAuthPolling();
+  stopOAuthPolling(connector);
   const startedOn = navigationRevision;
   const generation = oauthPollGeneration;
+  const connectorGeneration = oauthConnectorGeneration.get(connector);
   const tab = openBlankTab();
   return mutate({
     request: (current) => operatorRequest(oauthStartPath(connector, mode), "POST", current, undefined, valid),
@@ -1147,9 +1165,16 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
       }
       // A member's "check on return" outlives the poll window; see `memberAuthorizations`.
       if (state.role === "member") memberAuthorizations.set(connector, Date.now());
-      if (startedOn === navigationRevision && generation === oauthPollGeneration) {
+      if (
+        startedOn === navigationRevision &&
+        generation === oauthPollGeneration &&
+        connectorGeneration === oauthConnectorGeneration.get(connector)
+      ) {
         awaitingAuthorization.set(connector, Date.now() + OAUTH_POLL_WINDOW_MS);
-        oauthDeadlineTimer = setTimeout(() => stopOAuthPolling(connector), OAUTH_POLL_WINDOW_MS);
+        oauthDeadlineTimers.set(
+          connector,
+          setTimeout(() => stopOAuthPolling(connector), OAUTH_POLL_WINDOW_MS),
+        );
         scheduleOAuthPoll();
       }
       return {
@@ -1463,8 +1488,9 @@ function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, expos
       set({
         recoveryPending: false,
         refreshing: false,
+        admissionValid: false,
         ...(state.data
-          ? { contract: null, contractPhase: "error" }
+          ? { contractPhase: "error" }
           : auth.kind === "cloudflare-access"
             ? {
                 session: "gated",
@@ -1559,16 +1585,15 @@ function recheckAuthorization(): void {
     if (!state.oauthBusy) for (const id of awaitingAuthorization.keys()) void pollOAuthConnector(id);
     return;
   }
-  const retry =
-    Object.keys(state.connectorFailures).length > 0 ||
-    state.data.connectors.some(
-      (connector) =>
-        connector.status === "error" ||
-        connector.credential?.problem === "credential_unreadable" ||
-        (connector.status === "auth_required" && (connector.oauth || connector.authorizationUrl)) ||
-        awaitingAuthorization.has(connector.id),
-    );
-  if (retry && !state.oauthBusy) void guardedRecoveryRead((signal) => refreshSnapshot(true, undefined, signal));
+  const retry = state.data.connectors.filter(
+    (connector) =>
+      Boolean(state.connectorFailures[connector.id]) ||
+      connector.status === "error" ||
+      connector.credential?.problem === "credential_unreadable" ||
+      (connector.status === "auth_required" && (connector.oauth || connector.authorizationUrl)) ||
+      awaitingAuthorization.has(connector.id),
+  );
+  if (!state.oauthBusy) for (const connector of retry) void refreshConnector(connector.id, true);
 }
 
 export async function boot(): Promise<void> {
@@ -1633,7 +1658,7 @@ async function fetchConnector(
   signal: AbortSignal,
 ): Promise<DetailOutcome> {
   const sent = send(`/ui/connectors/${encodeURIComponent(id)}`, {
-    signal,
+    signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]),
     headers: requestHeaders(token),
     credentials: "same-origin",
   });
@@ -1672,7 +1697,6 @@ function withoutKey<T>(record: Readonly<Record<string, T>>, key: string): Record
 /** Build one atomic patch for all connector auth controls and catalog facts. */
 function detailsPatch(
   outcomes: Map<string, DetailOutcome>,
-  quiet: boolean,
   contract: OperatorUiContractV2 | null,
 ): Partial<OperatorState> {
   if (!state.data) return {};
@@ -1683,41 +1707,18 @@ function detailsPatch(
     .map((c) => {
       const outcome = outcomes.get(c.id);
       if (!outcome) return c;
-      if (outcome && !(quiet && outcome.kind !== "detail"))
+      if (outcome)
         connectorFailures =
           outcome.kind === "local"
             ? { ...connectorFailures, [c.id]: outcome.failure }
             : withoutKey(connectorFailures, c.id);
-      if (outcome && outcome.kind !== "detail" && !quiet) {
-        const live = contract?.live.connectors.find((v) => v.id === c.id);
-        if (live) {
-          live.status = "error";
-          live.problem = "connector_unavailable";
-          live.tools = [];
-        }
+      if (outcome.kind !== "detail") {
         const { problem: _problem, ...rest } = c;
         return outcome.kind === "downstream"
           ? { ...rest, status: "error" as const, problem: "connector_unavailable" as const }
           : { ...rest, status: "error" as const };
       }
-      const live = contract?.live.connectors.find((v) => v.id === c.id);
-      let detail = outcome?.kind === "detail" ? outcome.detail : c;
-      if (live) {
-        const { problem: _problem, registrationPath: _path, ...rest } = detail;
-        detail = {
-          ...rest,
-          status: live.status,
-          ...(live.problem ? { problem: live.problem } : {}),
-          ...(live.auth ? { registrationPath: live.auth.registrationPath } : {}),
-          tools: live.tools.map((t) => ({
-            name: t.name,
-            address: t.address,
-            ...(t.description ? { description: t.description } : {}),
-            safety: t.classification === "read" ? "runs_in_programs" : "needs_approval",
-          })),
-          toolCount: live.tools.length,
-        };
-      }
+      const detail = outcome.kind === "detail" ? outcome.detail : c;
       if (detail.status === "ok" && awaitingAuthorization.has(c.id)) {
         stopOAuthPolling(c.id);
         if (state.oauthNoticeFor === c.id) {
@@ -1749,7 +1750,7 @@ export function refreshConnector(id: string, quiet = false): Promise<void> {
       },
       connectorFailures: withoutKey(state.connectorFailures, id),
     });
-  return guardedRecoveryRead((signal) => refreshSnapshot(quiet, undefined, signal));
+  return refreshSnapshot(id);
 }
 
 /* Access tokens ----------------------------------------------------------- */

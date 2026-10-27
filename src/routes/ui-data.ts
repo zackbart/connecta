@@ -1,3 +1,5 @@
+import { describedTools } from "../described.js";
+import type { OperatorTool } from "../operator-ui/contract.js";
 // The Effect core of the operator payload: `buildUiData` in src/ui.ts is its
 // Promise face, and the `/ui/connectors/<id>` route yields it directly.
 //
@@ -18,7 +20,7 @@ import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector, ConnectorStatus } from "../types.js";
-import { uiProblemFor, uiToolSafety } from "../ui.js";
+import { uiProblemFor } from "../ui.js";
 import { CONNECTA_VERSION } from "../version.js";
 
 export interface UiDataOptions {
@@ -39,7 +41,7 @@ export interface UiDataOptions {
 
 interface Observed {
   status: ConnectorStatus;
-  tools: UiTool[];
+  tools: OperatorTool[];
   catalogFailed: boolean;
 }
 
@@ -114,12 +116,14 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
               signal,
               ...(options.defer ? { defer: options.defer } : {}),
             })
-          ).map((t): UiTool => ({
-            name: recordedToolName(t),
-            address: `${c.id}.${recordedToolName(t)}`,
-            ...(t.description ? { description: t.description } : {}),
-            safety: uiToolSafety(t),
-          })),
+          )
+            .flatMap((t) => describedTools([t]))
+            .map((t): OperatorTool => ({
+              ...t,
+              name: recordedToolName(t),
+              address: `${c.id}.${recordedToolName(t)}`,
+              classification: t.classification === "read" ? "read" : "write",
+            })),
         ).pipe(
           Effect.map((tools) => ({ status, tools, catalogFailed: false })),
           // The registry owns the failed catalog observation; the page only
@@ -233,7 +237,21 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           status: status.state,
           ...(problem ? { problem } : {}),
           toolCount: tools.length,
-          tools,
+          tools: tools.map((tool): UiTool => ({
+            name: tool.name,
+            address: tool.address,
+            ...(tool.description ? { description: tool.description } : {}),
+            safety: tool.classification === "read" ? "runs_in_programs" : "needs_approval",
+          })),
+          overlay: {
+            id: c.id,
+            status: status.state,
+            tools,
+            ...(problem ? { problem } : {}),
+            ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
+            catalogAgeMs: registry.catalogAgeMs(c.id),
+            lastCall: null,
+          },
           // Counts only, and only when a refresh in this runtime produced them.
           // `Registry.withCatalogObservations` rebuilt the report through
           ...(status.catalogAccess ? { catalogAccess: status.catalogAccess } : {}),
@@ -259,6 +277,14 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           oauth: Boolean(c.startAuth && c.disconnectAuth),
           toolCount: 0,
           tools: [],
+          overlay: {
+            id: c.id,
+            status: "error",
+            problem: "connector_unavailable",
+            tools: [],
+            catalogAgeMs: registry.catalogAgeMs(c.id),
+            lastCall: null,
+          },
         };
       });
 

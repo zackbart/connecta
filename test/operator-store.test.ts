@@ -15,7 +15,7 @@ const NOW = "2026-10-15T12:00:00.000Z";
 const stores: Array<{ forgetBearer(): void }> = [];
 
 const BASE = "https://deployment.example";
-const CONFIG = "/ui/api/config";
+const CONFIG = "/ui/api/config?live=cached";
 
 type ConfigConnector = { id: string; title?: string };
 type LiveConnector = { id: string; status: string; [key: string]: unknown };
@@ -699,169 +699,6 @@ describe("operator recovery bounds and snapshot ordering", () => {
   });
 });
 
-describe("scoped OAuth publication preserves full-cycle ownership", () => {
-  const ids = ["crm", "tickets", "notes"];
-  const row = (id: string, status = "ok") => ({ id, status, oauth: id === "crm", tools: [], toolCount: 0 });
-
-  async function overlap(exhausted = false) {
-    const loaded = await loadStore({ id: "a", getToken: async () => "a" });
-    const { store, configMock, fetchMock, declare } = loaded;
-    declare(ids);
-    let active = false;
-    let waiting = false;
-    let polled = false;
-    const notes = deferred<Response>();
-    configMock.mockImplementation(async (path: string) => {
-      const scoped = path.includes("?connector=crm");
-      if (scoped) polled = true;
-      return Response.json(
-        v2(
-          ids.map((id) => ({ id })),
-          (scoped ? ["crm"] : ids).map((id) => row(id, id === "crm" && !polled ? "auth_required" : "ok")),
-        ),
-      );
-    });
-    fetchMock.mockImplementation(async (path: string) => {
-      if (path.startsWith("/ui/oauth/"))
-        return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
-      if (path === "/ui/data")
-        return Response.json({
-          ...uiData("operator"),
-          connectors: ids.map((id) => row(id, id === "crm" && !polled ? "auth_required" : "ok")),
-        });
-      if (active && path === "/ui/connectors/tickets") return new Response(null, { status: 503 });
-      if (waiting && path === "/ui/connectors/notes") return notes.promise;
-      return Response.json(row(path.split("/").at(-1)!, path.endsWith("/crm") && !polled ? "auth_required" : "ok"));
-    });
-    await store.boot();
-    vi.useFakeTimers();
-    active = true;
-    if (exhausted) {
-      await store.loadOperatorContract();
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(loaded.paths.filter((p) => p === "/ui/data")).toHaveLength(5);
-    }
-    waiting = true;
-    loaded.paths.length = 0;
-    await store.startOAuth("crm", "continue");
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(store.getState().data?.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
-    expect(store.getState().contract?.live.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
-    return {
-      ...loaded,
-      notes,
-      finish() {
-        waiting = false;
-      },
-    };
-  }
-
-  it.each(["late failure", "late success", "stalled detail", "exhausted budget"] as const)(
-    "INV-4 INV-10: a poll preserves %s, both live rows and the 60-second read budget",
-    async (ordering) => {
-      const exhausted = ordering === "exhausted budget";
-      const { store, notes, finish, paths } = await overlap(exhausted);
-      if (ordering === "stalled detail") {
-        await vi.advanceTimersByTimeAsync(12_999);
-        expect(store.getState().contractPhase).toBe("ready");
-        await vi.advanceTimersByTimeAsync(1);
-        expect(store.getState()).toMatchObject({ contractPhase: "error", recoveryPending: false });
-        expect(store.getState().data?.connectors.find((r) => r.id === "tickets")?.status).toBe("error");
-        await vi.advanceTimersByTimeAsync(60_000);
-        expect(paths.filter((p) => p === CONFIG)).toHaveLength(1);
-        expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(4);
-        expect(paths.filter((p) => p === "/ui/data")).toHaveLength(0);
-        // A late result still publishes, retaining the newer poll after Retry appeared.
-        finish();
-        notes.resolve(Response.json(row("notes")));
-        await vi.advanceTimersByTimeAsync(0);
-      } else {
-        finish();
-        notes.resolve(ordering === "late success" ? Response.json(row("notes")) : new Response(null, { status: 503 }));
-        await vi.advanceTimersByTimeAsync(0);
-        expect(store.getState().data?.connectors.find((r) => r.id === "notes")?.status).toBe(
-          ordering === "late success" ? "ok" : "error",
-        );
-        expect(store.getState().contract?.live.connectors.find((r) => r.id === "notes")?.status).toBe(
-          ordering === "late success" ? "ok" : "error",
-        );
-        await vi.advanceTimersByTimeAsync(60_000);
-        expect(paths.filter((p) => p === "/ui/data")).toHaveLength(exhausted ? 0 : 4);
-        expect(paths.filter((p) => p === CONFIG)).toHaveLength(exhausted ? 1 : 5);
-        expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(exhausted ? 4 : 16);
-      }
-      expect(store.getState().data?.connectors.find((r) => r.id === "tickets")?.status).toBe("error");
-      expect(store.getState().contract?.live.connectors.find((r) => r.id === "tickets")?.status).toBe("error");
-      expect(store.getState().data?.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
-      expect(store.getState().contract?.live.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
-      if (ordering === "stalled detail") {
-        await vi.advanceTimersByTimeAsync(60_000);
-        expect(paths.filter((p) => p === "/ui/data")).toHaveLength(3);
-        expect(paths.filter((p) => p === CONFIG)).toHaveLength(4);
-        expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(13);
-      }
-      const counts = paths.length;
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(paths).toHaveLength(counts);
-    },
-  );
-
-  it.each(["full refresh", "mutation", "identity", "sign-out"] as const)(
-    "INV-4: %s still fences the older full cycle after a successful poll",
-    async (superseder) => {
-      const { store, notes, finish, changeSession } = await overlap();
-      finish();
-      if (superseder === "full refresh") await store.loadOperatorContract();
-      else if (superseder === "mutation") {
-        await store.startOAuth("crm", "continue");
-        await vi.advanceTimersByTimeAsync(0);
-      } else if (superseder === "identity") {
-        changeSession({ id: "b", getToken: async () => "b" });
-        await vi.advanceTimersByTimeAsync(0);
-      } else store.signOut();
-      notes.resolve(new Response(null, { status: 503 }));
-      await vi.advanceTimersByTimeAsync(0);
-      if (superseder === "sign-out") expect(store.getState().data).toBeNull();
-      else {
-        expect(store.getState().data?.connectors.find((r) => r.id === "notes")?.status).toBe("ok");
-        expect(store.getState().contract?.live.connectors.find((r) => r.id === "notes")?.status).toBe("ok");
-      }
-    },
-  );
-
-  it("INV-4 INV-10: an admission summary pending at poll success cannot roll back that row", async () => {
-    const { store, fetchMock, configMock, declare } = await loadStore({ id: "a", getToken: async () => "a" });
-    declare(["crm"]);
-    let polled = false;
-    const summary = () => ({ ...uiData("operator"), connectors: [row("crm", "auth_required")] });
-    configMock.mockImplementation(async (path: string) => {
-      if (path.includes("?connector=")) polled = true;
-      return Response.json(v2([{ id: "crm" }], [row("crm", polled ? "ok" : "auth_required")]));
-    });
-    const pending = deferred<Response>();
-    fetchMock.mockImplementation(async (path: string) =>
-      Response.json(path === "/ui/data" ? summary() : row("crm", "auth_required")),
-    );
-    await store.boot();
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(async (path: string) => {
-      if (path.startsWith("/ui/oauth/"))
-        return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
-      if (path === "/ui/data") return pending.promise;
-      return Response.json(row("crm", polled ? "ok" : "auth_required"));
-    });
-    await store.startOAuth("crm", "continue");
-    await vi.advanceTimersByTimeAsync(0);
-    const admission = store.retryLoad();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(store.getState().data?.connectors[0]?.status).toBe("ok");
-    pending.resolve(Response.json(summary()));
-    await admission;
-    expect(store.getState().data?.connectors[0]?.status).toBe("ok");
-    expect(store.getState().contract?.live.connectors[0]?.status).toBe("ok");
-  });
-});
-
 describe("operator role changes", () => {
   const PRIVILEGED = ["/ui/data", "/ui/connectors/", "/ui/api/activity", "/ui/access-tokens"];
   const privileged = (paths: string[]) => paths.filter((path) => PRIVILEGED.some((prefix) => path.startsWith(prefix)));
@@ -1313,76 +1150,284 @@ describe("token confirmations live in the row", () => {
   });
 });
 
-// Independent review regression: the scoped contract and detail begin before
-// the full cycle's deadline, but the detail settles after it cleared the contract.
-describe("review 894: poll after deadline", () => {
+describe("cached admission and scoped observations (#1113)", () => {
   const ids = ["crm", "tickets", "notes"];
-  const row = (id: string, status = "ok") => ({ id, status, oauth: id === "crm", tools: [], toolCount: 0 });
-  it("INV-4 INV-10: keeps the newer polled live row when the poll lands after the deadline", async () => {
-    const loaded = await loadStore({ id: "a", getToken: async () => "a" });
-    const { store, configMock, fetchMock, declare } = loaded;
-    declare(ids);
-    let consented = false;
-    let waiting = false;
-    const notes = deferred<Response>();
-    const pollDetail = deferred<Response>();
-    let crmWait = false;
-    const crm = () => (consented ? "ok" : "auth_required");
-    configMock.mockImplementation(async (path: string) => {
-      const scoped = path.includes("?connector=crm");
-      return Response.json(
-        v2(
-          ids.map((id) => ({ id })),
-          (scoped ? ["crm"] : ids).map((id) => row(id, id === "crm" ? crm() : "ok")),
-        ),
-      );
-    });
-    fetchMock.mockImplementation(async (path: string) => {
-      if (path.startsWith("/ui/oauth/"))
-        return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
-      if (path === "/ui/data")
-        return Response.json({
-          ...uiData("operator"),
-          connectors: ids.map((id) => row(id, id === "crm" ? crm() : "ok")),
-        });
-      if (waiting && path === "/ui/connectors/notes") return notes.promise;
-      if (crmWait && path === "/ui/connectors/crm") return pollDetail.promise;
-      const id = path.split("/").at(-1)!;
-      return Response.json(row(id, id === "crm" ? crm() : "ok"));
-    });
-    await store.boot();
-    vi.useFakeTimers();
-    waiting = true;
-    await store.startOAuth("crm", "continue");
-    await vi.advanceTimersByTimeAsync(13_900);
-    consented = true;
-    crmWait = true;
-    // The 14s poll reads its scoped contract and starts its detail read.
-    await vi.advanceTimersByTimeAsync(200);
-    expect(store.getState().contract).not.toBeNull();
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(store.getState()).toMatchObject({ contract: null, contractPhase: "error" });
-    pollDetail.resolve(Response.json(row("crm", "ok")));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.getState().data?.connectors.find((r) => r.id === "crm")?.status).toBe("ok");
-    waiting = false;
-    notes.resolve(Response.json(row("notes")));
-    await vi.advanceTimersByTimeAsync(0);
-    const published = () => {
-      expect(store.getState().contractPhase).toBe("ready");
-      for (const id of ids) {
-        expect(store.getState().data?.connectors.find((r) => r.id === id)?.status).toBe("ok");
-        expect(store.getState().contract?.live.connectors.find((r) => r.id === id)?.status).toBe("ok");
-      }
-    };
-    published();
-    expect(loaded.paths.filter((path) => path === CONFIG)).toHaveLength(2);
-    expect(loaded.paths.filter((path) => path.startsWith(CONFIG + "?"))).toHaveLength(7);
-    expect(loaded.paths.filter((path) => path.startsWith("/ui/connectors/"))).toHaveLength(13);
-    expect(loaded.paths.filter((path) => path === "/ui/data")).toHaveLength(1);
-    const reads = [...loaded.paths];
-    await vi.advanceTimersByTimeAsync(60_000);
-    published();
-    expect(loaded.paths).toEqual(reads);
+  const row = (id: string, status = "ok") => ({
+    id,
+    status,
+    oauth: true,
+    tools: [],
+    toolCount: 0,
+    overlay: { id, status, tools: [], catalogAgeMs: 17, lastCall: null },
   });
+  async function ready() {
+    const loaded = await loadStore({ id: "a", getToken: async () => "token" });
+    loaded.declare(ids);
+    loaded.configMock.mockImplementation(async () => Response.json(v2(ids.map((id) => ({ id })))));
+    loaded.fetchMock.mockImplementation(async (path: string) =>
+      Response.json(
+        path === "/ui/data"
+          ? { ...uiData("operator"), connectors: ids.map((id) => row(id)) }
+          : row(path.split("/").at(-1)!),
+      ),
+    );
+    await loaded.store.boot();
+    await vi.waitFor(() => expect(loaded.store.getState().contract?.live.connectors).toHaveLength(3));
+    return loaded;
+  }
+
+  it("refreshes one connector and atomically publishes its detail overlay without a config read", async () => {
+    const { store, fetchMock, paths } = await ready();
+    paths.length = 0;
+    const pending = deferred<Response>();
+    fetchMock.mockImplementation(() => pending.promise);
+    const pairs: string[] = [];
+    const unsubscribe = store.subscribe(() => {
+      const state = store.getState();
+      if (state.data?.connectors[0]?.status !== "loading")
+        pairs.push(
+          `${state.data?.connectors[0]?.status}/${state.contract?.live.connectors.find((r) => r.id === "crm")?.status}`,
+        );
+    });
+    const first = store.refreshConnector("crm");
+    const second = store.refreshConnector("crm");
+    await vi.waitFor(() => expect(paths).toEqual(["/ui/connectors/crm"]));
+    pending.resolve(Response.json(row("crm", "auth_required")));
+    await Promise.all([first, second]);
+    unsubscribe();
+    expect(pairs).toEqual(["auth_required/auth_required", "auth_required/auth_required"]);
+    expect(store.getState()).toMatchObject({ admissionValid: true, contractPhase: "ready" });
+  });
+
+  it("focus probes only unhealthy rows, and retries failures with a bounded scoped budget", async () => {
+    const { store, fetchMock, paths, windowListeners } = await ready();
+    fetchMock.mockImplementation(async (path: string) => Response.json(row(path.split("/").at(-1)!, "auth_required")));
+    await store.refreshConnector("crm");
+    paths.length = 0;
+    vi.useFakeTimers();
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(paths).toEqual(["/ui/connectors/crm"]);
+    fetchMock.mockResolvedValue(new Response(null, { status: 503 }));
+    await store.refreshConnector("crm");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(paths.filter((p) => p === "/ui/connectors/crm")).toHaveLength(6);
+    const before = paths.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(paths).toHaveLength(before);
+    expect(paths.every((p) => p === "/ui/connectors/crm")).toBe(true);
+  });
+
+  it("keeps a stale maintainer snapshot after admission's deadline and blocks reads, connection writes and tokens", async () => {
+    const { store, configMock, paths } = await ready();
+    const previous = store.getState().contract;
+    const pending = deferred<Response>();
+    configMock.mockImplementationOnce(() => pending.promise);
+    vi.useFakeTimers();
+    const refresh = store.loadOperatorContract();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await refresh;
+    expect(store.getState()).toMatchObject({ contract: previous, admissionValid: false, contractPhase: "error" });
+    paths.length = 0;
+    await store.loadActivity(true);
+    await store.loadAccessTokens();
+    await store.refreshConnector("crm");
+    await store.saveCredential("crm", { value: "secret" });
+    await store.rotateAgentToken("triage");
+    expect(paths).toEqual([]);
+    pending.resolve(Response.json(v2(ids.map((id) => ({ id })))));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState()).toMatchObject({ admissionValid: true, contractPhase: "ready" });
+    expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(3);
+  });
+
+  it("a slow detail after admission fails only its connector; siblings publish and late data cannot undo a newer mutation", async () => {
+    const { store, fetchMock, paths } = await ready();
+    const pending = deferred<Response>();
+    fetchMock.mockImplementation(async (path: string) =>
+      path === "/ui/connectors/notes" ? pending.promise : Response.json(row(path.split("/").at(-1)!, "auth_required")),
+    );
+    vi.useFakeTimers();
+    const full = store.loadOperatorContract();
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(store.getState()).toMatchObject({ admissionValid: true, contractPhase: "ready" });
+    expect(store.getState().data?.connectors.find((r) => r.id === "crm")?.status).toBe("auth_required");
+    pending.resolve(Response.json(row("notes")));
+    await full;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().contract?.live.connectors.find((r) => r.id === "notes")?.status).toBe("ok");
+    paths.length = 0;
+    await store.saveCredential("crm", { value: "secret" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(paths).toEqual(["/ui/credentials/crm", "/ui/connectors/crm"]);
+  });
+
+  it("polls concurrent OAuth returns independently and never reads config or healthy siblings", async () => {
+    const { store, fetchMock, paths } = await ready();
+    let connected = false;
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(
+        path.startsWith("/ui/oauth/")
+          ? { state: "auth_required", authorizationUrl: "https://issuer.example/consent" }
+          : row(path.split("/").at(-1)!, connected ? "ok" : "auth_required"),
+      ),
+    );
+    vi.useFakeTimers();
+    await store.startOAuth("crm", "continue");
+    await store.startOAuth("tickets", "continue");
+    await vi.advanceTimersByTimeAsync(0);
+    paths.length = 0;
+    connected = true;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(paths.sort()).toEqual(["/ui/connectors/crm", "/ui/connectors/tickets"]);
+    expect(
+      store
+        .getState()
+        .data?.connectors.slice(0, 2)
+        .map((r) => r.status),
+    ).toEqual(["ok", "ok"]);
+    const before = paths.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(paths).toHaveLength(before);
+  });
+
+  it.each(["identity", "sign-out", "mutation"])("fences late connector publication across %s", async (event) => {
+    const { store, fetchMock, changeSession } = await ready();
+    const pending = deferred<Response>();
+    fetchMock.mockImplementationOnce(() => pending.promise);
+    const old = store.refreshConnector("crm");
+    await vi.waitFor(() => expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/ui/connectors/crm"));
+    if (event === "identity") changeSession({ id: "b", getToken: async () => "b" });
+    else if (event === "sign-out") store.signOut();
+    else await store.saveCredential("crm", { value: "new-secret" });
+    await vi.waitFor(() =>
+      expect(
+        event === "sign-out" ? store.getState().data === null : store.getState().data?.connectors[0]?.status === "ok",
+      ).toBe(true),
+    );
+    pending.resolve(Response.json(row("crm", "error")));
+    await old;
+    if (event === "sign-out") expect(store.getState().contract).toBeNull();
+    else expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+  });
+});
+
+it("bounds detail concurrency across the page and cancels queued work on identity exit", async () => {
+  const loaded = await loadStore({ id: "a", getToken: async () => "token" });
+  const ids = Array.from({ length: 8 }, (_, i) => `crm${i}`);
+  loaded.declare(ids);
+  const pending: Array<ReturnType<typeof deferred<Response>>> = [];
+  const signals: AbortSignal[] = [];
+  loaded.fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
+    if (path === "/ui/data")
+      return Response.json({
+        ...uiData("operator"),
+        connectors: ids.map((id) => ({
+          id,
+          status: "loading",
+          toolCount: 0,
+          tools: [],
+        })),
+      });
+    signals.push(init.signal as AbortSignal);
+    const read = deferred<Response>();
+    pending.push(read);
+    return read.promise;
+  });
+  await loaded.store.boot();
+  await vi.waitFor(() => expect(pending).toHaveLength(4));
+  pending[0]!.resolve(Response.json({ id: "crm0", status: "ok", toolCount: 0, tools: [] }));
+  await vi.waitFor(() => expect(pending).toHaveLength(5));
+  loaded.store.signOut();
+  expect(signals.every((signal) => signal.aborted)).toBe(true);
+  for (const read of pending.slice(1)) read.resolve(Response.json({ status: "ok", tools: [] }));
+  await vi.waitFor(() => expect(loaded.store.getState().contract).toBeNull());
+  expect(pending).toHaveLength(5);
+});
+
+it("a newer scoped poll cannot be rolled back by a full admission already in flight", async () => {
+  const loaded = await loadStore({ id: "a", getToken: async () => "token" });
+  loaded.declare(["crm"]);
+  let status = "auth_required";
+  const row = () => ({
+    id: "crm",
+    status,
+    oauth: true,
+    tools: [],
+    toolCount: 0,
+    overlay: { id: "crm", status, tools: [], catalogAgeMs: null, lastCall: null },
+  });
+  loaded.fetchMock.mockImplementation(async (path: string) =>
+    Response.json(
+      path === "/ui/data"
+        ? { ...uiData("operator"), connectors: [row()] }
+        : path.startsWith("/ui/oauth/")
+          ? { state: "auth_required", authorizationUrl: "https://issuer.example/consent" }
+          : row(),
+    ),
+  );
+  await loaded.store.boot();
+  await vi.waitFor(() => expect(loaded.store.getState().contract?.live.connectors).toHaveLength(1));
+  const config = deferred<Response>();
+  loaded.configMock.mockImplementationOnce(() => config.promise);
+  vi.useFakeTimers();
+  const full = loaded.store.loadOperatorContract();
+  await vi.advanceTimersByTimeAsync(0);
+  await loaded.store.startOAuth("crm", "continue");
+  await vi.advanceTimersByTimeAsync(0);
+  status = "ok";
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(loaded.store.getState().data?.connectors[0]?.status).toBe("ok");
+  status = "error";
+  config.resolve(Response.json(v2([{ id: "crm" }], [{ id: "crm", status: "auth_required" }])));
+  await full;
+  await vi.advanceTimersByTimeAsync(0);
+  expect(loaded.store.getState().data?.connectors[0]?.status).toBe("ok");
+  expect(loaded.store.getState().contract?.live.connectors[0]?.status).toBe("ok");
+});
+
+it("a late scoped observation updates the stale snapshot without confirming admission or losing poll precedence", async () => {
+  const loaded = await loadStore({ id: "a", getToken: async () => "token" });
+  loaded.declare(["crm"]);
+  const row = (status: string) => ({
+    id: "crm",
+    status,
+    oauth: true,
+    tools: [],
+    toolCount: 0,
+    overlay: { id: "crm", status, tools: [], catalogAgeMs: null, lastCall: null },
+  });
+  loaded.fetchMock.mockImplementation(async (path: string) =>
+    Response.json(
+      path === "/ui/data"
+        ? { ...uiData("operator"), connectors: [row("auth_required")] }
+        : path.startsWith("/ui/oauth/")
+          ? { state: "auth_required", authorizationUrl: "https://issuer.example/consent" }
+          : row("auth_required"),
+    ),
+  );
+  await loaded.store.boot();
+  await vi.waitFor(() => expect(loaded.store.getState().contract?.live.connectors).toHaveLength(1));
+  const config = deferred<Response>();
+  const poll = deferred<Response>();
+  loaded.configMock.mockImplementationOnce(() => config.promise);
+  vi.useFakeTimers();
+  const full = loaded.store.loadOperatorContract();
+  await vi.advanceTimersByTimeAsync(0);
+  await loaded.store.startOAuth("crm", "continue");
+  await vi.advanceTimersByTimeAsync(0);
+  loaded.fetchMock.mockImplementationOnce(() => poll.promise);
+  await vi.advanceTimersByTimeAsync(2000);
+  await vi.advanceTimersByTimeAsync(13_000);
+  await full;
+  expect(loaded.store.getState()).toMatchObject({ admissionValid: false, contractPhase: "error" });
+  poll.resolve(Response.json(row("ok")));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(loaded.store.getState().data?.connectors[0]?.status).toBe("ok");
+  expect(loaded.store.getState()).toMatchObject({ admissionValid: false, contractPhase: "error" });
+  loaded.fetchMock.mockResolvedValue(Response.json(row("auth_required")));
+  config.resolve(Response.json(v2([{ id: "crm" }])));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(loaded.store.getState()).toMatchObject({ admissionValid: true, contractPhase: "ready" });
+  expect(loaded.store.getState().contract?.live.connectors[0]?.status).toBe("ok");
 });
