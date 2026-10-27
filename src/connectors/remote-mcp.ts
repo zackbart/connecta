@@ -1661,12 +1661,21 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // its actual sent auth with every operation using that client, including
   // handshake/discovery requests and OAuth rotations. Remove settled users.
   const activeContexts = new WeakMap<ConnectionState, Set<ConnectorContext>>();
+  // Resource headers are non-secret context by contract. They never join the
+  // sent set, so arguments and results equal to them pass unchanged (#1108).
+  const withoutResourceHeaders = (input: RequestInfo | URL, init?: RequestInit): RequestInit | undefined => {
+    if (!extraHeaders) return init;
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    for (const [name, value] of Object.entries(extraHeaders)) if (headers.get(name) === value) headers.delete(name);
+    return { ...init, headers };
+  };
   const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
     const active = activeContexts.get(entryFor(ctx));
     const recipients = new Set([sentSecretsFor(ctx), ...[...(active ?? [])].map(sentSecretsFor)]);
+    const tracked = withoutResourceHeaders(input, init);
     for (const secrets of recipients) {
-      if (opts.auth?.type === "oauth") trackRemoteClientRequest(secrets, input, init);
-      else secrets.request(input, init);
+      if (opts.auth?.type === "oauth") trackRemoteClientRequest(secrets, input, tracked);
+      else secrets.request(input, tracked);
     }
   };
   const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
@@ -4167,7 +4176,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (opts.auth?.type === "headers") {
           for (const value of Object.values(opts.auth.headers)) secrets.header(value);
         }
-        for (const value of Object.values(extraHeaders ?? {})) secrets.header(value);
         const state = entryFor(ctx);
         let active = activeContexts.get(state);
         if (!active) {
