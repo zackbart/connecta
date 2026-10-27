@@ -62,7 +62,8 @@ try {
     assert.equal(await connection.approval({ toolName: "write" }), "not-applicable");
     assert.equal(gateConnectaWrites({ toolName: "write" }), "user-approval");
     const instructions = connectaInstructions({ url: connection.url, getToken: () => token, fetch: async () => Response.json({ result: { instructions: "CRM guidance" } }) });
-    assert.equal((await instructions.events["turn.started"]()).content, "Connecta guidance:\\nCRM guidance");
+    const memo = async (_key, fn) => fn({ idempotencyKey: "turn_1", abortSignal: new AbortController().signal });
+    assert.equal((await instructions.evaluate({ memo, turn: { id: "turn_1" } })).content, "Connecta guidance:\\nCRM guidance");
   `,
   );
   run(process.execPath, ["smoke.mjs"], work);

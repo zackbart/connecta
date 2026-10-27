@@ -107,7 +107,7 @@ async function boot(consumer, url, token, transport) {
     await exited;
     clearTimeout(timer);
   };
-  const client = new Client({ host: `http://127.0.0.1:${port}` });
+  const client = new Client({ baseUrl: `http://127.0.0.1:${port}` });
   try {
     const start = performance.now();
     while (performance.now() - start < 120_000) {
@@ -276,14 +276,19 @@ async function cell(consumer, count, surface) {
     }
     const guidance = connectaInstructions({ url, pool: "assistant", getToken: () => token });
     const guidanceStart = performance.now();
-    const instructions = await guidance.events["turn.started"](
-      {},
-      { model: null, session: { id: "probe", auth: { current: null, initiator: null } }, channel: {}, messages: [] },
-    );
+    const memos = new Map();
+    const memo = async (key, fn) => {
+      const memoKey = JSON.stringify(key);
+      if (!memos.has(memoKey))
+        memos.set(memoKey, await fn({ idempotencyKey: memoKey, abortSignal: new AbortController().signal }));
+      return memos.get(memoKey);
+    };
+    const evaluate = (id) => guidance.evaluate({ memo, turn: { id, status: "running", input: [] } });
+    const instructions = await evaluate("probe_1");
     assert.match(instructions.content, /Seeded CRM/);
     const guidanceMs = performance.now() - guidanceStart;
     const cachedStart = performance.now();
-    assert.deepEqual(await guidance.events["turn.started"]({}, {}), instructions);
+    assert.deepEqual(await evaluate("probe_2"), instructions);
     const cachedGuidanceMs = performance.now() - cachedStart;
     const discovery = [];
     if (surface === "meta") {
@@ -413,24 +418,28 @@ async function cell(consumer, count, surface) {
     });
     eve = await boot(consumer, url, token, transport.origin);
     const eveStart = performance.now();
-    const created = await eve.client.sessions.create({
-      message: "Run the deterministic catalog contract.",
-      signal: AbortSignal.timeout(90_000),
-    });
-    const result = await created.response.result();
+    const signal = AbortSignal.timeout(90_000);
+    const created = await eve.client.sessions.create({ message: "Run the deterministic catalog contract.", signal });
+    // The stream reads through the delivery's settlement, so it ends with it.
+    const events = [];
+    const streamed = (async () => {
+      for await (const event of created.delivery.stream({ signal })) events.push(event);
+    })();
+    // Await both together so a failed stream read cannot reject unhandled.
+    const [result] = await Promise.all([created.delivery.result({ signal }), streamed]);
     const eveTurnMs = performance.now() - eveStart;
     await save(`${surface}-${count}-attempt.json`, {
       modelRequests,
-      events: result.events,
+      events,
       status: result.status,
-      message: result.message,
+      reply: result.reply,
       transportErrors,
       ledger,
       wire,
     });
     assert.deepEqual(transportErrors, []);
-    assert.ok(["completed", "waiting"].includes(result.status));
-    assert.equal(result.message, "contract-complete");
+    assert.ok(["completed", "awaiting-input"].includes(result.status));
+    assert.equal(result.reply, "contract-complete");
     assert.equal(modelRequests.length, sequence.length + 1);
     assert.deepEqual(
       ledger.filter((entry) => entry.args.id.startsWith("eve-")).map((entry) => entry.args.id),
@@ -478,7 +487,7 @@ async function cell(consumer, count, surface) {
       usage: "Unknown: deterministic transport provides no tokenizer or paid usage",
       paidCalls: 0,
     };
-    await save(`${surface}-${count}-trace.json`, { modelRequests, events: result.events, measurement });
+    await save(`${surface}-${count}-trace.json`, { modelRequests, events, measurement });
     return measurement;
   } finally {
     await eve?.close();
@@ -506,7 +515,7 @@ if (option("cell")) {
         private: true,
         type: "module",
         dependencies: {
-          eve: "0.83.0",
+          eve: "0.84.0",
           "@zackbart/connecta-eve": `file:${archive}`,
           "@zackbart/connecta": `file:${coreArchive}`,
           "quickjs-emscripten": "0.32.0",
@@ -515,7 +524,7 @@ if (option("cell")) {
     );
     await writeFile(
       join(work, "pnpm-workspace.yaml"),
-      'minimumReleaseAgeExclude:\n  - eve@0.83.0\noverrides:\n  "eve@0.83.0>undici": 8.12.3\n',
+      'minimumReleaseAgeExclude:\n  - eve@0.84.0\noverrides:\n  "eve@0.84.0>undici": 8.12.3\n',
     );
     run("pnpm", ["install", "--prefer-offline", "--ignore-scripts"], work);
     await writeFile(join(output, "consumer-pnpm-lock.yaml"), await readFile(join(work, "pnpm-lock.yaml")));
@@ -565,7 +574,7 @@ if (option("cell")) {
       dirty: run("git", ["status", "--porcelain"]).trim(),
       node: process.version,
       pnpm: run("pnpm", ["--version"]).trim(),
-      eve: "0.83.0",
+      eve: "0.84.0",
       helper: manifest.version,
       helperArchiveSha256: hash(await readFile(archive)),
       coreArchiveSha256: hash(await readFile(coreArchive)),
