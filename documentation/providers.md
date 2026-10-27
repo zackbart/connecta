@@ -1318,6 +1318,13 @@ would change existing payment settings. Deletes, voids, delivery, payment
 execution, batch and other accounting writes remain unavailable. The API hatch
 refuses POSTs even when named writes are enabled.
 
+Sparse field preservation, a current SyncToken and requestid do not establish
+that an invoice update cannot send email. For example, changing only DueDate
+on an invoice with NeedToSend and enabled card/ACH payments retains those
+settings; omitting email fields does not disable them. Do not reset delivery or
+payment settings to work around the unavailable update, or replace the invoice
+with a new one. No unsent-only update tool is currently exposed either.
+
 Each write requires `requestId`, a stable identifier for the exact intent,
 unique across all requests/tools for this company: 1–50 ASCII letters, digits,
 underscores or hyphens, beginning with a letter or digit. It is sent as Intuit's
