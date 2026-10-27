@@ -10,6 +10,7 @@ import type { ConnectorCredentialConfig, ConnectorCredentialFieldConfig, Connect
 export { READ_ONLY, CALL_ADMISSION, PROVIDER_COMMON } from "../provider.js";
 import type { RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import type { RemoteMcpAuth } from "./remote-mcp.js";
+import type { PrincipalForwarding } from "../request-token.js";
 
 type AuthCase<T extends RemoteMcpAuth["type"]> = Extract<RemoteMcpAuth, { type: T }>;
 
@@ -25,7 +26,11 @@ export const USAGE_GUIDE = optionsOf<ConnectorUsageGuide>()(keys("content", "sum
 
 /** `remoteMcp()`'s `auth`, closed per `type`. */
 export const REMOTE_MCP_AUTH = variants("type", {
-  request: optionsOf<AuthCase<"request">>()({ ...keys("type", "token"), headers: strings() }).shape,
+  request: optionsOf<AuthCase<"request">>()({
+    ...keys("type", "token"),
+    headers: strings(),
+    principal: optionsOf<PrincipalForwarding>()(keys("accept", "token")),
+  }).shape,
   headers: optionsOf<AuthCase<"headers">>()({ ...keys("type"), headers: strings() }).shape,
   credential: optionsOf<AuthCase<"credential">>()({
     ...keys("type", "header", "scheme"),

@@ -1800,7 +1800,16 @@ in-memory token caching and exact-token invalidation, with an absent subject
 for service accounts acting as themselves. Workspace providers keep supplying
 subjects and retain their delegated error guidance. `src/request-token.ts`
 owns the callable resolver contract and optional HTTP-401 invalidation hook;
-`remoteMcp()` invokes it without replaying the failed operation.
+`remoteMcp()` invokes it without replaying the failed operation. With
+`auth.principal`, `src/request-principal.ts` reads the admitted caller only
+through `callerOf` (see `src/connector-caller.ts`), refuses callers the policy
+does not accept before resolving, and gives `remoteMcp()` a principal key that
+joins the credential digest, so no client crosses principals. A custom `fetch`
+replaces global fetch and the owned write sender in that connector's transport,
+behind the same redirect wrapper and a same-origin guard.
+`test/remote-mcp-principal-forwarding.test.ts` checks admission, forging,
+client replacement, transport confinement and secrecy on Node, and a real
+service binding on workerd.
 `test/google-service-account-token.test.ts` exercises signing/cache behavior on
 Node and workerd; `test/google-service-account-remote.node.test.ts` checks
 real-socket token/MCP requests, invalidation and one physical attempt per write.

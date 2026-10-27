@@ -146,6 +146,12 @@ owner whose account the agent will use. See
 [Workspace pool owners](../documentation/auth.md#pool-owners-for-google-workspace)
 before connecting an agent to someone's account.
 
+A connection to the organization's own service can instead act as whoever
+signed in, by forwarding that person's identity. Agents cannot use such a
+connection unless the operator also allows them, and then they appear to the
+service as themselves, never as a person. See
+[forwarding the admitted principal](../documentation/auth.md#forwarding-the-admitted-principal).
+
 An assistant serving several people must use a pool appropriate for everyone
 in the conversation. Its app chooses that pool; the model does not choose
 its own access level. Keep private results out of broader conversations.

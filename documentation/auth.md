@@ -6,16 +6,16 @@
 and package maintenance. This guide owns identity, membership, and downstream
 credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 
-| Task                                                                | Sections                                                                                                                                                                                                                                               |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [agent endpoints](#agent-endpoints), [static bearer migration](#migrating-static-bearer-clients)                                                                                      |
-| Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                                                                                               |
-| Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                                                                                             |
-| Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [Clerk Organizations](#one-clerk-instance-one-organization-per-deployment), [management](#human-authentication-management) |
-| Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                                                                                                  |
-| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                           |
-| Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens), [Google hosted MCP](#google-service-account-tokens-and-hosted-mcp)      |
-| Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                                                                                                   |
+| Task                                                                | Sections                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [agent endpoints](#agent-endpoints), [static bearer migration](#migrating-static-bearer-clients)                                                                                                                                             |
+| Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                                                                                                                                                      |
+| Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                                                                                                                                                    |
+| Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [Clerk Organizations](#one-clerk-instance-one-organization-per-deployment), [management](#human-authentication-management)                                                        |
+| Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                                                                                                                                                         |
+| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                                                                                  |
+| Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens), [principal forwarding](#forwarding-the-admitted-principal), [Google hosted MCP](#google-service-account-tokens-and-hosted-mcp) |
+| Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                                                                                                                                                          |
 
 [Credential recognition and admission](#credential-recognition-and-admission)
 defines refusal precedence.
@@ -2671,11 +2671,17 @@ For providers offering both, deployment config chooses; handlers check `ctx.oaut
 
 `remoteMcp("<id>", { auth: { type: "request", token: async (ctx) => … } })` resolves
 its token before connecting and before reusing a client. The callback receives
-the operation's cancellation context, never an agent-selected credential owner.
+the operation's cancellation context only. It never receives an agent-selected
+credential owner, and without the opt-in below it never receives the caller.
 Only shared ownership is accepted. Tokens remain inside the request's hardened
 transport, are not stored or described, and a changed token replaces the client.
 This mode refuses cleartext non-loopback origins. Optional `auth.headers` carry
 static protocol/catalog controls and cannot set Authorization.
+
+Return the same token for the same caller while it remains valid, and cache a
+minted token until shortly before it expires. A value that changes on every
+resolution replaces the client each time; a change that lands while a call
+connects fails that call with a retryable error.
 
 A resolver may expose `token.invalidate(rejectedToken, ctx): Promise<void>` to
 remove a cached token after a downstream HTTP 401. The hook receives the exact
@@ -2694,6 +2700,95 @@ is retained across requests, and rejected writes are never replayed. An omitted
 `app.privateKey` uses the encrypted connector vault's `privateKey` field;
 `describe()` includes neither the key nor the minted tokens. The maintained
 provider skill explains App permissions and installation prerequisites.
+
+### Forwarding the admitted principal
+
+Set `auth.principal` instead of `auth.token` to let the resolver act for the
+caller inbound auth admitted. Use it only for a downstream the deployment
+controls and that already trusts this deployment, so the downstream needs no
+per-person OAuth:
+
+```ts
+auth: {
+  type: "request",
+  principal: {
+    accept: "human",
+    token: async (ctx, { principal }) => await notesAssertion(principal),
+  },
+},
+```
+
+- `principal` is `{ kind: "human", namespace, id }`: the admitted person's
+  stable reference, the same `{ namespace, id }` a pool member resolves to.
+  Inbound auth admits no verified email or display name into it; map the id in
+  deployment code or in the downstream when one is needed.
+- `accept: "human"` admits only people. Agents, anonymous callers,
+  principal-less machine credentials and contexts no request admitted are
+  refused with `auth_required` before the resolver runs. Agents still see the
+  connector, and their calls fail. No identity is ever substituted.
+- `accept: "human-or-agent"` also admits declared agents as
+  `{ kind: "agent", name, pool }`, the pool being the one the agent arrived on.
+  An agent is never presented as a person, its pool's owner included.
+- The caller comes only from the authorization that admitted the request.
+  Tool arguments, program code and request headers cannot choose or change it.
+- The principal joins the client's identity. A different principal never
+  reuses a client, connection or connect in flight, even when the resolver
+  returns the same token. `token.invalidate(rejected, ctx, { principal })`
+  receives the principal the rejected token was minted for.
+- Catalog listing needs an admitted caller like any call, and its cache stays
+  partitioned per caller. Operator status and catalog checks carry no caller,
+  so they report `auth_required` without connecting.
+- The connector stays shared. Connecta keeps no per-principal credential state
+  and never stores, logs or describes the principal or the token. `describe()`
+  reports `mode: "request"` as for any request resolver.
+
+#### Over a Workers service binding
+
+Pair principal forwarding with the optional `fetch` to reach a sibling Worker
+through a service binding. Then neither Cloudflare Access, the public internet
+nor a service token lies between the two Workers:
+
+```ts
+const notes = remoteMcp("notes", {
+  url: "https://notes.example.com/mcp",
+  fetch: (input, init) => env.NOTES.fetch(input, init),
+  auth: {
+    type: "request",
+    principal: {
+      accept: "human",
+      token: async (_ctx, { principal }) => await notesAssertion(principal, env.NOTES_ASSERTION_KEY),
+    },
+  },
+});
+```
+
+`notesAssertion` is deployment code. It signs a short-lived assertion naming
+`principal.namespace` and `principal.id` with a key both Workers hold, and
+caches it per principal until shortly before it expires. Over a binding, the
+token may instead be an unsigned principal reference, provided the downstream
+reads it only where the trust rule below holds.
+
+The downstream must accept a forwarded identity only through its binding
+entry point or after verifying the signature. Bind to a named entrypoint, such
+as `{ "binding": "NOTES", "service": "notes", "entrypoint": "Connecta" }` in
+the deployment's Wrangler `services`, and read the identity only in that
+entrypoint. Never accept it on a public route: anyone who can reach that route
+could name any person. A signature verified with a deployment-held key is also
+safe on a public route.
+
+`fetch` carries every MCP request, including handshakes, catalog reads, calls,
+writes and session close. Global fetch is never used for that connector. The
+configured `url` stays the logical origin: its HTTPS rule, cleartext refusal,
+redirect policy and same-origin redirect checks apply unchanged. A request for
+any other origin is refused before it reaches `fetch`. Each request, writes
+included, is handed to `fetch` once with `redirect: "manual"`, and a dispatched
+write is never sent again, so `fetch` must not retry or follow redirects. On
+Node, such writes do not need the owned transport. `fetch` cannot be combined
+with OAuth auth, because discovery, registration and token requests go to
+authorization servers the downstream names.
+
+Contributor evidence: `test/remote-mcp-principal-forwarding.test.ts` runs on
+Node and, through a real service binding, on workerd.
 
 ### Google service-account tokens and hosted MCP
 

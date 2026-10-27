@@ -390,7 +390,22 @@ export type {
 // are internal factoring and are deliberately not part of the API surface.
 export type { Registry } from "./registry.js";
 
-export type { RemoteMcpOptions, RemoteMcpAuth, RemoteMcpRedirectPolicy } from "./connectors/remote-mcp.js";
+export type {
+  RemoteMcpOptions,
+  RemoteMcpAuth,
+  RemoteMcpRequestAuth,
+  RemoteMcpRedirectPolicy,
+} from "./connectors/remote-mcp.js";
+export type {
+  AgentRequestPrincipal,
+  HumanRequestPrincipal,
+  PrincipalForwarding,
+  PrincipalRequestToken,
+  RequestPrincipal,
+  RequestPrincipalPolicy,
+  RequestToken,
+  RequestTokenInput,
+} from "./request-token.js";
 export type {
   ApiHandlerContext,
   ApiOAuthAccess,
