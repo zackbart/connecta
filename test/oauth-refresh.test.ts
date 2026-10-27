@@ -13,7 +13,7 @@ import { KvOAuthProvider, OAuthRefreshCoordinator } from "../src/auth/downstream
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { identityStorageKey } from "../src/identity.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthGrantKeys, scopes as keyScopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, oauthRefreshKeys, scopes as keyScopes } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { makeRegistry } from "./helpers.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -174,14 +174,15 @@ describe("OAuthRefreshCoordinator", () => {
     ["a rotating answer", bearer("access-new", "refresh-new"), bearer("access-new", "refresh-new")],
     ["an answer that keeps the refresh token", bearer("access-new"), bearer("access-new", "refresh-old")],
   ])(
-    "redeems once per epoch for eight scopes and hands each the same tokens after %s",
+    "coordinates eight scopes and permits the next successful refresh generation after %s",
     async (_name, answer, expected) => {
       const storage = await grantStore();
       const coordinator = new OAuthRefreshCoordinator();
       const gate = deferred<void>();
-      const server = tokenServer(async () => {
-        await gate.promise;
-        return Response.json(answer);
+      const nextGate = deferred<void>();
+      const server = tokenServer(async (n) => {
+        await (n === 1 ? gate.promise : nextGate.promise);
+        return Response.json(n === 1 ? answer : bearer("access-next", expected.refresh_token));
       });
       const flows = await Promise.all(Array.from({ length: 8 }, () => flow(storage, coordinator)));
       const refreshes = flows.map((provider) => refresh(coordinator, provider, server.fetch));
@@ -199,15 +200,57 @@ describe("OAuthRefreshCoordinator", () => {
       const writes = vi.spyOn(storage, "compareAndSet");
       await Promise.all(flows.map((provider, i) => provider.saveTokens(bodies[i]!, ISSUER)));
       expect(writes).not.toHaveBeenCalled();
-      // Only a new fingerprint permits another dispatch. A confirmed unchanged
-      // token can still hand the SDK its committed result.
-      const next = await flow(storage, coordinator);
-      expect((await refresh(coordinator, next, server.fetch, expected.refresh_token)).status).toBe(200);
-      expect(server.redeemed).toEqual(
-        expected.refresh_token === "refresh-old" ? ["refresh-old"] : ["refresh-old", expected.refresh_token],
+      // A fresh flow can refresh again after the successful commit, including
+      // vendors that return the same refresh-token bytes for several hours.
+      const coordinators = [new OAuthRefreshCoordinator(), new OAuthRefreshCoordinator()];
+      const next = await Promise.all(coordinators.map((c) => flow(storage, c)));
+      const following = next.map((provider, i) =>
+        refresh(coordinators[i]!, provider, server.fetch, expected.refresh_token),
       );
+      await drain();
+      nextGate.resolve();
+      for (const response of await Promise.all(following)) expect(response.status).toBe(200);
+      expect(server.redeemed).toEqual(["refresh-old", expected.refresh_token]);
     },
   );
+
+  it("INV-5 INV-9: recovers a reusable refresh after an unsent successor loses one grant read", async () => {
+    const backing = await grantStore();
+    const server = tokenServer((n) => Response.json(bearer(`access-${n}`, "refresh-old")));
+    const first = new OAuthRefreshCoordinator();
+    await refresh(first, await flow(backing, first), server.fetch);
+    let armed = true;
+    let failRead = false;
+    const storage: KVStorage = {
+      ...backing,
+      get: async (key) => {
+        if (failRead && key === GRANT) {
+          failRead = false;
+          throw new Error("transient grant read");
+        }
+        return backing.get(key);
+      },
+      compareAndSet: async (key, expected, next, options) => {
+        const won = await backing.compareAndSet(key, expected, next, options);
+        if (armed && won && key.startsWith(oauthRefreshKeys.prefix) && next) {
+          const lease = JSON.parse(next);
+          if (lease.state === "claimed" && lease.predecessor) {
+            armed = false;
+            failRead = true;
+          }
+        }
+        return won;
+      },
+    };
+    const unsent = new OAuthRefreshCoordinator();
+    await expect(refresh(unsent, await flow(storage, unsent), server.fetch)).rejects.toThrow("transient grant read");
+    expect(server.redeemed).toEqual(["refresh-old"]);
+    expect((await storedGrant(backing))?.body?.tokens?.access_token).toBe("access-1");
+    const retry = new OAuthRefreshCoordinator();
+    expect((await refresh(retry, await flow(storage, retry), server.fetch)).status).toBe(200);
+    expect(server.redeemed).toEqual(["refresh-old", "refresh-old"]);
+    expect((await storedGrant(backing))?.body?.tokens?.access_token).toBe("access-2");
+  });
 
   it("hands a scope whose token read predates a rotation the stored result without a token request", async () => {
     const expected = bearer("access-new", "refresh-new");

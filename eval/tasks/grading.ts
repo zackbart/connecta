@@ -15,6 +15,7 @@ export function parseGrading(value = "route"): Grading {
 
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
+  "quickbooks-accounting-journey": { route: [], outcome: ["privacy", "durable-rotation", "revoked", "reads-only"] },
   ...Object.fromEntries(
     GOOGLE_PRODUCTS.flatMap((product) =>
       Array.from({ length: 7 }, (_, i) => {

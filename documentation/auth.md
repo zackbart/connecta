@@ -1390,8 +1390,10 @@ leaves the local grant removed. The management route returns HTTP 200 with
 code. Revoke the old grant in the provider's console if removal there matters.
 With no advertised endpoint, Disconnect makes no request. Repeating Disconnect
 never retries revocation, because the removed grant is no longer available.
-Restart makes no revocation request. Static `api()` OAuth has no discovered
-revocation endpoint and continues to remove authorization locally.
+Restart makes no revocation request. Static `api()` OAuth uses the same
+removal and revocation flow when deployment configuration supplies
+`revocationEndpoint`; without it, removal remains local. The configured
+client secret is used in memory and is never saved with the grant.
 
 ## Refresh failures
 
@@ -1406,11 +1408,11 @@ Copy these durable records during storage migration.
 
 Each fingerprint record names its dispatch epoch, holder, and resolution state:
 
-| State         | Send gate                                                                                                                                                                                                   |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `outstanding` | Dispatched without a definitive outcome yet. Refuse the fingerprint in every epoch.                                                                                                                         |
-| `ambiguous`   | The sent request's outcome is unknowable. Refuse the fingerprint in every epoch, including when re-consent returns it again.                                                                                |
-| `resolved`    | The tokens were committed or a definitive failure was recorded. Refuse another send in the same epoch. A later epoch may send once only when its code exchange completed after the resolution was recorded. |
+| State         | Send gate                                                                                                                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `outstanding` | Dispatched without a definitive outcome yet. Refuse the fingerprint in every epoch.                                                                                                                                                                           |
+| `ambiguous`   | The sent request's outcome is unknowable. Refuse the fingerprint in every epoch, including when re-consent returns it again.                                                                                                                                  |
+| `resolved`    | The tokens were committed or a definitive failure was recorded. A completed lease whose token digest matches the current grant may start the next generation in the same epoch. A later epoch needs a code exchange that observed this exact resolved record. |
 
 Resolution writes use CAS against the exact outstanding record and record a
 `resolvedAt` timestamp with a resolved outcome. When accepting a code response,
@@ -1422,6 +1424,14 @@ CAS compares against that same resolved record and replaces it with the new
 outstanding dispatch. An earlier consent cannot become eligible merely because
 the pending refresh later resolves. Competing epochs cannot both replace the
 same record, and a late answer cannot turn an ambiguous record into resolved.
+
+For vendors that return unchanged refresh-token bytes, a successful token
+commit and its matching completed lease authorize the next refresh generation
+in that epoch. It must replace the exact resolved fingerprint by CAS before
+sending. Outstanding, ambiguous and failed attempts never authorize reuse;
+concurrent callers with an older access token adopt the committed result.
+An unsent successor retains the prior successful proof during cleanup, so a
+transient storage failure before dispatch can be retried without losing the grant.
 
 An ambiguous token stays blocked even if re-consent returns identical bytes.
 Recovery requires re-consent that yields a different refresh token, or
@@ -2519,6 +2529,8 @@ No discovery or registration occurs; all URLs are configuration, so the
 | `pkce`                       | S256 by default; `false` omits challenge and verifier.                                                                                                                                                                                                                                                                                                                                                                         |
 | `authorizationParams`        | Adds provider parameters; cannot restate the grant's own.                                                                                                                                                                                                                                                                                                                                                                      |
 | `expectedCallbackParameters` | Optional `Readonly<Record<string, string>>` of fixed provider response values. Each configured parameter must occur exactly once with its exact decoded value, after pending-state verification and before issuer validation, flow claims, code exchange, or grant persistence. Missing, duplicate, or mismatched values refuse without exchanging a code or returning parameter values. Omission preserves existing behavior. |
+| `revocationEndpoint`         | Optional trusted HTTPS revocation URL (loopback HTTP allowed), without credentials, query or fragment. Disconnect removes the local grant before one bounded attempt using the configured client. Failure reports `oauth_revocation_failed`; a repeated Disconnect never retries.                                                                                                                                              |
+| `revocationRequestFormat`    | `"form"` by default; `"json"` sends JSON without `token_type_hint`. Requires `revocationEndpoint` when set.                                                                                                                                                                                                                                                                                                                    |
 | `tokenRequestHeaders`        | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`.                                                                                                                                                                                                                                                                                             |
 | `tokenEndpointAuthMethod`    | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction.                                                                                                                                                                                                                                                                                                                      |
 | Issuer/resource              | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; after it changes, old tokens are never sent and the next consent replaces them.                                                                                                                                                                                                                      |

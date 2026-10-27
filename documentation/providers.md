@@ -16,6 +16,9 @@ hand-authored endpoint contracts. Tithe.ly and Overflow use endpoint checks
 without vendored OpenAPI documents. `remoteMcp()` discovers live server tools
 instead.
 
+QuickBooks Online uses a restricted hand-authored Accounting API contract with
+manual vendor review; its read hatch cannot execute arbitrary query SQL.
+
 These generated reference catalogs separate named workflows from API tools
 and reads from writes. API search/details inspect indexed contracts, including
 refused operations. Raw read/write calls accept only reviewed operations within
@@ -165,6 +168,20 @@ discovery for your deployment's catalog.
 - **API writes:** `pco_api_write`.
 
 **Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/planning-center).
+
+</details>
+
+<details>
+<summary>QuickBooks Online (7 tools)</summary>
+
+[Setup](#quickbooks-online). **API source:** Hand-authored endpoint contracts. No vendored OpenAPI document.
+
+- **Named reads:** `get_company_info`, `get_record`, `get_report`, `search_records`.
+- **Named writes:** None.
+- **API reads:** `quickbooks_api_details`, `quickbooks_api_read`, `quickbooks_api_search`.
+- **API writes:** None.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/quickbooks).
 
 </details>
 
@@ -1198,3 +1215,84 @@ body and `result.page` carries continuation. Resource keys, decryption JWTs and
 private download destinations remain withheld on named and hatch responses.
 A 404 does not prove absence. Auxiliary lookup failures send no move; an actual
 write failure can have an unknown outcome and requires a read before repetition.
+
+## QuickBooks Online
+
+Available from 0.35.0. Use the deployment's own Intuit app and configure one
+fixed QuickBooks Online company per connector. Multiple companies need separate
+connector IDs and separate consent; tool arguments cannot select another
+company or environment.
+
+```ts
+import { quickbooks } from "@zackbart/connecta/providers/quickbooks";
+
+const accounting = quickbooks("accounting", {
+  purpose: "Company accounting reports and invoice reconciliation",
+  realmId: process.env.QUICKBOOKS_REALM_ID!,
+  environment: "sandbox",
+  clientId: process.env.QUICKBOOKS_CLIENT_ID!,
+  clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET!,
+});
+```
+
+Create an Intuit QuickBooks Online app, enable the Accounting API and obtain
+the client ID and secret for the selected environment. Sandbox and production
+credentials are separate. Register
+`<publicUrl>/oauth/callback/accounting` as an exact redirect URI. Set the
+numeric company/realm ID in deployment configuration, then connect through
+the operator UI or `authorize_connector`. After valid OAuth state, the callback
+must contain exactly one `realmId` equal to the configured value before any
+code exchange. Selecting another company fails authorization. Store app
+credentials in deployment secrets; token import and endpoint overrides are
+not supported.
+
+OAuth defaults to one shared grant; `authScope: "personal"` instead gives each
+owner a grant for the same fixed company. The requested
+`com.intuit.quickbooks.accounting` scope permits both reads and writes at Intuit.
+This provider exposes only reads and enforces that boundary locally even on a
+writable Connecta endpoint. It reuses sealed grants, coordinated refresh,
+rotation and revocation. Access tokens last one hour; refresh authorization
+requires use within 100 days and expires absolutely after five years. Reconnect
+when Intuit requires consent again. Do not assume refresh extends the absolute
+window or infer expiry from provider-specific fields.
+
+`get_company_info`, `search_records`, `get_record` and `get_report` are the
+named reads. The reviewed record families are customers, vendors, accounts,
+items, invoices, bills, received accounting payments and bill payments.
+`search_records` accepts at most eight structured AND filters and returns up to
+100 rows per page (25 by default; configurable with `defaultPageSize`). Its
+signed continuation binds the original arguments, company, environment,
+connector and credential owner. Continue with unchanged arguments and cursor.
+Search is not a snapshot; concurrent accounting changes can alter later pages.
+
+Reports are allowlisted to ProfitAndLoss, BalanceSheet, CashFlow,
+AgedReceivables and AgedPayables. P&L and Cash Flow accept `start_date`; all
+accept `end_date` (translated to `report_date` with `aging_method: "Report_Date"`
+for AR/AP aging). P&L and Balance Sheet accept `accounting_method` (`Cash` or
+`Accrual`). No verified currency override is exposed; inspect the returned
+Header.Currency and never combine unlike currencies. Unsupported combinations fail before
+dispatch. Report Header, Columns and nested Rows retain section identity,
+column metadata and empty amount strings. Check the returned period, basis
+and currency; an empty amount is never converted to zero. Responses use the
+modernized report service in effect since August 31, 2026. Requests explicitly
+use the supported minor-version floor 75.
+
+`quickbooks_api_search` and `quickbooks_api_details` inspect reviewed
+operations. `quickbooks_api_read` reaches only indexed record/company/report
+GETs inside this company's configured host and path. `/query` is refused;
+use the named structured search. Unreviewed entities, arbitrary SQL, URL,
+realm, scope and token overrides and every write are unavailable. Desktop,
+Payments and Payroll APIs are outside this provider.
+
+All named and hatch responses apply the same closed privacy projection before
+`fields` narrows it. Public Id and SyncToken versions, accounting references,
+amounts and minimal display names remain; contact emails/phones/addresses,
+bank/card/tax identifiers, private notes, credentials and private URLs are
+withheld. No `sensitiveFields` or `raw` option widens these results. Reduce
+financial records to task-relevant aggregates before returning them to a user.
+`maxResultBytes`, `callAdmission` and the standard provider title/instructions
+options remain available. No default admission budget is declared: account for
+other integrations sharing the app when configuring one. Intuit documents
+500 requests per minute per company and 10 per second per company/app in both
+environments; after HTTP 429, wait at least 60 seconds. Local admission is per
+runtime and cannot coordinate other deployments' spending.

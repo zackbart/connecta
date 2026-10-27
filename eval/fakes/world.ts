@@ -1,3 +1,4 @@
+import { FakeQuickBooks } from "./quickbooks.js";
 import { FakeGoogle, type GoogleOptions } from "./google.js";
 /**
  * A world is one trial's downstream universe: six fake services sharing one
@@ -50,6 +51,7 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
+  quickbooks?: boolean;
   google?: {
     product: import("./google.js").GoogleProduct;
     serviceAccount: { clientEmail: string; privateKey: string };
@@ -62,6 +64,7 @@ export interface ConnectorSpec {
 }
 
 export interface WorldOptions {
+  quickbooks?: boolean;
   google?: GoogleOptions;
   restVendor?: RestVendor;
   github?: { fault?: "search-503" };
@@ -122,6 +125,7 @@ export class World {
   readonly services: Map<ServiceId, FakeService>;
   readonly billingToken = BILLING_TOKEN;
   readonly oauth = new FakeOAuth(this.ledger);
+  readonly quickbooks = new FakeQuickBooks(this.ledger);
   /** Host-observed guest calls, never inferred from model source text. */
   programs: ProgramObservation[] = [];
 
@@ -185,16 +189,22 @@ export class World {
   }
 
   async start(): Promise<void> {
+    if (this.options.quickbooks) await this.quickbooks.start();
     if (this.options.google) await this.google.start();
     await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
   }
 
   async stop(): Promise<void> {
+    if (this.options.quickbooks) await this.quickbooks.stop();
     if (this.options.google) await this.google.stop();
     await Promise.allSettled([...this.services.values(), ...this.restServices].map((service) => service.stop()));
   }
 
   connectorSpecs(): ConnectorSpec[] {
+    if (this.options.quickbooks)
+      return [
+        { id: "qb_alice", title: "QuickBooks", description: "Accounting", url: this.quickbooks.url, quickbooks: true },
+      ];
     if (this.options.google) return this.google.specs();
     if (
       this.options.restVendor ||

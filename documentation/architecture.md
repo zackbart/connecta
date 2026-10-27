@@ -1675,16 +1675,18 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   refusal, auth handoff, value safety and refund recovery. Graders inspect
   independent downstream state and the physical mutation ledger, and reject
   wrong targets, duplicate writes, missing completion and interrupted trials.
-- `pnpm run eval:smoke` boots the Node template, Node eval deployment and both
-  native Workers deployments, then exercises MCP and the operator page.
+- `pnpm run eval:smoke` boots the Node template, Node eval deployments and native
+  Workers deployments, including the actual QuickBooks provider, then exercises
+  MCP and the operator page.
 - `test/provider-privacy-journey.node.test.ts` sends credentials through real
   HTTP MCP and a maintained API provider. Unknown vendor fields and keys carry
   raw, escaped, percent-encoded, base64 and Basic echoes through direct calls,
   QuickJS programs, failure and recovery. The independent decoder in
   `test/helpers/secret-echoes.ts` checks the wire responses for secret fragments;
   it does not normalize them to placeholders or compare saved output.
-- `test/provider-failure-sweep.test.ts` owns catalog-wide dispatched failure,
-  classification, auxiliary and composite write outcomes. Existing
+- `test/provider-failure-sweep.test.ts` checks retained catalog examples for
+  dispatched failure, classification, auxiliary and composite write outcomes.
+  New providers use the required deployment outcomes above. Existing
   `test/sent-secrets.test.ts`, `test/sent-secret-output-boundary.test.ts`,
   `test/request-secret-redaction.test.ts` and `test/catalog-secret-redaction.test.ts`
   cover secrecy before projection, truncation, caching, paging and diagnostics.

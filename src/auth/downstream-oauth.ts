@@ -221,6 +221,8 @@ interface StoredRefreshLease {
   verdict?: RefreshFailure;
   completed?: true;
   tokenDigest?: string;
+  /** Resolved holder a reusable-token generation's unsent claim replaces. */
+  predecessor?: string;
 }
 
 const REFRESH_REQUEST_DEADLINE_MS = 20_000;
@@ -360,7 +362,7 @@ function requestedRefreshToken(init: RequestInit | undefined): string | null {
 /**
  * The token endpoint as one connector runtime's OAuth flows reach it.
  *
- * A refresh is redeemed once per owner partition and epoch: the first request
+ * A refresh generation is redeemed once per owner partition: the first request
  * owns the fetch, classifies the answer, and stores an accepted rotation, by
  * compare-and-set, before anyone is released, so a cancelled owner or an SDK
  * that redirects instead of saving cannot strand a spent refresh token.
@@ -1807,6 +1809,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return runEdge(authOwnMethod<void>(KvOAuthProvider.prototype, this, "disconnectAuthorization", [send]));
   }
 
+  /** Static adapters supply trusted configuration without persisting client secrets. */
+  protected revocationSnapshot(body: MigratedGrantBody): { body: MigratedGrantBody; client?: RemoteOAuthClient } {
+    return { body, ...(this.clientOptions?.client ? { client: this.clientOptions.client } : {}) };
+  }
+
   private performReset(operatorDisconnected: boolean, preserveClient: boolean, revoke?: FetchLike): Promise<void> {
     return runEdge(
       authOwnMethod<void>(KvOAuthProvider.prototype, this, "performReset", [
@@ -3185,6 +3192,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
           function* (this: KvOAuthProvider) {
             const waiting = sharedWait ?? refreshWait(signal);
             const wait = waiting.run;
+            const read = (key: string) =>
+              authCall<string | null>(wait, [authMethod(() => authStorage(this.storage, "get", [key]))]);
+            const discard = () =>
+              authCall<void>(wait, [
+                authMethod(() =>
+                  authInvoke(this, "discardRefusedGrant", [requested, epoch, waiting.transfer, waiting.signal]),
+                ),
+              ]);
+            const tokens = () =>
+              authCall<OAuthTokens | undefined>(wait, [
+                authMethod(() => authInvoke(this, "storedTokens", [waiting.signal])),
+              ]);
             let delay = 10;
             try {
               const digest = (yield authCall(wait, [
@@ -3195,85 +3214,38 @@ export class KvOAuthProvider implements OAuthClientProvider {
               const key = oauthRefreshKeys.lease(epoch, digest);
               const spentKey = oauthRefreshSpentKeys.spent(digest);
               while (!waiting.signal.aborted) {
-                const current = (yield authCall(wait, [
-                  authMethod(() => {
-                    return authInvoke(this, "storedTokens", [waiting.signal]) as Effect.Effect<
-                      | {
-                          access_token: string;
-                          token_type: string;
-                          id_token?: string | undefined;
-                          expires_in?: number | undefined;
-                          scope?: string | undefined;
-                          refresh_token?: string | undefined;
-                          issuer?: string | undefined;
-                        }
-                      | undefined,
-                      unknown
-                    >;
-                  }),
-                ])) as
-                  | {
-                      access_token: string;
-                      token_type: string;
-                      id_token?: string | undefined;
-                      expires_in?: number | undefined;
-                      scope?: string | undefined;
-                      refresh_token?: string | undefined;
-                      issuer?: string | undefined;
-                    }
-                  | undefined;
+                const current = (yield tokens()) as OAuthTokens | undefined;
                 if (current?.refresh_token !== requested || (current && this.refreshedSinceRead(current, epoch))) {
                   if (!current) this.recordRefreshFailure({ kind: "dead" });
                   return current
                     ? this.adoptRefresh(current)
                     : Response.json({ error: "invalid_grant" }, { status: 400 });
                 }
-                const raw = (yield authCall(wait, [
-                  authMethod(() => {
-                    return authStorage(this.storage, "get", [key]) as Effect.Effect<string | null, unknown>;
-                  }),
-                ])) as string | null;
+                const raw = (yield read(key)) as string | null;
                 const stored = raw === null ? undefined : parsed(raw);
-                if (
+                const committed =
                   plainObject(stored) &&
-                  stored.completed === true &&
-                  current &&
+                  (stored.completed === true ||
+                    (stored.state === "claimed" && typeof stored.predecessor === "string")) &&
+                  current !== undefined &&
                   stored.tokenDigest ===
                     ((yield authCall(wait, [
                       authMethod(() => {
                         return authCall(refreshTokensDigest, [current]) as Effect.Effect<string, unknown>;
                       }),
-                    ])) as string)
-                ) {
-                  return this.adoptRefresh(current);
-                }
-                if (plainObject(stored) && (plainObject(stored.verdict) || stored.completed === true)) {
+                    ])) as string);
+                const completed = committed && stored.completed === true;
+                if (plainObject(stored) && (plainObject(stored.verdict) || (stored.completed === true && !committed))) {
                   this.recordRefreshFailure({ kind: "dead" });
-                  (yield authCall(wait, [
-                    authMethod(() => {
-                      return authInvoke(this, "discardRefusedGrant", [
-                        requested,
-                        epoch,
-                        waiting.transfer,
-                        waiting.signal,
-                      ]) as Effect.Effect<void, unknown>;
-                    }),
-                  ])) as void;
+                  (yield discard()) as void;
                   throw new UnauthorizedError("OAuth refresh grant is no longer active.");
                 }
-                if (plainObject(stored) && stored.state !== "claimed") {
+                if (plainObject(stored) && stored.state !== "claimed" && !completed) {
                   // Never compare another isolate's clock for a sent request. The
                   // durable record survives expiry of this storage-owned liveness key.
                   const active =
                     typeof stored.activeKey === "string"
-                      ? ((yield authCall(wait, [
-                          authMethod(() => {
-                            return authStorage(this.storage, "get", [stored.activeKey as string]) as Effect.Effect<
-                              string | null,
-                              unknown
-                            >;
-                          }),
-                        ])) as string | null)
+                      ? ((yield read(stored.activeKey as string)) as string | null)
                       : null;
                   if (active === null) {
                     const refused = JSON.stringify({ ...stored, verdict: { kind: "dead" } });
@@ -3295,26 +3267,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
                         }),
                       ])) as void;
                       this.recordRefreshFailure({ kind: "dead" });
-                      (yield authCall(wait, [
-                        authMethod(() => {
-                          return authInvoke(this, "discardRefusedGrant", [
-                            requested,
-                            epoch,
-                            waiting.transfer,
-                            waiting.signal,
-                          ]) as Effect.Effect<void, unknown>;
-                        }),
-                      ])) as void;
+                      (yield discard()) as void;
                       throw new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
                     }
                     continue;
                   }
                 } else {
-                  const spentExpected = (yield authCall(wait, [
-                    authMethod(() => {
-                      return authStorage(this.storage, "get", [spentKey]) as Effect.Effect<string | null, unknown>;
-                    }),
-                  ])) as string | null;
+                  const spentExpected = (yield read(spentKey)) as string | null;
                   if (spentExpected !== null) {
                     const spent = storedRefreshSpent(spentExpected);
                     const consent = (
@@ -3326,23 +3285,24 @@ export class KvOAuthProvider implements OAuthClientProvider {
                     ).body.refreshConsent;
                     if (
                       spent?.state !== "resolved" ||
-                      spent.epoch === epoch ||
-                      consent?.digest !== digest ||
-                      consent.resolution !== spentExpected
+                      !(
+                        // A completed lease proves these exact tokens committed.
+                        // Reusable refresh tokens may start another generation,
+                        // but only after its own dispatch is durably resolved.
+                        (committed &&
+                          spent.epoch === epoch &&
+                          spent.holder === (completed ? stored.holder : stored.predecessor)) ||
+                        (spent.epoch !== epoch && consent?.digest === digest && consent.resolution === spentExpected)
+                      )
                     ) {
+                      // Lease and fingerprint are separate records. A competing
+                      // generation can advance both between these reads; retry
+                      // its new lease instead of discarding a live grant.
+                      const latestLease = (yield read(key)) as string | null;
+                      if (latestLease !== raw) continue;
                       // Reset can sweep the old lease while its request remains live.
                       // Only storage-owned expiry can make an outstanding send ambiguous.
-                      if (
-                        spent?.state === "outstanding" &&
-                        ((yield authCall(wait, [
-                          authMethod(() => {
-                            return authStorage(this.storage, "get", [spent.activeKey]) as Effect.Effect<
-                              string | null,
-                              unknown
-                            >;
-                          }),
-                        ])) as string | null) === null
-                      ) {
+                      if (spent?.state === "outstanding" && ((yield read(spent.activeKey)) as string | null) === null) {
                         (yield authCall(wait, [
                           authMethod(() => {
                             return authStorage<boolean>(
@@ -3355,31 +3315,34 @@ export class KvOAuthProvider implements OAuthClientProvider {
                         ])) as boolean;
                       }
                       this.recordRefreshFailure({ kind: "dead" });
-                      (yield authCall(wait, [
-                        authMethod(() => {
-                          return authInvoke(this, "discardRefusedGrant", [
-                            requested,
-                            epoch,
-                            waiting.transfer,
-                            waiting.signal,
-                          ]) as Effect.Effect<void, unknown>;
-                        }),
-                      ])) as void;
+                      (yield discard()) as void;
                       throw new UnauthorizedError("OAuth refresh token was already spent; authorization required.");
                     }
                   }
                   if (
                     raw === null ||
+                    completed ||
                     (plainObject(stored) &&
                       typeof stored.expiresAt === "number" &&
                       stored.expiresAt <= this.refreshNow())
                   ) {
                     // Clock skew can replace an unsent claim; its dispatch CAS then loses.
+                    const predecessor = completed
+                      ? stored.holder
+                      : plainObject(stored)
+                        ? stored.predecessor
+                        : undefined;
                     const claimed = JSON.stringify({
                       connectaOAuthRefresh: 1,
                       holder: crypto.randomUUID(),
                       state: "claimed",
                       expiresAt: this.refreshNow() + OAUTH_REFRESH_LEASE_SECONDS * 1000,
+                      ...(committed && typeof predecessor === "string" && typeof stored.tokenDigest === "string"
+                        ? {
+                            predecessor,
+                            tokenDigest: stored.tokenDigest,
+                          }
+                        : {}),
                     } satisfies StoredRefreshLease);
                     let won: boolean;
                     try {
@@ -3395,33 +3358,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                     }
                     if (won) {
                       try {
-                        const latest = (yield authCall(wait, [
-                          authMethod(() => {
-                            return authInvoke(this, "storedTokens", [waiting.signal]) as Effect.Effect<
-                              | {
-                                  access_token: string;
-                                  token_type: string;
-                                  id_token?: string | undefined;
-                                  expires_in?: number | undefined;
-                                  scope?: string | undefined;
-                                  refresh_token?: string | undefined;
-                                  issuer?: string | undefined;
-                                }
-                              | undefined,
-                              unknown
-                            >;
-                          }),
-                        ])) as
-                          | {
-                              access_token: string;
-                              token_type: string;
-                              id_token?: string | undefined;
-                              expires_in?: number | undefined;
-                              scope?: string | undefined;
-                              refresh_token?: string | undefined;
-                              issuer?: string | undefined;
-                            }
-                          | undefined;
+                        const latest = (yield tokens()) as OAuthTokens | undefined;
                         if (latest?.refresh_token !== requested || (latest && this.refreshedSinceRead(latest, epoch))) {
                           (yield authCall(wait, [
                             authMethod(() => {
@@ -3499,8 +3436,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
             if (!won) throw this.refreshContended();
             lease.raw = dispatched;
             if (waiting.signal.aborted) throw aborted(waiting.signal);
-            // One CAS owns the fingerprint across every epoch. Only a later consent
-            // that observed a resolved write may replace it. No TTL or deletion path.
+            // One CAS owns the fingerprint across epochs and generations. Only a
+            // proven successful commit or later consent may replace a resolved send.
             lease.spentRaw = JSON.stringify({
               connectaOAuthRefreshSpent: 1,
               epoch,
@@ -3550,10 +3487,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
         return authFlow<void>(
           function* (this: KvOAuthProvider) {
             const stored = parsed(lease.raw) as StoredRefreshLease;
-            // Only an unsent claim may be removed. Dispatched outcomes never reopen it.
+            // Unsent successors restore the prior completed proof; other unsent
+            // claims may be removed. Dispatched outcomes never reopen a send.
             const next =
               stored.state === "claimed"
-                ? null
+                ? stored.predecessor && stored.tokenDigest
+                  ? JSON.stringify({
+                      ...stored,
+                      holder: stored.predecessor,
+                      state: "dispatched",
+                      completed: true,
+                    } satisfies StoredRefreshLease)
+                  : null
                 : JSON.stringify({
                     ...stored,
                     ...(tokens
@@ -3778,8 +3723,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
                   (yield authInvoke(this, "sweepConsents", [])) as void;
                   (yield authInvoke(this, "sweepRefreshLeases", [])) as void;
                 } finally {
-                  if (revoke)
-                    (yield authCall(revokeDownstreamGrant, [grant.body, revoke, this.clientOptions?.client])) as void;
+                  if (revoke) {
+                    const snapshot = this.revocationSnapshot(grant.body);
+                    (yield authCall(revokeDownstreamGrant, [snapshot.body, revoke, snapshot.client])) as void;
+                  }
                 }
                 return;
               }
