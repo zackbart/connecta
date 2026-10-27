@@ -144,7 +144,7 @@ export const READ_CAP_MS = 60_000;
  * /v1/tax/calculations` is deliberately absent: it persists a Calculation
  * object a later Tax Transaction can reference, and Stripe bills each call.
  */
-export const READ_POSTS: readonly RestReadPost[] = [
+const READ_POSTS: readonly RestReadPost[] = [
   ["POST", "/v1/invoices/create_preview", "Computes an upcoming invoice; Stripe persists nothing."],
 ];
 
@@ -157,7 +157,7 @@ function invalid(message: string): never {
  * The key's own prefix carries its mode, so a live key in a sandbox
  * connector (or the reverse) is refused before any request leaves.
  */
-export function stripeKeyProblem(key: string, mode: StripeMode): string | undefined {
+function stripeKeyProblem(key: string, mode: StripeMode): string | undefined {
   if (/^(?:sk|rk)_org_/.test(key)) {
     return "This is a Stripe organization key, which needs a Stripe-Context header this connector does not send. Use one account's secret or restricted key.";
   }
@@ -242,7 +242,7 @@ function expansions(call: RestCall): string[] {
  * secret's value, or a full Issuing card number or CVC, which an Issuing
  * authorization, transaction, or token can embed as well as the card itself.
  */
-export function refuse(call: RestCall): string | undefined {
+function refuse(call: RestCall): string | undefined {
   const expanded = expansions(call);
   if (/^\/v1\/apps\/secrets(?:\/|$)/.test(call.path) && expanded.some((path) => /(?:^|\.)payload$/.test(path))) {
     return "Stripe Apps secret values are not returned through Connecta. Read the secret's metadata without expanding payload.";
@@ -257,7 +257,7 @@ export function refuse(call: RestCall): string | undefined {
 }
 
 export const stripeIndex = new OperationIndex(openapi, { vendor: "stripe", title: "Stripe" });
-export const stripeSafety = valueSafety(STRIPE_VALUE_SAFETY, () => stripeIndex);
+const stripeSafety = valueSafety(STRIPE_VALUE_SAFETY, () => stripeIndex);
 function operationRefusal(op: (typeof stripeIndex.ops)[number]): string | undefined {
   return (
     checkServer(op.server) ??
@@ -313,11 +313,11 @@ export const safety = () => ({
   reviewed: restSafety(stripeSafety, stripeIndex),
   sensitiveFields: { names: [], choice: "drop" as const },
 });
-export const getAccount = get("getAccount", "/v1/account", {
+const getAccount = get("getAccount", "/v1/account", {
   headers: Schema.Struct({ "Stripe-Account": Schema.optionalKey(Schema.String) }),
   success: Schema.Unknown,
 });
-export const getBalance = get("getBalance", "/v1/balance", { success: Schema.Unknown });
+const getBalance = get("getBalance", "/v1/balance", { success: Schema.Unknown });
 const RESPONSE_MEDIA = { "GET /v1/quotes/{quote}/pdf": ["application/pdf"] };
 export const StripeApi = {
   ...indexedVendor("stripe", stripeIndex, [getAccount, getBalance]),
@@ -378,7 +378,7 @@ export function connectedAccount(options: Readonly<StripeApiKeyOptions>): string
     throw new Error('stripe() connectedAccount must be a Stripe account id ("acct_...").');
   return account;
 }
-export function checkServer(server: string | undefined): string | undefined {
+function checkServer(server: string | undefined): string | undefined {
   if (server === undefined || server === FILES_ORIGIN) return undefined;
   return server === METER_EVENTS_ORIGIN
     ? "The meter event stream takes a short-lived meter event session token, not an API key. Send single events with POST /v2/billing/meter_events."

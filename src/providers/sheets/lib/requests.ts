@@ -1,4 +1,4 @@
-export const SHEETS_REQUEST_KINDS = [
+const SHEETS_REQUEST_KINDS = [
   "addBanding",
   "addChart",
   "addCommentReply",

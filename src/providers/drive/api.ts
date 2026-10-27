@@ -33,7 +33,7 @@ export const DRIVE: GoogleProduct = {
 
 const FileId = { fileId: Schema.String };
 const PermissionId = { ...FileId, permissionId: Schema.String };
-export const getFile = get("getFile", "/files/:fileId", { params: FileId, success: Schema.Unknown });
+const getFile = get("getFile", "/files/:fileId", { params: FileId, success: Schema.Unknown });
 const OPERATIONS = [
   get("listFiles", "/files", { success: Schema.Unknown }),
   post("createFile", "/files", { payload: Schema.Unknown, success: Schema.Unknown }),

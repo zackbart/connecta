@@ -20,7 +20,7 @@ import { googleBatchGuard } from "../_shared/google/hatch.js";
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
 /** A listed answer is cut here; get_response returns it whole. */
-export const LIST_ANSWER_CHARS = 2_000;
+const LIST_ANSWER_CHARS = 2_000;
 /** A form or item title or description is cut here in get_form's projection. */
 const DESCRIPTION_CHARS = 2_000;
 /** ...and bounded here in bytes, so escaped control characters cannot grow it. */

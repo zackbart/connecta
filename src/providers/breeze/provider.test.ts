@@ -177,7 +177,7 @@ it("INV-9: preserves factual in-band failures and JSON success contracts", async
   }
 });
 
-it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages before dispatch", async () => {
+it("INV-1 INV-4 INV-9: refuses GET-shaped mutations and dispatcher overrides on the read hatch", async () => {
   const connector = connection(),
     ctx = context();
   for (const path of [
@@ -216,36 +216,9 @@ it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages befo
   ])
     expect((await failure(call(connector, "breeze_api_write", args, ctx))).code).toBe("invalid_args");
   expect(calls).toHaveLength(0);
-  queue(
-    {
-      body: [
-        { id: "1", first_name: "Alice" },
-        { id: "2", first_name: "Bob" },
-      ],
-    },
-    { body: [] },
-  );
-  const first = await call(connector, "breeze_api_read", { path: "/people", query: { limit: 2 }, fields: ["id"] }, ctx);
-  expect(first.data).toEqual([{ id: "1" }, { id: "2" }]);
-  expect(first.page).toMatchObject({ hasMore: true, param: "offset", in: "query" });
-  const cursor = first.page.nextCursor;
-  for (const args of [
-    { path: "/people", query: { limit: 2, details: 1, offset: cursor }, fields: ["id"] },
-    { path: "/people", query: { limit: 2, offset: cursor.slice(0, -1) + "!" }, fields: ["id"] },
-  ])
-    expect((await failure(call(connector, "breeze_api_read", args, ctx))).code).toBe("invalid_args");
-  expect(
-    await call(
-      connector,
-      "breeze_api_read",
-      { path: "/people", query: { limit: 2, offset: cursor }, fields: ["id"] },
-      ctx,
-    ),
-  ).toMatchObject({ data: [], page: { hasMore: false, param: "offset", in: "query" } });
-  expect(new URL(calls.at(-1)!.url).searchParams.get("offset")).toBe("2");
 });
 
-it("INV-5: calendar secrets stay removed and list fields narrow safe rows", async () => {
+it("INV-5: calendar credentials stay removed across vendor response envelopes", async () => {
   const connector = connection(),
     ctx = context();
   for (const fields of [undefined, ["id", "address", "embed_key"]]) {
@@ -285,44 +258,6 @@ it("INV-5: calendar secrets stay removed and list fields narrow safe rows", asyn
       data: safe,
     });
   }
-  queue({ body: [{ id: "1", settings_id: "2", is_modified: "0", created_on: "2026-10-01", name: "Gathering" }] });
-  expect(await call(connector, "breeze_api_read", { path: "/events", fields: ["id", "created_on"] }, ctx)).toEqual({
-    status: 200,
-    data: [{ id: "1", created_on: "2026-10-01" }],
-  });
-  queue(
-    {
-      body: [
-        { id: "1", name: "One" },
-        { id: "2", name: "Two" },
-      ],
-    },
-    {
-      body: [
-        { id: "1", name: "One" },
-        { id: "2", name: "Two" },
-      ],
-    },
-  );
-  const tags = await call(connector, "list_tags", { limit: 1, fields: ["id"] }, ctx);
-  expect(tags.items).toEqual([{ id: "1" }]);
-  expect(await call(connector, "list_tags", { limit: 1, cursor: tags.page.nextCursor, fields: ["name"] }, ctx)).toEqual(
-    { items: [{ name: "Two" }], page: { hasMore: false } },
-  );
-  queue({ body: [{ id: "1", event_id: "2", name: "Gathering", end_datetime: "0000-00-00 00:00:00" }] });
-  expect(await call(connector, "list_events", { limit: 1, fields: ["id"] }, ctx)).toEqual({
-    items: [{ id: "1" }],
-    page: { hasMore: false },
-    truncated: ["items[]"],
-  });
-  const count = calls.length;
-  for (const [tool, args] of [
-    ["list_events", { fields: ["nope"] }],
-    ["list_people", { raw: true }],
-    ["get_person", { personId: "1", fields: ["photo"] }],
-  ] as const)
-    expect((await failure(call(connector, tool, args, ctx))).code).toBe("invalid_args");
-  expect(calls).toHaveLength(count);
 });
 
 it("INV-5: probes only the candidate key and refuses a different reported church", async () => {

@@ -45,7 +45,7 @@ const fail = (reason: string): never => {
   );
 };
 
-export function validatePin(options: Readonly<VercelTokenOptions>): void {
+function validatePin(options: Readonly<VercelTokenOptions>): void {
   if (options.pin === undefined) return;
   const id = options.pin?.teamId;
   if (typeof id !== "string" || !/^team_[A-Za-z0-9_-]+$/.test(id))

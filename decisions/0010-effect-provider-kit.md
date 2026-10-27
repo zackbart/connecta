@@ -12,7 +12,10 @@ copies named below have been retired. Current executable evidence is owned by
 the architecture guide's provider/HTTP sections: stateful outcome tasks, real
 HTTP privacy/hostile acknowledgements, physical-send and native fault journeys,
 and focused algorithm probes. The old file names and counts describe the
-implementation sequence, not current required validation.
+implementation sequence, not current required validation. The remaining
+catalog-wide failure argument/status matrix and test-only paging strategies
+(`token`, `offset`, `page`, `link`, `allRows`) are also retired; maintained
+providers use their live paging implementations and the bound cursor codec.
 
 [0009](./0009-effect-native-rewrite.md) chose to rebuild the HTTP layer on
 Effect and sequenced the work as B.1–B.5. This record fixes the design of

@@ -20,7 +20,7 @@ export const FORMS: GoogleProduct = {
 
 const FormId = { formId: Schema.String };
 
-export const getForm = get("getForm", "/forms/:formId", { params: FormId, success: Schema.Unknown });
+const getForm = get("getForm", "/forms/:formId", { params: FormId, success: Schema.Unknown });
 
 const OPERATIONS = [
   getForm,

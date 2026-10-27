@@ -138,7 +138,7 @@ function pick(value: unknown, keys: readonly string[]): Record<string, unknown> 
   );
 }
 /** Closed accounting projection: unknown fields never become a way around privacy. SyncToken is a version, not a credential. */
-export function safeRecord(value: unknown): Record<string, unknown> {
+function safeRecord(value: unknown): Record<string, unknown> {
   const source = object(value),
     out = pick(source, scalars);
   for (const key of references) if (source[key]) out[key] = pick(source[key], ["value", "name", "type"]);

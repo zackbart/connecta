@@ -1356,8 +1356,10 @@ acknowledgement, then reconciles vendor state with exactly one physical send.
 `test/provider-privacy-journey.node.test.ts` checks credential echoes over HTTP.
 Focused provider suites retain MIME/draft restrictions, revision conflicts,
 CCB routing, Planning Center product exclusions and deployment pins. Native
-HTTP framing, cursor and request-lifetime fault probes remain in the HTTP suites;
-catalog copies and decoder/adapter parity matrices are retired under #1072.
+HTTP framing, cursor and request-lifetime fault probes remain in the HTTP suites.
+The catalog-wide status sweep and its argument roster, catalog/ranking copies
+and unused paging strategy tests are retired under #1072. Provider workflows
+belong in the existing shared outcomes; a new tool requires no failure-matrix row.
 No legacy REST tool adapter remains.
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
@@ -1672,9 +1674,13 @@ capture determinism. Production invariants remain unchanged.
 Use the existing stateful fixture vendors and published-edge deployment adapters:
 
 - `pnpm run eval:outcomes` drives representative joins, retained paging, endpoint
-  refusal, auth handoff, value safety and refund recovery. Graders inspect
+  refusal, auth handoff, value safety and recovery after committed refunds,
+  cancellations, DNS and environment updates, plus a single GitHub draft release
+  and Google document partial creation and shared-drive permissions. Graders inspect
   independent downstream state and the physical mutation ledger, and reject
   wrong targets, duplicate writes, missing completion and interrupted trials.
+  Every reference also rejects a fabricated correct answer without the work.
+  Promoted read journeys reject erased MCP data even with the vendor ledger intact.
 - `pnpm run eval:smoke` boots the Node template, Node eval deployments and native
   Workers deployments, including the actual QuickBooks provider, then exercises
   MCP and the operator page.
@@ -1684,9 +1690,13 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   QuickJS programs, failure and recovery. The independent decoder in
   `test/helpers/secret-echoes.ts` checks the wire responses for secret fragments;
   it does not normalize them to placeholders or compare saved output.
-- `test/provider-failure-sweep.test.ts` checks retained catalog examples for
-  dispatched failure, classification, auxiliary and composite write outcomes.
-  New providers use the required deployment outcomes above. Existing
+- `test/provider-hostile-response.node.test.ts` reconciles real HTTP mutations
+  after HTML, malformed JSON and oversized acknowledgements with one physical
+  send. It distinguishes Stripe's reviewed pre-execution 401 refusal, and checks
+  read failure facts, secrecy and recovery through direct and QuickJS calls.
+  `test/provider-failure-sweep.test.ts` retains only concrete auxiliary, composite,
+  in-flight and untracked-call fault probes; no provider/tool argument roster or
+  catalog/finalizer agreement sweep remains. Existing
   `test/sent-secrets.test.ts`, `test/sent-secret-output-boundary.test.ts`,
   `test/request-secret-redaction.test.ts` and `test/catalog-secret-redaction.test.ts`
   cover secrecy before projection, truncation, caching, paging and diagnostics.
@@ -3119,8 +3129,9 @@ compiling and configuring the real thing.
   at construction) and the predicate matched, which the ledger records on the
   request. Only Stripe declares it (`src/providers/stripe/api.ts`, reviewed
   as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
-  `Request-Id`. `test/provider-failure-sweep.test.ts` holds that list to the
-  sources. Q8 is decided in one place, `settleWrite` in
+  `Request-Id`. The real HTTP hostile-response journey checks this refusal
+  against an ambiguous committed write; there is no copied declaration list.
+  Q8 is decided in one place, `settleWrite` in
   `src/write-outcome.ts`, once per logical call and over every request it
   recorded. The invocation calls it for every failure of a served write: a
   thrown or mapped error, a custom connector's, a program's call, and its
@@ -3369,29 +3380,17 @@ compiling and configuring the real thing.
   `write_outcome_unknown`. The caller's own abort reason still passes by
   identity for a read and for a served call, whose timeout passes through
   unchanged for the invocation to report.
-  The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
-  provider/tool on Node, fails on missing provider/tool examples or a
-  dispatched failure bypassing the helper, and covers served write/read
-  overrides with HTTP 503 for every tool and a connection reset after send
-  for each provider/verdict representative. HTTP 401 recovery uses those
-  representatives plus the distinct composite, auxiliary, owner-lookup and
-  POST-as-read paths.
-  Shared sender and real-socket evidence below own status/reset permutations.
-  Local metadata
-  tools prove zero sends; composite calls prove each distinct request leaves
-  once. The round-5 cases additionally cover Docs creation with initial text,
-  composite success followed by refusal, GitHub preflight failures, typed
-  handler errors after successful sends, Forms cursor conflicts after 200,
-  generic-code vendor refusals, auxiliary failures after resource dispatch,
-  redaction of refusal errors, and concurrent direct-call ledger isolation.
-  The round-6 cases cover a composite write's early refusal while siblings
-  await credentials or are in flight, requests started after the call ended,
-  connect-phase errnos with each body kind (all unknown for a write, and a
-  direct read stays retryable), a request aborted with a refusal-shaped
-  reason, an errno outside fetch's network error, and
-  undeclared handlers whose untracked send precedes a typed failure. Each
-  catalog case also checks that the ledger recorded every resource request
-  the network saw, and the inventory that every API connector declares it.
+  Shared provider outcomes and the real HTTP hostile-response journey check
+  returned data, failure/recovery, privacy and physical writes without a
+  catalog-wide status matrix. `test/provider-failure-sweep.test.ts` retains
+  fault probes for Docs creation with initial text, composite success followed
+  by refusal, GitHub preflight failures, typed handler errors after successful
+  sends, Forms cursor conflicts after 200, generic-code vendor refusals,
+  auxiliary failures after resource dispatch and concurrent direct-call isolation.
+  It also holds siblings awaiting credentials or already in flight when another
+  write fails, refuses requests after call closure, and probes network errors,
+  refusal-shaped abort reasons and untracked sends. Native transport and
+  request-lifetime suites retain their platform-specific evidence.
   `test/write-evidence.test.ts` uses real refused, reset, and held sockets on
   both runtimes: a refused write is unknown and a refused read retryable,
   including a write aborted with another fetch's real refusal as its reason

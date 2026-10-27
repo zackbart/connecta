@@ -26,7 +26,7 @@ import { pinAdmission, pinOptions, pinQuery, pinRoute, readPinnedTeam, type Verc
 export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const READ_CAP_MS = 60_000;
 /** POSTs that only read, admitted by `vercel_api_read`. */
-export const READ_POSTS: readonly RestReadPost[] = [
+const READ_POSTS: readonly RestReadPost[] = [
   ["POST", "/v2/observability/query", "Runs an Observability metrics query; Vercel persists nothing."],
   ["POST", "/v1/registrar/domains/availability", "Checks availability for a list of domains; buys nothing."],
   ["POST", "/v1/registrar/domains/price", "Quotes registrar prices for a list of domains; buys nothing."],
@@ -56,7 +56,7 @@ export function compact<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
-export function truthy(value: unknown): boolean {
+function truthy(value: unknown): boolean {
   return value === true || value === 1 || (typeof value === "string" && /^(?:1|true)$/i.test(value.trim()));
 }
 
@@ -189,34 +189,34 @@ class VercelIndex extends OperationIndex {
   }
 }
 export const vercelIndex = new VercelIndex(discoveryIndex(openapi), { vendor: "vercel", title: "Vercel" });
-export const vercelSafety = valueSafety(VERCEL_VALUE_SAFETY, () => vercelIndex);
+const vercelSafety = valueSafety(VERCEL_VALUE_SAFETY, () => vercelIndex);
 const Query = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Array(Schema.String)]));
 const params = (...names: string[]) => Schema.Struct(Object.fromEntries(names.map((name) => [name, Schema.String])));
-export const currentUser = get("currentUser", "/v2/user", { success: Schema.Unknown });
-export const teams = get("teams", "/v2/teams", { query: Query, success: Schema.Unknown });
-export const projectEnv = get("projectEnv", "/v10/projects/:idOrName/env", {
+const currentUser = get("currentUser", "/v2/user", { success: Schema.Unknown });
+const teams = get("teams", "/v2/teams", { query: Query, success: Schema.Unknown });
+const projectEnv = get("projectEnv", "/v10/projects/:idOrName/env", {
   params: params("idOrName"),
   query: Query,
   success: Schema.Unknown,
 });
-export const upsertEnv = post("upsertEnv", "/v10/projects/:idOrName/env", {
+const upsertEnv = post("upsertEnv", "/v10/projects/:idOrName/env", {
   params: params("idOrName"),
   query: Query,
   payload: Schema.Unknown,
   success: Schema.Unknown,
 });
-export const updateEnv = patch("updateEnv", "/v9/projects/:idOrName/env/:id", {
+const updateEnv = patch("updateEnv", "/v9/projects/:idOrName/env/:id", {
   params: params("idOrName", "id"),
   query: Query,
   payload: Schema.Unknown,
   success: Schema.Unknown,
 });
-export const buildLogs = get("buildLogs", "/v3/deployments/:idOrUrl/events", {
+const buildLogs = get("buildLogs", "/v3/deployments/:idOrUrl/events", {
   params: params("idOrUrl"),
   query: Query,
   success: Schema.Unknown,
 });
-export const runtimeLogs = get("runtimeLogs", "/v1/projects/:projectId/deployments/:deploymentId/runtime-logs", {
+const runtimeLogs = get("runtimeLogs", "/v1/projects/:projectId/deployments/:deploymentId/runtime-logs", {
   params: params("projectId", "deploymentId"),
   query: Query,
   success: Schema.Unknown,
@@ -351,7 +351,7 @@ export const refuse = (call: RestCall): string | undefined => {
   return undefined;
 };
 
-export function scope(call: RestCall, teamId: string | undefined, pin?: VercelTeamPin): RestCall {
+function scope(call: RestCall, teamId: string | undefined, pin?: VercelTeamPin): RestCall {
   if (pin) return { ...call, query: pinQuery(vercelIndex, call, pin) };
   const query: JsonRecord = { ...call.query };
   if (query["teamId"] === null) {
@@ -449,7 +449,7 @@ export function queryPairs(call: RestCall): [string, string][] {
     (Array.isArray(value) ? value : [value]).map((value) => [key, value] as [string, string]),
   );
 }
-export function sendVercel(
+function sendVercel(
   connection: Connection,
   call: RestCall,
   options: Readonly<VercelTokenOptions>,

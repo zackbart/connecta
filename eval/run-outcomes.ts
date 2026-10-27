@@ -42,6 +42,12 @@ const SCENARIOS: Record<string, string> = {
   "google-docs-3": "page document indexes without losing paragraph positions",
   "google-sheets-3": "page whole rows across ranges and retain every requested cell",
   "google-slides-7": "report a saved deck separately from an unconfirmed comment",
+  "tithely-cancel-recovery": "reconcile a cancelled recurring gift without repeating the cancellation",
+  "github-release-once": "create one draft release with the requested repository, tag and body",
+  "cloudflare-step2-dns-recovery": "reconcile a committed DNS update after a failed acknowledgement",
+  "vercel-step2-env-recovery": "reconcile a committed environment update without exposing the secret",
+  "google-drive-2": "distinguish direct permissions from inherited shared-drive access",
+  "google-docs-7": "recover the created document id after its initial text failed to save",
   "quickbooks-accounting-journey": "actual company accounting, consent, restart, rotation, privacy and isolation",
   "quickbooks-write-journey": "actual names, CAS conflict, unsent invoices and read reconciliation",
 };
@@ -163,6 +169,11 @@ async function run() {
     );
     const noop = await trial(task(id), "noop");
     record(`${id}: doing nothing fails`, !passed(noop), undefined, noop);
+    const fabricated = structuredClone(noop);
+    fabricated.finalAnswer = reference.finalAnswer ?? "";
+    fabricated.saved!.trace.finalAnswer = reference.finalAnswer ?? "";
+    const grade = regradeTrial(task(id), fabricated, "codex", "outcome");
+    record(`${id}: a fabricated answer without the work fails`, !passed(grade), failedChecks(grade), grade);
   }
 
   const quickbooks = references.find((t) => t.task === "quickbooks-accounting-journey");
@@ -189,6 +200,49 @@ async function run() {
       record(`control: QuickBooks ${mode} fails`, !passed(grade), failedChecks(grade), grade);
     }
   }
+  for (const id of [
+    "tithely-cancel-recovery",
+    "github-release-once",
+    "cloudflare-step2-dns-recovery",
+    "vercel-step2-env-recovery",
+  ]) {
+    const reference = references.find((t) => t.task === id);
+    if (!reference) continue;
+    const duplicated = structuredClone(reference);
+    duplicated.saved!.world.calls.push(structuredClone(duplicated.saved!.world.calls.find((c) => c.kind === "write")!));
+    const grade = regradeTrial(task(id), duplicated, "codex", "outcome");
+    record(`${id}: duplicate physical mutation fails`, !passed(grade), failedChecks(grade), grade);
+  }
+  const tithely = references.find((t) => t.task === "tithely-cancel-recovery");
+  if (tithely) {
+    for (const mode of ["failed-read", "empty-object", "empty-list", "malformed", "incomplete-page"] as const) {
+      const lost = structuredClone(tithely);
+      const use = lost.saved!.trace.toolUses.at(-1)!;
+      if (mode === "failed-read") {
+        lost.saved!.world.calls.at(-1)!.outcome = "tool_error";
+        use.isError = true;
+        use.resultText = JSON.stringify({ error: { code: "connector_call_failed", status: 503 } });
+      } else
+        use.resultText =
+          mode === "malformed"
+            ? "upstream unavailable"
+            : JSON.stringify(
+                mode === "empty-object"
+                  ? {}
+                  : mode === "empty-list"
+                    ? { items: [], page: { hasMore: false } }
+                    : { ...JSON.parse(use.resultText!), page: { hasMore: true } },
+              );
+      use.resultBlocks = [{ type: "text", text: use.resultText! }];
+      const grade = regradeTrial(task(tithely.task), lost, "codex", "outcome");
+      record(
+        `tithely-cancel-recovery: ${mode} cannot prove reconciliation`,
+        !passed(grade) && grade.checks.some((check) => check.id === "reconciled" && !check.pass),
+        failedChecks(grade),
+        grade,
+      );
+    }
+  }
   if (selected) return;
 
   // ----------------------------------------------- no-false-pass controls
@@ -203,6 +257,8 @@ async function run() {
     "overflow-donor-paging",
     "google-docs-3",
     "google-sheets-3",
+    "google-drive-2",
+    "google-docs-7",
   ]) {
     const lost = structuredClone(references.find((reference) => reference.task === id)!);
     for (const use of lost.saved!.trace.toolUses) {
@@ -227,26 +283,36 @@ async function run() {
       graded,
     );
   }
-  const reduced = structuredClone(references.find((reference) => reference.task === "google-sheets-3")!);
-  for (const use of reduced.saved!.trace.toolUses) {
-    use.resultText = "{}";
-    use.resultBlocks = [{ type: "text", text: "{}" }];
-  }
-  reduced.saved!.trace.toolUses.at(-1)!.resultText = JSON.stringify({
-    result: { ids: Array.from({ length: 6 }, (_, i) => `record${i + 1}`), total: 210 },
-  });
-  for (const use of reduced.saved!.trace.toolUses) {
-    use.resultBlocks = [{ type: "text", text: use.resultText! }];
-    for (const entry of reduced.saved!.trace.transcript) {
-      if (entry.kind === "tool_result" && entry.id === use.id) {
-        entry.text = use.resultText!;
-        entry.chars = entry.text.length;
+  const compactTrials = (
+    [
+      ["google-sheets-3", { ids: Array.from({ length: 6 }, (_, i) => `record${i + 1}`), total: 210 }],
+      [
+        "google-drive-2",
+        { id: "pdf1", direct: "reviewer@example.com", inherited: "alice@example.com", driveId: "shared1" },
+      ],
+      ["google-docs-7", { id: "new-doc", text: "Recovered opening." }],
+    ] as const
+  ).map(([id, result]) => {
+    const reduced = structuredClone(references.find((reference) => reference.task === id)!);
+    for (const use of reduced.saved!.trace.toolUses) {
+      use.resultText = "{}";
+      use.resultBlocks = [{ type: "text", text: "{}" }];
+    }
+    reduced.saved!.trace.toolUses.at(-1)!.resultText = JSON.stringify({ result });
+    for (const use of reduced.saved!.trace.toolUses) {
+      use.resultBlocks = [{ type: "text", text: use.resultText! }];
+      for (const entry of reduced.saved!.trace.transcript) {
+        if (entry.kind === "tool_result" && entry.id === use.id) {
+          entry.text = use.resultText!;
+          entry.chars = entry.text.length;
+        }
       }
     }
-  }
-  const summary = regradeTrial(task("google-sheets-3"), reduced, "codex", "outcome");
-  record("control: a compact delivered Sheets summary passes", passed(summary), failedChecks(summary), summary);
-  const legacy = structuredClone(reduced);
+    const summary = regradeTrial(task(id), reduced, "codex", "outcome");
+    record(`control: a compact delivered ${id} summary passes`, passed(summary), failedChecks(summary), summary);
+    return reduced;
+  });
+  const legacy = structuredClone(compactTrials[0]!);
   for (const use of legacy.saved!.trace.toolUses) delete use.resultBlocks;
   const legacyGrade = regradeTrial(task("google-sheets-3"), legacy, "codex", "outcome");
   record(
