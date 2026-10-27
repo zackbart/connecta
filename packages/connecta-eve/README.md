@@ -95,8 +95,11 @@ never trigger initialize. Both JSON and SSE replies are accepted. Each request
 has a five-second timeout. Successful guidance is cached for ten minutes per
 resolver; `ttlMs` overrides that duration. Eve evaluates instructions before
 every model call; the helper keeps one result per turn in Eve's memo, so a turn
-sees the same guidance throughout and at most one refresh. A failed refresh keeps the last copy,
-or adds nothing if no fetch has succeeded, and waits 30 seconds before retrying.
+sees the same guidance throughout and at most one refresh. A failed refresh
+keeps the last copy, or adds nothing if no fetch has succeeded, and waits 30
+seconds before retrying.
+When Eve cancels an evaluation, the helper rethrows the cancellation instead of
+counting it as a failure: nothing is kept for that turn and no wait starts.
 Tools remain usable. Instructions do not grant access.
 
 ## Vercel OIDC token source

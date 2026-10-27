@@ -152,9 +152,18 @@ export function connectaInstructions(options: ConnectaInstructionsOptions = {}) 
   let cached: { at: number; content: string } | undefined;
   let retryAfter = 0;
   const current = async (signal: AbortSignal): Promise<string | null> => {
+    signal.throwIfAborted();
     if (cached && Date.now() - cached.at <= ttlMs) return cached.content;
     if (Date.now() < retryAfter) return cached?.content ?? null;
-    const fresh = await fetchConnectaInstructions(options, signal).catch(() => null);
+    let fresh: string | null;
+    try {
+      fresh = await fetchConnectaInstructions(options, signal);
+    } catch {
+      // Eve's cancellation is not an endpoint failure: rethrowing keeps it out
+      // of the memo and the backoff, which every session of this resolver shares.
+      signal.throwIfAborted();
+      fresh = null;
+    }
     if (fresh) cached = { at: Date.now(), content: fresh };
     retryAfter = fresh ? 0 : Date.now() + 30_000;
     return fresh ?? cached?.content ?? null;

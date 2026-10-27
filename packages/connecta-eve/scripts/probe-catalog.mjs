@@ -107,7 +107,7 @@ async function boot(consumer, url, token, transport) {
     await exited;
     clearTimeout(timer);
   };
-  const client = new Client({ host: `http://127.0.0.1:${port}` });
+  const client = new Client({ baseUrl: `http://127.0.0.1:${port}` });
   try {
     const start = performance.now();
     while (performance.now() - start < 120_000) {
@@ -418,24 +418,28 @@ async function cell(consumer, count, surface) {
     });
     eve = await boot(consumer, url, token, transport.origin);
     const eveStart = performance.now();
-    const created = await eve.client.sessions.create({
-      message: "Run the deterministic catalog contract.",
-      signal: AbortSignal.timeout(90_000),
-    });
-    const result = await created.response.result();
+    const signal = AbortSignal.timeout(90_000);
+    const created = await eve.client.sessions.create({ message: "Run the deterministic catalog contract.", signal });
+    // The stream reads through the delivery's settlement, so it ends with it.
+    const events = [];
+    const streamed = (async () => {
+      for await (const event of created.delivery.stream({ signal })) events.push(event);
+    })();
+    const result = await created.delivery.result({ signal });
+    await streamed;
     const eveTurnMs = performance.now() - eveStart;
     await save(`${surface}-${count}-attempt.json`, {
       modelRequests,
-      events: result.events,
+      events,
       status: result.status,
-      message: result.message,
+      reply: result.reply,
       transportErrors,
       ledger,
       wire,
     });
     assert.deepEqual(transportErrors, []);
-    assert.ok(["completed", "waiting"].includes(result.status));
-    assert.equal(result.message, "contract-complete");
+    assert.ok(["completed", "awaiting-input"].includes(result.status));
+    assert.equal(result.reply, "contract-complete");
     assert.equal(modelRequests.length, sequence.length + 1);
     assert.deepEqual(
       ledger.filter((entry) => entry.args.id.startsWith("eve-")).map((entry) => entry.args.id),
@@ -483,7 +487,7 @@ async function cell(consumer, count, surface) {
       usage: "Unknown: deterministic transport provides no tokenizer or paid usage",
       paidCalls: 0,
     };
-    await save(`${surface}-${count}-trace.json`, { modelRequests, events: result.events, measurement });
+    await save(`${surface}-${count}-trace.json`, { modelRequests, events, measurement });
     return measurement;
   } finally {
     await eve?.close();
