@@ -43,6 +43,9 @@ version or bump either package to work around a failed publish.
    `pnpm --filter @zackbart/connecta-eve version <version> --no-git-tag-version --no-git-checks`.
    The second command skips the clean-tree check because the core bump is already uncommitted.
    The helper and core share every release tag and version; retain both lockfiles.
+   Set `templates/node/package.json`'s exact `@zackbart/connecta` dependency to
+   that version too. Run `node scripts/generate-version.mjs` and commit both
+   generated version files with the manifests.
    Validate core with `release:check:core` on Node 22 and the helper with
    `release:check:eve` on Node 24, matching publish.yml. `release:check` composes
    both for a deliberate single-runtime local run and requires Node 24.
