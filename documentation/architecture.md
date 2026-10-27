@@ -1770,6 +1770,19 @@ fetch, streams, Web Crypto, lifetime and request-byte behavior, as listed in
 
 ## Optional deployment modules
 
+`/google` (`src/google.ts`) exports the Promise-based
+`googleServiceAccountToken` request-token resolver outside the root graph.
+It reuses `src/providers/_shared/google/service-account.ts` for Web Crypto,
+in-memory token caching and exact-token invalidation, with an absent subject
+for service accounts acting as themselves. Workspace providers keep supplying
+subjects and retain their delegated error guidance. `src/request-token.ts`
+owns the callable resolver contract and optional HTTP-401 invalidation hook;
+`remoteMcp()` invokes it without replaying the failed operation.
+`test/google-service-account-token.test.ts` exercises signing/cache behavior on
+Node and workerd; `test/google-service-account-remote.node.test.ts` checks
+real-socket token/MCP requests, invalidation and one physical attempt per write.
+Operator setup lives in [Google hosted MCP](./auth.md#google-service-account-tokens-and-hosted-mcp).
+
 `createConnecta` takes closed typed `ui`, `vault`, and `activity`
 slots, with factories at `/ui`, `/credentials`, and `/activity`
 and agent tokens at `/auth/access-tokens`. Root exports the contracts, never the implementations, and there

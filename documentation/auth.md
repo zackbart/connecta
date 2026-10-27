@@ -14,7 +14,7 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 | Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [Clerk Organizations](#one-clerk-instance-one-organization-per-deployment), [management](#human-authentication-management) |
 | Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                                                                                                  |
 | Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                           |
-| Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens)                                                                          |
+| Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens), [Google hosted MCP](#google-service-account-tokens-and-hosted-mcp)      |
 | Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                                                                                                   |
 
 [Credential recognition and admission](#credential-recognition-and-admission)
@@ -2603,6 +2603,14 @@ transport, are not stored or described, and a changed token replaces the client.
 This mode refuses cleartext non-loopback origins. Optional `auth.headers` carry
 static protocol/catalog controls and cannot set Authorization.
 
+A resolver may expose `token.invalidate(rejectedToken, ctx): Promise<void>` to
+remove a cached token after a downstream HTTP 401. The hook receives the exact
+token sent by that transport, so it must leave a newer cached token intact.
+Hook failures are withheld and preserve the original 401. Request auth never
+automatically repeats the operation or renews the grant inside the failed
+scope: authorization failure stays latched for that scope. A new request resolves
+the callback again. In particular, no dispatched write is replayed.
+
 The GitHub provider validates each tool's owner/repo and scope access before
 resolving an installation token. It creates one token-bound MCP client for that
 operation and closes it before returning. Completed installation/token caches
@@ -2612,6 +2620,133 @@ is retained across requests, and rejected writes are never replayed. An omitted
 `app.privateKey` uses the encrypted connector vault's `privateKey` field;
 `describe()` includes neither the key nor the minted tokens. The maintained
 provider skill explains App permissions and installation prerequisites.
+
+### Google service-account tokens and hosted MCP
+
+Import `googleServiceAccountToken` from `@zackbart/connecta/google` to connect a
+Google hosted MCP server using a service-account JSON key on Node or Workers.
+This optional subpath is outside the root import graph. Supply deployment secrets
+through the environment or platform secret store:
+
+```ts
+import { remoteMcp } from "@zackbart/connecta";
+import { googleServiceAccountToken } from "@zackbart/connecta/google";
+
+const warehouse = remoteMcp("warehouse", {
+  url: "https://bigquery.googleapis.com/mcp",
+  authScope: "shared",
+  auth: {
+    type: "request",
+    token: googleServiceAccountToken({
+      serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+      scopes: ["https://www.googleapis.com/auth/bigquery"],
+    }),
+  },
+});
+
+const warehousePersonal = remoteMcp("warehouse_personal", {
+  url: "https://bigquery.googleapis.com/mcp",
+  authScope: "personal",
+  auth: {
+    type: "oauth",
+    scope: "https://www.googleapis.com/auth/bigquery",
+    client: {
+      issuer: "https://accounts.google.com",
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      tokenEndpointAuthMethod: "client_secret_post",
+    },
+  },
+});
+```
+
+`serviceAccount` accepts downloaded JSON text or
+`{ clientEmail, privateKey, clientId? }`; `privateKey` is a PKCS#8 RSA PEM of at
+least 2048 bits. `scopes` must be a non-empty array of HTTPS URLs without
+credentials, whitespace, or fragments. Unknown options fail construction with
+`ConfigError`. An optional fixed `subject: "alice@example.com"` requests
+Workspace domain-wide delegation and requires its admin grant. Omit `subject`
+for BigQuery: the signed assertion then has no `sub` and acts as the service
+account itself. See [Google's service-account grant documentation](https://developers.google.com/identity/protocols/oauth2/service-account).
+
+The helper signs RS256 JWT-bearer assertions and exchanges them at Google's fixed
+token endpoint. It keeps only bounded in-memory token entries, partitioned by
+account, key fingerprint, absent-or-present subject and scope set. Concurrent
+mints share a flight; tokens refresh with a one-minute margin. Keys, assertions
+and tokens are never logged, persisted or described. Bearer tokens use request
+auth's existing secret redaction. A 401 evicts only the rejected token; the next
+request mints again. The failed operation is never automatically repeated.
+
+#### Separate agent and people connections
+
+Grant the shared connection to agent pools (including pools used by Eve agents)
+and the personal connection to pools used by people. Add these entries to the
+existing deployment configuration, keeping its inbound auth, executor, vault and
+storage configuration:
+
+```ts
+connectors: [warehouse, warehousePersonal],
+agents: ["assistant"],
+pools: {
+  warehouse_agents: { tools: ["warehouse"], members: ["agent:assistant"] },
+  warehouse_people: { tools: ["warehouse_personal"], members: ["user_alice"] },
+},
+```
+
+Replace `user_alice` with Alice's admitted principal ID. Agents have no principal;
+`authScope: "personal"` connectors never appear for them, even if included in a
+pool's tools. The shared connection uses its fixed service account for every
+member; the personal connection uses each person's own encrypted OAuth grant.
+People connect through `authorize_connector` or their member page. Follow
+[Add a person](#add-a-person), [agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens)
+and [shared credential ownership](#connect-a-shared-credential) for admission and
+pool membership. The request-token connection gets its key from deployment
+configuration and does not need a credential-vault slot.
+
+#### Google-side setup
+
+1. Enable the BigQuery API in the Google Cloud project and confirm that the
+   BigQuery MCP service is available under the project's organization policies.
+   Google's current setup uses `https://bigquery.googleapis.com/mcp` and API
+   enablement; follow its current server setup if enablement requirements change.
+   Grant the service account MCP Tool User (`roles/mcp.toolUser`) and BigQuery
+   Job User (`roles/bigquery.jobUser`) on the project where queries run.
+   [BigQuery MCP setup and required roles](https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp).
+2. Grant BigQuery Data Viewer (`roles/bigquery.dataViewer`) on the datasets the
+   service account may query. Dataset grants restrict data access separately
+   from project-level job execution. Grant further permissions only for the
+   operations you intend to expose; OAuth scopes do not replace IAM.
+   [BigQuery IAM roles and grant levels](https://docs.cloud.google.com/bigquery/docs/access-control).
+   Create a service-account JSON key and store it as
+   `GOOGLE_SERVICE_ACCOUNT_JSON` in the deployment secret store; the helper
+   does not use ADC, metadata-server credentials, or workload identity federation.
+   [Service-account key creation](https://docs.cloud.google.com/iam/docs/keys-create-delete).
+3. For the personal connection, configure Google Auth Platform branding,
+   audience and data access. Choose **Internal** for an application restricted to
+   people in your Workspace organization, using a project belonging to that
+   organization. Internal consent does not grant dataset access; each person
+   still needs the applicable IAM permissions.
+   [Configure consent and audience](https://developers.google.com/workspace/guides/configure-oauth-consent).
+4. Create a **Web application** OAuth client under Google Auth Platform → Clients.
+   Register the exact Connecta callback, for example
+   `https://connecta.example/oauth/callback/warehouse_personal`, using the
+   deployment's configured public origin. Store its client ID and secret as
+   deployment secrets. Google's hosted MCP servers do not support DCR or client
+   metadata documents, so configure the static `auth.client` shown above.
+   [Web OAuth client setup](https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers#web),
+   [Google MCP registration limitations](https://docs.cloud.google.com/mcp/authenticate-mcp#limitations).
+
+The existing static-client path supports Google's exact issuer and
+`client_secret_post`; Google's [discovery document](https://accounts.google.com/.well-known/openid-configuration)
+advertises that method, PKCE S256, and `https://oauth2.googleapis.com/token`.
+This establishes configuration compatibility, not a verified live Google
+consent journey. Google's refresh-token flow requires `access_type=offline`,
+which Connecta's current generic remote MCP authorization URL does not add.
+Do not assume the personal connection receives a renewable grant: verify consent,
+challenge/discovery handling and access after token expiry against your project;
+reconnect when required. [Google's offline-access requirements](https://developers.google.com/identity/protocols/oauth2/web-server#offline).
+The personal example uses the existing OAuth implementation without a Google-specific
+flow change.
 
 ## Contributor reference
 

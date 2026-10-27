@@ -7,6 +7,7 @@
         "src/node.ts",
         "src/worker.ts",
         "src/json-schema.ts",
+        "src/google.ts",
         "src/executors/quickjs.ts",
         "src/executors/quickjs-child.ts",
         "src/auth/clerk.ts",

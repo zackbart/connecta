@@ -310,6 +310,8 @@ try {
     "dist/index.js",
     "dist/index.d.ts",
     "dist/types.d.ts",
+    "dist/google.js",
+    "dist/google.d.ts",
     "dist/json-schema.js",
     "dist/json-schema.d.ts",
     "dist/executors/quickjs.js",
@@ -453,6 +455,14 @@ const jsonSchema = await import("@zackbart/connecta/json-schema");
 if (typeof jsonSchema.Validator !== "function") {
   throw new Error("missing Validator re-export");
 }
+const google = await import("@zackbart/connecta/google");
+if (typeof google.googleServiceAccountToken !== "function" || "googleServiceAccountToken" in core) {
+  throw new Error("Google token helper must be available only at /google");
+}
+let refusedGoogle = false;
+try { google.googleServiceAccountToken({ serviceAccount: "invalid", scopes: [] }); }
+catch (error) { refusedGoogle = error.name === "ConfigError"; }
+if (!refusedGoogle) throw new Error("packed Google helper accepted invalid options");
 const originalFetch = globalThis.fetch;
 globalThis.fetch = () => { throw new Error("provider fixture construction attempted network access"); };
 try {
@@ -719,6 +729,9 @@ try {
     join(generatedRoot, "src", "config-contract.ts"),
     [
       'import { createConnecta, customExecutor, defineConfig, type AdmittingExecutor, type Connecta, type ConnectaCallsConfig, type ConnectaConfig, type ConnectaConfigDescription, type ConnectaDiscoveryConfig, type ExecutorLease, type KVStorage } from "@zackbart/connecta";',
+      'import { googleServiceAccountToken } from "@zackbart/connecta/google";',
+      'import { remoteMcp } from "@zackbart/connecta";',
+      'export const warehouse = (serviceAccount: string) => remoteMcp("warehouse", { url: "https://bigquery.googleapis.com/mcp", authScope: "shared", auth: { type: "request", token: googleServiceAccountToken({ serviceAccount, scopes: ["https://www.googleapis.com/auth/bigquery"] }) } });',
       'import { operatorPageTitle, type OperatorPage } from "@zackbart/connecta/ui";',
       'const pages: Record<OperatorPage, string> = { overview: "Overview", endpoints: "Endpoints", settings: "Settings", connector: "Connector", tokens: "Tokens", connections: "Connectors", activity: "Activity" };',
       'for (const page of Object.keys(pages) as OperatorPage[]) operatorPageTitle(page, "Workspace");',

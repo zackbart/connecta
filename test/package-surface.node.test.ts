@@ -122,6 +122,7 @@ describe("public package boundary", () => {
         "./sqlite",
         "./d1",
         "./json-schema",
+        "./google",
         "./quickjs",
         "./worker",
         "./auth/clerk",

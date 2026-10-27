@@ -126,6 +126,7 @@ import {
 } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf, strings } from "../config-schema.js";
+import type { RequestToken } from "../request-token.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
@@ -200,7 +201,7 @@ export type RemoteMcpAuth =
   | {
       type: "request";
       /** Resolve a Bearer token inside this request. Never persisted or described. */
-      token: (ctx: ConnectorContext) => Promise<string>;
+      token: RequestToken;
       /** Static protocol/catalog headers, never Authorization. */
       headers?: Record<string, string>;
     }
@@ -2668,6 +2669,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             return response;
           });
         })) as Response;
+        if (response.status === 401 && requestAuth?.token.invalidate && credentialValue !== null) {
+          // Invalidate the exact bytes this transport sent, never a newer token.
+          // Preserve the original 401 even if an operator hook fails. No replay.
+          (yield authCatch(authInvoke(requestAuth.token, "invalidate", [credentialValue, ctx]), () => {})) as void;
+        }
         if (credentialPost && !isOAuthCredentialRequest(init) && REDIRECT_STATUSES.has(response.status)) {
           (yield authCatch(
             authValue(() => response.body?.cancel()),
