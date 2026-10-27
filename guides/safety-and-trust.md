@@ -141,6 +141,7 @@ own availability, project/environment choices, and revocation details.
 | Enable the credential vault    | Encrypt stored credentials and OAuth tokens before connecting accounts.                              |
 | Pool membership and tools      | Each member can use every action that pool grants.                                                   |
 | Service permissions            | A shared credential uses the same account for every member.                                          |
+| Forwarded identity             | A service that trusts a forwarded person must accept it only from this deployment.                   |
 | Approval policy                | A writable pool can run unattended; the Eve helper defaults to that behavior.                        |
 | Tool classification            | Labels must match the service's actual behavior.                                                     |
 | Deployment and secret handling | Enable the credential vault; protect storage, encryption keys, backups, ingress, and the agent host. |

@@ -163,7 +163,18 @@ also supports OAuth, static headers, and request-local token resolution. Use
 [client registration](./auth.md#downstream-oauth-client-registration), and
 [request-local tokens](./auth.md#request-local-downstream-bearer-tokens)
 for those cases. Secrets belong in deployment secret storage or the vault,
-not source literals.
+not source literals. For a first-party downstream that already trusts this
+deployment, request auth can
+[forward the admitted principal](./auth.md#forwarding-the-admitted-principal)
+instead of asking each person to authorize it.
+
+Optional `fetch` sends every MCP request for one connector through a
+deployment-supplied function instead of global fetch, such as a Workers
+service binding: `fetch: (input, init) => env.NOTES.fetch(input, init)`. `url`
+still names the logical origin, and its HTTPS, redirect and same-origin rules
+apply. `fetch` receives each request once with `redirect: "manual"` and must
+not retry. It cannot be combined with OAuth auth. See
+[over a Workers service binding](./auth.md#over-a-workers-service-binding).
 
 Use optional top-level `headers` for non-secret resource context:
 `remoteMcp("crm", { url: "https://crm.example/mcp", headers: {
@@ -207,7 +218,8 @@ optional and composes with endpoint policy.
 On Node, serve with `listen` from `@zackbart/connecta/node`: it installs the
 owned transport that prevents native fetch or a host-configured dispatcher
 from silently resending a remote MCP write. Without that transport, Node
-refuses remote writes before dispatch. Downstream OAuth token, registration and
+refuses remote writes before dispatch. A connector with its own `fetch` hands
+writes to that function instead, which owns their single attempt. Downstream OAuth token, registration and
 revocation POSTs also require the owned sender. Read calls and OAuth discovery
 GETs keep native fetch. Workers
 use their native fetch with manual redirects; transport failures after

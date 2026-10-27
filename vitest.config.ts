@@ -52,6 +52,8 @@ const WORKERS_SUITES = [
   "test/remote-mcp-native.test.ts",
   "test/remote-mcp-skills.test.ts",
   "test/remote-mcp-headers.test.ts",
+  // A custom transport over a real service binding, and native fetch confinement.
+  "test/remote-mcp-principal-forwarding.test.ts",
   "test/server.test.ts",
   "test/native-tools.test.ts",
   "test/unhandled-rejections.test.ts",
@@ -300,6 +302,9 @@ export default defineConfig({
               serviceBindings: {
                 CLERK_ORGANIZATION: "clerk-organization",
                 SQL_LIFETIMES: "sql-lifetimes",
+                // A first-party MCP downstream whose identity entrypoint only a binding reaches.
+                NOTES_MCP: { name: "notes-mcp", entrypoint: "connecta" },
+                NOTES_PUBLIC: "notes-mcp",
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
                 EXECUTOR_REQUESTS: "executor-requests",
@@ -312,6 +317,13 @@ export default defineConfig({
                 ),
               },
               workers: await Promise.all([
+                {
+                  name: "notes-mcp",
+                  modules: true,
+                  script: await fixtureBundle("./test/fixtures/notes-binding-worker.ts"),
+                  compatibilityDate: "2025-01-01",
+                  compatibilityFlags: ["nodejs_compat"],
+                },
                 {
                   name: "sql-lifetimes",
                   modules: true,

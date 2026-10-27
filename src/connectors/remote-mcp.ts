@@ -127,13 +127,14 @@ import {
 } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf, strings } from "../config-schema.js";
-import type { RequestToken } from "../request-token.js";
+import type { PrincipalForwarding, RequestPrincipal, RequestToken } from "../request-token.js";
+import { requestPrincipalFor } from "../request-principal.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
-import { guardedTransport, sendGuarded, sendCredentialPost } from "../guarded-transport.js";
+import { guardedTransport, sendGuarded, sendCredentialPost, type GuardedTransport } from "../guarded-transport.js";
 import { sourceClassification } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
@@ -198,14 +199,40 @@ interface RemoteMcpCredentialAuth {
   scheme?: string | null;
 }
 
-export type RemoteMcpAuth =
+/**
+ * Request-local Bearer auth. With `principal`, the resolver also receives the
+ * caller inbound auth admitted, for a trusted first-party downstream.
+ */
+export type RemoteMcpRequestAuth =
   | {
       type: "request";
       /** Resolve a Bearer token inside this request. Never persisted or described. */
       token: RequestToken;
+      principal?: never;
       /** Static protocol/catalog headers, never Authorization. */
       headers?: Record<string, string>;
     }
+  | {
+      type: "request";
+      token?: never;
+      /**
+       * Resolve the Bearer token for the admitted caller instead. Callers the
+       * policy does not accept are refused before the resolver runs.
+       */
+      principal: PrincipalForwarding;
+      /** Static protocol/catalog headers, never Authorization. */
+      headers?: Record<string, string>;
+    };
+
+interface RequestAuthFields {
+  type: "request";
+  token?: RequestToken;
+  principal?: PrincipalForwarding;
+  headers?: Record<string, string>;
+}
+
+export type RemoteMcpAuth =
+  | RemoteMcpRequestAuth
   | { type: "headers"; headers: Record<string, string> }
   | RemoteMcpCredentialAuth
   | {
@@ -290,6 +317,15 @@ export interface RemoteMcpOptions {
    */
   logger?: Logger;
   /**
+   * Send every MCP request through this fetch instead of the global one, such
+   * as a Workers service binding: `(input, init) => env.NOTES.fetch(input, init)`.
+   * `url` still names the logical origin, and the HTTPS, redirect and
+   * same-origin rules apply to it. Each request, writes included, is handed
+   * over once with `redirect: "manual"`; the function must not retry or follow
+   * redirects. Cannot be combined with `auth: { type: "oauth" }`.
+   */
+  fetch?: FetchLike;
+  /**
    * @internal Testing seam. When set, this transport is used instead of the
    * HTTP transport, letting tests point the connector at an in-process MCP
    * server (e.g. via InMemoryTransport). Not part of the public API.
@@ -309,6 +345,7 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
     "redirects",
     "requireHttps",
     "logger",
+    "fetch",
     "_transportFactory",
     "skills",
   ),
@@ -1718,10 +1755,29 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         "`value` field only.",
     );
   }
-  const requestAuth = opts.auth?.type === "request" ? opts.auth : undefined;
-  if (requestAuth && (typeof requestAuth.token !== "function" || opts.authScope === "personal")) {
+  // Both request shapes, read field by field; a mixture is refused below.
+  const requestAuth: RequestAuthFields | undefined = opts.auth?.type === "request" ? opts.auth : undefined;
+  // Opt-in only: without it the resolver keeps receiving the context alone.
+  // `principal` replaces `token`; a malformed or mixed shape has no resolver.
+  const forwarding = requestAuth?.principal;
+  const requestToken = forwarding
+    ? requestAuth?.token === undefined && (forwarding.accept === "human" || forwarding.accept === "human-or-agent")
+      ? forwarding.token
+      : undefined
+    : requestAuth?.token;
+  if (requestAuth && (typeof requestToken !== "function" || opts.authScope === "personal")) {
     throw new Error(`remoteMcp(${JSON.stringify(id)}) requires a request token callback and shared authScope.`);
   }
+  const principalPolicy = forwarding?.accept;
+  const customFetch = opts.fetch;
+  // OAuth discovery, registration and token requests reach authorization
+  // servers the downstream names, through the owned credential sender. A
+  // custom fetch would split that traffic between two transports.
+  if (customFetch !== undefined && (typeof customFetch !== "function" || opts.auth?.type === "oauth")) {
+    throw new Error(`remoteMcp(${JSON.stringify(id)}).fetch must be a function, without OAuth auth.`);
+  }
+  // No delayed dispatch: a write counts as sent once it is handed to the function.
+  const customSender: GuardedTransport | undefined = customFetch && { send: customFetch };
   if (requestAuth?.headers) {
     try {
       if (Object.keys(requestAuth.headers).some((name) => name.toLowerCase() === "authorization")) throw new Error();
@@ -2105,12 +2161,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * trusting any cached client, so an operator's replacement is picked up
    * without a redeploy. The value stays in the caller's local scope.
    */
-  const readCredential = authMethod((ctx: ConnectorContext) =>
+  const readCredential = authMethod((ctx: ConnectorContext, principal?: RequestPrincipal) =>
     authFlow<string>(function* () {
       if (requestAuth) {
         let value: string;
         try {
-          value = (yield authInvoke(requestAuth, "token", [ctx])) as string;
+          // A fresh frozen input per resolution: one resolver cannot alter another's.
+          value = (yield authInvoke(
+            forwarding ?? requestAuth,
+            "token",
+            principal ? [ctx, Object.freeze({ principal })] : [ctx],
+          )) as string;
         } catch (error) {
           if (error instanceof ConnectorCallError) throw error;
           throw new ConnectorCallError("auth_required", "The request token could not be resolved.");
@@ -2591,6 +2652,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     credentialValue: string | null = null,
     /** A code exchange never transfers ownership to the refresh coordinator. */
     exchangeOnly = false,
+    /** The admitted principal `credentialValue` was resolved for, under the same terms. */
+    principal: RequestPrincipal | undefined = undefined,
   ): Transport => {
     const resourceInit = (input: RequestInfo | URL, init?: RequestInit): RequestInit | undefined => {
       if (!extraHeaders) return init;
@@ -2637,7 +2700,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
         const credentialPost =
           isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
-        const sender = flight?.write ? guardedTransport(true) : undefined;
+        // A custom transport reaches only the configured origin; redirects are
+        // already same-origin, and OAuth cannot be combined with it.
+        if (customFetch && new URL(input instanceof Request ? input.url : String(input)).origin !== destination.origin)
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Connector "${id}" refused a request outside its origin; nothing was sent.`,
+            { retryable: false },
+          );
+        // The deployment's fetch owns the wire: each write is handed over once.
+        const sender = flight?.write ? (customSender ?? guardedTransport(true)) : undefined;
         if (flight?.write) {
           if (flight.sent) {
             if (flight.request && flight.authorization)
@@ -2682,7 +2754,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                 )
               : (() => {
                   dispatch();
-                  return writeContinuation ? fetch(input, { ...init, redirect: "manual" }) : fetch(input, init);
+                  const send = customFetch ?? fetch;
+                  return writeContinuation ? send(input, { ...init, redirect: "manual" }) : send(input, init);
                 })();
           return pending.then((response) => {
             if (entry) recordProviderResponse(entry, response.status);
@@ -2694,10 +2767,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             return response;
           });
         })) as Response;
-        if (response.status === 401 && requestAuth?.token.invalidate && credentialValue !== null) {
+        if (response.status === 401 && requestToken?.invalidate && credentialValue !== null) {
           // Invalidate the exact bytes this transport sent, never a newer token.
           // Preserve the original 401 even if an operator hook fails. No replay.
-          (yield authCatch(authInvoke(requestAuth.token, "invalidate", [credentialValue, ctx]), () => {})) as void;
+          (yield authCatch(
+            authInvoke(
+              requestToken,
+              "invalidate",
+              principal ? [credentialValue, ctx, Object.freeze({ principal })] : [credentialValue, ctx],
+            ),
+            () => {},
+          )) as void;
         }
         if (credentialPost && !isOAuthCredentialRequest(init) && REDIRECT_STATUSES.has(response.status)) {
           (yield authCatch(
@@ -2996,17 +3076,30 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         let credentialValue: string | null = null;
         let credentialFramed: string | null = null;
         let credentialDigest: string | null = null;
+        // Only the admitted caller on this operation's context, never an argument.
+        // Refused before the resolver runs, so no token is minted for anyone else.
+        const principal = principalPolicy
+          ? requestPrincipalFor(
+              principalPolicy,
+              ctx,
+              (reason) => new CredentialRequiredError(`Connector "${id}" ${reason}.`),
+            )
+          : undefined;
         if (credentialAuth || requestAuth) {
-          credentialValue = (yield authCall(readCredential, [ctx])) as string;
+          credentialValue = (yield authCall(readCredential, [ctx, principal])) as string;
           credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
-          credentialDigest = (yield authCall(digestOf, [credentialValue])) as string;
+          // The principal joins the client's identity: another principal never
+          // reuses this client, even if its resolver returns the same token.
+          credentialDigest = (yield authCall(digestOf, [
+            principal ? JSON.stringify([principal, credentialValue]) : credentialValue,
+          ])) as string;
           if (
             (state.client || state.connecting) &&
             state.credentialDigest !== null &&
             state.credentialDigest !== credentialDigest
           ) {
             const observedConnection = state.client ?? state.connecting;
-            const currentCredential = (yield authCall(readCredential, [ctx])) as string;
+            const currentCredential = (yield authCall(readCredential, [ctx, principal])) as string;
             if (isClosed(state)) throw scopeEndedError();
             if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
               throw resendAdvice(
@@ -3023,7 +3116,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (isClosed(state)) throw scopeEndedError();
         if (state.client) return state.client;
         const attempt =
-          state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
+          state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest, principal);
         if (joined !== attempt) {
           leave();
           joined = attempt;
@@ -3050,6 +3143,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     credentialValue: string | null,
     credentialFramed: string | null,
     credentialDigest: string | null,
+    principal: RequestPrincipal | undefined,
   ): Deferred.Deferred<Client, unknown> => {
     const attempt = Deferred.makeUnsafe<Client, unknown>();
     state.connecting = attempt;
@@ -3058,7 +3152,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // which would otherwise wait on a client bound to the older key.
     state.credentialDigest = credentialDigest;
     detach(
-      connect(ctx, state, attempt, credentialValue, credentialFramed).pipe(
+      connect(ctx, state, attempt, credentialValue, credentialFramed, principal).pipe(
         // The connection belongs to this request, without the first waiter's
         // call/credential/budget authority. Refresh coordinators stay separate.
         Effect.provideService(RequestScope, Context.get(viewServices(ctx), RequestScope)),
@@ -3083,6 +3177,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     attempt: Deferred.Deferred<Client, unknown>,
     credentialValue: string | null,
     credentialFramed: string | null,
+    principal: RequestPrincipal | undefined,
   ): Effect.Effect<Client, unknown> => {
     // Force reset, rotation, and teardown all abandon an attempt the same way:
     // they unpublish it and close the lease it holds, if it holds one yet.
@@ -3247,7 +3342,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           return client;
         };
         let c = makeClient();
-        let t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
+        let t = buildTransport(
+          ctx,
+          provider,
+          credentialFramed,
+          connectionAbort.signal,
+          credentialValue,
+          false,
+          principal,
+        );
         if (!owned()) {
           held.transport = t;
           return yield* Effect.fail(scopeEndedError());
@@ -3276,7 +3379,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                 )
                   throw error;
                 c = makeClient();
-                t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
+                t = buildTransport(
+                  ctx,
+                  provider,
+                  credentialFramed,
+                  connectionAbort.signal,
+                  credentialValue,
+                  false,
+                  principal,
+                );
                 state.transport = held.transport = t;
                 recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
                 (yield authInvoke(c, "connect", [
