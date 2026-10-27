@@ -55,6 +55,42 @@ again for each request, so rotation requires no process restart. A `getToken`
 callback can return a string or a promise of one; it overrides the environment.
 No user's identity is forwarded.
 
+## Choosing the pool at runtime
+
+Both factories also accept a `pool` selector, synchronous or async. For example,
+a shared `pool.ts` can use authenticated channel attributes to choose
+`notes_alice` in a direct chat with `alice`, and `assistant` otherwise:
+
+```ts
+import type { DynamicContext } from "eve/connections";
+
+export const pool = (ctx: DynamicContext) =>
+  ctx.memo(["connecta-pool", ctx.turn?.id ?? null], () => {
+    const attributes = ctx.session.auth.current?.attributes;
+    return attributes?.chatType === "direct" && attributes?.userId === "alice"
+      ? "notes_alice"
+      : "assistant";
+  });
+```
+
+Supply those attributes through your authenticated channel. Import the selector
+in both agent files and pass it as `pool` to `connectaConnection` and
+`connectaInstructions`. The connection becomes an Eve `defineDynamic` value,
+evaluated before every model call, with `instanceKey` set to the selected pool.
+Eve refuses to replay a parked call if that connection changes.
+
+Both factories call the selector independently on every evaluation; the helper
+does not memoize its result. A selector doing I/O should use `ctx.memo` so
+lookups do not repeat and both definitions follow the same pool policy. Eve's
+memos are scoped to each definition; they are not shared between the two files.
+Use the turn ID, as above, to keep each choice for a turn, or choose your own
+lifetime. Pool policy belongs to the agent.
+
+Every selected name must match `[a-z0-9_-]+`. A throwing selector or invalid
+name fails the evaluation and the turn. Have your selector fall back to a
+least-privileged pool when its policy permits that. `connectaEndpoint` accepts
+only a static pool string.
+
 ## Eve 0.84.0 dependency override
 
 Eve 0.84.0 pins undici 8.10.2. Connecta's development/test override does not ship
@@ -93,14 +129,17 @@ Instructions use `server/discover` (MCP 2026-07-28), falling back to legacy
 non-OK status or an unsupported-method response. Network errors and timeouts
 never trigger initialize. Both JSON and SSE replies are accepted. Each request
 has a five-second timeout. Successful guidance is cached for ten minutes per
-resolver; `ttlMs` overrides that duration. Eve evaluates instructions before
-every model call; the helper keeps one result per turn in Eve's memo, so a turn
-sees the same guidance throughout and at most one refresh. A failed refresh
+endpoint URL within each resolver; `ttlMs` overrides that duration. Eve evaluates
+instructions before every model call; the helper keys its memo by endpoint URL and turn, so a turn
+keeps one result for its current endpoint. Switching pools fetches that pool's
+guidance, with its own TTL and failure backoff. A failed refresh
 keeps the last copy, or adds nothing if no fetch has succeeded, and waits 30
 seconds before retrying.
 When Eve cancels an evaluation, the helper rethrows the cancellation instead of
 counting it as a failure: nothing is kept for that turn and no wait starts.
-Tools remain usable. Instructions do not grant access.
+Tools remain usable. Instructions do not grant access. Set `clientName` on
+`connectaInstructions` to name its discovery and initialize requests in server
+logs; the default is `connecta-eve-instructions`.
 
 ## Vercel OIDC token source
 

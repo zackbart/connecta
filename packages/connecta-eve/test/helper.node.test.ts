@@ -5,13 +5,8 @@ import { createServer } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import { always, type ApprovalContext } from "eve/tools/approval";
 import { type McpClientConnectionDefinition, defineMcpClientConnection } from "eve/connections";
-import {
-  type DynamicContext,
-  type DynamicInstructionsResult,
-  type DynamicSentinel,
-  type Memo,
-  defineDynamic,
-} from "eve/instructions";
+import { type DynamicInstructionsResult, type DynamicSentinel, defineDynamic } from "eve/instructions";
+import { instructionSession as session } from "./eve-runtime.js";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { api } from "../../../src/connectors/api.js";
@@ -28,29 +23,6 @@ type IsAny<T> = 0 extends 1 & T ? true : false;
 const connectionIsAny: IsAny<ReturnType<typeof connectaConnection>> = false;
 const instructionsAreAny: IsAny<ReturnType<typeof connectaInstructions>> = false;
 void [connectionIsAny, instructionsAreAny];
-
-// Models Eve's memo store for one session of one definition: an evaluation
-// reads the kept JSON results, and only a successful evaluation replaces them
-// with the keys it used. A throwing memo keeps nothing.
-function session(instructions: DynamicSentinel<DynamicInstructionsResult>) {
-  let kept = new Map<string, unknown>();
-  return async (id: string | null, abortSignal = new AbortController().signal) => {
-    const used = new Map<string, unknown>();
-    const memo: Memo = async (key, fn) => {
-      const memoKey = JSON.stringify(key);
-      const value = kept.has(memoKey)
-        ? kept.get(memoKey)
-        : JSON.parse(JSON.stringify((await fn({ idempotencyKey: memoKey, abortSignal })) ?? null));
-      used.set(memoKey, value);
-      return structuredClone(value) as never;
-    };
-    // The resolver reads only the turn and memo; the rest of the frame is irrelevant.
-    const frame = { memo, turn: id === null ? null : { id, status: "running", input: [] } };
-    const result = await instructions.evaluate(frame as unknown as DynamicContext);
-    kept = used;
-    return result;
-  };
-}
 
 // Each call evaluates a new turn of one session per definition unless it names one.
 let turns = 0;

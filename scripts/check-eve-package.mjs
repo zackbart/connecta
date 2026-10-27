@@ -44,12 +44,16 @@ try {
     `minimumReleaseAgeExclude:\n  - eve@${manifest.devDependencies.eve}\n`,
   );
   run(pnpm, ["install", "--ignore-scripts"], work);
+  // Reuse the same real-Eve reaction/memo support against the consumer's pinned
+  // Eve installation. Node 24 strips its test-only TypeScript annotations.
+  await writeFile(join(work, "eve-runtime.ts"), await readFile(join(helper, "test/eve-runtime.ts"), "utf8"));
   await writeFile(
     join(work, "smoke.mjs"),
     `
     import assert from "node:assert/strict";
     import { createRequire } from "node:module";
     import { connectaConnection, connectaEndpoint, connectaInstructions, gateConnectaWrites } from "@zackbart/connecta-eve";
+    import { dynamicSession, instructionSession } from "./eve-runtime.ts";
     const require = createRequire(import.meta.url);
     assert.throws(() => require.resolve("@zackbart/connecta"), { code: "MODULE_NOT_FOUND" });
     let token = "cta_first";
@@ -62,8 +66,25 @@ try {
     assert.equal(await connection.approval({ toolName: "write" }), "not-applicable");
     assert.equal(gateConnectaWrites({ toolName: "write" }), "user-approval");
     const instructions = connectaInstructions({ url: connection.url, getToken: () => token, fetch: async () => Response.json({ result: { instructions: "CRM guidance" } }) });
-    const memo = async (_key, fn) => fn({ idempotencyKey: "turn_1", abortSignal: new AbortController().signal });
-    assert.equal((await instructions.evaluate({ memo, turn: { id: "turn_1" } })).content, "Connecta guidance:\\nCRM guidance");
+    assert.equal((await instructionSession(instructions)("turn_1")).content, "Connecta guidance:\\nCRM guidance");
+    let pool = "notes_alice";
+    const selector = async () => pool;
+    const dynamic = connectaConnection({ url: "https://connecta.example.com", pool: selector, description: "Notes", getToken: () => token });
+    assert.equal(dynamic.kind, "eve:dynamic");
+    const evaluateConnection = dynamicSession(dynamic, "connection");
+    const { result: selected } = await evaluateConnection("turn_1");
+    assert.equal(selected.url, "https://connecta.example.com/agent/notes_alice");
+    assert.equal(selected.instanceKey, "notes_alice");
+    assert.equal((await selected.auth.getToken()).token, token);
+    const dynamicInstructions = connectaInstructions({ url: "https://connecta.example.com", pool: selector, getToken: () => token, clientName: "assistant", fetch: async (url, init) => {
+      assert.equal(JSON.parse(init.body).params._meta["io.modelcontextprotocol/clientInfo"].name, "assistant");
+      return Response.json({ result: { instructions: String(url) } });
+    } });
+    const evaluateInstructions = instructionSession(dynamicInstructions);
+    assert.equal((await evaluateInstructions("turn_1")).content, "Connecta guidance:\\nhttps://connecta.example.com/agent/notes_alice");
+    pool = "assistant";
+    assert.equal((await evaluateConnection("turn_1")).result.instanceKey, "assistant");
+    assert.equal((await evaluateInstructions("turn_1")).content, "Connecta guidance:\\nhttps://connecta.example.com/agent/assistant");
   `,
   );
   run(process.execPath, ["smoke.mjs"], work);
@@ -73,16 +94,29 @@ try {
   await writeFile(
     join(work, "check.ts"),
     `
-    import { connectaConnection, connectaInstructions, gateConnectaWrites } from "./contract.js";
-    import { defineMcpClientConnection } from "eve/connections";
+    import { connectaConnection, connectaEndpoint, connectaInstructions, gateConnectaWrites, type ConnectaConnectionOptions, type ConnectaInstructionsOptions, type ConnectaPoolSelector } from "./contract.js";
+    import { defineMcpClientConnection, defineDynamic as defineDynamicConnection } from "eve/connections";
     import { defineDynamic } from "eve/instructions";
     import { never } from "eve/tools/approval";
     type IsAny<T> = 0 extends (1 & T) ? true : false;
     const connectionIsAny: IsAny<ReturnType<typeof connectaConnection>> = false;
     const instructionsAreAny: IsAny<ReturnType<typeof connectaInstructions>> = false;
     const connection: ReturnType<typeof defineMcpClientConnection> = connectaConnection({ description: "CRM", approval: never() });
+    const staticPoolConnection: ReturnType<typeof defineMcpClientConnection> = connectaConnection({ description: "Notes", pool: "assistant" });
     const instructions: ReturnType<typeof defineDynamic> = connectaInstructions();
+    const selector: ConnectaPoolSelector = ctx => ctx.memo(["pool", ctx.turn?.id ?? null], () => "assistant");
+    const dynamicConnection: ReturnType<typeof defineDynamicConnection> = connectaConnection({ description: "Notes", pool: selector });
+    const dynamicInstructions: ReturnType<typeof defineDynamic> = connectaInstructions({ pool: selector, clientName: "assistant" });
+    const connectionOptions: ConnectaConnectionOptions = { description: "Notes", pool: selector };
+    const instructionOptions: ConnectaInstructionsOptions = { pool: selector };
+    connectaConnection(connectionOptions);
+    connectaInstructions(instructionOptions);
+    // @ts-expect-error Endpoints stay static-only.
+    connectaEndpoint({ pool: selector });
+    // @ts-expect-error A dynamic connection cannot be used as a static definition.
+    const staticOnly: ReturnType<typeof defineMcpClientConnection> = dynamicConnection;
     const gate: typeof connection.approval = gateConnectaWrites;
+    void [staticPoolConnection, dynamicConnection, dynamicInstructions, staticOnly];
     void [connectionIsAny, instructionsAreAny, connection, instructions, gate];
   `,
   );
