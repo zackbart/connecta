@@ -190,8 +190,17 @@ OAuth provider validates the code exchange and PKCE. Credential Test calls a
 loopback downstream endpoint. Operator APIs, cookie/bearer admission, CSRF,
 assets, handoffs, callbacks, and encrypted storage use production code.
 
-The flows cover Clerk sign-in/reload/sign-out; OAuth connect/consent/callback/
-connected reread/reload; and credential save/test/replace/remove. They collect
+The flows use a real SQLite file and cover Clerk sign-in/reload/sign-out,
+actual Settings provenance and asset cache validators; OAuth
+connect/consent/callback/connected reread/disconnect; and credential
+save/test/replace/remove. They close and reopen the app, database and vault
+before rereading OAuth and credential state. A rejected SQL replacement leaves
+the previous secret usable downstream after restart. Trigger rows read from an
+independent SQL connection require one save, one replacement and one removal;
+reads and the rejected save commit no credential writes. Actual MCP calls
+check that credential edits preserve a reader pool's read access and refusal. Activity renders
+successful calls recorded before the SQLite restart without exposing either
+credential value. They collect
 CSP violations across every document and popup, and fail on unexpected network
 traffic. No credentials enter visual fixtures or screenshot baselines.
 

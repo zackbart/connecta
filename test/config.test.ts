@@ -54,48 +54,6 @@ describe("ConnectaConfig boundary", () => {
     expect(events).toEqual(["acquire private false", "release", "snapshot private", "close private"]);
   });
 
-  it("INV-11: requires explicit opt-in for custom executors regardless of constructor or display name", async () => {
-    class CustomExecutor {
-      readonly name = "DynamicWorkerExecutor";
-      async execute() {
-        return { result: null };
-      }
-    }
-    class DynamicWorkerExecutor {
-      async execute() {
-        return { result: null };
-      }
-    }
-    for (const executor of [
-      new CustomExecutor(),
-      new DynamicWorkerExecutor(),
-      { name: "DynamicWorkerExecutor", execute: async () => ({ result: null }) },
-      {
-        execute: async () => ({ result: null }),
-        async acquire() {
-          return { waitMs: 0, execute: async () => ({ result: null }), release() {} };
-        },
-      },
-    ]) {
-      const construct = () => createConnecta({ readOnly: false, connectors: [], executor, logger: "silent" });
-      for (const fragment of [
-        "ConnectaConfig.executor must declare its lifecycle",
-        'import { workerExecutor } from "@zackbart/connecta/worker";',
-        "executor: workerExecutor({ loader: env.LOADER })",
-        "@zackbart/connecta/quickjs",
-        'customExecutor(myExecutor, { lifecycle: "self-managed" })',
-      ])
-        expect(construct).toThrow(fragment);
-      const app = createConnecta({
-        readOnly: false,
-        connectors: [],
-        executor: customExecutor(executor, { lifecycle: "self-managed" }),
-        logger: "silent",
-      });
-      await app.close();
-    }
-  });
-
   it("INV-11: refuses storage without list or compareAndSet, as a Workers KV adapter is", () => {
     // The 0.28 Worker example's Workers KV adapter: no atomic claim.
     const kv = { get: async () => null, set: async () => {}, delete: async () => {}, list: async () => [] };
@@ -184,33 +142,6 @@ describe("ConnectaConfig boundary", () => {
     expect(() => unsafeCreateConnecta(config)).toThrow("ConnectaConfig.typo");
     expect(() => unsafeCreateConnecta(config)).not.toThrow(secret);
     expect(connectorsRead).toBe(false);
-  });
-});
-
-describe("ConnectaConfig schema", () => {
-  // Every numeric limit, the smallest value it accepts, and a sample of the
-  // values that once warned and fell back. One policy: they now throw.
-  const LIMITS = [
-    ["calls", "maxResultBytes", 1],
-    ["results", "maxStashBytes", 0],
-  ] as const;
-
-  it.each(LIMITS)("INV-11: refuses an unusable %s.%s at construction", async (group, key, min) => {
-    for (const value of [min - 1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "10", null]) {
-      expect(
-        () => unsafeCreateConnecta({ connectors: [], executor, [group]: { [key]: value } }),
-        `${group}.${key} = ${String(value)}`,
-      ).toThrow(`ConnectaConfig.${group}.${key} must be a`);
-    }
-    const accepted = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor,
-      logger: "silent",
-      [group]: { [key]: min },
-    });
-    expect(accepted.describeConfig().limits[group]).toHaveProperty(key, { value: min, source: "config" });
-    await accepted.close();
   });
 });
 

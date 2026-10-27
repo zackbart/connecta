@@ -644,8 +644,7 @@ and each personal connector's exact `manage`;
 The Overview's map and attention rows are pure functions of the contract in
 [connection-map.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/connection-map.ts)
 and [overview.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/overview.ts),
-covered by `test/operator-connection-map.test.ts` and
-`test/operator-overview.test.ts`; `src/operator-ui/styles/overview.css` holds
+exercised in Chromium by `test/browser/operator-overview.spec.ts`; `src/operator-ui/styles/overview.css` holds
 the page's styles.
 
 `src/operator-ui/config-summary.ts` maps the snapshot and its provenance to
