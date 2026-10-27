@@ -1,0 +1,26 @@
+{
+  "framework": null,
+  "regions": ["iad1"],
+  "functions": {
+    "api/index.mjs": {
+      "maxDuration": 30,
+      "includeFiles": "node_modules/.pnpm/**",
+      "supportsCancellation": true
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/agent/:path*",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/proof",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/mcp",
+      "destination": "/api/index"
+    }
+  ],
+  "fluid": true
+}
