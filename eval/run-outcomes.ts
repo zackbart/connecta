@@ -213,12 +213,52 @@ async function run() {
     );
   }
   const reduced = structuredClone(references.find((reference) => reference.task === "google-sheets-3")!);
-  for (const use of reduced.saved!.trace.toolUses) use.resultText = "{}";
+  for (const use of reduced.saved!.trace.toolUses) {
+    use.resultText = "{}";
+    use.resultBlocks = [{ type: "text", text: "{}" }];
+  }
   reduced.saved!.trace.toolUses.at(-1)!.resultText = JSON.stringify({
     result: { ids: Array.from({ length: 6 }, (_, i) => `record${i + 1}`), total: 210 },
   });
+  for (const use of reduced.saved!.trace.toolUses) {
+    use.resultBlocks = [{ type: "text", text: use.resultText! }];
+    for (const entry of reduced.saved!.trace.transcript) {
+      if (entry.kind === "tool_result" && entry.id === use.id) {
+        entry.text = use.resultText!;
+        entry.chars = entry.text.length;
+      }
+    }
+  }
   const summary = regradeTrial(task("google-sheets-3"), reduced, "codex", "outcome");
   record("control: a compact delivered Sheets summary passes", passed(summary), failedChecks(summary), summary);
+  const legacy = structuredClone(reduced);
+  for (const use of legacy.saved!.trace.toolUses) delete use.resultBlocks;
+  const legacyGrade = regradeTrial(task("google-sheets-3"), legacy, "codex", "outcome");
+  record(
+    "control: legacy results without content blocks pass",
+    passed(legacyGrade),
+    failedChecks(legacyGrade),
+    legacyGrade,
+  );
+
+  const emitted = await trial(
+    task("google-docs-3"),
+    "reference",
+    (call) => (tool, input) =>
+      call(
+        tool,
+        tool === "execute_code"
+          ? {
+              ...input,
+              code: String(input.code).replace(
+                "async () => {",
+                'async () => { connecta.emit({type:"text",text:"Read complete."});',
+              ),
+            }
+          : input,
+      ),
+  );
+  record("control: emitted prose beside delivered Docs data passes", passed(emitted), failedChecks(emitted), emitted);
 
   for (const [name, code] of [
     ["a failed paging program", 'async () => { throw new Error("paging unavailable"); }'],

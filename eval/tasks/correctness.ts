@@ -13,10 +13,17 @@ export function deliveredValues(trace: AgentTrace): any[] {
   };
   for (const use of trace.toolUses) {
     if (use.isError || !["call_tool", "execute_code", "read_result"].includes(use.tool)) continue;
-    try {
-      visit(JSON.parse(use.resultText ?? ""));
-    } catch {
-      // A partial preview cannot establish complete record facts.
+    const texts = use.resultBlocks?.flatMap((block) =>
+      block.type === "text" && typeof block.text === "string" ? [block.text] : [],
+    );
+    // Emitted prose and the returned JSON are separate MCP blocks. Old saved
+    // traces may only have their single serialized resultText.
+    for (const text of texts?.length ? texts : [use.resultText ?? ""]) {
+      try {
+        visit(JSON.parse(text));
+      } catch {
+        // Prose or a partial preview cannot establish record facts.
+      }
     }
   }
   return values;
