@@ -213,6 +213,36 @@ async function run() {
     const grade = regradeTrial(task(id), duplicated, "codex", "outcome");
     record(`${id}: duplicate physical mutation fails`, !passed(grade), failedChecks(grade), grade);
   }
+  const tithely = references.find((t) => t.task === "tithely-cancel-recovery");
+  if (tithely) {
+    for (const mode of ["failed-read", "empty-object", "empty-list", "malformed", "incomplete-page"] as const) {
+      const lost = structuredClone(tithely);
+      const use = lost.saved!.trace.toolUses.at(-1)!;
+      if (mode === "failed-read") {
+        lost.saved!.world.calls.at(-1)!.outcome = "tool_error";
+        use.isError = true;
+        use.resultText = JSON.stringify({ error: { code: "connector_call_failed", status: 503 } });
+      } else
+        use.resultText =
+          mode === "malformed"
+            ? "upstream unavailable"
+            : JSON.stringify(
+                mode === "empty-object"
+                  ? {}
+                  : mode === "empty-list"
+                    ? { items: [], page: { hasMore: false } }
+                    : { ...JSON.parse(use.resultText!), page: { hasMore: true } },
+              );
+      use.resultBlocks = [{ type: "text", text: use.resultText! }];
+      const grade = regradeTrial(task(tithely.task), lost, "codex", "outcome");
+      record(
+        `tithely-cancel-recovery: ${mode} cannot prove reconciliation`,
+        !passed(grade) && grade.checks.some((check) => check.id === "reconciled" && !check.pass),
+        failedChecks(grade),
+        grade,
+      );
+    }
+  }
   if (selected) return;
 
   // ----------------------------------------------- no-false-pass controls

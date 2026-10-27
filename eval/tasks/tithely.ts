@@ -12,6 +12,7 @@ import type { World } from "../fakes/world.js";
 import type { CallRecord } from "../fakes/service.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { check } from "./baseline.js";
+import { deliveredValues } from "./correctness.js";
 import {
   BOB,
   BOB_HOPE,
@@ -40,6 +41,15 @@ const calls = (world: World, method?: string, path?: string | RegExp) =>
 const success = (c: CallRecord) => c.outcome === "ok";
 const final = (trace: AgentTrace) => (trace.finalAnswer ?? "").replace(/[*`]/g, "");
 const query = (c: CallRecord) => c.args.query as Args;
+
+function completeRecurringList(value: Args | undefined, expected: string[]): boolean {
+  return (
+    Array.isArray(value?.items) &&
+    value.page?.hasMore === false &&
+    value.items.length === expected.length &&
+    expected.every((id) => value.items.some((row: Args) => row?.recurringId === id))
+  );
+}
 
 /** Every tool the agent named, top level or inside a program, caught refusals included. */
 function addresses(world: World, trace: AgentTrace): string[] {
@@ -210,14 +220,27 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     const sent = deletes[0]?.seq ?? Infinity;
     outcome(
       "reconciled",
-      "a read after the failed cancellation checked the gift before answering",
+      "a successful read delivered the complete scoped list after cancellation",
       world.ledger.calls.some(
         (c) =>
           c.service === SERVICE &&
           c.seq > sent &&
+          success(c) &&
           c.args.method === "GET" &&
-          ((c.args.path === "/recurring-list" && (query(c).account_id === BOB || query(c).organization_id === GRACE)) ||
-            c.args.path === `/recurring/${BOB_WEEKLY}`),
+          c.args.path === "/recurring-list" &&
+          (query(c).account_id === BOB || query(c).organization_id === GRACE) &&
+          deliveredValues(trace).some((value) =>
+            completeRecurringList(
+              value,
+              world.tithely.recurring
+                .filter(
+                  (row) =>
+                    (!query(c).account_id || row.donor_account.account_id === query(c).account_id) &&
+                    (!query(c).organization_id || row.organization.organization_id === query(c).organization_id),
+                )
+                .map((row) => row.recurring_id),
+            ),
+          ),
       ),
     );
     const ids = world.tithely.recurring.map((r) => r.recurring_id);
@@ -328,7 +351,10 @@ async function reference(id: string, ctx: ReferenceContext) {
     );
     if (!cancelled.isError) throw new Error("The injected HTTP 500 did not reach the agent");
     const after = await read(ctx, "list_recurring_charges", { accountId: BOB });
-    if (after.text.includes(BOB_WEEKLY)) throw new Error("The committed cancellation was lost");
+    if (after.isError) throw new Error("The cancellation reconciliation read failed");
+    const body = JSON.parse(after.text);
+    if (!completeRecurringList(body.result ?? body, [BOB_HOPE]))
+      throw new Error("The cancellation reconciliation did not deliver the complete remaining gift list");
     ctx.answer(
       `The cancel request failed with an unknown outcome, but a follow-up read shows ${BOB_WEEKLY} is cancelled.`,
     );
