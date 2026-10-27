@@ -1218,7 +1218,7 @@ write failure can have an unknown outcome and requires a read before repetition.
 
 ## QuickBooks Online
 
-Available from 0.35.0. Use the deployment's own Intuit app and configure one
+Available from 0.36.0. Use the deployment's own Intuit app and configure one
 fixed QuickBooks Online company per connector. Multiple companies need separate
 connector IDs and separate consent; tool arguments cannot select another
 company or environment.

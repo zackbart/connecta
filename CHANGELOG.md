@@ -2,6 +2,61 @@
 
 All notable changes to this package are documented here.
 
+## 0.36.0 — 2026-10-27
+
+Connecta 0.36.0 adds a maintained QuickBooks Online Accounting provider for one fixed sandbox or production company per connector. It offers company identity, bounded record searches, individual records and hierarchical financial reports, with contact details and payment credentials withheld. Deployments can opt into customer creation, sparse customer naming updates and unsent US service-invoice creation by setting `readOnly: false` on the connector. Writes need a stable request ID and are never replayed automatically; the API hatch stays read-only, and invoice updates remain unavailable. See [QuickBooks Online](https://github.com/zackbart/connecta/blob/v0.36.0/documentation/providers.md#quickbooks-online).
+
+Static API OAuth gains two options used by QuickBooks and available to any `api()` connector: fixed callback parameters that must match before code exchange, and a trusted revocation endpoint with form or JSON framing. Connectors that don't configure them keep their behavior. Separately, the shared OAuth refresh coordinator now handles vendors that return unchanged refresh-token bytes after a successful refresh. This applies automatically to every OAuth connection, remote MCP included, with no setting.
+
+`@zackbart/connecta-eve` now targets Eve 0.84 (`>=0.84.0 <0.85.0`), which is a breaking change for helper users. Upgrade the Eve app to 0.84.0 together with the helper, and retarget its undici override from `eve@0.83.0>undici` to `eve@0.84.0>undici` (Eve 0.84.0 still pins undici 8.10.2). The helper's two agent files need no edits. Endpoint instructions are now fetched once per turn through Eve's memo, and a cancelled turn no longer delays other sessions' fetches. See the [package guide](https://github.com/zackbart/connecta/blob/v0.36.0/packages/connecta-eve/README.md).
+
+The operator UI build is smaller, with no change to pages or styles. The remaining entries are contributor-facing: retired characterization goldens and provider test mirrors in favor of outcome checks, archived historical evals, and a required outcome-eval CI job. Deployments without QuickBooks or Eve agents can upgrade without changes. No database conversion or token rotation is required.
+
+### Added
+
+- Static API OAuth can require fixed callback parameters, refusing missing, duplicate, or mismatched values after state verification and before issuer validation or code exchange.
+- Document maintained API sources and the generated read/write tool inventory for every provider, linked from the README and provider setup guide.
+- Add a QuickBooks Online Accounting API provider for one fixed sandbox or
+  production company: company identity, bounded record searches, individual
+  records and hierarchical financial reports, with shared OAuth and a restricted
+  read hatch. Contact details and payment credentials remain withheld; public
+  SyncToken record versions remain available.
+  
+  Support successive coordinated OAuth refreshes when a vendor returns unchanged
+  refresh-token bytes after a successful commit. Static API OAuth can configure
+  a trusted revocation endpoint and form or JSON request framing; QuickBooks
+  disconnect revokes the latest grant after local removal. Malformed query and
+  report payloads fail instead of appearing as empty accounting results.
+- Add explicitly enabled QuickBooks Online customer creation, sparse customer naming updates and real unsent service-invoice creation for US companies and USD customers. The connector remains read-only unless deployment code sets `readOnly: false`; the API hatch remains read-only. Writes require a stable request ID and are never automatically replayed. Invoice creation fixes email status and disables online payment options; invoice updates remain deferred pending safe preservation of existing delivery/payment settings.
+
+### Changed
+
+- Keep Google Discovery source evidence once per provider and derive normalized OpenAPI in memory. Remove duplicate raw test fixtures and retained conversions while preserving compiled indexes, reviewed safety and frozen measurement digests.
+- **Breaking:** Move `@zackbart/connecta-eve` to Eve 0.84 (`>=0.84.0 <0.85.0`). Upgrade the Eve app to 0.84.0 with the helper and retarget its undici override to `eve@0.84.0>undici`. Endpoint instructions use Eve's function-form `defineDynamic` and keep one result per turn in Eve's memo, app auth declares `principalType: "app"`, and `approval` accepts Eve's approval configurations as well as policies.
+- Validate QuickBooks accounting reads, OAuth persistence and privacy through shared Node and native Workers outcome journeys. New provider behavior uses executable outcomes instead of characterization goldens (#1072, #1079).
+- Exercise opt-in QuickBooks customer writes and unsent service invoices in required outcome checks and both deployment smokes, including concurrent version conflicts, ambiguous-response reconciliation, privacy and one physical send per intent.
+- Remove unused private REST and Google provider migration adapters and their exclusive regression coverage. Maintained provider tools, public exports, and hosted-selector migration errors keep their current behavior.
+- Replace redundant provider catalog, schema, adapter and kit/core comparison tests
+  with shared stateful provider outcome tasks and a real HTTP hostile-acknowledgement
+  journey. Retain provider-specific algorithms, privacy, physical-send and native
+  fault coverage; provider runtime behavior and public fixtures remain unchanged.
+  Read outcomes require requested facts to reach the agent, with data-loss
+  controls that keep vendor calls and the expected answer intact.
+- Slim the operator UI build by removing redundant Query and Tailwind layers, unused Button Slot support, and duplicate browser-only server emissions. Preserve the public page type, authored styles, local fonts, and identity-scoped read cancellation.
+
+### Fixed
+
+- Contributor evals: `eval:agent` now exits nonzero unless every declared trial ran once, completed normally and passed, so failed, errored, timed-out, interrupted, skipped, missing, duplicated and stopped trials fail the batch. `eval:smoke` provisions the Node template with `rotate-token local-machine`, reaches `/agent/local-machine`, runs `connecta doctor`, claims no write where no write-capable tool exists, and runs the Worker targets with the example's own compatibility date and flags. A new required `eval:outcomes` command and CI `behavior` job grade seven scripted outcome scenarios and their no-false-pass controls. No package behavior changes.
+
+### Removed
+
+- Archive redundant REST eval regrades, invalid initial diagnostic batches and obsolete 0.24/0.25 measurements in Git history, preserving failure notes, exact-file hashes and immutable recovery links. Retain raw live and review-round evidence and the selftest's 0.29 baselines (#1072).
+- Retire the migration-only provider characterization snapshots, capture engine,
+  source controls and self-tests. Keep behavioral failure, privacy, physical-send
+  and request-lifetime coverage, with compact HTTP/QuickJS privacy journeys for
+  credential echoes in newly returned vendor fields.
+- Retire completed schema-preload, index-compaction, Effect evaluation, and Worker-disconnect experiment artifacts from the source checkout. Architecture conclusions retain immutable links to historical evidence. Remove release-note inputs already preserved in the changelog; future release narratives use temporary files before assembly into `CHANGELOG.md`.
+
 ## 0.35.0 — 2026-10-26
 
 Connecta 0.35.0 brings the provider kit and standard agent surfaces to all 15 maintained providers. Operation search and details expose reviewed API contracts without reading account data; indexed read and write tools complement the retained named tools. Gmail keeps its reviewed exception: draft writes use named tools and sending remains unavailable. Results use consistent list envelopes, narrowing `fields`, signed continuations and truncation paths. The [provider migration guide](https://github.com/zackbart/connecta/blob/v0.35.0/documentation/provider-migration-0.35.md) maps every renamed or removed tool and argument, including retired `raw`/`select` arguments, list keys, paging inputs and wrappers replaced by indexed operations. Update saved programs, pool grants, classification entries and deployment instructions before upgrading, and restart old continuations where the guide requires it.
