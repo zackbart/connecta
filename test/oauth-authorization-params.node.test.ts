@@ -22,65 +22,66 @@ const factories = {
       tools: [],
     }),
 };
-for (const [kind, build] of Object.entries(factories))
-  describe(`${kind} authorization parameters`, () => {
-    const reserved = [
-      "response_type",
-      "client_id",
-      "client_secret",
-      "redirect_uri",
-      "state",
-      "code_challenge",
-      "code_challenge_method",
-      "scope",
-      "resource",
-      "request",
-      "request_uri",
-    ];
-    it.each(reserved.flatMap((name) => [name, name.toUpperCase(), name[0]!.toUpperCase() + name.slice(1)]))(
-      "refuses reserved %s at construction",
-      (name) => {
-        expect(() => build({ [name]: "override" })).toThrow(ConfigError);
-      },
-    );
-    it.each([
-      null,
-      1,
-      "prompt=consent",
-      [],
-      new Map([["prompt", "consent"]]),
-      { "": "value" },
-      { "bad name": "value" },
-      { "bad&name": "value" },
-      { "scope%00": "value" },
-      { ["a".repeat(129)]: "value" },
-      { prompt: 3 },
-      { prompt: null },
-      { prompt: undefined },
-      { prompt: true },
-      { prompt: {} },
-      { prompt: "" },
-      { prompt: " " },
-      { prompt: "a\nb" },
-      { prompt: "a\u0000b" },
-      { prompt: "a\u007fb" },
-      { prompt: "a".repeat(2049) },
-      { prompt: "consent", Prompt: "login" },
-      Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`p${i}`, "value"])),
-    ])("refuses malformed map %#", (value) => {
-      expect(() => build(value)).toThrow(ConfigError);
-    });
-    it("accepts bounded, non-secret provider parameters and refuses accessors without running them", () => {
-      expect(() => build({ prompt: "consent", access_type: "offline", "vendor.option-1": "é & + =" })).not.toThrow();
-      expect(() =>
-        build({
-          get prompt() {
-            throw new Error("getter ran");
-          },
-        }),
-      ).toThrow(/plain value/);
-    });
+describe("remoteMcp authorization parameters", () => {
+  const build = factories.remoteMcp;
+  const reserved = [
+    "response_type",
+    "response_mode",
+    "client_id",
+    "client_secret",
+    "redirect_uri",
+    "state",
+    "code_challenge",
+    "code_challenge_method",
+    "scope",
+    "resource",
+    "request",
+    "request_uri",
+  ];
+  it.each(reserved.flatMap((name) => [name, name.toUpperCase(), name[0]!.toUpperCase() + name.slice(1)]))(
+    "refuses reserved %s at construction",
+    (name) => {
+      expect(() => build({ [name]: "override" })).toThrow(ConfigError);
+    },
+  );
+  it.each([
+    null,
+    1,
+    "prompt=consent",
+    [],
+    new Map([["prompt", "consent"]]),
+    { "": "value" },
+    { "bad name": "value" },
+    { "bad&name": "value" },
+    { "scope%00": "value" },
+    { ["a".repeat(129)]: "value" },
+    { prompt: 3 },
+    { prompt: null },
+    { prompt: undefined },
+    { prompt: true },
+    { prompt: {} },
+    { prompt: "" },
+    { prompt: " " },
+    { prompt: "a\nb" },
+    { prompt: "a\u0000b" },
+    { prompt: "a\u007fb" },
+    { prompt: "a".repeat(2049) },
+    { prompt: "consent", Prompt: "login" },
+    Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`p${i}`, "value"])),
+  ])("refuses malformed map %#", (value) => {
+    expect(() => build(value)).toThrow(ConfigError);
   });
+  it("accepts bounded, non-secret provider parameters and refuses accessors without running them", () => {
+    expect(() => build({ prompt: "consent", access_type: "offline", "vendor.option-1": "é & + =" })).not.toThrow();
+    expect(() =>
+      build({
+        get prompt() {
+          throw new Error("getter ran");
+        },
+      }),
+    ).toThrow(/plain value/);
+  });
+});
 
 it("keeps unknown auth options closed", () => {
   expect(() =>
@@ -97,4 +98,30 @@ it("describes only authorization parameter names and snapshots the configured ma
     authorizationParamNames: ["access_type", "prompt"],
   });
   expect(JSON.stringify(connector.describe!())).not.toContain("consent");
+});
+
+describe("api authorization parameters keep their existing validation", () => {
+  it.each([
+    "response_type",
+    "client_id",
+    "redirect_uri",
+    "state",
+    "scope",
+    "code_challenge",
+    "code_challenge_method",
+    "resource",
+  ])("refuses exact reserved %s", (name) => {
+    expect(() => factories.api({ [name]: "override" })).toThrow(/the authorization request owns it/);
+  });
+  it("refuses non-string values", () => {
+    expect(() => factories.api({ prompt: 3 })).toThrow(/must be a string/);
+  });
+  it.each([
+    { prompt: "" },
+    { claims: JSON.stringify({ id_token: { note: "x".repeat(4096) } }) },
+    Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`p${i}`, "value"])),
+    { "vendor option": "value" },
+  ])("still accepts previously valid configuration %#", (value) => {
+    expect(() => factories.api(value)).not.toThrow();
+  });
 });

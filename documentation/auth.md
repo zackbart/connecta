@@ -2526,9 +2526,11 @@ The map must be a plain string record with at most 32 entries. Names contain
 nonempty (not whitespace-only), at most 2048 UTF-16 code units, and contain no
 ASCII control characters. Case-variant duplicate names are refused. The
 following names, including every case variant, fail construction with
-`ConfigError`: `response_type`, `client_id`, `client_secret`, `redirect_uri`,
-`state`, `code_challenge`, `code_challenge_method`, `scope`, `resource`,
-`request`, and `request_uri`. Configure scopes through `auth.scope`.
+`ConfigError`: `response_type`, `response_mode`, `client_id`, `client_secret`,
+`redirect_uri`, `state`, `code_challenge`, `code_challenge_method`, `scope`,
+`resource`, `request`, and `request_uri`. Configure scopes through `auth.scope`.
+`response_mode` is reserved because Connecta accepts callbacks only as GET query
+parameters.
 
 For remote MCP, the map joins the stored client configuration binding, like
 scope and client identity. Adding, removing, or changing a parameter requires
@@ -2572,7 +2574,7 @@ No discovery or registration occurs; all URLs are configuration, so the
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Endpoints                    | Checked at construction: HTTPS, HTTP only on loopback, no credentials or fragment.                                                                                                                                                                                                                                                                                                                                             |
 | `pkce`                       | S256 by default; `false` omits challenge and verifier.                                                                                                                                                                                                                                                                                                                                                                         |
-| `authorizationParams`        | Browser-only provider parameters, with the same validation and reserved names as [remote MCP](#browser-authorization-parameters).                                                                                                                                                                                                                                                                                              |
+| `authorizationParams`        | Browser-only string parameters. Exact names `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method` and `resource` are refused; other names and string values are accepted as before. Remote MCP's [stricter rules](#browser-authorization-parameters) do not apply here.                                                                                                    |
 | `expectedCallbackParameters` | Optional `Readonly<Record<string, string>>` of fixed provider response values. Each configured parameter must occur exactly once with its exact decoded value, after pending-state verification and before issuer validation, flow claims, code exchange, or grant persistence. Missing, duplicate, or mismatched values refuse without exchanging a code or returning parameter values. Omission preserves existing behavior. |
 | `revocationEndpoint`         | Optional trusted HTTPS revocation URL (loopback HTTP allowed), without credentials, query or fragment. Disconnect removes the local grant before one bounded attempt using the configured client. Failure reports `oauth_revocation_failed`; a repeated Disconnect never retries.                                                                                                                                              |
 | `revocationRequestFormat`    | `"form"` by default; `"json"` sends JSON without `token_type_hint`. Requires `revocationEndpoint` when set.                                                                                                                                                                                                                                                                                                                    |
@@ -2626,7 +2628,9 @@ owner's access token as `Authorization: Bearer` with these rules:
   workerd never quotes a downstream's Content-Type in its own log.
 
 `api()` already supports `oauth.authorizationParams` through the same OAuth
-provider. It uses the validation rules above. Its existing binding remains
+provider and browser-only injection. It keeps its existing, more permissive
+validation (see the `api()` option table), so existing configurations still
+construct. Use only GET query response modes with it. Its existing binding remains
 unchanged: the token endpoint identifies the grant; scope, client identity,
 and authorization parameters do not add a stored client configuration binding.
 Changing authorization parameters affects new consents; reconnect to obtain a

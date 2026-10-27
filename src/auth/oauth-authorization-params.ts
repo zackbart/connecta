@@ -1,8 +1,12 @@
 import { ConfigError } from "../config-schema.js";
 
-/** Protocol and security fields cannot be supplied through provider extensions. */
+/**
+ * Protocol and security fields cannot be supplied through remote MCP extensions.
+ * `response_mode` stays reserved: callbacks arrive only as GET query parameters.
+ */
 const RESERVED = new Set([
   "response_type",
+  "response_mode",
   "client_id",
   "client_secret",
   "redirect_uri",
