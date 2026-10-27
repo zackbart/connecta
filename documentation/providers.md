@@ -1218,7 +1218,7 @@ write failure can have an unknown outcome and requires a read before repetition.
 
 ## QuickBooks Online
 
-Available from 0.35.0. Use the deployment's own Intuit app and configure one
+Available from 0.36.0. Use the deployment's own Intuit app and configure one
 fixed QuickBooks Online company per connector. Multiple companies need separate
 connector IDs and separate consent; tool arguments cannot select another
 company or environment.
@@ -1317,6 +1317,13 @@ an existing send-ready state is not established safe, and resetting that state
 would change existing payment settings. Deletes, voids, delivery, payment
 execution, batch and other accounting writes remain unavailable. The API hatch
 refuses POSTs even when named writes are enabled.
+
+Sparse field preservation, a current SyncToken and requestid do not establish
+that an invoice update cannot send email. For example, changing only DueDate
+on an invoice with NeedToSend and enabled card/ACH payments retains those
+settings; omitting email fields does not disable them. Do not reset delivery or
+payment settings to work around the unavailable update, or replace the invoice
+with a new one. No unsent-only update tool is currently exposed either.
 
 Each write requires `requestId`, a stable identifier for the exact intent,
 unique across all requests/tools for this company: 1–50 ASCII letters, digits,
