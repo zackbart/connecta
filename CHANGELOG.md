@@ -2,6 +2,48 @@
 
 All notable changes to this package are documented here.
 
+## 0.36.1 — 2026-10-27
+
+Connecta 0.36.1 adds read-only Granola workspace API access and lets Eve agents select a pool before each model call. Pool changes keep guidance caches separate and prevent replay of parked calls against a different pool. Existing static-pool configuration and public provider tools keep their behavior.
+
+The contributor checks now center on real Node/Workers, browser, persistence and installed-package journeys. Every PR runs browser, audit, Eve and Docker package checks. This patch requires no deployment configuration migration. Granola operators supply a workspace key; Eve pool selectors are optional.
+
+QuickBooks invoice updates remain unavailable while their delivery contract is unresolved. The workload validation recipe is reproducible locally; live validation requires separate authorization and is not claimed by this release.
+
+### Added
+
+- Let the Eve helper choose a pool before each model call with an app-owned selector, fence parked calls after pool changes, and cache instructions and failure backoff per endpoint. Instruction requests also accept a custom client name.
+- Add a read-only Granola workspace API provider for meeting notes, details, paginated transcripts, folders and spaces, with encrypted shared credentials and the standard operation search/details/read surface.
+
+### Changed
+
+- Add a locally reproducible Eve 0.84 workload fixture with independently verified audience-exchange controls and retained server cancellation receipts, and clarify that custom-audience workload tokens are refused. Live validation still requires separate authorization for disposable resources. Verify the standard 2 GiB Fluid resource preset and require confirmed cleanup even when evidence persistence fails.
+- Replace invariant/spec test-title bookkeeping with executable evidence file
+  references and the existing stateful behavior journeys. Require installed-package,
+  generated-deployment and Docker smoke in the shared CI build job, with browser,
+  audit and real Eve compatibility on every PR. Remove the path classifier,
+  duplicate package workflow and completed migration's cross-commit exemption guard.
+  Keep focused runtime probes, provider contracts, build/declaration checks and the
+  single fail-closed `check` status.
+- Remove completed provider-migration exemptions, legacy generator fixtures and
+  unused internal list/guide adapters. Consolidate contributor provider and release
+  workflows around the current standard without changing public tools or guides.
+- Replace lower-layer operator, configuration and storage test mirrors with real browser, SQLite restart and deployed Node/Workers persistence journeys. Preserve focused SQL rollback, expiry, isolation, secrecy and cancellation probes.
+- Replace redundant auth, write, privacy and runtime test matrices with real HTTP/MCP identity, one-send recovery, secrecy and socket-cancellation journeys. Require prompt downstream closure and admission release after client cancellation, before the ordinary request deadline. Retain focused security and lifetime fault probes without changing runtime behavior or public APIs.
+- Clarify why QuickBooks invoice updates remain unavailable: sparse field preservation and request IDs do not establish email suppression for existing send-ready invoices. Record the authoritative contract gaps and a proposed unsent-only update for further review; no accounting write surface is added.
+- Replace the remaining catalog-wide provider failure sweep and redundant
+  provider/HTTP agreement checks with shared stateful outcomes and real HTTP
+  failure/recovery journeys. Retain vendor-specific privacy, MIME, ownership,
+  revision, physical-send and lifetime fault probes; remove five internal paging
+  helpers used only by the retired tests and private exports hidden by the old
+  source scan. Require successful, complete delivered reconciliation data for the
+  Tithe.ly cancellation journey; failed, empty, malformed and incomplete replies
+  cannot establish recovery. Public provider behavior is unchanged.
+
+### Fixed
+
+- Use permanently unreachable loopback port zero for native transport-failure probes so later test servers cannot answer them. Verify each platform's native connection error while preserving Node/Workers write-outcome, retry, reset and abort assertions.
+
 ## 0.36.0 — 2026-10-27
 
 Connecta 0.36.0 adds a maintained QuickBooks Online Accounting provider for one fixed sandbox or production company per connector. It offers company identity, bounded record searches, individual records and hierarchical financial reports, with contact details and payment credentials withheld. Deployments can opt into customer creation, sparse customer naming updates and unsent US service-invoice creation by setting `readOnly: false` on the connector. Writes need a stable request ID and are never replayed automatically; the API hatch stays read-only, and invoice updates remain unavailable. See [QuickBooks Online](https://github.com/zackbart/connecta/blob/v0.36.0/documentation/providers.md#quickbooks-online).
