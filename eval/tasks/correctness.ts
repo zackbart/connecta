@@ -3,6 +3,32 @@ import type { ActiveTask, Check } from "./types.js";
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 
+/** Facts actually returned to the agent, excluding discovery and final prose. */
+export function deliveredValues(trace: AgentTrace): any[] {
+  const values: any[] = [];
+  const visit = (value: unknown) => {
+    values.push(value);
+    if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === "object") Object.values(value).forEach(visit);
+  };
+  for (const use of trace.toolUses) {
+    if (use.isError || !["call_tool", "execute_code", "read_result"].includes(use.tool)) continue;
+    const texts = use.resultBlocks?.flatMap((block) =>
+      block.type === "text" && typeof block.text === "string" ? [block.text] : [],
+    );
+    // Emitted prose and the returned JSON are separate MCP blocks. Old saved
+    // traces may only have their single serialized resultText.
+    for (const text of texts?.length ? texts : [use.resultText ?? ""]) {
+      try {
+        visit(JSON.parse(text));
+      } catch {
+        // Prose or a partial preview cannot establish record facts.
+      }
+    }
+  }
+  return values;
+}
+
 export interface Correctness {
   destination(world: World, trace: AgentTrace): boolean;
   /** Every expression must match the final answer, never the tool output. */

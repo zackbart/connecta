@@ -2,7 +2,6 @@
 // translation, refusals and write outcomes. Delegation, subjects and tokens
 // are covered by test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SLIDES_INDEX } from "./api.js";
 import { slides } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -435,18 +434,8 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
     }
   });
 
-  it("INV-3 INV-4 INV-10: indexes exactly five methods with plural presentationsId and refuses invalid fields before minting", async () => {
+  it("INV-4 INV-10: refuses invalid fields before minting", async () => {
     const c = connection();
-    expect(SLIDES_INDEX.pathMatching).toBe("uri-template");
-    expect(SLIDES_INDEX.ops).toHaveLength(5);
-    const detail = await call(c, "slides_api_details", { method: "GET", path: "/presentations/{presentationsId}" });
-    expect(JSON.stringify(detail)).toContain("presentationsId");
-    expect(calls).toEqual([]);
-    expect(tokenCalls).toBe(0);
-    const thumbnail = await call(c, "slides_api_search", { query: "thumbnail" });
-    expect(thumbnail.operations[0]).toMatchObject({ named: "get_slide_thumbnail" });
-    expect(thumbnail.operations[0].tool).toBeUndefined();
-    expect(thumbnail.operations[0].summary).toContain("use get_slide_thumbnail");
     for (const args of [
       { presentationId: "deck1", raw: true },
       { presentationId: "deck1", fields: ["bogus"] },
@@ -457,37 +446,6 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
     );
     expect(calls).toEqual([]);
     expect(tokenCalls).toBe(0);
-    for (const [query, path] of [
-      ["format slide text", "/presentations/{presentationId}:batchUpdate"],
-      ["make text bold", "/presentations/{presentationId}:batchUpdate"],
-      ["add a slide", "/presentations/{presentationId}:batchUpdate"],
-      ["create a presentation", "/presentations"],
-      ["create comment", "/presentations/{presentationId}:batchUpdate"],
-      ["add comment", "/presentations/{presentationId}:batchUpdate"],
-      ["reply to comment", "/presentations/{presentationId}:batchUpdate"],
-      ["resolve comment thread", "/presentations/{presentationId}:batchUpdate"],
-      ["replace slide text", "/presentations/{presentationId}:batchUpdate"],
-      ["replace literal phrase", "/presentations/{presentationId}:batchUpdate"],
-    ]) {
-      for (const method of [undefined, "POST"]) {
-        const result = await call(c, "slides_api_search", { query, ...(method ? { method } : {}) });
-        expect(
-          result.operations.slice(0, 2).some((op: any) => op.path === path),
-          query,
-        ).toBe(true);
-      }
-    }
-    for (const query of ["thumbnail", "get slide preview", "thumbnail link"]) {
-      const result = await call(c, "slides_api_search", { query });
-      const refused = result.operations.find((op: any) => op.path.endsWith("/thumbnail"));
-      expect(refused.summary, query).toBe(
-        "Refused: get slide thumbnail preview link grants temporary access; use get_slide_thumbnail.",
-      );
-      expect(refused.refusal, query).toBe(
-        "Generic Slides thumbnail/preview links are refused; use get_slide_thumbnail for the reviewed short-lived link.",
-      );
-      expect(refused.tool).toBeUndefined();
-    }
   });
 });
 

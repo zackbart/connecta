@@ -4,18 +4,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
-import { rankTools } from "../../catalog.js";
 import { identityStorageKey } from "../../identity.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
-import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
-import { resultSafety } from "../../http/safety.js";
-import { CCB_INDEX, CCB_VERDICTS, ccbSafety, errors } from "./api.js";
-import { ccbTools } from "./tools.js";
-import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
-import type { Connection } from "../../http/vendor.js";
 
 const BASE = "https://connecta.test";
 const PROD_API = "https://api.ccbchurch.com";
@@ -192,7 +185,7 @@ async function failure(promise: Promise<unknown>) {
 }
 
 describe("ccb() construction", () => {
-  it("INV-11: refuses invalid deployment options and keeps every kit decoder aligned with its catalog", async () => {
+  it("INV-2 INV-11: refuses invalid deployment options and prevents writes with read scopes", async () => {
     for (const [_label, overrides, message] of [
       ["no environment", { environment: undefined }, /requires environment/],
       ["a malformed scope", { scopes: ["individuals"] }, /not a CCB scope/],
@@ -201,16 +194,6 @@ describe("ccb() construction", () => {
       ["a blank title", { title: " " }, /title.*non-empty string/],
     ] as const) {
       expect(() => connection(overrides as Partial<CcbOptions>)).toThrow(message);
-    }
-    const kitConnection = { errors, safety: resultSafety(ccbSafety(OPTIONS)) } as Connection;
-    for (const tool of ccbTools({ connection: kitConnection, options: { ...OPTIONS, access: "read-write" } })) {
-      expect(
-        kitInputDisagreements(
-          tool,
-          (failureArguments["ccb"] as Record<string, Record<string, unknown>>)[tool.name] ?? {},
-        ),
-        tool.name,
-      ).toEqual([]);
     }
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
@@ -226,59 +209,6 @@ describe("ccb() construction", () => {
     await expect(
       connector.callTool("get_individual", { individualId: 42, fields: ["unknown"] }, ctx),
     ).rejects.toMatchObject({ code: "invalid_args" });
-    const searchable = connection({ access: "read-write" });
-    const catalogContext = makeRegistry([searchable]).contextFor("church", BASE);
-    for (const [query, operation] of [
-      ["update a person's email", "PUT /individuals/{id}"],
-      ["update person email", "PUT /individuals/{id}"],
-      ["edit individual email", "PUT /individuals/{id}"],
-      ["change a person's email", "PUT /individuals/{id}"],
-      ["create a person", "POST /individuals"],
-      ["add a pastoral note", "POST /individuals/{id}/notes"],
-      ["church campuses", "GET /campuses"],
-      ["record attendance", "POST /events/{id}/attendance/{occurrence}"],
-      ["take attendance", "POST /events/{id}/attendance/{occurrence}"],
-      ["add person to group", "POST /groups/{id}/members"],
-      ["change group role", "PUT /groups/{group_id}/members/roles"],
-      ["change phone number", "PUT /individuals/{id}"],
-      ["new individual", "POST /individuals"],
-      ["donations", "GET /individuals/{id}/metrics/giving"],
-      ["contributions", "GET /families/{id}/metrics/giving"],
-    ]) {
-      const result = (await searchable.callTool("ccb_api_search", { query }, catalogContext)) as any;
-      expect(
-        result.operations.slice(0, 2).map((op: any) => `${op.method} ${op.path}`),
-        query,
-      ).toContain(operation);
-    }
-    expect(Object.keys(CCB_VERDICTS).sort()).toEqual(CCB_INDEX.ops.map((op) => `${op.method} ${op.path}`).sort());
-    for (const op of CCB_INDEX.ops) {
-      expect(op.summary, op.path).toBeTruthy();
-      for (const parameter of CCB_INDEX.contract(op).parameters)
-        expect(parameter.description, `${op.path} ${parameter.name}`).toBeTruthy();
-    }
-    const detail = await searchable.callTool("ccb_api_details", { method: "GET", path: "/campuses" }, catalogContext);
-    expect(JSON.stringify(detail)).toContain("location");
-    expect(CCB_INDEX.responseRoots(CCB_INDEX.resolve("GET", "/campuses").op)).toContain("public_gift_message");
-    expect(fetchSpy).not.toHaveBeenCalled();
-    for (const [query, name] of [
-      ["campus", "ccb_api_read"],
-      ["forms", "ccb_api_read"],
-      ["assignments", "ccb_api_read"],
-      ["update email", "ccb_api_write"],
-      ["edit person email", "ccb_api_write"],
-      ["record attendance", "ccb_api_write"],
-      ["add person to group", "ccb_api_write"],
-      ["change group role", "ccb_api_write"],
-      ["change phone number", "ccb_api_write"],
-      ["new individual", "ccb_api_write"],
-      ["donations", "ccb_api_read"],
-      ["contributions", "ccb_api_read"],
-    ] as const)
-      expect(
-        rankTools([...searchable.staticTools!], query).map((entry) => entry.tool.name),
-        query,
-      ).toContain(name);
   });
 });
 

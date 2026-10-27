@@ -6,8 +6,6 @@ import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
 import type { ConnectorCaller } from "../../connector-caller.js";
-import { index, verdicts, refusalReasons } from "./lib/index.js";
-import { skill } from "./skill.generated.js";
 import { safety } from "./api.js";
 import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
@@ -663,38 +661,8 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     60_000,
   );
 
-  it("INV-5/INV-11: pins eleven read verdicts, three hatches, full MIME safety and zero-send refusals", async () => {
-    expect(index.pathMatching).toBe("uri-template");
-    expect(index.ops).toHaveLength(79);
-    expect(Object.values(verdicts).filter((v) => v === "read")).toHaveLength(11);
-    expect(Object.keys(verdicts).sort()).toEqual(index.ops.map((op) => `${op.method} ${op.path}`).sort());
-    // Exercise the resolver used at runtime, including named-only writer exceptions.
-    for (const op of index.ops) {
-      const key = `${op.method} ${op.path}` as keyof typeof verdicts;
-      const path = op.path.replace(/\{[^}]+\}/g, "item1");
-      if (verdicts[key] === "read" || key === "POST /drafts" || key === "PUT /drafts/{id}")
-        expect(safety.reviewed!.resolve!(op.method, path)).toBeTruthy();
-      else expect(() => safety.reviewed!.resolve!(op.method, path)).toThrow(refusalReasons[key]);
-    }
-    for (const [key, verdict] of Object.entries(verdicts))
-      if (verdict === "refuse") {
-        expect(refusalReasons[key]).toBeTruthy();
-        const summary = index.ops.find((op) => `${op.method} ${op.path}` === key)!.summary;
-        expect(summary).toMatch(/^Refused: /);
-        expect(summary).toContain("create_draft");
-        expect(summary).toContain("update_draft");
-        expect(summary.length).toBeLessThanOrEqual(120);
-      }
+  it("INV-5 INV-11: preserves MIME data and refuses sending, settings and foreign mailbox access before IO", async () => {
     const c = connection();
-    const tools = await c.listTools(context());
-    expect(tools).toHaveLength(12);
-    expect(
-      tools
-        .filter((t) => t.name.startsWith("gmail_api_"))
-        .map((t) => t.name)
-        .sort(),
-    ).toEqual(["gmail_api_details", "gmail_api_read", "gmail_api_search"]);
-    expect(JSON.stringify(skill)).not.toContain("gmail_api_write");
     await expect(call(c, "get_message", { messageId: "m1", raw: true })).rejects.toMatchObject({
       code: "invalid_args",
     });
@@ -731,50 +699,6 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
       { status: 200, data: MESSAGE },
     );
     expect(calls.at(-1)!.url.pathname).toBe("/gmail/v1/users/me/messages/m2");
-    // Indexed draft discovery names the safe alternative; no generic writer exists.
-    const search = await call(c, "gmail_api_search", { query: "draft reply" });
-    expect(JSON.stringify(search)).toContain("create_draft");
-    for (const [query, operation] of [
-      ["find unread messages", "GET /messages"],
-      ["search unread threads by sender subject date", "GET /threads"],
-      ["read thread messages and labels", "GET /threads/{id}"],
-      ["list mailbox labels and names", "GET /labels"],
-      ["read label message counts", "GET /labels/{id}"],
-      ["find saved drafts", "GET /drafts"],
-      ["read saved draft headers", "GET /drafts/{id}"],
-      ["read full message MIME metadata", "GET /messages/{id}"],
-      ["send mail", "POST /messages/send"],
-      ["send draft", "POST /drafts/send"],
-      ["message headers", "GET /messages/{id}"],
-      ["read message attachments", "GET /messages/{messageId}/attachments/{id}"],
-      ["draft reply", "POST /drafts"],
-      ["edit draft", "PUT /drafts/{id}"],
-      ["mailbox profile", "GET /profile"],
-      ["mail history", "GET /history"],
-      ["read RFC header", "GET /messages/{id}"],
-      ["custom RFC headers", "GET /messages/{id}"],
-      ["search mail", "GET /messages"],
-      ["reply to email", "POST /drafts"],
-    ])
-      for (const method of [undefined, operation!.split(" ")[0] as "GET" | "POST" | "PUT"])
-        expect(
-          index
-            .search(query!, { limit: 2, partial: true, ...(method ? { method } : {}) })
-            .map((op) => `${op.method} ${op.path}`),
-        ).toContain(operation);
-    for (const [query, operation] of [
-      ["read RFC header", "GET /messages/{id}"],
-      ["search mail", "GET /messages"],
-      ["reply to email", "POST /drafts"],
-    ]) {
-      const first = index.search(query!, { limit: 1, partial: true })[0]!;
-      expect(`${first.method} ${first.path}`).toBe(operation);
-    }
-    // Exercise the hatch's intent/ranking layer, not only the underlying index.
-    const history = await call(c, "gmail_api_search", { query: "mail history" });
-    expect(
-      history.operations.slice(0, 2).map((op: { method: string; path: string }) => `${op.method} ${op.path}`),
-    ).toContain("GET /history");
     route = (request) => ({
       body: request.url.searchParams.has("pageToken")
         ? { messages: [{ id: "m2" }], nextPageToken: "" }

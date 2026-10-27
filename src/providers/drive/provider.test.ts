@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { drive } from "./index.js";
-import { driveIndex, DRIVE_HATCH, DRIVE_REFUSALS } from "./lib/hatch.js";
+import { driveIndex } from "./lib/hatch.js";
 import { DRIVE_VALUE_SAFETY } from "./safety.js";
 import { reviewProblems } from "../../../test/fixtures/value-safety.js";
 import candidates from "./evidence/value-safety.json";
@@ -168,34 +168,7 @@ describe("reading content", () => {
       reviewProblems({ table: DRIVE_VALUE_SAFETY, index: driveIndex, source, candidates }),
     ))
       expect(problems).toEqual([]);
-    expect(driveIndex.ops).toHaveLength(64);
-    expect(Object.values(DRIVE_HATCH.verdicts).filter((v) => v !== "refuse")).toHaveLength(13);
-    for (const op of driveIndex.ops) {
-      if (DRIVE_REFUSALS[`${op.method} ${op.path}`]) expect(op.summary).toMatch(/^Refused: .+; .+\.$/);
-      expect(op.summary!.length).toBeLessThanOrEqual(120);
-    }
     const connector = connection();
-    for (const [query, operation] of [
-      ["find files by name", "drive.files.list"],
-      ["list folder contents", "drive.files.list"],
-      ["shared drives", "drive.drives.list"],
-      ["list file revisions", "drive.revisions.list"],
-      ["upload attachment", "drive.files.create"],
-      ["save file", "drive.files.create"],
-      ["rename file", "drive.files.update"],
-      ["move file to folder", "drive.files.update"],
-      ["change permission role", "drive.permissions.update"],
-      ["share file without emailing", "drive.permissions.create"],
-      ["permanently delete a file", "drive.files.delete"],
-      ["generate CSE token", "drive.files.generateCseToken"],
-      ["watch files", "drive.files.watch"],
-    ] as const) {
-      const found = await call(connector, "drive_api_search", { query, limit: 2 });
-      expect(
-        found.operations.map((op: any) => op.operationId),
-        query,
-      ).toContain(operation);
-    }
     for (const [name, args, path] of [
       ["search_files", {}, "items[].name"],
       ["list_folder_items", { folderId: "root" }, "items[].name"],

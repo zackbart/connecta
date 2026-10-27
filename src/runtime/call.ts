@@ -14,6 +14,7 @@ import type { ConnectorContext, ConnectorCredentialValues, KVStorage } from "../
 import { recordRecovery } from "../call-recovery.js";
 import { fromSignal, runEdge } from "./run.js";
 import { RequestScope, requestOwner as requestOf } from "./request-scope.js";
+
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/call/Caller") {}
 
@@ -433,9 +434,6 @@ export function deriveView<T extends ConnectorContext = ConnectorContext>(
   views.set(derived, entry);
   return derived;
 }
-export function viewCaller(view: ConnectorContext): ConnectorCaller | undefined {
-  return serviceFor(view, Caller);
-}
 export function viewLease(view: ConnectorContext): CallLease | undefined {
   return views.get(view)?.call;
 }
@@ -478,8 +476,6 @@ export function contextView(lease: CallLease, operation: ConnectorContext): Conn
   if (!request.open) lease.close();
   return view;
 }
-export const callView = (operation: ConnectorContext, lease: CallLease): ConnectorContext =>
-  contextView(lease, operation);
 export function chargeView(view: ConnectorContext): Promise<void> {
   const budget = recordedService(view, Budget);
   return budget ? runEdge(budget.charge) : Promise.reject(ended());

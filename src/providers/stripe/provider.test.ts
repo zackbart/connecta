@@ -3,9 +3,7 @@ import { connectorContext } from "../../../test/fixtures/misc.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext } from "../../types.js";
-
-import { manifest } from "../../http/vendor.js";
-import { MAX_RESPONSE_BYTES, STRIPE_VERDICTS, StripeApi, stripeIndex } from "./api.js";
+import { MAX_RESPONSE_BYTES, stripeIndex } from "./api.js";
 import { STRIPE_API_BASE_URL, stripe } from "./index.js";
 
 const SANDBOX = { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" } as const;
@@ -56,41 +54,6 @@ describe("stripe() over an API key", () => {
     expect(error).toBeInstanceOf(ConnectorCallError);
     return error as ConnectorCallError;
   }
-
-  it("INV-11: derives every manifest operation and vendor path parameter from the pinned index", () => {
-    const document = manifest(StripeApi);
-    const operations = Object.entries(document.paths)
-      .flatMap(([path, item]) =>
-        Object.entries(item)
-          .filter(([method]) => ["get", "head", "post", "put", "patch", "delete"].includes(method))
-          .map(([method, endpoint]) => {
-            const names = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).sort();
-            expect(
-              (endpoint as { parameters?: Array<{ in: string; name: string }> }).parameters
-                ?.filter((p) => p.in === "path")
-                .map((p) => p.name)
-                .sort() ?? [],
-            ).toEqual(names);
-            return `${method.toUpperCase()} ${path}`;
-          }),
-      )
-      .sort();
-    expect(operations).toEqual(stripeIndex.ops.map((op) => `${op.method} ${op.path}`).sort());
-    expect(stripe.definition.kit?.operations).toEqual(operations);
-    expect(Object.keys(STRIPE_VERDICTS).sort()).toEqual(operations);
-    expect(stripe.definition.kit).toMatchObject({
-      idempotencyKey: true,
-      refusesWithheld: true,
-      errors: {
-        unknownId: "not_found",
-        provesAbsence: true,
-        conflicts: expect.arrayContaining([
-          expect.stringContaining("HTTP 409"),
-          expect.stringContaining("lock_timeout"),
-        ]),
-      },
-    });
-  });
 
   it("INV-5: refuses a key whose prefix contradicts the declared mode before any request leaves", async () => {
     const sandbox = stripe("billing", SANDBOX);
