@@ -1,14 +1,12 @@
 import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
-import goldenSpec from "../../../test/goldens/planning-center/spec.js";
+import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
 import { resultSafety } from "../../http/safety.js";
 import type { Connection } from "../../http/vendor.js";
 import { validateToolInput } from "../../validate.js";
 import { errors, safety, PCO_INDEX, PCO_VERDICTS, PLANNING_CENTER_API_VERSIONS } from "./api.js";
 import { planningCenterTools } from "./tools.js";
-// The Planning Center connection uses the provider kit over JSON:API. Request
-// shapes, projections, and typed failures live in the characterization
-// goldens; these tests pin what the goldens do not: credential admission, the
-// hatch confinement, credential stripping, and the excludeApps boundary.
+// Planning Center fixture regressions cover JSON:API credential admission,
+// hatch confinement, credential stripping and the excludeApps boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { ConnectorCallError } from "../../errors.js";
@@ -623,7 +621,7 @@ it("INV-5 INV-10 INV-11: catalog decoding and credential probes preserve candida
     pageSize: 100,
     options: { purpose: "Catalog agreement" },
   })) {
-    const base = goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {};
+    const base = (failureArguments["planning-center"] as Record<string, Record<string, unknown>>)[tool.name] ?? {};
     expect(validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }), tool.name).toBeNull();
     expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
   }

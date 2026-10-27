@@ -4,8 +4,7 @@
 // after this cursor" into a vendor request and reads back rows and the next
 // vendor cursor; tools take one page, and `allRows` walks every page as a
 // Stream for programs and the hatch. The codec is the only place a cursor is
-// minted: `plain` hands the vendor's cursor through (what shipped providers
-// promise today, so goldens hold), `bound` ties it to the tool and its
+// minted: `plain` hands the vendor's cursor through; `bound` ties it to the tool and its
 // arguments so a cursor from another call is refused instead of silently
 // reading the wrong list.
 

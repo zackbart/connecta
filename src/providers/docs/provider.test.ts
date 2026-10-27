@@ -1,8 +1,6 @@
-// The Google Docs connection. test/goldens/docs pins each tool's catalog entry,
-// requests, results and failure ladder; these tests stub the network for what
-// the goldens do not reach: rendering every element kind, index paging, result
-// and hatch ceilings, refusals before dispatch, and write outcomes. Delegation,
-// subjects, and tokens are test/google-workspace-delegation.test.ts.
+// Google Docs fixture regressions cover rendering, index paging, result bounds,
+// refusals before dispatch and write outcomes. Delegation, subjects and tokens
+// are covered by test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { docs } from "./index.js";

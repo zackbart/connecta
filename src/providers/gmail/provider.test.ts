@@ -1,7 +1,6 @@
-// The draft-only Gmail connection. Request and result shapes are pinned by
-// test/goldens/gmail; this suite keeps what the goldens do not reach: MIME
-// encoding and refusals, body selection, charsets, attachments, and bounds.
-// Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
+// Draft-only Gmail fixture regressions cover MIME, refusals, body selection,
+// charsets, attachments and bounds. Delegation, subjects and tokens are covered
+// by test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { requestSentSecrets } from "../../sent-secrets.js";

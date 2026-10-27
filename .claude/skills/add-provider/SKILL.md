@@ -29,8 +29,7 @@ See AGENTS.md Verification.
   Grade independent fake state, physical requests, final answers, identity and
   secrecy; prove no-op and fabricated answers fail. Exercise Node and native
   Workers where applicable. Under #1072 new providers do not add characterization
-  goldens or an exemption roster; existing golden fixtures retain their internal
-  consistency checks until that subsystem retires.
+  goldens or an exemption roster.
   It meets the provider standard from its first commit. It never
   joins `PENDING`; the suite fails an off-standard new folder, and
   `providers:generate` refuses one that breaks D or G.
@@ -96,9 +95,9 @@ must never silently select an API credential.
   Missing `createAuthored`, absent `staticTools`, or an empty catalog fails
   generation before any output is written. This is required
   even without H-convention metadata. The S rules check it structurally on
-  Node; workerd's native evidence is the provider's goldens and focused cases.
-- Characterization goldens live in `test/goldens/<name>/`, never in the
-  provider folder. `goldens:update [provider]` rewrites them on Node.
+  Node; workerd runs focused cases for native fetch, streams, Web Crypto,
+  request lifetimes and provider bytes. Provider registration does not require
+  characterization snapshots or harness enrollment.
 
 ## Evidence (E)
 
@@ -438,13 +437,10 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    version 2 (`rationale` → `reason`, `reviewedAt` → `lastVerified`).
 3. Run `pnpm run providers:generate`, then remove the provider from
    `PENDING.step1` and its committed baseline entry.
-4. ALL three goldens (`catalog.json`, `calls.json`, AND `failures.json`) must
-   stay byte-identical. Back-port safety/write-outcome changes into today's
-   code first: A.2 (#902) covers write 5xx, OAuth replay, redirects and privacy;
-   regenerate goldens when it merges, then migrate. Only an impractical
-   back-port permits an exception: individually list each case and why its
-   back-port is impractical, and obtain reviewer approval in this step-1 PR.
-   `SKILL.md` does not change.
+4. Preserve actual agent outcomes with fixture-vendor journeys and targeted
+   regressions. Compare returned data, downstream state, refusal/recovery advice,
+   privacy and physical write counts; byte-for-byte implementation snapshots
+   are retired under #1072. `SKILL.md` does not change in step 1.
 
 **Step 2: the standard surface and guide.** A separate PR.
 
@@ -453,8 +449,8 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
 2. Rewrite `SKILL.md` to G: drop fragments for plain text and when-blocks,
    move operator setup to `documentation/providers.md`, and move conventions
    into declarations so the generated section states them.
-3. Regenerate the goldens and list every change by category: names, schemas,
-   envelope, errors, guide.
+3. Exercise the changed outcomes and list intended surface changes by category:
+   names, schemas, envelope, errors, guide.
 4. Add a `.changes/` fragment marked `breaking: true` that maps every renamed
    tool and argument, plus the release's migration entry.
 5. Rerun this provider's relevant eval tasks in EVERY step-2 PR, record fresh
@@ -484,7 +480,7 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    `providers:spec` emits shared, bounded response paths independently of
    request-depth shrinking; rerun `providers:generate` afterward and measure
    index and bundle growth without moving the pin. This metadata alone must
-   leave a step-1 provider's goldens byte-identical.
+   preserve a step-1 provider's agent-facing behavior.
 9. Opt paged hatch reads into `hatch.pages` by indexed operation. Select a
    declared adapter from `src/http/hatch-paging.ts`, or supply one with the
    vendor's exact cursor parameter, location, decoder and continuation rule.
@@ -586,13 +582,13 @@ export names and non-provider entries must remain unchanged.
 ## Verification
 
 Run provider-local tests, `test/provider-standard.node.test.ts`, conventions,
-registry, purity and package-boundary suites on Node. Goldens run on both
-projects: Node compares forward and reverse observations, workerd canonical
-observations. Ordinary portable filenames do not enroll suites in workerd;
-`vitest.config.ts` selects native boundaries, and mixed suites tag their native
-cases `workers` and broad logic cases `node`. Node runs both tags. Add native
-coverage there when a provider exercises platform-specific behavior. Nightly
-Node checks add repeats and jitter with `CONNECTA_GOLDENS_DETERMINISM=1`.
+registry, purity and package-boundary suites on Node. Reuse the existing
+stateful fake vendors, deployment adapters and outcome tasks for affected
+behavior; `pnpm run eval:outcomes` checks representative real workflows.
+`vitest.config.ts` selects native boundaries; ordinary portable filenames do
+not enroll suites in workerd. Mixed suites tag native cases `workers` and broad
+logic cases `node`; Node runs both. Add native coverage when behavior depends
+on platform-specific fetch, streams, Web Crypto, request lifetimes or bytes.
 Cite applicable `INV-n` IDs in meaningful test titles.
 
 `pnpm run providers:check` reads public API contracts only. Parser failures are

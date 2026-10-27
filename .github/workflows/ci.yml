@@ -90,7 +90,6 @@ jobs:
     timeout-minutes: 20
     env:
       VITEST_MAX_WORKERS: 4
-      CONNECTA_GOLDENS_DETERMINISM: ${{ github.event_name == 'schedule' && '1' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

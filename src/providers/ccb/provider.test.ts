@@ -1,9 +1,6 @@
-// The CCB (Pushpay ChMS) connection runs on the provider kit over `api()`'s
-// downstream OAuth grant. A fake CCB stands in for both the token endpoint and
-// the API. Request shapes, projections, and status mapping live in the
-// characterization goldens; these tests pin the consent URL, the code exchange
-// with CCB's own Accept header, rotating single-use refresh tokens, one-attempt
-// POST renewal, paging edges, the sensitive-field boundary, and grant isolation.
+// The CCB connection uses the provider kit over downstream OAuth. A fake
+// vendor exercises consent, token exchange, rotating refresh tokens, one-attempt
+// POST renewal, paging, sensitive fields and grant isolation.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
@@ -17,7 +14,7 @@ import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
 import { resultSafety } from "../../http/safety.js";
 import { CCB_INDEX, CCB_VERDICTS, ccbSafety, errors } from "./api.js";
 import { ccbTools } from "./tools.js";
-import goldenSpec from "../../../test/goldens/ccb/spec.js";
+import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
 import type { Connection } from "../../http/vendor.js";
 
 const BASE = "https://connecta.test";
@@ -208,7 +205,10 @@ describe("ccb() construction", () => {
     const kitConnection = { errors, safety: resultSafety(ccbSafety(OPTIONS)) } as Connection;
     for (const tool of ccbTools({ connection: kitConnection, options: { ...OPTIONS, access: "read-write" } })) {
       expect(
-        kitInputDisagreements(tool, goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {}),
+        kitInputDisagreements(
+          tool,
+          (failureArguments["ccb"] as Record<string, Record<string, unknown>>)[tool.name] ?? {},
+        ),
         tool.name,
       ).toEqual([]);
     }
