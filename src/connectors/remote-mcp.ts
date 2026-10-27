@@ -1671,8 +1671,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (!extraHeaders) return init;
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     for (const [name, value] of Object.entries(extraHeaders)) if (headers.get(name) === value) headers.delete(name);
-    for (const [name, value] of [...headers])
-      if (name.startsWith("mcp-param-") && resourceValues.has(value)) headers.delete(name);
+    const mirrored: string[] = [];
+    for (const [name, value] of headers)
+      if (name.startsWith("mcp-param-") && resourceValues.has(value)) mirrored.push(name);
+    for (const name of mirrored) headers.delete(name);
     return { ...init, headers };
   };
   const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
