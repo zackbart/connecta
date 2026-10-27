@@ -9,6 +9,8 @@ const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktr
 // workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
 // Pure logic runs only on Node; never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
+  // Granola bearer confinement, redirects, response bytes and signed continuation behavior.
+  "src/providers/granola/provider.test.ts",
   // Native UTF-8/Web Crypto content identity across physical index formats.
   "test/compact-index.test.ts",
   "test/storage-sql-d1.test.ts",

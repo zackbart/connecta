@@ -1,0 +1,14 @@
+{
+  "url": "https://docs.granola.ai/api-reference/openapi.json",
+  "revision": "sha256:3f1a93ae6380",
+  "digest": "sha256:3f1a93ae6380feb5297df8115855486224f82bea236eaf1fd916072843f5759d",
+  "vendored": true,
+  "options": {
+    "depth": 6,
+    "descriptions": 400,
+    "pathParams": "typed",
+    "numericBounds": true,
+    "formats": true,
+    "valueSafety": true
+  }
+}

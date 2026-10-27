@@ -1,11 +1,17 @@
 import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createServer } from "node:http";
 import { test as base, expect, type Page } from "@playwright/test";
 import { api } from "../../src/connectors/api.js";
+import { activityHistory } from "../../src/activity.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { listen } from "../../src/node.js";
 import { credentialKeys } from "../../src/storage/keys.js";
-import { memoryStorage } from "../../src/storage/memory.js";
+import { openSqlite, sqliteActivityStore, sqliteStorage } from "../../src/sqlite.js";
+import { connectMcp, parseJson } from "../../eval/support/mcp.js";
 import { createTestConnecta } from "../helpers.js";
 import { fakeClerkAuth } from "../fixtures/http.js";
 
@@ -20,7 +26,11 @@ const SEAL_KEY = Buffer.alloc(32, 7).toString("base64");
 type RequestFact = { method: string; path: string; authorization: string | undefined };
 type Deployment = {
   origin: string;
-  storage: ReturnType<typeof memoryStorage>;
+  storage: ReturnType<typeof sqliteStorage>;
+  restart(): Promise<void>;
+  checkScope(connected: boolean): Promise<void>;
+  credentialWrites(): string[];
+  refuseSave(refuse: boolean): void;
   vault: ReturnType<typeof encryptedCredentialVault>;
   requests: RequestFact[];
   exchanges: URLSearchParams[];
@@ -37,8 +47,23 @@ function escapeAttribute(value: string): string {
 // mutations, handoffs and callbacks all cross the production Node adapter.
 const test = base.extend<{ deployment: Deployment }>({
   deployment: async ({ context }, use) => {
-    const storage = memoryStorage();
-    const vault = encryptedCredentialVault(storage, SEAL_KEY);
+    const directory = await mkdtemp(join(tmpdir(), "connecta-browser-"));
+    const path = join(directory, "connecta.sqlite");
+    let database = openSqlite(path);
+    let storage = sqliteStorage(database);
+    let vault = encryptedCredentialVault(storage, SEAL_KEY);
+    await storage.get("warm");
+    // Count actual committed rows, including accidental repeated dispatches.
+    database.exec(`CREATE TABLE credential_writes (operation TEXT NOT NULL);
+      CREATE TRIGGER credential_insert AFTER INSERT ON connecta_kv
+      WHEN NEW.key = 'conn:vaulted:credential:v1'
+      BEGIN INSERT INTO credential_writes VALUES ('insert'); END;
+      CREATE TRIGGER credential_update AFTER UPDATE ON connecta_kv
+      WHEN NEW.key = 'conn:vaulted:credential:v1'
+      BEGIN INSERT INTO credential_writes VALUES ('update'); END;
+      CREATE TRIGGER credential_delete AFTER DELETE ON connecta_kv
+      WHEN OLD.key = 'conn:vaulted:credential:v1'
+      BEGIN INSERT INTO credential_writes VALUES ('delete'); END;`);
     const requests: RequestFact[] = [];
     const exchanges: URLSearchParams[] = [];
     const downstream: string[] = [];
@@ -50,6 +75,7 @@ const test = base.extend<{ deployment: Deployment }>({
     const originalFetch = globalThis.fetch;
 
     let providerOrigin: string;
+    let origin: string;
     const providerFetch = async (request: Request): Promise<Response> => {
       const url = new URL(request.url);
       if (url.pathname === "/authorize" && request.method === "GET") {
@@ -128,46 +154,74 @@ const test = base.extend<{ deployment: Deployment }>({
     providerOrigin = `http://127.0.0.1:${providerAddress.port}`;
     globalThis.fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
-      if (url.origin === providerOrigin) return originalFetch(input, init);
+      if (url.origin === providerOrigin || url.origin === origin) return originalFetch(input, init);
       unexpectedNetwork.push(url.href);
       throw new Error(`Unexpected server fetch: ${url.href}`);
     };
 
-    const app = createTestConnecta({
-      auth: fakeClerkAuth({ token: TOKEN, userId: "flows-operator", frontendApiUrl: CLERK, publishableKey: CLERK_KEY }),
-      storage,
-      vault,
-      logger: "silent",
-      connectors: [
-        api("oauth", {
-          title: "OAuth service",
-          oauth: {
-            authorizationEndpoint: `${providerOrigin}/authorize`,
-            tokenEndpoint: `${providerOrigin}/token`,
-            clientId: "flows-client",
-            scope: "records:read",
-            apiOrigins: [providerOrigin],
-          },
-          tools: [
-            { name: "read", description: "Read records", annotations: { readOnlyHint: true }, handler: () => null },
-          ],
+    const build = () =>
+      createTestConnecta({
+        calls: { maxResultBytes: 12_000 },
+        pools: { reader: { tools: ["vaulted"], members: ["flows-operator"], readOnly: true } },
+        auth: fakeClerkAuth({
+          token: TOKEN,
+          userId: "flows-operator",
+          frontendApiUrl: CLERK,
+          publishableKey: CLERK_KEY,
         }),
-        api("vaulted", {
-          title: "Vaulted service",
-          credential: { label: "API token" },
-          testCredential: async (value) => {
-            const response = await fetch(`${providerOrigin}/credential-check`, {
-              headers: { Authorization: `Bearer ${value}` },
-            });
-            return { ok: response.ok };
-          },
-          tools: [
-            { name: "read", description: "Read records", annotations: { readOnlyHint: true }, handler: () => null },
-          ],
-        }),
-      ],
-    });
-    const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+        storage,
+        vault,
+        activity: activityHistory({ store: sqliteActivityStore(database) }),
+        logger: "silent",
+        connectors: [
+          api("oauth", {
+            title: "OAuth service",
+            oauth: {
+              authorizationEndpoint: `${providerOrigin}/authorize`,
+              tokenEndpoint: `${providerOrigin}/token`,
+              clientId: "flows-client",
+              scope: "records:read",
+              apiOrigins: [providerOrigin],
+            },
+            tools: [
+              { name: "read", description: "Read records", annotations: { readOnlyHint: true }, handler: () => null },
+            ],
+          }),
+          api("vaulted", {
+            title: "Vaulted service",
+            credential: { label: "API token" },
+            testCredential: async (value) => {
+              const response = await fetch(`${providerOrigin}/credential-check`, {
+                headers: { Authorization: `Bearer ${value}` },
+              });
+              return { ok: response.ok };
+            },
+            tools: [
+              {
+                name: "read",
+                description: "Read records",
+                annotations: { readOnlyHint: true },
+                handler: () => ({ records: 3 }),
+              },
+              {
+                name: "write",
+                description: "Write records",
+                annotations: { readOnlyHint: false },
+                handler: () => {
+                  downstream.push("unexpected write");
+                  return null;
+                },
+              },
+            ],
+          }),
+        ],
+      });
+    let app = build();
+    // Keep the HTTP adapter and origin; replace every app/store/vault instance.
+    const server = listen(
+      { ...app, fetch: (...args) => app.fetch(...args) },
+      { port: 0, host: "127.0.0.1", gracefulShutdown: false },
+    );
     server.prependListener("request", (request) =>
       requests.push({
         method: request.method ?? "GET",
@@ -178,7 +232,7 @@ const test = base.extend<{ deployment: Deployment }>({
     await once(server, "listening");
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Node server did not bind a TCP port");
-    const origin = `http://127.0.0.1:${address.port}`;
+    origin = `http://127.0.0.1:${address.port}`;
 
     try {
       // The binding preserves violations across reloads and the OAuth popup.
@@ -240,7 +294,66 @@ const test = base.extend<{ deployment: Deployment }>({
         return route.abort("blockedbyclient");
       });
 
-      await use({ origin, storage, vault, requests, exchanges, downstream, consents, clerkLoads });
+      await use({
+        origin,
+        get storage() {
+          return storage;
+        },
+        get vault() {
+          return vault;
+        },
+        requests,
+        exchanges,
+        downstream,
+        consents,
+        clerkLoads,
+        async checkScope(connected) {
+          const client = await connectMcp(`${origin}/mcp/reader`, { Authorization: `Bearer ${TOKEN}` });
+          try {
+            const read = await client.call("call_tool", { address: "vaulted.read", args: {} });
+            expect(read.isError, read.text).toBe(!connected);
+            if (connected) expect(parseJson(read.text)).toEqual({ records: 3 });
+            const refused = await client.call("call_destructive_tool", {
+              address: "vaulted.write",
+              args: {},
+              reason: "scope check",
+            });
+            expect(refused.isError).toBe(true);
+            expect(refused.text).toContain("read_only_endpoint");
+            expect(downstream).not.toContain("unexpected write");
+          } finally {
+            await client.close();
+          }
+        },
+        async restart() {
+          await app.close();
+          database.close();
+          database = openSqlite(path);
+          storage = sqliteStorage(database);
+          vault = encryptedCredentialVault(storage, SEAL_KEY);
+          app = build();
+        },
+        credentialWrites() {
+          const reader = new DatabaseSync(path, { readOnly: true });
+          try {
+            return reader
+              .prepare("SELECT operation FROM credential_writes ORDER BY rowid")
+              .all()
+              .map((row) => String(row.operation));
+          } finally {
+            reader.close();
+          }
+        },
+        refuseSave(refuse) {
+          database.exec(
+            refuse
+              ? `CREATE TRIGGER refuse_save BEFORE INSERT ON connecta_kv
+            WHEN NEW.key = 'conn:vaulted:credential:v1'
+            BEGIN SELECT RAISE(ABORT, 'private storage failure'); END`
+              : "DROP TRIGGER refuse_save",
+          );
+        },
+      });
       expect(violations, "CSP violations across every flow document").toEqual([]);
       expect(unexpectedNetwork, "Only loopback and stubbed identity/provider traffic is allowed").toEqual([]);
     } finally {
@@ -252,6 +365,8 @@ const test = base.extend<{ deployment: Deployment }>({
         ]);
       } finally {
         globalThis.fetch = originalFetch;
+        database.close();
+        await rm(directory, { recursive: true, force: true });
       }
     }
   },
@@ -277,6 +392,23 @@ async function openShell(page: Page, deployment: Deployment, path: string, signe
 test("INV-4: Clerk sign-in admits a session before loading real operator data", async ({ page, deployment }) => {
   await openShell(page, deployment, "/connectors", false);
   await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toBeVisible();
+  const script = deployment.requests.find((request) => /^\/ui\/assets\/.*\.js$/.test(request.path))!.path;
+  const asset = await page.request.get(deployment.origin + script);
+  expect(asset.headers()["cache-control"]).toBe("public, max-age=31536000, immutable");
+  const head = await page.request.head(deployment.origin + script);
+  expect(head.status()).toBe(200);
+  expect(await head.body()).toHaveLength(0);
+  expect(head.headers().etag).toBe(asset.headers().etag);
+  const cached = await page.request.get(deployment.origin + script, {
+    headers: { "If-None-Match": `W/${asset.headers().etag}` },
+  });
+  expect(cached.status()).toBe(304);
+  expect((await page.request.post(deployment.origin + script)).status()).toBe(405);
+  for (const path of ["/ui/assets/missing.js", "/ui/assets/__proto__"]) {
+    const missing = await page.request.get(deployment.origin + path);
+    expect(missing.status()).toBe(404);
+    expect(missing.headers()["cache-control"]).toBe("no-store");
+  }
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toHaveCount(0);
   expect(deployment.requests.some((request) => request.path === "/ui/data")).toBe(false);
   expect((await page.request.get(deployment.origin + "/ui/api/config")).status()).toBe(401);
@@ -297,6 +429,16 @@ test("INV-4: Clerk sign-in admits a session before loading real operator data", 
   await page.reload();
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toHaveCount(0);
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  const settings = page.locator("#settingsView");
+  await expect(settings).toContainText("Defined in code");
+  await expect(settings).toContainText("SQLite");
+  await expect(settings.locator('[data-config-path="config.limits.calls.maxResultBytes"]')).toContainText("12 KB");
+  await expect(settings.locator('[data-config-path="config.limits.calls.maxResultBytes"]')).toContainText(
+    "set in code",
+  );
+  await expect(settings.locator('[data-config-path="config.limits.calls.defaultTimeoutMs"]')).toContainText("default");
+  await expect(settings.locator("input, select, textarea")).toHaveCount(0);
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toBeVisible();
@@ -368,8 +510,20 @@ test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and ca
   ).join("\n");
   expect(stored).not.toContain(ACCESS_TOKEN);
   expect(stored).not.toContain(REFRESH_TOKEN);
+  await deployment.restart();
   await page.reload();
   await expect(page.getByRole("button", { name: "Disconnect OAuth service", exact: true })).toBeVisible();
+  expect(deployment.exchanges).toHaveLength(1);
+  await page.getByRole("button", { name: "Disconnect OAuth service", exact: true }).click();
+  await page
+    .getByRole("group", { name: /Disconnect OAuth service/ })
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .click();
+  await expect(page.getByRole("button", { name: "Connect OAuth service", exact: true })).toBeVisible();
+  await deployment.restart();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Connect OAuth service", exact: true })).toBeVisible();
+  expect(deployment.exchanges).toHaveLength(1);
 });
 
 test("INV-5: credential save encrypts the vault value and Test sends the saved secret downstream", async ({
@@ -378,6 +532,7 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
 }) => {
   await openShell(page, deployment, "/connectors/vaulted#auth");
   const card = page.locator("#credential-vaulted");
+  await deployment.checkScope(false);
   await expect(page.getByText("Credential needed", { exact: true }).first()).toBeVisible();
   await card.getByRole("button", { name: "Add credential", exact: true }).click();
   await card.getByLabel("API token", { exact: true }).fill(SECRET);
@@ -413,6 +568,9 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
     { method: "PUT", path: "/ui/credentials/vaulted", authorization: `Bearer ${TOKEN}` },
     { method: "POST", path: "/ui/credentials/vaulted/test", authorization: `Bearer ${TOKEN}` },
   ]);
+  expect(deployment.credentialWrites()).toEqual(["insert"]);
+  await deployment.checkScope(true);
+  await deployment.restart();
   await page.reload();
   await expect(card.getByRole("button", { name: "Replace", exact: true })).toBeVisible();
   await expect(page.getByText("Credential needed", { exact: true })).toHaveCount(0);
@@ -424,9 +582,27 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   await card.getByRole("button", { name: "Replace", exact: true }).click();
   const replacement = SECRET + "-replacement";
   await card.getByLabel("API token", { exact: true }).fill(replacement);
+  deployment.refuseSave(true);
+  await card.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(card.locator("#credentialNotice-vaulted")).toHaveText(
+    "Not saved. A value is empty or in the wrong format.",
+  );
+  expect(await page.content()).not.toContain("private storage failure");
+  expect(deployment.credentialWrites()).toEqual(["insert"]);
+  expect(await deployment.vault.get("vaulted")).toBe(SECRET);
+  deployment.refuseSave(false);
+  await deployment.restart();
+  await page.reload();
+  await card.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential is valid.");
+  expect(deployment.downstream).toEqual([`Bearer ${SECRET}`, `Bearer ${SECRET}`]);
+  await card.getByRole("button", { name: "Replace", exact: true }).click();
+  await card.getByLabel("API token", { exact: true }).fill(replacement);
   await card.getByRole("button", { name: "Save", exact: true }).click();
   await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential saved.");
   expect(await deployment.vault.get("vaulted")).toBe(replacement);
+  expect(deployment.credentialWrites()).toEqual(["insert", "update"]);
+  await deployment.checkScope(true);
   expect(await page.content()).not.toContain(replacement);
   const dialogs: string[] = [];
   page.on("dialog", (dialog) => {
@@ -445,5 +621,15 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
     .click();
   await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential removed.");
   expect(await deployment.vault.get("vaulted")).toBeNull();
+  expect(deployment.credentialWrites()).toEqual(["insert", "update", "delete"]);
+  await deployment.restart();
+  await page.reload();
+  await expect(card.getByRole("button", { name: "Add credential", exact: true })).toBeVisible();
+  expect(deployment.credentialWrites()).toEqual(["insert", "update", "delete"]);
+  await page.getByRole("link", { name: "Activity", exact: true }).click();
+  await expect(page.locator(".activity-item.success").filter({ hasText: "vaulted.read" }).first()).toBeVisible();
+  await expect(page.locator("#activityView")).not.toContainText(SECRET);
+  await expect(page.locator("#activityView")).not.toContainText(replacement);
+  await deployment.checkScope(false);
   expect(dialogs).toEqual([]);
 });

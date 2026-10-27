@@ -1,0 +1,2690 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Granola API",
+    "version": "1.0.0",
+    "description": "API for accessing meeting data from Granola"
+  },
+  "servers": [
+    {
+      "url": "https://public-api.granola.ai",
+      "description": "Production"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "apiKey"
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": ["string", "null"],
+            "description": "The name of the user",
+            "example": "Oat Benson"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The email of the user",
+            "example": "oat@granola.ai"
+          }
+        },
+        "required": ["name", "email"]
+      },
+      "Space": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^spa_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the space",
+            "example": "spa_8kTq2mWxLp4Rz7"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["space"]
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the space",
+            "example": "Product team"
+          }
+        },
+        "required": ["id", "object", "name"]
+      },
+      "Folder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^fol_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the folder",
+            "example": "fol_4y6LduVdwSKC27"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["folder"]
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the folder",
+            "example": "Top secret recipes"
+          },
+          "parent_folder_id": {
+            "type": ["string", "null"],
+            "pattern": "^fol_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the parent folder, or null if the folder is top-level.",
+            "example": "fol_a74g2hvl98iUHG"
+          },
+          "space_id": {
+            "type": ["string", "null"],
+            "pattern": "^spa_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the space the folder belongs to, or null if it is not in a space or the API key cannot access that space.",
+            "example": "spa_8kTq2mWxLp4Rz7"
+          }
+        },
+        "required": ["id", "object", "name", "parent_folder_id"]
+      },
+      "Speaker": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": ["microphone", "speaker"],
+            "description": "The source of the speaker. For iOS transcripts, Granola currently returns `microphone` for all transcript items because iOS currently captures a single audio stream. Clients should not assume this will never expand in the future."
+          },
+          "attribution": {
+            "type": "string",
+            "enum": ["me", "them"],
+            "description": "Who said this relative to the note: `me` is the note-taker (the note's owner), `them` is other meeting participants. Omitted when the attribution is unknown, such as iOS transcript items that only carry an anonymous `diarization_label`.",
+            "example": "me"
+          },
+          "diarization_label": {
+            "type": "string",
+            "description": "The diarized anonymous speaker label assigned in the transcript, such as `Speaker A`. This is currently only present on iOS transcripts when diarization is available.",
+            "example": "Speaker A"
+          },
+          "name": {
+            "type": "string",
+            "description": "The resolved name of the identified speaker, such as `Alice Smith`. This is only present when a speaker could be identified for the transcript item.",
+            "example": "Alice Smith"
+          }
+        },
+        "required": ["source"]
+      },
+      "Transcript": {
+        "type": "object",
+        "properties": {
+          "speaker": {
+            "$ref": "#/components/schemas/Speaker"
+          },
+          "text": {
+            "type": "string",
+            "description": "The text of the transcript"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The start time of the transcript"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The end time of the transcript"
+          }
+        },
+        "required": ["speaker", "text", "start_time", "end_time"]
+      },
+      "CalendarInvitee": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The email of the calendar invitee",
+            "example": "raisin@granola.ai"
+          }
+        },
+        "required": ["email"]
+      },
+      "CalendarEvent": {
+        "type": "object",
+        "properties": {
+          "event_title": {
+            "type": ["string", "null"],
+            "description": "The title of the calendar event",
+            "example": "Quarterly yoghurt budget review"
+          },
+          "invitees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalendarInvitee"
+            }
+          },
+          "organiser": {
+            "type": ["string", "null"],
+            "format": "email",
+            "description": "The email of the organiser",
+            "example": "oat@granola.ai"
+          },
+          "calendar_event_id": {
+            "type": ["string", "null"],
+            "description": "The id of the calendar event",
+            "example": "2su99n6iiik37iiknmb5t4fkfh_20260127T153000Z"
+          },
+          "scheduled_start_time": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "The start time of the calendar event",
+            "example": "2026-01-27T15:30:00Z"
+          },
+          "scheduled_end_time": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "The end time of the calendar event",
+            "example": "2026-01-27T16:30:00Z"
+          }
+        },
+        "required": [
+          "event_title",
+          "invitees",
+          "organiser",
+          "calendar_event_id",
+          "scheduled_start_time",
+          "scheduled_end_time"
+        ]
+      },
+      "NoteSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^not_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the note",
+            "example": "not_1d3tmYTlCICgjy"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["note"],
+            "description": "The object type of the note"
+          },
+          "title": {
+            "type": ["string", "null"],
+            "description": "The title of the note",
+            "example": "Quarterly yoghurt budget review"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/User"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The creation time of the note",
+            "example": "2026-01-27T15:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The last update time of the note",
+            "example": "2026-01-27T16:45:00Z"
+          },
+          "deleted_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "When the note was deleted, or null if it has not been. Only keys with access to all workspace notes can see deleted notes.",
+            "example": null
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "title",
+          "owner",
+          "created_at",
+          "updated_at",
+          "deleted_at"
+        ]
+      },
+      "NoteAttachment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^att_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the attachment",
+            "example": "att_4y6LduVdwSKC27"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["attachment"]
+          },
+          "type": {
+            "type": "string",
+            "description": "The attachment type: `photo` for manually attached images. Clients should ignore types they do not recognize.",
+            "example": "photo"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The URL to download the image. URLs may change; fetch the note again for the current URL. Anyone with this URL can view it; treat it as sensitive note content."
+          },
+          "width": {
+            "type": "number",
+            "description": "The image width in pixels"
+          },
+          "height": {
+            "type": "number",
+            "description": "The image height in pixels"
+          }
+        },
+        "required": ["id", "object", "type", "url", "width", "height"]
+      },
+      "NoteDetail": {
+        "type": "object",
+        "properties": {
+          "web_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The URL to view the note in the Granola web app",
+            "example": "https://notes.granola.ai/d/f3e45e0f-24cc-480b-9a6c-8b1f5e3d7a2c"
+          },
+          "calendar_event": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CalendarEvent"
+              },
+              {
+                "type": ["object", "null"]
+              }
+            ]
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteAttachment"
+            },
+            "description": "Manually attached photos, in stored order. Empty when no photos are available."
+          },
+          "attendees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/User"
+            },
+            "description": "The attendees of the meeting",
+            "example": [
+              {
+                "name": "Oat Benson",
+                "email": "oat@granola.ai"
+              },
+              {
+                "name": "Raisin Patel",
+                "email": "raisin@granola.ai"
+              }
+            ]
+          },
+          "folder_membership": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Folder"
+            },
+            "description": "The folder membership of the note",
+            "example": [
+              {
+                "id": "fol_4y6LduVdwSKC27",
+                "object": "folder",
+                "name": "Top secret recipes",
+                "parent_folder_id": "fol_a74g2hvl98iUHG",
+                "space_id": "spa_8kTq2mWxLp4Rz7"
+              }
+            ]
+          },
+          "space_membership": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Space"
+            },
+            "description": "The spaces the note is in that the API key can access, through the folders it belongs to.",
+            "example": [
+              {
+                "id": "spa_8kTq2mWxLp4Rz7",
+                "object": "space",
+                "name": "Product team"
+              }
+            ]
+          },
+          "summary_text": {
+            "type": "string",
+            "description": "The summary text of the note",
+            "example": "The quarterly yoghurt budget review was a success. We spent $100,000 on yoghurt and made $150,000 in profit."
+          },
+          "summary_markdown": {
+            "type": ["string", "null"],
+            "description": "The summary of the note in markdown format. Can be null if the note has no summary.",
+            "example": "## Quarterly Yoghurt Budget Review\n\nThe quarterly yoghurt budget review was a success.\n\n- Spent **$100,000** on yoghurt\n- Made **$150,000** in profit"
+          },
+          "private_notes_text": {
+            "type": ["string", "null"],
+            "description": "The private notes the note's owner wrote themselves, as plain text. Only returned when the API key belongs to the user who created the note; `null` otherwise (including for shared notes and workspace-scoped keys).",
+            "example": "Push back on the dairy forecast. Ask about the almond milk pivot."
+          },
+          "private_notes_markdown": {
+            "type": ["string", "null"],
+            "description": "The private notes the note's owner wrote themselves, in markdown format. Only returned when the API key belongs to the user who created the note; `null` otherwise (including for shared notes and workspace-scoped keys).",
+            "example": "- Push back on the dairy forecast\n- Ask about the **almond milk** pivot"
+          },
+          "transcript": {
+            "type": ["array", "null"],
+            "items": {
+              "$ref": "#/components/schemas/Transcript"
+            },
+            "description": "The inline transcript of the note. If it is too large to return inline, Get Note returns `TRANSCRIPT_TOO_LARGE`; retrieve it in pages from `/v1/notes/{note_id}/transcript`. The example below shows a macOS transcript. On iOS, Granola currently returns `speaker.source` as `microphone`, and `diarization_label` can carry anonymous `Speaker A/B/...` buckets when diarization is available.",
+            "example": [
+              {
+                "speaker": {
+                  "source": "microphone",
+                  "attribution": "me"
+                },
+                "text": "I'm done pretending. Greek is the only yoghurt that deserves us.",
+                "start_time": "2026-01-27T15:30:00Z",
+                "end_time": "2026-01-27T16:30:00Z"
+              },
+              {
+                "speaker": {
+                  "source": "speaker",
+                  "attribution": "them"
+                },
+                "text": "Finally. Regular yoghurt is just milk that gave up halfway.",
+                "start_time": "2026-01-27T15:30:00Z",
+                "end_time": "2026-01-27T16:30:00Z"
+              }
+            ]
+          }
+        },
+        "required": [
+          "web_url",
+          "calendar_event",
+          "attachments",
+          "attendees",
+          "folder_membership",
+          "summary_text",
+          "summary_markdown",
+          "private_notes_text",
+          "private_notes_markdown",
+          "transcript"
+        ]
+      },
+      "Note": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^not_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the note",
+            "example": "not_1d3tmYTlCICgjy"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["note"],
+            "description": "The object type of the note"
+          },
+          "title": {
+            "type": ["string", "null"],
+            "description": "The title of the note",
+            "example": "Quarterly yoghurt budget review"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/User"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The creation time of the note",
+            "example": "2026-01-27T15:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The last update time of the note",
+            "example": "2026-01-27T16:45:00Z"
+          },
+          "deleted_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "When the note was deleted, or null if it has not been. Only keys with access to all workspace notes can see deleted notes.",
+            "example": null
+          },
+          "web_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The URL to view the note in the Granola web app",
+            "example": "https://notes.granola.ai/d/f3e45e0f-24cc-480b-9a6c-8b1f5e3d7a2c"
+          },
+          "calendar_event": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CalendarEvent"
+              },
+              {
+                "type": ["object", "null"]
+              }
+            ]
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteAttachment"
+            },
+            "description": "Manually attached photos, in stored order. Empty when no photos are available."
+          },
+          "attendees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/User"
+            },
+            "description": "The attendees of the meeting",
+            "example": [
+              {
+                "name": "Oat Benson",
+                "email": "oat@granola.ai"
+              },
+              {
+                "name": "Raisin Patel",
+                "email": "raisin@granola.ai"
+              }
+            ]
+          },
+          "folder_membership": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Folder"
+            },
+            "description": "The folder membership of the note",
+            "example": [
+              {
+                "id": "fol_4y6LduVdwSKC27",
+                "object": "folder",
+                "name": "Top secret recipes",
+                "parent_folder_id": "fol_a74g2hvl98iUHG",
+                "space_id": "spa_8kTq2mWxLp4Rz7"
+              }
+            ]
+          },
+          "space_membership": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Space"
+            },
+            "description": "The spaces the note is in that the API key can access, through the folders it belongs to.",
+            "example": [
+              {
+                "id": "spa_8kTq2mWxLp4Rz7",
+                "object": "space",
+                "name": "Product team"
+              }
+            ]
+          },
+          "summary_text": {
+            "type": "string",
+            "description": "The summary text of the note",
+            "example": "The quarterly yoghurt budget review was a success. We spent $100,000 on yoghurt and made $150,000 in profit."
+          },
+          "summary_markdown": {
+            "type": ["string", "null"],
+            "description": "The summary of the note in markdown format. Can be null if the note has no summary.",
+            "example": "## Quarterly Yoghurt Budget Review\n\nThe quarterly yoghurt budget review was a success.\n\n- Spent **$100,000** on yoghurt\n- Made **$150,000** in profit"
+          },
+          "private_notes_text": {
+            "type": ["string", "null"],
+            "description": "The private notes the note's owner wrote themselves, as plain text. Only returned when the API key belongs to the user who created the note; `null` otherwise (including for shared notes and workspace-scoped keys).",
+            "example": "Push back on the dairy forecast. Ask about the almond milk pivot."
+          },
+          "private_notes_markdown": {
+            "type": ["string", "null"],
+            "description": "The private notes the note's owner wrote themselves, in markdown format. Only returned when the API key belongs to the user who created the note; `null` otherwise (including for shared notes and workspace-scoped keys).",
+            "example": "- Push back on the dairy forecast\n- Ask about the **almond milk** pivot"
+          },
+          "transcript": {
+            "type": ["array", "null"],
+            "items": {
+              "$ref": "#/components/schemas/Transcript"
+            },
+            "description": "The inline transcript of the note. If it is too large to return inline, Get Note returns `TRANSCRIPT_TOO_LARGE`; retrieve it in pages from `/v1/notes/{note_id}/transcript`. The example below shows a macOS transcript. On iOS, Granola currently returns `speaker.source` as `microphone`, and `diarization_label` can carry anonymous `Speaker A/B/...` buckets when diarization is available.",
+            "example": [
+              {
+                "speaker": {
+                  "source": "microphone",
+                  "attribution": "me"
+                },
+                "text": "I'm done pretending. Greek is the only yoghurt that deserves us.",
+                "start_time": "2026-01-27T15:30:00Z",
+                "end_time": "2026-01-27T16:30:00Z"
+              },
+              {
+                "speaker": {
+                  "source": "speaker",
+                  "attribution": "them"
+                },
+                "text": "Finally. Regular yoghurt is just milk that gave up halfway.",
+                "start_time": "2026-01-27T15:30:00Z",
+                "end_time": "2026-01-27T16:30:00Z"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "title",
+          "owner",
+          "created_at",
+          "updated_at",
+          "deleted_at",
+          "web_url",
+          "calendar_event",
+          "attachments",
+          "attendees",
+          "folder_membership",
+          "summary_text",
+          "summary_markdown",
+          "private_notes_text",
+          "private_notes_markdown",
+          "transcript"
+        ]
+      },
+      "GetNotePath": {
+        "type": "object",
+        "properties": {
+          "note_id": {
+            "type": "string",
+            "pattern": "^[Nn][Oo][Tt]_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the note (case-insensitive)",
+            "example": "not_1d3tmYTlCICgjy"
+          }
+        },
+        "required": ["note_id"]
+      },
+      "GetNoteQuery": {
+        "type": "object",
+        "properties": {
+          "include": {
+            "type": "string",
+            "enum": ["transcript"],
+            "description": "Include the note transcript in the response. If it is too large to return inline, Get Note returns `TRANSCRIPT_TOO_LARGE`; retrieve it in pages from `/v1/notes/{note_id}/transcript`.",
+            "example": "transcript"
+          }
+        }
+      },
+      "GetTranscriptQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "The opaque cursor returned by the previous page",
+            "example": "eyJyb3dfb2Zmc2V0Ijo1MCwiaXRlbV9vZmZzZXQiOjB9"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50,
+            "description": "The maximum number of transcript items to return",
+            "example": 50
+          }
+        }
+      },
+      "GetTranscriptOutput": {
+        "type": "object",
+        "properties": {
+          "transcript": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Transcript"
+            },
+            "description": "Transcript items for this page"
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether another page of transcript items is available"
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "description": "The opaque cursor for the next page, or null when this is the final page"
+          }
+        },
+        "required": ["transcript", "hasMore", "cursor"]
+      },
+      "ListNotesQuery": {
+        "type": "object",
+        "properties": {
+          "created_before": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ],
+            "description": "Return notes created before this date",
+            "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+          },
+          "created_after": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ],
+            "description": "Return notes created after this date",
+            "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+          },
+          "updated_after": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ],
+            "description": "Return notes updated after this date",
+            "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+          },
+          "folder_id": {
+            "type": "string",
+            "pattern": "^[Ff][Oo][Ll]_[a-zA-Z0-9]{14}$",
+            "description": "Return notes in this folder and any of its child folders. Folder IDs are case-insensitive. Use the list folders endpoint to discover folder IDs.",
+            "example": "fol_4y6LduVdwSKC27"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10,
+            "description": "Maximum number of notes to return per page",
+            "example": 10
+          }
+        }
+      },
+      "ListNotesOutput": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteSummary"
+            }
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether there are more notes to fetch",
+            "example": true
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          }
+        },
+        "required": ["notes", "hasMore", "cursor"]
+      },
+      "ListFoldersQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10,
+            "description": "Maximum number of folders to return per page",
+            "example": 10
+          }
+        }
+      },
+      "ListFoldersOutput": {
+        "type": "object",
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Folder"
+            }
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether there are more folders to fetch",
+            "example": true
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          }
+        },
+        "required": ["folders", "hasMore", "cursor"]
+      },
+      "ListSpacesQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10,
+            "description": "The number of spaces to return",
+            "example": 10
+          }
+        }
+      },
+      "ListSpacesOutput": {
+        "type": "object",
+        "properties": {
+          "spaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Space"
+            }
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether there are more spaces to fetch",
+            "example": true
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          }
+        },
+        "required": ["spaces", "hasMore", "cursor"]
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^whe_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the webhook endpoint",
+            "example": "whe_2mKr8fQxLp7Ta3"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["webhook_endpoint"]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The HTTPS URL deliveries are sent to. When `url_redacted` is true, reduced to the URL's origin.",
+            "example": "https://example.com/granola-webhooks"
+          },
+          "url_redacted": {
+            "type": "boolean",
+            "description": "True when this response reduces `url` to its origin because the caller is not the endpoint's creator (the path can carry credentials). Orphaned endpoints whose creator account was deleted are returned unredacted so they can be cleaned up.",
+            "example": false
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["note.access_granted", "note.edited", "note.generated"]
+            },
+            "description": "The event names this endpoint is subscribed to",
+            "example": ["note.access_granted", "note.edited", "note.generated"]
+          },
+          "folder_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^fol_[a-zA-Z0-9]{14}$"
+            },
+            "description": "Folder IDs this endpoint's delivery is restricted to, or an empty array when unrestricted. Events fire only for notes in these folders or their subfolders.",
+            "example": []
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["personal", "public", "workspace"]
+            },
+            "description": "Which notes this endpoint receives events for. `personal` covers notes the creating user owns, notes shared directly with them, and notes in private folders shared with them. `public` covers notes visible to everyone in the workspace. `workspace` is reported for endpoints created with a workspace API key: public workspace notes plus notes in spaces with Granola API access enabled.",
+            "example": ["personal", "public"]
+          },
+          "created_by": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/User"
+              },
+              {
+                "type": ["object", "null"],
+                "description": "The user who created this endpoint. Null for a workspace-managed endpoint (`scopes` is `[\"workspace\"]`), or when the creator's account was deleted.",
+                "example": {
+                  "name": "Oat Benson",
+                  "email": "oat@granola.ai"
+                }
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether deliveries are active",
+            "example": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The creation time of the webhook endpoint",
+            "example": "2026-01-27T15:30:00Z"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "url",
+          "url_redacted",
+          "events",
+          "folder_ids",
+          "scopes",
+          "created_by",
+          "enabled",
+          "created_at"
+        ]
+      },
+      "CreateWebhookEndpointBody": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The publicly reachable HTTPS URL to deliver events to",
+            "example": "https://example.com/granola-webhooks"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["personal", "public", "workspace"]
+            },
+            "minItems": 1,
+            "description": "Which notes to receive events for. `personal` covers notes you own, notes shared directly with you, and notes in private folders shared with you. `public` covers notes visible to everyone in the workspace. Pass both for both sets of notes. Workspace admins can disable scopes for non-admin members in the workspace's API settings. With a Workspace API key, pass exactly `[\"workspace\"]` — the key's own scope: public workspace notes plus notes in spaces with Granola API access enabled.",
+            "example": ["personal", "public"]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["note.access_granted", "note.edited", "note.generated"]
+            },
+            "minItems": 1,
+            "default": ["note.access_granted", "note.edited", "note.generated"],
+            "description": "Event names to subscribe to. Omit to subscribe to all events.",
+            "example": ["note.access_granted", "note.edited", "note.generated"]
+          },
+          "folder_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[Ff][Oo][Ll]_[a-zA-Z0-9]{14}$"
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Restrict delivery to notes in these folders or any of their subfolders. Accepts folder IDs returned by `GET /v1/folders`, in any casing. Omit to receive events for every note matching `scopes`. The same filter applies to all subscribed `events`.",
+            "example": ["fol_2mKr8fQxLp7Ta3"]
+          }
+        },
+        "required": ["url", "scopes"]
+      },
+      "CreateWebhookEndpointOutput": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookEndpoint"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "signing_secret": {
+                "type": "string",
+                "description": "Secret for verifying delivery signatures (Standard Webhooks HMAC-SHA256). Shown only once, in this response — store it securely.",
+                "example": "whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            },
+            "required": ["signing_secret"]
+          }
+        ]
+      },
+      "ListWebhookEndpointsOutput": {
+        "type": "object",
+        "properties": {
+          "webhook_endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpoint"
+            }
+          }
+        },
+        "required": ["webhook_endpoints"]
+      },
+      "UpdateWebhookEndpointPath": {
+        "type": "object",
+        "properties": {
+          "webhook_endpoint_id": {
+            "type": "string",
+            "pattern": "^[Ww][Hh][Ee]_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the webhook endpoint. Case-insensitive.",
+            "example": "whe_2mKr8fQxLp7Ta3"
+          }
+        },
+        "required": ["webhook_endpoint_id"]
+      },
+      "UpdateWebhookEndpointBody": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The publicly reachable HTTPS URL to deliver events to. Omit to leave unchanged.",
+            "example": "https://example.com/granola-webhooks"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["personal", "public", "workspace"]
+            },
+            "minItems": 1,
+            "description": "Which notes to receive events for; replaces the current scopes. `personal` covers notes you own, notes shared directly with you, and notes in private folders shared with you. `public` covers notes visible to everyone in the workspace. Pass both for both sets of notes. Workspace admins can disable scopes for non-admin members in the workspace's API settings. A workspace-managed endpoint's scope is fixed: only `[\"workspace\"]` is accepted. Omit to leave unchanged.",
+            "example": ["personal", "public"]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["note.access_granted", "note.edited", "note.generated"]
+            },
+            "minItems": 1,
+            "description": "Event names to subscribe to; replaces the current subscriptions. Omit to leave unchanged.",
+            "example": ["note.access_granted", "note.edited", "note.generated"]
+          },
+          "folder_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[Ff][Oo][Ll]_[a-zA-Z0-9]{14}$"
+            },
+            "maxItems": 100,
+            "description": "Restrict delivery to notes in these folders or any of their subfolders; replaces the current folder filter. Accepts folder IDs returned by `GET /v1/folders`, in any casing. Pass an empty array to remove the filter. Omit to leave unchanged.",
+            "example": ["fol_2mKr8fQxLp7Ta3"]
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Pause (`false`) or resume (`true`) event deliveries. A paused endpoint keeps its configuration and signing secret; events that occur while paused are not delivered later. Omit to leave unchanged.",
+            "example": true
+          }
+        }
+      },
+      "DeleteWebhookEndpointPath": {
+        "type": "object",
+        "properties": {
+          "webhook_endpoint_id": {
+            "type": "string",
+            "pattern": "^[Ww][Hh][Ee]_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the webhook endpoint. Case-insensitive.",
+            "example": "whe_2mKr8fQxLp7Ta3"
+          }
+        },
+        "required": ["webhook_endpoint_id"]
+      },
+      "DeleteWebhookEndpointOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^whe_[a-zA-Z0-9]{14}$",
+            "description": "The ID of the deleted webhook endpoint",
+            "example": "whe_2mKr8fQxLp7Ta3"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["webhook_endpoint"]
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [true]
+          }
+        },
+        "required": ["id", "object", "deleted"]
+      },
+      "LegalHold": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^lgh_[a-zA-Z0-9]{14}$",
+            "description": "The unique identifier for the legal hold",
+            "example": "lgh_Abc123XyZ456De"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["legal_hold"],
+            "description": "The type of object",
+            "example": "legal_hold"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the hold, as your admins see it",
+            "example": "X v. Y"
+          },
+          "description": {
+            "type": ["string", "null"],
+            "description": "Free text describing the matter, or null",
+            "example": "Preservation notice 2026-08-12"
+          },
+          "covers_entire_workspace": {
+            "type": "boolean",
+            "description": "True when the hold covers every member of your workspace, current and future. Additive with `custodian_count` — a hold may do both.",
+            "example": false
+          },
+          "custodian_count": {
+            "type": "integer",
+            "description": "How many users this hold names individually. Workspace-wide coverage is `covers_entire_workspace`, not a custodian.",
+            "example": 3
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the hold was placed",
+            "example": "2026-09-21T10:00:00Z"
+          },
+          "released_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "When the hold was released, or null while it is active. A released hold is never deleted.",
+            "example": null
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "name",
+          "description",
+          "covers_entire_workspace",
+          "custodian_count",
+          "created_at",
+          "released_at"
+        ]
+      },
+      "LegalHoldCustodian": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^lhc_[a-zA-Z0-9]{14}$",
+            "description": "The unique identifier for the custodian entry",
+            "example": "lhc_7Yt3nBv8Wq2Lms"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["legal_hold_custodian"],
+            "description": "The type of object",
+            "example": "legal_hold_custodian"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "object": {
+                "type": "string",
+                "enum": ["user"]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^usr_[a-zA-Z0-9]{14}$"
+              },
+              "email": {
+                "type": ["string", "null"],
+                "format": "email"
+              }
+            },
+            "required": ["object", "id", "email"],
+            "description": "The person this custodian entry names. `email` is null once their Granola account has been deleted.",
+            "example": {
+              "object": "user",
+              "id": "usr_9Kd2mPq7Rt4Xyz",
+              "email": "person@example.com"
+            }
+          },
+          "added_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this person was named by the hold",
+            "example": "2026-09-21T10:00:00Z"
+          },
+          "removed_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "When this person was removed from the hold, or null while they are named. Removed custodians are always returned, so the record of who was held survives.",
+            "example": null
+          }
+        },
+        "required": ["id", "object", "user", "added_at", "removed_at"]
+      },
+      "LegalHoldCustodianInput": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The custodian's email address. Use this when your system knows employees by email rather than by Granola user id.",
+            "example": "person@example.com"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[Uu][Ss][Rr]_[a-zA-Z0-9]{14}$",
+            "description": "The custodian's Granola user id. Case-insensitive.",
+            "example": "usr_9Kd2mPq7Rt4Xyz"
+          }
+        }
+      },
+      "CreateLegalHoldBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "A name for the matter this hold preserves",
+            "example": "X v. Y"
+          },
+          "description": {
+            "type": ["string", "null"],
+            "maxLength": 2000,
+            "description": "Free text describing the matter",
+            "example": "Preservation notice 2026-08-12"
+          },
+          "covers_entire_workspace": {
+            "type": "boolean",
+            "description": "Whether the hold covers every member of your workspace, current and future. Required: scope is never something a caller falls into.",
+            "example": false
+          },
+          "custodians": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalHoldCustodianInput"
+            },
+            "maxItems": 100,
+            "description": "Users to name individually when the hold is created"
+          }
+        },
+        "required": ["name", "covers_entire_workspace"]
+      },
+      "UpdateLegalHoldBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "A new name for the matter",
+            "example": "X v. Y (consolidated)"
+          },
+          "description": {
+            "type": ["string", "null"],
+            "maxLength": 2000,
+            "description": "New free text for the matter, or null to clear it",
+            "example": "Preservation notice 2026-08-12"
+          },
+          "covers_entire_workspace": {
+            "type": "boolean",
+            "description": "Whether the hold covers every member of your workspace. Toggling this never touches the custodians the hold names.",
+            "example": true
+          }
+        }
+      },
+      "AddLegalHoldCustodiansBody": {
+        "type": "object",
+        "properties": {
+          "custodians": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalHoldCustodianInput"
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Users to name on this hold"
+          }
+        },
+        "required": ["custodians"]
+      },
+      "LegalHoldPath": {
+        "type": "object",
+        "properties": {
+          "hold_id": {
+            "type": "string",
+            "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+            "description": "The legal hold id. Case-insensitive.",
+            "example": "lgh_Abc123XyZ456De"
+          }
+        },
+        "required": ["hold_id"]
+      },
+      "LegalHoldCustodianPath": {
+        "type": "object",
+        "properties": {
+          "hold_id": {
+            "type": "string",
+            "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+            "description": "The legal hold id. Case-insensitive.",
+            "example": "lgh_Abc123XyZ456De"
+          },
+          "custodian_id": {
+            "type": "string",
+            "pattern": "^[Ll][Hh][Cc]_[a-zA-Z0-9]{14}$",
+            "description": "The custodian entry id. Case-insensitive.",
+            "example": "lhc_7Yt3nBv8Wq2Lms"
+          }
+        },
+        "required": ["hold_id", "custodian_id"]
+      },
+      "ListLegalHoldsQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10,
+            "description": "Maximum number of legal holds to return per page",
+            "example": 10
+          }
+        }
+      },
+      "ListLegalHoldCustodiansQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "The cursor to continue from",
+            "example": "eyJjcmVkZW50aWFsfQ=="
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10,
+            "description": "Maximum number of custodians to return per page",
+            "example": 10
+          }
+        }
+      },
+      "ListLegalHoldsOutput": {
+        "type": "object",
+        "properties": {
+          "legal_holds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalHold"
+            }
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether there are more legal holds to fetch. A page can hold fewer than `page_size` holds and still not be the last one, so page on this and `cursor`.",
+            "example": false
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "description": "The cursor to continue from",
+            "example": null
+          }
+        },
+        "required": ["legal_holds", "hasMore", "cursor"]
+      },
+      "ListLegalHoldCustodiansOutput": {
+        "type": "object",
+        "properties": {
+          "custodians": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalHoldCustodian"
+            }
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether there are more custodians to fetch. A page can hold fewer than `page_size` custodians and still not be the last one, so page on this and `cursor`.",
+            "example": false
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "description": "The cursor to continue from",
+            "example": null
+          }
+        },
+        "required": ["custodians", "hasMore", "cursor"]
+      },
+      "AddLegalHoldCustodiansOutput": {
+        "type": "object",
+        "properties": {
+          "custodians": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalHoldCustodian"
+            }
+          }
+        },
+        "required": ["custodians"]
+      },
+      "ReleaseLegalHoldOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^lgh_[a-zA-Z0-9]{14}$"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["legal_hold"]
+          },
+          "released": {
+            "type": "boolean",
+            "enum": [true]
+          },
+          "released_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": ["id", "object", "released", "released_at"]
+      },
+      "RemoveLegalHoldCustodianOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^lhc_[a-zA-Z0-9]{14}$"
+          },
+          "object": {
+            "type": "string",
+            "enum": ["legal_hold_custodian"]
+          },
+          "removed": {
+            "type": "boolean",
+            "enum": [true]
+          },
+          "removed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": ["id", "object", "removed", "removed_at"]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/v1/notes": {
+      "get": {
+        "summary": "List notes",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "description": "Return notes created before this date",
+              "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+            },
+            "required": false,
+            "name": "created_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "description": "Return notes created after this date",
+              "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+            },
+            "required": false,
+            "name": "created_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "description": "Return notes updated after this date",
+              "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+            },
+            "required": false,
+            "name": "updated_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ff][Oo][Ll]_[a-zA-Z0-9]{14}$",
+              "description": "Return notes in this folder and any of its child folders. Folder IDs are case-insensitive. Use the list folders endpoint to discover folder IDs.",
+              "example": "fol_4y6LduVdwSKC27"
+            },
+            "required": false,
+            "name": "folder_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The cursor to continue from",
+              "example": "eyJjcmVkZW50aWFsfQ=="
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 10,
+              "description": "Maximum number of notes to return per page",
+              "example": 10
+            },
+            "required": false,
+            "name": "page_size",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ss][Pp][Aa]_[a-zA-Z0-9]{14}$",
+              "description": "Return notes in this space. Space IDs are case-insensitive. Use the list spaces endpoint to discover space IDs.",
+              "example": "spa_8kTq2mWxLp4Rz7"
+            },
+            "required": false,
+            "name": "space_id",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of notes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListNotesOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          }
+        }
+      }
+    },
+    "/v1/notes/{note_id}": {
+      "get": {
+        "summary": "Get note",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Nn][Oo][Tt]_[a-zA-Z0-9]{14}$",
+              "description": "The ID of the note (case-insensitive)",
+              "example": "not_1d3tmYTlCICgjy"
+            },
+            "required": true,
+            "name": "note_id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": ["transcript"],
+              "description": "Include the note transcript in the response. If it is too large to return inline, Get Note returns `TRANSCRIPT_TOO_LARGE`; retrieve it in pages from `/v1/notes/{note_id}/transcript`.",
+              "example": "transcript"
+            },
+            "required": false,
+            "name": "include",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Note",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "413": {
+            "description": "Transcript is too large to return inline. Retrieve it in pages from `/v1/notes/{note_id}/transcript`."
+          }
+        }
+      }
+    },
+    "/v1/notes/{note_id}/transcript": {
+      "get": {
+        "summary": "Get transcript",
+        "description": "Retrieve a meeting transcript in pages, including when Get Note returns `TRANSCRIPT_TOO_LARGE`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Nn][Oo][Tt]_[a-zA-Z0-9]{14}$",
+              "description": "The ID of the note (case-insensitive)",
+              "example": "not_1d3tmYTlCICgjy"
+            },
+            "required": true,
+            "name": "note_id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The opaque cursor returned by the previous page",
+              "example": "eyJyb3dfb2Zmc2V0Ijo1MCwiaXRlbV9vZmZzZXQiOjB9"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50,
+              "description": "The maximum number of transcript items to return",
+              "example": 50
+            },
+            "required": false,
+            "name": "page_size",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of transcript items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTranscriptOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or invalid cursor"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/folders": {
+      "get": {
+        "summary": "List folders",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The cursor to continue from",
+              "example": "eyJjcmVkZW50aWFsfQ=="
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 10,
+              "description": "Maximum number of folders to return per page",
+              "example": 10
+            },
+            "required": false,
+            "name": "page_size",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of folders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListFoldersOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          }
+        }
+      }
+    },
+    "/v1/spaces": {
+      "get": {
+        "summary": "List spaces",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The cursor to continue from",
+              "example": "eyJjcmVkZW50aWFsfQ=="
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 10,
+              "description": "The number of spaces to return",
+              "example": 10
+            },
+            "required": false,
+            "name": "page_size",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of spaces",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSpacesOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          }
+        }
+      }
+    },
+    "/v1/audit": {
+      "get": {
+        "summary": "List audit events",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_.-]*$",
+              "description": "Return only events with this exact action, or events whose action starts with it followed by a dot (`workspace` returns `workspace.member_added` but not `workspace_automation.created`). Lowercase, as actions are.",
+              "example": "workspace"
+            },
+            "required": false,
+            "name": "action",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "description": "Return events that occurred before this date. Must fall within the one-year retention window; an earlier date is rejected.",
+              "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+            },
+            "required": false,
+            "name": "occurred_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "description": "Return events that occurred after this date. Must fall within the one-year retention window; an earlier date is rejected.",
+              "examples": ["2026-01-27", "2026-01-27T15:30:00Z"]
+            },
+            "required": false,
+            "name": "occurred_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The cursor to continue from",
+              "example": "eyJjcmVkZW50aWFsfQ=="
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 10,
+              "description": "Maximum number of audit events to return per page",
+              "example": 10
+            },
+            "required": false,
+            "name": "page_size",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^aud_[a-zA-Z0-9]{14}$",
+                            "description": "The ID of the audit event",
+                            "example": "aud_7Kq2mXbT9vRp3L"
+                          },
+                          "object": {
+                            "type": "string",
+                            "enum": ["audit_event"],
+                            "description": "The object type of the audit event"
+                          },
+                          "action": {
+                            "type": "string",
+                            "description": "The action that was recorded. See the [audit events reference](/audit-events) for every action and the `data` it carries. Actions are added over time, so treat this as an open set of strings rather than a fixed list.",
+                            "example": "workspace.member_added"
+                          },
+                          "occurred_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "When the action happened, to the millisecond",
+                            "example": "2026-01-27T15:30:00.482Z"
+                          },
+                          "collected_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "When Granola recorded the event. Usually the same moment as `occurred_at`, but later for events we learn about after the fact — a meeting recording is recorded once its summary finishes, and a note viewed offline is recorded when that device next reaches us. Events are returned in `collected_at` order, so this is the field that never moves under a cursor, and it carries microseconds to keep events that share a millisecond ordered.",
+                            "example": "2026-01-27T15:30:04.109733Z"
+                          },
+                          "actor": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "object": {
+                                    "type": "string",
+                                    "enum": ["api_key"],
+                                    "description": "The object type of the actor"
+                                  },
+                                  "id_suffix": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9]{8}$",
+                                    "description": "The final eight characters of the non-secret API key identifier.",
+                                    "example": "aB3dE7hK"
+                                  }
+                                },
+                                "required": ["object", "id_suffix"],
+                                "description": "A public API key authenticated the request.",
+                                "title": "API key",
+                                "example": {
+                                  "object": "api_key",
+                                  "id_suffix": "aB3dE7hK"
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "object": {
+                                    "type": "string",
+                                    "enum": ["user"],
+                                    "description": "The object type of the actor"
+                                  },
+                                  "id": {
+                                    "type": ["string", "null"],
+                                    "pattern": "^usr_[a-zA-Z0-9]{14}$",
+                                    "description": "The ID of the user who performed the action, or null if the recorded actor was not a resolvable user.",
+                                    "example": "usr_3nQ8vLpZ2kR7dY"
+                                  },
+                                  "email": {
+                                    "type": ["string", "null"],
+                                    "format": "email",
+                                    "description": "The email of the user who performed the action, or null if the account no longer exists.",
+                                    "example": "oat@granola.ai"
+                                  }
+                                },
+                                "required": ["object", "id", "email"],
+                                "description": "A person in your workspace performed the action.",
+                                "title": "User",
+                                "example": {
+                                  "object": "user",
+                                  "id": "usr_3nQ8vLpZ2kR7dY",
+                                  "email": "oat@granola.ai"
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "object": {
+                                    "type": "string",
+                                    "enum": ["system"],
+                                    "description": "The object type of the actor"
+                                  }
+                                },
+                                "required": ["object"],
+                                "description": "No identifiable user performed the action — it came from an automated process, such as a scheduled job or an inbound webhook from a connected service. This variant carries no other fields.",
+                                "title": "System",
+                                "example": {
+                                  "object": "system"
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "object": {
+                                    "type": "string",
+                                    "enum": ["anonymous"],
+                                    "description": "The object type of the actor"
+                                  }
+                                },
+                                "required": ["object"],
+                                "description": "A person performed the action without signing in, so there is no account to name — for example, someone opening a note through a shared link. Distinct from `system`, which means no person was involved at all. This variant carries no other fields; the `ip_address` and `user_agent` in `context` are the only attribution available.",
+                                "title": "Anonymous",
+                                "example": {
+                                  "object": "anonymous"
+                                }
+                              }
+                            ],
+                            "description": "Who performed the action"
+                          },
+                          "data": {
+                            "type": "object",
+                            "description": "Details of the action. The fields depend on the action, and their names are the ones Granola records internally, so they are camelCase rather than snake_case. See the [audit events reference](/audit-events) for the fields each action carries.",
+                            "additionalProperties": true,
+                            "example": {
+                              "role": "member"
+                            }
+                          },
+                          "context": {
+                            "type": "object",
+                            "properties": {
+                              "ip_address": {
+                                "type": ["string", "null"],
+                                "description": "The IP address the request came from, or null if it was not recorded.",
+                                "example": "203.0.113.42"
+                              },
+                              "user_agent": {
+                                "type": ["string", "null"],
+                                "description": "The user agent of the client that made the request, or null if it was not recorded.",
+                                "example": "Granola/7.400.0 (macOS 15.3)"
+                              },
+                              "client_version": {
+                                "type": ["string", "null"],
+                                "description": "The Granola client version that made the request, or null if it was not recorded.",
+                                "example": "7.400.0"
+                              }
+                            },
+                            "required": [
+                              "ip_address",
+                              "user_agent",
+                              "client_version"
+                            ],
+                            "description": "How the request that produced this event reached Granola",
+                            "example": {
+                              "ip_address": "203.0.113.42",
+                              "user_agent": "Granola/7.400.0 (macOS 15.3)",
+                              "client_version": "7.400.0"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "object",
+                          "action",
+                          "occurred_at",
+                          "collected_at",
+                          "actor",
+                          "data",
+                          "context"
+                        ]
+                      }
+                    },
+                    "hasMore": {
+                      "type": "boolean",
+                      "description": "Whether there are more audit events to fetch. A page can hold fewer than `page_size` events and still not be the last one, so page on this and `cursor` rather than on the number of events returned.",
+                      "example": true
+                    },
+                    "cursor": {
+                      "type": ["string", "null"],
+                      "description": "The cursor to continue from",
+                      "example": "eyJjcmVkZW50aWFsfQ=="
+                    }
+                  },
+                  "required": ["events", "hasMore", "cursor"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          }
+        }
+      }
+    },
+    "/v1/webhook-endpoints": {
+      "post": {
+        "summary": "Create webhook endpoint",
+        "description": "Registers an HTTPS URL to receive event deliveries. With a Workspace API key the endpoint is workspace-managed: pass `scopes: [\"workspace\"]` (the key's own scope), and `folder_ids` may only reference folders the key can list.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookEndpointBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Webhook endpoint created. The signing secret is only returned here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateWebhookEndpointOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "403": {
+            "description": "Forbidden - A requested scope is disabled by the workspace's API access controls"
+          },
+          "404": {
+            "description": "Not found - The webhooks API is not available for this workspace"
+          }
+        }
+      },
+      "get": {
+        "summary": "List webhook endpoints",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of webhook endpoints",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWebhookEndpointsOutput"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found - The webhooks API is not available for this workspace"
+          }
+        }
+      }
+    },
+    "/v1/webhook-endpoints/{webhook_endpoint_id}": {
+      "patch": {
+        "summary": "Update webhook endpoint",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ww][Hh][Ee]_[a-zA-Z0-9]{14}$",
+              "description": "The ID of the webhook endpoint. Case-insensitive.",
+              "example": "whe_2mKr8fQxLp7Ta3"
+            },
+            "required": true,
+            "name": "webhook_endpoint_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookEndpointBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated webhook endpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "403": {
+            "description": "Forbidden - A requested scope is disabled by the workspace's API access controls, the caller is not the endpoint's creator (non-creators can only change enabled), or the endpoint is workspace-managed (its scope is fixed)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete webhook endpoint",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ww][Hh][Ee]_[a-zA-Z0-9]{14}$",
+              "description": "The ID of the webhook endpoint. Case-insensitive.",
+              "example": "whe_2mKr8fQxLp7Ta3"
+            },
+            "required": true,
+            "name": "webhook_endpoint_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook endpoint deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteWebhookEndpointOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/legal-holds": {
+      "post": {
+        "summary": "Create legal hold",
+        "description": "Places a named legal hold on custodians in your workspace. Granola preserves a custodian's notes, transcripts and attachments while any hold covering them is active. Custodians see no change in the product.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLegalHoldBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The legal hold that was created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHold"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request, or a custodian is not a member of this workspace"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "409": {
+            "description": "A live legal hold with this name already exists in your workspace"
+          }
+        }
+      },
+      "get": {
+        "summary": "List legal holds",
+        "description": "Lists every legal hold in your workspace, newest first. Released holds are returned alongside active ones, each carrying `released_at`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The cursor to continue from",
+              "example": "eyJjcmVkZW50aWFsfQ=="
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 10,
+              "description": "Maximum number of legal holds to return per page",
+              "example": 10
+            },
+            "required": false,
+            "name": "page_size",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of legal holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLegalHoldsOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or invalid cursor"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          }
+        }
+      }
+    },
+    "/v1/legal-holds/{hold_id}": {
+      "get": {
+        "summary": "Get legal hold",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+              "description": "The legal hold id. Case-insensitive.",
+              "example": "lgh_Abc123XyZ456De"
+            },
+            "required": true,
+            "name": "hold_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The legal hold",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHold"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update legal hold",
+        "description": "Renames or re-describes a hold, or widens and narrows its workspace-wide coverage. Toggling coverage never touches the custodians the hold names. A released hold cannot be updated.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+              "description": "The legal hold id. Case-insensitive.",
+              "example": "lgh_Abc123XyZ456De"
+            },
+            "required": true,
+            "name": "hold_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLegalHoldBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated legal hold",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHold"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "A live legal hold with this name already exists in your workspace"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Release legal hold",
+        "description": "Releases a hold. Release is terminal: the hold is never deleted, there is no un-release, and a matter that reopens is a new hold. Releasing an already-released hold returns its original `released_at`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+              "description": "The legal hold id. Case-insensitive.",
+              "example": "lgh_Abc123XyZ456De"
+            },
+            "required": true,
+            "name": "hold_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The released legal hold",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseLegalHoldOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/legal-holds/{hold_id}/custodians": {
+      "post": {
+        "summary": "Add legal hold custodians",
+        "description": "Names users on a hold, by email or by Granola user id. Idempotent: the response carries the request's full resolved set, whether each entry was newly added or already present.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+              "description": "The legal hold id. Case-insensitive.",
+              "example": "lgh_Abc123XyZ456De"
+            },
+            "required": true,
+            "name": "hold_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddLegalHoldCustodiansBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The custodians named in the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddLegalHoldCustodiansOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request, or a custodian is not a member of this workspace"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "get": {
+        "summary": "List legal hold custodians",
+        "description": "Lists the users a hold names, oldest first. Removed custodians are returned alongside active ones, each carrying `removed_at`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+              "description": "The legal hold id. Case-insensitive.",
+              "example": "lgh_Abc123XyZ456De"
+            },
+            "required": true,
+            "name": "hold_id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The cursor to continue from",
+              "example": "eyJjcmVkZW50aWFsfQ=="
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 10,
+              "description": "Maximum number of custodians to return per page",
+              "example": 10
+            },
+            "required": false,
+            "name": "page_size",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of custodians",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLegalHoldCustodiansOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or invalid cursor"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/legal-holds/{hold_id}/custodians/{custodian_id}": {
+      "delete": {
+        "summary": "Remove legal hold custodian",
+        "description": "Removes a custodian from a hold. The record of who was held survives: the entry is returned by the list endpoint with `removed_at` set. A custodian id that was never issued returns 404.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ll][Gg][Hh]_[a-zA-Z0-9]{14}$",
+              "description": "The legal hold id. Case-insensitive.",
+              "example": "lgh_Abc123XyZ456De"
+            },
+            "required": true,
+            "name": "hold_id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[Ll][Hh][Cc]_[a-zA-Z0-9]{14}$",
+              "description": "The custodian entry id. Case-insensitive.",
+              "example": "lhc_7Yt3nBv8Wq2Lms"
+            },
+            "required": true,
+            "name": "custodian_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The removed custodian",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveLegalHoldCustodianOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid API key"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}
