@@ -162,6 +162,46 @@ async function run() {
 
   // ----------------------------------------------- no-false-pass controls
 
+  // Keep the real vendor ledger, continuations and canned answer intact while
+  // deleting the facts delivered over MCP. Calls alone cannot prove a read.
+  for (const id of [
+    "ccb-advanced-search",
+    "pco-step2-plan-join",
+    "overflow-donor-paging",
+    "google-docs-3",
+    "google-sheets-3",
+  ]) {
+    const lost = structuredClone(references.find((reference) => reference.task === id)!);
+    for (const use of lost.saved!.trace.toolUses) {
+      if (use.isError) continue;
+      const body = JSON.parse(use.resultText ?? "{}");
+      const page = body.page ?? body.result?.page;
+      const text = JSON.stringify({ page, result: { page } });
+      use.resultText = text;
+      use.resultBlocks = [{ type: "text", text }];
+      for (const entry of lost.saved!.trace.transcript) {
+        if (entry.kind === "tool_result" && entry.id === use.id) {
+          entry.text = text;
+          entry.chars = text.length;
+        }
+      }
+    }
+    const graded = regradeTrial(task(id), lost, "codex", "outcome");
+    record(
+      `control: ${id} loses delivered data`,
+      !passed(graded) && graded.checks.some((check) => check.id === "delivered-data" && !check.pass),
+      failedChecks(graded),
+      graded,
+    );
+  }
+  const reduced = structuredClone(references.find((reference) => reference.task === "google-sheets-3")!);
+  for (const use of reduced.saved!.trace.toolUses) use.resultText = "{}";
+  reduced.saved!.trace.toolUses.at(-1)!.resultText = JSON.stringify({
+    result: { ids: Array.from({ length: 6 }, (_, i) => `record${i + 1}`), total: 210 },
+  });
+  const summary = regradeTrial(task("google-sheets-3"), reduced, "codex", "outcome");
+  record("control: a compact delivered Sheets summary passes", passed(summary), failedChecks(summary), summary);
+
   for (const [name, code] of [
     ["a failed paging program", 'async () => { throw new Error("paging unavailable"); }'],
     [

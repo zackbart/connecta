@@ -4,6 +4,7 @@ import type { World } from "../fakes/world.js";
 import type { AgentTrace } from "../agent/trace.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { check } from "./baseline.js";
+import { deliveredValues } from "./correctness.js";
 import {
   CAMP,
   LOC,
@@ -69,6 +70,12 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     const pages = ledger.filter((c) => c.args.path === "/donors" && c.outcome === "ok");
     destination = pages.some((c) => Number((c.args.query as Args).page) >= 3);
     evidence &&= /ANSWER:\s*70\b/i.test(answer);
+    const delivered = deliveredValues(trace);
+    add(
+      "delivered-data",
+      seed.donors.every((donor) => delivered.some((row) => row?.id === donor.id && row.email === donor.email)) ||
+        delivered.some((row) => row?.count === seed.donors.filter((d) => d.email.endsWith("@care.example")).length),
+    );
   } else if (id === ids[3]) {
     destination = reached(`/deposits/${DEPOSIT}`) && reached(`/deposits/${DEPOSIT}/summary`) && reached("/deposits");
     evidence &&=

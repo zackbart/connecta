@@ -14,6 +14,7 @@ import {
   planningCenterState,
 } from "../fakes/planning-center.js";
 import { check } from "./baseline.js";
+import { deliveredValues } from "./correctness.js";
 const ids = [
   "pco-step2-filtered-people",
   "pco-step2-group-services-join",
@@ -100,12 +101,21 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
       reached(`/groups/v2/groups/${GROUP}/memberships`) &&
       [PERSON, "1003"].every((p) => reached(`/services/v2/people/${p}/schedules`)) &&
       (reached("/people/v2/people") || [PERSON, "1003"].every((p) => reached(`/people/v2/people/${p}`)));
-  else if (i === 2)
+  else if (i === 2) {
     destination =
       reached("/services/v2/service_types") &&
       reached(`/services/v2/service_types/${SERVICE}/plans`) &&
       ["items", "team_members"].every((part) => reached(`/services/v2/service_types/${SERVICE}/plans/${PLAN}/${part}`));
-  else if (i === 3)
+    const delivered = deliveredValues(trace);
+    add(
+      "delivered-data",
+      delivered.some((row) => canonical(row) === canonical(expected[i])) ||
+        (delivered.some((row) => row?.id === SERVICE && row.name === "Sunday Morning") &&
+          delivered.some((row) => row?.id === PLAN && row.title === "October Gathering") &&
+          delivered.some((row) => row?.id === "4202" && row.title === "Sermon" && row.length === 1500) &&
+          delivered.some((row) => row?.person_id === PERSON && row.status === "C")),
+    );
+  } else if (i === 3)
     destination =
       reads.filter((c) => c.args.path === "/people/v2/people").length >= 2 &&
       reads.some((c) => c.args.path === "/people/v2/people" && Number((c.args.query as any).offset) >= 100);

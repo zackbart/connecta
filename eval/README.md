@@ -23,6 +23,10 @@ Slides deck/comment save outcomes. Each is graded on outcome:
 downstream state, the physical write ledger and the final answer, not the
 route. Paging must deliver the actual failing test and HTTP status through a
 service or guest bridge. Each reference must pass and doing nothing must fail.
+The promoted CCB, Planning Center, Overflow, Docs and Sheets reads also require
+their requested record facts in successful MCP results. Controls erase those
+results while preserving continuations, vendor calls and the correct final
+answer; each must fail. Vendor activity alone cannot prove delivery.
 Controls reject failed paging and fabricated answers without reading the log.
 They also require rejected setup to exit without leaving servers alive,
 and require failure for the right post sent to the wrong channel,

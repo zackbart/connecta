@@ -3,6 +3,25 @@ import type { ActiveTask, Check } from "./types.js";
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 
+/** Facts actually returned to the agent, excluding discovery and final prose. */
+export function deliveredValues(trace: AgentTrace): any[] {
+  const values: any[] = [];
+  const visit = (value: unknown) => {
+    values.push(value);
+    if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === "object") Object.values(value).forEach(visit);
+  };
+  for (const use of trace.toolUses) {
+    if (use.isError || !["call_tool", "execute_code", "read_result"].includes(use.tool)) continue;
+    try {
+      visit(JSON.parse(use.resultText ?? ""));
+    } catch {
+      // A partial preview cannot establish complete record facts.
+    }
+  }
+  return values;
+}
+
 export interface Correctness {
   destination(world: World, trace: AgentTrace): boolean;
   /** Every expression must match the final answer, never the tool output. */
