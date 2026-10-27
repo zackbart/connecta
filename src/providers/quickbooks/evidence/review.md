@@ -185,3 +185,108 @@ Disabling those values would alter more than the intended date/number fields.
 Unblock update_invoice with authoritative update-specific no-email evidence
 that preserves existing payment/delivery settings, or an explicitly approved
 broader update contract. No update or arbitrary mutation hatch is exposed.
+
+### Invoice update investigation (#1087)
+
+Rechecked 2026-10-27 after inspecting merged
+[#1086](https://github.com/zackbart/connecta/pull/1086), its provider contracts,
+failure probes and stateful write journey. The current
+[official documentation feed](https://static.developer.intuit.com/v2/llms-full.txt)
+was fetched and split by its Source headings in memory; no feed or SDK bytes
+are retained. The developer pages sometimes return only a JavaScript shell.
+The feed supplies the implementation, sparse-update, request-ID, error and
+release-note text; the public Invoice reference supplies the entity-specific
+business rules and update sections. Community answers are not contract evidence.
+
+The reviewed contracts establish distinct guarantees:
+
+| Authoritative source                                                                                                                                                                                                                            | Established behavior                                                                                                                                                                                                                                                                         | Remaining gap                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Invoice reference: Business Rules, Sparse update an invoice, Full update an invoice, Send an invoice](https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/invoice)                                                 | Sparse updates retain omitted fields. Full updates clear omitted writable fields. The US autosend business rule depends on online payments, company opt-in, customer email and invoice credit-card/ACH acceptance. The separate send operation updates EmailStatus and delivery information. | A separate send endpoint does not establish that updates cannot trigger autosend. No reviewed update-specific suppression control or no-email guarantee covers existing send-ready invoices. |
+| [Basic invoicing: Configure invoice autosend](https://developer.intuit.com/app/developer/qbo/docs/develop/basic-implementations/basic-invoicing-implementation#configure-invoice-autosend)                                                      | The imported-invoice workflow describes company and payment prerequisites, plus EmailStatus NeedToSend and BillEmail in the Accounting API payload.                                                                                                                                          | It does not state whether an update evaluates retained values, newly supplied values, a status transition or a background import event.                                                      |
+| [Accounting API: Making sparse updates](https://developer.intuit.com/app/developer/qbo/docs/learn/explore-the-quickbooks-online-api)                                                                                                            | sparse:true changes the supplied writable fields without clearing omitted attributes.                                                                                                                                                                                                        | Field preservation does not establish absence of delivery side effects.                                                                                                                      |
+| [Invoice SyncToken](https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/invoice) and [5010: Stale Object Error](https://developer.intuit.com/app/developer/qbo/docs/develop/troubleshooting/handling-common-errors) | Updates use the record's concurrency version; an older version fails.                                                                                                                                                                                                                        | Version checking does not suppress email. Fetching and substituting a newer version would admit an intent against state the caller never observed.                                           |
+| [Basic fields: Request ID](https://developer.intuit.com/app/developer/qbo/docs/learn/learn-basic-field-definitions#request-id)                                                                                                                  | requestid is company-wide, at most 50 characters outside batch, and recognizes repeated identical content and ID.                                                                                                                                                                            | It does not suppress delivery on the first execution or establish a retention period. It does not relax Connecta's one-attempt rule.                                                         |
+| [August 2026 documentation update](https://developer.intuit.com/app/developer/qbo/docs/release-notes/general-release-notes)                                                                                                                     | The release note announces the US imported-invoice autosend documentation.                                                                                                                                                                                                                   | It adds no update-specific no-email contract. SDK fields and sample sparse DueDate updates add none either.                                                                                  |
+
+Intuit also documents a separate delivery path:
+[automatic invoice reminders](https://quickbooks.intuit.com/learn-support/en-us/help-article/invoicing/send-invoice-reminders-automatically-manually/L84cQjpxo_US_en_US)
+are scheduled relative to DueDate for unpaid invoices already emailed to the
+customer. This is a product behavior contract, not an API update-suppression
+contract. Our inference is that changing DueDate can affect future reminder
+eligibility even when EmailStatus and payment settings remain unchanged;
+absence of a synchronous send request does not establish absence of later
+delivery. A no-email contract must distinguish immediate autosend from these
+scheduled reminders.
+
+**Decision: invoice updates remain unavailable; #1087 stays open.** For example,
+an existing invoice may retain NeedToSend, BillEmail and enabled card/ACH
+acceptance while its company has autosend enabled. A sparse DueDate or
+DocNumber request preserves those prerequisites. The sources above do not
+establish that this request cannot cause delivery. Setting NotSet or disabling
+payments changes the invoice beyond the requested edit. Checking a response
+after dispatch cannot undo delivery. The creation-only fixed body and its
+fake-vendor evidence in #1086 do not establish update behavior. No live account,
+sandbox accounting mutation or real invoice was used to resolve the gap.
+
+### Proposed restricted update surface (not implemented)
+
+The concrete candidate for independent contract review is
+`update_unsent_invoice`, restricted to a verified US company and an existing
+USD invoice whose EmailStatus is explicitly NotSet and whose IPN, online,
+card, ACH, PayPal and Affirm flags are all explicitly false. Missing or unknown
+values fail closed; neither omission nor the absence of DeliveryInfo proves
+that an invoice is unsent. NeedToSend, EmailSent and any enabled payment option
+are refused without a POST. No invoice is reset to qualify. This restriction
+would remove the documented autosend prerequisites while preserving the
+accepted invoice's existing settings; applying those prerequisites to updates
+remains an inference requiring explicit review or update-specific Intuit
+confirmation. It is not a shipped safety guarantee or authorization to add a
+tool. A general update preserving send-ready state still requires an
+authoritative no-delivery contract or documented suppression mechanism.
+NotSet is a writable status, not established proof that no earlier delivery
+occurred; the candidate also needs authoritative clarification of delivery
+history and reminder eligibility. Public responses can omit payment flags,
+so requiring explicit false values may reject otherwise eligible invoices.
+The candidate's practical availability is not established.
+
+The proposed implementation and acceptance boundary is:
+
+- Accept only caller-observed Id and SyncToken, a stable requestId, and at
+  least one of DueDate or DocNumber. Reuse the existing date, document-number,
+  request-ID and public-identity bounds; reject AUTO_GENERATE, unknown fields
+  and an invalid date relative to the observed TxnDate. No lines, customer,
+  amounts, currency, exchange rate, delivery or payment fields are editable.
+- Read the fixed company and the raw invoice for safety validation, charging
+  every auxiliary request to the same call-admission budget. Require matching
+  Id and the caller's exact SyncToken. These reads validate eligibility, never
+  supply a replacement version. A changed version refuses the intent; a race
+  after the check must produce the vendor's stale conflict, with no refresh,
+  overwrite or second POST.
+- Send only Id, the caller's SyncToken, sparse:true and the requested fields
+  to the fixed company invoice endpoint, with minorversion 75 and requestid.
+  Omit existing payment/delivery fields so they remain unchanged. Never invoke
+  send, batch, void, delete or an arbitrary write hatch. Require explicit
+  readOnly:false and retain endpoint/pool policy and the read-only hatch.
+- Validate returned identity, version, edited values and preserved accounting
+  and delivery/payment state before acknowledging success. An uncertain or
+  contradictory reply, including a committed write answered 401, transport
+  failure, HTTP 500 or malformed success, remains nonretryable and unknown.
+  Reconcile by reading the known invoice Id; no automatic POST replay, fresh
+  requestId or fetch-and-overwrite recovery follows.
+- Extend the existing Node SQLite/QuickJS and native Workers/D1 journeys only
+  when the contract is accepted. Grade independent invoice state, exact sparse
+  intent and physical sends: one winner and one stale conflict in a race;
+  unchanged lines, amounts, customer and payment/delivery settings; zero POSTs
+  for send-ready/unknown-state invoices and policy refusals; one POST for each
+  committed-but-failed intent followed by read reconciliation. Include a
+  company with autosend enabled and stored customer contact. Check named,
+  hatch and fields projections, emitted results, activity and error secrecy.
+  Controls must reject duplicate sends, a substituted SyncToken, changed
+  omitted fields, fabricated state and private payload leakage.
+
+These journeys would defend an accepted contract, not discover or prove
+Intuit's undocumented email behavior. The existing write journey's stale
+customer race and creation recovery remain evidence for those shipped tools
+only. This investigation adds no simulated invoice-update implementation or
+passing update evidence. The unrelated patch release need not wait for #1087.
