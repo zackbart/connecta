@@ -3402,6 +3402,80 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }),
   );
 
+  /**
+   * What the owner's stored grant allows, read the way the invocation gate
+   * reads it. A downstream may answer its handshake and listing without
+   * credentials, so a healthy connection proves nothing about the grant.
+   */
+  type StoredGrantState = "disconnected" | "absent" | "granted";
+  const storedGrantState = authMethod((ctx: ConnectorContext, state: ConnectionState) =>
+    authFlow<StoredGrantState>(function* () {
+      // Closing the scope stops this read, a layout migration included, as
+      // it stops a connect attempt's.
+      const closed = new AbortController();
+      const lease = Scope.forkUnsafe(state.scope);
+      (yield Scope.addFinalizer(
+        lease,
+        Effect.sync(() => closed.abort(scopeEndedError())),
+      )) as void;
+      try {
+        const provider = newProvider(ctx, undefined, AbortSignal.any([viewSignal(ctx, true), closed.signal]));
+        if ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean) return "disconnected";
+        return (yield authInvoke(provider, "tokens", [])) ? "granted" : "absent";
+      } finally {
+        const release = Scope.closeUnsafe(lease, Exit.void);
+        if (release) detach(release);
+      }
+    }),
+  );
+
+  /**
+   * Start consent for a downstream that answered without challenging. The
+   * transport's bound 401 seam runs the SDK flow exactly as a challenge
+   * without `resource_metadata` would: RFC 9728 discovery at the resource's
+   * well-known URLs, the same issuer and resource checks, consent state, and
+   * CIMD/DCR/static client order. Nothing is sent to the MCP endpoint.
+   */
+  const startUnchallenged = authMethod((ctx: ConnectorContext) =>
+    authFlow<ConnectorStatus>(function* () {
+      const required = {
+        state: "auth_required",
+        message: "Authorization required \u2014 open the URL to connect.",
+      } as const;
+      // A test transport carries no OAuth flow to start.
+      if (opts._transportFactory) return required;
+      const provider = newProvider(ctx);
+      const epoch = (yield authInvoke(provider, "beginFlow", [])) as string;
+      if (provider.isOperatorDisconnectedEpoch(epoch)) throw operatorDisconnectedError();
+      const transport = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
+      const internals = transport as unknown as {
+        _authProvider: {
+          onUnauthorized: (flow: { response: Response; serverUrl: URL; fetchFn: FetchLike }) => Promise<void>;
+        };
+        _fetchWithInit?: FetchLike;
+      };
+      try {
+        (yield authInvoke(internals._authProvider, "onUnauthorized", [
+          {
+            response: new Response(null, { status: 401 }),
+            serverUrl: new URL(opts.url),
+            fetchFn: internals._fetchWithInit ?? fetch,
+          },
+        ])) as void;
+        // Authorized without consent: nothing is pending to hand back.
+        return { state: "ok", message: "Already authorized \u2014 connection is healthy." };
+      } catch (err) {
+        if (!(err instanceof UnauthorizedError)) throw err;
+      } finally {
+        detach(closeConnection(null, transport, ctx.logger));
+      }
+      const authorizationUrl = (yield authInvoke(provider, "consentUrl", [viewSignal(ctx, true)])) as
+        | string
+        | undefined;
+      return { ...required, ...(authorizationUrl !== undefined ? { authorizationUrl } : {}) };
+    }),
+  );
+
   // Built once from construction-time values: names, framing, and public
   // URLs only. A static header's value and a stored credential never reach
   // it, and a URL keeps origin and path: a CIMD document's query may carry a
@@ -3996,6 +4070,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           }),
         );
         try {
+          if (isOauth) {
+            // The grant decides, as it does for a call: a downstream that
+            // answers without credentials is not connected for this owner.
+            const grant = (yield authCall(storedGrantState, [ctx, state])) as StoredGrantState;
+            if (isClosed(state)) throw scopeEndedError();
+            if (grant === "disconnected") throw operatorDisconnectedError();
+            if (grant === "absent")
+              return (yield authCall(report, [
+                { state: "auth_required", message: "Authorization required \u2014 open the URL to connect." },
+              ])) as ConnectorStatus;
+          }
           (yield authCall(ensureConnected, [ctx, state])) as Client;
           return (yield authCall(report, [{ state: "ok" }])) as ConnectorStatus;
         } catch (err) {
@@ -4134,7 +4219,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           }
           if (ctx.signal?.aborted) throw ctx.signal.reason;
           try {
+            const grant = (yield authCall(storedGrantState, [ctx, state])) as StoredGrantState;
+            if (isClosed(state)) throw scopeEndedError();
+            // Without a grant, the handshake still runs first, so a 401
+            // challenge's `resource_metadata` starts consent as it always has.
             (yield authCall(ensureConnected, [ctx, state])) as Client;
+            if (grant !== "granted") return (yield authCall(startUnchallenged, [ctx])) as ConnectorStatus;
             return {
               state: "ok",
               message: "Already authorized \u2014 connection is healthy.",

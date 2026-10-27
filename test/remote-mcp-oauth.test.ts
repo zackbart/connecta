@@ -210,7 +210,9 @@ describe("remoteMcp() oauth status via _transportFactory", () => {
       _transportFactory: () => throwingTransport(new UnauthorizedError("401")),
     });
 
-    const status = await connector.status!(ctx());
+    const context = ctx();
+    await seedGrant(context.storage, { issuer, tokens: { access_token: "tok", token_type: "Bearer" } });
+    const status = await connector.status!(context);
     expect(status.state).toBe("auth_required");
     expect(status.authorizationUrl).toBeUndefined();
   });
@@ -222,7 +224,10 @@ describe("remoteMcp() oauth status via _transportFactory", () => {
       _transportFactory: () => throwingTransport(new Error("ECONNREFUSED downstream")),
     });
 
-    const status = await connector.status!(ctx());
+    // A grant, so status asks the downstream rather than reporting its absence.
+    const context = ctx();
+    await seedGrant(context.storage, { issuer, tokens: { access_token: "tok", token_type: "Bearer" } });
+    const status = await connector.status!(context);
     expect(status.state).toBe("error");
     expect(status.authorizationUrl).toBeUndefined();
     expect(status.message).toContain("MCP handshake with https://unused.example failed");
@@ -317,12 +322,20 @@ describe("remoteMcp() startAuth", () => {
       },
     });
 
+    await seedGrant(storage, { issuer, tokens: { access_token: "tok", token_type: "Bearer" } });
     const abandoned = connector.status!(c);
     await started;
-    await expect(connector.startAuth!(c, { force: true })).resolves.toMatchObject({ state: "ok" });
+    // The forced restart wipes the grant, so its healthy handshake still needs consent.
+    await expect(connector.startAuth!(c, { force: true })).resolves.toMatchObject({ state: "auth_required" });
     oldStart.reject(new UnauthorizedError("late 401"));
     await expect(abandoned).resolves.toMatchObject({ state: "error" });
 
+    // Consent lands in the live epoch; the replacement client is still healthy.
+    await seedGrant(
+      storage,
+      { issuer, tokens: { access_token: "tok", token_type: "Bearer" } },
+      required(await epochOf(storage)),
+    );
     expect(await connector.status!(c)).toMatchObject({ state: "ok" });
     expect(builds).toBe(2);
   });
@@ -361,8 +374,8 @@ describe("remoteMcp() startAuth", () => {
     const result = await c.startAuth!(context, { force: true });
 
     expect(closedFirst).toBe(true);
-    // Reconnected cleanly via transport #2 → healthy again.
-    expect(result.state).toBe("ok");
+    // Reconnected cleanly via transport #2, but the wiped grant needs consent.
+    expect(result.state).toBe("auth_required");
     const grant = required(await storedGrant(storage));
     expect(grant.epoch).not.toBe("v3:seeded");
     expect(grant.body?.client).toBeUndefined();
@@ -952,6 +965,7 @@ describe("remoteMcp() cross-isolate force re-auth", () => {
     const ctxB = ctx(storage);
 
     // A connects and is healthy in the initial epoch.
+    await seedGrant(storage, { issuer, tokens: { access_token: "tok", token_type: "Bearer" } });
     expect((await a.status!(ctxA)).state).toBe("ok");
 
     // B force-reauthorizes → publishes a unique epoch and wipes credentials.
@@ -961,6 +975,7 @@ describe("remoteMcp() cross-isolate force re-auth", () => {
     // A's next call notices the epoch advanced, drops its now-stale client,
     // and reconnects — against wiped creds, so it degrades to auth_required
     // instead of silently keeping the revoked token alive.
+    await expect(a.listTools(ctxA)).rejects.toMatchObject({ code: "downstream_oauth_required" });
     const after = await a.status!(ctxA);
     expect(after.state).toBe("auth_required");
     expect(after.authorizationUrl).toBeUndefined();
