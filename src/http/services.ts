@@ -15,6 +15,7 @@ import {
 } from "../runtime/call.js";
 import { RequestRefused, ResendRefused, type HttpFailure, type OperationRef } from "./errors.js";
 import type { WriteRequest } from "./write-request.js";
+
 export { writeRequestKey, type WriteRequest } from "./write-request.js";
 export {
   Caller,
@@ -26,12 +27,6 @@ export {
   Signal,
   Classification,
   Ledger,
-  openRequest,
-  operationView,
-  deriveView,
-  viewCaller,
-  callView,
-  chargeView,
 } from "../runtime/call.js";
 export type CallServices = import("../runtime/call.js").CallServices | Dispatches | WriteCapacity;
 /**

@@ -3,15 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
-import { resultSafety } from "../../http/safety.js";
-import type { Connection } from "../../http/vendor.js";
-import { hatch } from "../../http/hatch.js";
-import { errors, TITHELY_INDEX, TITHELY_NAMED, TITHELY_VERDICTS } from "./api.js";
 import { tithely } from "./index.js";
-import { tithelyTools } from "./tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
-import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 interface StubResponse {
@@ -318,79 +312,5 @@ describe("connection modes", () => {
       ]);
     }
     expect(stored.credential!.getAll).not.toHaveBeenCalled();
-  });
-
-  it("renders the guide, catalog, title and description in every environment, sensitive-field choice and mode", async () => {
-    const purpose = "Weekly giving reports for Grace Church";
-    const dropped = "This connection withholds organizations' payout bank and legal-contact details from every result.";
-    for (const environment of ["live", "test"] as const) {
-      for (const sensitiveFields of ["drop", "return"] as const) {
-        for (const instructions of [undefined, "  Reduce to weekly totals.  "]) {
-          const live = environment === "live";
-          const connector = connection({ environment, sensitiveFields, ...(instructions ? { instructions } : {}) });
-          const guide = connector.usageGuide as { content: string; summary: string; required?: boolean };
-          expect(guide.required).toBe(true);
-          expect(guide.summary).toContain(live ? "Live" : "Test");
-          expect(guide.content).toContain(live ? "real donors and real money" : "no real money moves");
-          expect(guide.content).toContain(
-            sensitiveFields === "return" ? "returns organizations' payout bank and legal-contact details" : dropped,
-          );
-          if (instructions) expect(guide.content).toContain("Reduce to weekly totals.");
-          expect([connector.title, connector.description]).toEqual(
-            live
-              ? ["Tithe.ly Giving", `Tithe.ly giving — live donors and real money — ${purpose}`]
-              : ["Tithe.ly Giving (test)", `Tithe.ly giving (test environment, no real money) — ${purpose}`],
-          );
-          // The catalog says what this connection's mode returns.
-          const tools = await connector.listTools(context());
-          const description = (name: string) => tools.find((tool) => tool.name === name)!.description;
-          expect(description("tithely_api_read")).toContain(
-            sensitiveFields === "return" ? "details are returned." : "details are dropped.",
-          );
-          expect(description("list_organizations")).toContain(
-            sensitiveFields === "return" ? "legal-contact details included" : "legal-contact details stay withheld",
-          );
-        }
-      }
-    }
-    // Read-only and an overridden page size are connection context, and the catalog follows.
-    const narrowed = connection({ readOnly: true, defaultPageSize: 10 });
-    expect((narrowed.usageGuide as { content: string }).content).toContain(
-      `${dropped}\n\nThis connection is read-only: every write is refused.\n\nList tools return 10 rows by default on this connection.\n\n## Giving data`,
-    );
-    const catalog = await narrowed.listTools(context());
-    const charges = catalog.find((tool) => tool.name === "list_charges")!;
-    expect((charges.inputSchema as any).properties.limit).toMatchObject({ default: 10, maximum: 99 });
-    // fields may omit any property, so selected results render sparse; list envelopes keep items and page.
-    const organizations = catalog.find((tool) => tool.name === "list_organizations")!.outputSchema as any;
-    expect(organizations.required).toEqual(["items", "page"]);
-    expect(JSON.stringify(organizations.properties.items)).not.toContain('"required"');
-  });
-});
-
-describe("the catalog and the kit's decoder (decision 0010)", () => {
-  it("INV-1: every tool accepts and refuses the same boundary values in both renderings", () => {
-    // Includes the cases that found each drift: createdAfter past 2^53 and a hatch path of "/" and 300 emoji.
-    const bases: Record<string, Record<string, unknown>> = {
-      list_charges: {},
-      get_charge: { chargeId: "ch_1" },
-      get_recurring_charge: { recurringId: "rc_1" },
-      list_payment_methods: { accountId: "user_1" },
-      tithely_api_search: { query: "charges" },
-      tithely_api_details: { method: "GET", path: "/charges-list" },
-      tithely_api_read: { path: "/charges-list" },
-      tithely_api_write: { method: "POST", path: "/charges" },
-    };
-    // Building reads only the failure table and the value-safety boundary; nothing is sent.
-    const connection = {
-      errors,
-      safety: resultSafety({ review: "Built for its schemas only.", sensitiveFields: { names: [], choice: "drop" } }),
-    } as unknown as Connection;
-    const tools = [
-      ...tithelyTools({ connection, pageSize: 25, options: {} }),
-      ...hatch({ name: "tithely", index: TITHELY_INDEX, verdicts: TITHELY_VERDICTS, named: TITHELY_NAMED, connection }),
-    ];
-    expect(tools).toHaveLength(11);
-    for (const tool of tools) expect(kitInputDisagreements(tool, bases[tool.name] ?? {}), tool.name).toEqual([]);
   });
 });

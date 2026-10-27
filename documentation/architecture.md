@@ -1349,8 +1349,16 @@ see below), and any framing, scope, paging or refusal hooks through the hatch
 binding. The connection owns authentication, transport, failure mapping and
 result safety. An index's `slashParams` can admit an encoded `/` in a reviewed
 final key segment. Current hatch admission, paging, privacy and one-send
-outcomes are exercised in `test/http-hatch.test.ts` and maintained provider
-suites; no legacy REST tool adapter remains.
+outcomes are exercised by the required `eval:outcomes` tasks against stateful
+vendors and HTTP MCP deployments. `test/provider-hostile-response.node.test.ts`
+commits real HTTP writes before returning HTML, malformed JSON or an oversized
+acknowledgement, then reconciles vendor state with exactly one physical send.
+`test/provider-privacy-journey.node.test.ts` checks credential echoes over HTTP.
+Focused provider suites retain MIME/draft restrictions, revision conflicts,
+CCB routing, Planning Center product exclusions and deployment pins. Native
+HTTP framing, cursor and request-lifetime fault probes remain in the HTTP suites;
+catalog copies and decoder/adapter parity matrices are retired under #1072.
+No legacy REST tool adapter remains.
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
 `numericBounds: true` preserves documented numeric minimum/maximum constraints
@@ -2098,9 +2106,12 @@ An accepted write's blocked retry retains its original HTTP status; a slot
 occupied by an auxiliary read instead names the separate write step needed.
 Structured resend advice reaches output only when the core permits it. Generic
 unknown writes retain the core's diagnostic wait; Q8 removes it. The mapping
-adds no Promise entry or lifetime owner. The rule tables in `http-kit.test.ts`,
-Stripe's sixteen-branch comparison and `kit-core-verdicts.test.ts` establish
-these internal contracts. Maintained API providers use the kit through their
+adds no Promise entry or lifetime owner. `provider-failure-sweep.test.ts`,
+`guarded-attempts.node.test.ts`, `call-services.test.ts` and the native
+transport suites exercise these contracts through invocation, physical sockets
+and request closure. `http-kit.test.ts` retains focused numeric/text fact,
+request-equivalence and bulk-capacity fault probes. The migration-era
+kit/core verdict comparison is retired under #1072. Maintained API providers use the kit through their
 explicit provider subpaths; it stays off the root import graph and published
 declarations expose Promises.
 
@@ -2179,7 +2190,7 @@ inventories, and stale fallback cannot authorize post-entry auth recovery.
 ### Contributor provider kit
 
 Provider declarations use `src/http/vendor.ts` for HttpApi operations and
-`src/http/tools.ts` for list, get, read, write and action builders.
+`src/http/tools.ts` for list, get, read and write builders.
 `src/http/provider.ts` composes them with `defineProvider`; it returns the
 ordinary Promise-based Connector factory. The kit stays outside the root
 graph and its Effect types are internal. In each provider, `api.ts` declares

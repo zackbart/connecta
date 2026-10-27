@@ -33,6 +33,15 @@ const SCENARIOS: Record<string, string> = {
   "p5-read-only-program-refusal": "a read-only pool refuses the write and the agent says so",
   "p5-auth-connect-incapable": "identity-checked /connect handoff through an incapable host",
   "801-vercel-env-value-safety": "rotate a secret without ever reading or echoing a value",
+  "ccb-advanced-search": "route a read-only POST search without mutating church records",
+  "pco-step2-plan-join": "join Services plans, items and scheduled people in a read-only pool",
+  "breeze-update-recovery": "reconcile a GET-shaped mutation without repeating it",
+  "overflow-donor-paging": "count matching donors across every vendor page",
+  "google-gmail-7": "refuse to rebuild a draft with carried attachments and preserve its MIME parts",
+  "google-forms-7": "recover from a revision conflict before changing the form once",
+  "google-docs-3": "page document indexes without losing paragraph positions",
+  "google-sheets-3": "page whole rows across ranges and retain every requested cell",
+  "google-slides-7": "report a saved deck separately from an unconfirmed comment",
 };
 
 const args = flags(process.argv.slice(2));

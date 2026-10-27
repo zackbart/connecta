@@ -654,7 +654,7 @@ const CALLBACK_OWNERS = ["request"] as const;
 // settlingOperation wrappers, Registry.getTools/statusFor and CatalogService's
 // loadConnector/resolveTool/search/describe boundaries. closeScope is teardown,
 // not a revocable operation; api.describe and provider construction are synchronous.
-// Low-level closed-call memo, recovery and ledger guards live in http-kit.test.ts.
+// Closed-call memo, recovery and ledger fault probes live in call-revocation.test.ts.
 // Explicit compatibility: adding an entry or a reachable seam is one table
 // line. No impossible Cartesian product (e.g. API prompts) is manufactured.
 export const ENTRIES: readonly Entry[] = [

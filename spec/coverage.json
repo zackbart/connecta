@@ -297,7 +297,7 @@
       "id": "tools-call",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header. The four structured-only meta-tools declare outputSchema; native-content direct-call tools omit it.",
+      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header. The four structured-only meta-tools declare outputSchema; native-content direct-call tools omit it. Maintained-provider hostile HTTP acknowledgements remain failures even after a vendor commits; a subsequent read reconciles state without replaying the physical write.",
       "tests": [
         {
           "file": "test/meta-tools-call.test.ts",
@@ -322,6 +322,10 @@
         {
           "file": "test/provider-privacy-journey.node.test.ts",
           "title": "INV-5: Stripe API hides credential echoes in new fields across direct, guest, failure and recovery"
+        },
+        {
+          "file": "test/provider-hostile-response.node.test.ts",
+          "title": "INV-5 INV-9: reconciles committed writes after hostile HTTP acknowledgements without a second physical send"
         }
       ]
     },

@@ -13,7 +13,6 @@
 // argument validation, sent-secret redaction, withheld handler text. Its
 // boundary also decides every write's outcome, from the core ledger the kit's
 // transport records into, so a kit connector declares `tracksEveryRequest`.
-
 import { Context, Effect, Schema } from "effect";
 import { inLogicalCall } from "../provider-call.js";
 import { registerToolEntry } from "../runtime/call-entry.js";
@@ -466,14 +465,6 @@ export function write<I extends Input, O extends Schema.Top>(
     },
     spec.idempotency,
   );
-}
-
-/** Money, mail, and refunds are always destructive and never idempotent hints. */
-export function action<I extends Input, O extends Schema.Top>(
-  connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: ToolSpec<I, O>,
-): ApiTool {
-  return build(connection, spec, "write", { readOnlyHint: false, destructiveHint: true, idempotentHint: false });
 }
 
 /**

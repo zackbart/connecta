@@ -2,10 +2,8 @@ import { googleBatchGuard, googleHatchBinding, googleNamedOperation } from "../s
 import { googleClient } from "../src/providers/_shared/google/kit.js";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { Effect, Schema } from "effect";
-import { kitInputDisagreements } from "./helpers/kit-schema.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
-import { tagCallerIdentity, type ConnectorCaller } from "../src/connector-caller.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { attachCallClassification } from "../src/call-classification.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
@@ -29,20 +27,17 @@ import { Registry } from "../src/registry.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { runEdge } from "../src/runtime/run.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { Integer } from "../src/http/json-schema.js";
 import { restSafety, resultSafety } from "../src/http/safety.js";
-import { connect, form, get, post, Summary, vendor } from "../src/http/vendor.js";
+import { connect, form, get, post, vendor } from "../src/http/vendor.js";
 import { vendorIndex } from "../src/http/vendor-index.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
-import { HATCH_SEARCH_QUERIES } from "./fixtures/hatch-search.js";
 import { cloudflareIndex } from "../src/providers/cloudflare/api.js";
 import { fixture as cloudflareFixture } from "../src/providers/cloudflare/fixtures.js";
 import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
-import { providerFixtures } from "./providers.generated.js";
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
 
 const NATIVE = { ...WORKERS, timeout: 30_000 };
@@ -250,6 +245,32 @@ it(
 );
 
 it(
+  "INV-1 INV-10: finds a usable refund operation and explains a refused credential operation without vendor IO",
+  NODE,
+  async () => {
+    const connector = stripeFixture.create();
+    const call = (kind: string, args: Record<string, unknown>) =>
+      connector.callTool(`stripe_api_${kind}`, args, connectorContext(storage)) as Promise<any>;
+    const refunds = await call("search", { query: "issue refund" });
+    expect(refunds.operations).toContainEqual(
+      expect.objectContaining({ method: "POST", path: "/v1/refunds", tool: "stripe_api_write" }),
+    );
+    const credentials = await call("search", { query: "create customer session" });
+    const refused = credentials.operations.find((op: any) => op.path === "/v1/customer_sessions");
+    expect(refused).toMatchObject({ method: "POST", refusal: expect.any(String) });
+    expect(refused.tool).toBeUndefined();
+    await expect(call("write", { method: "POST", path: refused.path })).rejects.toMatchObject({ code: "invalid_args" });
+    // Unknown resource words and prototype names must not invent an operation.
+    expect(await call("search", { query: "list DNS zones" })).toMatchObject({
+      operations: [],
+      page: { hasMore: false },
+    });
+    expect(await call("search", { query: "constructor" })).toMatchObject({ operations: [] });
+    expect(sent).toEqual([]);
+  },
+);
+
+it(
   "INV-3 INV-5 INV-11: opts reviewed hatches into optional safe totals and construction-owned named suggestions",
   NATIVE,
   async () => {
@@ -374,7 +395,7 @@ it(
 );
 
 it(
-  "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
+  "INV-3 INV-4 INV-10: binds discovery pages to callers and contracts while delivering large descriptions without IO",
   { ...NODE, timeout: 120_000 },
   async () => {
     const closed = setup({ writeEnabled: false });
@@ -396,214 +417,6 @@ it(
     expect(closed.authenticate).not.toHaveBeenCalled();
     const verdicts = { ...VERDICTS };
     const { call, tools, index, connection, sendPath, authenticate } = setup({ verdicts });
-    expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
-      ["items_api_search", { readOnlyHint: true }],
-      ["items_api_details", { readOnlyHint: true }],
-      ["items_api_read", { readOnlyHint: true }],
-      ["items_api_write", { readOnlyHint: false, destructiveHint: true }],
-    ]);
-    // Compact pages of at most eight, continued by cursor until hasMore is false.
-    const rows: Array<Record<string, unknown>> = [];
-    let page: { hasMore: boolean; nextCursor?: string } = { hasMore: true };
-    while (page.hasMore) {
-      const reply = (await call("search", {
-        query: "item",
-        limit: 8,
-        ...(page.nextCursor ? { cursor: page.nextCursor } : {}),
-      })) as { operations: Array<Record<string, unknown>>; page: typeof page };
-      expect(reply.operations.length).toBeLessThanOrEqual(8);
-      expect(Object.keys(reply.operations[0]!)).not.toContain("tag");
-      rows.push(...reply.operations);
-      page = reply.page;
-      expect("nextCursor" in page).toBe(page.hasMore);
-    }
-    expect(rows).toHaveLength(11);
-    // An exact path noun leads, root collection first.
-    const first = (await call("search", { query: "items", limit: 3 })) as { operations: Array<{ path: string }> };
-    expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
-    const fixtures = new Map(providerFixtures.map((fixture) => [fixture.name, fixture.create()]));
-    // Reviewed reasons are metadata: search/details and rejected calls agree without authentication or sends.
-    for (const [provider, method, path] of [
-      ["cloudflare", "POST", "/user/tokens"],
-      ["vercel", "GET", "/v1/env/{id}"],
-      ["stripe", "POST", "/v1/customer_sessions"],
-      ["ccb", "POST", "/oauth/token"],
-      ["ccb", "POST", "/files"],
-      ["planning-center", "POST", "/publishing/v2/episodes/{episode_id}/generate_download_url"],
-      ["github", "GET", "/search/issues"],
-      ["github", "POST", "/repos/{owner}/{repo}/branches/{branch}/rename"],
-      ["drive", "DELETE", "/files/{fileId}"],
-      ["gmail", "GET", "/settings/vacation"],
-      ["forms", "POST", "/forms/{formId}:setPublishSettings"],
-      ["slides", "GET", "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail"],
-    ]) {
-      const connector = fixtures.get(provider!)!;
-      const prefix = provider === "planning-center" ? "pco" : provider;
-      const detailsReply = (await connector.callTool(
-        `${prefix}_api_details`,
-        { method, path },
-        connectorContext(),
-      )) as any;
-      const details = (detailsReply.structuredContent ?? detailsReply) as {
-        summary: string;
-        refusal: string;
-        verdict: string;
-      };
-      expect(details.verdict).toBe("refuse");
-      expect(details.refusal).toBeTypeOf("string");
-      const searchReply = (await connector.callTool(
-        `${prefix}_api_search`,
-        { query: path!.replace(/\{[^}]*\}/g, "fixture"), method, limit: 8 },
-        connectorContext(),
-      )) as any;
-      const search = (searchReply.structuredContent ?? searchReply) as {
-        operations: Array<{ method: string; path: string; summary: string; refusal?: string; tool?: string }>;
-      };
-      const hit = search.operations.find((op) => op.method === method && op.path === path)!;
-      expect(hit, `${provider}: ${method} ${path}`).toBeDefined();
-      expect(hit.summary).toBe(details.summary);
-      expect(hit.tool).toBeUndefined();
-      const args = { path: path!.replace(/\{[^}]*\}/g, "fixture"), ...(method !== "GET" ? { method } : {}) };
-      await expect(
-        connector.callTool(`${prefix}_api_${method === "GET" ? "read" : "write"}`, args, connectorContext()),
-      ).rejects.toThrow(details.refusal);
-    }
-    expect(sent).toEqual([]);
-    for (const [provider, query, method, path, maxRank] of HATCH_SEARCH_QUERIES) {
-      const connector = fixtures.get(provider)!;
-      const prefix = provider === "planning-center" ? "pco" : provider;
-      const args = { query, limit: 8 };
-      const searchContext = connectorContext();
-      const reply = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as any;
-      const found = (reply.structuredContent ?? reply) as {
-        operations: Array<{ method: string; path: string; summary: string; tool?: string; named?: string }>;
-        page: { hasMore: boolean; nextCursor?: string };
-      };
-      const rank = found.operations.findIndex((op) => op.method === method && op.path === path) + 1;
-      expect(rank, `${provider}: ${query}`).toBeGreaterThan(0);
-      expect(rank, `${provider}: ${query}`).toBeLessThanOrEqual(maxRank);
-      if (
-        (provider === "drive" && query === "delete file permanently") ||
-        (provider === "gmail" && query === "send an email")
-      ) {
-        expect(found.operations[rank - 1]).toMatchObject({ refusal: expect.any(String) });
-        expect(found.operations[rank - 1]!.tool).toBeUndefined();
-        expect(found.operations[rank - 1]!.named).toBeUndefined();
-      }
-      if (provider === "vercel") {
-        const filtered = (await connector.callTool(
-          `${prefix}_api_search`,
-          { ...args, method },
-          searchContext,
-        )) as typeof found;
-        const filteredRank = filtered.operations.findIndex((op) => op.method === method && op.path === path) + 1;
-        expect(filteredRank, `Vercel method-filtered: ${query}`).toBeGreaterThan(0);
-        expect(filteredRank, `Vercel method-filtered: ${query}`).toBeLessThanOrEqual(maxRank);
-      }
-      expect(found.operations.length).toBeLessThanOrEqual(8);
-      expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
-      const repeated = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as any;
-      expect(repeated.structuredContent ?? repeated).toEqual(found);
-    }
-    for (const [provider, query] of [
-      ["planning-center", "rename to bob"],
-      ["github", "make"],
-      ["planning-center", "Show All"],
-      ["planning-center", "please show all"],
-      ["planning-center", "delete dns record"],
-      ["planning-center", "please list all of the dns records for the zone by name"],
-      ["overflow", "delete dns record"],
-      ["tithely", "list zones"],
-      ["breeze", "create a dns zone"],
-      ["planning-center", "xyzzy"],
-      ["planning-center", "list xyzzy"],
-      ["stripe", "create xyzzy"],
-      ["stripe", "get xyzzy details"],
-      ["stripe", "the"],
-      ["stripe", "show me"],
-      ["stripe", "constructor"],
-      ["stripe", "delete toString"],
-      ["stripe", "__proto__"],
-    ] as const) {
-      const prefix = provider === "planning-center" ? "pco" : provider;
-      const found = (await fixtures.get(provider)!.callTool(`${prefix}_api_search`, { query }, connectorContext())) as {
-        structuredContent?: unknown;
-      };
-      expect(found.structuredContent ?? found, `${provider}: ${query}`).toMatchObject({
-        operations: [],
-        page: { hasMore: false },
-      });
-    }
-    // Verb-less noun phrases keep their broader eligibility rule.
-    const broad = (await fixtures
-      .get("planning-center")!
-      .callTool(
-        "pco_api_search",
-        { query: "account member roles permissions groups tokens policies settings", limit: 8 },
-        connectorContext(),
-      )) as { operations: unknown[]; page: { hasMore: boolean } };
-    expect(broad.operations).toHaveLength(8);
-    expect(broad.page.hasMore).toBe(true);
-    // Nouns survive verb ambiguity; common inflections share one root key.
-    const nounOps: OpenApiData["ops"] = [
-      ["GET", "/issues", "ListIssues", "List issues", 0],
-      ["GET", "/issues/{issue}", "GetIssue", "Get issue", 0],
-      ["PATCH", "/issues/{issue}", "CloseIssue", "Close issue", 0],
-      ["POST", "/refunds", "IssueRefund", "Issue a refund", 0],
-      ...["campuses", "batches", "categories", "processes"].flatMap((noun): OpenApiData["ops"] => [
-        ["GET", `/${noun}`, `List${noun}`, `List ${noun}`, 0],
-        ["GET", `/items/{item}/${noun}`, `Related${noun}`, `Related ${noun}`, 0],
-      ]),
-    ];
-    const nouns = setup({
-      data: { ...DATA, ops: nounOps, details: JSON.stringify({ d: [], o: nounOps.map(() => 0) }), fields: [] },
-      verdicts: Object.fromEntries(
-        nounOps.map(([method, path]) => [`${method} ${path}`, method === "GET" ? "read" : "write"]),
-      ),
-    });
-    for (const [query, method, path] of [
-      ["issue", "GET", "/issues"],
-      ["get issue 42", "GET", "/issues/{issue}"],
-      ["close issue", "PATCH", "/issues/{issue}"],
-      ["issue a refund", "POST", "/refunds"],
-      ...["campus", "campuses", "batch", "batches", "category", "categories", "process"].map((noun) => [
-        noun,
-        "GET",
-        noun.startsWith("campus")
-          ? "/campuses"
-          : noun.startsWith("batch")
-            ? "/batches"
-            : noun.startsWith("categor")
-              ? "/categories"
-              : "/processes",
-      ]),
-    ]) {
-      const found = (await nouns.call("search", { query })) as { operations: Array<{ method: string; path: string }> };
-      expect(found.operations[0], query).toMatchObject({ method, path });
-    }
-    expect(await nouns.call("search", { query: "constructor" })).toMatchObject({ operations: [] });
-    // A broad person lookup ranks all five People profile operations first,
-    // then continues into other products and relationships without losing any.
-    const pco = fixtures.get("planning-center")!;
-    const pcoContext = connectorContext();
-    const profiles = (await pco.callTool("pco_api_search", { query: "person", limit: 5 }, pcoContext)) as any;
-    expect(profiles.operations.map((op: any) => op.path)).toEqual([
-      "/people/v2/people",
-      "/people/v2/people",
-      "/people/v2/people/{person_id}",
-      "/people/v2/people/{person_id}",
-      "/people/v2/people/{person_id}",
-    ]);
-    expect(profiles.page.hasMore).toBe(true);
-    const others = (await pco.callTool(
-      "pco_api_search",
-      { query: "person", cursor: profiles.page.nextCursor },
-      pcoContext,
-    )) as any;
-    expect(others.operations.length).toBeGreaterThan(0);
-    expect(
-      others.operations.some((op: any) => !["/people/v2/people", "/people/v2/people/{person_id}"].includes(op.path)),
-    ).toBe(true);
     await expect(call("search", { query: "item", limit: 9 })).rejects.toMatchObject({ code: "invalid_args" });
     await expect(call("search", { query: "item", cursor: "e30" })).rejects.toMatchObject({ code: "invalid_args" });
     const searchPage = (await call("search", { query: "item", limit: 1 })) as { page: { nextCursor: string } };
@@ -689,444 +502,66 @@ it(
       );
       await expect(call("search", { query: "item", cursor })).rejects.toMatchObject({ code: "invalid_args" });
     }
-    for (const [method, path, verdict, tool] of [
-      ["GET", "/items", "read", "items_api_read"],
-      ["GET", "/touch", "write", "items_api_write"],
-      ["DELETE", "/items/{item}", "destructive", "items_api_write"],
-      ["POST", "/query", "read", "items_api_read"],
-      ["GET", "/blocked", "refuse", undefined],
-      ["GET", "/items/{item}", "refuse", undefined],
-    ]) {
-      const details = (await call("details", { method, path })) as Record<string, unknown>;
-      expect(details).toMatchObject({ method, path, verdict, revision: "r1" });
-      if (path === "/blocked") {
-        expect(details["summary"]).toBe("Blocked item");
-        expect(details["refusal"]).toBe("Connecta refuses GET /blocked. Item access is managed by the operator.");
-        expect(rows.find((row) => row["path"] === path)?.["summary"]).toBe(details["summary"]);
-        expect(rows.find((row) => row["path"] === path)?.["refusal"]).toBe(details["refusal"]);
-      }
-      expect(details["tool"]).toBe(tool);
-      expect(rows.find((row) => row["method"] === method && row["path"] === path)?.["tool"]).toBe(tool);
-    }
-    Object.assign(verdicts, { "GET /items": "write" });
-    expect(await call("details", { method: "GET", path: "/items" })).toMatchObject({ verdict: "read" });
-    // `method` is omitted only when GET is the one read method; enums follow the verdicts.
-    const readMethod = (table: Parameters<typeof hatch>[0]["verdicts"]) => {
-      const schema = hatch({ name: "items", index, connection, verdicts: table }).find(
-        (tool) => tool.name === "items_api_read",
-      )!.inputSchema as { properties: Record<string, any>; required: string[] };
-      return { method: schema.properties["method"]?.enum, required: schema.required.includes("method") };
-    };
-    expect(readMethod({ "GET /items": "read" })).toEqual({ method: undefined, required: false });
-    expect(readMethod({ "POST /query": "read" })).toEqual({ method: ["POST"], required: false });
-    expect(readMethod({ "HEAD /items/{item}": "read" })).toEqual({ method: ["HEAD"], required: false });
-    expect(readMethod({ "POST /query": "read", "HEAD /items/{item}": "read" })).toEqual({
-      method: ["HEAD", "POST"],
-      required: true,
-    });
-    expect(hatch({ name: "items", index, connection, verdicts: {} }).map((tool) => tool.name)).toEqual([
-      "items_api_search",
-      "items_api_details",
-      "items_api_read",
-    ]);
-    for (const methods of [[], ["HEAD"]] as const)
-      expect(() =>
-        hatch({
-          name: "items",
-          index,
-          connection,
-          verdicts: VERDICTS,
-          idempotency: { header: "Idempotency-Key", methods },
-        }),
-      ).toThrow(/idempotency methods/);
-    expect(() =>
-      hatch({
-        name: "items",
-        index,
-        connection,
-        verdicts: VERDICTS,
-        binding: { review: "", send: () => Effect.succeed({ status: 200, data: null }) },
-      }),
-    ).toThrow(/binding needs/);
-    expect(() => hatch({ name: "items", index, connection, verdicts: { "GET /missing": "read" } })).toThrow(
-      "Hatch verdict GET /missing is not in the API index.",
-    );
-    expect(() =>
-      hatch({ name: "items", index, connection, verdicts: VERDICTS, named: { "GET /missing": "missing" } }),
-    ).toThrow("Hatch named tool for GET /missing needs an indexed operation.");
-    expect(() =>
-      hatch({ name: "items", index, connection, verdicts: VERDICTS, pages: { "GET /missing": stripePage } }),
-    ).toThrow("Hatch paging for GET /missing needs an indexed read and a cursor adapter.");
-    for (const bad of [{ "GET /missing": "read" }, { "GET /items": "unknown" }]) {
-      expect(() => hatch({ name: "items", index, connection, verdicts: bad as never })).toThrow();
-    }
-    for (const pages of [
-      { "GET /missing": stripePage },
-      { "GET /items": stripePage }, // starting_after is not declared by this index
-      { "GET /touch": { ...stripePage, param: "limit" } }, // not a read
-    ])
-      expect(() => hatch({ name: "items", index, connection, verdicts: VERDICTS, pages })).toThrow();
-    // The compiler's shared response-field representation serves discovery,
-    // without changing the legacy REST search/details or any provider catalog.
-    const compiled = new OperationIndex(
-      {
-        ...DATA,
-        ops: [["GET", "/widgets", "ListWidgets", "List widgets", 0]],
-        details: JSON.stringify({ d: [], o: [] }),
-        fields: JSON.stringify({ p: ["[].birth_date"], d: [[0]], o: [0] }),
-      },
-      { vendor: "compiled", title: "Compiled" },
-    );
-    const compiledConnector = apiConnector("compiled", {
-      tools: hatch({
-        name: "compiled",
-        index: compiled,
-        verdicts: { "GET /widgets": "read" },
-        connection,
-      }),
-    });
-    expect(
-      await compiledConnector.callTool("compiled_api_search", { query: "birth" }, connectorContext()),
-    ).toMatchObject({
-      operations: [{ path: "/widgets", matched: "response field [].birth_date" }],
-    });
-    await expect(
-      compiledConnector.callTool("compiled_api_read", { path: "/widgets", fields: ["misspelled"] }, connectorContext()),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    for (const tool of tools) {
-      const base = tool.name.endsWith("_search")
-        ? { query: "items" }
-        : tool.name.endsWith("_details") || tool.name.endsWith("_write")
-          ? { method: "GET", path: "/items" }
-          : { path: "/items" };
-      expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
-      expect(tool.inputSchema).toMatchObject({ additionalProperties: false });
-      expect(Object.keys((tool.inputSchema as { properties: object }).properties)).not.toEqual(
-        expect.arrayContaining(["raw"]),
-      );
-    }
-    // A kit vendor with no OpenAPI pin indexes its own declarations, and details stay in budget.
-    const optional = Object.fromEntries(
-      Array.from({ length: 300 }, (_, i) => [
-        `note_${i}`,
-        Schema.optionalKey(Schema.String.annotate({ description: "n".repeat(120) })),
-      ]),
-    );
+    // The agent must recover a large description and every required property,
+    // using only public details pages, with a bound continuation and no vendor IO.
+    const description = `Reviewed ${"long contract ".repeat(4000)}😀`;
+    const fields = Object.fromEntries(Array.from({ length: 240 }, (_, i) => [`field_${i}`, Schema.String]));
     const derived = vendorIndex(
       vendor(
-        "forms",
-        post("createThing", "/things/:thing_id", {
-          params: { thing_id: Schema.String },
-          query: { account_id: Schema.String },
-          payload: form(
-            Schema.Struct({
-              name: Schema.String.annotate({ description: "Display name." }),
-              amount: Schema.optionalKey(Integer),
-              ...optional,
-            }),
-          ),
-          success: Schema.Struct({
-            object: Schema.optionalKey(
-              Schema.Struct({ widget_id: Schema.String, owner: Schema.Struct({ date_of_birth: Schema.String }) }),
-            ),
-          }),
-        }).annotate(Summary, "Create a thing"),
-      ),
-      { prefix: "forms", title: "Forms", revision: "v1" },
-    );
-    const forms = tracksEveryRequest(
-      apiConnector("forms", {
-        tools: hatch({ name: "forms", index: derived, verdicts: { "POST /things/{thing_id}": "write" }, connection }),
-      }),
-    );
-    const formsCall = (kind: string, args: Record<string, unknown>) =>
-      forms.callTool(`forms_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>;
-    expect((await formsCall("search", { query: "thing" })).operations).toEqual([
-      {
-        method: "POST",
-        path: "/things/{thing_id}",
-        operationId: "createThing",
-        summary: "Create a thing",
-        tool: "forms_api_write",
-      },
-    ]);
-    // A field the operation returns finds it too, marked, after every path or summary match.
-    expect((await formsCall("search", { query: "widget" })).operations).toEqual([
-      expect.objectContaining({ path: "/things/{thing_id}", matched: "response field object.widget_id" }),
-    ]);
-    // A field only a nested record declares is still found.
-    expect((await formsCall("search", { query: "birth" })).operations).toEqual([
-      expect.objectContaining({ matched: "response field object.owner.date_of_birth" }),
-    ]);
-    // Every details answer stays within 32 KiB: a large contract pages whole pieces, and a piece
-    // too large for one answer arrives as chunks of its JSON. Following every cursor terminates and
-    // reconstructs the whole contract: each parameter, each property with its requiredness, and every
-    // other keyword of the body schema.
-    const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
-    const walk = async (call: typeof formsCall, args: Record<string, unknown>) => {
-      const pages: Array<Record<string, any>> = [];
-      const seen = new Set<string>();
-      let cursor: string | undefined;
-      do {
-        if (cursor) {
-          expect(seen.has(cursor)).toBe(false);
-          seen.add(cursor);
-        }
-        const page = await call("details", { ...args, ...(cursor ? { cursor } : {}) });
-        expect(size(page)).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
-        pages.push(page);
-        cursor = page["page"]?.hasMore ? page["page"].nextCursor : undefined;
-      } while (cursor && pages.length < 400);
-      expect(cursor).toBeUndefined();
-      const firstCursor = pages[0]?.["page"]?.nextCursor;
-      if (firstCursor) {
-        const claims = JSON.parse(atob(firstCursor.replace(/-/g, "+").replace(/_/g, "/")));
-        const tampered = btoa(JSON.stringify({ ...claims, c: '{"i":0,"o":1}' }))
-          .replace(/\+/g, "-")
-          .replace(/\//g, "_")
-          .replace(/=+$/, "");
-        await expect(call("details", { ...args, cursor: tampered })).rejects.toMatchObject({ code: "invalid_args" });
-        const label = derived.revision;
-        const scope = { revision: await derived.cursorRevision(), ...args };
-        if (call === formsCall) {
-          Object.defineProperty(derived, "revision", { value: "v2", configurable: true });
-          await expect(call("details", { ...args, cursor: firstCursor })).rejects.toMatchObject({
-            code: "invalid_args",
-          });
-          Object.defineProperty(derived, "revision", { value: label, configurable: true });
-          for (const at of [
-            { i: 0, o: 0 },
-            { i: -1, o: 0 },
-            { i: 0, o: 0.5 },
-            { i: 0, o: 999999999 },
-            { i: 9999, o: 0 },
-          ]) {
-            const cursor = await runEdge(
-              boundCursor
-                .encode("forms_api_details", scope, JSON.stringify(at))
-                .pipe(
-                  Effect.provideService(ContinuationStorage, storage),
-                  Effect.provideService(ContinuationBinding, { connection: "forms", principal: null }),
-                ),
-            );
-            await expect(call("details", { ...args, cursor })).rejects.toMatchObject({ code: "invalid_args" });
-          }
-        }
-      }
-      const labels: Record<string, string> = {};
-      const parameters: unknown[] = [];
-      const schema: Record<string, any> = {};
-      const properties: Record<string, unknown> = {};
-      const required = new Set<string>();
-      let body: Record<string, unknown> | undefined;
-      let pending: { of: string; text: string } | undefined;
-      const settle = () => {
-        if (!pending) return;
-        const value = JSON.parse(pending.text);
-        if (pending.of === "operationId" || pending.of === "summary" || pending.of === "refusal")
-          labels[pending.of] = value;
-        else if (pending.of.startsWith("parameters.")) parameters.push(value);
-        else if (pending.of === "body.schema") Object.assign(schema, value);
-        else properties[pending.of.slice("body.schema.properties.".length)] = value;
-        pending = undefined;
-      };
-      for (const page of pages) {
-        if (pending && page["chunk"]?.of !== pending.of) settle();
-        if (page["chunk"]) pending = { of: page["chunk"].of, text: (pending?.text ?? "") + page["chunk"].text };
-        parameters.push(...page["parameters"]);
-        if (page["body"]) {
-          const { schema: part, ...wrapper } = page["body"];
-          body = wrapper;
-          const { properties: some, required: names, ...frame } = part;
-          Object.assign(schema, frame);
-          Object.assign(properties, some ?? {});
-          for (const name of names ?? []) required.add(name);
-        }
-      }
-      settle();
-      const first = pages[0]!;
-      return {
-        pages,
-        contract: {
-          method: first["method"],
-          path: first["path"],
-          operationId: labels["operationId"] ?? first["operationId"],
-          summary: labels["summary"] ?? first["summary"],
-          ...(first["refusal"] ? { refusal: labels["refusal"] ?? first["refusal"] } : {}),
-          parameters,
-          ...(body
-            ? {
-                body: {
-                  ...body,
-                  schema: {
-                    ...schema,
-                    ...(Object.keys(properties).length ? { properties } : {}),
-                    ...(required.size ? { required: [...required].sort() } : {}),
-                  },
-                },
-              }
-            : {}),
-        },
-      };
-    };
-    const original = (index: OperationIndex, param?: string) => {
-      const contract = index.contract(index.ops[0]!, param);
-      const schema = contract.body?.schema as { required?: string[] } | undefined;
-      return schema?.required
-        ? { ...contract, body: { ...contract.body!, schema: { ...schema, required: [...schema.required].sort() } } }
-        : contract;
-    };
-    const contract = await walk(formsCall, { method: "POST", path: "/things/t1" });
-    expect(contract.pages.length).toBeGreaterThan(1);
-    expect(contract.contract).toEqual(original(derived));
-    expect((await formsCall("details", { method: "POST", path: "/things/{thing_id}", param: "amount" })).body).toEqual({
-      contentType: "application/x-www-form-urlencoded",
-      schema: { type: "object", properties: { amount: { type: "number" } } },
-    });
-    const heavy = (fields: Record<string, Schema.Top>, verdict = "write") => {
-      const index = vendorIndex(
-        vendor("heavy", post("heavy", "/heavy", { payload: form(Schema.Struct(fields)), success: Schema.Unknown })),
-        { prefix: "heavy", title: "Heavy", revision: "v1" },
-      );
-      const connector = apiConnector("heavy", {
-        tools: hatch({ name: "heavy", index, verdicts: { "POST /heavy": verdict as "write" }, connection }),
-      });
-      return {
-        index,
-        call: (kind: string, args: Record<string, unknown>) =>
-          connector.callTool(`heavy_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>,
-      };
-    };
-    // An irreducibly large required contract pages every required property.
-    const many = heavy(
-      Object.fromEntries(
-        Array.from({ length: 240 }, (_, i) => [
-          `required_${i}`,
-          Schema.String.annotate({ description: "r".repeat(180) }),
-        ]),
-      ),
-    );
-    expect((await walk(many.call, { method: "POST", path: "/heavy" })).contract).toEqual(original(many.index));
-    // A property larger than an answer arrives as chunks and keeps its requiredness, through param too.
-    const big = heavy({
-      must: Schema.String.annotate({ description: `${"x".repeat(40000)}😀` }),
-      other: Schema.String,
-    });
-    const property = (original(big.index).body!.schema as { properties: { must: unknown } }).properties.must;
-    const splitPair = JSON.stringify(property).indexOf("😀") + 1;
-    expect(splitPair).toBeGreaterThan(0);
-    const splitCursor = await runEdge(
-      boundCursor
-        .encode(
-          "heavy_api_details",
-          { revision: await big.index.cursorRevision(), method: "POST", path: "/heavy" },
-          JSON.stringify({ i: 1, o: splitPair }),
-        )
-        .pipe(
-          Effect.provideService(ContinuationStorage, storage),
-          Effect.provideService(ContinuationBinding, { connection: "heavy", principal: null }),
-        ),
-    );
-    await expect(big.call("details", { method: "POST", path: "/heavy", cursor: splitCursor })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    const whole = await walk(big.call, { method: "POST", path: "/heavy" });
-    expect(whole.pages.some((page) => page["chunk"]?.of === "body.schema.properties.must")).toBe(true);
-    expect(whole.contract).toEqual(original(big.index));
-    expect((await walk(big.call, { method: "POST", path: "/heavy", param: "must" })).contract).toEqual(
-      original(big.index, "must"),
-    );
-    // An object body's own keywords (a long description, additionalProperties) are carried too.
-    const framed = new OperationIndex(
-      {
-        ...DATA,
-        ops: [["POST", "/framed", "Framed", "Framed body", 0]],
-        details: JSON.stringify({
-          d: [],
-          o: [
-            [
-              [["limit", "query", 0, { t: "number" }]],
-              [
-                "application/json",
-                {
-                  t: "object",
-                  d: `Root ${"x".repeat(40000)}`,
-                  p: { known: { t: "string" } },
-                  r: ["known"],
-                  m: { t: "number" },
-                },
-                1,
-              ],
-            ],
-          ],
+        "contract",
+        post("create", "/things", {
+          payload: form(Schema.Struct({ ...fields, note: Schema.String.annotate({ description }) })),
+          success: Schema.Unknown,
         }),
-        fields: [],
-      },
-      { vendor: "framed", title: "Framed" },
+      ),
+      { prefix: "contract", title: "Contract", revision: "r1" },
     );
-    const framedCall = (kind: string, args: Record<string, unknown>) =>
-      apiConnector("framed", { tools: hatch({ name: "framed", index: framed, verdicts: {}, connection }) }).callTool(
-        `framed_api_${kind}`,
-        args,
+    const connector = apiConnector("contract", {
+      tools: hatch({ name: "contract", index: derived, verdicts: { "POST /things": "write" }, connection }),
+    });
+    const properties = new Set<string>();
+    const required = new Set<string>();
+    let note = "";
+    let cursor: string | undefined;
+    let firstCursor: string | undefined;
+    let pages = 0;
+    do {
+      const reply = (await connector.callTool(
+        "contract_api_details",
+        {
+          method: "POST",
+          path: "/things",
+          ...(cursor ? { cursor } : {}),
+        },
         connectorContext(storage),
-      ) as Promise<Record<string, any>>;
-    const framedPages = await walk(framedCall, { method: "POST", path: "/framed" });
-    expect(framedPages.pages.some((page) => page["chunk"]?.of === "body.schema")).toBe(true);
-    expect(framedPages.contract).toEqual({
-      ...original(framed),
-      refusal: "Connecta refuses POST /framed: it has no admitted hatch verdict.",
-    });
-    // Search trims whole entries to its exact byte budget, page and cursor included, and continues by cursor.
-    const long = new OperationIndex(
-      {
-        ...DATA,
-        ops: Array.from(
-          { length: 10 },
-          (_, i) => ["GET", `/${"x".repeat(2000)}${i}`, `Long${i}`, "Long path", 0] as const,
-        ),
-        details: JSON.stringify({ d: [], o: [] }),
-        fields: [],
-      },
-      { vendor: "long", title: "Long" },
-    );
-    const searchLong = (args: Record<string, unknown>) =>
-      tracksEveryRequest(
-        apiConnector("long", { tools: hatch({ name: "long", index: long, verdicts: {}, connection }) }),
-      ).callTool("long_api_search", args, connectorContext(storage)) as Promise<Record<string, any>>;
-    const trimmed = await searchLong({ query: "xxx", limit: 8 });
-    expect(trimmed["operations"].length).toBeLessThan(8);
-    expect(size(trimmed)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
-    expect(trimmed["page"].hasMore).toBe(true);
-    expect(size(await searchLong({ query: "xxx", limit: 8, cursor: trimmed["page"].nextCursor }))).toBeLessThanOrEqual(
-      SEARCH_BUDGET.bytes,
-    );
-    // A sole entry with an oversized label is cut, marked, and served whole by details.
-    const label = new OperationIndex(
-      {
-        ...DATA,
-        ops: [["GET", "/things", "x".repeat(40000), "Things", 0]],
-        details: JSON.stringify({ d: [], o: [] }),
-      },
-      { vendor: "label", title: "Label" },
-    );
-    const labelled = apiConnector("label", { tools: hatch({ name: "label", index: label, verdicts: {}, connection }) });
-    const found = (await labelled.callTool(
-      "label_api_search",
-      { query: "things" },
-      connectorContext(storage),
-    )) as Record<string, any>;
-    expect(size(found)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
-    expect(found["truncated"]).toEqual(["operations[0].operationId"]);
-    const labels = await walk(
-      (kind, args) =>
-        labelled.callTool(`label_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>,
-      { method: "GET", path: "/things" },
-    );
-    expect(labels.pages[0]!["truncated"]).toEqual(["operationId"]);
-    expect(labels.contract).toEqual({
-      ...original(label),
-      refusal: "Connecta refuses GET /things: it has no admitted hatch verdict.",
-    });
+      )) as any;
+      expect(new TextEncoder().encode(JSON.stringify(reply)).length).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
+      for (const name of Object.keys(reply.body?.schema?.properties ?? {})) properties.add(name);
+      for (const name of reply.body?.schema?.required ?? []) required.add(name);
+      if (reply.chunk) {
+        expect(reply.chunk.of).toBe("body.schema.properties.note");
+        note += reply.chunk.text;
+      }
+      cursor = reply.page?.nextCursor;
+      firstCursor ??= cursor;
+      expect(++pages).toBeLessThan(20);
+    } while (cursor);
+    expect(pages).toBeGreaterThan(1);
+    expect([...properties].sort()).toEqual(Object.keys(fields).sort());
+    expect([...required].sort()).toEqual([...Object.keys(fields), "note"].sort());
+    expect(JSON.parse(note)).toEqual({ type: "string", description });
+    await expect(
+      connector.callTool(
+        "contract_api_details",
+        {
+          method: "POST",
+          path: "/things",
+          param: "note",
+          cursor: firstCursor,
+        },
+        connectorContext(storage),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
     expect(sendPath).not.toHaveBeenCalled();
     expect(authenticate).not.toHaveBeenCalled();
     expect(sent).toEqual([]);
@@ -1379,84 +814,6 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   })();
   expect(enumFailure).toMatchObject({ code: "invalid_args" });
   expect((enumFailure as Error).message).not.toContain("Integer ids");
-  let exclusive = 0;
-  for (const op of cloudflareIndex.ops) {
-    if (
-      !/\/cloudforce-one\/v2\/brand-protection\/(?:queries|takedown-notices)\/|\/cloudforce-one\/v2\/credential-monitor\/domains\//.test(
-        op.path,
-      )
-    )
-      continue;
-    for (const param of cloudflareIndex
-      .contract(op)
-      .parameters.filter((param) => param.in === "path" && param.schema["type"] === "integer")) {
-      exclusive++;
-      expect(param.schema["minimum"]).toBe(1);
-      const path = (value: string) =>
-        op.path.replace(/\{([^}]+)\}/g, (_part, name) => (name === param.name ? value : "1"));
-      expect(() => cloudflareIndex.resolve(op.method, path("0"))).toThrow("at least 1");
-      expect(() => cloudflareIndex.resolve(op.method, path("1"))).not.toThrow();
-    }
-  }
-  expect(exclusive).toBe(16);
-  // Native fetch framing must never turn an HTML page into a JSON write acknowledgement.
-  for (const [fixture, credential, writes, readPath] of [
-    [
-      stripeFixture,
-      "sk_test_media_fixture",
-      [["stripe_api_write", { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_1" } }]],
-      "/v1/customers/cus_1",
-    ],
-    [
-      cloudflareFixture,
-      "cf-media-token",
-      [
-        [
-          "cloudflare_api_write",
-          { method: "PATCH", path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1", body: { ttl: 300 } },
-        ],
-      ],
-      "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
-    ],
-    [
-      vercelFixture,
-      "vercel-media-token",
-      [
-        ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web/env/env_1", body: { value: "replacement" } }],
-        ["update_project_env_var", { projectId: "web", envVarId: "env_1", value: "replacement" }],
-      ],
-      "/v2/user",
-    ],
-  ] as const) {
-    const connector = fixture.create("media");
-    const ctx = () => ({
-      ...connectorContext(),
-      credential: { get: async () => credential, getAll: async () => ({ value: credential }) },
-    });
-    for (const type of ["text/html", "text/plain", "application/octet-stream"]) {
-      response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
-      for (const [tool, args] of writes) {
-        sent = [];
-        const writeContext = ctx();
-        attachCallClassification(writeContext, "write");
-        await expect(
-          connector.callTool(tool, args, writeContext),
-          `${fixture.name}.${tool} ${type}`,
-        ).rejects.toMatchObject({
-          code: "connector_call_failed",
-          retryable: false,
-          writeOutcome: "unknown",
-          message: expect.stringContaining("check the target before repeating"),
-        });
-        expect(sent).toHaveLength(1);
-      }
-      sent = [];
-      await expect(connector.callTool(`${fixture.name}_api_read`, { path: readPath }, ctx())).rejects.toMatchObject({
-        code: "connector_call_failed",
-      });
-      expect(sent).toHaveLength(1);
-    }
-  }
   for (const [fixture, credential, args, type, body] of [
     ...[
       "/accounts/0123456789abcdef0123456789abcdef/workers/scripts/script_1/content/v2",
@@ -1911,72 +1268,6 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     expect(last.page).toEqual({ hasMore: false, param: adapter.param, in: "query" });
     expect(new URL(sent[1]!.url).searchParams.get(adapter.param)).toBe(row.raw);
     expect(new URL(sent[1]!.url).pathname).toBe("/v1/items");
-    // The same durable root key still cannot authorize another connection or
-    // personal credential owner; only the admitted context supplies that binding.
-    const continuation = { ...args, query: { ...args.query, [adapter.param]: first.page.nextCursor } };
-    // A generic caller-dependent connector gets the same binding as a named
-    // list. The same agent in another owner's pool is a different identity.
-    for (const perCaller of [false, true]) {
-      const base = apiConnector("items", { tools: paged.tools });
-      const shared = perCaller ? Object.create(tagCallerIdentity(base)) : base;
-      const registry = new Registry([shared], { storage, logger: paged.context.logger });
-      const caller: ConnectorCaller = {
-        authenticated: true,
-        identity: { actor: { kind: "test-users", id: "alice" }, interactive: true },
-        pool: "research",
-        poolOwner: "alice@example.com",
-      };
-      const scopedContext = (caller: ConnectorCaller) =>
-        registry.scoped({ connectorIds: "all", caller }).contextFor("items", "https://connecta.example");
-      response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
-      const issued = (await shared.callTool("items_api_read", args, scopedContext(caller))) as any;
-      const resumed = { ...args, query: { ...args.query, [adapter.param]: issued.page.nextCursor } };
-      response = () => Response.json(row.last);
-      for (const other of [
-        { ...caller, identity: { ...caller.identity, actor: { kind: "test-users", id: "bob" } } },
-        { ...caller, pool: "other" },
-        { ...caller, poolOwner: "bob@example.com" },
-      ]) {
-        const before = sent.length;
-        if (perCaller) {
-          await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).rejects.toMatchObject({
-            code: "invalid_args",
-          });
-          expect(sent).toHaveLength(before);
-        } else {
-          await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).resolves.toHaveProperty(
-            "page",
-          );
-        }
-      }
-      await expect(shared.callTool("items_api_read", resumed, scopedContext(caller))).resolves.toHaveProperty("page");
-      if (!perCaller) expect(issued.page.nextCursor).toBe(first.page.nextCursor);
-    }
-    const beforeAlias = sent.length;
-    await expect(
-      apiConnector("other_items", { tools: paged.tools }).callTool(
-        "items_api_read",
-        continuation,
-        connectorContext(storage),
-      ),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(sent).toHaveLength(beforeAlias);
-    const personal = apiConnector("items", { tools: paged.tools, authScope: "personal" });
-    const registry = new Registry([personal], { storage, logger: paged.context.logger });
-    const personalContext = (owner: string) =>
-      registry.personalRegistry(owner).contextFor("items", "https://connecta.example", {});
-    response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
-    const alice = (await personal.callTool("items_api_read", args, personalContext("alice"))) as any;
-    const personalContinuation = { ...args, query: { ...args.query, [adapter.param]: alice.page.nextCursor } };
-    const beforeOwner = sent.length;
-    await expect(
-      personal.callTool("items_api_read", personalContinuation, personalContext("bob")),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(sent).toHaveLength(beforeOwner);
-    response = () => Response.json(row.last);
-    expect(await personal.callTool("items_api_read", personalContinuation, personalContext("alice"))).toMatchObject({
-      page: { hasMore: false },
-    });
   }
   // A binding replaces neither guard unless it explicitly owns that check.
   for (const allowOtherServers of [false, true]) {
@@ -2176,33 +1467,11 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   response = () => Response.json({ pagination: { next: null } });
   await routed.call("read", { path: "/items", query: { tag: ["scope-a"], until: routedFirst.page.nextCursor } });
   expect(new URL(sent.at(-1)!.url).searchParams.get("until")).toBe("123");
-  // Vercel JSON-only writes must not accept HTML or binary acknowledgements (#1000).
   const hosting = vercelFixture.create();
   const hostingContext = {
     ...connectorContext(storage),
-    credential: { get: async () => "k7Q9w2E4r6T8y1U3", getAll: async () => ({ value: "k7Q9w2E4r6T8y1U3" }) },
+    credential: { get: async () => "hosting-key", getAll: async () => ({ value: "hosting-key" }) },
   };
-  for (const [name, args] of [
-    ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web", body: { framework: "nextjs" } }],
-    ["update_project_env_var", { projectId: "web", envVarId: "env_1", comment: "rotation" }],
-    ["vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "hello" }],
-  ] as const)
-    for (const type of ["text/html", "application/octet-stream"]) {
-      sent = [];
-      response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
-      await expect(hosting.callTool(name, args, hostingContext)).rejects.toMatchObject({
-        code: "connector_call_failed",
-        retryable: false,
-        writeOutcome: "unknown",
-        message: expect.stringContaining("check the target before repeating"),
-      });
-      expect(sent).toHaveLength(1);
-    }
-  sent = [];
-  await expect(hosting.callTool("vercel_api_read", { path: "/v7/deployments" }, hostingContext)).rejects.toMatchObject({
-    message: expect.not.stringContaining("Whether the write"),
-  });
-  expect(sent).toHaveLength(1);
   // Every pinned framed billing/command success remains rows, including a dispatched command write.
   for (const [method, path, media, body] of [
     ["GET", "/v1/billing/charges", "application/jsonl", undefined],

@@ -7,6 +7,13 @@ supersedes: []
 
 # The Effect provider kit
 
+Historical evidence note (#1072): migration parity tables and catalog/schema
+copies named below have been retired. Current executable evidence is owned by
+the architecture guide's provider/HTTP sections: stateful outcome tasks, real
+HTTP privacy/hostile acknowledgements, physical-send and native fault journeys,
+and focused algorithm probes. The old file names and counts describe the
+implementation sequence, not current required validation.
+
 [0009](./0009-effect-native-rewrite.md) chose to rebuild the HTTP layer on
 Effect and sequenced the work as B.1–B.5. This record fixes the design of
 B.1–B.4 and the gate B.5 must pass before Phase C starts. A prototype under
