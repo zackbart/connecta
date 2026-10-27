@@ -1753,6 +1753,15 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   Native transport parity, OAuth and write-provenance suites retain their
   workerd coverage. The shared throwaway RSA key in `test/fixtures/rsa.ts` is
   used by write-provenance and unknown-write-advice fixtures.
+- `test/executor-requests.test.ts` runs overlapping `execute_code` programs
+  as separate workerd requests through the real Worker Loader executor, with
+  real TCP host calls that read their own request's signal. Queued programs
+  and the programs whose release admitted them return their own answers; queue
+  refusals keep the retryable shape. Its fixture applies workerd's request
+  binding of async-context frames, which the pinned runtime predates; pointing
+  `MINIFLARE_WORKERD_PATH` at a newer workerd runs the native check.
+  `test/request-context.node.test.ts` pins the same wake order and async context
+  on Node for executor and call admission, and for QuickJS host calls.
 - The request, catalog, auxiliary-call and renewal lifetime
   suites, plus `test/auth-admission-binding.test.ts`, exercise cancellation,
   held native work and garbage collection. These test actual request ownership;
@@ -2026,11 +2035,13 @@ existing execute pipeline, using its request identity and call capabilities.
 The executor seam creates no second request or call owner.
 
 Both built-ins acquire their permits through native admission and return
-execute-once leases with synchronous, idempotent release. A queued standalone
-execution crosses `awaitExecutorLease`'s Promise handoff before host setup, so
-workerd resumes in the waiting request. `execute_code` retains its public
-`acquire()` handoff for that same reason. A cancelled queued handoff withdraws
-its waiter, and a late custom acquisition releases its abandoned lease.
+execute-once leases with synchronous, idempotent release. Admission wakes a
+queued waiter through a Settlement, so it resumes in its own request
+([across requests](#across-requests)). A queued standalone execution also
+crosses `awaitExecutorLease`'s Promise handoff before host setup, and
+`execute_code` retains its public `acquire()` handoff. A cancelled queued
+handoff withdraws its waiter, and a late custom acquisition releases its
+abandoned lease.
 
 The Worker SDK prepares source and dispatchers against an inert loader. The
 native host then acquires the actual Loader handle and RPC entrypoint with
@@ -2046,7 +2057,9 @@ Both built-ins normalize provider leaf returns with `Promise.resolve`, retaining
 direct JavaScript callers' synchronous value tolerance and original host
 rejections. The published provider-function signature remains Promise-shaped.
 
-QuickJS owns host-call fibers in each active run's Scope. Completion,
+QuickJS owns host-call fibers in each active run's Scope, started in the
+async context the run captured: a warm child's IPC events arrive in the
+context of the request that spawned it. Completion,
 interruption, cancellation, recycling and shutdown revoke provider lookup and
 interrupt those fibers; late SDK results and stale IPC cannot reply to another
 run. Releasing a lease during readiness or crash backoff also cancels the old
@@ -2231,24 +2244,36 @@ request's abort handler also releases them idempotently if workerd discards the
 pending continuation on disconnect. Membership cache
 hits precede these bounds; see [organization admission](./auth.md#one-clerk-instance-one-organization-per-deployment).
 
-Asynchronous work shared across requests meets only through a Deferred that the owning
-request completes, never through a fiber that outlives its request. Two
-workerd rules follow, and both have bitten.
+Asynchronous work shared across requests meets only through a `Settlement`
+(`src/runtime/settlement.ts`) that one request settles, never through a fiber
+that outlives its request or a Deferred another request awaits. Two workerd
+rules follow, and both have bitten.
 
-**Waiting on a shared Deferred is its own edge.** Deferred resumes a waiting
-fiber synchronously, inside the call that completed it, which on Workers means
-inside the completing request's I/O context. A waiter that goes on to touch its
-own body, transport, or storage there fails with "Cannot perform I/O on behalf
-of a different request", or hangs until its deadline. So the wait runs through
-`runEdge`, and the waiter does its own I/O after awaiting that promise, which
-workerd resumes in the waiter's request as it does any promise resolved from
-another. The same holds one level out for every queue: a queued call, a queued
-`execute_code`, and a queued `/mcp` request are each handed their permit from
-inside the request that released one, so each awaits the controller's
-Promise-shaped `acquire` rather than yielding its Effect program, and does its
-own work only once that promise resolves. Effect's `Semaphore` is not used
-across requests for the same reason, and because a same-tick newcomer can take
-a released permit ahead of a waiter that queued earlier.
+**No request resumes another request's fiber.** Deferred resumes a waiting
+fiber synchronously, inside the call that completed it, and Effect re-enters
+the async context the fiber suspended in through the `AsyncResource` it
+captured. On Workers that context belongs to the waiter's request. Since
+workerd's September 2026 releases, a Worker with compatibility date 2025-06-16
+or later (or `bind_asynclocalstorage_snapshot_to_request`) refuses that entry
+from any other request: "Cannot call this AsyncLocalStorage bound function
+outside of the request in which it was created." The throw escapes the
+completing call, so the request that released an admission slot failed with
+`executor_failed`, and the stranded waiter later timed out (#1106). Older
+runtimes ran the waiter in the completing request instead, where its own I/O
+failed with "Cannot perform I/O on behalf of a different request". Awaiting a
+Promise around the wait fixes neither: the fiber waiting inside that Promise is
+the one resumed. A Settlement records its outcome synchronously, for queue
+arbitration and late-grant cleanup, and wakes each waiter by resolving a
+Promise the waiter's own request created. workerd runs that Promise's reactions
+in the request that created it, and Node runs them a microtask later in the
+waiter's async context. Executor admission, `/mcp` request admission,
+connector call admission and OAuth refresh flights all queue through
+Settlements; Effect's `Semaphore` is not used across requests for the same
+reason, and because a same-tick newcomer can take a released permit ahead of a
+waiter that queued earlier. Events from shared native objects follow the same
+rule: a warm QuickJS child's IPC messages arrive in the async context of the
+request that spawned it, so host calls dispatch inside the running program's
+captured context.
 
 **Never read another request's signal.** On workerd, reading `aborted` or
 `reason`, or calling `abort()`, on a signal that belongs to another request

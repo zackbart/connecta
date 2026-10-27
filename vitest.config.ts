@@ -23,6 +23,7 @@ const WORKERS_SUITES = [
   "test/clerk-organization-workerd.test.ts",
   "test/codemode-compat.test.ts",
   "test/executor-native.test.ts",
+  "test/executor-requests.test.ts",
   "test/guest-api-contract.test.ts",
   "test/kv-to-d1.test.ts",
   "test/usage-guide.test.ts",
@@ -152,7 +153,7 @@ async function clerkOrganizationWorker(backend: string) {
 // This cache lasts until config reload: restart watch mode after changing a
 // fixture entry or any of its bundled dependencies.
 const fixtureBundles = new Map<string, Promise<string>>();
-function fixtureBundle(entry: string): Promise<string> {
+function fixtureBundle(entry: string, external?: string[]): Promise<string> {
   let text = fixtureBundles.get(entry);
   if (!text) {
     text = build({
@@ -161,6 +162,7 @@ function fixtureBundle(entry: string): Promise<string> {
       format: "esm",
       platform: "neutral",
       conditions: ["workerd", "worker", "browser"],
+      ...(external ? { external } : {}),
       write: false,
     }).then(({ outputFiles }) => outputFiles[0]!.text);
     fixtureBundles.set(entry, text);
@@ -203,6 +205,22 @@ async function authAdmissionEntryWorker(name: string, origin: string) {
 // invocations were seen to keep later ones reachable in the same isolate.
 const AUTH_ADMISSION_ENTRY_ISOLATES = ["middleware", "ended"];
 const bindingName = (key: string) => `AUTH_ADMISSION_${key.toUpperCase().replaceAll("-", "_")}`;
+
+// Overlapping execute_code programs through the real Worker Loader executor
+// (test/executor-requests.test.ts). Each call through its binding is a separate
+// workerd request; host calls fetch the slow fixture route over TCP. The date
+// is past 2025-06-16, where workerd binds async-context frames to requests.
+async function executorRequestsWorker(origin: string) {
+  return {
+    name: "executor-requests",
+    modules: true,
+    script: await fixtureBundle("./test/fixtures/executor-requests.ts", ["cloudflare:workers", "node:*"]),
+    compatibilityDate: "2026-07-01",
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
+    bindings: { ORIGIN: origin },
+    workerLoaders: { LOADER: {} },
+  };
+}
 
 export default defineConfig({
   test: {
@@ -284,6 +302,7 @@ export default defineConfig({
                 SQL_LIFETIMES: "sql-lifetimes",
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
+                EXECUTOR_REQUESTS: "executor-requests",
                 ...Object.fromEntries(
                   AUTH_ADMISSION_ENTRY_ISOLATES.map((key) => `entry-${key}`).flatMap((key) => [
                     [bindingName(key), `auth-admission-${key}`],
@@ -304,6 +323,7 @@ export default defineConfig({
                 clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
+                executorRequestsWorker(inject("authAdmissionServer")),
                 ...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) =>
                   authAdmissionEntryWorker(`auth-admission-entry-${key}`, inject("authAdmissionServer")),
                 ),

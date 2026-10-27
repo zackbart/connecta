@@ -16,6 +16,14 @@ export default async function setup(project: TestProject) {
   const sdkHeld = new Map<string, ServerResponse>();
   const submissionHeld = new Map<string, ServerResponse>();
   const server = createServer(async (req, res) => {
+    // A slow downstream for overlapping Worker programs: each host call is a
+    // real TCP request answered only after its own delay.
+    if (req.url?.startsWith("/executor/slow")) {
+      const url = new URL(req.url, "http://fixture");
+      const timer = setTimeout(() => res.end(JSON.stringify({ id: url.searchParams.get("id") })), Number(url.searchParams.get("ms") ?? 0));
+      res.on("close", () => clearTimeout(timer));
+      return;
+    }
     // Independent of admission's counted waves: a submitted native operation
     // must let another real request run while its TCP response is pending.
     if (req.url?.startsWith("/submission/")) {

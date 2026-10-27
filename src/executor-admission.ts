@@ -1,6 +1,7 @@
-import { Deferred, Duration, Effect } from "effect";
+import { Duration, Effect, Exit } from "effect";
 import { admit, provideAdmissionProgram } from "./runtime/admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
+import { Settlement } from "./runtime/settlement.js";
 import type { AdmittingExecutor, AdmissionSnapshot, Executor, ExecutorLease } from "./types.js";
 import { keepErrorName } from "./redaction-identity.js";
 
@@ -51,14 +52,15 @@ export interface AdmissionLease {
 }
 
 /**
- * One queued caller. Its outcome is a Deferred completed by exactly one party:
- * release() with a lease, close() with a shutdown error, or the waiting fiber
- * itself on timeout or abort. remove() arbitrates, as it always has — only
- * the party that takes the waiter out of the queue may settle it.
+ * One queued caller. Its outcome is settled by exactly one party: release()
+ * with a lease, close() with a shutdown error, or the waiting fiber itself on
+ * timeout or abort. remove() arbitrates, as it always has — only the party
+ * that takes the waiter out of the queue may settle it. Whichever request
+ * settles it, the waiter resumes in its own (src/runtime/settlement.ts).
  */
 interface Waiter {
   readonly queuedAt: number;
-  readonly outcome: Deferred.Deferred<AdmissionLease, ExecutorAdmissionError>;
+  readonly outcome: Settlement<AdmissionLease, ExecutorAdmissionError>;
 }
 
 export interface AdmissionControllerOptions {
@@ -165,10 +167,7 @@ export class AdmissionController {
     this.closed = true;
     for (const waiter of this.waiters.splice(0)) {
       this.closedTotal++;
-      Deferred.doneUnsafe(
-        waiter.outcome,
-        Effect.fail(new ExecutorAdmissionError("executor_closed", "Executor is shutting down.")),
-      );
+      waiter.outcome.settle(Exit.fail(new ExecutorAdmissionError("executor_closed", "Executor is shutting down.")));
     }
   }
 
@@ -215,7 +214,7 @@ export class AdmissionController {
       this.queueWaitTotalMs += waitMs;
       this.queueWaitMaxMs = Math.max(this.queueWaitMaxMs, waitMs);
       this.active++;
-      Deferred.doneUnsafe(waiter.outcome, Effect.succeed(this.makeLease(waitMs)));
+      waiter.outcome.settle(Exit.succeed(this.makeLease(waitMs)));
     }
   }
 
@@ -226,10 +225,7 @@ export class AdmissionController {
       if (now - waiter.queuedAt < this.queueTimeoutMs) continue;
       this.waiters.splice(index, 1);
       this.rejectedTotal++;
-      Deferred.doneUnsafe(
-        waiter.outcome,
-        Effect.fail(this.overloaded(`Executor admission timed out after ${this.queueTimeoutMs}ms.`)),
-      );
+      waiter.outcome.settle(Exit.fail(this.overloaded(`Executor admission timed out after ${this.queueTimeoutMs}ms.`)));
     }
   }
 
@@ -273,11 +269,10 @@ export class AdmissionController {
       this.cancelledTotal++;
       return Effect.void;
     }
-    if (!Deferred.isDoneUnsafe(waiter.outcome)) return Effect.void;
-    return Deferred.await(waiter.outcome).pipe(
-      Effect.tap((lease) => Effect.sync(() => lease.release())),
-      Effect.ignore,
-    );
+    return Effect.sync(() => {
+      const outcome = waiter.outcome.outcome;
+      if (outcome && Exit.isSuccess(outcome)) outcome.value.release();
+    });
   }
 
   // The admission program, handed to src/runtime/admission.ts. It lives in a
@@ -319,7 +314,7 @@ export class AdmissionController {
 
         const waiter: Waiter = {
           queuedAt: Date.now(),
-          outcome: Deferred.makeUnsafe(),
+          outcome: new Settlement(),
         };
         controller.waiters.push(waiter);
         controller.queuedTotal++;
@@ -332,14 +327,14 @@ export class AdmissionController {
           error: () => ExecutorAdmissionError,
         ): Effect.Effect<AdmissionLease, ExecutorAdmissionError> =>
           Effect.suspend(() => {
-            if (!controller.remove(waiter)) return Deferred.await(waiter.outcome);
+            if (!controller.remove(waiter)) return waiter.outcome.wait();
             count();
             return Effect.fail(error());
           });
 
         // One flat race; each contender is a forked fiber.
         const contenders = [
-          Deferred.await(waiter.outcome),
+          waiter.outcome.wait(),
           Effect.sleep(Duration.millis(controller.queueTimeoutMs)).pipe(
             Effect.andThen(
               giveUp(

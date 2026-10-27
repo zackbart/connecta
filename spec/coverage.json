@@ -37,8 +37,13 @@
       "id": "stateless-requests",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#statelessness",
-      "notes": "Fresh upward server and request-local downstream clients; legacy session cleanup stays request-scoped.",
-      "evidence": ["test/remote-mcp.test.ts", "test/server.test.ts"]
+      "notes": "Fresh upward server and request-local downstream clients; legacy session cleanup stays request-scoped. Concurrent stateless requests share only isolate-level admission queues, which wake each queued request, call, and execute_code program in its own request and async context, whichever request released the slot.",
+      "evidence": [
+        "test/remote-mcp.test.ts",
+        "test/server.test.ts",
+        "test/executor-requests.test.ts",
+        "test/request-context.node.test.ts"
+      ]
     },
     {
       "id": "icons",

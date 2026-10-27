@@ -1,8 +1,9 @@
-import { Deferred, Duration, Effect } from "effect";
+import { Duration, Effect, Exit } from "effect";
 import { CALL_ADMISSION } from "./provider.js";
 import { ConnectorCallError } from "./errors.js";
 import { provideCallAdmissionProgram, provideCallBudgetCharge, startCallAdmission } from "./runtime/call-admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
+import { Settlement } from "./runtime/settlement.js";
 import type { ConnectorCallAdmissionInput, ConnectorCallAdmissionPolicy, ConnectorCallAdmissionRule } from "./types.js";
 import { keepErrorName } from "./redaction-identity.js";
 
@@ -46,17 +47,18 @@ export interface CallAdmissionPermit {
 }
 
 /**
- * One queued call. Its outcome is a Deferred completed by exactly one party:
- * the pump with a permit or a refusal, close() with a shutdown error, or the
- * waiting fiber itself on timeout or abort. removeWaiter() arbitrates — only
- * the party that takes the waiter out of the queue may settle it. A waiter
+ * One queued call. Its outcome is settled by exactly one party: the pump with
+ * a permit or a refusal, close() with a shutdown error, or the waiting fiber
+ * itself on timeout or abort. removeWaiter() arbitrates — only the party that
+ * takes the waiter out of the queue may settle it. Whichever request settles
+ * it, the waiter resumes in its own (src/runtime/settlement.ts). A waiter
  * holds a clock and a continuation; never the call's arguments, and never its
  * signal, which belongs to the waiter's request and is watched from there.
  */
 interface Waiter {
   readonly queuedAt: number;
   readonly now: () => number;
-  readonly outcome: Deferred.Deferred<CallAdmissionPermit, CallAdmissionError>;
+  readonly outcome: Settlement<CallAdmissionPermit, CallAdmissionError>;
 }
 
 interface PartitionState {
@@ -198,9 +200,8 @@ export class ConnectorCallAdmissionController {
     this.closed = true;
     for (const state of this.partitions.values()) {
       for (const waiter of state.waiters.splice(0)) {
-        Deferred.doneUnsafe(
-          waiter.outcome,
-          Effect.fail(
+        waiter.outcome.settle(
+          Exit.fail(
             new CallAdmissionError(
               "closed",
               "unavailable",
@@ -275,11 +276,11 @@ export class ConnectorCallAdmissionController {
       const retryAfterMs = this.budgetRetryAfterMs(state, now);
       if (retryAfterMs !== undefined) {
         this.rateLimitedTotal++;
-        Deferred.doneUnsafe(waiter.outcome, Effect.fail(this.budgetLimited(retryAfterMs)));
+        waiter.outcome.settle(Exit.fail(this.budgetLimited(retryAfterMs)));
         continue;
       }
       const waitMs = Math.max(0, now - waiter.queuedAt);
-      Deferred.doneUnsafe(waiter.outcome, Effect.succeed(this.admit(state, now, waitMs)));
+      waiter.outcome.settle(Exit.succeed(this.admit(state, now, waitMs)));
     }
   }
 
@@ -338,11 +339,10 @@ export class ConnectorCallAdmissionController {
       this.maybeDeletePartition(key, state, waiter.now());
       return Effect.void;
     }
-    if (!Deferred.isDoneUnsafe(waiter.outcome)) return Effect.void;
-    return Deferred.await(waiter.outcome).pipe(
-      Effect.tap((permit) => Effect.sync(() => permit.release())),
-      Effect.ignore,
-    );
+    return Effect.sync(() => {
+      const outcome = waiter.outcome.outcome;
+      if (outcome && Exit.isSuccess(outcome)) outcome.value.release();
+    });
   }
 
   private concurrencyLimited(reason: string): CallAdmissionError {
@@ -383,7 +383,7 @@ export class ConnectorCallAdmissionController {
   // for a fiber. Semaphore does not fit that wait — permits here are
   // per-partition, the queue is bounded and counted, and each waiter carries
   // its own timeout and budget recheck — so the queue stays explicit, as in
-  // AdmissionController, with a Deferred per waiter.
+  // AdmissionController, with a Settlement per waiter.
   static {
     provideCallAdmissionProgram((controller, input, now) => {
       // Copy the signal out before building the wait: the effect returned
@@ -476,7 +476,7 @@ export class ConnectorCallAdmissionController {
       const waiter: Waiter = {
         queuedAt,
         now,
-        outcome: Deferred.makeUnsafe(),
+        outcome: new Settlement(),
       };
       state.waiters.push(waiter);
       controller.queuedTotal++;
@@ -490,7 +490,7 @@ export class ConnectorCallAdmissionController {
       ): Effect.Effect<CallAdmissionPermit, CallAdmissionError> =>
         Effect.suspend(() => {
           if (!controller.removeWaiter(state, waiter)) {
-            return Deferred.await(waiter.outcome);
+            return waiter.outcome.wait();
           }
           count();
           const refusal = error();
@@ -502,7 +502,7 @@ export class ConnectorCallAdmissionController {
       // checks the signal as it starts, which closes the check-to-listener
       // race an AbortSignal would not replay.
       const contenders = [
-        Deferred.await(waiter.outcome),
+        waiter.outcome.wait(),
         Effect.sleep(Duration.millis(controller.queueTimeoutMs)).pipe(
           Effect.andThen(
             giveUp(
