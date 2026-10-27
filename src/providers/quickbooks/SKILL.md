@@ -58,6 +58,9 @@ reject changed references. Taxes and totals are computed by QuickBooks: inspect
 the returned currency, exchange rate and totals; line sums are not a promise of
 an untaxed total. Locale/company tax requirements may reject this narrow body.
 No customer/item creation happens implicitly.
+Each additional request charges the call-admission budget before dispatch.
+Contradictory returned references, dates, rate or service prices produce an
+unknown outcome; reconcile through reads rather than repeating the write.
 
 Invoice email status is fixed to NotSet; online, IPN, credit-card, ACH, PayPal
 and Affirm payment flags are fixed false. No email field or send operation is

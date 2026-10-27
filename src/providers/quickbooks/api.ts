@@ -279,6 +279,11 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) => {
             "AllowOnlineAffirmPayment",
           ].every((key) => record[key] === undefined || record[key] === false) &&
           amount(record["TotalAmt"]) &&
+          ["Balance", "HomeTotalAmt", "HomeBalance"].every((key) => record[key] === undefined || amount(record[key])) &&
+          (record["ExchangeRate"] === undefined ||
+            (typeof record["ExchangeRate"] === "number" &&
+              Number.isFinite(record["ExchangeRate"]) &&
+              record["ExchangeRate"] > 0)) &&
           typeof record["DocNumber"] === "string" &&
           record["DocNumber"].trim() !== "" &&
           numericId(object(record["CustomerRef"])["value"]) &&

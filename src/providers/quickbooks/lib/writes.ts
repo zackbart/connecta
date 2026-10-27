@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../../errors.js";
-import { Refusal } from "../../../http/errors.js";
+import { Refusal, StatusFailure } from "../../../http/errors.js";
+import { Budget } from "../../../http/services.js";
 import { action, write } from "../../../http/tools.js";
 import type { Connection } from "../../../http/vendor.js";
 import { companyInfo, CustomerNames, customerWrite, invoiceWrite, PublicId, recordReads, SyncToken } from "../api.js";
@@ -46,6 +47,38 @@ const InvoiceInput = Schema.Struct({
 const refuse = (message: string) =>
   Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", message) }));
 const version = { minorversion: "75" } as const;
+const charge = Effect.flatMap(Budget, (budget) => budget.charge).pipe(
+  Effect.catch((error) =>
+    error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+  ),
+);
+
+/** Totals and tax are vendor-computed; the authored references, dates and service prices must agree. */
+function matchesInvoice(record: Record<string, unknown>, args: typeof InvoiceInput.Type): boolean {
+  const lines = Array.isArray(record["Line"]) ? record["Line"] : [];
+  const services = lines.filter((line) => object(line)["DetailType"] === "SalesItemLineDetail");
+  const expected = args.lines
+    .map((line) => JSON.stringify([line.itemId, Number(line.amount), 1, Number(line.amount)]))
+    .sort();
+  const actual = services
+    .map((line) => {
+      const row = object(line),
+        detail = object(row["SalesItemLineDetail"]);
+      return JSON.stringify([object(detail["ItemRef"])["value"], row["Amount"], detail["Qty"], detail["UnitPrice"]]);
+    })
+    .sort();
+  return (
+    object(record["CustomerRef"])["value"] === args.customerId &&
+    object(record["CurrencyRef"])["value"] === args.currency &&
+    record["DocNumber"] === args.docNumber &&
+    record["TxnDate"] === args.txnDate &&
+    record["DueDate"] === args.dueDate &&
+    (record["ExchangeRate"] === Number(args.exchangeRate) ||
+      (record["ExchangeRate"] === undefined && Number(args.exchangeRate) === 1)) &&
+    lines.every((line) => ["SalesItemLineDetail", "SubTotalLineDetail"].includes(String(object(line)["DetailType"]))) &&
+    JSON.stringify(actual) === JSON.stringify(expected)
+  );
+}
 
 export function quickbooksWrites(connection: Connection, realmId: string) {
   return [
@@ -115,6 +148,7 @@ export function quickbooksWrites(connection: Connection, realmId: string) {
             return yield* refuse(
               "Invoice creation is restricted to US companies, where the reviewed invoice-autosend contract applies.",
             );
+          yield* charge;
           const customer = object(
             object(
               (yield* connection.send(
@@ -133,6 +167,7 @@ export function quickbooksWrites(connection: Connection, realmId: string) {
               "The customer must be active and have the supplied currency; reread before creating an invoice.",
             );
           for (const itemId of new Set(args.lines.map((line) => line.itemId))) {
+            yield* charge;
             const item = object(
               object(
                 (yield* connection.send(
@@ -147,7 +182,8 @@ export function quickbooksWrites(connection: Connection, realmId: string) {
                 "Every invoice item must be an active Service item; reread before creating an invoice.",
               );
           }
-          const { data } = yield* connection.send(invoiceWrite, {
+          yield* charge;
+          const { data, status } = yield* connection.send(invoiceWrite, {
             query: { ...version, requestid: args.requestId },
             payload: {
               CustomerRef: { value: args.customerId },
@@ -174,7 +210,17 @@ export function quickbooksWrites(connection: Connection, realmId: string) {
               AllowOnlineAffirmPayment: false,
             },
           });
-          return namedRecord(object(data)["Invoice"]);
+          const invoice = object(object(data)["Invoice"]);
+          if (!matchesInvoice(invoice, args))
+            return yield* Effect.fail(
+              new StatusFailure({
+                status,
+                headers: new Headers(),
+                body: undefined,
+                operation: { method: "POST", template: "/invoice" },
+              }),
+            );
+          return namedRecord(invoice);
         }),
     }),
   ];

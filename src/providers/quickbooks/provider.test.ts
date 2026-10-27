@@ -10,7 +10,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function connected(writes = false) {
+async function connected(writes = false, maxCalls?: number) {
   const requests: URL[] = [];
   let answer: unknown = {};
   let status = 200;
@@ -38,7 +38,16 @@ async function connected(writes = false) {
       return handle ? handle(url, init) : Response.json(answer, { status });
     }),
   );
-  const connector = fixture.create("accounting", writes ? { readOnly: false } : {});
+  const connector = fixture.create("accounting", {
+    ...(writes ? { readOnly: false } : {}),
+    ...(maxCalls === undefined
+      ? {}
+      : {
+          callAdmission: {
+            rules: [{ maxConcurrency: 1, budget: { kind: "rolling-window" as const, maxCalls, windowMs: 60_000 } }],
+          },
+        }),
+  });
   const registry = makeRegistry([connector]);
   const ctx = () => registry.contextFor("accounting", "https://connecta.example");
   const started = await connector.startAuth!(ctx());
@@ -47,6 +56,7 @@ async function connected(writes = false) {
   await connector.finishAuth!("company-code", ctx(), new URLSearchParams({ state, realmId: "123456789" }));
   return {
     connector,
+    registry,
     requests,
     sends,
     ctx,
@@ -206,10 +216,33 @@ const invoiceArgs = {
     { itemId: "7", amount: "12.34" },
   ],
 };
+it("INV-7: charges every sequential invoice request against the existing admission permit before dispatch", async () => {
+  const { createMetaTools } = await import("../../meta-tools.js");
+  for (const maxCalls of [1, 2, 3]) {
+    const world = await connected(true, maxCalls);
+    world.handle((url) =>
+      Response.json(
+        url.pathname.includes("companyinfo")
+          ? { CompanyInfo: { Id: "123456789", Country: "US" } }
+          : url.pathname.includes("customer")
+            ? { Customer: { Id: "51", Active: true, CurrencyRef: { value: "USD" } } }
+            : { Item: { Id: "7", Active: true, Type: "Service" } },
+      ),
+    );
+    const refused = await createMetaTools(world.registry, "https://connecta.example").callDestructiveTool({
+      address: "accounting.create_invoice",
+      args: invoiceArgs,
+    });
+    expect(refused.isError).toBe(true);
+    expect(world.sends.map((send) => send.method)).toEqual(Array(maxCalls).fill("GET"));
+    expect(world.registry.callAdmissionSnapshot()["accounting"]).toMatchObject({ active: 0, queued: 0 });
+  }
+});
 it("INV-9: verifies service references and sends one real invoice with immutable no-email/payment fields and decimal units", async () => {
   const world = await connected(true);
   let malformed = false;
   let emailStatus = "NotSet";
+  let contradiction: Record<string, unknown> = {};
   world.handle((url) =>
     url.pathname.endsWith("/companyinfo/123456789")
       ? Response.json({ CompanyInfo: { Id: "123456789", Country: "US" } })
@@ -225,14 +258,17 @@ it("INV-9: verifies service references and sends one real invoice with immutable
                   EmailStatus: emailStatus,
                   SyncToken: "0",
                   DocNumber: "SERVICES-1",
+                  TxnDate: invoiceArgs.txnDate,
+                  DueDate: invoiceArgs.dueDate,
                   CustomerRef: { value: "51" },
                   CurrencyRef: { value: "USD" },
                   TotalAmt: 12.44,
                   Line: [0.1, 12.34].map((Amount) => ({
                     Amount,
                     DetailType: "SalesItemLineDetail",
-                    SalesItemLineDetail: { ItemRef: { value: "7" } },
+                    SalesItemLineDetail: { ItemRef: { value: "7" }, Qty: 1, UnitPrice: Amount },
                   })),
+                  ...contradiction,
                 },
               }),
   );
@@ -279,6 +315,30 @@ it("INV-9: verifies service references and sends one real invoice with immutable
     writeOutcome: "unknown",
   });
   expect(world.sends.filter((send) => send.method === "POST")).toHaveLength(3);
+  emailStatus = "NotSet";
+  for (const changed of [
+    { CustomerRef: { value: "999" }, CurrencyRef: { value: "EUR" }, DocNumber: "UNRELATED-OLD-INVOICE" },
+    { ExchangeRate: "not-a-number" },
+    {
+      Line: [
+        {
+          Amount: 99,
+          DetailType: "SalesItemLineDetail",
+          SalesItemLineDetail: { ItemRef: { value: "7" }, Qty: 1, UnitPrice: 99 },
+        },
+      ],
+    },
+  ]) {
+    contradiction = changed;
+    const before = world.sends.filter((send) => send.method === "POST").length;
+    await expect(
+      world.call("create_invoice", { ...invoiceArgs, requestId: `contradiction-${before}` }),
+    ).rejects.toMatchObject({
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(world.sends.filter((send) => send.method === "POST")).toHaveLength(before + 1);
+  }
 });
 
 it("INV-9: refuses inventory items and non-US companies before any accounting mutation", async () => {

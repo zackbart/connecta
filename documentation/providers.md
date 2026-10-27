@@ -1304,6 +1304,9 @@ recheck the customer currency and item type and activity; they are not an atomic
 and no implicit customer/item creation, are used. QuickBooks computes taxes and
 totals, and locale/company rules may reject the narrow request. Inspect the
 returned CurrencyRef, ExchangeRate and totals.
+Each request after the first charges the same call-admission budget before
+dispatch. Returned references, dates, rate and service prices must match the
+admitted intent; contradictions produce an unknown, non-retryable outcome.
 
 Creation fixes EmailStatus to `NotSet` and IPN/online/card/ACH/PayPal/Affirm
 payment flags to false, accepts no email fields, and never calls a send endpoint.
