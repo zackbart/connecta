@@ -1199,6 +1199,15 @@ meaning. These facts do not change agent error fields or write outcomes.
 
 ## Configuration
 
+Downstream OAuth browser extensions use `auth.authorizationParams` on
+`remoteMcp()` and `oauth.authorizationParams` on `api()`. Both snapshot and
+validate the string map at construction, reserve protocol/security parameters
+case-insensitively, and add entries only when publishing the consent URL.
+Remote MCP includes canonical sorted entries in its existing client configuration
+binding (omitted and empty maps remain equivalent); static API OAuth retains
+its existing token-endpoint binding. The [auth contract](./auth.md#browser-authorization-parameters)
+owns limits, reserved names, and reconnect requirements.
+
 `ConnectaConfig` is one schema (`src/config.ts`, combinators in
 `src/config-schema.ts`). The same value produces the TypeScript type a
 deployment writes, the unknown-key walk createConnecta runs before reading any
@@ -1210,8 +1219,8 @@ is resolved in place of the caller's object, so no getter or Proxy trap runs;
 an accessor on a config object or array is refused by path, as is an object
 that cannot be inspected. A closed object or record slot takes a plain object
 only: an array or a class instance there is refused by path, unread. String
-maps (static `headers`, `api()`'s `authorizationParams` and
-`tokenRequestHeaders`) are copied the same way and each value must be a
+maps (static `headers`, remote MCP and `api()` OAuth `authorizationParams`,
+and `api()` OAuth `tokenRequestHeaders`) are copied the same way and each value must be a
 string. A discriminated union (`remoteMcp()`'s `auth.type`,
 a provider's `auth.type`) with a missing or unrecognized discriminant throws
 with the valid values. Only plain data is copied. Connectors, modules,

@@ -45,6 +45,7 @@ const WORKERS_SUITES = [
   "test/upward-native.test.ts",
   "test/skills-extension.test.ts",
   "test/oauth-refresh-http.test.ts",
+  "test/oauth-authorization-params.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
   "test/remote-mcp-native.test.ts",

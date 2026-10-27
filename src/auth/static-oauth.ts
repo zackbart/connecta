@@ -331,7 +331,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       undefined,
       settings.scope,
       undefined,
-      { secrets: sentSecretsFor(ctx) },
+      { secrets: sentSecretsFor(ctx), authorizationParams: settings.authorizationParams },
     );
   }
 
@@ -494,9 +494,6 @@ class StaticOAuthProvider extends KvOAuthProvider {
       function (this: StaticOAuthProvider, authorizationUrl: URL) {
         return authFlow<void>(
           function* (this: StaticOAuthProvider) {
-            for (const [name, value] of this.settings.authorizationParams) {
-              authorizationUrl.searchParams.set(name, value);
-            }
             if (!this.settings.pkce) {
               authorizationUrl.searchParams.delete("code_challenge");
               authorizationUrl.searchParams.delete("code_challenge_method");

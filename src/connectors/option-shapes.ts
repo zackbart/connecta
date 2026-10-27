@@ -33,6 +33,7 @@ export const REMOTE_MCP_AUTH = variants("type", {
   }).shape,
   oauth: optionsOf<AuthCase<"oauth">>()({
     ...keys("type", "clientMetadataUrl", "scope"),
+    authorizationParams: strings(),
     client: optionsOf<RemoteOAuthClient>()(keys("issuer", "clientId", "clientSecret", "tokenEndpointAuthMethod")),
   }).shape,
 });

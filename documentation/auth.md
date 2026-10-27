@@ -2498,6 +2498,48 @@ stored static-client state and reselects the configured identity.
 Configured `scope` is a fallback; a downstream challenge or protected-resource
 declaration takes precedence, and the SDK adds `offline_access` when advertised.
 
+### Browser authorization parameters
+
+Set `auth.authorizationParams` on an OAuth `remoteMcp()` connector to add
+non-secret provider parameters to the browser consent URL. This works with
+pre-registered clients, CIMD, and DCR. For example:
+
+```ts
+remoteMcp("crm", {
+  url: "https://mcp.example/mcp",
+  auth: {
+    type: "oauth",
+    scope: "records.read",
+    authorizationParams: { access_type: "offline", prompt: "consent" },
+  },
+});
+```
+
+Each configured parameter occurs once, replacing any same-name value already
+on the authorization endpoint URL. These parameters are never added to token
+exchange, refresh, registration, revocation, metadata, or MCP requests.
+Descriptions expose parameter names only. Values are public configuration,
+visible in the consent URL and stored with it; never put secrets here.
+
+The map must be a plain string record with at most 32 entries. Names contain
+1–128 ASCII letters, digits, dots, underscores, or hyphens. Values must be
+nonempty (not whitespace-only), at most 2048 UTF-16 code units, and contain no
+ASCII control characters. Case-variant duplicate names are refused. The
+following names, including every case variant, fail construction with
+`ConfigError`: `response_type`, `response_mode`, `client_id`, `client_secret`,
+`redirect_uri`, `state`, `code_challenge`, `code_challenge_method`, `scope`,
+`resource`, `request`, and `request_uri`. Configure scopes through `auth.scope`.
+`response_mode` is reserved because Connecta accepts callbacks only as GET query
+parameters.
+
+For remote MCP, the map joins the stored client configuration binding, like
+scope and client identity. Adding, removing, or changing a parameter requires
+Restart or Disconnect and reconnect to obtain a grant with the new consent
+settings. The map does not rewrite existing grants or pending consent URLs;
+as with scope, reconfiguring it alone does not obtain a new grant. A DCR
+registration created under different parameters cannot be carried through
+Restart. Key order is irrelevant; an empty map and omission are equivalent.
+
 ## Downstream OAuth on `api()`
 
 `api()` takes a static authorization-code configuration for APIs without MCP
@@ -2532,7 +2574,7 @@ No discovery or registration occurs; all URLs are configuration, so the
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Endpoints                    | Checked at construction: HTTPS, HTTP only on loopback, no credentials or fragment.                                                                                                                                                                                                                                                                                                                                             |
 | `pkce`                       | S256 by default; `false` omits challenge and verifier.                                                                                                                                                                                                                                                                                                                                                                         |
-| `authorizationParams`        | Adds provider parameters; cannot restate the grant's own.                                                                                                                                                                                                                                                                                                                                                                      |
+| `authorizationParams`        | Browser-only string parameters. Exact names `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method` and `resource` are refused; other names and string values are accepted as before. Remote MCP's [stricter rules](#browser-authorization-parameters) do not apply here.                                                                                                    |
 | `expectedCallbackParameters` | Optional `Readonly<Record<string, string>>` of fixed provider response values. Each configured parameter must occur exactly once with its exact decoded value, after pending-state verification and before issuer validation, flow claims, code exchange, or grant persistence. Missing, duplicate, or mismatched values refuse without exchanging a code or returning parameter values. Omission preserves existing behavior. |
 | `revocationEndpoint`         | Optional trusted HTTPS revocation URL (loopback HTTP allowed), without credentials, query or fragment. Disconnect removes the local grant before one bounded attempt using the configured client. Failure reports `oauth_revocation_failed`; a repeated Disconnect never retries.                                                                                                                                              |
 | `revocationRequestFormat`    | `"form"` by default; `"json"` sends JSON without `token_type_hint`. Requires `revocationEndpoint` when set.                                                                                                                                                                                                                                                                                                                    |
@@ -2584,6 +2626,15 @@ owner's access token as `Authorization: Bearer` with these rules:
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.
 - The answer's `.text()` and `.json()`, clones' too, decode its bytes as UTF-8, so
   workerd never quotes a downstream's Content-Type in its own log.
+
+`api()` already supports `oauth.authorizationParams` through the same OAuth
+provider and browser-only injection. It keeps its existing, more permissive
+validation (see the `api()` option table), so existing configurations still
+construct. Use only GET query response modes with it. Its existing binding remains
+unchanged: the token endpoint identifies the grant; scope, client identity,
+and authorization parameters do not add a stored client configuration binding.
+Changing authorization parameters affects new consents; reconnect to obtain a
+grant with different consent settings.
 
 The grant record and consents, epoch fencing, vault sealing, shared/personal ownership,
 callback state/principal checks, `authorize_connector`, Connect, Restart, and
@@ -2650,6 +2701,7 @@ const warehousePersonal = remoteMcp("warehouse_personal", {
   auth: {
     type: "oauth",
     scope: "https://www.googleapis.com/auth/bigquery",
+    authorizationParams: { access_type: "offline", prompt: "consent" },
     client: {
       issuer: "https://accounts.google.com",
       clientId: env.GOOGLE_CLIENT_ID,
@@ -2736,17 +2788,17 @@ configuration and does not need a credential-vault slot.
    [Web OAuth client setup](https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers#web),
    [Google MCP registration limitations](https://docs.cloud.google.com/mcp/authenticate-mcp#limitations).
 
-The existing static-client path supports Google's exact issuer and
+The pre-registered client path supports Google's exact issuer and
 `client_secret_post`; Google's [discovery document](https://accounts.google.com/.well-known/openid-configuration)
 advertises that method, PKCE S256, and `https://oauth2.googleapis.com/token`.
-This establishes configuration compatibility, not a verified live Google
-consent journey. Google's refresh-token flow requires `access_type=offline`,
-which Connecta's current generic remote MCP authorization URL does not add.
-Do not assume the personal connection receives a renewable grant: verify consent,
-challenge/discovery handling and access after token expiry against your project;
-reconnect when required. [Google's offline-access requirements](https://developers.google.com/identity/protocols/oauth2/web-server#offline).
-The personal example uses the existing OAuth implementation without a Google-specific
-flow change.
+The personal example requests `access_type=offline` to obtain a refresh token
+and `prompt=consent` to show consent again when reconnecting. See
+[Google's offline-access requirements](https://developers.google.com/identity/protocols/oauth2/web-server#offline).
+Connecta retains the stored refresh token when a successful refresh response
+omits `refresh_token`, allowing later refreshes with that same token. After
+adding these parameters to an existing connector, Disconnect and reconnect.
+Live Google consent and project-specific permissions still need verification
+against the operator's project.
 
 ## Contributor reference
 
