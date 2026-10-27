@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect";
 import type { ApiOAuthConfig } from "../../connectors/api-connector.js";
 import { StatusFailure, type VendorErrors } from "../../http/errors.js";
 import type { HatchBinding } from "../../http/hatch.js";
-import { get, Summary, vendor, type Connection, type ConnectOptions } from "../../http/vendor.js";
+import { get, post, Summary, vendor, type Connection, type ConnectOptions } from "../../http/vendor.js";
 import { vendorIndex } from "../../http/vendor-index.js";
 import type { QuickBooksOptions } from "./index.js";
 import { RecordShape, CompanyShape, ReportShape, object } from "./safety.js";
@@ -49,10 +49,57 @@ export const reportReads = Object.fromEntries(
     }).annotate(Summary, `Read the ${name} financial report`),
   ]),
 );
+// Closed named-write bodies. POSTs are indexed for safety, but refused by the hatch.
+export const PublicId = Schema.String.check(matches("^[1-9]\\d{0,30}$"));
+export const SyncToken = Schema.String.check(matches("^(?:0|[1-9]\\d{0,30})$"));
+const Name = Schema.String.check(matches("^\\S(?:[^\\r\\n]{0,498}\\S)?$"));
+export const CustomerNames = { DisplayName: Name, CompanyName: Schema.optionalKey(Name) };
+export const customerWrite = post("writeCustomer", "/customer", {
+  query: { minorversion: Schema.Literal("75"), requestid: Schema.String },
+  payload: Schema.Struct({
+    ...CustomerNames,
+    Id: Schema.optionalKey(PublicId),
+    SyncToken: Schema.optionalKey(SyncToken),
+    sparse: Schema.optionalKey(Schema.Literal(true)),
+  }),
+  success: Schema.Struct({ Customer: RecordShape }),
+}).annotate(Summary, "Create a customer or sparsely update naming fields through named tools only");
+export const invoiceWrite = post("createInvoice", "/invoice", {
+  query: { minorversion: Schema.Literal("75"), requestid: Schema.String },
+  payload: Schema.Struct({
+    CustomerRef: Schema.Struct({ value: PublicId }),
+    CurrencyRef: Schema.Struct({ value: Schema.String }),
+    ExchangeRate: Schema.Number,
+    TxnDate: Schema.String,
+    DueDate: Schema.String,
+    DocNumber: Schema.String,
+    Line: Schema.Array(
+      Schema.Struct({
+        Amount: Schema.Number,
+        DetailType: Schema.Literal("SalesItemLineDetail"),
+        SalesItemLineDetail: Schema.Struct({
+          ItemRef: Schema.Struct({ value: PublicId }),
+          Qty: Schema.Literal(1),
+          UnitPrice: Schema.Number,
+        }),
+      }),
+    ),
+    EmailStatus: Schema.Literal("NotSet"),
+    AllowIPNPayment: Schema.Literal(false),
+    AllowOnlinePayment: Schema.Literal(false),
+    AllowOnlineCreditCardPayment: Schema.Literal(false),
+    AllowOnlineACHPayment: Schema.Literal(false),
+    AllowOnlinePayPalPayment: Schema.Literal(false),
+    AllowOnlineAffirmPayment: Schema.Literal(false),
+  }),
+  success: Schema.Struct({ Invoice: RecordShape }),
+}).annotate(Summary, "Create a real unsent service invoice through create_invoice only");
 export const QuickBooksApi = vendor(
   "QuickBooks Online",
   companyInfo,
   queryRecords,
+  customerWrite,
+  invoiceWrite,
   ...Object.values(recordReads),
   ...Object.values(reportReads),
 );
@@ -64,6 +111,8 @@ export const QUICKBOOKS_INDEX = vendorIndex(QuickBooksApi, {
 export const QUICKBOOKS_VERDICTS = {
   "GET /companyinfo/{id}": "read",
   "GET /query": "refuse",
+  "POST /customer": "refuse",
+  "POST /invoice": "refuse",
   ...Object.fromEntries(
     Object.values(ENTITIES).map((entity) => [`GET /${entity.toLowerCase()}/{id}`, "read" as const]),
   ),
@@ -133,12 +182,17 @@ export function quickbooksBinding({
 
 export const errors: VendorErrors = {
   provider: "QuickBooks Online",
-  meanings: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] },
+  meanings: {
+    unknownId: "connector_call_failed",
+    provesAbsence: false,
+    conflicts: ["Intuit fault 5010 for a stale SyncToken", "Intuit fault 6240 for a duplicate DisplayName"],
+  },
   facts: (body) => {
     const rows = object(object(body)["Fault"])["Error"];
-    return { faultCode: Array.isArray(rows) && object(rows[0])["code"] === "610" ? "610" : "" };
+    const code = Array.isArray(rows) ? object(rows[0])["code"] : undefined;
+    return { faultCode: typeof code === "string" && ["610", "5010", "6240"].includes(code) ? code : "" };
   },
-  factVocabulary: { faultCode: ["610"] },
+  factVocabulary: { faultCode: ["610", "5010", "6240"] },
   detail: ({ status }) => `QuickBooks Online returned HTTP ${status}.`,
   unreadable: "QuickBooks Online returned a successful response that is not JSON.",
   numericFacts: {
@@ -151,7 +205,18 @@ export const errors: VendorErrors = {
       words: (detail) => `${detail} The accounting response was incomplete or invalid.`,
     }),
     400: ({ facts }) => ({
-      code: facts["faultCode"] === "610" ? "connector_call_failed" : "invalid_args",
+      code:
+        facts["faultCode"] === "610"
+          ? "connector_call_failed"
+          : ["5010", "6240"].includes(String(facts["faultCode"]))
+            ? "conflict"
+            : "invalid_args",
+      words: (detail) =>
+        facts["faultCode"] === "5010"
+          ? `${detail} The observed SyncToken is stale; reread and review the change.`
+          : facts["faultCode"] === "6240"
+            ? `${detail} The DisplayName is already in use by a customer, vendor or employee.`
+            : detail,
       retryable: false,
     }),
     401: () => ({ code: "auth_required" }),
@@ -165,7 +230,7 @@ export const errors: VendorErrors = {
   },
 };
 
-/** Missing data is a failed read, never a fabricated empty record/report/search. */
+/** Missing data is a failure, never a fabricated record/report/search or confirmed write. */
 const container = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const cells = (value: unknown): boolean =>
@@ -192,7 +257,42 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) => {
   const root = object(body);
   const path = answer.operation.template;
   let valid: boolean;
-  if (path === "/query") {
+  if (answer.operation.method === "POST") {
+    const key = path === "/customer" ? "Customer" : path === "/invoice" ? "Invoice" : undefined;
+    const record = key === undefined ? {} : object(root[key]);
+    const numericId = (value: unknown) => typeof value === "string" && /^[1-9]\d{0,30}$/.test(value);
+    const amount = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+    valid =
+      key !== undefined &&
+      numericId(record["Id"]) &&
+      typeof record["SyncToken"] === "string" &&
+      /^(?:0|[1-9]\d{0,30})$/.test(record["SyncToken"]) &&
+      (key === "Customer"
+        ? typeof record["DisplayName"] === "string" && record["DisplayName"].trim() !== ""
+        : (record["EmailStatus"] === undefined || record["EmailStatus"] === "NotSet") &&
+          [
+            "AllowIPNPayment",
+            "AllowOnlinePayment",
+            "AllowOnlineCreditCardPayment",
+            "AllowOnlineACHPayment",
+            "AllowOnlinePayPalPayment",
+            "AllowOnlineAffirmPayment",
+          ].every((key) => record[key] === undefined || record[key] === false) &&
+          amount(record["TotalAmt"]) &&
+          typeof record["DocNumber"] === "string" &&
+          record["DocNumber"].trim() !== "" &&
+          numericId(object(record["CustomerRef"])["value"]) &&
+          typeof object(record["CurrencyRef"])["value"] === "string" &&
+          /^[A-Z]{3}$/.test(String(object(record["CurrencyRef"])["value"])) &&
+          Array.isArray(record["Line"]) &&
+          record["Line"].length > 0 &&
+          record["Line"].every((line: unknown) => container(line) && amount(line["Amount"])) &&
+          record["Line"].some(
+            (line: unknown) =>
+              object(line)["DetailType"] === "SalesItemLineDetail" &&
+              numericId(object(object(object(line)["SalesItemLineDetail"])["ItemRef"])["value"]),
+          ));
+  } else if (path === "/query") {
     const rows = root["QueryResponse"];
     valid =
       container(rows) &&
@@ -227,7 +327,7 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) => {
       : Object.values(ENTITIES).find((entity) => path.startsWith(`/${entity.toLowerCase()}/`));
     valid = key !== undefined && typeof object(root[key])["Id"] === "string";
   }
-  return valid
+  return valid && root["Fault"] === undefined
     ? Effect.succeed(body)
     : Effect.fail(
         new StatusFailure({ status: answer.status, headers: answer.headers, body, operation: answer.operation }),

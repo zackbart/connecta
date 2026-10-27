@@ -10,10 +10,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function connected() {
+async function connected(writes = false) {
   const requests: URL[] = [];
   let answer: unknown = {};
   let status = 200;
+  let handle: ((url: URL, init: RequestInit) => Response) | undefined;
+  const sends: { url: URL; method: string; body: unknown }[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: URL | string, init: RequestInit = {}) => {
@@ -32,10 +34,11 @@ async function connected() {
       expect(url.searchParams.get("minorversion")).toBe("75");
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer fixture-access-token");
       requests.push(url);
-      return Response.json(answer, { status });
+      sends.push({ url, method: init.method ?? "GET", body: init.body ? JSON.parse(String(init.body)) : undefined });
+      return handle ? handle(url, init) : Response.json(answer, { status });
     }),
   );
-  const connector = fixture.create("accounting");
+  const connector = fixture.create("accounting", writes ? { readOnly: false } : {});
   const registry = makeRegistry([connector]);
   const ctx = () => registry.contextFor("accounting", "https://connecta.example");
   const started = await connector.startAuth!(ctx());
@@ -45,7 +48,11 @@ async function connected() {
   return {
     connector,
     requests,
+    sends,
     ctx,
+    handle: (next: (url: URL, init: RequestInit) => Response) => {
+      handle = next;
+    },
     respond: (value: unknown, nextStatus = 200) => {
       answer = value;
       status = nextStatus;
@@ -139,5 +146,205 @@ it("INV-5: preserves legitimate empty query and report responses", async () => {
     const report = { Header: { ReportName: "ProfitAndLoss" }, Columns: { Column: [] }, Rows };
     world.respond(report);
     expect(await world.call("get_report", { report: "ProfitAndLoss" })).toEqual(report);
+  }
+});
+
+it("INV-9 INV-5: creates and sparsely renames a customer with the observed version; stale writes never fetch or overwrite", async () => {
+  const world = await connected(true);
+  world.respond({
+    Customer: {
+      Id: "51",
+      SyncToken: "0",
+      DisplayName: "Studio",
+      CompanyName: "Studio LLC",
+      PrimaryEmailAddr: { Address: "private@example.com" },
+    },
+  });
+  expect(
+    await world.call("create_customer", {
+      requestId: "customer-intent-1",
+      DisplayName: "Studio",
+      CompanyName: "Studio LLC",
+    }),
+  ).toEqual({ Id: "51", SyncToken: "0", DisplayName: "Studio", CompanyName: "Studio LLC" });
+  expect(world.sends[0]).toMatchObject({ method: "POST", body: { DisplayName: "Studio", CompanyName: "Studio LLC" } });
+  expect(world.sends[0]!.url.searchParams.get("requestid")).toBe("customer-intent-1");
+  world.respond({ Customer: { Id: "51", SyncToken: "1", DisplayName: "Studio Two" } });
+  await world.call("update_customer", {
+    requestId: "customer-intent-2",
+    Id: "51",
+    SyncToken: "0",
+    DisplayName: "Studio Two",
+  });
+  expect(world.sends[1]!.body).toEqual({ Id: "51", SyncToken: "0", DisplayName: "Studio Two", sparse: true });
+  world.respond({ Fault: { Error: [{ code: "5010", Message: "private customer and credential prose" }] } }, 400);
+  await expect(
+    world.call("update_customer", {
+      requestId: "customer-intent-3",
+      Id: "51",
+      SyncToken: "0",
+      DisplayName: "Lost edit",
+    }),
+  ).rejects.toMatchObject({
+    code: "conflict",
+    retryable: false,
+    message: expect.stringContaining("SyncToken is stale"),
+  });
+  expect(world.sends.map((send) => send.method)).toEqual(["POST", "POST", "POST"]);
+});
+
+const invoiceArgs = {
+  requestId: "invoice-intent-1",
+  customerId: "51",
+  currency: "USD",
+  exchangeRate: "1",
+  txnDate: "2026-10-27",
+  dueDate: "2026-11-27",
+  docNumber: "SERVICES-1",
+  lines: [
+    { itemId: "7", amount: "0.10" },
+    { itemId: "7", amount: "12.34" },
+  ],
+};
+it("INV-9: verifies service references and sends one real invoice with immutable no-email/payment fields and decimal units", async () => {
+  const world = await connected(true);
+  let malformed = false;
+  let emailStatus = "NotSet";
+  world.handle((url) =>
+    url.pathname.endsWith("/companyinfo/123456789")
+      ? Response.json({ CompanyInfo: { Id: "123456789", Country: "US" } })
+      : url.pathname.endsWith("/customer/51")
+        ? Response.json({ Customer: { Id: "51", Active: true, CurrencyRef: { value: "USD" } } })
+        : url.pathname.endsWith("/item/7")
+          ? Response.json({ Item: { Id: "7", Active: true, Type: "Service" } })
+          : malformed
+            ? Response.json({ Invoice: { Id: "61", SyncToken: "0" } })
+            : Response.json({
+                Invoice: {
+                  Id: "61",
+                  EmailStatus: emailStatus,
+                  SyncToken: "0",
+                  DocNumber: "SERVICES-1",
+                  CustomerRef: { value: "51" },
+                  CurrencyRef: { value: "USD" },
+                  TotalAmt: 12.44,
+                  Line: [0.1, 12.34].map((Amount) => ({
+                    Amount,
+                    DetailType: "SalesItemLineDetail",
+                    SalesItemLineDetail: { ItemRef: { value: "7" } },
+                  })),
+                },
+              }),
+  );
+  const created = await world.call("create_invoice", invoiceArgs);
+  expect(created).toMatchObject({ Id: "61", SyncToken: "0", TotalAmt: 12.44 });
+  expect(world.sends.map((send) => send.method)).toEqual(["GET", "GET", "GET", "POST"]);
+  const sent = world.sends[3]!;
+  expect(sent.url.pathname).toBe("/v3/company/123456789/invoice");
+  expect(sent.url.searchParams.get("requestid")).toBe("invoice-intent-1");
+  expect(sent.body).toEqual({
+    CustomerRef: { value: "51" },
+    CurrencyRef: { value: "USD" },
+    ExchangeRate: 1,
+    TxnDate: "2026-10-27",
+    DueDate: "2026-11-27",
+    DocNumber: "SERVICES-1",
+    Line: [0.1, 12.34].map((Amount) => ({
+      Amount,
+      DetailType: "SalesItemLineDetail",
+      SalesItemLineDetail: { ItemRef: { value: "7" }, Qty: 1, UnitPrice: Amount },
+    })),
+    EmailStatus: "NotSet",
+    AllowIPNPayment: false,
+    AllowOnlinePayment: false,
+    AllowOnlineCreditCardPayment: false,
+    AllowOnlineACHPayment: false,
+    AllowOnlinePayPalPayment: false,
+    AllowOnlineAffirmPayment: false,
+  });
+  await expect(world.call("create_invoice", { ...invoiceArgs, EmailStatus: "NeedToSend" })).rejects.toMatchObject({
+    code: "invalid_args",
+  });
+  expect(world.sends).toHaveLength(4);
+  malformed = true;
+  await expect(world.call("create_invoice", { ...invoiceArgs, requestId: "invoice-intent-2" })).rejects.toMatchObject({
+    retryable: false,
+    writeOutcome: "unknown",
+  });
+  expect(world.sends.filter((send) => send.method === "POST")).toHaveLength(2);
+  malformed = false;
+  emailStatus = "NeedToSend";
+  await expect(world.call("create_invoice", { ...invoiceArgs, requestId: "invoice-intent-3" })).rejects.toMatchObject({
+    retryable: false,
+    writeOutcome: "unknown",
+  });
+  expect(world.sends.filter((send) => send.method === "POST")).toHaveLength(3);
+});
+
+it("INV-9: refuses inventory items and non-US companies before any accounting mutation", async () => {
+  const world = await connected(true);
+  world.handle((url) =>
+    url.pathname.endsWith("/companyinfo/123456789")
+      ? Response.json({ CompanyInfo: { Id: "123456789", Country: "US" } })
+      : url.pathname.endsWith("/customer/51")
+        ? Response.json({ Customer: { Id: "51", Active: true, CurrencyRef: { value: "USD" } } })
+        : Response.json({ Item: { Id: "7", Active: true, Type: "Inventory" } }),
+  );
+  await expect(world.call("create_invoice", invoiceArgs)).rejects.toMatchObject({ code: "invalid_args" });
+  expect(world.sends.map((send) => send.method)).toEqual(["GET", "GET", "GET"]);
+  world.handle(() => Response.json({ CompanyInfo: { Id: "123456789", Country: "CA" } }));
+  await expect(world.call("create_invoice", invoiceArgs)).rejects.toMatchObject({ code: "invalid_args" });
+  expect(world.sends.map((send) => send.method)).toEqual(["GET", "GET", "GET", "GET"]);
+});
+
+it("INV-2: defaults read-only and refuses malformed writes before validation, auth or I/O", async () => {
+  const { CatalogService } = await import("../../catalog-service.js");
+  const { createMetaTools } = await import("../../meta-tools.js");
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  for (const readOnly of [undefined, true, false]) {
+    const connector = fixture.create("accounting", readOnly === undefined ? {} : { readOnly });
+    expect(connector.readOnly).toBe(readOnly !== false);
+    const registry = makeRegistry([connector]);
+    const catalog = new CatalogService(registry, "https://connecta.example");
+    const page = await catalog.search({ connector: "accounting", safety: "all" });
+    expect(page.entries.some((entry) => entry.tool.address === "accounting.create_customer")).toBe(readOnly === false);
+    const meta = createMetaTools(registry, "https://connecta.example", { readOnly: readOnly === false });
+    const result = await meta.callDestructiveTool({
+      address: "accounting.create_customer",
+      args: { requestId: null, arbitrary: true },
+    });
+    expect(result.structuredContent).toMatchObject({ error: { code: "read_only_endpoint" } });
+  }
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("INV-9 INV-5: never replays dispatched customer writes after authentication, transport, server or malformed-success failures", async () => {
+  const world = await connected(true);
+  const replies = [
+    () => Response.json({ Fault: { Error: [{ code: "private", Message: "private vendor prose" }] } }, { status: 401 }),
+    () => {
+      throw new TypeError("private transport prose");
+    },
+    () => Response.json({ private: "private vendor prose" }, { status: 500 }),
+    () => Response.json({}),
+    () =>
+      Response.json({
+        Fault: { Error: [{ code: "6240", Message: "private vendor prose" }] },
+        Customer: { Id: "51", SyncToken: "0", DisplayName: "Studio" },
+      }),
+  ];
+  for (const [index, reply] of replies.entries()) {
+    const before = world.sends.length;
+    world.handle(reply);
+    let failed: unknown;
+    try {
+      await world.call("create_customer", { requestId: `unknown-intent-${index}`, DisplayName: "Studio" });
+    } catch (error) {
+      failed = error;
+    }
+    expect(failed).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(String(failed)).not.toContain("private");
+    expect(world.sends.length - before).toBe(1);
   }
 });

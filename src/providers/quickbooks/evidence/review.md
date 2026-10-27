@@ -1,4 +1,4 @@
-# QuickBooks Online read provider — contributor review
+# QuickBooks Online provider — contributor review
 
 Reviewed 2026-10-26. This is a hand-authored, restricted Accounting API v3
 adapter. No verified official REST OpenAPI was found; none is invented here.
@@ -20,7 +20,7 @@ No SDK source, generated SDK code or XSD bytes are redistributed.
 is Apache-2.0 and includes `Copyright 2016 Intuit, Inc.`. This attribution and
 the immutable links record provenance; no third-party archive is bundled.
 The XSD's desktop-only fields and broad entity set do not establish Online
-availability. We retain only explicitly reviewed read fields.
+availability. We retain only explicitly reviewed accounting response fields.
 
 ## REST and OAuth sources
 
@@ -102,3 +102,86 @@ labels is withheld, including embedded signed destinations. Errors withhold
 vendor prose entirely. Fields selection only narrows this already-safe result;
 no option widens it. Report cells preserve strings and empty values, with the
 same URL boundary. No binary content is supported.
+
+## Bounded write follow-on (#1079)
+
+Reviewed 2026-10-27 against the current official public documentation feed
+(split by Source in memory; no archive retained) and Intuit's official SDK.
+The named surface adds customer creation, sparse naming updates and invoice
+creation. No auth, storage or runtime dependencies change. POST contracts are
+indexed for value safety and discovery refusal, never a write hatch.
+
+- [Basic fields / request ID](https://developer.intuit.com/app/developer/qbo/docs/learn/learn-basic-field-definitions#request-id)
+  establishes a query parameter named requestid, uniqueness across requests for
+  one realm, maximum 50 characters outside batch, and recognition of repeated
+  content plus ID with the original response. It establishes no retention
+  duration. The narrower ASCII syntax is local policy. The kit's header-key
+  facility is deliberately unused; requestId is a required named argument,
+  and no duplicate-safe replay advice is inferred from it.
+- [Accounting API update operations](https://developer.intuit.com/app/developer/qbo/docs/learn/explore-the-quickbooks-online-api)
+  and the [official PHP synchronous-call guide](https://developer.intuit.com/app/developer/qbo/docs/develop/sdks-and-samples-collections/php/synchronous-calls)
+  establish that sparse:true changes supplied fields and preserves omitted
+  fields. The pinned Java IntuitEntity schema above establishes Id/SyncToken
+  concurrency. [Common errors](https://developer.intuit.com/app/developer/qbo/docs/develop/troubleshooting/handling-common-errors)
+  identifies stale version 5010 and duplicate name 6240, including DisplayName
+  uniqueness across Customer/Vendor/Employee. Only those facts and existing 610
+  are allowlisted; wording never includes vendor prose. No version is fetched
+  or substituted on an update failure.
+- The official PHP SDK at
+  [8bf471f08c39dffc4851f4d0714d43366a1ae857](https://github.com/intuit/QuickBooks-V3-PHP-SDK/tree/8bf471f08c39dffc4851f4d0714d43366a1ae857/src/_Samples)
+  supplies CustomerCreate.php and CustomerSparseUpdate.php for the naming
+  fields and sparse update. InvoiceCreate.php corroborates SalesItemLineDetail
+  with ItemRef, Amount and CustomerRef. SDK examples are field evidence, not
+  proof of no-email behavior; broad contact fields in examples are excluded.
+  No SDK bytes are copied, compiled or redistributed.
+- [Invoice workflow](https://developer.intuit.com/app/developer/qbo/docs/workflows/create-an-invoice)
+  and [REST features](https://developer.intuit.com/app/developer/qbo/docs/learn/rest-api-features)
+  establish POST /v3/company/{realmId}/invoice and its line/reference body.
+  [Multicurrency](https://developer.intuit.com/app/developer/qbo/docs/workflows/manage-multiple-currencies)
+  defines CurrencyRef, home-units-per-foreign-unit ExchangeRate and computed
+  totals. The workflow explicitly describes vendor-computed sales tax. The
+  pinned Java Transaction/SalesTransaction/Invoice and ItemLineDetail schemas
+  corroborate dates, DocNumber (21-character QBO limit and AUTO_GENERATE
+  sentinel), references, price/quantity and payment flags. The caller supplies
+  dates/rate/number/prices; no mutable defaults are silently substituted.
+  Preflight reads verify US company identity, active USD customer and active Service items,
+  without implying an atomic snapshot or a tax-free total. Two-decimal amount
+  strings and six-decimal rate precision are conservative local bounds;
+  conversion encodes JSON numbers without multiplication, addition or cents
+  conversion. Unsupported company/locale tax requirements fail at Intuit.
+
+### Invoice email safety and deferred updates
+
+The authoritative [basic invoicing implementation, Configure invoice autosend](https://developer.intuit.com/app/developer/qbo/docs/develop/basic-implementations/basic-invoicing-implementation#configure-invoice-autosend)
+was present in the current official feed. The official
+[August 2026 release note](https://developer.intuit.com/app/developer/qbo/docs/release-notes/general-release-notes)
+links that documentation addition. This is vendor documentation, not the
+community anecdotes or SDK field examples previously available.
+
+It documents US imported-invoice autosend requiring Payments activation, a
+customer email, company opt-in under Sales / Automatically send imported
+invoices, and online credit-card or ACH acceptance. Its Accounting API
+instructions additionally require EmailStatus NeedToSend with BillEmail.
+Creation first reads the fixed CompanyInfo and requires Country US; it also
+requires a USD customer and caller-specified USD to bound decimal precision.
+Other companies/currencies fail before POST. Our inference from those
+documented required conditions: an explicit NotSet
+creation request, with payment flags disabled, does not request this autosend
+behavior even when company opt-in and a stored customer email exist. The fixed
+body sets NotSet and IPN/online/card/ACH/PayPal/Affirm flags false, omits email
+fields, uses only the accounting scope and never invokes /send. Current official
+[Sales Order invoice responses](https://developer.intuit.com/app/developer/qbo/docs/workflows/manage-sales-orders/use-cases)
+also corroborate the PayPal/Affirm flags. The pinned official PHP SDK's
+[IPPInvoice model](https://github.com/intuit/QuickBooks-V3-PHP-SDK/blob/8bf471f08c39dffc4851f4d0714d43366a1ae857/src/Data/IPPInvoice.php)
+defines both as writable boolean properties; these fields are not inferred
+solely from a sample response. None of these values is caller configurable. This is a real accounting invoice, never a draft. Contradictory returned email/payment states fail as unknown outcomes instead
+of confirming an unsent creation. No claim is made about unrelated automations
+operated by other integrations.
+
+Invoice updates are deliberately deferred. The public REST/GraphQL comparison
+shows a sparse DueDate update, but it does not establish suppression of email
+when an existing invoice retains NeedToSend and enabled payment settings.
+Disabling those values would alter more than the intended date/number fields.
+Unblock update_invoice with authoritative update-specific no-email evidence
+that preserves existing payment/delivery settings, or an explicitly approved
+broader update contract. No update or arbitrary mutation hatch is exposed.

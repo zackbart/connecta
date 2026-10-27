@@ -27,6 +27,8 @@ export interface QuickBooksOptions extends ProviderOptions {
   clientSecret: string;
   /** Default rows per search: 25, at most 100. */
   defaultPageSize?: number;
+  /** Defaults to true. Explicit false enables the bounded named writes. */
+  readOnly?: boolean;
 }
 
 const OPTIONS = optionsOf<QuickBooksOptions>()({
@@ -62,7 +64,7 @@ export const quickbooks = defineApiProvider<QuickBooksOptions>({
   options: OPTIONS,
   displayTitle: (options) => `QuickBooks Online (${options.environment})`,
   description: (options) =>
-    `QuickBooks Online accounting reads, company ${options.realmId} (${options.environment}): ${options.purpose}`,
+    `QuickBooks Online accounting, company ${options.realmId} (${options.environment}): ${options.purpose}`,
   vendor: QuickBooksApi,
   baseUrl,
   maxResponseBytes: 4 * 1024 * 1024,
@@ -85,11 +87,12 @@ export const quickbooks = defineApiProvider<QuickBooksOptions>({
   guide: (options) => ({
     context: [
       `Company ${options.realmId}, ${options.environment}: ${options.purpose}`,
-      "Only reviewed accounting reads are exposed. Intuit's accounting consent scope also permits writes outside this connector.",
+      options.readOnly === false
+        ? "Bounded named writes are enabled. The API hatch remains read-only."
+        : "This connection is read-only. Set readOnly: false in deployment code to enable bounded named writes.",
       "Contact details, bank/card/tax identifiers, credentials and private links are withheld on every read.",
     ],
-    summary:
-      "QuickBooks Online accounting reads: company identity, record joins, decimal money and hierarchical reports.",
+    summary: "QuickBooks Online accounting reads and explicitly enabled customer/service-invoice writes.",
     required: true,
   }),
   hatch: {
@@ -104,5 +107,20 @@ export const quickbooks = defineApiProvider<QuickBooksOptions>({
       read: "Only reviewed record, company and report reads. Use search_records for bounded structured queries; raw SQL is refused.",
     }),
   },
+  // The existing common option defaults writable elsewhere. This provider requires explicit opt-in.
+  tagConnector: (connector, options) => {
+    Object.defineProperty(connector, "readOnly", {
+      value: options.readOnly !== false,
+      enumerable: true,
+      configurable: true,
+    });
+  },
+  transformGuide: (guide) => ({
+    ...guide,
+    content: guide.content.replace(
+      "Writes take no idempotency key.",
+      "Every named write requires requestId, sent as Intuit's requestid query parameter; no idempotencyKey header argument is accepted.",
+    ),
+  }),
   tools: quickbooksTools,
 });

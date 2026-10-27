@@ -1,3 +1,4 @@
+import { quickbooksWrites } from "./lib/writes.js";
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
@@ -42,6 +43,7 @@ export function quickbooksTools({
   options: Readonly<QuickBooksOptions>;
 }): ApiTool[] {
   return [
+    ...quickbooksWrites(connection, options.realmId),
     getTool(connection, {
       name: "get_company_info",
       description: "Read the configured company's accounting identity without contact or tax identifiers.",

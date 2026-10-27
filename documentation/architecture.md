@@ -2276,7 +2276,7 @@ A refused method outside a read/write tool's input schema is inspected through
 Gmail's 49 non-GET refusals do not add a method field or a write hatch, and Forms'
 refused DELETE remains outside its write enum. GitHub's refused raw PUT merge
 is likewise outside its write enum; its named guarded alternative is unaffected.
-These 51 schema refusals happen
+Such schema refusals happen
 before authentication or I/O; details exposes the same reviewed reason as search.
 Every schema-reachable refused operation still fails with that reason before
 authentication or dispatch. This is policy inspection, never execution admission.

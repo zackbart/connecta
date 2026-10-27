@@ -17,7 +17,9 @@
       "GET /reports/BalanceSheet",
       "GET /reports/CashFlow",
       "GET /reports/ProfitAndLoss",
-      "GET /vendor/{id}"
+      "GET /vendor/{id}",
+      "POST /customer",
+      "POST /invoice"
     ],
     "evidence": {}
   },
@@ -33,6 +35,12 @@
       "source": "https://developer.intuit.com/.well-known/openid_configuration",
       "reason": "Compare the authorization/token endpoints and Intuit's OAuth policy with the fixed deployment-owned app configuration. Confirm one-hour access tokens, rolling 100-day refresh validity and absolute five-year reauthorization, minor-version policy and modern report semantics against the primary sources recorded in evidence/review.md; discovery does not describe those policies.",
       "lastVerified": "2026-10-26"
+    },
+    {
+      "type": "manual",
+      "source": "https://developer.intuit.com/app/developer/qbo/docs/develop/basic-implementations/basic-invoicing-implementation#configure-invoice-autosend",
+      "reason": "Compare the current autosend prerequisites, fixed NotSet/payment-disabled invoice creation body, requestid query semantics, sparse customer updates and 5010/6240 faults against the primary sources in evidence/review.md. No verified official REST OpenAPI is available; SDK field definitions alone do not prove email behavior. Invoice updates remain deferred.",
+      "lastVerified": "2026-10-27"
     }
   ]
 }

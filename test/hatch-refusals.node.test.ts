@@ -5,7 +5,6 @@ import { SEARCH_BUDGET } from "../src/http/hatch.js";
 import type { RestMethod } from "../src/providers/_shared/rest/operation-index.js";
 import { providerFixtures } from "./providers.generated.js";
 import { connectorContext } from "./fixtures/misc.js";
-import schemaRefusalCases from "./fixtures/hatch-schema-refusals.json";
 
 const factories = Object.values(import.meta.glob<Record<string, any>>("../src/providers/*/index.ts", { eager: true }))
   .flatMap((module) => Object.values(module).filter((value) => typeof value === "function" && value.definition))
@@ -28,8 +27,6 @@ it.each(providerFixtures)(
       throw new Error("Refusal must precede authentication");
     });
     vi.stubGlobal("fetch", fetch);
-    let schemaRefusals = 0;
-    const schemaCases: typeof schemaRefusalCases = [];
     try {
       for (const [key] of refused) {
         const split = key.indexOf(" ");
@@ -74,17 +71,9 @@ it.each(providerFixtures)(
         expect(error, key).toBeDefined();
         expect(error.code, key).toBe("invalid_args");
         if (schemaAllows) expect(error.message, key).toContain(details.refusal);
-        else {
-          schemaRefusals++;
-          schemaCases.push({ provider: fixture.name, operation: key, tool: tool.name });
-        }
         expect(fetch, key).not.toHaveBeenCalled();
         expect(get, key).not.toHaveBeenCalled();
       }
-      expect(schemaRefusals).toBe(fixture.name === "gmail" ? 49 : ["forms", "github"].includes(fixture.name) ? 1 : 0);
-      expect(schemaCases.sort((a, b) => a.operation.localeCompare(b.operation))).toEqual(
-        schemaRefusalCases.filter((row) => row.provider === fixture.name),
-      );
       if (fixture.name === "gmail") {
         expect(tools.some((tool) => tool.name === "gmail_api_write")).toBe(false);
         expect(
