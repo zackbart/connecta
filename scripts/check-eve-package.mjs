@@ -59,6 +59,11 @@ try {
     assert.equal((await connection.auth.getToken()).token, token);
     token = "cta_rotated";
     assert.equal((await connection.auth.getToken()).token, token);
+    const dynamic = connectaConnection({ url: "https://connecta.example.com", pool: async () => "notes_alice", description: "Notes", getToken: () => token });
+    const selected = await dynamic.evaluate({});
+    assert.equal(selected.url, "https://connecta.example.com/agent/notes_alice");
+    assert.equal(selected.instanceKey, "notes_alice");
+    assert.equal((await selected.auth.getToken()).token, token);
     assert.equal(await connection.approval({ toolName: "write" }), "not-applicable");
     assert.equal(gateConnectaWrites({ toolName: "write" }), "user-approval");
     const instructions = connectaInstructions({ url: connection.url, getToken: () => token, fetch: async () => Response.json({ result: { instructions: "CRM guidance" } }) });
@@ -73,17 +78,23 @@ try {
   await writeFile(
     join(work, "check.ts"),
     `
-    import { connectaConnection, connectaInstructions, gateConnectaWrites } from "./contract.js";
-    import { defineMcpClientConnection } from "eve/connections";
+    import { connectaConnection, connectaInstructions, gateConnectaWrites, type ConnectaConnectionOptions, type ConnectaInstructionsOptions, type ConnectaPoolSelector } from "./contract.js";
+    import { defineMcpClientConnection, defineDynamic as defineDynamicConnection } from "eve/connections";
     import { defineDynamic } from "eve/instructions";
     import { never } from "eve/tools/approval";
     type IsAny<T> = 0 extends (1 & T) ? true : false;
     const connectionIsAny: IsAny<ReturnType<typeof connectaConnection>> = false;
     const instructionsAreAny: IsAny<ReturnType<typeof connectaInstructions>> = false;
     const connection: ReturnType<typeof defineMcpClientConnection> = connectaConnection({ description: "CRM", approval: never() });
+    const staticPool: ReturnType<typeof defineMcpClientConnection> = connectaConnection({ pool: "assistant", description: "CRM" });
+    const selector: ConnectaPoolSelector = (ctx) => ctx.memo(ctx.turn?.id ?? null, () => "notes_alice");
+    const dynamic: ReturnType<typeof defineDynamicConnection> = connectaConnection({ pool: selector, description: "Notes" });
+    const connectionOptions: ConnectaConnectionOptions = { pool: selector, description: "Notes" };
+    const instructionOptions: ConnectaInstructionsOptions = { pool: selector, clientName: "assistant-guidance" };
+    const dynamicInstructions: ReturnType<typeof defineDynamic> = connectaInstructions(instructionOptions);
     const instructions: ReturnType<typeof defineDynamic> = connectaInstructions();
     const gate: typeof connection.approval = gateConnectaWrites;
-    void [connectionIsAny, instructionsAreAny, connection, instructions, gate];
+    void [connectionIsAny, instructionsAreAny, connection, staticPool, dynamic, connectionOptions, dynamicInstructions, instructions, gate];
   `,
   );
   await writeFile(
