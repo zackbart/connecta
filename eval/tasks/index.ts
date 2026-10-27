@@ -1,3 +1,4 @@
+import { QUICKBOOKS_WRITE_TASK } from "./quickbooks-writes.js";
 import { QUICKBOOKS_TASK } from "./quickbooks.js";
 import { GOOGLE_TASKS } from "./google.js";
 import { BASELINE_TASKS } from "./baseline.js";
@@ -23,6 +24,7 @@ export const COMPARISON_TASKS: ActiveTask[] = [
 ];
 export const ACTIVE_TASKS: ActiveTask[] = [
   QUICKBOOKS_TASK,
+  QUICKBOOKS_WRITE_TASK,
   ...COMPARISON_TASKS,
   ...REST_TASKS,
   ...TITHELY_TASKS,

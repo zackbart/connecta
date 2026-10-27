@@ -43,6 +43,7 @@ const SCENARIOS: Record<string, string> = {
   "google-sheets-3": "page whole rows across ranges and retain every requested cell",
   "google-slides-7": "report a saved deck separately from an unconfirmed comment",
   "quickbooks-accounting-journey": "actual company accounting, consent, restart, rotation, privacy and isolation",
+  "quickbooks-write-journey": "actual names, CAS conflict, unsent invoices and read reconciliation",
 };
 
 const args = flags(process.argv.slice(2));
@@ -176,6 +177,18 @@ async function run() {
       fakeGrade,
     );
   }
+  const qbWrites = references.find((t) => t.task === "quickbooks-write-journey");
+  if (qbWrites) {
+    for (const mode of ["no-dispatch", "duplicate", "fabricated-state"] as const) {
+      const fabricated = structuredClone(qbWrites);
+      const world = fabricated.saved!.world;
+      if (mode === "no-dispatch") world.calls = world.calls.filter((c) => c.kind !== "write");
+      if (mode === "duplicate") world.calls.push(structuredClone(world.calls.find((c) => c.kind === "write")!));
+      if (mode === "fabricated-state") world.quickbooks!.companies["111111"]!.Invoice.pop();
+      const grade = regradeTrial(task(qbWrites.task), fabricated, "codex", "outcome");
+      record(`control: QuickBooks ${mode} fails`, !passed(grade), failedChecks(grade), grade);
+    }
+  }
   if (selected) return;
 
   // ----------------------------------------------- no-false-pass controls
@@ -183,6 +196,8 @@ async function run() {
   // Keep the real vendor ledger, continuations and canned answer intact while
   // deleting the facts delivered over MCP. Calls alone cannot prove a read.
   for (const id of [
+    "quickbooks-accounting-journey",
+    "quickbooks-write-journey",
     "ccb-advanced-search",
     "pco-step2-plan-join",
     "overflow-donor-paging",

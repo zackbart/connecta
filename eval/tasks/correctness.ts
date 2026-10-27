@@ -12,7 +12,8 @@ export function deliveredValues(trace: AgentTrace): any[] {
     else if (value && typeof value === "object") Object.values(value).forEach(visit);
   };
   for (const use of trace.toolUses) {
-    if (use.isError || !["call_tool", "execute_code", "read_result"].includes(use.tool)) continue;
+    if (use.isError || !["call_tool", "call_destructive_tool", "execute_code", "read_result"].includes(use.tool))
+      continue;
     const texts = use.resultBlocks?.flatMap((block) =>
       block.type === "text" && typeof block.text === "string" ? [block.text] : [],
     );

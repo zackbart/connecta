@@ -155,11 +155,11 @@ var options11 = { purpose: "Accounting fixture", realmId: "123456789", environme
 var fixture11 = {
   name: "quickbooks",
   options: options11,
-  cases: [{ label: "production", options: { environment: "production" } }, { label: "personal", options: { authScope: "personal" } }],
+  cases: [{ label: "writes", options: { readOnly: false } }, { label: "production", options: { environment: "production" } }, { label: "personal", options: { authScope: "personal" } }],
   create(id = "fixture", overrides = {}) {
     return quickbooks(id, { ...options11, ...overrides });
   },
-  conventions: { verbs: ["get", "search", "quickbooks"], nestedDescriptionExceptions: [], auth: "oauth" }
+  conventions: { verbs: ["get", "search", "create", "update", "quickbooks"], nestedDescriptionExceptions: [], auth: "oauth" }
 };
 
 // src/providers/sheets/fixtures.ts

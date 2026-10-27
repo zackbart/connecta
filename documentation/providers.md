@@ -172,12 +172,12 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>QuickBooks Online (7 tools)</summary>
+<summary>QuickBooks Online (10 tools)</summary>
 
 [Setup](#quickbooks-online). **API source:** Hand-authored endpoint contracts. No vendored OpenAPI document.
 
 - **Named reads:** `get_company_info`, `get_record`, `get_report`, `search_records`.
-- **Named writes:** None.
+- **Named writes:** `create_customer`, `create_invoice`, `update_customer`.
 - **API reads:** `quickbooks_api_details`, `quickbooks_api_read`, `quickbooks_api_search`.
 - **API writes:** None.
 
@@ -1249,8 +1249,10 @@ not supported.
 OAuth defaults to one shared grant; `authScope: "personal"` instead gives each
 owner a grant for the same fixed company. The requested
 `com.intuit.quickbooks.accounting` scope permits both reads and writes at Intuit.
-This provider exposes only reads and enforces that boundary locally even on a
-writable Connecta endpoint. It reuses sealed grants, coordinated refresh,
+This provider defaults to `readOnly: true`. Set `readOnly: false` explicitly in
+deployment code to enable the three bounded named writes below. Connector,
+endpoint and pool read-only policy still refuses writes before validation or
+dispatch. It reuses sealed grants, coordinated refresh,
 rotation and revocation. Access tokens last one hour; refresh authorization
 requires use within 100 days and expires absolutely after five years. Reconnect
 when Intuit requires consent again. Do not assume refresh extends the absolute
@@ -1281,8 +1283,55 @@ use the supported minor-version floor 75.
 operations. `quickbooks_api_read` reaches only indexed record/company/report
 GETs inside this company's configured host and path. `/query` is refused;
 use the named structured search. Unreviewed entities, arbitrary SQL, URL,
-realm, scope and token overrides and every write are unavailable. Desktop,
+realm, scope and token overrides and arbitrary writes are unavailable. Desktop,
 Payments and Payroll APIs are outside this provider.
+
+With `readOnly: false`, `create_customer` accepts only DisplayName and optional
+CompanyName. `update_customer` requires caller-observed Id and SyncToken and
+uses `sparse: true` for those naming fields; a stale version fails without a
+version fetch or overwrite. DisplayName must be unique across customers,
+vendors and employees.
+
+`create_invoice` creates a real accounting transaction, never a draft, only
+for a verified US company and a customer using USD. The reviewed autosend
+contract is US-specific; the initial money contract uses two-decimal USD
+units. It requires an observed active customer, currency USD, an explicit positive
+exchange rate, transaction/due dates, DocNumber and 1–20 active Service-item
+lines. Amounts are positive decimal-unit strings with exactly two fractional
+digits, at most 999999999.99 per line. Every line explicitly supplies one unit
+and its price. Preflight reads verify the fixed company Country is US, then
+recheck the customer currency and item type and activity; they are not an atomic snapshot. No default prices, dates or rates,
+and no implicit customer/item creation, are used. QuickBooks computes taxes and
+totals, and locale/company rules may reject the narrow request. Inspect the
+returned CurrencyRef, ExchangeRate and totals.
+Each request after the first charges the same call-admission budget before
+dispatch. Returned references, dates, rate and service prices must match the
+admitted intent; contradictions produce an unknown, non-retryable outcome.
+
+Creation fixes EmailStatus to `NotSet` and IPN/online/card/ACH/PayPal/Affirm
+payment flags to false, accepts no email fields, and never calls a send endpoint.
+Intuit's documented autosend path requires company opt-in, enabled online
+payments and `NeedToSend` with BillEmail; the fixed creation body withholds
+those request conditions. Invoice updates remain unavailable because retaining
+an existing send-ready state is not established safe, and resetting that state
+would change existing payment settings. Deletes, voids, delivery, payment
+execution, batch and other accounting writes remain unavailable. The API hatch
+refuses POSTs even when named writes are enabled.
+
+Each write requires `requestId`, a stable identifier for the exact intent,
+unique across all requests/tools for this company: 1–50 ASCII letters, digits,
+underscores or hyphens, beginning with a letter or digit. It is sent as Intuit's
+`requestid` query parameter with minorversion 75. The vendor recognizes repeated
+content and ID; no retention duration is established. This never permits
+Connecta to replay automatically: every dispatched write has one attempt,
+including 401, timeout, server failure and malformed success.
+
+Reconcile an unknown create through reads before another intent: customer
+DisplayName (including inactive matches when relevant), or invoice DocNumber
+plus CustomerRef and currency, dates, lines and computed amounts. DocNumber may
+repeat and is not proof by itself. Do not blindly create again with a new ID;
+report ambiguity. Reconcile unknown updates by the known record Id and version.
+The requestId supplies no lookup endpoint or permanent retention guarantee.
 
 All named and hatch responses apply the same closed privacy projection before
 `fields` narrows it. Public Id and SyncToken versions, accounting references,

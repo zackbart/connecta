@@ -10,10 +10,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function connected() {
+async function connected(writes = false, maxCalls?: number) {
   const requests: URL[] = [];
   let answer: unknown = {};
   let status = 200;
+  let handle: ((url: URL, init: RequestInit) => Response) | undefined;
+  const sends: { url: URL; method: string; body: unknown }[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: URL | string, init: RequestInit = {}) => {
@@ -32,10 +34,20 @@ async function connected() {
       expect(url.searchParams.get("minorversion")).toBe("75");
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer fixture-access-token");
       requests.push(url);
-      return Response.json(answer, { status });
+      sends.push({ url, method: init.method ?? "GET", body: init.body ? JSON.parse(String(init.body)) : undefined });
+      return handle ? handle(url, init) : Response.json(answer, { status });
     }),
   );
-  const connector = fixture.create("accounting");
+  const connector = fixture.create("accounting", {
+    ...(writes ? { readOnly: false } : {}),
+    ...(maxCalls === undefined
+      ? {}
+      : {
+          callAdmission: {
+            rules: [{ maxConcurrency: 1, budget: { kind: "rolling-window" as const, maxCalls, windowMs: 60_000 } }],
+          },
+        }),
+  });
   const registry = makeRegistry([connector]);
   const ctx = () => registry.contextFor("accounting", "https://connecta.example");
   const started = await connector.startAuth!(ctx());
@@ -44,8 +56,13 @@ async function connected() {
   await connector.finishAuth!("company-code", ctx(), new URLSearchParams({ state, realmId: "123456789" }));
   return {
     connector,
+    registry,
     requests,
+    sends,
     ctx,
+    handle: (next: (url: URL, init: RequestInit) => Response) => {
+      handle = next;
+    },
     respond: (value: unknown, nextStatus = 200) => {
       answer = value;
       status = nextStatus;
@@ -140,4 +157,150 @@ it("INV-5: preserves legitimate empty query and report responses", async () => {
     world.respond(report);
     expect(await world.call("get_report", { report: "ProfitAndLoss" })).toEqual(report);
   }
+});
+
+const invoiceArgs = {
+  requestId: "invoice-intent-1",
+  customerId: "51",
+  currency: "USD",
+  exchangeRate: "1",
+  txnDate: "2026-10-27",
+  dueDate: "2026-11-27",
+  docNumber: "SERVICES-1",
+  lines: [
+    { itemId: "7", amount: "0.10" },
+    { itemId: "7", amount: "12.34" },
+  ],
+};
+it("INV-7: charges every sequential invoice request against the existing admission permit before dispatch", async () => {
+  const { createMetaTools } = await import("../../meta-tools.js");
+  for (const maxCalls of [1, 2, 3]) {
+    const world = await connected(true, maxCalls);
+    world.handle((url) =>
+      Response.json(
+        url.pathname.includes("companyinfo")
+          ? { CompanyInfo: { Id: "123456789", Country: "US" } }
+          : url.pathname.includes("customer")
+            ? { Customer: { Id: "51", Active: true, CurrencyRef: { value: "USD" } } }
+            : { Item: { Id: "7", Active: true, Type: "Service" } },
+      ),
+    );
+    const refused = await createMetaTools(world.registry, "https://connecta.example").callDestructiveTool({
+      address: "accounting.create_invoice",
+      args: invoiceArgs,
+    });
+    expect(refused.isError).toBe(true);
+    expect(world.sends.map((send) => send.method)).toEqual(Array(maxCalls).fill("GET"));
+    expect(world.registry.callAdmissionSnapshot()["accounting"]).toMatchObject({ active: 0, queued: 0 });
+  }
+});
+it("INV-9: incomplete invoice successes and accounting or delivery contradictions remain unknown outcomes", async () => {
+  const world = await connected(true);
+  let malformed = false;
+  let emailStatus = "NotSet";
+  let contradiction: Record<string, unknown> = {};
+  world.handle((url) =>
+    url.pathname.endsWith("/companyinfo/123456789")
+      ? Response.json({ CompanyInfo: { Id: "123456789", Country: "US" } })
+      : url.pathname.endsWith("/customer/51")
+        ? Response.json({ Customer: { Id: "51", Active: true, CurrencyRef: { value: "USD" } } })
+        : url.pathname.endsWith("/item/7")
+          ? Response.json({ Item: { Id: "7", Active: true, Type: "Service" } })
+          : malformed
+            ? Response.json({ Invoice: { Id: "61", SyncToken: "0" } })
+            : Response.json({
+                Invoice: {
+                  Id: "61",
+                  EmailStatus: emailStatus,
+                  SyncToken: "0",
+                  DocNumber: "SERVICES-1",
+                  TxnDate: invoiceArgs.txnDate,
+                  DueDate: invoiceArgs.dueDate,
+                  CustomerRef: { value: "51" },
+                  CurrencyRef: { value: "USD" },
+                  TotalAmt: 12.44,
+                  Line: [0.1, 12.34].map((Amount) => ({
+                    Amount,
+                    DetailType: "SalesItemLineDetail",
+                    SalesItemLineDetail: { ItemRef: { value: "7" }, Qty: 1, UnitPrice: Amount },
+                  })),
+                  ...contradiction,
+                },
+              }),
+  );
+  malformed = true;
+  await expect(world.call("create_invoice", { ...invoiceArgs, requestId: "invoice-intent-2" })).rejects.toMatchObject({
+    retryable: false,
+    writeOutcome: "unknown",
+  });
+  expect(world.sends.filter((send) => send.method === "POST")).toHaveLength(1);
+  malformed = false;
+  emailStatus = "NeedToSend";
+  await expect(world.call("create_invoice", { ...invoiceArgs, requestId: "invoice-intent-3" })).rejects.toMatchObject({
+    retryable: false,
+    writeOutcome: "unknown",
+  });
+  expect(world.sends.filter((send) => send.method === "POST")).toHaveLength(2);
+  emailStatus = "NotSet";
+  for (const changed of [
+    { CustomerRef: { value: "999" }, CurrencyRef: { value: "EUR" }, DocNumber: "UNRELATED-OLD-INVOICE" },
+    { ExchangeRate: "not-a-number" },
+    {
+      Line: [
+        {
+          Amount: 99,
+          DetailType: "SalesItemLineDetail",
+          SalesItemLineDetail: { ItemRef: { value: "7" }, Qty: 1, UnitPrice: 99 },
+        },
+      ],
+    },
+  ]) {
+    contradiction = changed;
+    const before = world.sends.filter((send) => send.method === "POST").length;
+    await expect(
+      world.call("create_invoice", { ...invoiceArgs, requestId: `contradiction-${before}` }),
+    ).rejects.toMatchObject({
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(world.sends.filter((send) => send.method === "POST")).toHaveLength(before + 1);
+  }
+});
+
+it("INV-2: defaults read-only and refuses malformed writes before validation, auth or I/O", async () => {
+  const { CatalogService } = await import("../../catalog-service.js");
+  const { createMetaTools } = await import("../../meta-tools.js");
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  for (const readOnly of [undefined, true, false]) {
+    const connector = fixture.create("accounting", readOnly === undefined ? {} : { readOnly });
+    expect(connector.readOnly).toBe(readOnly !== false);
+    const registry = makeRegistry([connector]);
+    const catalog = new CatalogService(registry, "https://connecta.example");
+    const page = await catalog.search({ connector: "accounting", safety: "all" });
+    expect(page.entries.some((entry) => entry.tool.address === "accounting.create_customer")).toBe(readOnly === false);
+    const meta = createMetaTools(registry, "https://connecta.example", { readOnly: readOnly === false });
+    const result = await meta.callDestructiveTool({
+      address: "accounting.create_customer",
+      args: { requestId: null, arbitrary: true },
+    });
+    expect(result.structuredContent).toMatchObject({ error: { code: "read_only_endpoint" } });
+  }
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("INV-9 INV-5: a Fault beside plausible customer data is not a confirmed success", async () => {
+  const world = await connected(true);
+  world.respond({
+    Fault: { Error: [{ code: "6240", Message: "private vendor prose" }] },
+    Customer: { Id: "51", SyncToken: "0", DisplayName: "Studio" },
+  });
+  await expect(
+    world.call("create_customer", { requestId: "fault-intent", DisplayName: "Studio" }),
+  ).rejects.toMatchObject({
+    retryable: false,
+    writeOutcome: "unknown",
+    message: expect.not.stringContaining("private"),
+  });
+  expect(world.sends).toHaveLength(1);
 });
