@@ -1,4 +1,6 @@
 import { interceptQuickBooks, quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
+import { granola } from "@zackbart/connecta/providers/granola";
+import { interceptGranola } from "./granola.js";
 import { gmail } from "@zackbart/connecta/providers/gmail";
 import { drive } from "@zackbart/connecta/providers/drive";
 import { docs } from "@zackbart/connecta/providers/docs";
@@ -120,6 +122,8 @@ export async function startNodeDeployment(
     const previousPrograms: ProgramObservation[] = [];
     const qb = connectors.find((s) => s.quickbooks);
     if (qb) restoreFetch = interceptQuickBooks(qb.url);
+    const notes = connectors.find((s) => s.granola);
+    if (notes) restoreFetch = interceptGranola(notes.url);
     const build = () =>
       createConnecta({
         readOnly: endpointReadOnly,
@@ -144,6 +148,7 @@ export async function startNodeDeployment(
           ...(oauth ? [oauth.connector()] : []),
           ...connectors.map((spec) => {
             const options = { purpose: spec.description };
+            if (spec.granola) return granola(spec.id, options);
             if (spec.google) {
               const factory = { gmail, drive, docs, sheets, slides, forms }[spec.google.product];
               return factory(spec.id, {
@@ -234,7 +239,7 @@ export async function startNodeDeployment(
       },
     );
     await once(server, "listening");
-    if (qb) restoreTransport = installRestKitTransport();
+    if (qb || notes) restoreTransport = installRestKitTransport();
     else if (connectors.some((spec) => spec.rest)) installRestKitTransport();
     if (connectors.some((spec) => spec.google)) installGoogleKitTransport();
     for (const spec of connectors.filter((entry) => entry.rest === "ccb")) {
@@ -250,7 +255,7 @@ export async function startNodeDeployment(
       get programs() {
         return [...previousPrograms, ...observed.programs];
       },
-      ...(qb
+      ...(qb || notes
         ? {
             restart: async (readOnly?: boolean) => {
               endpointReadOnly = readOnly ?? endpointReadOnly;

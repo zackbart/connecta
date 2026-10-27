@@ -15,6 +15,7 @@ export function parseGrading(value = "route"): Grading {
 
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
+  "granola-workspace-journey": { route: [], outcome: ["delivered-data", "privacy", "read-only"] },
   "quickbooks-write-journey": {
     route: [],
     outcome: [

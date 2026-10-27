@@ -1,4 +1,5 @@
 import { FakeQuickBooks } from "./quickbooks.js";
+import { FakeGranola, GRANOLA_KEY } from "./granola.js";
 import { FakeGoogle, type GoogleOptions } from "./google.js";
 /**
  * A world is one trial's downstream universe: six fake services sharing one
@@ -46,6 +47,7 @@ export type ServiceId =
  * changes one adapter rather than every task.
  */
 export interface ConnectorSpec {
+  granola?: boolean;
   id: string;
   title: string;
   description: string;
@@ -64,6 +66,7 @@ export interface ConnectorSpec {
 }
 
 export interface WorldOptions {
+  granola?: boolean;
   quickbooks?: boolean;
   google?: GoogleOptions;
   restVendor?: RestVendor;
@@ -126,6 +129,7 @@ export class World {
   readonly billingToken = BILLING_TOKEN;
   readonly oauth = new FakeOAuth(this.ledger);
   readonly quickbooks = new FakeQuickBooks(this.ledger);
+  readonly granola = new FakeGranola(this.ledger);
   /** Host-observed guest calls, never inferred from model source text. */
   programs: ProgramObservation[] = [];
 
@@ -189,18 +193,31 @@ export class World {
   }
 
   async start(): Promise<void> {
+    if (this.options.granola) await this.granola.start();
     if (this.options.quickbooks) await this.quickbooks.start();
     if (this.options.google) await this.google.start();
     await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
   }
 
   async stop(): Promise<void> {
+    if (this.options.granola) await this.granola.stop();
     if (this.options.quickbooks) await this.quickbooks.stop();
     if (this.options.google) await this.google.stop();
     await Promise.allSettled([...this.services.values(), ...this.restServices].map((service) => service.stop()));
   }
 
   connectorSpecs(): ConnectorSpec[] {
+    if (this.options.granola)
+      return [
+        {
+          id: "granola",
+          title: "Granola",
+          description: "Workspace meetings",
+          url: this.granola.url,
+          granola: true,
+          credential: { label: "Workspace API key", value: GRANOLA_KEY },
+        },
+      ];
     if (this.options.quickbooks)
       return [
         { id: "qb_alice", title: "QuickBooks", description: "Accounting", url: this.quickbooks.url, quickbooks: true },

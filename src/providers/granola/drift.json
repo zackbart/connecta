@@ -1,0 +1,142 @@
+{
+  "version": 2,
+  "provider": "granola",
+  "generated": {
+    "operations": [
+      "DELETE /v1/legal-holds/{hold_id}",
+      "DELETE /v1/legal-holds/{hold_id}/custodians/{custodian_id}",
+      "DELETE /v1/webhook-endpoints/{webhook_endpoint_id}",
+      "GET /v1/audit",
+      "GET /v1/folders",
+      "GET /v1/legal-holds",
+      "GET /v1/legal-holds/{hold_id}",
+      "GET /v1/legal-holds/{hold_id}/custodians",
+      "GET /v1/notes",
+      "GET /v1/notes/{note_id}",
+      "GET /v1/notes/{note_id}/transcript",
+      "GET /v1/spaces",
+      "GET /v1/webhook-endpoints",
+      "PATCH /v1/legal-holds/{hold_id}",
+      "PATCH /v1/webhook-endpoints/{webhook_endpoint_id}",
+      "POST /v1/legal-holds",
+      "POST /v1/legal-holds/{hold_id}/custodians",
+      "POST /v1/webhook-endpoints"
+    ],
+    "evidence": {
+      "openapi.document.json": "sha256:3f1a93ae6380feb5297df8115855486224f82bea236eaf1fd916072843f5759d",
+      "openapi.json": "sha256:cc03e1ca12b494ccdf510f43b8151ae7e47d9140e47dd63d3760c09a41d5ceb9",
+      "value-safety.json": "sha256:61c8986dcb88be336b4d4a3802aaa8c9ab2dc59b38fc107abc5417e72fc3d151"
+    }
+  },
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://docs.granola.ai/api-reference/openapi.json",
+        "format": "openapi"
+      },
+      "endpoints": [
+        {
+          "operation": "GET /v1/notes",
+          "specRevision": "1.0.0",
+          "contract": "sha256:e8d053d212c896ceb6b933c073234baa74d4a18ac2262ef63c5ea387848758a9"
+        },
+        {
+          "operation": "GET /v1/notes/{note_id}",
+          "specRevision": "1.0.0",
+          "contract": "sha256:b1f4649061d0613e9287c87fe416537ef139832a31c70bd148f9ee27cec26e0a"
+        },
+        {
+          "operation": "GET /v1/notes/{note_id}/transcript",
+          "specRevision": "1.0.0",
+          "contract": "sha256:c5c746b480ccd2aa58acdc3ef74fccb5d14db33430209a5d8282b9129c467190"
+        },
+        {
+          "operation": "GET /v1/folders",
+          "specRevision": "1.0.0",
+          "contract": "sha256:18d521222f0c219a749aa2da89a4fc5483cb186872b76a55de2cb096a173def3"
+        },
+        {
+          "operation": "GET /v1/spaces",
+          "specRevision": "1.0.0",
+          "contract": "sha256:64d3f19669b444b096079cd7399398ff047db6f553e22046165c2d0360afe92b"
+        },
+        {
+          "operation": "GET /v1/audit",
+          "specRevision": "1.0.0",
+          "contract": "sha256:dcc17a7cdf8cca2b9eec62b3505d594b5d89f26c56b9731639f907b47a9a656c"
+        },
+        {
+          "operation": "POST /v1/webhook-endpoints",
+          "specRevision": "1.0.0",
+          "contract": "sha256:a654df1ad408184b54f7f78abbecd48d9d74c015341d31c046388029a03acf64"
+        },
+        {
+          "operation": "GET /v1/webhook-endpoints",
+          "specRevision": "1.0.0",
+          "contract": "sha256:d048bc103b3585b439413966e4d8c2dcf9cb644d17d662cfc4ade5e9616eae5b"
+        },
+        {
+          "operation": "PATCH /v1/webhook-endpoints/{webhook_endpoint_id}",
+          "specRevision": "1.0.0",
+          "contract": "sha256:bf14289419a64a4bb4c22360e3380b2287c74fd1c9a1c6791715294476132a7d"
+        },
+        {
+          "operation": "DELETE /v1/webhook-endpoints/{webhook_endpoint_id}",
+          "specRevision": "1.0.0",
+          "contract": "sha256:3786a1beb4f0ca6075258797a621e9046b21236e4b9966a6699f79c04761e23b"
+        },
+        {
+          "operation": "POST /v1/legal-holds",
+          "specRevision": "1.0.0",
+          "contract": "sha256:ad7240e8892f3b12fac7042980d2ab2090767fc36b8dd49aac660908a4ca3875"
+        },
+        {
+          "operation": "GET /v1/legal-holds",
+          "specRevision": "1.0.0",
+          "contract": "sha256:c396e5c8b8b5a2ba9406c0a9c97859c4dbd23bd38145db867a1e5e55c4ab446c"
+        },
+        {
+          "operation": "GET /v1/legal-holds/{hold_id}",
+          "specRevision": "1.0.0",
+          "contract": "sha256:f79dddbd7a4ca5efbb4d03df951243d147471a2f40ea1516d348c4140d6e45e0"
+        },
+        {
+          "operation": "PATCH /v1/legal-holds/{hold_id}",
+          "specRevision": "1.0.0",
+          "contract": "sha256:601bfaa169419816afc76173f54d31f703e8b13306bc3a774cf9e05d30f02078"
+        },
+        {
+          "operation": "DELETE /v1/legal-holds/{hold_id}",
+          "specRevision": "1.0.0",
+          "contract": "sha256:a19454e146d983a01b10d5a9f7010abd770f2a0d2e53ab429b5d4c550529da13"
+        },
+        {
+          "operation": "POST /v1/legal-holds/{hold_id}/custodians",
+          "specRevision": "1.0.0",
+          "contract": "sha256:aeb304b9c089e9f82aecf681eada8c94d64a1c15b0211dd66596f80c64c8356b"
+        },
+        {
+          "operation": "GET /v1/legal-holds/{hold_id}/custodians",
+          "specRevision": "1.0.0",
+          "contract": "sha256:173260baa62c158c5994f6665e87ae27044176f88616b1ab2070c2d5ce5231d1"
+        },
+        {
+          "operation": "DELETE /v1/legal-holds/{hold_id}/custodians/{custodian_id}",
+          "specRevision": "1.0.0",
+          "contract": "sha256:1c71c656157bcfb6c47cb5525576394add3aa7e9e147dfcaf26a33b1c820e459"
+        }
+      ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.granola.ai/help-center/sharing/integrations/granola-api#workspace-api-keys",
+      "reason": "OpenAPI does not encode workspace-key ownership, Business/Enterprise availability, public-note and API-enabled-space access, key creation or the per-workspace 25-request/5-second rate limit. Compare those policies and the transcript-too-large recovery against the public overview and help center. Never probe customer data.",
+      "lastVerified": "2026-10-27"
+    }
+  ]
+}

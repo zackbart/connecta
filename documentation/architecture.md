@@ -1676,8 +1676,14 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   independent downstream state and the physical mutation ledger, and reject
   wrong targets, duplicate writes, missing completion and interrupted trials.
 - `pnpm run eval:smoke` boots the Node template, Node eval deployments and native
-  Workers deployments, including the actual QuickBooks provider, then exercises
+  Workers deployments, including the actual QuickBooks and Granola providers, then exercises
   MCP and the operator page.
+- The shared `granola-workspace-journey` outcome uses actual provider reads,
+  independent fake meeting state and physical cursor/filter requests on both
+  Node/SQLite/QuickJS and native Workers/D1. It covers transcript-too-large
+  recovery, empty intermediate pages, selected fields, withheld photo/credential
+  values and shared-vault reuse after application reconstruction. No-op,
+  fabricated-read and erased-delivery controls must fail.
 - `test/provider-privacy-journey.node.test.ts` sends credentials through real
   HTTP MCP and a maintained API provider. Unknown vendor fields and keys carry
   raw, escaped, percent-encoded, base64 and Basic echoes through direct calls,

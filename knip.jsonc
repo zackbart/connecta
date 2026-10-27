@@ -23,6 +23,7 @@
         "src/providers/forms/index.ts",
         "src/providers/github/index.ts",
         "src/providers/gmail/index.ts",
+        "src/providers/granola/index.ts",
         "src/providers/overflow/index.ts",
         "src/providers/planning-center/index.ts",
         "src/providers/quickbooks/index.ts",
