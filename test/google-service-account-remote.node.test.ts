@@ -7,7 +7,7 @@ import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { nodeGuardedTransport } from "../src/http/node-transport.js";
 import { serveFetch } from "../eval/support/serve.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { connectorContext } from "./fixtures/misc.js";
+import { connectorContext, deferred } from "./fixtures/misc.js";
 import { PRIVATE_KEY } from "./fixtures/rsa.js";
 
 for (const operation of ["initialize", "tools/list", "read", "write"] as const) {
@@ -109,6 +109,79 @@ for (const operation of ["initialize", "tools/list", "read", "write"] as const) 
       configureGuardedTransport(previous);
       fetchSpy.mockRestore();
       await Promise.all([endpoint.close(), vendor.close()]);
+    }
+  });
+}
+
+for (const failure of ["throws", "is cancelled"] as const) {
+  it(`keeps a committed write unknown and unreplayed when 401 invalidation ${failure}`, async () => {
+    let dispatches = 0;
+    let mutations = 0;
+    const invalidated: string[] = [];
+    const started = deferred<void>();
+    const controller = new AbortController();
+    const downstream = httpDownstream((server) => {
+      server.registerTool("write", { inputSchema: z.object({}), annotations: { readOnlyHint: false } }, async () => {
+        mutations++;
+        return { content: [{ type: "text", text: "complete" }] };
+      });
+    });
+    const vendor = await serveFetch(async (request) => {
+      const rpc =
+        request.method === "POST"
+          ? ((await request.clone().json()) as { method: string; params?: { name?: string } })
+          : undefined;
+      const response = await downstream.fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        ...(request.method === "POST" ? { body: await request.text() } : {}),
+      });
+      if (rpc?.method !== "tools/call" || rpc.params?.name !== "write") return response;
+      dispatches++;
+      // The vendor commits the write, then rejects the credential.
+      await response.text();
+      return new Response("REQUEST_TOKEN_SECRET_1", { status: 401 });
+    });
+    const token = Object.assign(async () => "REQUEST_TOKEN_SECRET_1", {
+      invalidate: async (rejected: string, ctx: { signal?: AbortSignal }) => {
+        invalidated.push(rejected);
+        if (failure === "throws") throw new Error("INVALIDATION_HOOK_SECRET_TEXT REQUEST_TOKEN_SECRET_1");
+        started.resolve();
+        await new Promise<never>((_, reject) => {
+          if (ctx.signal?.aborted) reject(ctx.signal.reason);
+          ctx.signal?.addEventListener("abort", () => reject(ctx.signal!.reason), { once: true });
+        });
+      },
+    });
+    const previous = configureGuardedTransport(nodeGuardedTransport);
+    const connector = remoteMcp("warehouse", {
+      url: `${vendor.url}/mcp`,
+      versionNegotiation: "legacy",
+      authScope: "shared",
+      auth: { type: "request", token },
+    });
+    const ctx = { ...connectorContext(), signal: controller.signal };
+    try {
+      const call = connector.callTool("write", {}, ctx);
+      if (failure === "is cancelled") {
+        await started.promise;
+        controller.abort(new Error("caller left"));
+      }
+      const error = (await call.then(
+        () => undefined,
+        (caught: unknown) => caught,
+      )) as { retryable?: boolean; writeOutcome?: string; message?: string } | undefined;
+      expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(JSON.stringify({ ...error, message: error?.message })).not.toMatch(
+        /REQUEST_TOKEN_SECRET_1|INVALIDATION_HOOK_SECRET_TEXT/,
+      );
+      expect(invalidated).toEqual(["REQUEST_TOKEN_SECRET_1"]);
+      expect(dispatches).toBe(1);
+      expect(mutations).toBe(1);
+    } finally {
+      await connector.closeScope?.(ctx);
+      configureGuardedTransport(previous);
+      await vendor.close();
     }
   });
 }
