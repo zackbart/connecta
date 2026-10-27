@@ -42,6 +42,12 @@ const SCENARIOS: Record<string, string> = {
   "google-docs-3": "page document indexes without losing paragraph positions",
   "google-sheets-3": "page whole rows across ranges and retain every requested cell",
   "google-slides-7": "report a saved deck separately from an unconfirmed comment",
+  "tithely-cancel-recovery": "reconcile a cancelled recurring gift without repeating the cancellation",
+  "github-release-once": "create one draft release with the requested repository, tag and body",
+  "cloudflare-step2-dns-recovery": "reconcile a committed DNS update after a failed acknowledgement",
+  "vercel-step2-env-recovery": "reconcile a committed environment update without exposing the secret",
+  "google-drive-2": "distinguish direct permissions from inherited shared-drive access",
+  "google-docs-7": "recover the created document id after its initial text failed to save",
   "quickbooks-accounting-journey": "actual company accounting, consent, restart, rotation, privacy and isolation",
   "quickbooks-write-journey": "actual names, CAS conflict, unsent invoices and read reconciliation",
 };
@@ -163,6 +169,11 @@ async function run() {
     );
     const noop = await trial(task(id), "noop");
     record(`${id}: doing nothing fails`, !passed(noop), undefined, noop);
+    const fabricated = structuredClone(noop);
+    fabricated.finalAnswer = reference.finalAnswer ?? "";
+    fabricated.saved!.trace.finalAnswer = reference.finalAnswer ?? "";
+    const grade = regradeTrial(task(id), fabricated, "codex", "outcome");
+    record(`${id}: a fabricated answer without the work fails`, !passed(grade), failedChecks(grade), grade);
   }
 
   const quickbooks = references.find((t) => t.task === "quickbooks-accounting-journey");
@@ -189,6 +200,19 @@ async function run() {
       record(`control: QuickBooks ${mode} fails`, !passed(grade), failedChecks(grade), grade);
     }
   }
+  for (const id of [
+    "tithely-cancel-recovery",
+    "github-release-once",
+    "cloudflare-step2-dns-recovery",
+    "vercel-step2-env-recovery",
+  ]) {
+    const reference = references.find((t) => t.task === id);
+    if (!reference) continue;
+    const duplicated = structuredClone(reference);
+    duplicated.saved!.world.calls.push(structuredClone(duplicated.saved!.world.calls.find((c) => c.kind === "write")!));
+    const grade = regradeTrial(task(id), duplicated, "codex", "outcome");
+    record(`${id}: duplicate physical mutation fails`, !passed(grade), failedChecks(grade), grade);
+  }
   if (selected) return;
 
   // ----------------------------------------------- no-false-pass controls
@@ -203,6 +227,8 @@ async function run() {
     "overflow-donor-paging",
     "google-docs-3",
     "google-sheets-3",
+    "google-drive-2",
+    "google-docs-7",
   ]) {
     const lost = structuredClone(references.find((reference) => reference.task === id)!);
     for (const use of lost.saved!.trace.toolUses) {

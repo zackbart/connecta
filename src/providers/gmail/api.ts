@@ -2,7 +2,6 @@
 import { Effect, Schema } from "effect";
 import { encodedFieldProvenance, get, post, put, vendor, type EncodedFieldProvenance } from "../../http/vendor.js";
 import { googleErrors, type GoogleProduct } from "../_shared/google/kit.js";
-
 import { gmailSafety } from "./safety.js";
 import { ConnectorCallError } from "../../errors.js";
 import { GMAIL_SCOPES } from "./lib/constants.js";
@@ -25,7 +24,7 @@ const Page = {
   maxResults: Schema.optionalKey(Schema.String),
   pageToken: Schema.optionalKey(Schema.String),
 };
-export const listLabels = get("listLabels", "/labels", { success: Schema.Unknown });
+const listLabels = get("listLabels", "/labels", { success: Schema.Unknown });
 const OPERATIONS = [
   get("listThreads", "/threads", {
     query: { ...Page, includeSpamTrash: Schema.optionalKey(Schema.String) },

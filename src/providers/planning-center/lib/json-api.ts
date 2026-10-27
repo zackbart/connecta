@@ -23,7 +23,7 @@ export function compact<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
-export function isResource(value: unknown): value is Resource {
+function isResource(value: unknown): value is Resource {
   const record = asRecord(value);
   return typeof record["id"] === "string" && typeof record["type"] === "string";
 }
@@ -40,7 +40,7 @@ export function indexIncluded(document: JsonRecord): Included {
   return index;
 }
 
-export function relationshipData(resource: Resource, name: string): unknown {
+function relationshipData(resource: Resource, name: string): unknown {
   return resource.relationships?.[name]?.data;
 }
 

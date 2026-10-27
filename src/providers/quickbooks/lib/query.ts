@@ -58,7 +58,7 @@ export function reportProblem(report: string, query: Readonly<Record<string, unk
   return undefined;
 }
 
-export const FILTER_FIELDS = [
+const FILTER_FIELDS = [
   "Id",
   "DisplayName",
   "Name",

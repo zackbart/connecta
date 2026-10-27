@@ -20,11 +20,16 @@ and named-write journeys. Provider journeys also cover
 CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
 write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal,
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
-Slides deck/comment save outcomes. Each is graded on outcome:
+Slides deck/comment save outcomes. The provider/HTTP cleanup also promotes
+existing Tithe.ly cancellation recovery, a single GitHub draft release,
+Cloudflare DNS and Vercel environment recovery, shared-drive permission
+inheritance and Docs partial-creation recovery. Each is graded on outcome:
 downstream state, the physical write ledger and the final answer, not the
 route. Paging must deliver the actual failing test and HTTP status through a
-service or guest bridge. Each reference must pass and doing nothing must fail.
-The promoted CCB, Planning Center, Overflow, Docs and Sheets reads also require
+service or guest bridge. Each reference must pass; doing nothing and supplying its correct final answer
+without doing the work must both fail. Duplicate physical mutations fail the
+promoted write journeys.
+The promoted CCB, Planning Center, Overflow, Drive, Docs and Sheets reads also require
 their requested record facts in successful MCP results. Controls erase those
 results while preserving continuations, vendor calls and the correct final
 answer; each must fail. Vendor activity alone cannot prove delivery.

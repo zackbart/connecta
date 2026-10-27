@@ -479,7 +479,7 @@ export const getContributions = get("getContributions", "/contributions", {
   success: GetContributionsResponse,
 }).annotate(Summary, "List contributions (gifts), filtered by campaign, campus, status and dates");
 
-export const chargeCashPaymentMethod = post("chargeCashPaymentMethod", "/contributions", {
+const chargeCashPaymentMethod = post("chargeCashPaymentMethod", "/contributions", {
   payload: ChargeCashPaymentMethodParams,
   success: ChargeCashPaymentMethodResponse,
 }).annotate(Summary, "Charge a donor's saved card, bank or wallet payment method for a cash gift");
@@ -489,7 +489,7 @@ export const getContributionById = get("getContributionById", "/contributions/:c
   success: GetContributionResponse,
 }).annotate(Summary, "Retrieve one contribution (gift) and its donor, campaign and settlement status");
 
-export const initiateRefund = post("initiateRefund", "/contributions/:contributionId/initiate-refund", {
+const initiateRefund = post("initiateRefund", "/contributions/:contributionId/initiate-refund", {
   params: {
     "contributionId": Schema.String.pipe(Schema.annotateKey({ description: "The Id of the contribution to refund." })),
   },
@@ -587,7 +587,7 @@ export const getRefunds = get("getRefunds", "/refunds", {
   success: GetRefundsResponse,
 }).annotate(Summary, "List refunds with contribution and deposit joins and cent amounts");
 
-export const getRefundById = get("getRefundById", "/refunds/:refundId", {
+const getRefundById = get("getRefundById", "/refunds/:refundId", {
   params: { "refundId": Schema.String.pipe(Schema.annotateKey({ description: "refund id." })) },
   success: GetRefundResponse,
 }).annotate(Summary, "Retrieve one refund and its contribution, status and cent amounts");
@@ -616,12 +616,12 @@ export const getChargebacks = get("getChargebacks", "/chargebacks", {
   success: GetChargebacksResponse,
 }).annotate(Summary, "List card disputes and ACH returns (chargebacks)");
 
-export const getChargebackById = get("getChargebackById", "/chargebacks/:chargebackId", {
+const getChargebackById = get("getChargebackById", "/chargebacks/:chargebackId", {
   params: { "chargebackId": Schema.String.pipe(Schema.annotateKey({ description: "chargeback id." })) },
   success: GetChargebackResponse,
 }).annotate(Summary, "Retrieve one chargeback (card dispute or ACH return)");
 
-export const getWebhooks = get("getWebhooks", "/webhooks", {
+const getWebhooks = get("getWebhooks", "/webhooks", {
   query: {
     "limit": Schema.optionalKey(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
@@ -641,12 +641,12 @@ export const getWebhooks = get("getWebhooks", "/webhooks", {
   success: GetWebhooksResponse,
 }).annotate(Summary, "List webhook subscriptions, destinations and enabled event names");
 
-export const getWebhookById = get("getWebhookById", "/webhooks/:webhookId", {
+const getWebhookById = get("getWebhookById", "/webhooks/:webhookId", {
   params: { "webhookId": Schema.String.pipe(Schema.annotateKey({ description: "webhook id." })) },
   success: GetWebhookResponse,
 }).annotate(Summary, "Retrieve one webhook subscription and its delivery destination");
 
-export const getWebhookEventLogs = get("getWebhookEventLogs", "/webhooks/:webhookId/event-logs", {
+const getWebhookEventLogs = get("getWebhookEventLogs", "/webhooks/:webhookId/event-logs", {
   params: { "webhookId": Schema.String.pipe(Schema.annotateKey({ description: "webhook id." })) },
   query: {
     "limit": Schema.optionalKey(
@@ -733,7 +733,7 @@ export const getDonorProfiles = get("getDonorProfiles", "/donors", {
   success: GetDonorsResponse,
 }).annotate(Summary, "List donor profiles, contact information and giving counts");
 
-export const createDonorProfile = post("createDonorProfile", "/donors", {
+const createDonorProfile = post("createDonorProfile", "/donors", {
   payload: CreateDonorProfileParams,
   success: CreateDonorProfileResponse,
 }).annotate(Summary, "Create a donor profile for a nonprofit");
@@ -743,13 +743,13 @@ export const getDonorProfile = get("getDonorProfile", "/donors/:donorId", {
   success: GetDonorResponse,
 }).annotate(Summary, "Retrieve a donor profile, phone, address and giving counts");
 
-export const updateDonorProfile = patch("updateDonorProfile", "/donors/:donorId", {
+const updateDonorProfile = patch("updateDonorProfile", "/donors/:donorId", {
   params: { "donorId": Schema.String.pipe(Schema.annotateKey({ description: "The ID of the donor to update." })) },
   payload: UpdateDonorProfileParams,
   success: Schema.Unknown,
 }).annotate(Summary, "Update (edit) a donor's name, email or phone");
 
-export const createSubscription = post("createSubscription", "/subscriptions/:donorId", {
+const createSubscription = post("createSubscription", "/subscriptions/:donorId", {
   params: {
     "donorId": Schema.String.pipe(
       Schema.annotateKey({ description: "The Id of the donor to create the subscription for." }),
@@ -839,7 +839,7 @@ export const getSubscriptions = get("getSubscriptions", "/subscriptions", {
   success: GetSubscriptionsResponse,
 }).annotate(Summary, "List recurring gifts (subscriptions) across donors");
 
-export const getSubscriptionById = get("getSubscriptionById", "/subscriptions/:donorId/:subscriptionId", {
+const getSubscriptionById = get("getSubscriptionById", "/subscriptions/:donorId/:subscriptionId", {
   params: {
     "donorId": Schema.String.pipe(
       Schema.annotateKey({ description: "The Id of the donor to get the subscription for." }),
@@ -849,7 +849,7 @@ export const getSubscriptionById = get("getSubscriptionById", "/subscriptions/:d
   success: GetSubscriptionResponse,
 }).annotate(Summary, "Retrieve one donor's recurring gift and payment schedule");
 
-export const updateSubscriptionById = patch("updateSubscriptionById", "/subscriptions/:donorId/:subscriptionId", {
+const updateSubscriptionById = patch("updateSubscriptionById", "/subscriptions/:donorId/:subscriptionId", {
   params: {
     "donorId": Schema.String.pipe(
       Schema.annotateKey({ description: "The Id of the donor to update the subscription for." }),
@@ -860,7 +860,7 @@ export const updateSubscriptionById = patch("updateSubscriptionById", "/subscrip
   success: Schema.Unknown,
 }).annotate(Summary, "Update a recurring gift, payment method, schedule or dollar amount");
 
-export const cancelSubscription = del("cancelSubscription", "/subscriptions/:donorId/:subscriptionId", {
+const cancelSubscription = del("cancelSubscription", "/subscriptions/:donorId/:subscriptionId", {
   params: {
     "donorId": Schema.String.pipe(
       Schema.annotateKey({ description: "The Id of the donor to cancel the subscription for." }),
@@ -933,7 +933,7 @@ export const getCampaigns = get("getCampaigns", "/campaigns", {
   success: GetCampaignsResponse,
 }).annotate(Summary, "List campaigns and subcampaigns, with parent and giving relationships");
 
-export const getCampaignById = get("getCampaignById", "/campaigns/:campaignId", {
+const getCampaignById = get("getCampaignById", "/campaigns/:campaignId", {
   params: {
     "campaignId": Schema.String.pipe(Schema.annotateKey({ description: "The Id of the campaign/subcampaign to get." })),
   },
@@ -961,17 +961,17 @@ export const getLocations = get("getLocations", "/locations", {
   success: GetLocationsResponse,
 }).annotate(Summary, "List nonprofit locations (campuses)");
 
-export const getLocationById = get("getLocationById", "/locations/:locationId", {
+const getLocationById = get("getLocationById", "/locations/:locationId", {
   params: { "locationId": Schema.String.pipe(Schema.annotateKey({ description: "The Id of the location to get." })) },
   success: GetLocationByIdResponse,
 }).annotate(Summary, "Retrieve a nonprofit location (campus)");
 
-export const authorizePayment = post("authorizePayment", "/payments/authorize", {
+const authorizePayment = post("authorizePayment", "/payments/authorize", {
   payload: AuthorizePaymentRequest,
   success: AuthorizePaymentResponse,
 }).annotate(Summary, "Authorize a payment, or save a payment method with zero amountInCents");
 
-export const getDestinations = get("getDestinations", "/tap/destinations", {
+const getDestinations = get("getDestinations", "/tap/destinations", {
   query: {
     "limit": Schema.optionalKey(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
@@ -998,14 +998,14 @@ export const getDestinations = get("getDestinations", "/tap/destinations", {
   success: GetTapDestinationsResponse,
 }).annotate(Summary, "List Tap-to-give destinations and configured URLs or messages");
 
-export const getDestinationById = get("getDestinationById", "/tap/destinations/:destinationId", {
+const getDestinationById = get("getDestinationById", "/tap/destinations/:destinationId", {
   params: {
     "destinationId": Schema.String.pipe(Schema.annotateKey({ description: "The ID of the tap destination." })),
   },
   success: GetTapDestinationByIdResponse,
 }).annotate(Summary, "Retrieve a Tap-to-give destination URL or message");
 
-export const getDevices = get("getDevices", "/tap/devices", {
+const getDevices = get("getDevices", "/tap/devices", {
   query: {
     "limit": Schema.optionalKey(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
@@ -1055,12 +1055,12 @@ export const getDevices = get("getDevices", "/tap/devices", {
   success: GetTapDevicesResponse,
 }).annotate(Summary, "List Tap-to-give devices, groups and current destinations");
 
-export const getDeviceById = get("getDeviceById", "/tap/devices/:deviceId", {
+const getDeviceById = get("getDeviceById", "/tap/devices/:deviceId", {
   params: { "deviceId": Schema.String.pipe(Schema.annotateKey({ description: "The ID of the tap device." })) },
   success: GetTapDeviceByIdResponse,
 }).annotate(Summary, "Retrieve a Tap-to-give device and its current destination");
 
-export const getEvents = get("getEvents", "/tap/events", {
+const getEvents = get("getEvents", "/tap/events", {
   query: {
     "limit": Schema.optionalKey(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
@@ -1098,7 +1098,7 @@ export const getEvents = get("getEvents", "/tap/events", {
   success: GetTapEventsResponse,
 }).annotate(Summary, "List Tap-to-give engagement events (taps, not donations)");
 
-export const getGroups = get("getGroups", "/tap/groups", {
+const getGroups = get("getGroups", "/tap/groups", {
   query: {
     "limit": Schema.optionalKey(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
@@ -1120,12 +1120,12 @@ export const getGroups = get("getGroups", "/tap/groups", {
   success: GetTapGroupsResponse,
 }).annotate(Summary, "List Tap-to-give device groups");
 
-export const getGroupById = get("getGroupById", "/tap/groups/:groupId", {
+const getGroupById = get("getGroupById", "/tap/groups/:groupId", {
   params: { "groupId": Schema.String.pipe(Schema.annotateKey({ description: "The ID of the tap group." })) },
   success: GetTapGroupByIdResponse,
 }).annotate(Summary, "Retrieve a Tap-to-give group and its devices and destination");
 
-export const health = get("health", "/health", {
+const health = get("health", "/health", {
   success: Schema.String,
 }).annotate(Summary, "Read the API health text (not an authenticated credential check)");
 
@@ -1292,7 +1292,7 @@ function pageNumber(value: string | number): number {
     throw new ConnectorCallError("invalid_args", "This Overflow cursor contains no valid page number.");
   return page;
 }
-export const overflowPage: HatchPageAdapter = {
+const overflowPage: HatchPageAdapter = {
   param: "page",
   in: "query",
   decode: pageNumber,
@@ -1309,7 +1309,7 @@ export const overflowPage: HatchPageAdapter = {
     return more ? current + 1 : null;
   },
 };
-export const overflowEventPage: HatchPageAdapter = {
+const overflowEventPage: HatchPageAdapter = {
   param: "cursor",
   in: "query",
   decode(cursor) {

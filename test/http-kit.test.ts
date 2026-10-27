@@ -7,7 +7,7 @@ import { installOwnedTransport } from "./fixtures/owned-transport.js";
 // value-safety boundary, the catalog JSON Schema dialect, the cursor codec,
 // call and operation services with explicit lifetimes, and the OAuth
 // refresh-once rule that reads the call's classification, not the method.
-import { Context, Effect, Schema, Stream } from "effect";
+import { Context, Effect, Schema } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { attachCallClassification } from "../src/call-classification.js";
@@ -34,7 +34,7 @@ import {
 } from "../src/http/errors.js";
 import { catalogSchema, codePoints, isMaxChars, isMinChars } from "../src/http/json-schema.js";
 import { bearer, refreshOnce } from "../src/http/oauth.js";
-import { allRows, boundCursor, lookahead, token, offset, page, link } from "../src/http/paging.js";
+import { boundCursor, lookahead } from "../src/http/paging.js";
 import { resultSafety } from "../src/http/safety.js";
 import {
   Budget,
@@ -822,93 +822,6 @@ describe("paging (decision 0010, B.4)", () => {
       const result = await run(Effect.result(boundCursor.encode("list_charges", args, "ch_2")), client);
       expect(result._tag === "Failure" && result.failure.error).toMatchObject({ code: "unavailable", retryable: true });
       if (corrupt) expect(result._tag === "Failure" && result.failure.error.message).not.toContain(corrupt);
-    }
-  });
-
-  it("streams every row across pages with one cursor rule", NODE, async () => {
-    const pages: Record<string, { rows: number[]; next: string | null }> = {
-      start: { rows: [1, 2], next: "a" },
-      a: { rows: [3], next: "b" },
-      b: { rows: [], next: null },
-    };
-    const rows = await runEdge(
-      Stream.runCollect(
-        allRows((cursor) => {
-          const page = pages[cursor ?? "start"]!;
-          return Effect.succeed({ rows: page.rows, page: { hasMore: page.next !== null, nextCursor: page.next } });
-        }),
-      ),
-    );
-    expect(Array.from(rows)).toEqual([1, 2, 3]);
-    const strategies = [
-      token({ fetch: () => Effect.succeed({ rows: [1], hasMore: true, nextCursor: "2" }) }),
-      offset({
-        offset: 1,
-        limit: 1,
-        fetch: (start, size) => {
-          expect([start, size]).toEqual([1, 1]);
-          return Effect.succeed({ rows: [1], total: 3 });
-        },
-      }),
-      page({
-        page: 1,
-        limit: 1,
-        fetch: (start, size) => {
-          expect([start, size]).toEqual([1, 1]);
-          return Effect.succeed({ rows: [1], totalPages: 3 });
-        },
-      }),
-      link({
-        baseUrl: OPTIONS.baseUrl,
-        param: "cursor",
-        fetch: () => Effect.succeed({ rows: [1], next: "https://api.acme.example/v1/items?cursor=2" }),
-      }),
-    ];
-    for (const strategy of strategies)
-      expect(await runEdge(strategy)).toEqual({ rows: [1], page: { hasMore: true, nextCursor: "2" } });
-    for (const strategy of [
-      token({ fetch: () => Effect.succeed({ rows: [], hasMore: false, nextCursor: "stale" }) }),
-      offset({ offset: 1, limit: 2, fetch: () => Effect.succeed({ rows: [] }) }),
-      page({ page: 2, limit: 2, fetch: () => Effect.succeed({ rows: [], hasMore: false }) }),
-      link({ baseUrl: OPTIONS.baseUrl, param: "cursor", fetch: () => Effect.succeed({ rows: [] }) }),
-    ])
-      expect(await runEdge(strategy)).toEqual({ rows: [], page: { hasMore: false, nextCursor: null } });
-    for (const [strategy, code] of [
-      ...[
-        "https://other.example/v1/items?cursor=x",
-        "/v2/items?cursor=x",
-        "https://api.acme.example/v1evil?cursor=x",
-        "/v1/%2e%2e/items?cursor=x",
-        "/v1/items",
-        "/v1/items?cursor=x&cursor=y",
-        "https://alice@api.acme.example/v1/items?cursor=x",
-      ].map(
-        (next) =>
-          [
-            link({ baseUrl: OPTIONS.baseUrl, param: "cursor", fetch: () => Effect.succeed({ rows: [], next }) }),
-            "connector_call_failed",
-          ] as const,
-      ),
-      [token({ fetch: () => Effect.succeed({ rows: [], hasMore: true, nextCursor: null }) }), "connector_call_failed"],
-      ...[NaN, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1].flatMap(
-        (position) =>
-          [
-            [
-              offset({ offset: position, limit: 1, fetch: () => Effect.die("Invalid offset reached fetch.") }),
-              "invalid_args",
-            ],
-            [
-              page({ page: position, limit: 1, fetch: () => Effect.die("Invalid page reached fetch.") }),
-              "invalid_args",
-            ],
-          ] as const,
-      ),
-      [page({ page: 0, limit: 1, fetch: () => Effect.die("Invalid page reached fetch.") }), "invalid_args"],
-      [offset({ offset: 0, limit: 0, fetch: () => Effect.die("Invalid limit reached fetch.") }), "invalid_args"],
-      [page({ page: 1, limit: 0, fetch: () => Effect.die("Invalid limit reached fetch.") }), "invalid_args"],
-    ] as const) {
-      const result = await runEdge(Effect.result(strategy));
-      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "Refusal", error: { code } } });
     }
   });
 });

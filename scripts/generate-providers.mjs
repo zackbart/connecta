@@ -86,7 +86,9 @@ function replaceEntries(entries, providers, makeEntry) {
 function knipEntries(source, providers) {
   const entries = /("entry"\s*:\s*\[)([\s\S]*?)(\n\s*\])/.exec(source);
   if (!entries) throw new Error("knip.jsonc requires an entry array");
-  const membership = /^\s*"src\/providers\/[^"\n]+"\s*,?[^\n]*\n/gm;
+  // Own public provider entries, including retired flat entries. Explicit
+  // fixture entrypoints belong to their dynamic consumers and stay intact.
+  const membership = /^\s*"src\/providers\/(?:[^/"\n]+\.ts|[^"\n]+\/index\.ts)"\s*,?[^\n]*\n/gm;
   const matches = [...entries[2].matchAll(membership)];
   const position = matches[0]?.index ?? entries[2].length;
   const before = entries[2].slice(0, position);

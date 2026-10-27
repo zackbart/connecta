@@ -37,6 +37,8 @@
         "examples/*/alchemy.run.ts",
         "scripts/*.mjs",
         "test/**/*.test.ts",
+        // providers:generate dynamically reads this fixture's conventionToolBlocks.
+        "src/providers/planning-center/fixtures.ts",
         // The eval harness: CLI entries, plus the Worker entries wrangler loads.
         "eval/*.ts",
         "eval/deploy/worker-*.ts"

@@ -11,7 +11,7 @@ export const driveIndex = new OperationIndex(openapi, {
   title: "Google Drive",
   pathMatching: "uri-template",
 });
-export const DRIVE_REFUSALS: Readonly<Record<string, string>> = {
+const DRIVE_REFUSALS: Readonly<Record<string, string>> = {
   "GET /apps":
     "This operation has not been admitted to the narrow Drive execution allowlist; use the named file and permission workflows.",
   "GET /apps/{appId}":

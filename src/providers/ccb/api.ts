@@ -271,7 +271,7 @@ export const CCB_INDEX = new OperationIndex(
 export const getMe = get("getMe", "/me", { success: Schema.Unknown });
 export const CcbApi = indexedVendor("CCB", CCB_INDEX, [getMe]);
 const safety = valueSafety(CCB_VALUE_SAFETY, () => CCB_INDEX);
-export const CCB_PAGE_HEADERS = ["x-page", "x-next-page", "x-total-pages", "x-total"] as const;
+const CCB_PAGE_HEADERS = ["x-page", "x-next-page", "x-total-pages", "x-total"] as const;
 export function ccbPageInfo(
   headers: Readonly<Record<string, string>>,
   page: number,

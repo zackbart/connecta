@@ -18,7 +18,7 @@ export const SHEETS: GoogleProduct = {
 const SpreadsheetId = { spreadsheetId: Schema.String };
 const optionalString = Schema.optionalKey(Schema.String);
 
-export const getSpreadsheet = get("getSpreadsheet", "/spreadsheets/:spreadsheetId", {
+const getSpreadsheet = get("getSpreadsheet", "/spreadsheets/:spreadsheetId", {
   params: SpreadsheetId,
   query: { includeGridData: optionalString, fields: optionalString },
   success: Schema.Unknown,

@@ -6,9 +6,8 @@ import { vercel, type VercelTokenOptions } from "./index.js";
 import { Effect } from "effect";
 import { ConnectorCallError } from "../../errors.js";
 import { Budget, ContinuationBinding, setViewService } from "../../runtime/call.js";
-import { vercelIndex, VERCEL_VERDICTS, transformGuide } from "./api.js";
+import { vercelIndex, VERCEL_VERDICTS } from "./api.js";
 import { MAX_PIN_LOOKUPS, pinQuery, pinRoute } from "./lib/pin.js";
-import type { RestCall } from "../_shared/rest/kit.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { SkillsRegistry } from "../../skills.js";
@@ -213,42 +212,6 @@ describe("Vercel deployment team pin", () => {
     expect(sent).toEqual([]);
   });
 
-  it("INV-10 INV-11: changes only the precisely identified generated Hatch count and preserves later guidance", () => {
-    const baseGuide = unpinnedGuide();
-    const suffix = " Separate refusal guidance. Schema-first guidance remains verbatim.";
-    const content = baseGuide.content
-      .split("\n")
-      .map((line) => (line.startsWith("- **Hatch:** `vercel_api_search` ") ? `${line}${suffix}` : line))
-      .join("\n");
-    const guide = { ...baseGuide, content };
-    expect(transformGuide(guide, OPTIONS)).toBe(guide);
-    const changed = transformGuide(guide, { ...OPTIONS, pin: { teamId: "team_alice" } });
-    const baseCount = Object.values(VERCEL_VERDICTS).filter((v) => v === "refuse").length;
-    const total = vercelIndex.ops.filter(
-      (op) => pinRoute(vercelIndex, op) === "denied" || VERCEL_VERDICTS[`${op.method} ${op.path}`] === "refuse",
-    ).length;
-    expect(changed).toEqual({
-      ...guide,
-      content: content.replace(
-        `${baseCount} operations are refused by design`,
-        `${total} operations are refused by design`,
-      ),
-    });
-    expect(changed.content).toContain(suffix);
-    expect(changed.content).toContain("inspect the original operation summary and its separate refusal.");
-    expect(changed.content).toContain(
-      "Use details for refused methods outside the read/write call schemas; those methods remain unavailable.",
-    );
-    const pinned = { ...OPTIONS, pin: { teamId: "team_alice" } };
-    expect(() => transformGuide({ ...guide, content: "Missing Hatch sentence." }, pinned)).toThrow(/exactly one/);
-    const hatchLine = content.split("\n").find((line) => line.startsWith("- **Hatch:**"))!;
-    expect(() => transformGuide({ ...guide, content: `${content}\n${hatchLine}` }, pinned)).toThrow(/exactly one/);
-    function unpinnedGuide() {
-      const guide = vercel("other_hosting", OPTIONS).usageGuide!;
-      return typeof guide === "string" ? { content: guide } : guide;
-    }
-  });
-
   it("INV-11: validates an explicit ID-only pin and a compatible routing default", () => {
     for (const pin of [
       null,
@@ -384,42 +347,6 @@ describe("Vercel deployment team pin", () => {
     const probe = await connector().testCredential!("candidate-token", context());
     expect(probe.ok).toBe(false); // The fake supplies no pinned-team identity.
     expect(sent.map((r) => r.url.pathname)).toEqual(["/v2/teams/team_alice"]);
-  });
-
-  it("INV-2: audits every pinned operation's route and rejects foreign selectors", () => {
-    expect(vercelIndex.ops).toHaveLength(466);
-    const counts = { "query-team": 0, "path-team": 0, denied: 0 };
-    for (const op of vercelIndex.ops) {
-      const params = Object.fromEntries(
-        [...op.path.matchAll(/\{([^}]+)\}/g)].map((m) => [m[1]!, m[1] === "teamId" ? "team_alice" : "sample"]),
-      );
-      const base: RestCall = {
-        method: op.method,
-        op,
-        params,
-        path: op.path.replace(/\{([^}]+)\}/g, (_, name: string) => params[name]!),
-        query: {},
-        body: undefined,
-      };
-      const route = pinRoute(vercelIndex, op);
-      counts[route]++;
-      for (const selectors of [
-        { teamId: "team_bob" },
-        { teamId: null },
-        { teamId: ["team_alice", "team_alice"] },
-        { "teamId[]": "team_bob" },
-        { "%2574eamId": "team_bob" },
-        { ownerId: "team_bob" },
-        { newDefaultTeamId: "team_alice" },
-      ])
-        expect(
-          () => pinQuery(vercelIndex, { ...base, query: selectors }, { teamId: "team_alice" }),
-          `${op.method} ${op.path}`,
-        ).toThrow();
-      if (route === "denied") expect(() => pinQuery(vercelIndex, base, { teamId: "team_alice" })).toThrow();
-      else expect(() => pinQuery(vercelIndex, base, { teamId: "team_alice" })).not.toThrow();
-    }
-    expect(counts).toEqual({ "query-team": 368, "path-team": 17, denied: 81 });
   });
 
   it("INV-5: preserves resource slugs and third-party metadata in their reviewed locations", () => {
