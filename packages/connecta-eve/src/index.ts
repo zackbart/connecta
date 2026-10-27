@@ -104,18 +104,19 @@ export function connectaConnection(options: ConnectaConnectionOptions) {
     return defineDynamicConnection(async (ctx) => {
       const selected = await pool(ctx);
       validatePool(selected);
-      return connectionDefinition({ ...rest, pool: selected }, selected);
+      return connectionDefinition(options, connectaEndpoint({ ...rest, pool: selected }), selected);
     });
   }
-  return connectionDefinition(pool === undefined ? rest : { ...rest, pool });
+  return connectionDefinition(options, connectaEndpoint(pool === undefined ? rest : { ...rest, pool }));
 }
 
 function connectionDefinition(
-  options: ConnectaConnectionOptions & { pool?: string },
+  options: ConnectaConnectionOptions,
+  endpoint: string,
   instanceKey?: string,
 ): McpClientConnectionDefinition {
   return defineMcpClientConnection({
-    url: connectaEndpoint(options),
+    url: endpoint,
     ...(instanceKey === undefined ? {} : { instanceKey }),
     description: options.description,
     auth: {

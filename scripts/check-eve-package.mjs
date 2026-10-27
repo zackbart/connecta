@@ -53,12 +53,15 @@ try {
     const require = createRequire(import.meta.url);
     assert.throws(() => require.resolve("@zackbart/connecta"), { code: "MODULE_NOT_FOUND" });
     let token = "cta_first";
-    const connection = connectaConnection({ url: "https://connecta.example.com", pool: "assistant", description: "CRM", getToken: () => token });
+    const options = { url: "https://connecta.example.com", pool: "assistant", description: "CRM", getToken: () => token };
+    const connection = connectaConnection(options);
     assert.equal(connection.url, connectaEndpoint({ url: "https://connecta.example.com", pool: "assistant" }));
     assert.equal(connection.auth.principalType, "app");
     assert.equal((await connection.auth.getToken()).token, token);
     token = "cta_rotated";
     assert.equal((await connection.auth.getToken()).token, token);
+    options.getToken = () => "cta_replaced_provider";
+    assert.equal((await connection.auth.getToken()).token, "cta_replaced_provider");
     const dynamic = connectaConnection({ url: "https://connecta.example.com", pool: async () => "notes_alice", description: "Notes", getToken: () => token });
     const selected = await dynamic.evaluate({});
     assert.equal(selected.url, "https://connecta.example.com/agent/notes_alice");
