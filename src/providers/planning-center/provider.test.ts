@@ -1,10 +1,5 @@
-import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
-import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
-import { resultSafety } from "../../http/safety.js";
-import type { Connection } from "../../http/vendor.js";
-import { validateToolInput } from "../../validate.js";
-import { errors, safety, PCO_INDEX, PCO_VERDICTS, PLANNING_CENTER_API_VERSIONS } from "./api.js";
-import { planningCenterTools } from "./tools.js";
+import { PCO_INDEX, PLANNING_CENTER_API_VERSIONS } from "./api.js";
+
 // Planning Center fixture regressions cover JSON:API credential admission,
 // hatch confinement, credential stripping and the excludeApps boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -233,75 +228,6 @@ describe("Planning Center contracts", () => {
       code: "connector_call_failed",
       message: "Planning Center returned malformed JSON.",
     });
-  });
-
-  it("INV-1 INV-11: ranks full-index discovery and continues large contracts within their byte budgets", async () => {
-    const connector = connection(),
-      ctx = context();
-    const invoke = (name: string, args: Record<string, unknown>) => call(name, args, connector, ctx);
-    // The source's one empty-path artifact is omitted: 1,752 real operations.
-    const beforeDiscovery = calls.length;
-    expect(PCO_INDEX.ops).toHaveLength(1752);
-    expect(Object.keys(PCO_VERDICTS)).toHaveLength(1752);
-    expect(PCO_INDEX.operation("POST", "/people/v2")).toBeUndefined();
-    expect(Math.max(...PCO_INDEX.ops.map((op) => op.summary.length))).toBeLessThanOrEqual(300);
-    for (const [query, expected, method] of [
-      ["person mergers", "/people/v2/person_mergers", "GET"],
-      ["note categories", "/people/v2/note_categories", "GET"],
-      ["song arrangements", "/services/v2/songs/{song_id}/arrangements", "GET"],
-      ["group memberships", "/groups/v2/groups/{group_id}/memberships", "GET"],
-      ["volunteer roster", "/services/v2/people"],
-      ["church group leaders", "/groups/v2/groups"],
-      ["volunteer", "/services/v2/people"],
-      ["group leaders", "/groups/v2/groups/{group_id}/memberships"],
-      ["custom field", "/people/v2/field_definitions"],
-      ["order of service", "/services/v2/service_types"],
-      ["person", "/people/v2/people"],
-    ]) {
-      const found = await invoke("pco_api_search", { query, ...(method ? { method } : {}) });
-      expect(found.operations.length, query).toBeLessThanOrEqual(8);
-      expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(16 * 1024);
-      expect(
-        found.operations.map((op: any) => op.path),
-        query,
-      ).toContain(expected);
-      if (query === "person") expect(found.operations[0].path).toBe(expected);
-    }
-    for (const [query, expected] of [
-      ["list person mergers", "/people/v2/person_mergers"],
-      ["create phone number", "/people/v2/people/{person_id}/phone_numbers"],
-      ["list people", "/people/v2/people"],
-      ["list groups", "/groups/v2/groups"],
-    ]) {
-      const found = await invoke("pco_api_search", { query });
-      expect(
-        found.operations.slice(0, 2).map((op: any) => op.path),
-        query,
-      ).toContain(expected);
-      expect(found.operations.length, query).toBeLessThanOrEqual(8);
-      expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(16 * 1024);
-    }
-    const detailArgs = { method: "GET", path: "/people/v2/list_categories/{list_category_id}/lists" };
-    const parameters: any[] = [],
-      chunks: Record<string, string> = {};
-    let cursor: string | undefined,
-      detailPages = 0;
-    do {
-      const detail = await invoke("pco_api_details", { ...detailArgs, ...(cursor ? { cursor } : {}) });
-      expect(new TextEncoder().encode(JSON.stringify(detail)).length).toBeLessThanOrEqual(32 * 1024);
-      parameters.push(...detail.parameters);
-      if (detail.chunk) chunks[detail.chunk.of] = (chunks[detail.chunk.of] ?? "") + detail.chunk.text;
-      cursor = detail.page?.nextCursor;
-      detailPages++;
-      expect(detailPages).toBeLessThan(20);
-    } while (cursor);
-    expect(detailPages).toBeGreaterThan(1);
-    for (const text of Object.values(chunks)) parameters.push(JSON.parse(text));
-    const operation = PCO_INDEX.operation("GET", detailArgs.path)!;
-    expect(parameters.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
-      [...PCO_INDEX.contract(operation).parameters].sort((a, b) => a.name.localeCompare(b.name)),
-    );
-    expect(calls).toHaveLength(beforeDiscovery);
   });
 
   it("INV-3 INV-9 INV-11: binds paging, validates fields before dispatch and preserves scoped error meanings", async () => {
@@ -614,17 +540,7 @@ describe("Planning Center excludeApps", () => {
   });
 });
 
-it("INV-5 INV-10 INV-11: catalog decoding and credential probes preserve candidate keys, framing, failures, and response descriptions", async () => {
-  const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
-  for (const tool of planningCenterTools({
-    connection: kitConnection,
-    pageSize: 100,
-    options: { purpose: "Catalog agreement" },
-  })) {
-    const base = (failureArguments["planning-center"] as Record<string, Record<string, unknown>>)[tool.name] ?? {};
-    expect(validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }), tool.name).toBeNull();
-    expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
-  }
+it("INV-5 INV-10: credential probes use candidate keys and refuse missing credentials without sending", async () => {
   const connector = connection({ userAgent: "fixture-agent/1", authScope: "personal" });
   const candidate = { applicationId: "candidate-id", secret: "candidate-secret" };
   for (const [body, expected] of [

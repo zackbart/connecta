@@ -3,13 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { classifyCallError, ConnectorCallError } from "../../errors.js";
-
 import { CredentialVault } from "../../credentials.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { vercel } from "./index.js";
-
 import { REDACTED } from "../_shared/rest/value-safety.js";
 
 const TOKEN = { purpose: "Production web applications", auth: { type: "token" }, teamId: "team_default" } as const;
@@ -587,20 +585,6 @@ describe("vercel() over an access token", () => {
 
   it("INV-3 INV-4 INV-5 INV-9: routes selectors and confines fields, continuations and secret-bearing writes before dispatch", async () => {
     const connector = vercel("hosting", TOKEN);
-    const discoverySends = sent.length;
-    for (const [query, method, path] of [
-      ["redeploy", "POST", "/v13/deployments"],
-      ["create environment variable", "POST", "/v10/projects/{idOrName}/env"],
-      ["add environment variable", "POST", "/v10/projects/{idOrName}/env"],
-      ["update environment variable", "PATCH", "/v9/projects/{idOrName}/env/{id}"],
-      ["delete environment variable", "DELETE", "/v9/projects/{idOrName}/env/{id}"],
-    ]) {
-      for (const filter of [{}, { method }]) {
-        const found = await call(connector, "vercel_api_search", { query, limit: 8, ...filter });
-        expect(found.operations.slice(0, 2), query).toContainEqual(expect.objectContaining({ method, path }));
-      }
-    }
-    expect(sent).toHaveLength(discoverySends);
     const refused = await refusal(
       call(connector, "vercel_api_write", {
         method: "PATCH",

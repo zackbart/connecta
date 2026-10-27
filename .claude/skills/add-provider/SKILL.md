@@ -76,7 +76,7 @@ must never silently select an API credential.
 | `drift.json`                                 | `api` | Version 2 (D)                                                                                                                                                                                              |
 | `evidence/`                                  | `api` | Fixed names (E)                                                                                                                                                                                            |
 | `fixtures.ts`                                | `api` | `fixture`: name, credential-free options, mode cases, `create()`, and convention data (allowed verbs, justified nested-description exceptions, auth category); runs on Node and against the packed tarball |
-| `provider.test.ts`                           | `api` | The provider suite; `provider.node.test.ts` only when Node is required                                                                                                                                     |
+| `provider.test.ts`                           | `api` | Focused provider-specific logic/fault regressions; use shared stateful outcome journeys for workflows. `provider.node.test.ts` only when Node is required                                                  |
 | `provider.<topic>.test.ts`                   | `api` | Optional further suites, such as `provider.safety.node.test.ts`                                                                                                                                            |
 | `skill.generated.ts`, `openapi.generated.ts` |       | Generated; never edit                                                                                                                                                                                      |
 | `lib/*.ts`                                   | `api` | Any other implementation module                                                                                                                                                                            |
@@ -421,8 +421,9 @@ vendors"). The steps:
 5. Run `describeValueSafety` from `test/fixtures/value-safety.ts` in the
    safety suite with the verdict counts, a connector, a vendor-shaped error
    body, the absences, and examples for conditional resource rules, plus
-   regressions in `provider.test.ts` for each secret family the review found,
-   expansions and events included.
+   independent behavioral regressions for secret families the review found,
+   expansions and events included. Reuse surviving public-edge journeys and
+   safety probes; do not duplicate the table in expected catalog/schema matrices.
 
 ## Migrating a provider
 

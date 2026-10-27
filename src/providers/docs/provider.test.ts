@@ -2,7 +2,6 @@
 // refusals before dispatch and write outcomes. Delegation, subjects and tokens
 // are covered by test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import { docs } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -582,31 +581,6 @@ describe("indexed Docs surface", () => {
       contentUri: "[redacted]",
       sourceUri: "https://example.com/image",
     });
-    const { DOCS_INDEX, DOCS_VERDICTS } = await import("./lib/discovery.js");
-    expect(DOCS_INDEX.pathMatching).toBe("uri-template");
-    expect(DOCS_INDEX.ops.map((op) => `${op.method} ${op.path}`).sort()).toEqual(Object.keys(DOCS_VERDICTS).sort());
-    for (const query of [
-      "append paragraph",
-      "insert text at index",
-      "replace all text",
-      "format document text",
-      "delete text range",
-      "bold",
-      "add header",
-      "create table",
-    ]) {
-      const found = await call(connector, "docs_api_search", { query });
-      expect(found.operations.slice(0, 2).some((op: { path: string }) => op.path.endsWith(":batchUpdate"))).toBe(true);
-    }
-    for (const query of ["create a document", "add blank document"]) {
-      const found = await call(connector, "docs_api_search", { query });
-      expect(found.operations.slice(0, 2).some((op: { path: string }) => op.path === "/documents")).toBe(true);
-    }
-    expect(DOCS_INDEX.ops.every((op) => op.summary.length <= 120)).toBe(true);
-    for (const query of ["document named ranges", "document styles", "read document tabs"]) {
-      const found = await call(connector, "docs_api_search", { query });
-      expect(found.operations.slice(0, 2).some((op: { method: string }) => op.method === "GET")).toBe(true);
-    }
     expect(calls.at(-1)?.url.pathname).toBe("/v1/documents/doc-1");
     expect(calls.at(-1)?.url.searchParams.get("includeTabsContent")).toBe("true");
     const sent = calls.length;

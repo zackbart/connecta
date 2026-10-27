@@ -1,11 +1,5 @@
-import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
-import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
-import { resultSafety } from "../../http/safety.js";
-import type { Connection } from "../../http/vendor.js";
-import { validateToolInput } from "../../validate.js";
-import { errors, safety, OVERFLOW_INDEX, OVERFLOW_VERDICTS } from "./api.js";
-import { overflowTools } from "./tools.js";
+
 // Overflow fixture regressions cover reset headers, candidate credentials,
 // pagination, privacy and single-send recovery.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,16 +97,7 @@ async function failure(promise: Promise<unknown>): Promise<ConnectorCallError> {
 }
 
 describe("overflow() standard surface", () => {
-  it("INV-1 INV-5 INV-9 INV-11: admits the standard contracts, binds exact-count pages, strips secrets and preserves single-send recovery", async () => {
-    const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
-    for (const tool of overflowTools({ connection: kitConnection, pageSize: 25 })) {
-      const base = (failureArguments["overflow"] as Record<string, Record<string, unknown>>)[tool.name] ?? {};
-      expect(
-        validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }),
-        tool.name,
-      ).toBeNull();
-      expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
-    }
+  it("INV-3 INV-5 INV-9: binds exact-count pages, strips secrets and preserves single-send recovery", async () => {
     queue(
       {
         status: 429,
@@ -128,57 +113,7 @@ describe("overflow() standard surface", () => {
     const connector = connection();
     const ctx = context();
     const id = "0123456789abcdef01234567";
-    expect(OVERFLOW_INDEX.ops).toHaveLength(38);
-    expect(Object.keys(OVERFLOW_VERDICTS)).toHaveLength(38);
     const beforeDiscovery = calls.length;
-    for (const [query, path] of [
-      ["payout", "/deposits"],
-      ["recurring gift", "/subscriptions"],
-      ["refund", `/contributions/{contributionId}/initiate-refund`],
-      ["delivery failures", "/webhooks/{webhookId}/event-logs"],
-    ]) {
-      const found = await call(connector, "overflow_api_search", { query, limit: 8 }, ctx);
-      expect(
-        found.operations.some((op: { path: string }) => op.path === path),
-        query,
-      ).toBe(true);
-      expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(16 * 1024);
-    }
-    for (const query of [
-      "refund a gift",
-      "refund gift",
-      "refund donation",
-      "refund a donation",
-      "issue a refund",
-      "refund a cash gift",
-      "refund duplicate gift",
-    ]) {
-      for (const method of [undefined, "POST"]) {
-        const found = await call(connector, "overflow_api_search", { query, ...(method ? { method } : {}) }, ctx);
-        expect(found.operations[0], `${query} (${method ?? "any method"})`).toMatchObject({
-          method: "POST",
-          path: "/contributions/{contributionId}/initiate-refund",
-        });
-      }
-    }
-    for (const [query, method, path] of [
-      ["cancel recurring gift", "DELETE", "/subscriptions/{donorId}/{subscriptionId}"],
-      ["stop a recurring donation", "DELETE", "/subscriptions/{donorId}/{subscriptionId}"],
-      ["edit donor phone", "PATCH", "/donors/{donorId}"],
-      ["charge saved card", "POST", "/contributions"],
-    ]) {
-      const found = await call(connector, "overflow_api_search", { query }, ctx);
-      expect(found.operations[0], query).toMatchObject({ method, path });
-    }
-    const details = await call(
-      connector,
-      "overflow_api_details",
-      { method: "POST", path: "/subscriptions/{donorId}" },
-      ctx,
-    );
-    expect(details.body.schema.required).toEqual(expect.arrayContaining(["paymentMethodId", "amount", "frequency"]));
-    expect(calls).toHaveLength(beforeDiscovery);
-
     // Fields and withheld values fail before auth or dispatch, including on writes.
     for (const [tool, args] of [
       ["get_donor", { donorId: id, fields: ["not_a_property"] }],

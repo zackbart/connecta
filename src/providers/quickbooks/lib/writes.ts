@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../../errors.js";
 import { Refusal, StatusFailure } from "../../../http/errors.js";
 import { Budget } from "../../../http/services.js";
-import { action, write } from "../../../http/tools.js";
+import { write } from "../../../http/tools.js";
 import type { Connection } from "../../../http/vendor.js";
 import { companyInfo, CustomerNames, customerWrite, invoiceWrite, PublicId, recordReads, SyncToken } from "../api.js";
 import { namedRecord, NamedRecordShape, object } from "../safety.js";
@@ -108,8 +108,10 @@ export function quickbooksWrites(connection: Connection, realmId: string) {
           .send(customerWrite, { query: { ...version, requestid: requestId }, payload: { ...body, sparse: true } })
           .pipe(Effect.map(({ data }) => namedRecord(object(data)["Customer"]))),
     }),
-    action(connection, {
+    write(connection, {
       name: "create_invoice",
+      destructive: true,
+      idempotent: false,
       description:
         "Create a real US-company USD accounting invoice, never a draft, once after checking company, active customer/currency and Service items. Dates, DocNumber, exchange rate and one-unit line prices are explicit. EmailStatus is fixed NotSet and online payment flags are false; no email/send operation. Vendor computes taxes/totals. Reconcile unknown outcomes through reads; never blindly create again.",
       input: InvoiceInput,

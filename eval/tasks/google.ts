@@ -11,6 +11,7 @@ import {
   type GoogleProduct,
 } from "../fakes/google.js";
 import { check } from "./baseline.js";
+import { deliveredValues } from "./correctness.js";
 
 type Row = Record<string, any>;
 const goals: Record<GoogleProduct, readonly string[]> = {
@@ -548,6 +549,25 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
     );
   }
   if (task === 3) {
+    if (product === "docs" || product === "sheets") {
+      const delivered = deliveredValues(trace);
+      const expectedRows =
+        product === "docs"
+          ? ((expected as Row).positions as number[][])
+          : [...a.values, ["record1", "Alice"], ["record2", "Bob"]];
+      add(
+        "delivered-data",
+        expectedRows.every((row) =>
+          delivered.some(
+            (value) =>
+              (Array.isArray(value) && JSON.stringify(value) === JSON.stringify(row)) ||
+              (product === "docs" && value?.startIndex === row[0] && value?.endIndex === row[1]),
+          ),
+        ) ||
+          (product === "sheets" &&
+            delivered.some((value) => subset(value, { ids: (expected as Row).ids, total: (expected as Row).total }))),
+      );
+    }
     const vendorComplete = scoped.every((call) => {
       const token = call.args.returned?.nextPageToken;
       return (

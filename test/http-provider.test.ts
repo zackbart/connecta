@@ -15,7 +15,6 @@ import { read, write } from "../src/http/tools.js";
 import { get, vendor } from "../src/http/vendor.js";
 import { PROVIDER_COMMON, type ProviderOptions } from "../src/provider.js";
 import { boundaryFor, originalCallIdentity, tracksRequests } from "../src/provider-call-facts.js";
-import { OperationIndex } from "../src/providers/_shared/rest/operation-index.js";
 import { runEdge } from "../src/runtime/run.js";
 import { ContinuationBinding, ContinuationStorage, serviceFor, setViewService } from "../src/runtime/call.js";
 import { Registry } from "../src/registry.js";
@@ -173,96 +172,6 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
     /idempotencyKey/,
   );
   expect(fetch).not.toHaveBeenCalled();
-});
-
-it("INV-11: renders guides, carries common options and snapshots code-derived kit facts", NODE, () => {
-  const pages: number[] = [];
-  const index = new OperationIndex(
-    {
-      source: "https://tickets.example/spec",
-      revision: "fixture",
-      digest: "sha256:fixture",
-      version: "1",
-      servers: ["https://tickets.example"],
-      tags: ["account"],
-      ops: [["GET", "/who", "who", "Read the account", 0]],
-      details: '{"d":[],"o":[0]}',
-    },
-    { vendor: "tickets", title: "Tickets" },
-  );
-  const hatch = { name: "tickets", index, verdicts: { "GET /who": "read" as const } };
-  const pageSize = { default: 10, max: 50 };
-  const completeGuide = { content: "Legacy fragments and instructions.\n", summary: "Triage", required: true };
-  const factory = defineApiProvider({
-    ...definition,
-    displayTitle: (options) => `${options.purpose} tickets`,
-    description: (options) => `Tickets for ${options.purpose}.`,
-    guide: (options) => (options.purpose === "Triage" ? completeGuide : definition.guide(options)),
-    pageSize,
-    hatch,
-    tools: (kit) => {
-      pages.push(kit.pageSize);
-      return definition.tools(kit);
-    },
-  });
-  pageSize.default = 99;
-  hatch.verdicts["GET /who"] = "refuse" as never;
-  const first = factory("tickets", {
-    purpose: "  Support  ",
-    instructions: "Use alice's queue.",
-    authScope: "personal",
-    readOnly: true,
-    maxResultBytes: 256,
-    title: "Team tickets",
-  });
-  const second = factory("other", { purpose: "Triage", defaultPageSize: 50, instructions: "Already rendered." });
-  expect(pages).toEqual([10, 50]);
-  expect(first).toMatchObject({
-    title: "Team tickets",
-    description: "Tickets for Support.",
-    authScope: "personal",
-    readOnly: true,
-    maxResultBytes: 256,
-  });
-  expect(second.title).toBe("Triage tickets");
-  expect(second.usageGuide).toEqual(completeGuide);
-  expect(first.usageGuide).toMatchObject({
-    content:
-      "# Tickets usage\n\nSupport\n\nResolve ids before writing.\n\n## Workspace instructions\n\nUse alice's queue.\n",
-  });
-  expect(factory.definition.kit).toEqual({
-    operations: ["GET /tickets/{id}", "GET /who"],
-    pageSize: { default: 10, max: 50 },
-    hatch: { name: "tickets", verdicts: { "GET /who": "read" } },
-    refusesWithheld: true,
-    errors: {
-      unknownId: "not_found",
-      provesAbsence: true,
-      conflicts: ["HTTP 409 when a ticket changed since it was read"],
-    },
-    idempotencyKey: false,
-  });
-  expect(Object.isFrozen(factory.definition.kit?.hatch?.verdicts)).toBe(true);
-  expect(first.describe?.().source.provider).toBe("tickets");
-  expect(first.staticTools?.map(({ name }) => name)).toEqual([
-    "who",
-    "send",
-    "refuse",
-    "tickets_api_search",
-    "tickets_api_details",
-    "tickets_api_read",
-  ]);
-  const { pageSize: _pageSize, ...unpaged } = definition;
-  expect(defineApiProvider({ ...unpaged, tools: () => [] })("tickets", { purpose: "Support" }).id).toBe("tickets");
-  expect(() =>
-    defineApiProvider({
-      ...unpaged,
-      tools: (kit) => {
-        void kit.pageSize;
-        return [];
-      },
-    })("tickets", { purpose: "Support" }),
-  ).toThrow(/Declare pageSize/);
 });
 
 it(

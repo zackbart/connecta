@@ -33,6 +33,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
               ...(task === 6 ? ["reconciled"] : []),
               ...((GOOGLE_EXPECTED[product][i] as Record<string, unknown>).ids ? ["complete-evidence"] : []),
               ...(task === 3 ? ["full-pages"] : []),
+              ...(task === 3 && ["docs", "sheets"].includes(product) ? ["delivered-data"] : []),
               ...(task === 2 && ["docs", "sheets", "slides"].includes(product) ? ["joined"] : []),
               ...(product === "drive" && task === 4 ? ["revisions"] : []),
               ...(product === "sheets" && task === 7 ? ["metadata-read"] : []),
@@ -56,7 +57,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   ...Object.fromEntries(
     ["filtered-individuals", "family-group-join", "individual-paging", "advanced-search", "campus-hatch"].map((s) => [
       `ccb-${s}`,
-      { route: [], outcome: ["reads-only"] },
+      { route: [], outcome: ["reads-only", ...(s === "advanced-search" ? ["delivered-data"] : [])] },
     ]),
   ),
   ...Object.fromEntries(
@@ -105,7 +106,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "801-vercel-env-value-safety": { route: [], outcome: ["state", "value-safety", "only-requested-writes"] },
   "pco-step2-filtered-people": { route: [], outcome: ["reads-only", "filtered"] },
   "pco-step2-group-services-join": { route: [], outcome: ["reads-only"] },
-  "pco-step2-plan-join": { route: [], outcome: ["reads-only"] },
+  "pco-step2-plan-join": { route: [], outcome: ["reads-only", "delivered-data"] },
   "pco-step2-people-paging": { route: [], outcome: ["reads-only"] },
   "pco-step2-merger-hatch": { route: [], outcome: ["reads-only"] },
   "pco-step2-note-once": { route: [], outcome: ["state", "only-requested-writes"] },
@@ -119,7 +120,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "github-search-recovery": { route: [], outcome: ["reads-only", "recovered"] },
   "overflow-filtered-gifts": { route: [], outcome: ["reads-only"] },
   "overflow-recurring-join": { route: [], outcome: ["reads-only"] },
-  "overflow-donor-paging": { route: [], outcome: ["reads-only"] },
+  "overflow-donor-paging": { route: [], outcome: ["reads-only", "delivered-data"] },
   "overflow-deposit-reconciliation": { route: [], outcome: ["reads-only"] },
   "overflow-tap-hatch": { route: [], outcome: ["reads-only"] },
   "overflow-refund-once": { route: [], outcome: ["state", "only-requested-writes", "reconciled"] },

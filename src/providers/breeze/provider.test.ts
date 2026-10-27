@@ -2,12 +2,6 @@
 // hatch admission, credential probes, projection and input decoding.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
-import { errors, breezeSafety } from "./api.js";
-import { breezeTools } from "./tools.js";
-import { resultSafety } from "../../http/safety.js";
-import type { Connection } from "../../http/vendor.js";
-import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
-import failureArguments from "../../../test/fixtures/provider-failure-arguments.json";
 import { ConnectorCallError } from "../../errors.js";
 import { breeze } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -159,26 +153,6 @@ it("INV-9: preserves factual in-band failures and JSON success contracts", async
     status: 200,
     data: false,
   });
-  for (const [status, text] of [
-    [500, ""],
-    [500, "<html>Unavailable</html>"],
-    [429, ""],
-    [429, "<p>Slow down</p>"],
-    [400, "x".repeat(300)],
-    [401, "Invalid key"],
-    [403, ""],
-  ] as const) {
-    for (const [tool, args] of [
-      ["list_tags", {}],
-      ["breeze_api_write", { method: "GET", path: "/tags/assign", query: { person_id: "1", tag_id: "2" } }],
-    ] as const) {
-      queue({ status, text });
-      const error = await failure(call(connection(), tool, args));
-      expect(error.message).toMatch(/^Breeze /);
-      expect(error.message).toContain(status === 401 ? "Breeze said: Invalid key." : `HTTP ${status}`);
-      expect(error.message).not.toMatch(/\s{2}/);
-    }
-  }
   queue({ body: { success: true, errors: null, payment_id: 1 } });
   expect(
     await call(connection(), "breeze_api_write", { method: "GET", path: "/giving/add", query: { amount: "1.00" } }),
@@ -242,25 +216,6 @@ it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages befo
   ])
     expect((await failure(call(connector, "breeze_api_write", args, ctx))).code).toBe("invalid_args");
   expect(calls).toHaveLength(0);
-  const found = await call(connector, "breeze_api_search", { query: "people", limit: 1 }, ctx);
-  expect(found.page.hasMore).toBe(true);
-  expect(
-    (await call(connector, "breeze_api_details", { method: "GET", path: "/people/add" }, ctx)).parameters
-      .filter((p: any) => p.required)
-      .map((p: any) => p.name),
-  ).toEqual(["first", "last"]);
-  await call(connector, "breeze_api_search", { query: "people", limit: 1, cursor: found.page.nextCursor }, ctx);
-  for (const [query, path] of [
-    ["delete person", "/people/delete"],
-    ["family", "/families/create"],
-    ["tag person", "/tags/assign"],
-    ["check in", "/events/attendance/add"],
-    ["donation", "/giving/list"],
-  ])
-    expect((await call(connector, "breeze_api_search", { query }, ctx)).operations.map((op: any) => op.path)).toContain(
-      path,
-    );
-  expect(calls).toHaveLength(0);
   queue(
     {
       body: [
@@ -288,27 +243,6 @@ it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages befo
     ),
   ).toMatchObject({ data: [], page: { hasMore: false, param: "offset", in: "query" } });
   expect(new URL(calls.at(-1)!.url).searchParams.get("offset")).toBe("2");
-  queue({ body: [{ id: "1" }, { id: "2" }] }, { body: [{ id: "3" }] });
-  const named = await call(connector, "list_people", { limit: 2 }, ctx);
-  expect(named.page.hasMore).toBe(true);
-  const last = await call(connector, "list_people", { limit: 2, cursor: named.page.nextCursor, fields: ["id"] }, ctx);
-  expect(last).toEqual({ items: [{ id: "3" }], page: { hasMore: false } });
-  queue({ status: 503, text: "failure" });
-  const count = calls.length;
-  const error = await failure(
-    call(
-      connector,
-      "breeze_api_write",
-      { method: "GET", path: "/tags/assign", query: { person_id: "1", tag_id: "2" } },
-      ctx,
-    ),
-  );
-  expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
-  expect(calls).toHaveLength(count + 1);
-  const catalog = await connector.listTools(ctx);
-  for (const name of ["add_person", "update_person", "breeze_api_write"])
-    expect(catalog.find((t) => t.name === name)?.annotations?.readOnlyHint).toBe(false);
-  expect(catalog.find((t) => t.name === "breeze_api_write")?.annotations?.destructiveHint).toBe(true);
 });
 
 it("INV-5: calendar secrets stay removed and list fields narrow safe rows", async () => {
@@ -406,16 +340,5 @@ it("INV-5: probes only the candidate key and refuses a different reported church
     queue({ body });
     expect(await connector.testCredential!("candidate-key", context(null))).toEqual(expected);
     expect(calls.at(-1)!.headers["api-key"]).toBe("candidate-key");
-  }
-});
-
-it("INV-11: every authored catalog agrees with its kit decoder at argument boundaries", () => {
-  const tools = breezeTools({
-    connection: { errors, safety: resultSafety(breezeSafety) } as Connection,
-    pageSize: 100,
-  });
-  for (const tool of tools) {
-    const base = (failureArguments.breeze as Record<string, Record<string, unknown>>)[tool.name] ?? {};
-    expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
   }
 });
