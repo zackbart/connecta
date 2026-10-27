@@ -2,7 +2,7 @@
 // humans write sources, reasons, and dates; tools write lists and digests.
 // `providers:generate` writes the `generated` block from the provider's
 // definition and its evidence bytes, and `drift-check.mjs` reads both
-// versions. Version 1 stays readable for providers still in PENDING.step1.
+// versions. Version 1 remains readable for historical drift records.
 // The record's offline structure is `drift-validate.mjs`, shared with the
 // provider-standard suite.
 //

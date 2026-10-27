@@ -1,50 +1,42 @@
 ---
 name: add-provider
-description: Add, migrate, or change a maintained connecta provider under decision 0011's provider standard (API layout, fixed evidence, generated drift and guide sections, one agent-facing shape), with classification, value safety, fixtures, bundle baselines, and vendor-contract drift evidence.
+description: Add or change a maintained connecta provider under decision 0011's provider standard (API layout, fixed evidence, generated drift and guide sections, one agent-facing shape), with classification, value safety, fixtures, bundle baselines, and vendor-contract drift evidence.
 ---
 
-# Add, migrate, or change a maintained provider
+# Add or change a maintained provider
 
-Read `PRINCIPLES.md`, the architecture guide, and
-[decision 0011](../../../decisions/0011-provider-standard.md), the provider
-standard this skill applies. Its rule ids are K (kinds), L (layout),
-E (evidence), D (`drift.json`), G (the guide), and S (the agent-facing
-surface). Decision 0010 ([#904](https://github.com/zackbart/connecta/pull/904),
-proposed) designs the Effect provider kit that `api` providers are built on.
+Read `PRINCIPLES.md`, `documentation/architecture.md` (Providers and reviewed
+classification; Contributor provider kit), and `documentation/providers.md`.
+This skill describes the current provider workflow. Decisions
+[0010](../../../decisions/0010-effect-provider-kit.md),
+[0011](../../../decisions/0011-provider-standard.md) and
+[0012](../../../decisions/0012-hosted-mcp-runtime-discovery.md) record its design history.
 
-`test/provider-standard.node.test.ts` enforces L, E, D, G and S on every
-provider folder, and `test/provider-conventions.test.ts` applies S on Node.
-Every maintained provider has completed both migration steps. The generator
-and provider suites enforce the current layout, evidence, drift, guide and
-surface contracts. See AGENTS.md Verification.
+`test/provider-standard.node.test.ts` enforces layout (L), evidence (E),
+drift (D), guide (G) and surface (S) rules on every provider folder;
+`test/provider-conventions.test.ts` applies the tool conventions on Node.
+The generator refuses D or G violations before writing any output.
 
-## Which rules apply
+## Workflow
 
-- **A new provider** supplies compact executable provider outcomes through the
-  published deployment adapters, required by `eval:outcomes` and `eval:smoke`.
-  Grade independent fake state, physical requests, final answers, identity and
-  secrecy; prove no-op and fabricated answers fail. Exercise Node and native
-  Workers where applicable. Under #1072 new providers do not add characterization
-  goldens or an exemption roster.
-  It meets the provider standard from its first commit. It never
-  joins `PENDING`; the suite fails an off-standard new folder, and
-  `providers:generate` refuses one that breaks D or G.
-  Use `defineApiProvider` from `src/http/provider.ts` for a new API
-  implementation: it builds on `defineProvider`, validates construction,
-  and derives `kit.operations`, page size and hatch verdicts for generation.
-  Import kit modules through their explicit source paths, never the root.
-  The kit remains internal; deployment factories return ordinary Connectors
-  and published declarations must name no Effect type. B.5's Tithe.ly gate
-  must pass before Phase C migrations begin.
-  Reviewed path calls need an indexed safety resolver; a caller-supplied
-  template never establishes the operation's policy. Use an explicit global
-  review only when the provider permits unindexed paths. Step-1 migrations
-  may return their complete legacy usage guide from the helper, preserving
-  fragments and option-dependent lines without changing `SKILL.md`.
-- **A migration PR** is step 1 or step 2 for one provider, never both. See
-  [Migrating a provider](#migrating-a-provider).
-- **A change to a provider still in `PENDING`** keeps its current shape. See
-  [Changing a provider that has not migrated](#changing-a-provider-that-has-not-migrated-transitional).
+1. Use the standard folder below and `defineApiProvider` from
+   `src/http/provider.ts` for an API implementation. It builds on
+   `defineProvider`, validates construction and derives generation facts.
+   Import internal kit modules by explicit source path. Deployment factories
+   return ordinary Connectors; published declarations name no Effect type.
+2. Review the vendor contract, classification, credential withholding and
+   paging before implementing tools. Reviewed path calls need an indexed
+   safety resolver; caller-supplied templates never establish policy. An
+   explicit global review applies only where unindexed paths are permitted.
+3. Reuse compact stateful provider outcomes through published deployment
+   adapters. Grade independent fake state, physical requests, final answers,
+   identity and secrecy; prove no-op and fabricated answers fail. Cover native
+   Workers boundaries where applicable and keep focused vendor fault probes.
+   Do not add characterization goldens or migration exemptions.
+4. Generate indexes, evidence and guides, run the verification below, and
+   record changed outcomes for each affected provider. For breaking tool,
+   argument, envelope or guide changes, add a `breaking: true` change fragment
+   mapping the changes and update the installed migration instructions.
 
 ## API providers only
 
@@ -128,7 +120,7 @@ characters and encoded action separators before dispatch.
 `googleClient(connection, index)` always requires an index. Each product's hatch uses
 `googleHatchBinding(connection, { index, review })` with the same connection
 and index as the hatch; the provider-standard suite checks actual hatch
-construction through every Google product fixture, including those awaiting step 2.
+construction through every Google product fixture, through the kit.
 
 Google Discovery conversions declare `discovery: { pin: "discovery.json",
 format: "google-discovery-v1", summaries?: { [methodId]: summary } }` on the
@@ -306,12 +298,10 @@ links, plus marker containment in paths and queries.
   deployment's `sensitiveFields: "drop" | "return"` option.
 
 Names stay snake_case `verb_object`, with the safety class as the verb (H2),
-and H1–H14 otherwise apply. After step 2, S6 replaces H9's recoverable
-`raw: true` access: widen the projection or supply S1's hatch through the same
-privacy boundary. S1 replaces H14's GET-only read hatch with explicit reviewed
-read verdicts (including read-only POST); writes remain destructive regardless
-of method. H9's projection/truncation and H14's confinement and safety split
-still apply.
+and H1–H14 otherwise apply. Recover omitted data through a wider projection or
+S1's hatch within the same privacy boundary. Hatch reads use explicit reviewed
+verdicts, including read-only POST; writes remain destructive regardless of
+method. Projection/truncation, confinement and the safety split still apply.
 
 ## Sent-secret text safety (INV-5)
 
@@ -346,12 +336,9 @@ never base64-encode bytes into another field.
 
 ## Value safety
 
-Value safety is required for every `api` or `dual` provider. Under the
-standard the reviewed table lives in `safety.ts`, the candidates in
-`evidence/value-safety.json`, acknowledged absences in the table's `absent`
-field, and the harness in `provider.safety.node.test.ts`. A provider still in
-`PENDING.step1` keeps `value-safety.ts`, `value-safety.candidates.json`,
-`value-safety.absent.json`, and `value-safety.node.test.ts` until its step 1.
+Value safety is required for every API provider. The reviewed table lives in
+`safety.ts`, candidates in `evidence/value-safety.json`, acknowledged absences
+in the table's `absent` field, and probes in `provider.safety.node.test.ts`.
 
 No response may return a credential or a stored secret value unless a
 reviewed named tool exists to return it (architecture, "Value safety for REST
@@ -421,41 +408,9 @@ vendors"). The steps:
    expansions and events included. Reuse surviving public-edge journeys and
    safety probes; do not duplicate the table in expected catalog/schema matrices.
 
-## Migrating a provider
+## Hatch admission and paging
 
-Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
-
-**Step 1: onto the kit and the standard folder.** Agent output does not move.
-
-1. Build `api.ts` and `tools.ts` on the kit. Use `defineProvider`
-   (through `defineApiProvider` where appropriate).
-2. Move every file to its standard name (0011's table maps each existing
-   file), convert evidence to its format, and rewrite `drift.json` as
-   version 2 (`rationale` → `reason`, `reviewedAt` → `lastVerified`).
-3. Run `pnpm run providers:generate`, then remove the provider from
-   `PENDING.step1` and its committed baseline entry.
-4. Preserve actual agent outcomes with fixture-vendor journeys and targeted
-   regressions. Compare returned data, downstream state, refusal/recovery advice,
-   privacy and physical write counts; byte-for-byte implementation snapshots
-   are retired under #1072. `SKILL.md` does not change in step 1.
-
-**Step 2: the standard surface and guide.** A separate PR.
-
-1. Apply S1–S6, retire `raw` (widen the projection or point to the hatch),
-   and adopt the kit's error table.
-2. Rewrite `SKILL.md` to G: drop fragments for plain text and when-blocks,
-   move operator setup to `documentation/providers.md`, and move conventions
-   into declarations so the generated section states them.
-3. Exercise the changed outcomes and list intended surface changes by category:
-   names, schemas, envelope, errors, guide.
-4. Add a `.changes/` fragment marked `breaking: true` that maps every renamed
-   tool and argument, plus the release's migration entry.
-5. Rerun this provider's relevant eval tasks in EVERY step-2 PR, record fresh
-   before/after results, and update affected eval fixtures/baselines and tool
-   references in maintained guidance. Tithe.ly's results do not validate
-   Planning Center joins, CCB search routing or Google batch edits.
-6. Remove the provider from `PENDING.step2` and its committed baseline entry.
-7. Use the standard hatch's withheld-scalar admission and derived
+1. Use the standard hatch's withheld-scalar admission and derived
    `kit.refusesWithheld` fact. Hatch request paths, query keys/values and
    bodies reject whole `[redacted]` values (including decoded spellings) and
    withheld links with `invalid_args` before dispatch; paths and queries reject
@@ -463,7 +418,7 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    apply whole-value/link admission to named-write arguments; typed kit requests
    also check actual path/query inputs. Bodies composed later from internal reads
    are not rescanned as a whole. Do not add a provider opt-out or
-   claim this admission for legacy non-kit tools or arbitrary encoded bytes.
+   claim this admission for arbitrary non-kit tools or encoded bytes.
    Bound discovery cursors authenticate their payload with the root store's
    lazy compare-and-set signing key, bind the connection/personal owner and an
    index content hash, and validate
@@ -471,14 +426,14 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    never supply a process-local key or log signing material. Error meanings
    and declared kit codes must pass runtime ConnectorCallErrorCode membership
    at construction. Fold regression cases into existing kit/hatch/standard rows.
-8. A hatch over a compiled REST pin declares response fields in its index
+2. A hatch over a compiled REST pin declares response fields in its index
    (`OpenApiData.fields`) before `fields` can narrow it; operations without a
    declared response refuse `fields`.
    `providers:spec` emits shared, bounded response paths independently of
    request-depth shrinking; rerun `providers:generate` afterward and measure
-   index and bundle growth without moving the pin. This metadata alone must
-   preserve a step-1 provider's agent-facing behavior.
-9. Opt paged hatch reads into `hatch.pages` by indexed operation. Select a
+   index and bundle growth without moving the pin. Review metadata changes
+   for their effect on the published surface.
+3. Opt paged hatch reads into `hatch.pages` by indexed operation. Select a
    declared adapter from `src/http/hatch-paging.ts`, or supply one with the
    vendor's exact cursor parameter, location, decoder and continuation rule.
    Preserve paging metadata through the result hook; adapters read safe data
@@ -491,27 +446,12 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    metadata, binding to the original call and credential echoes with fixture
    vendors before switching a maintained provider's surface.
 
-## Changing a provider that has not migrated (transitional)
+## Transport and authentication
 
-This section applies only to providers in `PENDING`, and S.2 deletes it.
-
-- Every API provider has completed step 1 and uses `defineProvider()`
-  (through `defineApiProvider` where appropriate). The final migration removed
-  the unused `asProviderFactory()` adapter. Providers still in `PENDING.step2`
-  retain their step-1 surface and guide until their separate step-2 migration.
-- Legacy `SKILL.md` files mark exact text with `<!-- fragment: key -->` and
-  `<!-- endfragment -->`. The frontmatter `content` names the published
-  fragment for a guide whose fragments serve different implementations.
-  Preserve guide bytes; a guide change belongs in step 2.
-- Legacy `drift.json` (version 1) keeps reviewed endpoint digests, revisions,
-  product pins, inventories, and source URLs. A `manual` check declares its
-  `source` and `rationale` and must not disappear from reporting.
-- Every maintained API provider uses the current kit and indexed hatch. Shared
+- Every maintained API provider uses the kit and indexed hatch. Shared
   REST call shapes and pinned-schema conversion live in
-  `src/providers/_shared/rest/kit.ts`; do not recreate the retired `restTools`,
-  `restKitTools`, Google catalog bridge or auth-case dispatcher. Rejected hosted
-  selectors remain construction guards that point operators to generic
-  `remoteMcp()` connections.
+  `src/providers/_shared/rest/kit.ts`; use those shared implementations. Rejected hosted selectors remain
+  construction guards pointing to generic `remoteMcp()` connections.
 - Pin the vendor's document in `evidence/openapi.json`, compile
   `openapi.generated.ts` with `pnpm run providers:spec --provider <name>`,
   and record its digest in `drift.json`. Shrink details (depth, descriptions,
@@ -530,8 +470,7 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
   handoff. Declare `authBeforeExecution` on the provider's `guardedFetch` only
   where the vendor's documentation says it authenticates a request before
   acting on it: cite the page and its words in `evidence` and in the
-  provider's review (`evidence/review.md`, or a `manual` check in a version 1
-  `drift.json`, as Stripe does), keep `matches` to raw status, headers, method
+  provider's `evidence/review.md`, keep `matches` to raw status, headers, method
   and path, and prove the refusal versus an ambiguous committed write through
   an existing outcome journey or focused vendor fault probe. Do not copy a
   provider declaration into a source-scanned exemption list. Without such a page, leave it out.
@@ -566,10 +505,9 @@ These hold on every path.
 Run `pnpm run providers:generate`. Folder discovery derives provider exports,
 Knip entries, bundle membership and baselines, packed smoke fixtures, portable
 convention imports, the bounded README inventory, `skill.generated.ts` with
-its Conventions, and `drift.json`'s `generated` block. It reads the pending
-lists from `test/provider-pending-baseline.json` and refuses, before writing
-anything, a D violation in a provider past step 1 and a G violation in one
-past step 2, using the rule checks in `test/provider-standard.ts`. Do not
+its Conventions, and `drift.json`'s `generated` block. It refuses D and G
+violations in every provider before writing anything, using the shared checks
+in `test/provider-standard.ts`. Do not
 hand-edit generated membership lists. Knip generation owns provider entrypoints;
 explicit fixture entrypoints used by dynamic generator hooks remain intact. Run it again after `providers:spec`, so
 the evidence digests follow the files.

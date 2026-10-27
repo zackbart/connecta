@@ -16,8 +16,8 @@ contracts, and runnable deployment setup in agent docs. This file owns
 repository policy; scoped skills and provider guides own their task-specific
 detail. Update the owning contract when changing behavior, and keep the README
 and explanatory guides consistent without adding a configuration reference.
-The [rework plan of record #703](https://github.com/zackbart/connecta/issues/703)
-owns the rework and supersedes older guidance wherever they conflict.
+The completed [rework plan of record #703](https://github.com/zackbart/connecta/issues/703)
+records owner decisions that supersede older guidance wherever they conflict.
 [decisions/](./decisions/) explains past choices without binding later PRs.
 [spec/coverage.json](./spec/coverage.json) records current MCP support, gaps,
 and test evidence. Describe planned work as planned, not shipped behavior.
@@ -107,9 +107,8 @@ suites use Vitest tags: `workers` marks native cases; workerd skips `node` cases
 and Node runs both. Portable filenames alone do not enroll a suite in workerd.
 Focused `.only` tests are refused by Vitest.
 
-Provider layout, evidence, drift, guide and surface checks remain. The completed
-migration's empty pending inventory remains checked locally; its historical
-cross-commit exemption guard is retired. Invariants are defended by behavioral
+Provider layout, evidence, drift, guide and surface checks remain. Every maintained
+provider meets the standard without migration exemptions. Invariants are defended by behavioral
 assertions and focused fault probes. The contributor behavioral evidence map in
 [architecture](./documentation/architecture.md) routes them, and
 [spec/coverage.json](./spec/coverage.json) links executable evidence files for
@@ -226,12 +225,15 @@ Read the matching skill before that work: [add-provider](./.claude/skills/add-pr
 
 ## Agent policy
 
-Sol (GPT-6.1-Sol through T3 `delegate_task`: `codex`, `gpt-6.1-sol`) and Opus (`claudeAgent`, `claude-opus-5-5`) work as a pair.
-The builder's model never reviews its own PR: a Sol-built PR gets an Opus review, and an Opus-built PR gets a Sol review. Security reviews run at xhigh reasoning.
-Opus orchestrates and builds design-heavy items. Sol builds mechanical items and handles the fix rounds on its own PRs.
-Run at most about four concurrent Opus agents.
+Use Sol (GPT-6.1-Sol through T3 `delegate_task`: `codex`, `gpt-6.1-sol`) for
+building, fix rounds, rebases and independent reviews, as authorized by #703.
+The builder never reviews its own PR; an independent Sol may review a Sol-built
+PR. Security reviews run at xhigh reasoning. Use Opus (`claudeAgent`,
+`claude-opus-5-5`) sparingly for orchestration and design-heavy or cross-cutting
+work where Sol has stalled. Run at most about four concurrent Opus agents.
 Every PR gets an independent review before merge, in at most two rounds: a full first round, then a diff-only second round in which only production-reachable defects block.
 Parallel builders use separate worktrees off `origin/main`, or off the lower item's branch when stacked. A build may stack on an unmerged lower item; merges stay in plan order.
-One phase checklist item is one PR; reference its phase issue in the body.
-Under #703 the orchestrator squash-merges clean, green PRs with the PR title as summary and deletes the branch.
-Deployments, advisory publication, and npm publishing wait until the end of Phase 5.
+One checklist item is one PR; reference its owning issue in the body.
+The orchestrator squash-merges clean, green PRs with the PR title as summary and deletes the branch.
+Deployments, advisory publication and npm publishing require the owner's authorization
+for that release or operation. Authorization given in the session remains valid.

@@ -7,8 +7,8 @@
 // return it. Field-by-field redaction over a whole API cannot converge, so
 // every REST vendor reviews each operation this module flags with a verdict —
 // `refuse`, `redact` (reviewed field paths), or `safe` — in its
-// `safety.ts` (`value-safety.ts` until its step 1), and the shared harness
-// (`src/providers/_shared/rest/value-safety-harness.ts`) fails when a flagged
+// `safety.ts`, and the shared harness
+// (`test/fixtures/value-safety.ts`) fails when a flagged
 // operation has none, or a flagged field is neither redacted nor kept.
 //
 // One detector serves every vendor. It is the union of the two that preceded
@@ -16,12 +16,11 @@
 // and deliberately over-inclusive; the review decides.
 //
 // `generate-openapi.mjs` writes the result to `evidence/value-safety.json`
-// (`value-safety.candidates.json` in a folder that has not landed its step 1)
 // when the source record sets `"valueSafety"`, stamped with
 // the pinned digest and this format, so a moved pin or a tightened rule
 // forces a fresh review.
 
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -527,23 +526,14 @@ async function exists(path) {
  * acknowledged absent paths, for `providers:spec`, which runs under tsx so it
  * can read TypeScript. Under decision 0011's layout the table is in
  * `safety.ts` and its `absent` field carries the acknowledgements with their
- * reason; a folder that has not landed its step 1 keeps `value-safety.ts` and
- * `value-safety.absent.json`. A folder mixing the two is refused.
+ * reason.
  */
 export async function reviewedTable(directory) {
-  const [standard, legacy, legacyAbsent] = await Promise.all(
-    ["safety.ts", "value-safety.ts", "value-safety.absent.json"].map((name) => exists(join(directory, name))),
-  );
-  if (standard && (legacy || legacyAbsent)) {
-    throw new Error(`${directory}: safety.ts carries the reviewed table and its absent paths; remove value-safety.*`);
-  }
-  if (!standard && !legacy) return undefined;
-  const module = await import(pathToFileURL(join(directory, standard ? "safety.ts" : "value-safety.ts")).href);
+  if (!(await exists(join(directory, "safety.ts")))) return undefined;
+  const module = await import(pathToFileURL(join(directory, "safety.ts")).href);
   const table = Object.values(module).find((value) => value && typeof value === "object" && "operations" in value);
   if (!table) return undefined;
-  let absent = standard ? (table.absent ?? {}) : {};
-  if (legacyAbsent) absent = JSON.parse(await readFile(join(directory, "value-safety.absent.json"), "utf8"));
-  return { table, absent: { operations: {}, resources: {}, ...absent } };
+  return { table, absent: { operations: {}, resources: {}, ...table.absent } };
 }
 
 /**

@@ -2,8 +2,7 @@
 // `<!-- when: <key> -->` … `<!-- end -->` blocks, followed by a
 // `## Conventions` section rendered from the provider's declarations.
 // `providers:generate` writes both into `skill.generated.ts`, and
-// `ProviderContext.usageGuide` selects each connection's blocks. Providers in
-// PENDING.step2 keep their fragment guides (`parseSkill`) until their step 2.
+// `ProviderContext.usageGuide` selects each connection's blocks.
 
 const MARKER = /^<!--\s*(?:when:\s*([a-z][a-z0-9:-]*)|end)\s*-->$/;
 const HATCH_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;

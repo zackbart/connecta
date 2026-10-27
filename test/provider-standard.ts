@@ -1,21 +1,7 @@
-// The provider standard of decision 0011 (decisions/0011-provider-standard.md):
-// the rule checks, and the one list of providers that have not reached it yet.
-//
-// Rule ids match the record: L folder layout, E evidence, D drift.json, G the
-// maintained guide, S the agent-facing surface. Step 1 (onto the kit, agent
-// output unchanged) answers to L, E and D; step 2 (the agent-facing surface)
-// adds G and S. The checks are plain functions over plain data, so the
-// Node-only folder suite (`provider-standard.node.test.ts`), the
-// conventions suite, and `providers:generate` (which refuses D past step 1
-// and G past step 2) apply the same rules.
-
-/**
- * Providers that have not landed a step yet. Each list only shrinks: a
- * migration PR removes its provider, and `provider-standard.node.test.ts`
- * checks the current inventory and fails while a listed provider already passes, so an exemption cannot
- * outlive its reason. A name never joins these lists. A provider folder
- * created after them meets the whole standard from its first commit.
- */
+// The provider standard of decision 0011 (decisions/0011-provider-standard.md).
+// L layout, E evidence, D drift.json, G guide and S surface checks are plain
+// functions shared by the folder suite, conventions and providers:generate.
+// The generator refuses D and G violations before writing any output.
 import {
   driftRecordProblems,
   generatedProblems,
@@ -24,13 +10,6 @@ import {
   validOpenApiComposition,
 } from "../scripts/drift-validate.mjs";
 import type { Connector, ConnectorContext } from "../src/types.js";
-
-export const PENDING = {
-  /** Not yet on the kit and the standard layout, evidence and drift record. */
-  step1: new Set<string>(),
-  /** Agent-facing surface and guide not yet standard. Always contains step1. */
-  step2: new Set<string>(),
-} as const;
 
 /** Independent of optional H-convention metadata; omission must never skip the S checks. */
 export async function authoredTools(

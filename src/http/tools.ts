@@ -32,7 +32,7 @@ import {
 } from "./errors.js";
 import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import { catalogSchema, Integer } from "./json-schema.js";
-import { boundCursor, Cursor, PageInfo, StandardPage, type Page } from "./paging.js";
+import { boundCursor, Cursor, StandardPage, type Page } from "./paging.js";
 import {
   Classification,
   Dispatches,
@@ -198,17 +198,6 @@ export function get<I extends Input, O extends Schema.Top>(
   return read(connection, spec);
 }
 
-/** Step-1 lists keep `{ [key]: rows, page: PageInfo }` until their step 2. */
-interface LegacyListSpec<I extends Input, Row extends Schema.Top> extends Omit<ToolSpec<I, never>, "output" | "run"> {
-  readonly key: string;
-  readonly row: Row;
-  readonly cursor?: "plain" | "bound";
-  readonly page: (
-    args: I["Type"],
-    cursor: string | undefined,
-  ) => Effect.Effect<Page<Row["Type"]>, HttpFailure, CallServices>;
-}
-
 /**
  * A standard list (decision 0011 S2, S3, S5): `{ items, page }`, with the kit
  * appending `limit` (its declared default and maximum), `cursor` and
@@ -238,48 +227,17 @@ interface StandardListSpec<F extends Schema.Struct.Fields, Row extends Schema.To
   ) => Effect.Effect<Page<Row["Type"]>, HttpFailure, CallServices>;
 }
 
-/** One page, with a cursor that either passes through or is tied to this call. */
-export function list<I extends Input, Row extends Schema.Top>(
-  connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: LegacyListSpec<I, Row>,
-): ApiTool;
+/** One standard page, with a cursor that passes through or is tied to this call. */
 export function list<F extends Schema.Struct.Fields, Row extends Schema.Top>(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
   spec: StandardListSpec<F, Row>,
 ): ApiTool;
 export function list(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: LegacyListSpec<Input, Schema.Top> | StandardListSpec<Schema.Struct.Fields, Schema.Top>,
+  spec: StandardListSpec<Schema.Struct.Fields, Schema.Top>,
 ): ApiTool {
   if (spec.cursor !== undefined && spec.cursor !== "plain" && spec.cursor !== "bound")
     throw new Error('A list cursor must be "plain" or "bound".');
-  if (!("key" in spec)) return standardList(connection, spec);
-  if (!spec.key || spec.key === "page") throw new Error("A list needs a row key distinct from page.");
-  return read(connection, {
-    ...spec,
-    output: Schema.Struct({ [spec.key]: Schema.Array(spec.row), page: PageInfo }),
-    run: (args) =>
-      Effect.gen(function* () {
-        const fields = args as Readonly<Record<string, unknown>>;
-        const supplied = typeof fields.cursor === "string" ? fields.cursor : undefined;
-        const cursor =
-          supplied !== undefined && spec.cursor === "bound"
-            ? yield* boundCursor.decode(spec.name, fields, supplied)
-            : supplied;
-        const result = yield* spec.page(args, cursor);
-        const nextCursor =
-          result.page.nextCursor !== null && spec.cursor === "bound"
-            ? yield* boundCursor.encode(spec.name, fields, result.page.nextCursor)
-            : result.page.nextCursor;
-        return { [spec.key]: result.rows, page: { ...result.page, nextCursor } };
-      }),
-  });
-}
-
-function standardList(
-  connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: StandardListSpec<Schema.Struct.Fields, Schema.Top>,
-): ApiTool {
   const { default: size, max } = spec.limit;
   if (spec.total !== undefined && spec.total !== true)
     throw new Error(`${spec.name} total must opt in with true for a vendor-stated exact count.`);

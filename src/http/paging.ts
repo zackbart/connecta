@@ -3,10 +3,6 @@
 // List tools take one page at a time. Lookahead detects an extra row; bound
 // cursors authenticate the tool, arguments, connection and credential owner.
 
-// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
-//
-// List tools take one page at a time. Lookahead detects an extra row; bound
-// cursors authenticate the tool, arguments, connection and credential owner.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import { Refusal, type HttpFailure } from "./errors.js";
@@ -15,17 +11,10 @@ import { ContinuationBinding, ContinuationStorage } from "../runtime/call.js";
 import { continuationKeys } from "../storage/keys.js";
 import type { KVStorage } from "../types.js";
 
-/** The `page` object every list tool returns. */
-export const PageInfo = Schema.Struct({
-  hasMore: Schema.Boolean,
-  nextCursor: Schema.NullOr(Schema.String),
-});
-
 /**
  * The standard `page` (decision 0011 S2): `nextCursor` is present exactly
  * when `hasMore` is true and continuation is safe. A hatch adapter can report
  * more data without a cursor when its continuation cannot be confined.
- * Step-1 lists keep `PageInfo` until their step 2.
  */
 export const StandardPage = Schema.Struct({
   hasMore: Schema.Boolean,
@@ -39,7 +28,8 @@ export const Cursor = Schema.String.check(Schema.isMinLength(1)).annotate({
 
 export interface Page<Row> {
   readonly rows: ReadonlyArray<Row>;
-  readonly page: typeof PageInfo.Type & { readonly total?: number };
+  /** Internal vendor page; the list builder omits nextCursor on terminal pages. */
+  readonly page: { readonly hasMore: boolean; readonly nextCursor: string | null; readonly total?: number };
 }
 
 /**
