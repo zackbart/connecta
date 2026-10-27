@@ -1334,8 +1334,11 @@ Connector ids already appear in native tool names. The
 operator UI and `describeConfig()` show every pool's effective `surface` and
 `executeCode` as facts from deployment code. Change these settings in code.
 
-Keep native pools bounded. Comparisons so far used 40 synthetic tools;
-large production catalogs near the cap have not been evaluated.
+Keep native pools bounded. Local real-Eve validation uses seeded catalogs from
+40 through 1,000 downstream tools across meta, native and native-plus-code
+surfaces, with a deterministic model transport and no paid model calls. These
+checks establish local runtime contracts; model task quality and large
+production catalogs near the cap remain unmeasured.
 
 ### Eve agents
 

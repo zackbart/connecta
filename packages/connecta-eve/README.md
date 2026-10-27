@@ -130,6 +130,8 @@ export default connectaInstructions({ pool: "assistant", getToken: getVercelOidc
 
 Install `@vercel/oidc` in the Eve app when using this variant. The helper has no
 dependency on it and never switches credential types automatically.
+Use the default workload audience: Connecta refuses tokens exchanged for a
+custom audience, even when Vercel signed them.
 
 ## Contributor validation
 
@@ -149,3 +151,10 @@ isolate each matrix cell; Eve startup is separate from turn latency. Reports
 retain actual Eve events and transport inputs. Token usage and model task
 quality remain unmeasured; these results establish local runtime contracts,
 not live Vercel workload admission or production model performance.
+
+For a disposable workload check, use the
+[contributor fixture recipe](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/scripts/workload-fixture/README.md) from a source
+checkout. Its preparation command packs and installs the current core/helper,
+checks local signed controls and cancellation, and creates no live resources.
+Live execution requires separate owner authorization for the concrete account,
+project, bounds, cost ceiling and cleanup. Keep its evidence outside the checkout.

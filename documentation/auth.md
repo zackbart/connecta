@@ -412,6 +412,11 @@ agent. Enabling `preview` lets code on any pushed preview branch act as the agen
 Treat the project's OIDC token as a bearer credential for all of this agent's
 pools. Its default audience, `https://vercel.com/<team-slug>`, is shared by every
 service accepting Vercel's default OIDC tokens; it is not specific to Connecta.
+Connecta accepts only that default audience. Vercel's custom-audience token
+exchange can produce a validly signed token for another service; Connecta
+refuses it. For example, a token exchanged for `https://tickets.example.com`
+cannot authenticate to `/agent/assistant`. Resolve the ordinary workload token
+with `getVercelOidcToken()` without an `audience` option.
 Anything holding the project's token can act as the agent:
 project code, builds (including build steps and dependency install scripts with
 access to `VERCEL_OIDC_TOKEN`), and services the project sends the token to,
