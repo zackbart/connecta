@@ -97,8 +97,13 @@ describe("write evidence over real connections", () => {
     if (result.ok) throw new Error("expected the read to fail");
     expect(result.error).toMatchObject({ code: "unavailable", retryable: true });
     expect(result.error).not.toHaveProperty("writeOutcome");
-    // workerd exposes no coordinator errno for its native connection failures.
-    if (!WORKERD) expect(result.error).toMatchObject({ details: { code: inject("unreachableHttpCode") } });
+    // workerd exposes no coordinator errno; the public sanitizer omits
+    // Darwin's EADDRNOTAVAIL while the raw-fetch control retains that code.
+    if (!WORKERD) {
+      if (inject("unreachableHttpCode") === "ECONNREFUSED")
+        expect(result.error).toMatchObject({ details: { code: "ECONNREFUSED" } });
+      else expect(result.error).not.toHaveProperty("details.code");
+    }
   });
 
   it("INV-9: a write the server received before the connection reset is unknown on every runtime", async () => {
