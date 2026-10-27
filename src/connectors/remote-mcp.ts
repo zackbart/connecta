@@ -3402,6 +3402,66 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }),
   );
 
+  /**
+   * Whether the owner's grant holds tokens, read the way the invocation gate
+   * reads it. A downstream may answer its handshake and listing without
+   * credentials, so a healthy connection proves nothing about the grant.
+   * Read after connecting: connect has bound the epoch, migrated an older
+   * layout, and refused a disconnected one within the scope's lifetime.
+   */
+  const granted = authMethod((ctx: ConnectorContext) =>
+    authFlow<boolean>(function* () {
+      return Boolean(yield authInvoke(newProvider(ctx), "tokens", []));
+    }),
+  );
+
+  /**
+   * Start consent for a downstream that answered without challenging. The
+   * transport's bound 401 seam runs the SDK flow exactly as a challenge
+   * without `resource_metadata` would: RFC 9728 discovery at the resource's
+   * well-known URLs, the same issuer and resource checks, consent state, and
+   * CIMD/DCR/static client order. Nothing is sent to the MCP endpoint.
+   */
+  const startUnchallenged = authMethod((ctx: ConnectorContext) =>
+    authFlow<ConnectorStatus>(function* () {
+      const required = {
+        state: "auth_required",
+        message: "Authorization required \u2014 open the URL to connect.",
+      } as const;
+      // A test transport carries no OAuth flow to start.
+      if (opts._transportFactory) return required;
+      // Bound to the live epoch, which the connect just found connected: a
+      // reset or disconnect meanwhile fails this flow's writes.
+      const provider = newProvider(ctx);
+      (yield authInvoke(provider, "beginFlow", [])) as string;
+      // Never started, this transport holds no session or stream to close.
+      const transport = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
+      const internals = transport as unknown as {
+        _authProvider: {
+          onUnauthorized: (flow: { response: Response; serverUrl: URL; fetchFn: FetchLike }) => Promise<void>;
+        };
+        _fetchWithInit: FetchLike;
+      };
+      try {
+        (yield authInvoke(internals._authProvider, "onUnauthorized", [
+          {
+            response: new Response(null, { status: 401 }),
+            serverUrl: new URL(opts.url),
+            fetchFn: internals._fetchWithInit,
+          },
+        ])) as void;
+        // Authorized without consent: nothing is pending to hand back.
+        return { state: "ok", message: "Already authorized \u2014 connection is healthy." };
+      } catch (err) {
+        if (!(err instanceof UnauthorizedError)) throw err;
+      }
+      const authorizationUrl = (yield authInvoke(provider, "consentUrl", [viewSignal(ctx, true)])) as
+        | string
+        | undefined;
+      return { ...required, ...(authorizationUrl !== undefined ? { authorizationUrl } : {}) };
+    }),
+  );
+
   // Built once from construction-time values: names, framing, and public
   // URLs only. A static header's value and a stored credential never reach
   // it, and a URL keeps origin and path: a CIMD document's query may carry a
@@ -3997,6 +4057,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         );
         try {
           (yield authCall(ensureConnected, [ctx, state])) as Client;
+          // The grant decides, as it does for a call: a downstream that
+          // answers without credentials is not connected for this owner.
+          if (isOauth && !((yield authCall(granted, [ctx])) as boolean))
+            return (yield authCall(report, [
+              { state: "auth_required", message: "Authorization required \u2014 open the URL to connect." },
+            ])) as ConnectorStatus;
           return (yield authCall(report, [{ state: "ok" }])) as ConnectorStatus;
         } catch (err) {
           if (err instanceof CredentialRequiredError) {
@@ -4134,7 +4200,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           }
           if (ctx.signal?.aborted) throw ctx.signal.reason;
           try {
+            // The handshake runs first, so a 401 challenge's
+            // `resource_metadata` starts consent as it always has.
             (yield authCall(ensureConnected, [ctx, state])) as Client;
+            if (!((yield authCall(granted, [ctx])) as boolean))
+              return (yield authCall(startUnchallenged, [ctx])) as ConnectorStatus;
             return {
               state: "ok",
               message: "Already authorized \u2014 connection is healthy.",

@@ -571,6 +571,7 @@ describe("remoteMcp() connector", () => {
     });
     const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
     const context = { ...ctx(), requestScope: {} };
+    await seedGrant(context.storage, { tokens: { access_token: "tok", token_type: "Bearer" } });
     const firstController = new AbortController();
     const secondController = new AbortController();
     const secondListening = vi.spyOn(secondController.signal, "addEventListener");
@@ -798,7 +799,8 @@ describe("remoteMcp() connector", () => {
       list: (prefix) => backing.list(prefix),
       compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       async get(key) {
-        if (key === oauthGrantKeys.grant && ++generationReads === 2) {
+        // The first grant read after the handshake starts is the generation read.
+        if (key === oauthGrantKeys.grant && counts.connect === 1 && ++generationReads === 1) {
           reachedSecondRead();
           await generationGate;
         }
@@ -808,6 +810,7 @@ describe("remoteMcp() connector", () => {
       delete: (key) => backing.delete(key),
     };
     const { connector, counts } = await makeTrackedConnector({ oauth: true });
+    await seedGrant(backing, { tokens: { access_token: "tok", token_type: "Bearer" } });
     const context = { ...ctx(storage), requestScope: {} };
 
     const status = connector.status!(context);
@@ -889,9 +892,11 @@ describe("downstream session termination", () => {
         requestScope: {},
         credential: { get: async () => secret, getAll: async () => ({ value: secret }) },
       };
+      const tokens = { access_token: "tok", token_type: "Bearer" };
+      if (exit !== "rotation") await seedGrant(context.storage, { tokens });
       await expect(connector.status!(context)).resolves.toMatchObject({ state: "ok" });
       if (exit === "rotation") secret = "new-secret";
-      if (exit === "generation") await seedGrant(context.storage, {}, "v3:replacement");
+      if (exit === "generation") await seedGrant(context.storage, { tokens }, "v3:replacement");
       if (exit === "disconnect") await connector.disconnectAuth!(context);
       else await expect(connector.status!(context)).resolves.toMatchObject({ state: "ok" });
       // The operation above completes while the provider still holds DELETE.

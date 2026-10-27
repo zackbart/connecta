@@ -1336,6 +1336,29 @@ healthy. Restart invalidates it even if the connection ends healthy. Continue
 trusts the stored registration's `redirect_uris`; after changing `publicUrl`,
 Restart registers for the current callback URL.
 
+For `remoteMcp()` OAuth, the owner's stored grant decides whether a connection
+is connected, not whether the downstream answers. Some servers answer
+`initialize` and `tools/list` without credentials and challenge only
+`tools/call`. The operator status, the UI's connected state, and a start agree
+with the gate a call passes:
+
+| Stored grant        | Status                                                      | Start (Connect, Continue, Restart, `authorize_connector`)                                                                                                                                                                                                                          |
+| ------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Disconnected        | `auth_required`; the downstream is not asked                | Replaces the epoch, then proceeds as for no tokens                                                                                                                                                                                                                                 |
+| No tokens           | Connects; `auth_required` even when the downstream answers  | Connects first, so a 401's `resource_metadata` starts consent as before. A downstream that answers without credentials still gets consent, discovered from RFC 9728 metadata at the configured URL's well-known locations. The start answers `auth_required` with the consent URL. |
+| Tokens (any expiry) | Connects; `ok`, or `auth_required` when a 401 needs consent | Connects; `ok` without starting a flow when healthy                                                                                                                                                                                                                                |
+
+A start without a challenge runs the same SDK flow as a 401 without
+`resource_metadata`. Issuer and resource checks, consent state, PKCE, and
+the CIMD, registration, and static-client order are unchanged, and nothing is
+sent to the MCP endpoint. A call never starts consent. A call's 401 that names
+per-tool metadata, such as `/.well-known/oauth-protected-resource/<tool>`,
+renews through it when the grant holds no discovery. That metadata must name
+the configured resource, as any other must. When renewal is refused, the grant
+loses its tokens and the next start hands out consent. Restart (`force: true`)
+removes the tokens first, so it starts consent unless the downstream or
+discovery fails.
+
 ### Consents and callbacks
 
 A start stores its flow record, then the grant's pointer to it. A reset that
