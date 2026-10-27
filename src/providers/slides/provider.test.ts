@@ -1,8 +1,6 @@
-// The Google Slides connection. test/goldens/slides pins each tool's catalog
-// entry, requests, results and failure ladder; these tests stub the network
-// for what the goldens do not reach: paging, cursor binding, result bounds,
-// request translation, refusals before dispatch, and write outcomes.
-// Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
+// Google Slides fixture regressions cover paging, cursor binding, result bounds,
+// translation, refusals and write outcomes. Delegation, subjects and tokens
+// are covered by test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SLIDES_INDEX } from "./api.js";
 import { slides } from "./index.js";

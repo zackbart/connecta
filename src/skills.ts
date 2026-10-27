@@ -50,8 +50,6 @@ export function nativeInstructions(executeCode: boolean): string {
   return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? "combine work in execute_code using the program addresses in tool descriptions." : "find tools with your host's search."} Read-only endpoints omit and refuse writes. Never repeat a write for output. Give auth handoffs to the user/operator. Follow nextAction to page with ${executeCode ? "connecta.result in execute_code" : "read_result"}. skills lists guidance.`;
 }
 
-export { USAGE_SKILL } from "./usage-guide.js";
-
 /** True when at least one of `connectors` carries a usage guide. */
 export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
   return connectors.some((connector) => connectorGuide(connector) !== undefined);

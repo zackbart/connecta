@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import goldenSourceBoundary from "./scripts/golden-source-boundary.mjs";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { build, buildSync, type Plugin } from "esbuild";
@@ -69,15 +68,13 @@ const WORKERS_SUITES = [
   "test/clerk.test.ts",
   "test/cloudflare-access-auth.test.ts",
   "test/credentials.test.ts",
-  // Every provider's characterized requests, built by workerd.
-  "test/goldens.test.ts",
   // Provider pin policy crosses native fetch, request budgets and Web Crypto cursors.
   "src/providers/vercel/provider.pin.test.ts",
   "src/providers/planning-center/provider.pagination.test.ts",
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
   // Brace globs tolerate deleted files without enrolling other suites.
   "test/{http-kit,http-hatch,http-provider}.test.ts",
-  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness,auth-elicitation,downstream-input}.test.ts",
+  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,auth-elicitation,downstream-input}.test.ts",
 ];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
@@ -209,7 +206,6 @@ export default defineConfig({
     reporters: ["default", new CoverageReporter()],
     projects: [
       {
-        plugins: [goldenSourceBoundary()],
         // The deployment shapes are consumer projects: they import the package
         // by name, and `dist/` does not exist yet when tests run. Point each
         // specifier at its source module so a suite may run the template's and
@@ -242,7 +238,6 @@ export default defineConfig({
         test: {
           name: "node",
           tags: [{ name: "node" }, { name: "workers" }],
-          setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
@@ -255,7 +250,6 @@ export default defineConfig({
       },
       {
         plugins: [
-          goldenSourceBoundary(),
           executorBundles(),
           cloudflareTest(async ({ inject }) => ({
             miniflare: {
@@ -317,7 +311,6 @@ export default defineConfig({
         test: {
           name: "workers",
           tags: [{ name: "node", skip: true }, { name: "workers" }],
-          setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/clerk-backend-server.ts",

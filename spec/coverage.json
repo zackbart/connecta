@@ -314,6 +314,14 @@
         {
           "file": "test/meta-tool-schemas.test.ts",
           "title": "INV-3: structured-only meta-tools advertise schemas and direct-call tools permit native content"
+        },
+        {
+          "file": "test/provider-privacy-journey.node.test.ts",
+          "title": "INV-5: remote MCP hides credential echoes in new fields across direct, guest, failure and recovery"
+        },
+        {
+          "file": "test/provider-privacy-journey.node.test.ts",
+          "title": "INV-5: Stripe API hides credential echoes in new fields across direct, guest, failure and recovery"
         }
       ]
     },

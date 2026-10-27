@@ -1,5 +1,5 @@
-// Public, throwaway test keys. Never use for real credentials. JWT signatures
-// are placeholdered; only decoded claims reach the characterization goldens.
+// Public, throwaway RSA key for provider write-provenance fixtures.
+// Never use for real credentials.
 export const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDW8qk1qLjEXfBV
 ubNhAv5xq7l1BxZ/mwT489eR039HFDUjbfwbkeHLRhgcy5WFtWz9eKP4epE9zw//
@@ -28,14 +28,4 @@ x0ziGf4T3GMMC1JRq2DGy5YCeOukieoTezyIqY8FFBRcYFSO45JNqEjqDzuuhS1/
 6eHR7lD6tj9abCLlFtR7aQ6MWrdrvolQzIc+t+Qisd3SPO7lKHbRlAQAYOI6n3NO
 aRBg43iL1R9bA7chohnzfnOO
 -----END PRIVATE KEY-----
-`;
-export const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1vKpNai4xF3wVbmzYQL+
-cau5dQcWf5sE+PPXkdN/RxQ1I238G5Hhy0YYHMuVhbVs/Xij+HqRPc8P/1pabrFc
-SvuSAex4KepN7QLjcn7O9+fWN7jVJiiZsME7+Ln3GQ2PEscItij2IJB5DkMLJXZE
-B18GhWwoESLWFxtmZZDSAdlg8dCatUGdHhw5oVnADoby95tgOqYjTX+7HtEKCtgJ
-AvygTuz3GvKfV5Tt61X+dTLewWS4e1nXSuVhvjh+A5P6tU/QlPiyKlccN+XTfCx3
-/dsjwY8DggDuCcYfOQHmIPEGxW3mFNxy5mlmpNOkJhWpEWV2c7Dt0wCDGXzIC2eh
-KwIDAQAB
------END PUBLIC KEY-----
 `;

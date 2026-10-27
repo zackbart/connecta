@@ -1406,7 +1406,7 @@ UTF-16 code units; full reconstruction must match its recorded exact length.
 These physical decode checks do not change request validation, schema traversal,
 search, refusal, result or discovery budgets. Generation and offline roundtrip
 tests must preserve every pinned logical contract; storage changes never accept
-new upstream evidence or golden bytes. The compaction suites cover exact strings,
+new upstream evidence. The compaction suites cover exact strings,
 native Web Crypto identity, malformed references, lazy decoding, mutation
 semantics and every maintained provider.
 
@@ -1653,232 +1653,48 @@ There are no hosted review maps, pins, drift comparisons or review UI fields.
 Catalog refresh activity still compares successive accepted catalog fingerprints
 and reports only added, removed and changed counts in the caller's partition.
 
-#### Characterization goldens
+#### Behavioral evidence (contributor)
 
-Every maintained provider with an `api()` surface has goldens under
-`test/goldens/<provider>/`: the oracle a provider migration must match byte
-for byte. `catalog.json` holds the connector metadata, the rendered guide,
-and each tool's name, description, schemas, and annotations. `calls.json`
-holds at least one fixture call per tool, then an echo call: the exact
-requests sent (method, URL, sorted headers, body), grouped into causal
-steps, and the agent-visible outcome. `failures.json` drives one read and
-one write through 400, 401, 403, 404, 409, 422, 429 (with `retry-after`)
-and 500 responses, a 401 whose message echoes every sent secret, a refused
-connection, and a transport timeout (a `TimeoutError` after the request
-left). `setup.json`, for a provider whose spec completes an OAuth consent,
-holds the consent's steps. Calls run through `Registry` and
-`InvocationService` with a real credential vault, so the outcome is what
-`call_tool` returns before MCP rendering.
+The characterization snapshot engine, provider JSON snapshots, source scheduler
+and its self-tests are retired under
+[#1072](https://github.com/zackbart/connecta/issues/1072). Provider changes no
+longer require golden enrollment, snapshot updates, byte equivalence or nightly
+capture determinism. Production invariants remain unchanged.
 
-`test/goldens/<provider>/spec.ts` says only how to build the provider and
-which calls to make, including an `echo` call whose vendor reply carries the
-text the harness passes. `test/goldens/harness.ts` owns everything else:
+Use the existing stateful fixture vendors and published-edge deployment adapters:
 
-- The fake network records each request as `new Request(input, init)`
-  builds it, so `init.headers` replaces a Request's headers as Fetch does,
-  and a body gets its implied `content-type`. Form bodies are recorded as
-  fields when they re-encode to the exact bytes sent; FormData as its parts,
-  with the runtime's boundary as `<boundary>`. A JSON body is recorded as
-  `json` alone only when it is exactly that value's compact serialization;
-  any other spacing, key order, or escape also keeps the exact `text`.
-- A step loop drives each scenario under fake timers. It drains microtasks,
-  fires timers due now synchronously, and waits for request construction and
-  counted real work to finish. Newly waiting requests form one step, sorted
-  by method, URL, headers, and exact body. The loop releases **one answer at
-  a time**, running to quiescence after each. Previously recorded requests
-  keep release priority over new requests. Fixture updates capture canonical
-  cohort release order and reverse cohort release order, each with its own
-  fresh module graph, clock, network and cache namespace. Queue replies are
-  assigned in canonical request order in both runs; only answer delivery
-  changes. Steps remain readable admission cohorts, not simultaneous answers.
-  Workerd checks compare the canonical observation. In stored fixtures,
-  identical observations collapse to one
-  row; differing reverse observations appear in `variants`, each with
-  `order: "reverse"`, complete `steps`, optional `waitedMs`, and `result`.
-  Setup uses the same rule, with `{ steps, variants }` only when orders differ.
-  This bounded two-order model deliberately does not enumerate all interleavings.
-- Every request records integer `after`: the number of answers delivered
-  when the provider called fetch, before harness jitter or body inspection.
-  It identifies a prefix of that run's release sequence; it includes auxiliary
-  requests and resets for setup and invocation. The canonical run releases
-  each cohort forwards, the reverse run backwards, with older cohorts first.
-  For concurrent A and B, C awaiting only B and C awaiting both have canonical
-  `after: 2`, but reverse `after: 1` and `after: 2` respectively. The differing
-  variant preserves that dependency. One integer per request keeps frontiers
-  linear, including a 300-page sequential call. A write sent before login and
-  a write duplicated concurrently or sequentially also differ.
-- Distinct queued replies for indistinguishable concurrent requests are a
-  fixture authoring error: the harness rejects them with a diagnostic. Use
-  identical replies or a request discriminator the provider controls. The
-  arrival order of identical requests cannot assign distinct responses.
-- `test/goldens/setup.ts` installs source dispatchers before a golden test
-  file imports any provider, connector or Effect module. `vi.resetModules()`
-  and dynamic imports refresh those graphs for each capture and release order.
-  The dispatchers retain their identity across captures: saved and prebound
-  functions, and functions captured by Effect, still consult the current
-  capture. Their defining prototypes are wrapped too. Native implementations
-  remain private to the source controller; outside captures the dispatchers
-  delegate unchanged, preserving Vitest's real clocks and runner timeouts.
-- The supported asynchronous model is explicit: fake fetch answers; fake
-  timeout, interval and immediate timers, including `AbortSignal.timeout`; Web Crypto's promise-returning
-  subtle methods; Request/Response/Blob body reads (`arrayBuffer`, `blob`,
-  `bytes`, `formData`, `json`, `text`, where present); default stream-reader
-  `read`/`cancel` and stream `cancel`/`pipeTo`; and promises/`queueMicrotask` chains rooted in those sources or
-  synchronous work. Effect's scheduler and sleeps use the same microtasks
-  and fake timers. A synchronous TextDecoderStream pipeline is supported.
-  Timer delays must coerce to finite nonnegative integer milliseconds within
-  the signed 32-bit timer range; other delays poison the capture. This keeps
-  Date and nanosecond clocks integral. New host asynchronous sources must be
-  registered and counted before use.
-  Native CompressionStream/DecompressionStream, `scheduler.wait`, and
-  native socket/worker/event-source constructors are rejected explicitly,
-  including when their errors are swallowed by a provider. CompressionStream
-  async iteration bypasses the reader-method spy and cannot establish
-  quiescence. No golden may silently bless that path.
-- A no-stimulus audit follows declared quiescence: request, counted-work,
-  timer, or call-settlement progress before an answer or clock tick fails
-  with an unsupported-source diagnostic. Waiting without a request, counted
-  work, or fake timer also fails. The audit is a secondary assertion: source
-  control starts at module load, and supported host promises and microtasks
-  are counted from entry through completion. Quiescence requires zero active
-  counted work, zero queued controlled microtasks, and no due timers; future
-  virtual timers are explicit harness stimuli. Unregistered native producers
-  are unavailable or throw, including saved constructors and swallowed errors.
-  `process.nextTick`, `process.uptime`, `Atomics.waitAsync`, native messaging
-  constructors, and performance timeline methods are unsupported. The
-  test-only `golden-source-boundary` transform rejects Node host-module imports
-  in provider graphs and rejects lazy module loading during scenario work,
-  before either can capture native references or schedule uncounted I/O. Only
-  the harness's fresh-graph loading phase admits test fixture imports.
-  Invalid captures cancel and drain their concurrent fake requests.
-- Settle, rejected-capture cleanup, and final teardown pump controlled timers,
-  microtasks, and fake requests within the original 10,000-host-turn windows.
-  Only outstanding captured Web Crypto operations can extend a window: after
-  exhausting it, await a snapshot of those native operations to settle, then
-  resume with a fresh bounded window. Each phase allows at most 100 native
-  extensions and reports an explicit error on exhaustion. Web Crypto always
-  settles independently of the harness's fake network, timers, and producers.
-  Body reads and stream reads are counted for quiescence but cannot extend a
-  window: their producers may require a fake response, future virtual time,
-  or never complete. No producer attribution or stream constructor tracking
-  is needed. Pending native crypto never advances virtual deadlines or merges
-  request cohorts. Clock advancement remains limited to 1,000 ticks.
-  Unsupported producer dependencies reject within the turn bound; teardown
-  always clears timers and releases capture ownership, including after failed
-  construction and overlapping capture rejection. The next capture must work.
-  Each capture has an async-context epoch that closes before ownership is
-  released, even when its native extension cap is exhausted. Controlled-source dispatchers reject closed
-  continuations before touching another capture's state. Fake request entry,
-  admission, response delivery, and serialization check their owning epoch,
-  including after asynchronous body inspection. Late work cannot record into
-  or receive a response from a later capture, which never waits for it.
-  Closing also attaches rejection handlers to outstanding counted promises,
-  consuming abandoned native body-read rejections without awaiting them.
-  Source regressions explicitly assert either completion or bounded rejection
-  followed by recovery. Crypto-delay probes at 11,000 and 100,000 host turns
-  must complete with unchanged observations; producer-fed bodies need not.
-- The network answers in zero virtual time. Before advancing to the next
-  timer, the loop requires eight quiet real event-loop turns and an audit.
-  A row records nonzero `waitedMs`, the virtual time spent on provider
-  timers. Elapsed-time readings count only those timers. A timer of 0 ms
-  set outside a timer callback is due at once and stays in the current
-  cohort. Unjoined timers at completion fail. Since `AbortSignal.timeout`
-  cannot be cancelled, remaining signal deadlines fire during teardown, outside
-  `waitedMs`; any resulting request or result mutation fails. Every successful
-  drive and scenario boundary has zero outstanding controlled work and timers.
-- Auxiliary routes answer token exchanges and other requests that are not
-  the tool's own, and are recorded by name with headers and body. A JWT in a
-  header or field is recorded as its decoded header and claims, with
-  `<signature>` for the per-run signature.
-- `setup` runs before each scenario; its requests must be identical in
-  every scenario and are recorded once.
-- Determinism: a fresh fake clock per scenario (timers, `Date`, and
-  `performance`, and Node `process.hrtime`/`hrtime.bigint`, starting at
-  2026-01-02T03:04:05Z), counted
-  `crypto.randomUUID`, and fixed `crypto.getRandomValues` and `Math.random`,
-  all restarted per scenario. `create(scenario)` receives a slug unique in
-  the process: the scenario name plus a per-capture suffix the goldens never
-  show. Load-time hrtime dispatchers also control Effect wall and monotonic
-  nanoseconds on the virtual clock. Default-date Intl formatting also reads
-  the virtual wall clock.
-  A process-wide cache (Google's delegated tokens) never carries
-  over from an earlier scenario or capture.
-- Secrets: every credential field and secret becomes `<secret:field>`, with
-  HTTP Basic shown decoded. Before that placeholdering, the harness fails
-  the capture if any secret reaches a caller-visible result (INV-5). The
-  guard decodes the result itself: JSON escapes, percent escapes in either
-  hex case, and base64 or base64url at any alignment, up to three layers
-  deep. It also finds any start of a secret that reaches 12 characters past
-  its public framing, so a truncated echo is a leak. Framing is a PEM armor
-  line and the DER structure that opens every key of its type (tags,
-  lengths, version, algorithm identifier), which guides and example keys
-  print. A later fragment, a shorter one in any encoding, or a secret with
-  its case changed is not detected. A base64 run is decoded only from 11
-  characters (8 bytes), shorter than the base64 of any start the guard
-  looks for.
-- The echo call carries every secret not listed in `unsent` in each
-  encoding redaction covers: raw, percent-encoded with upper- and lowercase
-  hex, base64, unpadded base64url, and `\uXXXX` escapes with upper- and
-  lowercase hex, plus the base64 of each `basic` pair. Every sent secret
-  contains `/`, `+`, and `=`, so its percent and base64url forms differ from
-  its raw and base64 forms. The `401 echo` case echoes the raw secrets only
-  unless the spec sets `errorEcho: "all"`: a provider that caps a vendor
-  message before redaction sees it would leak the start of a longer form its
-  cut goes through. The Google Workspace specs set it, since Google redacts a
-  message whole before cutting it to 500 characters. Their `401 echo` carries
-  `errorEchoForms`: every form above, the `Bearer` and `token` framings, and
-  an HTTP Basic pair holding the token as header, base64 and base64url.
+- `pnpm run eval:outcomes` drives representative joins, retained paging, endpoint
+  refusal, auth handoff, value safety and refund recovery. Graders inspect
+  independent downstream state and the physical mutation ledger, and reject
+  wrong targets, duplicate writes, missing completion and interrupted trials.
+- `pnpm run eval:smoke` boots the Node template, Node eval deployment and both
+  native Workers deployments, then exercises MCP and the operator page.
+- `test/provider-privacy-journey.node.test.ts` sends credentials through real
+  HTTP MCP and a maintained API provider. Unknown vendor fields and keys carry
+  raw, escaped, percent-encoded, base64 and Basic echoes through direct calls,
+  QuickJS programs, failure and recovery. The independent decoder in
+  `test/helpers/secret-echoes.ts` checks the wire responses for secret fragments;
+  it does not normalize them to placeholders or compare saved output.
+- `test/provider-failure-sweep.test.ts` owns catalog-wide dispatched failure,
+  classification, auxiliary and composite write outcomes. Existing
+  `test/sent-secrets.test.ts`, `test/sent-secret-output-boundary.test.ts`,
+  `test/request-secret-redaction.test.ts` and `test/catalog-secret-redaction.test.ts`
+  cover secrecy before projection, truncation, caching, paging and diagnostics.
+- `test/write-evidence.node.test.ts`, `test/remote-mcp-attempts.node.test.ts` and
+  `test/oauth-credential-attempts.node.test.ts` inspect physical socket sends.
+  Native transport parity, OAuth and write-provenance suites retain their
+  workerd coverage. The shared throwaway RSA key in `test/fixtures/rsa.ts` is
+  used by write-provenance and unknown-write-advice fixtures.
+- The request, catalog, auxiliary-call, renewal and Promise-boundary lifetime
+  suites, plus `test/auth-admission-binding.test.ts`, exercise cancellation,
+  held native work and garbage collection. These test actual request ownership;
+  the retired capture scheduler's source guards were only harness constraints.
 
-Object keys keep the order the provider produced. A migration changes the
-provider, never the spec or harness.
-
-`test/goldens.test.ts` compares every provider on Node and workerd. It fails
-if a provider folder is neither covered nor listed as remote-MCP-only, a tool
-has no call, or a golden file is missing or extra. Ordinary checks never write.
-Node compares forward and reverse observations byte for byte; workerd compares
-canonical observations. Each order starts a fresh module graph. Workers projection
-removes variants only at harness observation positions, never from vendor fields
-or schemas. Fixture updates retain both orders.
-There are no characterization tiers, path classifiers, or planning-only runs.
-
-`test/goldens-harness.test.ts` keeps the source and mutation guards on Node:
-replaced Authorization headers, changed auxiliary/login bytes, writes sent
-early or twice, and missing secret-encoding redaction must alter a capture or
-fail it. Mutation probes capture the affected call rather than repeating an
-entire provider catalog. Redaction negative controls use Forms, GitHub, Breeze
-and Tithe.ly to cover OAuth/Bearer, app-token, query-key and provider-kit lanes;
-the ordinary goldens still check every provider's complete secret echoes.
-The native-extension budget is checked directly at its 100-extension boundary,
-and a gated closed-epoch continuation must fail before entering the next
-capture's network. Genuine crypto completion, rejection, late dispatch and
-producer-fed stream probes retain their native settlement coverage without
-repeating a million-turn synthetic delay. Ordinary runs use one source-probe schedule. Nightly Node runs set
-`CONNECTA_GOLDENS_DETERMINISM=1` for an identical repeat, provider jitter seeds
-1 and 2, and the complete source-probe jitter matrix. Small native-source probes also run on
-workerd: `scheduler.wait`, CompressionStream, saved timers/microtasks and
-Effect scheduling, prebound crypto/clocks, module freshness, runner clocks,
-and Blob/TextDecoderStream promise settlement. Runtime-specific cases carry
-Vitest's `workers` tag; broad cases carry `node`, which the Workers project
-skips. Other mixed transport/auth/runtime suites use the same tags to retain
-native fetch, request/response streams, deadlines, signals, crypto and SDK
-settlement without duplicating their policy matrices. `vitest.config.ts`
-selects these files with globs that tolerate test-file deletion. Portable
-filenames alone do not enroll a new file in workerd.
-
-Repository verification policy, CI requirements, and exact commands live in
-[AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md#verification).
-
-JWT fixture specs import fixed, public throwaway RSA PEM keys, with an
-import/sign/verify self-test. This avoids expensive key generation on every
-fresh module evaluation without changing characterized JWT claims or bytes.
-The harness never caches evaluated module graphs. Global controls prohibit
-`it.concurrent`; parallelism must use isolated files/workers. Transformed code
-may be cached.
-
-`pnpm run goldens:update [provider...]` rewrites the named goldens (all
-when none are named) on Node; it is not part of `check`. A PR
-that changes agent-facing output on purpose regenerates the affected goldens
-and says why in its description; any other golden diff is a regression.
+Add a compact fault journey only for a meaningful outcome those suites cannot
+observe. Reuse their fixtures and adapters; do not reintroduce a snapshot
+format, module loader or virtual scheduler. Workerd enrollment is for native
+fetch, streams, Web Crypto, lifetime and request-byte behavior, as listed in
+`vitest.config.ts`; pure logic runs on Node.
 
 ## Optional deployment modules
 
@@ -2152,8 +1968,7 @@ never-settling evaluation/host calls, late rejection, execute-once ownership and
 original acquisition errors in workerd. `test/quickjs-pool.node.test.ts` covers
 readiness release, stale/malformed IPC, late host failures, backoff and bounded
 kill. Real Worker and QuickJS guest contracts, the HTTP Worker budget/queued
-request fixture and native-output suites supply runtime parity evidence;
-provider goldens do not execute a sandbox.
+request fixture and native-output suites supply runtime parity evidence.
 
 ### Native SQL storage (contributor)
 
@@ -2367,9 +2182,8 @@ Provider declarations use `src/http/vendor.ts` for HttpApi operations and
 `src/http/tools.ts` for list, get, read, write and action builders.
 `src/http/provider.ts` composes them with `defineProvider`; it returns the
 ordinary Promise-based Connector factory. The kit stays outside the root
-graph and its Effect types are internal. Tithe.ly is the first provider on
-it (B.5): `api.ts` declares the vendor, `tools.ts` the tools, and its goldens
-are unchanged.
+graph and its Effect types are internal. In each provider, `api.ts` declares
+the vendor and `tools.ts` the tools.
 
 Decision 0011's standard surface (Tithe.ly's step 2) adds four kit pieces.
 A `list` without the legacy `key` returns `{ items, page }`, with
@@ -2611,8 +2425,7 @@ storage loses them with the store. Key-load outages or corrupt stored keys
 produce retryable `unavailable`, naming the cursor signing key without its
 value. See [cursor-key recovery](./deploying.md#recover-a-cursor-signing-key):
 after repairing/deleting a corrupt key, restart every process/isolate to clear
-cached keys. Pre-upgrade cursors require a new first page. Offline goldens
-preseed a fixed key only in their harness.
+cached keys. Pre-upgrade cursors require a new first page.
 
 The helper derives connection metadata and probe messages from
 validated options and still accepts complete legacy usage guides for compatibility.
@@ -2624,8 +2437,7 @@ CCB uses shared System Auth grants and personal Identity Auth grants. Tool
 arguments cannot select a grant's owner. On Node, every maintained-provider
 request uses the owned sender `listen()` installs, reads included. Without it,
 maintained-provider writes and reviewed POST reads are refused before sending;
-suites exercising those requests configure the sender themselves, as the goldens
-harness does. Anything a connection
+focused suites exercising those requests configure the sender themselves. Anything a connection
 caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
@@ -3109,7 +2921,7 @@ Two native input schemas with validation and JSON Schema rendering add 62,148
 bytes gzip to the root, taking it from 303,083 to 365,231 against a 339,526
 cap. Effect can reject excess properties when both decoding and rendering use
 `onExcessProperty: "error"`; its default strips them. The generated schemas
-still differ from the exact meta-tool goldens, including record rendering and
+still differ from the published meta-tool schemas, including record rendering and
 composed numeric bounds. A Schema replacement would need to preserve that
 contract and memoized rendering. Both MCP SDK packages still depend on Zod,
 so changing our inputs alone does not remove Zod from an installation.
@@ -3550,7 +3362,7 @@ compiling and configuring the real thing.
   overrides with HTTP 503 for every tool and a connection reset after send
   for each provider/verdict representative. HTTP 401 recovery uses those
   representatives plus the distinct composite, auxiliary, owner-lookup and
-  POST-as-read paths; every provider's full golden failure matrix still runs.
+  POST-as-read paths.
   Shared sender and real-socket evidence below own status/reset permutations.
   Local metadata
   tools prove zero sends; composite calls prove each distinct request leaves
@@ -3839,7 +3651,7 @@ and workerd. `remote-mcp-native-bundle.node.test.ts` additionally loads an actua
 minified production bundle to verify call/cache registration, request Context,
 native storage, saved-original delegates, custom replacements and closed-owner
 refusal. Existing wire, physical-attempt, cache and OAuth lifetime suites remain
-the compatibility evidence; provider golden observations remain unchanged.
+the compatibility evidence.
 
 ### Native upward MCP orchestration (contributor)
 

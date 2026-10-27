@@ -23,7 +23,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { resendWording } from "./fixtures/resend-wording.js";
-import { PRIVATE_KEY } from "./goldens/rsa-fixture.js";
+import { PRIVATE_KEY } from "./fixtures/rsa.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";
