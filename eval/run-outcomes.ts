@@ -196,6 +196,8 @@ async function run() {
   // Keep the real vendor ledger, continuations and canned answer intact while
   // deleting the facts delivered over MCP. Calls alone cannot prove a read.
   for (const id of [
+    "quickbooks-accounting-journey",
+    "quickbooks-write-journey",
     "ccb-advanced-search",
     "pco-step2-plan-join",
     "overflow-donor-paging",

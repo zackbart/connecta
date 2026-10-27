@@ -18,6 +18,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "quickbooks-write-journey": {
     route: [],
     outcome: [
+      "delivered-data",
       "budget",
       "contradictions",
       "physical-intents",
@@ -30,7 +31,10 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
       "company-isolation",
     ],
   },
-  "quickbooks-accounting-journey": { route: [], outcome: ["privacy", "durable-rotation", "revoked", "reads-only"] },
+  "quickbooks-accounting-journey": {
+    route: [],
+    outcome: ["delivered-data", "privacy", "durable-rotation", "revoked", "reads-only"],
+  },
   ...Object.fromEntries(
     GOOGLE_PRODUCTS.flatMap((product) =>
       Array.from({ length: 7 }, (_, i) => {

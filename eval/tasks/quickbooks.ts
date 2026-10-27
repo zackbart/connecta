@@ -6,6 +6,7 @@ import { QB_COMPANIES } from "../deploy/quickbooks.js";
 import { QB_PRIVATE } from "../fakes/quickbooks.js";
 import type { World } from "../fakes/world.js";
 import { check } from "./baseline.js";
+import { deliveredValues } from "./correctness.js";
 import type { ActiveTask } from "./types.js";
 
 function requireThat(value: unknown, message: string): asserts value {
@@ -230,11 +231,18 @@ export const QUICKBOOKS_TASK: ActiveTask = {
       CurrencyRef: r.CurrencyRef,
     }));
     const same = isDeepStrictEqual;
+    const delivered = deliveredValues(trace);
     const grants = world.quickbooks.state.grants;
     const queries = reads
       .filter((c) => c.args.realm === QB_COMPANIES.alice && String(c.args.path).endsWith("/query"))
       .map((c) => String((c.args.query as Record<string, string>).query));
     return [
+      check(
+        "delivered-data",
+        "Complete invoice facts and report hierarchy were delivered over MCP",
+        expected.every((invoice) => delivered.some((row) => same(row, invoice))) &&
+          delivered.some((row) => same(row, company.report)),
+      ),
       check(
         "correct-destination",
         "Both real company routes were read",

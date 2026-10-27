@@ -4,6 +4,7 @@ import { QB_COMPANIES } from "../deploy/quickbooks.js";
 import { QB_PRIVATE, quickbooksState } from "../fakes/quickbooks.js";
 import { connectMcp } from "../support/mcp.js";
 import { check } from "./baseline.js";
+import { deliveredValues } from "./correctness.js";
 import { consent, readBob } from "./quickbooks.js";
 import type { ActiveTask } from "./types.js";
 
@@ -301,7 +302,30 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
           .concat([["Name", "[redacted]"]]),
       );
     const traceText = JSON.stringify(trace);
+    const delivered = deliveredValues(trace);
     return [
+      check(
+        "delivered-data",
+        "Observed customer version and every committed invoice were delivered over MCP",
+        customer !== undefined &&
+          delivered.some(
+            (row) => row?.Id === customer.Id && row.SyncToken === "1" && row.DisplayName === customer.DisplayName,
+          ) &&
+          invoices.length === 5 &&
+          invoices.every((invoice) =>
+            delivered.some(
+              (row) =>
+                row?.Id === invoice.Id &&
+                row.SyncToken === invoice.SyncToken &&
+                row.DocNumber === invoice.DocNumber &&
+                row.CustomerRef?.value === invoice.CustomerRef.value &&
+                row.CurrencyRef?.value === invoice.CurrencyRef.value &&
+                row.TxnDate === invoice.TxnDate &&
+                row.DueDate === invoice.DueDate &&
+                row.TotalAmt === invoice.TotalAmt,
+            ),
+          ),
+      ),
       check(
         "physical-intents",
         "Exactly one physical POST per intent, exact realm and requestid",
