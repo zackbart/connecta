@@ -18,7 +18,9 @@ pnpm run check
 
 The output directory must not exist. The command packs the built packages,
 installs those archives with real Eve 0.84.0, `@vercel/oidc` 4.0.3 and
-`@vercel/functions` 3.10.3, and applies Eve's undici 8.12.3 override. Preserve
+`@vercel/functions` 3.10.3, and applies Eve's undici 8.12.3 override plus Zod
+4.6.6 for `@vercel/cli-config` 0.3.3's older pin. Audit the generated consumer
+with `pnpm audit --audit-level moderate` before approving a live deployment. Preserve
 `provenance.json`, the archives, dependency lockfile and `local-results.json`.
 Record the source commit, any dirty paths, Node/pnpm versions and every file hash.
 After a package or source change, prepare a new directory; never overwrite old
