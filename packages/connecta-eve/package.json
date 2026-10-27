@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta-eve",
-  "version": "0.36.0",
+  "version": "0.36.1",
   "type": "module",
   "sideEffects": false,
   "description": "Eve connection and instructions helpers for Connecta agent endpoints.",
