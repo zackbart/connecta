@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here.
 
+## 0.36.2 — 2026-10-27
+
+Connecta 0.36.2 makes Google's hosted MCP servers, such as BigQuery, usable through generic `remoteMcp()` connections. The new `@zackbart/connecta/google` entry mints Google service-account tokens for request-local auth, so agent pools can share a service-account connection without a browser consent. The service account acts as itself, or as a Workspace user when a delegation subject is given. A rejected token is dropped and re-minted for the next request; dispatched writes are never replayed.
+
+Remote MCP OAuth connections can now add browser-only authorization parameters with `auth.authorizationParams`. Personal Google connections set `access_type: "offline"` and `prompt: "consent"` to receive refresh tokens. Protocol and security fields are reserved, and changing the parameters requires reconnecting. API OAuth keeps its existing `authorizationParams` validation.
+
+Both additions are opt-in. Deployments that do not use them need no configuration change. The root bundle cap rises to 403,500 B gzip to fit the new validation. Live Google sign-in and BigQuery calls have not been exercised with deployment credentials.
+
+### Added
+
+- Mint Google service-account tokens for generic remote MCP request auth through `@zackbart/connecta/google`, with optional Workspace delegation and rejected-token cache invalidation.
+- Let remote MCP OAuth connections configure browser-only authorization parameters, including Google's offline-access and consent settings. Protocol and security fields, including `response_mode`, are reserved in every case variant; changing remote MCP authorization parameters requires reconnecting. API OAuth keeps its existing `authorizationParams` validation.
+
 ## 0.36.1 — 2026-10-27
 
 Connecta 0.36.1 adds read-only Granola workspace API access and lets Eve agents select a pool before each model call. Pool changes keep guidance caches separate and prevent replay of parked calls against a different pool. Existing static-pool configuration and public provider tools keep their behavior.
