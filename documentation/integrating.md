@@ -170,8 +170,10 @@ Use optional top-level `headers` for non-secret resource context:
 "X-MCP-Toolsets": "tickets,notes" }, readOnly: true })`. These headers apply to
 MCP handshake, catalog and call requests at the exact resource URL path, never OAuth
 metadata, token or registration requests. Values are included in cache and
-negotiation identities; values of at least eight characters are redacted if echoed. Configuration descriptions
-show only names. Never put credentials here. Use `auth` for secrets. Extra
+negotiation identities. They are never treated as sent secrets: program and
+direct-call arguments equal to a header value reach the downstream unchanged on
+every call, and results, catalogs and errors that echo a value return it as
+sent. Configuration descriptions show only names. Never put credentials here. Use `auth` for secrets. Extra
 headers cannot be combined with `auth.type: "headers"`, collide with an
 auth-owned name, or set HTTP transport/session headers
 (`Accept`, `Cookie`, `Host`, `Content-*`, hop-by-hop headers, `Last-Event-ID`,

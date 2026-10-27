@@ -49,7 +49,8 @@ The only new option is an optional top-level `headers` map of non-secret
 extra headers, such as a toolset selector. Connecta cannot enforce
 "non-secret", so the values register as sent secrets and only header names
 are ever described. Echoed values are redacted only when at least eight
-characters long. The map joins the negotiation digest and the cache's
+characters long. [0017](./0017-resource-headers-are-not-secrets.md) supersedes
+this sent-secret registration: the values no longer redact. The map joins the negotiation digest and the cache's
 configuration identity. Extra headers are sent only to the configured
 resource origin and exact pathname, never OAuth metadata, registration or
 token requests. Construction refuses the map alongside
