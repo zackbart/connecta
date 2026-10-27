@@ -13,6 +13,8 @@ interface Session {
   posts: Record<string, number>;
   redeemed: string[];
   requests: Array<{ path: string; grant: string | null; credential: string | null }>;
+  wire: Array<{ url: string; method: string; body: string; headers: Record<string, string | string[] | undefined> }>;
+  acceptedAccess?: string;
   refreshStarted: Promise<void>;
   startRefresh(): void;
   released: Promise<void>;
@@ -32,7 +34,7 @@ export default async function setup(project: TestProject) {
         const released = new Promise<void>((resolve) => { release = resolve; });
         let startRefresh!: () => void;
         const refreshStarted = new Promise<void>((resolve) => { startRefresh = resolve; });
-        sessions.set(id, { mode: body, posts: {}, redeemed: [], requests: [], refreshStarted, startRefresh, released, release });
+        sessions.set(id, { mode: body, posts: {}, redeemed: [], requests: [], wire: [], refreshStarted, startRefresh, released, release });
         response.end(JSON.stringify({ id }));
         return;
       }
@@ -62,6 +64,20 @@ export default async function setup(project: TestProject) {
         response.end("{}");
         return;
       }
+      if (operation === "wire") {
+        response.end(JSON.stringify(session.wire));
+        return;
+      }
+      if (operation === "expire") {
+        session.acceptedAccess = "expired";
+        response.end("{}");
+        return;
+      }
+      const authorizationParams = session.mode.startsWith("sdk-authorization-params");
+      const googleClient = session.mode === "sdk-authorization-params-static";
+      if (authorizationParams && (operation !== undefined || url.pathname.includes("/.well-known/"))) {
+        session.wire.push({ url: `http://${request.headers.host}${request.url}`, method: request.method!, body, headers: request.headers });
+      }
       if (session.mode.startsWith("sdk-")) {
         const origin = `http://${request.headers.host}`;
         const issuer = `${origin}/session/${id}`;
@@ -84,8 +100,8 @@ export default async function setup(project: TestProject) {
           response.writeHead(status, { "content-type": "application/json", ...headers });
           response.end(JSON.stringify(value));
         };
-        if (url.pathname.includes("/.well-known/oauth-authorization-server/")) {
-          json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, registration_endpoint: `${issuer}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"], ...((session.mode.startsWith("sdk-revoke-") || session.mode.startsWith("sdk-attempt-revoke-")) ? { revocation_endpoint: `${issuer}/revoke` } : {}) });
+        if (url.pathname.includes("/.well-known/oauth-authorization-server/") || operation === "discovery") {
+          json({ issuer: googleClient ? "https://accounts.google.com" : issuer, authorization_endpoint: `${issuer}/authorize${authorizationParams ? "?prompt=old&prompt=older" : ""}`, token_endpoint: `${issuer}/token`, registration_endpoint: `${issuer}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: googleClient ? ["client_secret_post"] : ["none"], ...((authorizationParams || session.mode.startsWith("sdk-revoke-") || session.mode.startsWith("sdk-attempt-revoke-")) ? { revocation_endpoint: `${issuer}/revoke` } : {}) });
           return;
         }
         if (operation === "revoke" || operation === "revoke-final") {
@@ -99,7 +115,7 @@ export default async function setup(project: TestProject) {
           return;
         }
         if (operation === "resource") {
-          json({ resource: `${issuer}/mcp`, authorization_servers: [issuer] });
+          json({ resource: `${issuer}/mcp`, authorization_servers: [googleClient ? "https://accounts.google.com" : issuer] });
           return;
         }
         if (operation === "register") {
@@ -108,7 +124,7 @@ export default async function setup(project: TestProject) {
         }
         if (operation === "mcp") {
           if (request.method !== "POST") { response.writeHead(405).end(); return; }
-          if (request.headers.authorization !== "Bearer new-access") {
+          if (request.headers.authorization !== `Bearer ${authorizationParams ? (session.acceptedAccess ?? "unauthorized") : "new-access"}`) {
             response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${issuer}/resource"` }).end();
             return;
           }
@@ -134,6 +150,12 @@ export default async function setup(project: TestProject) {
           if (session.mode === "sdk-pending-first" && firstRefresh) await session.released;
           if (session.mode === "sdk-ambiguous-first" && firstRefresh) {
             response.writeHead(200, { "content-type": "application/json" }).end("{");
+            return;
+          }
+          if (authorizationParams) {
+            session.acceptedAccess = `access-${session.posts.token}`;
+            json({ access_token: session.acceptedAccess, token_type: "Bearer", expires_in: 3600,
+              ...(form.get("grant_type") === "authorization_code" ? { refresh_token: "google-shaped-refresh" } : {}) });
             return;
           }
           json({ access_token: form.get("grant_type") === "authorization_code" ? "consent-access" : "new-access", refresh_token: form.get("grant_type") === "authorization_code" ? (session.mode === "sdk-consent-different" ? "different-refresh" : "old-refresh") : "new-refresh", token_type: "Bearer" });

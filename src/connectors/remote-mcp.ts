@@ -1,3 +1,4 @@
+import { authorizationParamsFor } from "../auth/oauth-authorization-params.js";
 import { authView } from "../auth/native-call.js";
 import { authFlow, authCall, authInvoke, authValue, authMethod, authCatch } from "../auth/native.js";
 import { isOAuthCredentialRequest } from "../auth/oauth-token-response.js";
@@ -215,6 +216,8 @@ export type RemoteMcpAuth =
       client?: RemoteOAuthClient;
       /** Space-separated default scopes when the resource server does not advertise them. */
       scope?: string;
+      /** Non-secret browser authorization parameters; protocol fields are reserved. Changes require reconnect. */
+      authorizationParams?: Record<string, string>;
     };
 
 export type RemoteMcpRedirectPolicy = "none" | "same-origin";
@@ -1619,6 +1622,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
   const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
   assertOAuthScope(id, oauthScope);
+  const authorizationParams = authorizationParamsFor(
+    opts.auth?.type === "oauth" ? opts.auth.authorizationParams : undefined,
+    `remoteMcp(${JSON.stringify(id)}).auth.authorizationParams`,
+  );
   const staticClient = opts.auth?.type === "oauth" && opts.auth.client ? { ...opts.auth.client } : undefined;
   assertRemoteOAuthClient(id, staticClient);
   if (staticClient && clientMetadataUrl !== undefined)
@@ -2528,6 +2535,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ctx.oauthClientName,
           staticClient ? remoteClientAuthMethod(staticClient) : "none",
         ),
+        ...(authorizationParams.length ? { authorizationParams } : {}),
         authScope: opts.authScope ?? "shared",
         versionNegotiation: opts.versionNegotiation ?? "auto",
         redirects: opts.redirects ?? "none",
@@ -2546,7 +2554,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       metadataUrl,
       oauthScope,
       undefined,
-      { name: ctx.oauthClientName, client: staticClient, secrets: sentSecretsFor(ctx) },
+      { name: ctx.oauthClientName, client: staticClient, secrets: sentSecretsFor(ctx), authorizationParams },
     );
     if (state) state.provider = provider;
     return provider;
@@ -3396,6 +3404,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         : isOauth
           ? {
               mode: "oauth",
+              ...(authorizationParams.length
+                ? { authorizationParamNames: authorizationParams.map(([name]) => name) }
+                : {}),
               ...(oauthScope !== undefined ? { scope: oauthScope } : {}),
               ...(describedClientMetadataUrl !== undefined ? { clientMetadataUrl: describedClientMetadataUrl } : {}),
             }

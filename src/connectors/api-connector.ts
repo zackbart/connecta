@@ -113,7 +113,9 @@ export interface ApiOAuthConfig {
   pkce?: boolean;
   /**
    * Extra authorization-request parameters, such as a provider's
-   * `access_type`. The grant's own parameters cannot be overridden.
+   * `access_type`. Non-secret, browser-only; protocol fields and their case
+   * variants are reserved. At most 32 entries; names 1–128 ASCII word/dot/hyphen
+   * characters, values 1–2048 code units without controls or whitespace-only values.
    */
   authorizationParams?: Record<string, string>;
   /**

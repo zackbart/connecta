@@ -367,6 +367,7 @@ describe("downstream OAuth best practice", () => {
       revocation: true,
       auth: {
         type: "oauth",
+        authorizationParams: { access_type: "offline", prompt: "consent" },
         client: {
           issuer: ISSUER,
           clientId: "static-client",
@@ -376,6 +377,9 @@ describe("downstream OAuth best practice", () => {
       },
     });
     const status = await flow.start();
+    const url = new URL(status.authorizationUrl!);
+    expect(url.searchParams.getAll("access_type")).toEqual(["offline"]);
+    expect(url.searchParams.getAll("prompt")).toEqual(["consent"]);
     expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
     await flow.connector.disconnectAuth!(flow.ctx());
     const credentials = flow.sent.filter(
@@ -387,6 +391,11 @@ describe("downstream OAuth best practice", () => {
       expect(request.form.get("client_secret")).toBe(SECRET);
       expect(new Headers(request.init.headers).has("authorization")).toBe(false);
       expect(request.init.redirect).toBe("manual");
+    }
+    for (const request of flow.sent) {
+      expect(new URL(request.url).searchParams.has("access_type")).toBe(false);
+      expect(request.form.has("access_type")).toBe(false);
+      expect(request.form.has("prompt")).toBe(false);
     }
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });

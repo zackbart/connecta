@@ -43,6 +43,7 @@ import {
   KvOAuthProvider,
   refreshCoordinatorsByPartition,
 } from "./downstream-oauth.js";
+import { authorizationParamsFor } from "./oauth-authorization-params.js";
 import { authView } from "./native-call.js";
 import {
   authCall,
@@ -84,18 +85,6 @@ export const PUBLIC_TOKEN_REQUEST_HEADERS: ReadonlyMap<string, ReadonlySet<strin
  * discovery and no dynamic registration, so no URL here was taught to
  * connecta by a downstream.
  */
-
-/** Parameters the grant itself owns; a deployment may not restate them. */
-const RESERVED_AUTHORIZATION_PARAMS: ReadonlySet<string> = new Set([
-  "response_type",
-  "client_id",
-  "redirect_uri",
-  "state",
-  "scope",
-  "code_challenge",
-  "code_challenge_method",
-  "resource",
-]);
 
 /** Protocol response fields have their own validation, never static assertions. */
 const RESERVED_CALLBACK_PARAMS: ReadonlySet<string> = new Set([
@@ -219,16 +208,10 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
     invalid(`tokenEndpointAuthMethod ` + `"${clientAuthentication}" needs a clientSecret.`);
   }
   assertOAuthScope(id, config.scope);
-  const authorizationParams: Array<readonly [string, string]> = [];
-  for (const [name, value] of Object.entries(config.authorizationParams ?? {})) {
-    if (RESERVED_AUTHORIZATION_PARAMS.has(name)) {
-      invalid(`authorizationParams may not set ` + `"${name}"; the authorization request owns it.`);
-    }
-    if (typeof value !== "string") {
-      invalid(`authorizationParams.${name} must be a string.`);
-    }
-    authorizationParams.push([name, value]);
-  }
+  const authorizationParams = authorizationParamsFor(
+    config.authorizationParams,
+    `api(${JSON.stringify(id)}).oauth.authorizationParams`,
+  );
   const expectedCallbackParameters: Array<readonly [string, string]> = [];
   if (
     config.expectedCallbackParameters !== undefined &&
@@ -331,7 +314,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       undefined,
       settings.scope,
       undefined,
-      { secrets: sentSecretsFor(ctx) },
+      { secrets: sentSecretsFor(ctx), authorizationParams: settings.authorizationParams },
     );
   }
 
@@ -494,9 +477,6 @@ class StaticOAuthProvider extends KvOAuthProvider {
       function (this: StaticOAuthProvider, authorizationUrl: URL) {
         return authFlow<void>(
           function* (this: StaticOAuthProvider) {
-            for (const [name, value] of this.settings.authorizationParams) {
-              authorizationUrl.searchParams.set(name, value);
-            }
             if (!this.settings.pkce) {
               authorizationUrl.searchParams.delete("code_challenge");
               authorizationUrl.searchParams.delete("code_challenge_method");

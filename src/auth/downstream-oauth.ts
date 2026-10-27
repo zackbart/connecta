@@ -1088,6 +1088,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     /** Isolate-local clock, used only for claims that have never been sent. */
     private readonly refreshNow: () => number = Date.now,
     private readonly clientOptions?: {
+      authorizationParams?: ReadonlyArray<readonly [string, string]>;
       name?: string | undefined;
       client?: RemoteOAuthClient | undefined;
       secrets?: SentSecrets | undefined;
@@ -2764,6 +2765,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
           function* (this: KvOAuthProvider) {
             if (this.signal?.aborted) return;
             if (!this.allowAuthorization) throw this.authorizationRefused();
+            for (const [name, value] of this.clientOptions?.authorizationParams ?? []) {
+              authorizationUrl.searchParams.set(name, value);
+            }
             this.assertCredentialFree(
               authorizationUrl.toString(),
               ((yield authInvoke(this, "boundGrant", [])) as Grant).body,
