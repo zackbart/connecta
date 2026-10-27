@@ -1,0 +1,43 @@
+{
+  "format": 5,
+  "digest": "sha256:3f1a93ae6380feb5297df8115855486224f82bea236eaf1fd916072843f5759d",
+  "options": {},
+  "candidates": {
+    "GET /v1/audit": {
+      "fields": ["events[].actor.id_suffix"],
+      "named": false
+    },
+    "GET /v1/notes/{note_id}": {
+      "fields": ["private_notes_markdown", "private_notes_text", "space_membership"],
+      "named": false
+    },
+    "GET /v1/webhook-endpoints": {
+      "fields": ["webhook_endpoints[].scopes", "webhook_endpoints[].url_redacted"],
+      "named": true
+    },
+    "POST /v1/webhook-endpoints": {
+      "fields": ["scopes", "signing_secret", "url_redacted"],
+      "named": true
+    },
+    "PATCH /v1/webhook-endpoints/{webhook_endpoint_id}": {
+      "fields": ["scopes", "url_redacted"],
+      "named": true
+    },
+    "DELETE /v1/webhook-endpoints/{webhook_endpoint_id}": {
+      "fields": [],
+      "named": true
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /v1/notes/{note_id}": [
+        "attachments[].url",
+        "private_notes_markdown",
+        "private_notes_text",
+        "space_membership"
+      ]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

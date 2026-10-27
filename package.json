@@ -107,6 +107,10 @@
       "types": "./dist/providers/gmail/index.d.ts",
       "import": "./dist/providers/gmail/index.js"
     },
+    "./providers/granola": {
+      "types": "./dist/providers/granola/index.d.ts",
+      "import": "./dist/providers/granola/index.js"
+    },
     "./providers/overflow": {
       "types": "./dist/providers/overflow/index.d.ts",
       "import": "./dist/providers/overflow/index.js"

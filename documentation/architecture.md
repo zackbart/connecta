@@ -1682,8 +1682,14 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   Every reference also rejects a fabricated correct answer without the work.
   Promoted read journeys reject erased MCP data even with the vendor ledger intact.
 - `pnpm run eval:smoke` boots the Node template, Node eval deployments and native
-  Workers deployments, including the actual QuickBooks provider, then exercises
+  Workers deployments, including the actual QuickBooks and Granola providers, then exercises
   MCP and the operator page.
+- The shared `granola-workspace-journey` outcome uses actual provider reads,
+  independent fake meeting state and physical cursor/filter requests on both
+  Node/SQLite/QuickJS and native Workers/D1. It covers transcript-too-large
+  recovery, empty intermediate pages, selected fields, withheld photo/credential
+  values and shared-vault reuse after application reconstruction. No-op,
+  fabricated-read and erased-delivery controls must fail.
 - `test/identity-write-journey.node.test.ts` uses the existing Node deployment
   adapter, stateful MCP fake, SQLite vault and QuickJS to grade admitted human
   and machine identities, pool isolation, fail-closed discovery, endpoint and
