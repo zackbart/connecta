@@ -547,7 +547,11 @@ LOADER: Cloudflare.WorkerLoader(),
 `@zackbart/connecta/worker`. The adapter constructs the upstream
 `DynamicWorkerExecutor` with only the loader and a deadline, and disposes each
 run's loader and RPC handles when its lease ends, even if the guest has not
-settled. It serves the six-tool surface. Do not add `bindings`, `modules`, or
+settled. It serves the six-tool surface. Its admission pool is per isolate:
+two runs, eight queued for up to 60 seconds, then a retryable
+`executor_overloaded`. Pass `admission` to `workerExecutor()` to change it; see
+[code mode](../../documentation/code-mode.md#deploy-time-capability). Do not
+add `bindings`, `modules`, or
 `globalOutbound`; they grant guest code ambient authority. A copied deployment
 owns the package install — see
 [copied into its own repository](#copied-into-its-own-repository).

@@ -54,11 +54,14 @@ interface WorkerExecutorOptions {
 
 /** Loader-only upstream sandbox whose lease disposes handles at run end. */
 export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecutor {
+  // One pool per executor, so per isolate. A queued run may wait out one
+  // default guest deadline: programs spend it awaiting host calls, and a
+  // five-second wait refused nearly every run queued behind one (#1106).
   const admission = new AdmissionController(
     options.admission ?? {
       concurrency: 2,
       maxQueueSize: 8,
-      queueTimeoutMs: 5_000,
+      queueTimeoutMs: 60_000,
       retryAfterMs: 1_000,
     },
   );

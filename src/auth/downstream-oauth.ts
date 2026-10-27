@@ -8,7 +8,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/client";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
-import { Deferred, Effect } from "effect";
+import { Effect, Exit } from "effect";
 import { byteReadResponse } from "../byte-read-response.js";
 import { deriveContext } from "../derived-context.js";
 import { ConnectorCallError, resendAdvice } from "../errors.js";
@@ -16,6 +16,7 @@ import { oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { keepErrorName } from "../redaction-identity.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
+import { Settlement } from "../runtime/settlement.js";
 import { SentSecrets } from "../sent-secrets.js";
 import {
   OAUTH_FLOW_TTL_SECONDS,
@@ -292,7 +293,7 @@ function refreshWait(signal?: AbortSignal): RefreshWait {
 }
 
 interface RefreshFlight {
-  outcome: Deferred.Deferred<RefreshFlightOutcome>;
+  outcome: Settlement<RefreshFlightOutcome>;
 }
 
 function aborted(signal: AbortSignal | undefined): unknown {
@@ -303,19 +304,17 @@ function aborted(signal: AbortSignal | undefined): unknown {
  * The outcome of a flight another request owns, failures included. Rejects
  * only with this caller's own abort.
  *
- * This wait is a Promise edge of its own, and the caller's storage reads stay
- * outside it, on purpose. The owner settles the Deferred from its own request,
- * and Deferred resumes a waiting fiber synchronously inside that call — on
- * Workers, inside the owner's I/O context. Resolving this caller's promise
- * instead hands the rest of its work back to its own request, as workerd does
- * for any promise resolved from another one.
+ * The owner settles the flight from its own request. Settlement wakes this
+ * waiter through a Promise this request created, so the wait — and the
+ * caller's storage reads after it — resume here, never inside the owner's
+ * call (src/runtime/settlement.ts).
  */
 function waitForRefreshFlight(
   flight: RefreshFlight,
   signal?: AbortSignal,
   deadline?: AbortSignal,
 ): Promise<RefreshFlightOutcome> {
-  const settled = Deferred.await(flight.outcome);
+  const settled = flight.outcome.wait();
   // The abort goes first, so a caller that has already left never joins.
   return runEdge(
     Effect.raceAllFirst<Effect.Effect<RefreshFlightOutcome, unknown>>([
@@ -501,7 +500,7 @@ export class OAuthRefreshCoordinator {
     const flight = this.flights.get(epoch);
     if (!flight) return;
     this.flights.delete(epoch);
-    Deferred.doneUnsafe(flight.outcome, Effect.succeed({ status: "retired" }));
+    flight.outcome.settle(Exit.succeed({ status: "retired" }));
   }
 
   static {
@@ -637,15 +636,15 @@ export class OAuthRefreshCoordinator {
       ) {
         return authFlow<Response>(
           function* (this: OAuthRefreshCoordinator) {
-            const flight: RefreshFlight = { outcome: Deferred.makeUnsafe() };
+            const flight: RefreshFlight = { outcome: new Settlement() };
             this.flights.set(epoch, flight);
             // Pin the owner partition until the flight settles, whoever is waiting.
             const release = this.retainPartition();
             const settle = (outcome: RefreshFlightOutcome) => {
               if (this.flights.get(epoch) === flight) this.flights.delete(epoch);
               release();
-              // Last, because joined fibers resume inside this call.
-              Deferred.doneUnsafe(flight.outcome, Effect.succeed(outcome));
+              // Last: joined waiters wake in their own requests, after this.
+              flight.outcome.settle(Exit.succeed(outcome));
             };
             const fail = (error: unknown, verdict?: RefreshFailure) => {
               if (verdict) provider.recordRefreshFailure(verdict);

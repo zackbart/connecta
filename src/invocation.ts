@@ -89,13 +89,12 @@ export function timed<A, E, R>(
 /**
  * The connector's call permit, owned by the enclosing Scope.
  *
- * Admission goes through `registry.admitCall`, a Promise, on purpose. The
- * permit queue is shared by every request in the isolate, and a queued
- * waiter is resumed from inside the request that released the slot. Were
- * this fiber to wait on the controller's Effect program itself
- * (`acquireCallScoped`), it would be resumed there and run this call's
- * downstream I/O in the releasing request, which workerd refuses. Awaiting
- * admitCall's promise resumes it in its own request instead.
+ * The permit queue is shared by every request in the isolate, and a queued
+ * waiter is handed its permit from inside the request that released the
+ * slot. The queue wakes it through a Promise its own request created
+ * (src/runtime/settlement.ts), and this fiber awaits `registry.admitCall`'s
+ * Promise, so this call's downstream I/O runs in its own request, never the
+ * releasing one, which workerd refuses.
  *
  * The wait stays interruptible, so a deadline ends it. A permit granted just
  * as the wait was interrupted still arrives, later, and is released on

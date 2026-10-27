@@ -182,3 +182,40 @@ describe.skipIf(!inWorkerd)("Worker native resource ownership", () => {
     await h.executor.close?.();
   });
 });
+
+const nativeLoader = inWorkerd
+  ? await (async () => {
+      const testModule = "cloudflare:test";
+      const { env } = (await import(/* @vite-ignore */ testModule)) as { env: { LOADER?: WorkerLoader } };
+      return env.LOADER;
+    })()
+  : undefined;
+describe.skipIf(!nativeLoader)("Worker shutdown on the native Worker Loader", () => {
+  it("INV-7: a slot granted just before close() never starts its program", async () => {
+    if (!workerModule || !nativeLoader) throw new Error("Worker tests require workerd and its Loader.");
+    const write = vi.fn(async () => 42);
+    const host = [{ name: "host", fns: { write } }];
+    const admission = { concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 5_000 };
+    // Control: this loader does run the program and its host call.
+    const control = workerModule.workerExecutor({ loader: nativeLoader, admission });
+    expect(await control.execute("async () => host.write()", host)).toMatchObject({ result: 42 });
+    expect(write).toHaveBeenCalledOnce();
+    await control.close?.();
+    write.mockClear();
+
+    const executor = workerModule.workerExecutor({ loader: nativeLoader, admission });
+    const first = await executor.acquire();
+    const queued = executor.acquire();
+    await vi.waitFor(() => expect(executor.admissionSnapshot?.()).toMatchObject({ queued: 1 }));
+    // The grant is recorded here; the queued caller hears it only later.
+    first.release();
+    await executor.close?.();
+    const outcome = await queued.then(
+      (lease) => lease.execute("async () => host.write()", host),
+      (error: unknown) => error,
+    );
+    expect(outcome).toMatchObject({ code: "executor_closed", retryable: false });
+    expect(write).not.toHaveBeenCalled();
+    expect(executor.admissionSnapshot?.()).toMatchObject({ active: 0, queued: 0, closed: true });
+  });
+});

@@ -1290,11 +1290,11 @@ function runSignal(caller: AbortSignal | undefined): Effect.Effect<AbortSignal, 
 /**
  * An admitting executor's lease, released when the run's scope closes.
  *
- * `acquire()` is the executor's Promise, awaited as one on purpose. A queued
- * request is handed its lease from inside whichever request released one, so
- * a fiber resumed straight from the executor's admission queue would build
- * this request's providers and run its program in the releasing request —
- * which workerd refuses for any I/O. Awaiting the promise resumes it here.
+ * A queued request is handed its lease from inside whichever request released
+ * one. The built-in queues wake it through a Promise its own request created
+ * (src/runtime/settlement.ts), and `acquire()` is awaited as a Promise for any
+ * executor, so this request's providers and program run here, never in the
+ * releasing request, which workerd refuses.
  */
 function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
   return Effect.acquireRelease(

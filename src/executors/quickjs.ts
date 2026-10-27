@@ -11,6 +11,7 @@
 // the child's messages arrive as Node events, and host calls are the
 // Promise-shaped provider functions execute.ts hands over.
 
+import { AsyncResource } from "node:async_hooks";
 import { Buffer } from "node:buffer";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -79,6 +80,9 @@ interface ActiveRun {
   providers: Map<string, ExecutorProvider>;
   outcome: Deferred.Deferred<ExecuteResult, Error>;
   readonly hosts: Scope.Closeable;
+  // The async context of the request running this program. Child messages
+  // arrive in the context of whichever request spawned the warm child.
+  readonly owner: AsyncResource;
 }
 
 // One forked child process and the Scope that owns it.
@@ -411,6 +415,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         providers: providerMap,
         outcome: Deferred.makeUnsafe(),
         hosts: Scope.makeUnsafe(),
+        owner: new AsyncResource("connecta.quickjs.run"),
       };
       slot.active = active;
       try {
@@ -656,7 +661,10 @@ class QuickJsChildPool implements AdmittingExecutor {
     }
     if (message.type === "host-call") {
       if (message.jobId !== active.id) return;
-      void detach(forkOwned(this.handleHostCall(slot, child.process, active, message), active.hosts));
+      // Dispatch in the program's own request, never the spawner's.
+      active.owner.runInAsyncScope(
+        () => void detach(forkOwned(this.handleHostCall(slot, child.process, active, message), active.hosts)),
+      );
       return;
     }
     if ((message.type !== "result" && message.type !== "result-chunk") || message.jobId !== active.id) return;

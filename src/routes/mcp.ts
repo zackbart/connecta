@@ -311,12 +311,12 @@ function scopedToBody(
 /**
  * The request's admission permit, owned by its Scope.
  *
- * Admission goes through the controller's Promise rather than its Effect
- * program, on purpose. The pool is shared by every request
- * in the isolate, and a queued request is handed its permit from inside the
- * request whose body just ended. A fiber resumed there would authorize and
- * serve this request in that one's I/O context, which workerd refuses;
- * awaiting `acquire()`'s promise resumes it in its own.
+ * The pool is shared by every request in the isolate, and a queued request is
+ * handed its permit from inside the request whose body just ended. The queue
+ * wakes it through a Promise its own request created
+ * (src/runtime/settlement.ts), and this fiber awaits `acquire()`'s Promise, so
+ * it authorizes and serves this request in its own I/O context, never that
+ * one's, which workerd refuses.
  *
  * The wait stays interruptible, and a permit granted just as it was
  * interrupted still arrives, later, to be released on arrival.

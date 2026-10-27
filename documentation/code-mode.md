@@ -65,9 +65,15 @@ createConnecta({ executor: workerExecutor({ loader: env.LOADER }), readOnly: fal
 ```
 
 The adapter uses only `loader` and an optional `timeout`. Its admission defaults
-are two active runs, eight queued runs, and a five-second queue deadline, settable
-through `admission`. Lease release disposes RPC and loader handles independently
-of guest settlement. `bindings`, `modules`, or `globalOutbound` violate `P2`.
+are two active runs, eight queued runs, a 60-second queue deadline (the default
+guest deadline) and a one-second `retryAfterMs` hint. `admission` replaces all
+four: `{ concurrency, maxQueueSize, queueTimeoutMs, retryAfterMs? }`, where an
+omitted `retryAfterMs` equals `queueTimeoutMs`. The pool belongs to the executor
+instance, so a Worker that builds one per isolate bounds each isolate, not the
+deployment or a caller: concurrent requests that land on one isolate share its
+slots, and requests on other isolates do not count. Lease release disposes RPC
+and loader handles independently of guest settlement. `bindings`, `modules`, or
+`globalOutbound` violate `P2`.
 The [Worker example](../examples/worker/README.md#code-mode) has the full setup.
 
 Keep the Worker's optional peer. Unbranded executors throw, including bundled upstream copies.
@@ -981,7 +987,21 @@ payload is refused before parsing and names no address.
 plus a bounded queue with a wait timeout. Overload is a retryable
 `executor_overloaded` carrying `retryAfterMs`; cancellation and shutdown are
 terminal. Admission happens _before_ any catalog or provider is built, so a
-queued request holds no state.
+queued request holds no state. A full queue refuses at once with
+`Executor queue is full.`; a queued run that outlives `queueTimeoutMs` is
+refused with `Executor admission timed out after <n>ms.`. Either arrives as an
+error result whose `structuredContent.error` is
+`{ code: "executor_overloaded", message, retryable: true, retryAfterMs }`, with
+`hostCalls` all zero; the program never started, so retrying it after
+`retryAfterMs` sends nothing twice. Whichever request releases a slot, the
+queued run resumes, builds its providers, makes its host calls and holds its
+sandbox handles in its own request; the releasing request's result is
+unaffected. A slot handed to a queued run is heard a turn after it is granted.
+When the executor closes in that gap, the slot is given back and the run is
+refused with `executor_closed`, so nothing granted before `close()` starts after
+it. A grant that beat the caller's abort stays the caller's, which releases it
+on arrival. A queued run also holds its MCP request permit
+([request admission](./architecture.md#admission-in-two-places)) while it waits.
 
 **L8.** Result, log, host-call, and emission budgets are deployment configuration.
 A call may request `timeoutMs` just as a direct call does; the guest deadline is
@@ -1287,7 +1307,7 @@ rejection, and branded adapter acceptance across module copies.
 | `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                       |
 | `L3`, `X1`             | `test/guest-api-contract.test.ts` (short-deadline executors), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value)                                                                                                                                                                                                                                                                                                            |
 | `L4`, `L8`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors), `test/worker-budget-response.node.test.ts` (native handle disposal and admission recovery across completed HTTP responses)                                                                                                                                                                                                                     |
-| `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue)                                                                                                                                                                                                                                                                                                                                                                                    |
+| `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue), `test/executor-requests.test.ts` (queued handoffs and refusal shape across separate workerd requests), `test/request-context.node.test.ts` (queued and QuickJS host-call request context)                                                                                                                                                                                         |
 | `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/kv-to-d1.test.ts` (SQL stash and native D1 fault probes), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.node.test.ts` (outer reply serialization failure settles the call)                                                 |
 | `V1`–`V4`              | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/browser/operator-ui.spec.ts` (identity changes), `test/sql-storage-contract.ts`, run by `test/sqlite-storage.node.test.ts` (historical activity rows still round-trip)                                                             |
 | `V5`, `W9`             | `test/program-writes.test.ts` (unawaited program drain, failed-program accounting), `test/identity-write-journey.node.test.ts` (committed ambiguity, reconciliation and physical writes), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                 |
