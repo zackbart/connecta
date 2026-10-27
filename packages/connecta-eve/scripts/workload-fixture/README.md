@@ -37,8 +37,16 @@ exchange, a $1 incremental ceiling, and cleanup in the same session. The normal
 path uses 16 function invocations: `/proof`, discovery, eight endpoint controls,
 cancellation, a fresh read and four concurrent reads. Do not attach storage,
 databases, production connectors, paid models, custom domains or repository
-deployment hooks. Use one region, 1 GiB memory, a 30-second function limit and
-the standard build machine. Bound the project lifetime to 30 minutes.
+deployment hooks. Use one region, Fluid compute with the standard 2 GiB memory
+preset, a 30-second function limit and the standard build machine. Verify the
+project's `resourceConfig` reports `fluid: true`, `functionDefaultMemoryType:
+"standard"`, `functionDefaultRegions: ["iad1"]`, `functionDefaultTimeout: 30`
+and `functionZeroConfigFailover: false` before adding secrets or deploying,
+and again before invoking the proof. Refuse an absent or different setting.
+With Fluid enabled, `vercel.json` cannot set memory; the project preset owns it.
+See [function memory](https://vercel.com/docs/functions/configuring-functions/memory)
+and [project resource configuration](https://vercel.com/docs/rest-api/projects/update-an-existing-project).
+Bound the project lifetime to 30 minutes.
 
 All account commands must explicitly select the reviewed team, for example
 `vercel ... --scope example-team`. Verify the returned immutable account ID
@@ -109,13 +117,16 @@ false until the collector verifies it. Client abort and a later read alone do
 not establish server cancellation.
 
 If receipts do not arrive within the bound, retain a failed/incomplete result
-and perform cleanup anyway within the authorized lifetime. Do not claim proof
+and perform cleanup anyway within the authorized lifetime. Evidence open, write
+or flush errors must not prevent cleanup; put deletion in an unconditional
+`finally`, and retain sanitized evidence-failure facts when possible. Do not claim proof
 or keep resources running indefinitely. Logs are a delivery dependency, not a
 durable database: success requires an actual retained receipt, not an assumption.
 
 Delete the disposable project and all its deployments, environment secrets and
 automation bypass. Verify the project and deployment lookups return not-found;
-retain those cleanup statuses. On failure, record exact remaining IDs for owner
+retain those cleanup statuses. Overall success requires both not-found results,
+no evidence or cleanup errors, and the authorized lifetime bound. On failure, record exact remaining IDs for owner
 cleanup. Remove local linkage and private temporary files, retain sanitized
 source/package hashes, versions, result and cleanup receipts, and keep the
 original evidence unchanged. The fixture has no operational data to undo.
