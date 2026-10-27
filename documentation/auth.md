@@ -448,7 +448,7 @@ export default defineMcpClientConnection({
   url: "https://connecta.example.com/agent/assistant",
   description: "Use the assistant's shared CRM and ticket tools.",
   auth: {
-    credentialOwner: "app",
+    principalType: "app",
     getToken: async () => ({ token: await getVercelOidcToken() }),
   },
 });

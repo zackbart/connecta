@@ -5,7 +5,13 @@ import { createServer } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import { always, type ApprovalContext } from "eve/tools/approval";
 import { type McpClientConnectionDefinition, defineMcpClientConnection } from "eve/connections";
-import { type DynamicInstructionsResult, type DynamicSentinel, defineDynamic } from "eve/instructions";
+import {
+  type DynamicContext,
+  type DynamicInstructionsResult,
+  type DynamicSentinel,
+  type Memo,
+  defineDynamic,
+} from "eve/instructions";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { api } from "../../../src/connectors/api.js";
@@ -23,17 +29,40 @@ const connectionIsAny: IsAny<ReturnType<typeof connectaConnection>> = false;
 const instructionsAreAny: IsAny<ReturnType<typeof connectaInstructions>> = false;
 void [connectionIsAny, instructionsAreAny];
 
-function turn(instructions: DynamicSentinel<DynamicInstructionsResult>) {
-  const handler = instructions.events["turn.started"];
-  if (!handler) throw new Error("Missing turn.started resolver");
-  return handler(
-    {},
-    { model: null, session: { id: "test", auth: { current: null, initiator: null } }, channel: {}, messages: [] },
-  );
+// Models Eve's memo store for one session of one definition: an evaluation
+// reads the kept JSON results, and only a successful evaluation replaces them
+// with the keys it used. A throwing memo keeps nothing.
+function session(instructions: DynamicSentinel<DynamicInstructionsResult>) {
+  let kept = new Map<string, unknown>();
+  return async (id: string | null, abortSignal = new AbortController().signal) => {
+    const used = new Map<string, unknown>();
+    const memo: Memo = async (key, fn) => {
+      const memoKey = JSON.stringify(key);
+      const value = kept.has(memoKey)
+        ? kept.get(memoKey)
+        : JSON.parse(JSON.stringify((await fn({ idempotencyKey: memoKey, abortSignal })) ?? null));
+      used.set(memoKey, value);
+      return structuredClone(value) as never;
+    };
+    // The resolver reads only the turn and memo; the rest of the frame is irrelevant.
+    const frame = { memo, turn: id === null ? null : { id, status: "running", input: [] } };
+    const result = await instructions.evaluate(frame as unknown as DynamicContext);
+    kept = used;
+    return result;
+  };
 }
 
-// The real Eve factory normalizes credentialOwner to principalType. Narrow
-// its public auth union without replacing Eve's types with ambient stand-ins.
+// Each call evaluates a new turn of one session per definition unless it names one.
+let turns = 0;
+const sessions = new WeakMap<object, ReturnType<typeof session>>();
+function turn(instructions: DynamicSentinel<DynamicInstructionsResult>, id = `turn_${++turns}`) {
+  let current = sessions.get(instructions);
+  if (!current) sessions.set(instructions, (current = session(instructions)));
+  return current(id);
+}
+
+// Narrow the real Eve factory's public auth union without replacing Eve's
+// types with ambient stand-ins.
 function authOf(connection: McpClientConnectionDefinition) {
   const auth = connection.auth;
   if (!auth || typeof auth === "function" || !("getToken" in auth) || !auth.getToken) {
@@ -142,6 +171,79 @@ it("discovers instructions, falls back to initialize/SSE, caches successes and f
   expect(
     await turn(connectaInstructions({ url: "https://connecta.example.com", getToken: () => token, fetch: fetcher })),
   ).toBeNull();
+});
+
+it("keeps one result per turn and session across Eve's repeated evaluations", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  let fetches = 0;
+  let signal: AbortSignal | null | undefined;
+  const fetcher: typeof fetch = async (_url, init) => {
+    fetches++;
+    signal = init?.signal;
+    return Response.json({ result: { instructions: `Guidance ${fetches}` } });
+  };
+  const instructions = connectaInstructions({
+    url: "https://connecta.example.com",
+    getToken: () => "cta_agent",
+    fetch: fetcher,
+    ttlMs: 0,
+  });
+  const alice = session(instructions);
+  expect(await alice("turn_1")).toMatchObject({ content: "Connecta guidance:\nGuidance 1" });
+  expect(signal).toBeInstanceOf(AbortSignal);
+  vi.setSystemTime(Date.now() + 1);
+  // A later model call in the same turn reuses the memo despite the expired cache.
+  expect(await alice("turn_1")).toMatchObject({ content: "Connecta guidance:\nGuidance 1" });
+  expect(fetches).toBe(1);
+  // Memos are per session: another session's same turn ID fetches its own.
+  vi.setSystemTime(Date.now() + 1);
+  expect(await session(instructions)("turn_1")).toMatchObject({ content: "Connecta guidance:\nGuidance 2" });
+  vi.setSystemTime(Date.now() + 1);
+  expect(await alice("turn_2")).toMatchObject({ content: "Connecta guidance:\nGuidance 3" });
+  // Before the first turn the key is null, and it is reused like any other.
+  const bob = session(instructions);
+  vi.setSystemTime(Date.now() + 1);
+  expect(await bob(null)).toMatchObject({ content: "Connecta guidance:\nGuidance 4" });
+  expect(await bob(null)).toMatchObject({ content: "Connecta guidance:\nGuidance 4" });
+  expect(fetches).toBe(4);
+});
+
+it("rethrows Eve's cancellation without keeping a result or delaying other sessions", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  let fetches = 0;
+  let started: () => void = () => {};
+  const fetcher: typeof fetch = async (_url, init) => {
+    fetches++;
+    if (fetches === 1) {
+      started();
+      // Like a real fetch, reject when the combined signal aborts.
+      await new Promise((_, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }),
+      );
+    }
+    return Response.json({ result: { instructions: "Healthy guidance" } });
+  };
+  const instructions = connectaInstructions({
+    url: "https://connecta.example.com",
+    getToken: () => "cta_agent",
+    fetch: fetcher,
+  });
+  const alice = session(instructions);
+  const controller = new AbortController();
+  const inFlight = new Promise<void>((resolve) => (started = resolve));
+  const aborted = alice("turn_1", controller.signal);
+  await inFlight;
+  controller.abort(new DOMException("Cancelled", "AbortError"));
+  await expect(aborted).rejects.toThrow("Cancelled");
+  const cancelled = new AbortController();
+  cancelled.abort(new DOMException("Cancelled", "AbortError"));
+  await expect(alice("turn_1", cancelled.signal)).rejects.toThrow("Cancelled");
+  expect(fetches).toBe(1);
+  // No backoff started: a healthy session fetches at once, and the cancelled
+  // turn kept nothing, so its retry gets the guidance too.
+  expect(await session(instructions)("turn_1")).toMatchObject({ content: "Connecta guidance:\nHealthy guidance" });
+  expect(await alice("turn_1")).toMatchObject({ content: "Connecta guidance:\nHealthy guidance" });
+  expect(fetches).toBe(2);
 });
 
 it.each(["network", "timeout"])(
