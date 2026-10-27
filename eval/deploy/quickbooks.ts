@@ -12,17 +12,46 @@ const QB_HOSTS = [
   "developer.api.intuit.com",
 ];
 
-export function quickbooksConnectors() {
-  return Object.entries(QB_COMPANIES).map(([owner, realmId]) =>
+export function quickbooksConnectors(writes = false) {
+  const owners = Object.entries(QB_COMPANIES).map(([owner, realmId]) =>
     quickbooks(`qb_${owner}`, {
       purpose: `${owner}'s accounting`,
       realmId,
+      ...(writes ? { readOnly: false } : {}),
       ...(owner === "bob" ? { authScope: "personal" as const } : {}),
       environment: owner === "alice" ? "sandbox" : "production",
       clientId: QB_CLIENT,
       clientSecret: QB_SECRET,
     }),
   );
+  return writes
+    ? [
+        ...owners,
+        ...([1, 4] as const).map((maxCalls) =>
+          quickbooks(`qb_budget_${maxCalls}`, {
+            purpose: "bounded invoice admission",
+            realmId: QB_COMPANIES.alice,
+            environment: "sandbox",
+            clientId: QB_CLIENT,
+            clientSecret: QB_SECRET,
+            readOnly: false,
+            callAdmission: {
+              rules: [{ maxConcurrency: 1, budget: { kind: "rolling-window", maxCalls, windowMs: 60000 } }],
+            },
+          }),
+        ),
+        ...[undefined, true].map((readOnly, index) =>
+          quickbooks(`qb_readonly_${index}`, {
+            purpose: "read-only refusal probe",
+            realmId: QB_COMPANIES.alice,
+            environment: "sandbox",
+            clientId: QB_CLIENT,
+            clientSecret: QB_SECRET,
+            ...(readOnly === undefined ? {} : { readOnly }),
+          }),
+        ),
+      ]
+    : owners;
 }
 export const quickbooksAuth: InboundAuth = {
   kind: "clerk",
@@ -35,10 +64,14 @@ export const quickbooksAuth: InboundAuth = {
     return userId ? { ok: true, userId } : { ok: false, response: new Response("Unauthorized", { status: 401 }) };
   },
 };
-export const quickbooksPools = {
-  eval: { tools: ["qb_alice"], members: ["agent:eval-machine"] },
+export const quickbooksPools = (writes = false) => ({
+  eval: {
+    tools: ["qb_alice", ...(writes ? ["qb_readonly_0", "qb_readonly_1", "qb_budget_1", "qb_budget_4"] : [])],
+    members: ["agent:eval-machine"],
+  },
+  readonly: { tools: ["qb_alice"], members: ["agent:eval-machine", "alice"], readOnly: true },
   bob: { tools: ["qb_bob"], members: ["bob"] },
-};
+});
 
 /** All Intuit traffic fails closed onto a local fake, including unexpected credentials. */
 export function interceptQuickBooks(target: string): () => void {

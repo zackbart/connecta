@@ -13,8 +13,7 @@ function requireThat(value: unknown, message: string): asserts value {
 }
 
 /** The operator follows real consent/callback routes; never calls connector auth hooks. */
-async function consent(origin: string, owner: "alice" | "bob", wrong = false) {
-  const id = `qb_${owner}`;
+export async function consent(origin: string, owner: "alice" | "bob", wrong = false, id = `qb_${owner}`) {
   const headers = { Authorization: `Bearer eval-${owner}`, Origin: origin };
   const start = await fetch(`${origin}/ui/oauth/${id}`, { method: "POST", headers });
   const handoff = (await start.json()) as { authorizationUrl: string };
@@ -44,7 +43,7 @@ async function consent(origin: string, owner: "alice" | "bob", wrong = false) {
   );
 }
 
-async function readBob(deployment: Deployment) {
+export async function readBob(deployment: Deployment) {
   const session = await connectMcp(`${deployment.origin}/mcp/bob`, { Authorization: "Bearer eval-bob" });
   try {
     const reply = await session.call("execute_code", {
