@@ -16,7 +16,7 @@ stored agent tokens): a two-source join with one post, retained-result
 paging, one Stripe refund, reconciliation after a committed refund answered
 HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
 a secret rotation that never reads a value, and the QuickBooks accounting
-and named-write journeys. Provider journeys also cover
+and named-write journeys, plus a Granola workspace meeting dossier. Provider journeys also cover
 CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
 write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal,
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
@@ -26,10 +26,10 @@ Cloudflare DNS and Vercel environment recovery, shared-drive permission
 inheritance and Docs partial-creation recovery. Each is graded on outcome:
 downstream state, the physical write ledger and the final answer, not the
 route. Paging must deliver the actual failing test and HTTP status through a
-service or guest bridge. Each reference must pass; doing nothing and supplying its correct final answer
-without doing the work must both fail. Duplicate physical mutations fail the
-promoted write journeys.
-The promoted CCB, Planning Center, Overflow, Drive, Docs and Sheets reads also require
+service or guest bridge. Each reference must pass; doing nothing and supplying
+its correct final answer without doing the work must both fail. Duplicate
+physical mutations fail the promoted write journeys. The promoted Granola,
+CCB, Planning Center, Overflow, Drive, Docs and Sheets reads also require
 their requested record facts in successful MCP results. Controls erase those
 results while preserving continuations, vendor calls and the correct final
 answer; each must fail. Valid compact summaries of Sheets, Drive and Docs data
@@ -53,11 +53,11 @@ the same D1 directory. Only the correct owner can still read downstream records;
 independent SQL inspection requires two encrypted durable rows and exactly one
 committed save per owner.
 
-`eval:smoke` builds the package and boots six deployments: the
+`eval:smoke` builds the package and boots eight deployments: the
 `connecta init` Node template with its agent token from `rotate-token` and
 `connecta doctor --pool local-machine`, the Node eval deployment, the
 unmodified Worker example, the Worker example's composition over loopback
-fakes, and the two QuickBooks compositions described below. The Worker targets run natively in workerd under `wrangler dev`, with the
+fakes, the two QuickBooks compositions described below, and two Granola compositions. The Worker targets run natively in workerd under `wrangler dev`, with the
 compatibility date, flags and bindings read from `examples/worker/wrangler.jsonc`;
 the original two Worker entries use a local Access stand-in. The original four targets check
 `/health`, MCP initialize, the six-tool list, an `execute_code` read and the
@@ -67,6 +67,20 @@ the resulting fake state; targets without one claim no write. Steps are bounded
 to two minutes, child process groups stop on exit or signal, and any failed
 check exits nonzero with the results JSON. Install Chromium once with
 `pnpm run test:browser:install`.
+
+The Granola task (`granola-workspace-journey`) runs the published provider with
+the same reference and independent grader on Node and the `node-granola` /
+`worker-granola` smoke targets. It discovers space/folder IDs, reads a filtered
+note list across an empty intermediate page, recovers HTTP 413 through complete
+transcript paging (including another empty page), narrows fields and reuses the
+encrypted shared credential after application reconstruction. The fake owns
+the meeting facts, an inaccessible private meeting and a bearer photo URL.
+The grader requires actual delivered facts, physical cursor/filter requests,
+the exact final dossier, no mutations and no credential/photo/private-note
+disclosure. No-op, fabricated physical reads and erased delivered-data controls
+fail independently. Test-only transport interception runs after Node's owned
+sender is installed and confines the fixed Granola origin to a local fake;
+native workerd uses the same fixed-origin interception.
 
 The QuickBooks task (`quickbooks-accounting-journey`) runs through the actual
 published provider on Node; smoke targets `node-quickbooks` and

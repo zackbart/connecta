@@ -1,6 +1,8 @@
 import { playReference } from "./agent/reference.js";
 import { QUICKBOOKS_WRITE_TASK } from "./tasks/quickbooks-writes.js";
 import { QUICKBOOKS_TASK } from "./tasks/quickbooks.js";
+import { GRANOLA_TASK } from "./tasks/granola.js";
+import { GRANOLA_KEY } from "./fakes/granola.js";
 /**
  * `pnpm run eval:smoke [--targets a,b] [--no-build] [--out path]` — boot both
  * deployment shapes from this checkout and drive them over MCP and a browser.
@@ -44,7 +46,8 @@ const SIX = META_TOOLS;
 const args = flags(process.argv.slice(2));
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `smoke-${stamp()}.json`));
 const selected = (
-  args.get("targets") ?? "node-template,node-fakes,worker-example,worker-fakes,node-quickbooks,worker-quickbooks"
+  args.get("targets") ??
+  "node-template,node-fakes,worker-example,worker-fakes,node-quickbooks,worker-quickbooks,node-granola,worker-granola"
 ).split(",");
 
 const STEP_MS = 120_000;
@@ -642,21 +645,26 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
 }
 
 /** The same task and independent grader run against both real executors/stores. */
-async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promise<SmokeTarget> {
+async function providerJourney(
+  kind: "node-quickbooks" | "worker-quickbooks" | "node-granola" | "worker-granola",
+): Promise<SmokeTarget> {
+  const notes = kind.endsWith("granola");
   const checks: SmokeCheck[] = [];
   const target: SmokeTarget = {
     target: kind,
-    description: "Actual QuickBooks provider accounting and durable OAuth journey",
+    description: notes
+      ? "Actual Granola workspace meeting and shared-vault journey"
+      : "Actual QuickBooks provider accounting and durable OAuth journey",
     status: "fail",
     checks,
   };
-  for (const task of [QUICKBOOKS_TASK, QUICKBOOKS_WRITE_TASK])
+  for (const task of notes ? [GRANOLA_TASK] : [QUICKBOOKS_TASK, QUICKBOOKS_WRITE_TASK])
     await step(checks, task.title, async () => {
       await playReference(
         task,
         {
           mode: "reference",
-          ...(kind === "worker-quickbooks"
+          ...(kind.startsWith("worker-")
             ? {
                 deploy: async (world: World) => {
                   const persist = await mkdtemp(join(tmpdir(), "connecta-qb-workerd-"));
@@ -667,8 +675,8 @@ async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promis
                   await writeFile(
                     config,
                     JSON.stringify({
-                      name: "connecta-qb-smoke",
-                      main: join(ROOT, "eval/deploy/worker-quickbooks.ts"),
+                      name: notes ? "connecta-granola-smoke" : "connecta-qb-smoke",
+                      main: join(ROOT, notes ? "eval/deploy/worker-granola.ts" : "eval/deploy/worker-quickbooks.ts"),
                       compatibility_date: example.compatibility_date,
                       compatibility_flags: example.compatibility_flags,
                       d1_databases: example.d1_databases,
@@ -691,10 +699,14 @@ async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promis
                       "--show-interactive-dev-session=false",
                       "--var",
                       `PUBLIC_URL:${origin}`,
-                      "--var",
-                      `QUICKBOOKS_URL:${world.quickbooks.url}`,
-                      "--var",
-                      `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
+                      ...(notes
+                        ? ["--var", `GRANOLA_URL:${world.granola.url}`, "--var", `GRANOLA_KEY:${GRANOLA_KEY}`]
+                        : [
+                            "--var",
+                            `QUICKBOOKS_URL:${world.quickbooks.url}`,
+                            "--var",
+                            `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
+                          ]),
                       "--var",
                       `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
                     ],
@@ -740,7 +752,7 @@ async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promis
           if (failures.length) throw new Error(failures.map((c) => c.id).join(", "));
         },
       );
-      return kind === "node-quickbooks"
+      return kind.startsWith("node-")
         ? "SQLite + QuickJS + managed agent token"
         : "native workerd + D1 + Dynamic Worker executor + managed agent token";
     });
@@ -756,8 +768,10 @@ if (!args.has("no-build")) {
   if (built.status !== 0) throw new Error("pnpm run build failed");
 }
 const runners: Record<string, () => Promise<SmokeTarget>> = {
-  "node-quickbooks": () => quickBooks("node-quickbooks"),
-  "worker-quickbooks": () => quickBooks("worker-quickbooks"),
+  "node-quickbooks": () => providerJourney("node-quickbooks"),
+  "worker-quickbooks": () => providerJourney("worker-quickbooks"),
+  "node-granola": () => providerJourney("node-granola"),
+  "worker-granola": () => providerJourney("worker-granola"),
   "node-template": nodeTemplate,
   "node-fakes": nodeFakes,
   "worker-example": () => worker("worker-example"),

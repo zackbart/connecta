@@ -26,6 +26,8 @@ import { ACTIVE_TASKS } from "./tasks/index.js";
 import type { ActiveTask } from "./tasks/types.js";
 
 const SCENARIOS: Record<string, string> = {
+  "granola-workspace-journey":
+    "complete accessible meeting dossier, transcript fallback, privacy and shared-vault restart",
   "cross-connector-join": "join two paged sources, then post one answer",
   "p5-result-paging": "page a retained result without refetching",
   "stripe-step2-refund-once": "one requested refund, no other mutation",
@@ -176,6 +178,18 @@ async function run() {
     record(`${id}: a fabricated answer without the work fails`, !passed(grade), failedChecks(grade), grade);
   }
 
+  const granola = references.find((t) => t.task === "granola-workspace-journey");
+  if (granola) {
+    const fabricated = structuredClone(granola);
+    fabricated.saved!.world.calls = [];
+    const grade = regradeTrial(task(granola.task), fabricated, "codex", "outcome");
+    record(
+      "control: fabricated Granola dossier without physical reads fails",
+      !passed(grade),
+      failedChecks(grade),
+      grade,
+    );
+  }
   const quickbooks = references.find((t) => t.task === "quickbooks-accounting-journey");
   if (quickbooks) {
     const fabricated = structuredClone(quickbooks);
@@ -250,6 +264,7 @@ async function run() {
   // Keep the real vendor ledger, continuations and canned answer intact while
   // deleting the facts delivered over MCP. Calls alone cannot prove a read.
   for (const id of [
+    "granola-workspace-journey",
     "quickbooks-accounting-journey",
     "quickbooks-write-journey",
     "ccb-advanced-search",
