@@ -771,7 +771,8 @@ async function refreshSnapshot(
         (connectorPublications.get(connector.id)?.revision ?? 0) > publication
       )
         return;
-      if (outcome.kind === "local" && outcome.failure === "session") return refuseSession(401);
+      if (outcome.kind === "stale") return;
+      if (outcome.kind === "session") return refuseSession(outcome.status);
       const outcomes = new Map([[connector.id, outcome]]);
       let contract = state.contract;
       const overlay = outcome.kind === "detail" ? outcome.detail.overlay : undefined;
@@ -849,7 +850,7 @@ async function coalescedConnector(
     if (activeConnectorReads >= 4) await new Promise<void>((resolve) => connectorWaiters.push(resolve));
     else activeConnectorReads++;
     try {
-      if (combined.aborted) return { kind: "local", failure: "network" } as const;
+      if (combined.aborted) return { kind: "stale" } as const;
       return await fetchConnector(id, token, combined);
     } finally {
       const next = connectorWaiters.shift();
@@ -864,6 +865,11 @@ async function coalescedConnector(
   } finally {
     if (connectorReads.get(id) === read) connectorReads.delete(id);
   }
+}
+
+function invalidateConnector(id: string): void {
+  connectorReads.get(id)?.controller.abort();
+  connectorPublications.set(id, { revision: ++snapshotReadRevision });
 }
 
 /**
@@ -882,10 +888,7 @@ async function mutate(options: {
   reload?: string | undefined;
 }): Promise<void> {
   const current = fence();
-  if (options.reload) {
-    connectorReads.get(options.reload)?.controller.abort();
-    connectorPublications.set(options.reload, { revision: ++snapshotReadRevision });
-  }
+  if (options.reload) invalidateConnector(options.reload);
   set(options.busy);
   try {
     const payload = await options.request(current);
@@ -905,6 +908,8 @@ async function mutate(options: {
  * which carries their own connection state.
  */
 function reloadConnection(connector: string): void {
+  // Reads started during the write cannot satisfy its settled observation.
+  invalidateConnector(connector);
   if (maintainerNow()) void refreshConnector(connector);
   else if (state.role === "member") void loadOperatorContract();
 }
@@ -1649,7 +1654,9 @@ export async function boot(): Promise<void> {
  */
 type DetailOutcome =
   | { kind: "detail"; detail: UiConnector }
-  | { kind: "local"; failure: ConnectorLoadFailure }
+  | { kind: "stale" }
+  | { kind: "session"; status: number }
+  | { kind: "local"; failure: Exclude<ConnectorLoadFailure, "session"> }
   | { kind: "downstream" };
 
 async function fetchConnector(
@@ -1663,7 +1670,7 @@ async function fetchConnector(
     credentials: "same-origin",
   });
   // Withheld: the cycle that asked is fenced or about to be.
-  if (!sent) return { kind: "local", failure: "session" };
+  if (!sent) return { kind: "stale" };
   let response: Response;
   try {
     response = await sent;
@@ -1671,7 +1678,7 @@ async function fetchConnector(
     return { kind: "local", failure: "network" };
   }
   if (response.status === 401 || response.status === 403) {
-    return { kind: "local", failure: "session" };
+    return { kind: "session", status: response.status };
   }
   if (response.status === 503) {
     try {
@@ -1706,7 +1713,7 @@ function detailsPatch(
     .filter((c) => !contract?.config || contract.config.connectors.some((v) => v.id === c.id))
     .map((c) => {
       const outcome = outcomes.get(c.id);
-      if (!outcome) return c;
+      if (!outcome || outcome.kind === "stale" || outcome.kind === "session") return c;
       if (outcome)
         connectorFailures =
           outcome.kind === "local"

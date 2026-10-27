@@ -578,8 +578,10 @@ have independent deadlines and cannot withdraw deployment-wide admission.
 A passive admission deadline retains the last maintainer snapshot with a stale
 notice. Admission validity is separate from snapshot presence: privileged reads,
 connection writes and token actions require valid admission. A scoped connector
-result cannot restore it. A late full admission may publish behind its original
-identity and revision fences. Refusal, identity change and sign-out clear immediately;
+result cannot restore it. Queued reads withheld locally after admission expires
+are discarded without clearing the snapshot or showing sign-in. A late full
+admission may publish behind its original identity and revision fences. HTTP
+401/403 refusal, identity change and sign-out clear immediately;
 member failures still remove their actionable projection. Retry aborts the old
 admission cycle; navigation and identity transitions cancel its reads. Passive
 attempts coalesce even after the deadline. Automatic admission retries remain
@@ -589,7 +591,10 @@ Connector Refresh, focus recovery and mutation follow-ups read only affected
 connectors. Focus probes unhealthy rows, never healthy siblings. All detail reads
 share a four-request limit and coalesce per connector. Failures retry only their
 connector with the same bounded backoff; recovery never replays a mutation.
-Mutation invalidation and newer publications fence older results per connector,
+Mutations cancel affected reads and advance their publication fence both at
+dispatch and on settlement, including failure. Follow-ups require an observation
+started after settlement, so a Refresh or retry started during the write cannot
+supply its result. Newer publications also fence older results per connector,
 while identity and full refresh revisions fence the complete view. An explicit
 OAuth start polls only that connector every two seconds for up to 30 seconds.
 Concurrent authorizations retain independent cancellation and publication. Success,

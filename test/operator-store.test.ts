@@ -1160,19 +1160,19 @@ describe("cached admission and scoped observations (#1113)", () => {
     toolCount: 0,
     overlay: { id, status, tools: [], catalogAgeMs: 17, lastCall: null },
   });
-  async function ready() {
+  async function ready(connectorIds = ids) {
     const loaded = await loadStore({ id: "a", getToken: async () => "token" });
-    loaded.declare(ids);
-    loaded.configMock.mockImplementation(async () => Response.json(v2(ids.map((id) => ({ id })))));
+    loaded.declare(connectorIds);
+    loaded.configMock.mockImplementation(async () => Response.json(v2(connectorIds.map((id) => ({ id })))));
     loaded.fetchMock.mockImplementation(async (path: string) =>
       Response.json(
         path === "/ui/data"
-          ? { ...uiData("operator"), connectors: ids.map((id) => row(id)) }
+          ? { ...uiData("operator"), connectors: connectorIds.map((id) => row(id)) }
           : row(path.split("/").at(-1)!),
       ),
     );
     await loaded.store.boot();
-    await vi.waitFor(() => expect(loaded.store.getState().contract?.live.connectors).toHaveLength(3));
+    await vi.waitFor(() => expect(loaded.store.getState().contract?.live.connectors).toHaveLength(connectorIds.length));
     return loaded;
   }
 
@@ -1240,6 +1240,109 @@ describe("cached admission and scoped observations (#1113)", () => {
     expect(store.getState()).toMatchObject({ admissionValid: true, contractPhase: "ready" });
     expect(paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(3);
   });
+
+  it("discards queued recovery reads after admission expires without clearing the snapshot or showing sign-in", async () => {
+    const connectorIds = ["crm", "tickets", "notes", "calendar", "files", "tasks"];
+    const { store, fetchMock, configMock, paths } = await ready(connectorIds);
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(async () => new Response(null, { status: 503 }));
+    await Promise.all(connectorIds.map((id) => store.refreshConnector(id)));
+    const snapshot = store.getState().contract;
+    const details: Array<ReturnType<typeof deferred<Response>>> = [];
+    fetchMock.mockImplementation(() => {
+      const detail = deferred<Response>();
+      details.push(detail);
+      return detail.promise;
+    });
+    const config = deferred<Response>();
+    configMock.mockImplementationOnce(() => config.promise);
+    paths.length = 0;
+    const full = store.loadOperatorContract();
+    await vi.advanceTimersByTimeAsync(2000);
+    // Normal recovery timers fill all four slots, leaving two details queued.
+    expect(details).toHaveLength(4);
+    expect(paths).toEqual([CONFIG, ...connectorIds.slice(0, 4).map((id) => `/ui/connectors/${id}`)]);
+    await vi.advanceTimersByTimeAsync(13_000);
+    await full;
+    expect(store.getState()).toMatchObject({ contract: snapshot, admissionValid: false, contractPhase: "error" });
+    const requests = [...paths];
+    details[0]!.resolve(Response.json(row("crm", "error")));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState()).toMatchObject({
+      session: "ready",
+      gate: null,
+      role: "maintainer",
+      admissionValid: false,
+      contractPhase: "error",
+      data: { serverInfo: { name: "operator" } },
+    });
+    expect(store.getState().contract?.live.connectors).toHaveLength(6);
+    expect(store.getState().data?.connectors).toHaveLength(6);
+    expect(paths).toEqual(requests);
+    expect(details).toHaveLength(4);
+  });
+
+  it.each([401, 403])("clears the snapshot on a real connector HTTP %s session refusal", async (status) => {
+    const { store, fetchMock } = await ready();
+    fetchMock.mockResolvedValueOnce(new Response(null, { status }));
+    await store.refreshConnector("crm");
+    expect(store.getState()).toMatchObject({ session: "gated", contract: null, data: null });
+    expect(store.getState().gate?.message).toBe(
+      status === 403
+        ? "This Clerk account can't open Connecta's operator pages."
+        : "Clerk session not accepted. Sign out and sign in again.",
+    );
+  });
+
+  it.each([
+    { source: "Refresh", status: 200 },
+    { source: "Refresh", status: 503 },
+    { source: "retry", status: 200 },
+    { source: "retry", status: 503 },
+  ])(
+    "fences a $source read started during a credential save settling with HTTP $status",
+    async ({ source, status }) => {
+      const { store, fetchMock, paths } = await ready();
+      vi.useFakeTimers();
+      if (source === "retry") {
+        fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
+        await store.refreshConnector("crm");
+      }
+      const write = deferred<Response>();
+      const duringWrite = deferred<Response>();
+      const afterWrite = deferred<Response>();
+      const detailSignals: AbortSignal[] = [];
+      fetchMock.mockImplementation((path: string, init: RequestInit) => {
+        if (path === "/ui/credentials/crm") return write.promise;
+        expect(path).toBe("/ui/connectors/crm");
+        detailSignals.push(init.signal as AbortSignal);
+        return detailSignals.length === 1 ? duringWrite.promise : afterWrite.promise;
+      });
+      paths.length = 0;
+      const save = store.saveCredential("crm", { value: "secret" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(paths).toEqual(["/ui/credentials/crm"]);
+      const refresh = source === "Refresh" ? store.refreshConnector("crm") : undefined;
+      await vi.advanceTimersByTimeAsync(source === "retry" ? 2000 : 0);
+      expect(detailSignals).toHaveLength(1);
+      expect(detailSignals[0]!.aborted).toBe(false);
+      write.resolve(Response.json({ ok: status === 200 }, { status }));
+      await save;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(detailSignals[0]!.aborted).toBe(true);
+      expect(paths).toEqual(["/ui/credentials/crm", "/ui/connectors/crm", "/ui/connectors/crm"]);
+      afterWrite.resolve(Response.json(row("crm")));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getState().data?.connectors.find((c) => c.id === "crm")?.status).toBe("ok");
+      // The mock deliberately ignores abort, proving the publication fence too.
+      duringWrite.resolve(Response.json(row("crm", "auth_required")));
+      await refresh;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getState().data?.connectors.find((c) => c.id === "crm")?.status).toBe("ok");
+      expect(store.getState().contract?.live.connectors.find((c) => c.id === "crm")?.status).toBe("ok");
+      expect(store.getState().credentialNotice?.tone).toBe(status === 200 ? "info" : "error");
+    },
+  );
 
   it("a slow detail after admission fails only its connector; siblings publish and late data cannot undo a newer mutation", async () => {
     const { store, fetchMock, paths } = await ready();
