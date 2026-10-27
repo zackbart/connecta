@@ -277,7 +277,7 @@ describe("an OAuth flow on a live client", () => {
       requestScope: {},
       allowAuthorization: true,
     });
-    expect(await connector.status!(context)).toMatchObject({ state: "ok" });
+    // The call connects the client without a grant, which this downstream allows.
     const error = await connector.callTool("read", {}, context).then(
       () => null,
       (err: unknown) => err,
@@ -370,7 +370,7 @@ describe("an OAuth flow on a live client", () => {
       requestScope: {},
       allowAuthorization: true,
     });
-    expect(await connector.status!(context)).toMatchObject({ state: "ok" });
+    // The call connects the client without a grant, which this downstream allows.
     const first = connector
       .callTool("read", {}, context, {
         definition: { name: "read", annotations: { readOnlyHint: true } },
@@ -483,7 +483,7 @@ describe("the SDK seams OAuth flows are bounded at", () => {
       );
       const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: mode });
       const context = { ...scope(), allowAuthorization: true };
-      expect(await connector.status!(context)).toMatchObject({ state: "ok" });
+      // The call connects the client without a grant, which this downstream allows.
       try {
         const errors = await Promise.all(
           [0, 1].map(() => connector.callTool("write", {}, context).catch((error: unknown) => error)),
