@@ -18,6 +18,20 @@ import { stripe } from "../src/providers/stripe/index.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { makeRegistry } from "./helpers.js";
 
+it("keeps the refused origin unavailable to competing test listeners", async () => {
+  const origin = new URL(inject("refusedHttpOrigin"));
+  const competitor = createServer();
+  const result = await new Promise<string>((resolve) => {
+    competitor.once("error", (error: NodeJS.ErrnoException) => resolve(error.code ?? error.message));
+    competitor.listen(Number(origin.port), origin.hostname, () => resolve("listening"));
+  });
+  try {
+    expect(result).toBe("EADDRINUSE");
+  } finally {
+    if (competitor.listening) await new Promise<void>((resolve) => competitor.close(() => resolve()));
+  }
+});
+
 /** A server whose first request gets `answer`; it reports what it received. */
 async function listen(answer: (close: () => void, response: import("node:http").ServerResponse) => void) {
   const received: Array<{ method: string; bytes: number }> = [];
