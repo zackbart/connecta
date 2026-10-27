@@ -1,4 +1,9 @@
-import { defineMcpClientConnection, type McpClientConnectionDefinition } from "eve/connections";
+import {
+  defineDynamic as defineDynamicConnection,
+  defineMcpClientConnection,
+  type DynamicContext,
+  type McpClientConnectionDefinition,
+} from "eve/connections";
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { never, type Approval, type ApprovalPolicy } from "eve/tools/approval";
 
@@ -18,7 +23,12 @@ export interface ConnectaEndpointOptions {
   getToken?: () => string | Promise<string>;
 }
 
-export interface ConnectaConnectionOptions extends ConnectaEndpointOptions {
+/** App-owned pool policy; use `ctx.memo` when its result should stay fixed. */
+export type ConnectaPoolSelector = (ctx: DynamicContext) => string | Promise<string>;
+
+export interface ConnectaConnectionOptions extends Omit<ConnectaEndpointOptions, "pool"> {
+  /** A fixed pool, or a policy Eve evaluates before every model call. */
+  pool?: string | ConnectaPoolSelector;
   /** What the connection offers, for the model choosing which connection to search. */
   description: string;
   /** Eve's approval for every Connecta tool: a policy or configuration. Defaults to `never()`. */
@@ -31,7 +41,11 @@ export interface ConnectaConnectionOptions extends ConnectaEndpointOptions {
   gateWrites?: boolean;
 }
 
-export interface ConnectaInstructionsOptions extends ConnectaEndpointOptions {
+export interface ConnectaInstructionsOptions extends Omit<ConnectaEndpointOptions, "pool"> {
+  /** A fixed pool, or the same policy used by the connection. */
+  pool?: string | ConnectaPoolSelector;
+  /** MCP client name for instruction requests. Default `connecta-eve-instructions`. */
+  clientName?: string;
   /** How long fetched instructions are reused. Default ten minutes. */
   ttlMs?: number;
   /** Fetch implementation, for tests. */
@@ -43,16 +57,22 @@ function environment(name: string): string | undefined {
   return value?.trim() || undefined;
 }
 
+function validatePool(pool: string): void {
+  if (typeof pool !== "string" || !/^[a-z0-9_-]+$/.test(pool)) {
+    throw new Error(`Connecta pool "${pool}" must match [a-z0-9_-]+.`);
+  }
+}
+
 /** The endpoint URL these options name. */
 export function connectaEndpoint(options: ConnectaEndpointOptions = {}): string {
   const url = options.url ?? environment("CONNECTA_URL");
   if (!url) throw new Error("Connecta needs a url, or CONNECTA_URL in the environment.");
   if (options.pool === undefined) return url;
-  if (!/^[a-z0-9_-]+$/.test(options.pool)) throw new Error(`Connecta pool "${options.pool}" must match [a-z0-9_-]+.`);
+  validatePool(options.pool);
   return `${url.replace(/\/+$/, "")}/agent/${options.pool}`;
 }
 
-async function tokenFor(options: ConnectaEndpointOptions): Promise<string> {
+async function tokenFor(options: Pick<ConnectaEndpointOptions, "getToken">): Promise<string> {
   const token = options.getToken ? (await options.getToken()).trim() : environment("CONNECTA_ACCESS_TOKEN");
   if (!token) throw new Error("Connecta needs an agent token: getToken, or CONNECTA_ACCESS_TOKEN in the environment.");
   return token;
@@ -69,9 +89,35 @@ export const gateConnectaWrites: ApprovalPolicy = ({ toolAnnotations }) =>
  * The Eve connection for a Connecta agent endpoint, with app-owned auth:
  * one agent token, sent as a bearer and re-read on every request.
  */
-export function connectaConnection(options: ConnectaConnectionOptions): McpClientConnectionDefinition {
+export function connectaConnection(
+  options: ConnectaConnectionOptions & { pool: ConnectaPoolSelector },
+): ReturnType<typeof defineDynamicConnection>;
+export function connectaConnection(
+  options: ConnectaConnectionOptions & { pool?: string },
+): McpClientConnectionDefinition;
+export function connectaConnection(
+  options: ConnectaConnectionOptions,
+): McpClientConnectionDefinition | ReturnType<typeof defineDynamicConnection>;
+export function connectaConnection(options: ConnectaConnectionOptions) {
+  const { pool, ...rest } = options;
+  if (typeof pool === "function") {
+    return defineDynamicConnection(async (ctx) => {
+      const selected = await pool(ctx);
+      validatePool(selected);
+      return connectionDefinition(options, connectaEndpoint({ ...rest, pool: selected }), selected);
+    });
+  }
+  return connectionDefinition(options, connectaEndpoint(pool === undefined ? rest : { ...rest, pool }));
+}
+
+function connectionDefinition(
+  options: ConnectaConnectionOptions,
+  endpoint: string,
+  instanceKey?: string,
+): McpClientConnectionDefinition {
   return defineMcpClientConnection({
-    url: connectaEndpoint(options),
+    url: endpoint,
+    ...(instanceKey === undefined ? {} : { instanceKey }),
     description: options.description,
     auth: {
       principalType: "app",
@@ -84,11 +130,13 @@ export function connectaConnection(options: ConnectaConnectionOptions): McpClien
 /** Connecta's MCP `instructions` for one endpoint, or null when unavailable. */
 async function instructionRequest(
   options: ConnectaInstructionsOptions,
+  endpoint: string,
   method: "server/discover" | "initialize",
   signal: AbortSignal,
 ) {
   const modern = method === "server/discover";
-  const response = await (options.fetch ?? fetch)(connectaEndpoint(options), {
+  const clientInfo = { name: options.clientName ?? "connecta-eve-instructions", version: "1" };
+  const response = await (options.fetch ?? fetch)(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${await tokenFor(options)}`,
@@ -105,13 +153,13 @@ async function instructionRequest(
             _meta: {
               "io.modelcontextprotocol/protocolVersion": "2026-07-28",
               "io.modelcontextprotocol/clientCapabilities": {},
-              "io.modelcontextprotocol/clientInfo": { name: "connecta-eve-instructions", version: "1" },
+              "io.modelcontextprotocol/clientInfo": clientInfo,
             },
           }
         : {
             protocolVersion: "2025-06-18",
             capabilities: {},
-            clientInfo: { name: "connecta-eve-instructions", version: "1" },
+            clientInfo,
           },
     }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
@@ -132,12 +180,13 @@ async function instructionRequest(
 
 async function fetchConnectaInstructions(
   options: ConnectaInstructionsOptions,
+  endpoint: string,
   signal: AbortSignal,
 ): Promise<string | null> {
   // Only a completed discovery response can justify legacy negotiation.
   // Network failures and timeouts propagate to the resolver's fail-open path.
-  const discovered = await instructionRequest(options, "server/discover", signal);
-  return discovered ?? instructionRequest(options, "initialize", signal);
+  const discovered = await instructionRequest(options, endpoint, "server/discover", signal);
+  return discovered ?? instructionRequest(options, endpoint, "initialize", signal);
 }
 
 /**
@@ -145,32 +194,49 @@ async function fetchConnectaInstructions(
  * Eve does not pass an MCP server's `instructions` to the model, so this
  * fetches them and caches each success; a failure keeps the last copy, or adds
  * nothing, and the tools still work. Eve evaluates the resolver before every
- * model call; a memo keyed on the turn keeps one result for the whole turn.
+ * model call; a memo keyed on the endpoint and turn keeps one result for each.
+ * Pool policy runs independently of the connection and owns its memo lifetime.
  */
 export function connectaInstructions(options: ConnectaInstructionsOptions = {}) {
   const ttlMs = options.ttlMs ?? 600_000;
-  let cached: { at: number; content: string } | undefined;
-  let retryAfter = 0;
-  const current = async (signal: AbortSignal): Promise<string | null> => {
+  const endpoints = new Map<string, { cached?: { at: number; content: string }; retryAfter: number }>();
+  const current = async (endpoint: string, signal: AbortSignal): Promise<string | null> => {
     signal.throwIfAborted();
+    let state = endpoints.get(endpoint);
+    if (!state) endpoints.set(endpoint, (state = { retryAfter: 0 }));
+    const { cached, retryAfter } = state;
     if (cached && Date.now() - cached.at <= ttlMs) return cached.content;
     if (Date.now() < retryAfter) return cached?.content ?? null;
     let fresh: string | null;
     try {
-      fresh = await fetchConnectaInstructions(options, signal);
+      fresh = await fetchConnectaInstructions(options, endpoint, signal);
     } catch {
       // Eve's cancellation is not an endpoint failure: rethrowing keeps it out
       // of the memo and the backoff, which every session of this resolver shares.
       signal.throwIfAborted();
       fresh = null;
     }
-    if (fresh) cached = { at: Date.now(), content: fresh };
-    retryAfter = fresh ? 0 : Date.now() + 30_000;
+    if (fresh) state.cached = { at: Date.now(), content: fresh };
+    state.retryAfter = fresh ? 0 : Date.now() + 30_000;
     return fresh ?? cached?.content ?? null;
   };
   return defineDynamic(async (ctx) => {
-    const content = await ctx.memo(["connecta-instructions", ctx.turn?.id ?? null], ({ abortSignal }) =>
-      current(abortSignal),
+    const { pool, ...rest } = options;
+    let endpoint: string;
+    if (typeof pool === "function") {
+      const selected = await pool(ctx);
+      validatePool(selected);
+      endpoint = connectaEndpoint({ ...rest, pool: selected });
+    } else {
+      // Static configuration errors have always omitted optional guidance.
+      try {
+        endpoint = connectaEndpoint(pool === undefined ? rest : { ...rest, pool });
+      } catch {
+        return null;
+      }
+    }
+    const content = await ctx.memo(["connecta-instructions", endpoint, ctx.turn?.id ?? null], ({ abortSignal }) =>
+      current(endpoint, abortSignal),
     );
     return content ? defineInstructions({ content: `Connecta guidance:\n${content}` }) : null;
   });
