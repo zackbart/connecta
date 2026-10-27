@@ -55,6 +55,16 @@ async function status(): Promise<{ standard: Snapshot; tight: Snapshot; failures
 }
 
 describe.skipIf(!worker)("execute_code across separate Worker requests", () => {
+  it("INV-7: the fixture's request binding refuses another request's entry with or without its token, as workerd does", async () => {
+    const outcome = async (path: string) =>
+      ((await (await worker!.fetch(`http://localhost${path}`)).json()) as { outcome: string }).outcome;
+    const refused = "Cannot call this AsyncLocalStorage bound function outside of the request in which it was created.";
+    // Its own request enters it even outside the token.
+    expect(await outcome("/probe/create")).toBe("entered");
+    expect(await outcome("/probe/enter")).toBe(refused);
+    expect(await outcome("/probe/enter?untokened")).toBe(refused);
+  });
+
   it("INV-7: a queued program resumes, calls and finishes in its own request, whichever request released its slot", async () => {
     const before = await status();
     const programs = Array.from({ length: 6 }, (_, i) => `queued${i}`);

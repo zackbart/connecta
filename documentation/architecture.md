@@ -1758,10 +1758,15 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   real TCP host calls that read their own request's signal. Queued programs
   and the programs whose release admitted them return their own answers; queue
   refusals keep the retryable shape. Its fixture applies workerd's request
-  binding of async-context frames, which the pinned runtime predates; pointing
+  binding of async-context frames, which the pinned runtime predates, through a
+  signal each request owns, so it refuses another request's entry with or
+  without an async-context token, as workerd does; pointing
   `MINIFLARE_WORKERD_PATH` at a newer workerd runs the native check.
+  `test/executor-native.test.ts` shows that a slot granted just before
+  `close()` never starts a program on the native Worker Loader.
   `test/request-context.node.test.ts` pins the same wake order and async context
-  on Node for executor and call admission, and for QuickJS host calls.
+  on Node for executor and call admission and QuickJS host calls, and gives back
+  grants that shutdown overtook.
 - The request, catalog, auxiliary-call and renewal lifetime
   suites, plus `test/auth-admission-binding.test.ts`, exercise cancellation,
   held native work and garbage collection. These test actual request ownership;
@@ -2266,8 +2271,12 @@ the one resumed. A Settlement records its outcome synchronously, for queue
 arbitration and late-grant cleanup, and wakes each waiter by resolving a
 Promise the waiter's own request created. workerd runs that Promise's reactions
 in the request that created it, and Node runs them a microtask later in the
-waiter's async context. Executor admission, `/mcp` request admission,
-connector call admission and OAuth refresh flights all queue through
+waiter's async context. That wake is a turn late, so whatever a waiter acts on
+it rechecks there: an admission queue gives back a grant its controller closed
+in between, while a grant that beat the waiter's own abort stays the waiter's to
+release, and a refresh waiter rechecks its own signal before using a flight's
+answer. Executor admission, `/mcp` request
+admission, connector call admission and OAuth refresh flights all queue through
 Settlements; Effect's `Semaphore` is not used across requests for the same
 reason, and because a same-tick newcomer can take a released permit ahead of a
 waiter that queued earlier. Events from shared native objects follow the same

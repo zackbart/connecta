@@ -482,8 +482,8 @@ export class ConnectorCallAdmissionController {
       controller.queuedTotal++;
 
       // A timeout or abort settles the waiter only if it takes it out of the
-      // queue first. Otherwise the pump or close() got there in the same tick,
-      // and the outcome they recorded is the answer.
+      // queue first. Otherwise the pump or close() got there first, and the
+      // outcome they recorded is the answer, rechecked once heard.
       const giveUp = (
         count: () => void,
         error: () => CallAdmissionError,
@@ -524,7 +524,24 @@ export class ConnectorCallAdmissionController {
           ),
         );
       }
+      // A grant is recorded in the releasing request and heard here a turn
+      // later. A shutdown in that gap wins, so no call dispatches after
+      // close(): give the permit back. A grant that beat the caller's abort
+      // stays the caller's to release, as it always has.
+      const received = (permit: CallAdmissionPermit): Effect.Effect<CallAdmissionPermit, CallAdmissionError> =>
+        Effect.suspend(() => {
+          if (!controller.closed) return Effect.succeed(permit);
+          permit.release();
+          return Effect.fail(
+            new CallAdmissionError(
+              "closed",
+              "unavailable",
+              `Connector "${controller.connectorId}" call admission is closed.`,
+            ),
+          );
+        });
       return Effect.raceAllFirst(contenders).pipe(
+        Effect.flatMap(received),
         Effect.onInterrupt(() => controller.cleanupWaiter(key, state, waiter)),
       );
     });

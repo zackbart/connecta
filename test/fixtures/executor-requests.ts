@@ -1,4 +1,4 @@
-import { requestToken } from "./request-bound-async-resource.js";
+import { ownedByThisRequest, requestToken } from "./request-bound-async-resource.js";
 import { createConnecta, type Connector } from "../../src/index.js";
 import { workerExecutor } from "../../src/worker.js";
 import type { AdmittingExecutor } from "../../src/types.js";
@@ -20,6 +20,34 @@ const failures: string[] = [];
 // request's signal from any other request, so reading it proves where a host
 // call runs.
 const owned = new Map<string, AbortSignal>();
+// An AsyncResource made by one /probe request and entered by later ones, to
+// check that the fixture's request binding refuses what workerd refuses.
+interface Probe {
+  runInAsyncScope(fn: () => string): string;
+}
+let probe: Probe | undefined;
+
+function enter(resource: Probe): string {
+  try {
+    return resource.runInAsyncScope(() => "entered");
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function probeRoute(url: URL): Response {
+  const runtime = globalThis as unknown as {
+    process: { getBuiltinModule(name: string): { AsyncResource: new (type: string) => Probe } };
+  };
+  const { AsyncResource } = runtime.process.getBuiltinModule("node:async_hooks");
+  if (url.pathname === "/probe/create") {
+    const created = new AsyncResource("probe");
+    probe = created;
+    // Its own request may enter it outside the token, as workerd allows.
+    return Response.json({ outcome: requestToken.exit(() => enter(created)) });
+  }
+  return Response.json({ outcome: probe ? enter(probe) : "no probe" });
+}
 
 function slowConnector(env: Env): Connector {
   return {
@@ -53,36 +81,41 @@ function slowConnector(env: Env): Connector {
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    executors ??= {
-      standard: workerExecutor({ loader: env.LOADER }),
-      tight: workerExecutor({
-        loader: env.LOADER,
-        admission: { concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 1_000, retryAfterMs: 750 },
-      }),
-    };
-    const app = (executor: AdmittingExecutor) =>
-      createConnecta({
-        readOnly: true,
-        publicUrl: "http://localhost",
-        logger: "silent",
-        executor,
-        connectors: [slowConnector(env)],
-      });
-    apps ??= { standard: app(executors.standard), tight: app(executors.tight) };
     const url = new URL(request.url);
-    if (url.pathname === "/status") {
-      return Response.json({
-        standard: executors.standard.admissionSnapshot?.(),
-        tight: executors.tight.admissionSnapshot?.(),
-        failures,
-      });
-    }
-    const program = request.headers.get("X-Program");
-    if (program) owned.set(program, new AbortController().signal);
-    const tight = url.pathname.startsWith("/tight/");
-    const target = tight ? new Request(new URL(url.pathname.slice("/tight".length), url), request) : request;
-    return requestToken.run({}, () =>
-      (tight ? apps!.tight : apps!.standard).fetch(target, env, ctx),
-    );
+    // `?untokened` serves a probe outside any request token.
+    if (url.searchParams.has("untokened")) return probeRoute(url);
+    return requestToken.run(ownedByThisRequest(), () => serve(request, url, env, ctx));
   },
 };
+
+function serve(request: Request, url: URL, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
+  executors ??= {
+    standard: workerExecutor({ loader: env.LOADER }),
+    tight: workerExecutor({
+      loader: env.LOADER,
+      admission: { concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 1_000, retryAfterMs: 750 },
+    }),
+  };
+  const app = (executor: AdmittingExecutor) =>
+    createConnecta({
+      readOnly: true,
+      publicUrl: "http://localhost",
+      logger: "silent",
+      executor,
+      connectors: [slowConnector(env)],
+    });
+  apps ??= { standard: app(executors.standard), tight: app(executors.tight) };
+  if (url.pathname.startsWith("/probe/")) return probeRoute(url);
+  if (url.pathname === "/status") {
+    return Response.json({
+      standard: executors.standard.admissionSnapshot?.(),
+      tight: executors.tight.admissionSnapshot?.(),
+      failures,
+    });
+  }
+  const program = request.headers.get("X-Program");
+  if (program) owned.set(program, new AbortController().signal);
+  const tight = url.pathname.startsWith("/tight/");
+  const target = tight ? new Request(new URL(url.pathname.slice("/tight".length), url), request) : request;
+  return (tight ? apps.tight : apps.standard).fetch(target, env, ctx);
+}

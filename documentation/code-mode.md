@@ -996,7 +996,11 @@ error result whose `structuredContent.error` is
 `retryAfterMs` sends nothing twice. Whichever request releases a slot, the
 queued run resumes, builds its providers, makes its host calls and holds its
 sandbox handles in its own request; the releasing request's result is
-unaffected. A queued run also holds its MCP request permit
+unaffected. A slot handed to a queued run is heard a turn after it is granted.
+When the executor closes in that gap, the slot is given back and the run is
+refused with `executor_closed`, so nothing granted before `close()` starts after
+it. A grant that beat the caller's abort stays the caller's, which releases it
+on arrival. A queued run also holds its MCP request permit
 ([request admission](./architecture.md#admission-in-two-places)) while it waits.
 
 **L8.** Result, log, host-call, and emission budgets are deployment configuration.

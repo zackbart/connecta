@@ -3,13 +3,21 @@
 // throws (Workers with compatibility date 2025-06-16 or later, or the
 // `bind_asynclocalstorage_snapshot_to_request` flag). Effect captures one per
 // suspended fiber and resumes the fiber through it. The test pool's pinned
-// workerd predates that binding, so this fixture applies the same rule,
-// keyed on the token every fixture request runs under. Import it first: Effect
-// reads `process.getBuiltinModule("node:async_hooks")` when it evaluates.
-// Under a newer workerd (MINIFLARE_WORKERD_PATH) the native check applies too.
+// workerd predates that binding, so this fixture applies the same rule. Import
+// it first: Effect reads `process.getBuiltinModule("node:async_hooks")` when it
+// evaluates. Under a newer workerd (MINIFLARE_WORKERD_PATH) the native check
+// applies too.
+//
+// Like workerd, the check compares requests, not async-context values: a
+// resource remembers a signal its request created, and workerd refuses to read
+// that signal from any other request, whatever that request's async context
+// holds. A resource created outside any request token is unbound, as workerd
+// leaves one created outside any async-context frame.
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 
-export const requestToken = new AsyncLocalStorage<object>();
+/** Run each fixture request inside `requestToken.run(ownedByThisRequest(), ...)`. */
+export const requestToken = new AsyncLocalStorage<{ readonly signal: AbortSignal }>();
+export const ownedByThisRequest = () => ({ signal: new AbortController().signal });
 
 const message = "Cannot call this AsyncLocalStorage bound function outside of the request in which it was created.";
 
@@ -21,8 +29,13 @@ class RequestBoundAsyncResource extends AsyncResource {
     thisArg?: This,
     ...args: unknown[]
   ): Result {
-    const current = requestToken.getStore();
-    if (this.#owner && current && current !== this.#owner) throw new Error(message);
+    if (this.#owner) {
+      try {
+        void this.#owner.signal.aborted;
+      } catch {
+        throw new Error(message);
+      }
+    }
     return super.runInAsyncScope(fn, thisArg, ...args);
   }
 }

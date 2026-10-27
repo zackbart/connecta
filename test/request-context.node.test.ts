@@ -122,6 +122,42 @@ describe("shared admission queues hand a permit across requests", () => {
   });
 });
 
+describe("a permit granted before its waiter hears of it", () => {
+  // The grant is recorded in the releasing request and heard a turn later.
+  // A shutdown in that gap must win. (A grant that beats the waiter's abort
+  // stays the waiter's: test/cancellation-faults.test.ts.)
+  it("INV-7: is given back when execution admission closes first", async () => {
+    const admission = new AdmissionController({ concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 1_000 });
+    const held = await runEdge(admit(admission));
+    const bob = runEdge(admit(admission)).catch((error: unknown) => error);
+    held.release();
+    admission.close();
+    expect(await bob).toMatchObject({ code: "executor_closed", retryable: false });
+    expect(admission.snapshot()).toMatchObject({ active: 0, queued: 0, totals: { admitted: 2, closed: 1 } });
+  });
+
+  it("INV-7: is given back when connector call admission closes first", async () => {
+    const admission = new ConnectorCallAdmissionController("limited", { rules: [{ maxConcurrency: 1 }] });
+    const call = () => runEdge(startCallAdmission(admission, { toolName: "read", args: {} }));
+    const held = await call();
+    const bob = call().catch((error: unknown) => error);
+    held.release();
+    admission.close();
+    expect(await bob).toMatchObject({ admissionKind: "closed", code: "unavailable" });
+    expect(admission.snapshot()).toMatchObject({ active: 0, queued: 0 });
+  });
+
+  it("INV-7: never becomes a QuickJS lease after the executor closes", async () => {
+    const executor = quickJsExecutor({ concurrency: 1 });
+    const held = await executor.acquire();
+    const queued = executor.acquire().catch((error: unknown) => error);
+    held.release();
+    await executor.close?.();
+    expect(await queued).toMatchObject({ code: "executor_closed" });
+    expect(executor.admissionSnapshot?.()).toMatchObject({ active: 0, queued: 0, closed: true });
+  });
+});
+
 describe("QuickJS host calls", () => {
   it("INV-7: run in the context of the request that runs the program, not the one that spawned its child", async () => {
     const executor = quickJsExecutor({ concurrency: 1 });

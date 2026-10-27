@@ -320,8 +320,8 @@ export class AdmissionController {
         controller.queuedTotal++;
 
         // A timeout or abort settles the waiter only if it takes it out of the
-        // queue first. Otherwise release() or close() got there in the same
-        // tick, and the outcome they recorded is the answer.
+        // queue first. Otherwise release() or close() got there first, and the
+        // outcome they recorded is the answer, rechecked once heard.
         const giveUp = (
           count: () => void,
           error: () => ExecutorAdmissionError,
@@ -365,7 +365,21 @@ export class AdmissionController {
             ),
           );
         }
-        return Effect.raceAllFirst(contenders).pipe(Effect.onInterrupt(() => controller.cleanup(waiter)));
+        // A grant is recorded in the releasing request and heard here a turn
+        // later. A shutdown in that gap wins, so nothing granted before
+        // close() starts after it: give the slot back. A grant that beat the
+        // caller's abort stays the caller's to release, as it always has.
+        const received = (lease: AdmissionLease): Effect.Effect<AdmissionLease, ExecutorAdmissionError> =>
+          Effect.suspend(() => {
+            if (!controller.closed) return Effect.succeed(lease);
+            lease.release();
+            controller.closedTotal++;
+            return Effect.fail(new ExecutorAdmissionError("executor_closed", "Executor is shutting down."));
+          });
+        return Effect.raceAllFirst(contenders).pipe(
+          Effect.flatMap(received),
+          Effect.onInterrupt(() => controller.cleanup(waiter)),
+        );
       }),
     );
   }
