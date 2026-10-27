@@ -544,27 +544,29 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
     const delivered = deliveredValues(trace);
     add(
       "delivered-data",
-      [
-        { id: "perm1", emailAddress: "reviewer@example.com", role: "reader", inherited: false },
-        { id: "perm2", emailAddress: ALICE, role: "organizer", inherited: true, inheritedFrom: "shared1" },
-      ].every(({ inherited, inheritedFrom, ...identity }) =>
-        delivered.some(
-          (value) =>
-            subset(value, identity) &&
-            (subset(value, { inherited, ...(inheritedFrom ? { inheritedFrom } : {}) }) ||
-              value?.permissionDetails?.some((detail: Row) =>
-                subset(detail, { inherited, ...(inheritedFrom ? { inheritedFrom } : {}) }),
-              )),
+      delivered.some((value) => subset(value, expected)) ||
+        [
+          { id: "perm1", emailAddress: "reviewer@example.com", role: "reader", inherited: false },
+          { id: "perm2", emailAddress: ALICE, role: "organizer", inherited: true, inheritedFrom: "shared1" },
+        ].every(({ inherited, inheritedFrom, ...identity }) =>
+          delivered.some(
+            (value) =>
+              subset(value, identity) &&
+              (subset(value, { inherited, ...(inheritedFrom ? { inheritedFrom } : {}) }) ||
+                value?.permissionDetails?.some((detail: Row) =>
+                  subset(detail, { inherited, ...(inheritedFrom ? { inheritedFrom } : {}) }),
+                )),
+          ),
         ),
-      ),
     );
   }
   if (product === "docs" && task === 7) {
     const delivered = deliveredValues(trace);
     add(
       "delivered-data",
-      delivered.some((value) => value?.documentId === "new-doc") &&
-        delivered.some((value) => typeof value === "string" && value.includes("Recovered opening.")),
+      delivered.some((value) => subset(value, expected)) ||
+        (delivered.some((value) => value?.documentId === "new-doc") &&
+          delivered.some((value) => typeof value === "string" && value.includes("Recovered opening."))),
     );
   }
   const requiredIds = (expected as Row)?.ids as string[] | undefined;

@@ -253,26 +253,36 @@ async function run() {
       graded,
     );
   }
-  const reduced = structuredClone(references.find((reference) => reference.task === "google-sheets-3")!);
-  for (const use of reduced.saved!.trace.toolUses) {
-    use.resultText = "{}";
-    use.resultBlocks = [{ type: "text", text: "{}" }];
-  }
-  reduced.saved!.trace.toolUses.at(-1)!.resultText = JSON.stringify({
-    result: { ids: Array.from({ length: 6 }, (_, i) => `record${i + 1}`), total: 210 },
-  });
-  for (const use of reduced.saved!.trace.toolUses) {
-    use.resultBlocks = [{ type: "text", text: use.resultText! }];
-    for (const entry of reduced.saved!.trace.transcript) {
-      if (entry.kind === "tool_result" && entry.id === use.id) {
-        entry.text = use.resultText!;
-        entry.chars = entry.text.length;
+  const compactTrials = (
+    [
+      ["google-sheets-3", { ids: Array.from({ length: 6 }, (_, i) => `record${i + 1}`), total: 210 }],
+      [
+        "google-drive-2",
+        { id: "pdf1", direct: "reviewer@example.com", inherited: "alice@example.com", driveId: "shared1" },
+      ],
+      ["google-docs-7", { id: "new-doc", text: "Recovered opening." }],
+    ] as const
+  ).map(([id, result]) => {
+    const reduced = structuredClone(references.find((reference) => reference.task === id)!);
+    for (const use of reduced.saved!.trace.toolUses) {
+      use.resultText = "{}";
+      use.resultBlocks = [{ type: "text", text: "{}" }];
+    }
+    reduced.saved!.trace.toolUses.at(-1)!.resultText = JSON.stringify({ result });
+    for (const use of reduced.saved!.trace.toolUses) {
+      use.resultBlocks = [{ type: "text", text: use.resultText! }];
+      for (const entry of reduced.saved!.trace.transcript) {
+        if (entry.kind === "tool_result" && entry.id === use.id) {
+          entry.text = use.resultText!;
+          entry.chars = entry.text.length;
+        }
       }
     }
-  }
-  const summary = regradeTrial(task("google-sheets-3"), reduced, "codex", "outcome");
-  record("control: a compact delivered Sheets summary passes", passed(summary), failedChecks(summary), summary);
-  const legacy = structuredClone(reduced);
+    const summary = regradeTrial(task(id), reduced, "codex", "outcome");
+    record(`control: a compact delivered ${id} summary passes`, passed(summary), failedChecks(summary), summary);
+    return reduced;
+  });
+  const legacy = structuredClone(compactTrials[0]!);
   for (const use of legacy.saved!.trace.toolUses) delete use.resultBlocks;
   const legacyGrade = regradeTrial(task("google-sheets-3"), legacy, "codex", "outcome");
   record(

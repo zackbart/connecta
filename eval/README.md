@@ -32,7 +32,8 @@ promoted write journeys.
 The promoted CCB, Planning Center, Overflow, Drive, Docs and Sheets reads also require
 their requested record facts in successful MCP results. Controls erase those
 results while preserving continuations, vendor calls and the correct final
-answer; each must fail. Vendor activity alone cannot prove delivery.
+answer; each must fail. Valid compact summaries of Sheets, Drive and Docs data
+still pass. Vendor activity alone cannot prove delivery.
 Facts are read from individual MCP text blocks so emitted prose can accompany
 JSON; legacy saved results without content blocks remain supported.
 Controls reject failed paging and fabricated answers without reading the log.
