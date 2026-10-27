@@ -18,10 +18,9 @@ import { sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
 import { scopes } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, ToolDef } from "../src/types.js";
-import { mcpRpc } from "./fixtures/http.js";
 import { deferred } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
-import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 
 const TOKEN = "r5-failed-catalog-bearer-credential";
 const BASE = "https://connecta.test";
@@ -203,35 +202,6 @@ it("INV-5: listing credentials redact a later unauthenticated result before stas
   expect(contexts.at(-1)!.requestScope).not.toBe(contexts[0]!.requestScope);
 });
 
-it("INV-5: api handler errors redact the header credential on direct and guest exits", async () => {
-  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    expect(new Request(input, init).headers.get("x-api-key")).toBe(TOKEN);
-    return Response.json({ message: `Handler refused ${TOKEN}` }, { status: 400 });
-  });
-  const connector = api("api", {
-    tools: [
-      {
-        name: "read",
-        description: "Read",
-        annotations: { readOnlyHint: true },
-        handler: async (_args, ctx) => {
-          const body = (await (
-            await ctx.fetch("https://api.test/read", { headers: { "X-API-Key": TOKEN } })
-          ).json()) as { message: string };
-          throw new ConnectorCallError("invalid_args", body.message, { cause: new Error(TOKEN) });
-        },
-      },
-    ],
-  });
-  const registry = makeRegistry([connector]);
-  const direct = await createMetaTools(registry, BASE).callTool({ address: "api.read" });
-  expect(direct.isError).toBe(true);
-  expect(JSON.stringify(direct)).toContain("Handler refused [redacted]");
-  expect(JSON.stringify(direct)).not.toContain(TOKEN);
-  const guest = (await buildSandboxProviders(registry, BASE, silentLogger))[0]!.fns;
-  await expect(guest.call!("api.read", {})).rejects.toThrow("Handler refused [redacted]");
-});
-
 it.each(["http", "throw"])(
   "INV-5: OAuth refresh %s errors register and redact the refresh credential",
   async (mode) => {
@@ -279,122 +249,6 @@ it.each(["http", "throw"])(
     expect(refreshes).toBe(1);
     expect(sentSecretsForRequest(requestScope).text(refresh)).toBe("[redacted]");
     expect(JSON.stringify(result)).not.toContain(refresh);
-  },
-);
-
-it("INV-5: every meta-tool output and guest bridge entry uses the request boundary", async () => {
-  const connector = api("contract", {
-    tools: [
-      {
-        name: "read",
-        description: `Read ${TOKEN}`,
-        annotations: { readOnlyHint: true },
-        handler: async () => ({ echo: TOKEN }),
-      },
-    ],
-  });
-  connector.usageGuide = `Guide ${TOKEN}`;
-  connector.readResource = async (uri) => ({ contents: [{ uri, text: TOKEN }] });
-  connector.startAuth = async () => ({ state: "auth_required" });
-  const registry = makeRegistry([connector]);
-  const requestScope = {};
-  const secrets = sentSecretsForRequest(requestScope);
-  secrets.add(TOKEN);
-  const tools = createMetaTools(registry, BASE, {
-    requestScope,
-    canManageAuth: () => true,
-    oauthConnectUrl: async () => `https://oauth.test/${TOKEN}`,
-  });
-  const outputs: Record<keyof typeof tools, () => Promise<unknown>> = {
-    skills: () => tools.skills({ name: "connector:contract" }),
-    searchTools: () => tools.searchTools({ connector: "contract", fullDescriptions: true }),
-    callTool: () => tools.callTool({ address: "contract.read", resultMode: "value" }),
-    callDestructiveTool: () =>
-      tools.callDestructiveTool({ address: "contract.read", reason: "Contract test", resultMode: "value" }),
-    readResult: () => tools.readResult({ id: TOKEN }),
-    authorizeConnector: () => tools.authorizeConnector({ connector: "contract" }),
-  };
-  expect(Object.keys(tools).sort()).toEqual(Object.keys(outputs).sort());
-  for (const [name, run] of Object.entries(outputs)) {
-    const result = JSON.stringify(await run());
-    expect(result, name).not.toContain(TOKEN);
-    expect(result, name).toContain("[redacted]");
-  }
-  const bridge = (await buildSandboxProviders(registry, BASE, silentLogger, undefined, { sentSecrets: secrets }))[0]!
-    .fns;
-  const entries: Record<string, () => Promise<unknown>> = {
-    call: () => bridge.call!("contract.read", {}),
-    result: () => bridge.result!(TOKEN),
-    skill: () => bridge.skill!("connector:contract"),
-    read: () => bridge.read!("resource://contract/" + encodeURIComponent("docs://manual")),
-    search: () => bridge.search!({ connector: "contract", fullDescriptions: true }),
-    describe: () => bridge.describe!({ address: "contract.read", fullDescriptions: true }),
-    emit: () => bridge.emit!({ type: TOKEN }),
-  };
-  expect(Object.keys(bridge).sort()).toEqual(Object.keys(entries).sort());
-  for (const [name, run] of Object.entries(entries)) {
-    const result = await run().catch((error) => ({ message: error.message }));
-    expect(JSON.stringify(result), name).not.toContain(TOKEN);
-  }
-});
-
-it.each(["modern", "legacy"])(
-  "INV-5: %s MCP wire responses redact failed listings in text and structured content",
-  async (protocol) => {
-    vi.stubGlobal("fetch", async () => Response.json({ message: `Catalog refused ${TOKEN}` }, { status: 400 }));
-    const transport = guardedFetch({
-      provider: "Catalog",
-      baseUrl: "https://catalog.test",
-      maxResponseBytes: 65_536,
-      authenticate: async () => ({ Authorization: `Bearer ${TOKEN}` }),
-    });
-    const connector: Connector = {
-      id: "catalog",
-      kind: "api",
-      async listTools(ctx) {
-        return transport({ method: "GET", path: "/tools" }, ctx, async (response) => {
-          const parsed = await response.jsonResult();
-          if ("parseError" in parsed) throw new Error("Bad fixture");
-          throw new ConnectorCallError("invalid_args", (parsed.value as { message: string }).message);
-        });
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const app = createTestConnecta({ connectors: [connector], storage: memoryStorage(), logger: silentLogger });
-    try {
-      const request = mcpRpc("tools/call", {
-        name: "call_tool",
-        arguments: { address: "catalog.read" },
-        ...(protocol === "modern"
-          ? {
-              _meta: {
-                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                "io.modelcontextprotocol/clientCapabilities": {},
-              },
-            }
-          : {}),
-      });
-      if (protocol === "modern") {
-        request.headers.set("Mcp-Protocol-Version", "2026-07-28");
-        request.headers.set("Mcp-Method", "tools/call");
-        request.headers.set("Mcp-Name", "call_tool");
-        request.headers.set("Mcp-Param-Address", "catalog.read");
-      }
-      const response = await app.fetch(request);
-      const body = await response.text();
-      expect(body).not.toContain(TOKEN);
-      const rpc = JSON.parse(body) as {
-        result: { isError: boolean; content: { text: string }[]; structuredContent: { error: { message: string } } };
-      };
-      expect(rpc.result, body).toBeDefined();
-      expect(rpc.result.isError).toBe(true);
-      expect(rpc.result.content[0]!.text).toContain("Catalog refused [redacted]");
-      expect(rpc.result.structuredContent.error.message).toBe("Catalog refused [redacted]");
-    } finally {
-      await app.close();
-    }
   },
 );
 

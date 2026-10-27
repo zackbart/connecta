@@ -1684,6 +1684,22 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
 - `pnpm run eval:smoke` boots the Node template, Node eval deployments and native
   Workers deployments, including the actual QuickBooks provider, then exercises
   MCP and the operator page.
+- `test/identity-write-journey.node.test.ts` uses the existing Node deployment
+  adapter, stateful MCP fake, SQLite vault and QuickJS to grade admitted human
+  and machine identities, pool isolation, fail-closed discovery, endpoint and
+  connector policy, physical mutation counts, ambiguous-write reconciliation,
+  credential ownership and payload-free activity. Independent decoding checks
+  returned private values and credential echoes; positive record facts must
+  still arrive. An explicitly writable pool also exercises reopening a
+  read-only deployment without bypassing connector policy.
+- `test/cancellation-journey.node.test.ts` observes a queued client's departure
+  without another vendor send, and an active client's departure after the
+  vendor commits. The vendor must see its held response socket close before
+  releasing it; a later MCP read recovers the committed intent exactly once.
+  `test/cancellation-faults.test.ts` keeps signal-less token-resolution,
+  warmed-credential digest, stalled body-cleanup and abort/grant races on Node
+  and workerd. These replace the universal Promise-method/seam/owner matrix
+  and its enrollment self-test, plus migration-only runtime wrapper checks.
 - `test/provider-privacy-journey.node.test.ts` sends credentials through real
   HTTP MCP and a maintained API provider. Unknown vendor fields and keys carry
   raw, escaped, percent-encoded, base64 and Basic echoes through direct calls,
@@ -1705,10 +1721,23 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   Native transport parity, OAuth and write-provenance suites retain their
   workerd coverage. The shared throwaway RSA key in `test/fixtures/rsa.ts` is
   used by write-provenance and unknown-write-advice fixtures.
-- The request, catalog, auxiliary-call, renewal and Promise-boundary lifetime
+- The request, catalog, auxiliary-call and renewal lifetime
   suites, plus `test/auth-admission-binding.test.ts`, exercise cancellation,
   held native work and garbage collection. These test actual request ownership;
   the retired capture scheduler's source guards were only harness constraints.
+
+The remaining probes defend distinct reachable failures: auth admission and
+native scheduler ownership, grant/callback fencing and refresh coordination,
+SDK replay/redirect/SSE attempts, nested write provenance and refusal evidence,
+unawaited program drain and failed-program accounting, catalog drift and paging
+revocation, and hostile serializers, structural echoes, truncation and persisted
+pages. Broad scripted-executor policy/privacy cross-products and repeated
+post-401 result/error-shape tables are retired. Provider/HTTP cleanup, lower-layer
+operator/config/storage replacement, and INV/spec title evidence and CI
+simplification remain separate #1072 checklist items. This change keeps their
+remaining enforcement and the existing outcome graders. It also removes the
+unused internal scoped-admission helper and write-outcome re-export whose only
+consumers were retired tests; runtime and public API behavior are unchanged.
 
 Add a compact fault journey only for a meaningful outcome those suites cannot
 observe. Reuse their fixtures and adapters; do not reintroduce a snapshot
@@ -1832,9 +1861,9 @@ declarations; elsewhere it lives in an unexported function or in
 (`ConnectorCallError`, `ExecutorAdmissionError`, `CallAdmissionError`) because
 callers and tests check `instanceof`, `name`, and `message`.
 
-Effect callers skip the Promise and take the program: `admit` and
-`acquireScoped` for request admission (`src/runtime/admission.ts`), `admitCall`
-and `acquireCallScoped` for call admission, `closeScope` and `closeScopeOnExit`
+Effect callers skip the Promise and take the program: `admit` for executor
+admission (`src/runtime/admission.ts`), `admitCall` and `acquireCallScoped` for
+call admission, `closeScope` and `closeScopeOnExit`
 for a connector scope, `withDeadlineEffect` where Promise code has
 `withDeadline`. The build prunes every declaration no `exports` target reaches,
 and `pnpm run check:declarations` fails if what remains names an Effect type.
@@ -3036,7 +3065,8 @@ compiling and configuring the real thing.
   rejections are observed; dispatch and lease guards still contain detached
   work. Per-await I/O cancellation remains useful for releasing resources,
   while prompt refusal is enforced at the boundary
-  (`test/promise-boundary-lifetime.test.ts`). Invocation owns
+  (`test/cancellation-faults.test.ts`, `test/operation-cancellation.test.ts`
+  and `test/cancellation-journey.node.test.ts`). Invocation owns
   the recovery and logical-call records it reads after teardown. Closing an
   outer call also revokes nested calls paused in preparation. Request-owned
   MCP sessions and token flights outlive individual calls and close with the
