@@ -3487,10 +3487,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
         return authFlow<void>(
           function* (this: KvOAuthProvider) {
             const stored = parsed(lease.raw) as StoredRefreshLease;
-            // Only an unsent claim may be removed. Dispatched outcomes never reopen it.
+            // Unsent successors restore the prior completed proof; other unsent
+            // claims may be removed. Dispatched outcomes never reopen a send.
             const next =
               stored.state === "claimed"
-                ? null
+                ? stored.predecessor && stored.tokenDigest
+                  ? JSON.stringify({
+                      ...stored,
+                      holder: stored.predecessor,
+                      state: "dispatched",
+                      completed: true,
+                    } satisfies StoredRefreshLease)
+                  : null
                 : JSON.stringify({
                     ...stored,
                     ...(tokens

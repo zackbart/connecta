@@ -13,7 +13,7 @@ import { KvOAuthProvider, OAuthRefreshCoordinator } from "../src/auth/downstream
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { identityStorageKey } from "../src/identity.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthGrantKeys, scopes as keyScopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, oauthRefreshKeys, scopes as keyScopes } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { makeRegistry } from "./helpers.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -213,6 +213,44 @@ describe("OAuthRefreshCoordinator", () => {
       expect(server.redeemed).toEqual(["refresh-old", expected.refresh_token]);
     },
   );
+
+  it("INV-5 INV-9: recovers a reusable refresh after an unsent successor loses one grant read", async () => {
+    const backing = await grantStore();
+    const server = tokenServer((n) => Response.json(bearer(`access-${n}`, "refresh-old")));
+    const first = new OAuthRefreshCoordinator();
+    await refresh(first, await flow(backing, first), server.fetch);
+    let armed = true;
+    let failRead = false;
+    const storage: KVStorage = {
+      ...backing,
+      get: async (key) => {
+        if (failRead && key === GRANT) {
+          failRead = false;
+          throw new Error("transient grant read");
+        }
+        return backing.get(key);
+      },
+      compareAndSet: async (key, expected, next, options) => {
+        const won = await backing.compareAndSet(key, expected, next, options);
+        if (armed && won && key.startsWith(oauthRefreshKeys.prefix) && next) {
+          const lease = JSON.parse(next);
+          if (lease.state === "claimed" && lease.predecessor) {
+            armed = false;
+            failRead = true;
+          }
+        }
+        return won;
+      },
+    };
+    const unsent = new OAuthRefreshCoordinator();
+    await expect(refresh(unsent, await flow(storage, unsent), server.fetch)).rejects.toThrow("transient grant read");
+    expect(server.redeemed).toEqual(["refresh-old"]);
+    expect((await storedGrant(backing))?.body?.tokens?.access_token).toBe("access-1");
+    const retry = new OAuthRefreshCoordinator();
+    expect((await refresh(retry, await flow(storage, retry), server.fetch)).status).toBe(200);
+    expect(server.redeemed).toEqual(["refresh-old", "refresh-old"]);
+    expect((await storedGrant(backing))?.body?.tokens?.access_token).toBe("access-2");
+  });
 
   it("hands a scope whose token read predates a rotation the stored result without a token request", async () => {
     const expected = bearer("access-new", "refresh-new");

@@ -1430,6 +1430,8 @@ commit and its matching completed lease authorize the next refresh generation
 in that epoch. It must replace the exact resolved fingerprint by CAS before
 sending. Outstanding, ambiguous and failed attempts never authorize reuse;
 concurrent callers with an older access token adopt the committed result.
+An unsent successor retains the prior successful proof during cleanup, so a
+transient storage failure before dispatch can be retried without losing the grant.
 
 An ambiguous token stays blocked even if re-consent returns identical bytes.
 Recovery requires re-consent that yields a different refresh token, or
