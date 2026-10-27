@@ -7,37 +7,27 @@ description: Diagnose a red connecta CI run - read the aggregate check gate, rec
 
 ## Read the gate
 
-[ci.yml](../../../.github/workflows/ci.yml) runs three core jobs and the
-required `check` gate for every PR, main push and nightly. The inline
-changed-files step in `static` selects browser/audit on relevant PRs; main,
-nightly and manual runs select both. The canonical path expressions and
-browser import rationale live in that workflow. `check` uses `if: always()`:
-core jobs and classification must succeed; selected jobs must succeed;
-unselected jobs must skip. Missing outputs, failures, cancellations and
-unexpected skips fail the gate. Superseded PR runs are cancelled; inspect the
-newest head's run.
+[ci.yml](../../../.github/workflows/ci.yml) requires build, Node, Workers,
+behavior, browser, audit and Eve on every PR, main push, nightly and manual run.
+`check` uses `if: always()` and requires all seven jobs to succeed. Failures,
+cancellations, missing jobs and unexpected skips fail it. Inspect the newest
+head's run; superseded PR runs are cancelled.
 
-- `static`: `check:static` (format, generated freshness, docs, fragments,
-  lint, Knip, typecheck), then `check:build` (build, declarations, bundle cap).
-  The exemption guard rejects names absent from the PR base (the pre-push SHA on main; HEAD's
-  first parent on nightly/manual); it fails on missing comparison history.
-- `node`: unfiltered `test:node` through `vitest.config.node.ts`, including
-  INV/spec evidence and collection enforcement.
-- `workers`: `test:workers`, runtime-sensitive `WORKERS_SUITES` in
+- `build`: static checks, build/declarations/bundle caps, example typechecks
+  and installed-consumer/generated-deployment smoke. Docker is required.
+- `node`: all retained Node suites through `vitest.config.node.ts`.
+- `workers`: runtime-sensitive `WORKERS_SUITES` in
   [vitest.config.ts](../../../vitest.config.ts). Mixed suites tag native cases
-  `workers`; workerd skips cases tagged `node`. Node runs both.
-- `browser`: Playwright `behavior` retries twice in CI; `visual` never retries.
-  Any failed attempt, including a flaky pass, uploads `playwright-report` with
-  HTML, diffs and traces.
-- `audit`: `check:security` without an install.
+  `workers`; workerd skips `node` cases, while Node runs both.
+- `behavior`: required outcome controls and deployed Node/Workers smoke.
+- `browser`: Playwright behavior retries twice in CI; visual never retries.
+  Any failed attempt retains `playwright-report` with HTML, diffs and traces.
+- `audit`: core production and helper full dependency graphs without installs.
+- `eve`: real Eve helper checks and isolated runtime/type consumers on Node 24.
 
-Separate workflows report status outside `check`:
-
-- [Package smoke](../../../.github/workflows/package.yml): main, nightly and
-  manual; build, example typechecks, then `check:package`, including Docker.
-- [Provider drift](../../../.github/workflows/provider-drift.yml): weekly and
-  manual only, advisory. Scans all public providers and separates new findings
-  from standing manual reviews. Parser/contract tests remain in `node`.
+[Provider drift](../../../.github/workflows/provider-drift.yml) remains
+separate, weekly and manual, and advisory. It separates changed contracts from
+standing manual reviews; its parser tests remain in Node.
 
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
@@ -77,21 +67,14 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   controllable clock when supported; do not relax correctness or performance
   assertions to hide a failure.
 - **pnpm audit.** A new upstream advisory fails `audit` and `check` on
-  dependency-changing PRs and every main push. The nightly run also
+  every PR and main push. The nightly run also
   audits main without a new commit. Fix it in its own PR that moves the
   dependency, then rebase; publishing stays blocked until audit passes.
-- **Coverage reporter.** `Test-backed coverage failed` comes from the full,
-  unfiltered Node run, including CI's Node-only config: an `INV-n` lost its
-  passing test, a `spec/coverage.json` title no longer matches a passing test
-  exactly, or a collected suite did not
-  run. Reproduce it with unfiltered `pnpm run test:node` or `pnpm run test`.
-  `--project`, file and name filters, and focused reruns skip invariant and
-  spec enforcement by design and cannot reproduce coverage failures.
 
 ## Locally
 
 `pnpm run check:fast` runs static checks and Vitest’s built-in
 `--changed origin/main` selection on Node as the partial inner loop. `pnpm run check` runs CI's
-core checks locally; run browser/audit too when applicable. `release:check` adds Chromium, examples, audit and
+core checks locally; browser and audit are also required in CI. `release:check` adds Chromium, examples, audit and
 package/Docker smoke. Other agents
 share this machine; check `uptime` before blaming a timeout on your change.

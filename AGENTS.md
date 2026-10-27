@@ -62,97 +62,78 @@ instructions in `examples/` and `documentation/`.
 ## Verification
 
 `pnpm run check:fast` runs `check:static`, then Vitest's built-in
-`--changed origin/main` selection on Node. This is a partial inner loop:
-INV and spec evidence checks are skipped. Fetch `origin/main` first.
-Configuration changes and deleted modules need the full `check`, since a
-deleted module's import graph is gone. Use ordinary Vitest file/name filters
-for focused runs.
+`--changed origin/main` selection on Node. Fetch `origin/main` first. This is a
+partial inner loop. Configuration changes and deleted modules need the full
+`check`, since a deleted module's import graph is gone. Use ordinary Vitest
+file/name filters for focused runs.
 
-`pnpm run check` runs the unconditional PR checks and must pass before claiming work is
-done. Run `test:browser` and `check:security` too when their CI paths apply.
-`pnpm run eval:outcomes` and `pnpm run eval:smoke` are the required behavioral
-checks ([eval/README.md](./eval/README.md)); run them for changes to `src/`,
-`eval/`, `templates/`, `examples/` or `bin/`.
-It runs `check:static` (format, generated providers, documentation links,
-changelog fragments and their tests, operator UI and Clerk SDK freshness,
-Oxlint, Knip, typecheck), `test` (all Node suites and the selected workerd
-suites), and `check:build` (build, declarations, bundle cap).
+`pnpm run check` runs static checks, all Node and selected workerd suites,
+and build/declaration/bundle checks. It must pass before claiming work is done.
+Run `eval:outcomes` and `eval:smoke` for changes to `src/`, `eval/`, `templates/`,
+`examples/` or `bin/`; see [eval/README.md](./eval/README.md). These journeys
+inspect actual data, independent vendor state, physical mutations, identity,
+secrecy, recovery and request lifetimes. Their controls reject missing work,
+fabricated answers, duplicate writes and interrupted trials.
 
-`release:check` adds Chromium, example typechecks, the production dependency
-audit, and published-package/generated-deployment/Docker smoke. Use it for
-packaging, dependencies, exports and releases. Run
-`pnpm run test:browser:install` once per machine. Package smoke reuses the
-built `dist/` and packs with `--ignore-scripts`. The Eve helper's check and
-packed-consumer smoke also run in `release:check`, which requires Node 24.
-To match release CI, run `release:check:core` on Node 22 and `release:check:eve`
-on Node 24. The latter also audits the helper's full dependency graph.
+CI runs `build`, `node`, `workers`, `behavior`, `browser`, `audit` and `eve` on
+every PR, main push, nightly and manual run:
 
-`packages/connecta-eve/` is validated separately from root tests. When changing
-that package or the agent-endpoint contract (any `src/` change selects its CI
-job), run `pnpm --filter @zackbart/connecta-eve run check` and
-`pnpm run check:eve-package` on Node 24.
+- `build` shares one install for static checks, build/declarations/bundle caps,
+  example typechecks, and packed-consumer/generated-deployment/Docker smoke.
+  Docker is required; an unavailable engine fails the job.
+- `node` runs all `test:node` suites through `vitest.config.node.ts`;
+  `workers` runs the runtime-sensitive `WORKERS_SUITES` in `vitest.config.ts`.
+  Each uses four Vitest workers on the four-core CI runner.
+- `behavior` runs `eval:outcomes` and `eval:smoke`, retaining `eval/results/`
+  on failure.
+- `browser` runs Playwright. Visual comparisons never retry; behavior tests
+  keep two CI retries. Any failed attempt retains the HTML report, diffs and
+  traces as `playwright-report`.
+- `audit` checks core's production lockfile graph and the helper's full graph
+  without installing dependencies.
+- `eve` uses Node 24 for the separate helper's typecheck, tests, build and
+  packed-consumer runtime/type smoke against real Eve.
 
-CI runs `static`, `node`, `workers`, and `behavior` in parallel on every PR,
-main push, and nightly. `static` runs `check:static` and `check:build` with one install;
-`node` runs `test:node`; `workers` runs `test:workers`; `behavior` runs
-`eval:outcomes` and `eval:smoke`, uploading `eval/results/` on failure. Runtime jobs use four
-Vitest workers on the four-core runner. Installs use the frozen lockfile and
-shared pnpm store cache. Core jobs install only `@zackbart/connecta`; the
-conditional `eve` job installs both workspaces and runs the helper's typecheck,
-tests, build and packed-consumer runtime/type smoke on Node 24. Workspace packages use separate lockfiles so Eve's
-framework and peers do not enter the root importer or core CI install.
-A single inline changed-files step in `static` selects
-PR browser/audit/Eve jobs with `git diff --name-only -z` against the PR base. Their
-canonical path expressions and the browser import rationale live only in
-[ci.yml](.github/workflows/ci.yml). Main, nightly and manual runs always select
-all three. There are no planning exceptions or classifier scripts.
+`check` is the single required status, with all seven jobs in `needs` and
+`if: always()`. Every job must succeed; failures, cancellations, missing jobs
+and unexpected skips fail the gate. Superseded PR runs are cancelled; each main
+push retains a full run. Branch protection should require `check` and an
+up-to-date branch. Repository settings are managed separately.
 
-Mixed boundary suites use Vitest tags: `workers` marks native cases, while the Workers project skips
-`node` cases. Node runs both tags. Brace-glob selection tolerates deleted
-files; portable filenames alone do not enroll a new suite in workerd.
+Installs use frozen lockfiles and the shared pnpm store cache. Core jobs install
+only `@zackbart/connecta`; Eve installs both workspaces. Separate lockfiles keep
+the helper's framework and peers out of core's dependency graph. Mixed boundary
+suites use Vitest tags: `workers` marks native cases; workerd skips `node` cases,
+and Node runs both. Portable filenames alone do not enroll a suite in workerd.
+Focused `.only` tests are refused by Vitest.
 
-`check` is the single required status, with `needs: [static, node, workers,
-behavior, browser, audit, eve]` and `if: always()`. Core jobs and the changed-files step must
-succeed. Browser/audit/Eve must succeed when selected, and must be skipped when
-explicitly unselected. Missing or invalid outputs, failures, cancellations,
-and unexpected skips fail the gate. Build failures fail `static` and hence
-`check`. Superseded PR runs are cancelled; each main push retains a full run.
-Branch protection should require `check` and an up-to-date branch so the
-merge checkout includes current main. Repository settings are managed separately.
+Provider layout, evidence, drift, guide and surface checks remain. The completed
+migration's empty pending inventory remains checked locally; its historical
+cross-commit exemption guard is retired. Invariants are defended by behavioral
+assertions and focused fault probes. The contributor behavioral evidence map in
+[architecture](./documentation/architecture.md) routes them, and
+[spec/coverage.json](./spec/coverage.json) links executable evidence files for
+current protocol claims.
 
-`test:node` uses `vitest.config.node.ts` without a CLI project filter. Its
-reporter enforces every INV ID, spec reference, and collected suite; removing,
-skipping, or focusing away the final passing evidence fails. Explicit file,
-name, project, changed-file and shard filters skip enforcement, so they are
-for partial runs only. The same reporter enforces the complete `test` run.
+`release:check:core` runs the full core check, browser tests, example typechecks,
+production audit and package/generated-deployment/Docker smoke on Node 22.
+`release:check:eve` runs the helper's own check, packed-consumer runtime/type
+smoke and complete dependency audit on Node 24. `release:check` composes both and
+requires Node 24. Use the release checks for packaging, dependencies, exports
+and releases. Install Chromium once per machine with
+`pnpm run test:browser:install`. Package smoke reuses built `dist/` and packs
+with `--ignore-scripts`.
 
-Decision 0011's provider layout, evidence, drift, guide and surface checks
-remain, along with exemption-inventory consistency and stale-exemption checks.
-The static job compares `test/provider-pending-baseline.json` with the PR base
-(the pre-push SHA on main; HEAD's first parent on nightly/manual runs). Each step's names may
-only shrink. Missing history or an unreadable baseline fails the job. No
-`CONNECTA_STANDARD_BASE` setting or local history fallback is needed; the
-small guard's test runs in `check:static`.
+When changing `packages/connecta-eve/` or the agent-endpoint contract (any `src/`
+change), run `pnpm --filter @zackbart/connecta-eve run check` and
+`pnpm run check:eve-package` on Node 24. Run browser and audit checks for PRs;
+all CI paths now include them.
 
-Browser, audit and Eve participate in `check` when selected. Browser visual
-comparisons never retry; behavior tests keep two CI retries. Any failed
-attempt uploads the HTML report, diffs and traces as `playwright-report`.
-Audit runs `check:security` for core's production graph and
-`check:security:eve` for the helper's own full lockfile graph, without installing
-dependencies.
-
-Two independent workflows report their own status outside `check`; failures
-on main remain visible in Actions:
-
-- Package smoke: every main push, nightly, and on demand; builds the package,
-  checks examples, then runs consumer and Docker smoke.
-- Provider drift: weekly and on demand, scanning all public providers. It
-  remains advisory; summaries separate changed contracts from standing
-  manual reviews. Its parser/contract tests still run in Node on every PR.
-
-Nightly runs cover the core, browser, audit and package/Docker checks without
-needing a new commit. Operator snapshots stay on demand; publishing remains
-release/tag driven and runs `release:check` before publishing.
+Provider drift remains a separate advisory workflow, weekly and on demand.
+Its summaries separate changed contracts from standing manual reviews;
+parser/contract tests still run in Node on every PR. Operator snapshots stay
+on demand. Publishing remains release/tag driven and runs the release checks
+before publishing.
 
 ## Source map
 
@@ -209,15 +190,14 @@ Core suites live in `test/` and `src/providers/<name>/`; root Node runs every
 run against real Eve on Node 24 through
 `pnpm --filter @zackbart/connecta-eve run check`. Run that check and
 `pnpm run check:eve-package` on Node 24 when changing the helper or the
-agent-endpoint contract. The helper's suites are outside the root INV/spec
-coverage reporter. workerd runs only the suites listed in `WORKERS_SUITES` in `vitest.config.ts`:
+agent-endpoint contract. The helper's suites run separately. workerd runs only the suites listed in `WORKERS_SUITES` in `vitest.config.ts`:
 those that need Workers bindings or the Worker executor, or exercise behaviour
 that can differ under workerd (fetch, streams, unhandled rejections, Web
 Crypto, provider request bytes). List a new suite there only for such
 behaviour; pure logic runs once, on Node. A suite that needs Node APIs is named
-`*.node.test.ts` and starts with `// Node-only: <reason>`. Cite the `INV-n` IDs a
-test enforces in its title. The full Node run's coverage reporter rejects
-missing and unknown IDs, and spec coverage titles that no passing test matches.
+`*.node.test.ts` and starts with `// Node-only: <reason>`. Test titles may cite
+`INV-n` IDs; assertions must check the contract. Record protocol evidence by
+executable file in `spec/coverage.json`.
 
 ## Conventions
 
