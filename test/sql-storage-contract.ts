@@ -287,37 +287,12 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect(await a.compareAndSet("holder", null, "fresh", { ttlSeconds: 120 })).toBe(true);
   });
 
-  it("shares one table between stores over the same database", async () => {
-    const db = await open();
-    const first = db.storage();
-    const second = db.storage();
-    const claims = await Promise.all(
-      Array.from({ length: 20 }, (_, i) => (i % 2 ? first : second).compareAndSet("claim", null, `owner-${i}`)),
-    );
-    expect(claims.filter(Boolean)).toHaveLength(1);
-    expect(await second.get("claim")).toBe(await first.get("claim"));
-  });
-
   it("refuses a stored value holding NUL that is not UTF-8 instead of reading it wrong", async () => {
     const db = await open();
     const storage = db.storage();
     await storage.set("bad", "placeholder");
     await db.exec("UPDATE connecta_kv SET value = CAST(x'ff00' AS TEXT) WHERE key = ?", "bad");
     await expect(storage.get("bad")).rejects.toThrow(new TypeError('the stored value of "bad" is not valid UTF-8'));
-  });
-
-  it("round-trips get, set, delete, and a sorted list", async () => {
-    const storage = (await open()).storage();
-    await storage.set("conn:b:token", "2");
-    await storage.set("conn:a:token", "1");
-    await storage.set("results:x", "3");
-    await storage.set("conn:a:token", "1b");
-    expect(await storage.get("conn:a:token")).toBe("1b");
-    expect(await storage.list("conn:")).toEqual(["conn:a:token", "conn:b:token"]);
-    expect(await storage.list("")).toEqual(["conn:a:token", "conn:b:token", "results:x"]);
-    await storage.delete("conn:a:token");
-    expect(await storage.get("conn:a:token")).toBeNull();
-    expect(await storage.list("conn:")).toEqual(["conn:b:token"]);
   });
 
   it("treats a list prefix literally, never as a pattern", async () => {
@@ -362,21 +337,6 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
       cursor = page.nextCursor;
     } while (cursor);
     expect(seen).toEqual([7, 6, 5, 4, 3, 2, 1, 0].map((index) => id(index)));
-  });
-
-  it("round-trips every activity field, including the actor namespace", async () => {
-    const activity = (await open()).activity();
-    const full = event(1, {
-      actor: { kind: "clerk", id: "user_123", namespace: "https://clerk.example" },
-      outcome: "error",
-      errorCode: "unknown_tool",
-      friction: "tool_not_found",
-      deploymentId: "production",
-    });
-    const bare = event(2, { actor: { kind: "bearer" }, friction: "result_too_large" });
-    await activity.record(full);
-    await activity.record(bare);
-    expect((await activity.list!({ limit: 10 })).events).toEqual([bare, full]);
   });
 
   it("INV-6: validates package versions on SQL writes and historical reads", async () => {

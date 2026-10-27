@@ -763,9 +763,9 @@ adoption, OAuth handoff ownership, single-use connect links, every downstream
 OAuth grant write and consent claim, the result stash, and initialization of the cursor signing key.
 
 Every key is built in `src/storage/keys.ts`, which lists each family with its
-scope, version, codec, and TTL policy; `test/storage-keys.node.test.ts` fails when
-two families overlap, another source file spells a prefix (constant concatenation
-folded), or a storage call passes a key holding literal text. Core hands
+scope, version, codec, and TTL policy. Deployed-consumer persistence journeys
+check actual owner isolation in the physical database; key probes retain NUL
+refusal. Core hands
 subsystems namespaced views: `conn:<id>:` per connector, `principal:<key>:` per
 personal registry, `results:` and `subject:<key>:` for result paging.
 
@@ -1700,6 +1700,29 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   warmed-credential digest, stalled body-cleanup and abort/grant races on Node
   and workerd. These replace the universal Promise-method/seam/owner matrix
   and its enrollment self-test, plus migration-only runtime wrapper checks.
+- `test/browser/operator-flows.spec.ts` serves the actual operator shell and
+  routes over TCP with file-backed SQLite. Sign-in, Settings provenance, OAuth
+  connect/disconnect and credential save/test/replace/remove survive closing and
+  reopening the app, database and vault. An independent SQL connection reads
+  trigger counts: one save, one replacement, one removal, and no credential
+  writes from reads or a rejected replacement. A real SQL trigger failure leaves the old
+  credential usable after restart. MCP calls verify that those edits preserve
+  the reader pool's actual read access and write refusal. Activity renders
+  successful calls recorded before restart without either credential value.
+- The existing Node-template `eval:smoke` target constructs invalid config from
+  published imports before any I/O and reuses a stored token after restarting
+  the consumer process. Its Worker-fakes target saves a personal credential in
+  Chromium, refuses another owner's use, saves that owner's invalid credential,
+  then restarts workerd on the same D1 directory. Actual downstream records
+  remain readable only to the correct owner. Direct SQL inspection finds two
+  distinct durable encrypted rows and exactly one committed save for each.
+- Keep focused SQL batch/schema/retention rollback, clock-skew and absolute
+  expiry, NUL/UTF-8 and literal-prefix, cross-connection claims, cancellation,
+  corrupt-row and tracing-secrecy probes. Keep operator identity/slot fences,
+  deadlines, CSRF, restricted-view projection and sink secrecy probes. These
+  cover faults that a successful browser journey cannot reproduce. Retired
+  evidence includes the key-prefix source scanner, config expected-object
+  matrices, operator structure snapshots and native-composition sentinels.
 - `test/provider-privacy-journey.node.test.ts` sends credentials through real
   HTTP MCP and a maintained API provider. Unknown vendor fields and keys carry
   raw, escaped, percent-encoded, base64 and Basic echoes through direct calls,
@@ -2083,8 +2106,8 @@ published storage interfaces.
 The synchronous state-file parser, validation, file read, and one atomic
 SQLite import remain native synchronous leaves because `importStateFile` is a
 published synchronous API. `openSqlite` retains file modes, WAL, busy timeout,
-and database ownership. `test/sql-effect-contract.ts` runs native-path,
-affected-row, 50-claim, cancellation, and tracing checks on SQLite and native
+and database ownership. `test/sql-effect-contract.ts` retains affected-row,
+50-claim, typed-failure, cancellation, and tracing probes on SQLite and native
 D1. `test/kv-to-d1.test.ts` also reuses stores across separate workerd requests;
 the existing SQL contracts prove rollback, database-clock TTL, encodings,
 activity upgrades, and copy recovery.

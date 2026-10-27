@@ -2,9 +2,8 @@
 //
 // A deployment has one KVStorage (D1 on Workers, SQLite on Node, memory in
 // tests), and every subsystem shares it. Sharing is safe because no two
-// families claim overlapping keys, and that is only checkable if every key is
-// built here: `test/storage-keys.node.test.ts` fails when another source file
-// spells one of these prefixes itself.
+// families claim overlapping keys. Build every key here; persistence journeys
+// check actual isolation through the deployment and its physical database.
 //
 // Each family records:
 //

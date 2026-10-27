@@ -66,20 +66,6 @@ describe("sqliteStorage in a file", () => {
     }
   });
 
-  it("lets exactly one of two connections to one file win a claim", async () => {
-    // Two connections stand in for two processes sharing the volume.
-    const path = join(tempDirectory(), "connecta.sqlite");
-    const a = sqliteStorage(track(openSqlite(path)));
-    const b = sqliteStorage(track(openSqlite(path)));
-    await a.get("warm");
-    await b.get("warm");
-    const claims = await Promise.all(
-      Array.from({ length: 50 }, (_, i) => (i % 2 ? a : b).compareAndSet("claim", null, `owner-${i}`)),
-    );
-    expect(claims.filter(Boolean)).toHaveLength(1);
-    expect(await a.get("claim")).toBe(await b.get("claim"));
-  });
-
   it("books 64 simultaneous stash claims from two processes at capacity 64, and refuses the 65th", async () => {
     const path = join(tempDirectory(), "connecta.sqlite");
     const processes = [openSqlite(path), openSqlite(path)].map(

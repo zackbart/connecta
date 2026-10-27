@@ -45,6 +45,14 @@ duplicated, interrupted or cached-pass-only trial or an early stop. Grading
 goes through saved inputs and `regradeTrial`, so a failure's diagnostics are
 regradable. Failures exit nonzero and write `eval/results/outcomes-<time>.json`.
 
+The Node-template smoke also checks config refusal through published imports
+before any I/O and reuses its stored agent token after a process restart. The
+Worker-fakes smoke saves a personal credential in the real browser UI and another
+member's invalid credential through the real routes, then restarts workerd with
+the same D1 directory. Only the correct owner can still read downstream records;
+independent SQL inspection requires two encrypted durable rows and exactly one
+committed save per owner.
+
 `eval:smoke` builds the package and boots six deployments: the
 `connecta init` Node template with its agent token from `rotate-token` and
 `connecta doctor --pool local-machine`, the Node eval deployment, the
