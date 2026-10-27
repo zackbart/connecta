@@ -1,8 +1,7 @@
 /**
- * A Google service account acting for Workspace users through domain-wide
- * delegation: the key, the signed JWT-bearer assertion, and the short-lived
- * access tokens it buys. Shared by every Workspace product provider; never its
- * own export.
+ * A Google service account acting as itself or for Workspace users through
+ * domain-wide delegation: the key, signed JWT-bearer assertions and short-lived
+ * access tokens. Shared by Workspace providers and the optional /google helper.
  *
  * Why not the vault. One key serves every Workspace connector a deployment
  * declares — Gmail, Drive, Docs — and it is a deployment secret in the same
@@ -305,7 +304,7 @@ function signingKey(account: ServiceAccountKey): Promise<CryptoKey> {
 /** The RS256 JWT-bearer assertion for one subject and scope set. */
 async function signAssertion(
   account: ServiceAccountKey,
-  subject: string,
+  subject: string | undefined,
   scopes: readonly string[],
   nowSeconds: number,
 ): Promise<string> {
@@ -381,9 +380,27 @@ function tokenFailure(
   status: number,
   headers: Headers,
   payload: unknown,
+  subject: string | undefined,
 ): ConnectorCallError {
   const code = asRecord(payload)["error"];
   const said = tokenAnswer(status, code);
+  if (subject === undefined) {
+    if (code === "unauthorized_client" || code === "access_denied" || code === "invalid_scope" || status === 403) {
+      return new ConnectorCallError(
+        "provider_permission_denied",
+        `Google refused a service-account token.${said} Check the requested OAuth scopes and the service account's IAM permissions for the target API and resources.`,
+      );
+    }
+    if (code === "invalid_grant") {
+      return resendAdvice(
+        new ConnectorCallError(
+          "auth_required",
+          `Google refused the service-account assertion.${said} The key may be deleted or disabled, or this host's clock may be minutes off. Check the key and clock.`,
+        ),
+        " before retrying",
+      );
+    }
+  }
   const client = account.clientId
     ? `client ID ${account.clientId} (${account.clientEmail})`
     : `the client ID of ${account.clientEmail}`;
@@ -427,7 +444,7 @@ function tokenFailure(
   }
   return new ConnectorCallError(
     "connector_call_failed",
-    `Google's token endpoint refused the delegated assertion with HTTP ${status}.${said}`,
+    `Google's token endpoint refused the ${subject === undefined ? "service-account" : "delegated"} assertion with HTTP ${status}.${said}`,
     { retryable: false },
   );
 }
@@ -439,7 +456,7 @@ interface Minted {
 
 async function mint(
   account: ServiceAccountKey,
-  subject: string,
+  subject: string | undefined,
   scopes: readonly string[],
   ctx: ConnectorContext,
 ): Promise<Minted> {
@@ -457,7 +474,7 @@ async function mint(
       const parsed = await response.jsonResult();
       const payload = "value" in parsed ? parsed.value : undefined;
       if (!response.ok) {
-        throw verdict(tokenFailure(account, scopes, response.status, response.headers, payload));
+        throw verdict(tokenFailure(account, scopes, response.status, response.headers, payload, subject));
       }
       const body = asRecord(payload);
       const accessToken = body["access_token"];
@@ -524,7 +541,7 @@ const flights = new Map<string, Flight>();
 /** One delegated token request: whose account, acting as whom, for what. */
 export interface DelegatedTokenRequest {
   account: ServiceAccountKey;
-  subject: string;
+  subject?: string | undefined;
   scopes: readonly string[];
 }
 
@@ -548,9 +565,12 @@ function keyIdentity(account: ServiceAccountKey): Promise<string> {
 
 async function cacheKey({ account, subject, scopes }: DelegatedTokenRequest): Promise<string> {
   // Workspace addresses are case-insensitive; scope order is not a new grant.
-  return [account.clientEmail, await keyIdentity(account), subject.toLowerCase(), [...scopes].sort().join(" ")].join(
-    "\n",
-  );
+  return JSON.stringify([
+    account.clientEmail,
+    await keyIdentity(account),
+    subject?.toLowerCase() ?? null,
+    [...new Set(scopes)].sort(),
+  ]);
 }
 
 function remember(key: string, minted: Minted): void {

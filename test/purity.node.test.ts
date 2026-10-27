@@ -131,6 +131,8 @@ describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }
     expect(graph.has(clerkAdapter)).toBe(false);
     for (const file of [
       "ui.ts",
+      "google.ts",
+      "providers/_shared/google/service-account.ts",
       "operator-ui/generated.ts",
       "credentials.ts",
       "activity.ts",
