@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta-eve",
-  "version": "0.35.0",
+  "version": "0.36.0",
   "type": "module",
   "sideEffects": false,
   "description": "Eve connection and instructions helpers for Connecta agent endpoints.",
@@ -28,11 +28,11 @@
     }
   },
   "peerDependencies": {
-    "eve": ">=0.83.0 <0.84.0"
+    "eve": ">=0.84.0 <0.85.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "eve": "0.83.0",
+    "eve": "0.84.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6"
   },

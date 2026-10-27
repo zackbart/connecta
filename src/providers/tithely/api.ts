@@ -27,7 +27,6 @@
 // Drift: there is no combined specification, but each reference page served
 // as `.md` embeds a one-operation OpenAPI 3.1 snippet; drift.json names the
 // page of every operation declared here.
-
 import { Effect, Schema } from "effect";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
@@ -172,7 +171,7 @@ export const listOrganizations = get("listOrganizations", "/organizations-list",
   query: PageQuery,
   success: Rows(OrganizationRecord),
 }).annotate(Summary, "List all organizations these keys manage");
-export const getOrganization = get("getOrganization", "/organizations/:organization_id", {
+const getOrganization = get("getOrganization", "/organizations/:organization_id", {
   params: id("organization_id"),
   success: Single("organization_id", OrganizationRecord),
 }).annotate(Summary, "Retrieve an organization");
@@ -184,7 +183,7 @@ export const listAllAccounts = get("listAllAccounts", "/accounts-list-all", {
   query: PageQuery,
   success: Rows(AccountRecord),
 }).annotate(Summary, "List all donor accounts");
-export const getAccount = get("getAccount", "/accounts/:account_id", {
+const getAccount = get("getAccount", "/accounts/:account_id", {
   params: id("account_id"),
   success: Single("account_id", AccountRecord),
 }).annotate(Summary, "Retrieve a donor account");

@@ -164,6 +164,7 @@ describe("provider folder generation", () => {
       "entry": [
         "src/index.ts",
         "src/providers/retired.ts",
+        "src/providers/alpha/fixtures.ts",
         "src/worker.ts"
       ]
     },
@@ -175,6 +176,7 @@ describe("provider folder generation", () => {
     const result = run(root);
     expect(result.status, result.stderr).toBe(0);
     expect(read(root, "knip.jsonc")).toContain('        "src/providers/alpha/index.ts",');
+    expect(read(root, "knip.jsonc")).toContain('"src/providers/alpha/fixtures.ts"');
     expect(json(root, "knip.jsonc").workspaces["packages/connecta-eve"]).toEqual({ entry: ["src/index.ts"] });
     expect(run(root, true).status).toBe(0);
   });

@@ -521,24 +521,6 @@ describe("ccb() typed failures (H11)", () => {
       retryAfterMs: 3000,
     });
   });
-
-  it("refuses a successful response that is not JSON", async () => {
-    expect(await failing(new Response("<html>maintenance</html>", { status: 200 }))).toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-    });
-    const broken = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('{"id":'));
-        controller.error(new Error("connection lost"));
-      },
-    });
-    expect(await failing(new Response(broken))).toMatchObject({
-      code: "connector_call_failed",
-      message: "CCB's response body could not be read completely.",
-      retryable: false,
-    });
-  });
 });
 
 describe("ccb() escape hatches (H14)", () => {

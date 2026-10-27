@@ -184,7 +184,7 @@ export const UPLOADS: ReadonlyArray<readonly [method: string, template: string]>
  * pin, zone creation must name a pinned account, and the rest is public data.
  * Every other unscoped operation is refused under a pin (default deny).
  */
-export const PIN_SAFE_UNSCOPED: ReadonlySet<string> = new Set([
+const PIN_SAFE_UNSCOPED: ReadonlySet<string> = new Set([
   "GET /user",
   "GET /user/tokens/verify",
   "GET /accounts",
@@ -205,7 +205,7 @@ export const PIN_SAFE_UNSCOPED: ReadonlySet<string> = new Set([
 ]);
 
 /** Why each family of unscoped operations is refused under a pin; `test` checks every one is covered. */
-export const PIN_REFUSED_UNSCOPED: Readonly<Record<string, string>> = {
+const PIN_REFUSED_UNSCOPED: Readonly<Record<string, string>> = {
   accounts: "creates or moves accounts outside the pin",
   analytics: "queries datasets across every account; use POST /accounts/{account_tag}/analytics/sql",
   api: "is an internal health route",
@@ -500,18 +500,18 @@ export const cloudflareIndex = new CloudflareIndex(cloudflareDiscovery(openapi),
   slashParams: SLASH_PARAMS,
 });
 
-export const getUser = get("getUser", "/user", { success: Schema.Unknown });
-export const verifyToken = get("verifyToken", "/user/tokens/verify", { success: Schema.Unknown });
-export const verifyAccountToken = get("verifyAccountToken", "/accounts/:account_id/tokens/verify", {
+const getUser = get("getUser", "/user", { success: Schema.Unknown });
+const verifyToken = get("verifyToken", "/user/tokens/verify", { success: Schema.Unknown });
+const verifyAccountToken = get("verifyAccountToken", "/accounts/:account_id/tokens/verify", {
   params: { account_id: Schema.String },
   success: Schema.Unknown,
 });
 const PageQuery = { page: Schema.optionalKey(Integer), per_page: Schema.optionalKey(Integer) };
-export const listAccounts = get("listAccounts", "/accounts", {
+const listAccounts = get("listAccounts", "/accounts", {
   query: { ...PageQuery, name: Schema.optionalKey(Schema.String) },
   success: Schema.Unknown,
 });
-export const listZones = get("listZones", "/zones", {
+const listZones = get("listZones", "/zones", {
   query: {
     ...PageQuery,
     name: Schema.optionalKey(Schema.String),
@@ -520,7 +520,7 @@ export const listZones = get("listZones", "/zones", {
   },
   success: Schema.Unknown,
 });
-export const graphqlQuery = post("graphqlQuery", "/graphql", {
+const graphqlQuery = post("graphqlQuery", "/graphql", {
   payload: Schema.Struct({
     query: Schema.String,
     variables: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),

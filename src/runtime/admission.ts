@@ -8,7 +8,7 @@
 // Promise callers keep `acquire()`, which runs the same program through
 // runEdge; Effect callers come through this module and never see a Promise.
 
-import { Effect, type Scope } from "effect";
+import { Effect } from "effect";
 import type { AdmissionController, AdmissionLease, ExecutorAdmissionError } from "../executor-admission.js";
 
 type AdmissionProgram = (
@@ -52,19 +52,4 @@ export function admit(
     throw new Error("AdmissionController's admission program was never installed.");
   }
   return program(controller, options.signal, options.wait !== false);
-}
-
-/**
- * A lease owned by the enclosing Scope: released when the scope closes, on
- * success, failure, or interruption alike. The wait itself stays
- * interruptible — a queued request whose caller left must not hold its place
- * in line until the queue timeout.
- */
-export function acquireScoped(
-  controller: AdmissionController,
-  options: AdmitOptions = {},
-): Effect.Effect<AdmissionLease, ExecutorAdmissionError, Scope.Scope> {
-  return Effect.acquireRelease(admit(controller, options), (lease) => Effect.sync(() => lease.release()), {
-    interruptible: true,
-  });
 }

@@ -34,9 +34,7 @@ export {
   DEFAULT_PAGE_SIZE,
   PLANNING_CENTER_MAX_RESPONSE_BYTES,
   PLANNING_CENTER_ADMISSION,
-  DEFAULT_USER_AGENT,
   type PlanningCenterApp,
-  type PlanningCenterExcludableApp,
 } from "./lib/constants.js";
 export const CREDENTIAL: ConnectorCredentialConfig = {
   label: "Planning Center personal access token",
@@ -87,7 +85,7 @@ export const authenticate = Effect.gen(function* () {
   return { Authorization: `Basic ${btoa(`${applicationId}:${secret}`)}` };
 });
 /** A request any tool makes: the app is read from the path, never passed. */
-export interface PlanningCenterRequest {
+interface PlanningCenterRequest {
   method: GuardedRequest["method"];
   /** `/<app>/v2/...`, exactly as Planning Center documents it. */
   path: string;
@@ -106,7 +104,7 @@ export function isApp(value: string): value is PlanningCenterApp {
  * normalization the guarded transport applies — so `..` cannot carry a request
  * from `/people/v2` to `/oauth` or anywhere else outside a product.
  */
-export function appForPath(path: string, apps: readonly PlanningCenterApp[]): PlanningCenterApp {
+function appForPath(path: string, apps: readonly PlanningCenterApp[]): PlanningCenterApp {
   let normalized: string | undefined;
   if (path.startsWith("/") && !path.startsWith("//")) {
     try {
@@ -351,7 +349,7 @@ export const errors: VendorErrors = {
 /** All ten product pins retain their own public URL and version. */
 export const PCO_PREFIX = "pco";
 export const PCO_INDEX = new PlanningCenterIndex(openapi);
-export const getPeopleMe = get("getPeopleMe", "/people/v2/me", {
+const getPeopleMe = get("getPeopleMe", "/people/v2/me", {
   success: Schema.Unknown,
   query: { include: Schema.String },
   headers: { "X-PCO-API-Version": Schema.String },
@@ -402,7 +400,7 @@ export const PCO_NAMED = {
 } as const;
 
 /** Native collection offset metadata, read only after response safety. */
-export const pcoPage: HatchPageAdapter = {
+const pcoPage: HatchPageAdapter = {
   param: "offset",
   in: "query",
   total: (data) => pageOf(asRecord(data)).totalCount ?? undefined,

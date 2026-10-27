@@ -536,8 +536,9 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
   acting on it: cite the page and its words in `evidence` and in the
   provider's review (`evidence/review.md`, or a `manual` check in a version 1
   `drift.json`, as Stripe does), keep `matches` to raw status, headers, method
-  and path, and add the provider to `AUTH_BEFORE_EXECUTION` in
-  `test/provider-failure-sweep.test.ts`. Without such a page, leave it out.
+  and path, and prove the refusal versus an ambiguous committed write through
+  an existing outcome journey or focused vendor fault probe. Do not copy a
+  provider declaration into a source-scanned exemption list. Without such a page, leave it out.
 - A provider that renews its credential after a 401 (a login, a refresh, a
   minted token) records it with `renewedAfterUnauthorized(request, sent,
   fresh)`: the one request that 401 answered (`answeredRequest(response)` in
@@ -573,7 +574,8 @@ its Conventions, and `drift.json`'s `generated` block. It reads the pending
 lists from `test/provider-pending-baseline.json` and refuses, before writing
 anything, a D violation in a provider past step 1 and a G violation in one
 past step 2, using the rule checks in `test/provider-standard.ts`. Do not
-hand-edit generated membership lists. Run it again after `providers:spec`, so
+hand-edit generated membership lists. Knip generation owns provider entrypoints;
+explicit fixture entrypoints used by dynamic generator hooks remain intact. Run it again after `providers:spec`, so
 the evidence digests follow the files.
 
 `pnpm run check:providers-generated` compares expected outputs without

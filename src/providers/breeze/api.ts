@@ -75,7 +75,7 @@ const PATH_PATTERN = /^(\/[a-z0-9_]+)+\/?$/;
  * which reads the calendar without a key, and its embed key. Neither hatch
  * returns them.
  */
-export function withoutCalendarFeeds(path: string, body: unknown): unknown {
+function withoutCalendarFeeds(path: string, body: unknown): unknown {
   if (path !== "/events/calendars/list") return body;
   const strip = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(strip);
@@ -89,7 +89,7 @@ export function withoutCalendarFeeds(path: string, body: unknown): unknown {
   return strip(body);
 }
 
-export function normalizedPath(raw: unknown): string {
+function normalizedPath(raw: unknown): string {
   const path = typeof raw === "string" ? raw : "";
   if (!PATH_PATTERN.test(path)) {
     throw new ConnectorCallError(
