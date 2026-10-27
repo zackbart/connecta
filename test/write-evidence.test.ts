@@ -1,5 +1,5 @@
-// No transport rejection proves a write unsent, over real refused and reset
-// connections through each runtime's own fetch: one send can hide several
+// No transport rejection proves a write unsent, over real connect failures
+// and resets through each runtime's own fetch: one send can hide several
 // attempts (a 421 or HTTP/2 refused-stream resend, a retrying dispatcher),
 // so a refusal on the last says nothing about the first. Reads keep their
 // retry advice.
@@ -61,18 +61,18 @@ async function exchanges(id: string): Promise<Array<{ method: string; bytes: num
 
 describe("write evidence over real connections", () => {
   it.each([["no body", { method: "DELETE", path: "/tickets/1" }]] as const)(
-    "INV-9: a write whose connection is refused, with %s, is unknown on every runtime",
+    "INV-9: a write whose connection fails, with %s, is unknown on every runtime",
     async (_name, request) => {
-      const { error, state } = await write(inject("refusedHttpOrigin"), request);
+      const { error, state } = await write(inject("unreachableHttpOrigin"), request);
       expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
       expect(state).toBe("unknown");
     },
   );
 
-  it("INV-9: a read whose connection is refused stays retryable on every runtime", async () => {
+  it("INV-9: a read whose connection fails stays retryable on every runtime", async () => {
     const send = guardedFetch({
       provider: "Tickets",
-      baseUrl: inject("refusedHttpOrigin"),
+      baseUrl: inject("unreachableHttpOrigin"),
       authenticate: () => ({}),
       maxResponseBytes: 1024,
     });
@@ -97,8 +97,8 @@ describe("write evidence over real connections", () => {
     if (result.ok) throw new Error("expected the read to fail");
     expect(result.error).toMatchObject({ code: "unavailable", retryable: true });
     expect(result.error).not.toHaveProperty("writeOutcome");
-    // workerd reports "Network connection lost." with no errno.
-    if (!WORKERD) expect(result.error).toMatchObject({ details: { code: "ECONNREFUSED" } });
+    // workerd exposes no coordinator errno for its native connection failures.
+    if (!WORKERD) expect(result.error).toMatchObject({ details: { code: inject("unreachableHttpCode") } });
   });
 
   it("INV-9: a write the server received before the connection reset is unknown on every runtime", async () => {
@@ -141,10 +141,10 @@ describe("an aborted write never proves itself unsent", () => {
       (error: unknown) => error,
     );
 
-  it("INV-9: a write aborted with a real refusal as its reason, after the server read its body, is unknown", async () => {
+  it("INV-9: a write aborted with a real connect failure as its reason, after the server read its body, is unknown", async () => {
     // A genuine connect-phase failure from another request. workerd names no
     // errno, so there the reason is shaped as undici's own.
-    const refusal = await fetch(inject("refusedHttpOrigin")).then(
+    const refusal = await fetch(inject("unreachableHttpOrigin")).then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -153,7 +153,9 @@ describe("an aborted write never proves itself unsent", () => {
           cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
         })
       : refusal;
-    expect(reason).toMatchObject({ cause: { code: "ECONNREFUSED" } });
+    expect(reason).toMatchObject({
+      cause: { code: WORKERD ? "ECONNREFUSED" : inject("unreachableHttpCode") },
+    });
     const body = { title: "Fixture" };
     for (const ledger of [true, false]) {
       const id = crypto.randomUUID();

@@ -18,17 +18,19 @@ import { stripe } from "../src/providers/stripe/index.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { makeRegistry } from "./helpers.js";
 
-it("keeps the refused origin unavailable to competing test listeners", async () => {
-  const origin = new URL(inject("refusedHttpOrigin"));
-  const competitor = createServer();
-  const result = await new Promise<string>((resolve) => {
-    competitor.once("error", (error: NodeJS.ErrnoException) => resolve(error.code ?? error.message));
-    competitor.listen(Number(origin.port), origin.hostname, () => resolve("listening"));
-  });
+it("keeps the connect-failure target unreachable while another fixture allocates a listener", async () => {
+  const origin = new URL(inject("unreachableHttpOrigin"));
+  const competitor = createServer((_request, response) => response.end("{}"));
+  await new Promise<void>((resolve) => competitor.listen(0, origin.hostname, resolve));
   try {
-    expect(result).toBe("EADDRINUSE");
+    const address = competitor.address();
+    if (!address || typeof address === "string") throw new Error("The competing fixture has no TCP address.");
+    expect(origin.port).toBe("0");
+    expect(address.port).toBeGreaterThan(0);
+    await expect(fetch(origin)).rejects.toMatchObject({ cause: { code: inject("unreachableHttpCode") } });
   } finally {
-    if (competitor.listening) await new Promise<void>((resolve) => competitor.close(() => resolve()));
+    competitor.closeAllConnections();
+    await new Promise<void>((resolve) => competitor.close(() => resolve()));
   }
 });
 
