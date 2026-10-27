@@ -150,32 +150,51 @@ it("INV-5: resource headers never redact program arguments or echoes, while auth
   const project = "project_alpha_123";
   const context = "tenant_context_456";
   const token = "REQUEST_BEARER_TOKEN_789";
-  const sent: { args: Record<string, unknown>; project: string | null; context: string | null }[] = [];
-  const downstream = httpDownstream(
-    (server) => {
-      server.registerTool(
-        "query",
-        {
-          inputSchema: z.object({ projectId: z.string(), probe: z.string().optional() }).loose(),
-          annotations: { readOnlyHint: true },
-        },
-        async (args) => ({ content: [{ type: "text", text: `${args.projectId}.dataset|${args.probe ?? ""}` }] }),
-      );
-    },
-    {
-      capture: async (request) => {
-        if (request.method !== "POST") return;
-        const message = (await request.json()) as { method?: string; params?: { arguments?: Record<string, unknown> } };
-        if (message.method === "tools/call")
-          sent.push({
-            args: message.params!.arguments!,
-            project: request.headers.get("x-goog-user-project"),
-            context: request.headers.get("x-auth-context"),
-          });
+  const sent: {
+    args: Record<string, unknown>;
+    project: string | null;
+    context: string | null;
+    mirrored: string | null;
+  }[] = [];
+  const downstream = httpDownstream((server) => {
+    server.registerTool(
+      "query",
+      {
+        inputSchema: z.object({ projectId: z.string(), scope: z.string(), probe: z.string() }).loose(),
+        annotations: { readOnlyHint: true },
       },
-    },
-  );
-  vi.stubGlobal("fetch", downstream.fetch);
+      async () => ({ content: [] }),
+    );
+  });
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const message =
+      request.method === "POST"
+        ? ((await request.clone().json()) as { id?: unknown; method?: string; params?: Record<string, any> })
+        : undefined;
+    if (message?.method === "tools/call") {
+      const args = message.params!.arguments as Record<string, unknown>;
+      sent.push({
+        args,
+        project: request.headers.get("x-goog-user-project"),
+        context: request.headers.get("x-auth-context"),
+        mirrored: request.headers.get("mcp-param-x-auth-context"),
+      });
+      // The downstream echoes the project argument and the bearer it actually received.
+      const text = `${args.projectId}.dataset|${args.scope}|${request.headers.get("authorization")}`;
+      return Response.json({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { resultType: "complete", content: [{ type: "text", text }] },
+      });
+    }
+    const response = await downstream.fetch(input as string, init);
+    if (message?.method !== "tools/list") return response;
+    const body = (await response.json()) as { result: { tools: { inputSchema: any }[] } };
+    // `scope` is mirrored as `Mcp-Param-X-Auth-Context`, a credential-shaped wire name.
+    body.result.tools[0]!.inputSchema.properties.scope["x-mcp-header"] = "X-Auth-Context";
+    return Response.json(body, { status: response.status, headers: response.headers });
+  });
   const executor = scriptedExecutor(async (fns) => {
     const results: unknown[] = [];
     for (const i of [1, 2, 3])
@@ -203,15 +222,15 @@ it("INV-5: resource headers never redact program arguments or echoes, while auth
   const rpc = await readJsonRpc(
     await connecta.fetch(mcpRpc("tools/call", { name: "execute_code", arguments: { code: "async () => null" } })),
   );
-  expect(rpc.result.isError).toBeUndefined();
+  expect(rpc.result.isError, JSON.stringify(rpc.result)).toBeUndefined();
   expect(sent).toHaveLength(3);
-  for (const call of sent) {
-    expect(call).toMatchObject({ project, context, args: { projectId: project, scope: context } });
-  }
+  for (const call of sent)
+    expect(call).toMatchObject({ project, context, mirrored: context, args: { projectId: project, scope: context } });
   // The outbound bearer token is still a sent secret: later calls never carry it.
   expect(sent.slice(1).map((call) => call.args.probe)).toEqual(["[redacted]", "[redacted]"]);
   const text = JSON.stringify(rpc.result);
-  expect(text).toContain(`${project}.dataset`);
+  // Every call's echo returns the resource values intact; the bearer echo is redacted.
+  expect(text.split(`${project}.dataset|${context}|[redacted]`).length - 1).toBeGreaterThanOrEqual(3);
   expect(text).not.toContain(token);
 });
 

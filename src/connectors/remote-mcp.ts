@@ -254,7 +254,8 @@ export interface RemoteMcpOptions {
    * Non-secret resource context headers. Never credentials: use auth for those.
    * Auth-owned, HTTP transport/session and OAuth client-auth headers are
    * reserved. Cannot be combined with inline headers auth. Sent only at the
-   * resource URL path; echoed values are redacted at eight characters or more.
+   * resource URL path. Values are never treated as sent secrets: arguments and
+   * echoes equal to them pass unchanged.
    */
   headers?: Record<string, string>;
   /**
@@ -1663,10 +1664,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const activeContexts = new WeakMap<ConnectionState, Set<ConnectorContext>>();
   // Resource headers are non-secret context by contract. They never join the
   // sent set, so arguments and results equal to them pass unchanged (#1108).
+  // An argument mirrored as `Mcp-Param-*` carrying a resource value is the
+  // same context under a name the tracker may read as credential-shaped.
+  const resourceValues = new Set(Object.values(extraHeaders ?? {}));
   const withoutResourceHeaders = (input: RequestInfo | URL, init?: RequestInit): RequestInit | undefined => {
     if (!extraHeaders) return init;
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     for (const [name, value] of Object.entries(extraHeaders)) if (headers.get(name) === value) headers.delete(name);
+    for (const [name, value] of [...headers])
+      if (name.startsWith("mcp-param-") && resourceValues.has(value)) headers.delete(name);
     return { ...init, headers };
   };
   const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
