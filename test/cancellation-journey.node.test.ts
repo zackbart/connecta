@@ -86,11 +86,24 @@ it("INV-7 INV-9: client cancellation removes queued work, closes a committed wri
     await second;
     await waitFor(async () => (await health()).admission.requests.queued === 0);
     expect(commits).toEqual(["requested-once"]);
+    // Both observations must follow the abort, well before the 10-second request deadline.
+    let closureTimer: ReturnType<typeof setTimeout> | undefined;
+    const cancelled = Promise.race([
+      Promise.all([disconnected.promise, waitFor(async () => (await health()).admission.requests.active === 0)]),
+      new Promise<never>((_, reject) => {
+        closureTimer = setTimeout(
+          () => reject(new Error("Client abort did not promptly close and release the request")),
+          2_000,
+        );
+      }),
+    ]);
     active.abort(new Error("active caller left"));
-    await first;
-    // The vendor must observe disconnection before it releases the incomplete response.
-    await disconnected.promise;
-    await waitFor(async () => (await health()).admission.requests.active === 0);
+    try {
+      await cancelled;
+      await first;
+    } finally {
+      clearTimeout(closureTimer);
+    }
     const recovered = await fetch(deployment.mcpUrl, {
       method: "POST",
       headers,
