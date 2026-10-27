@@ -208,11 +208,13 @@ export type RemoteMcpRequestAuth =
       type: "request";
       /** Resolve a Bearer token inside this request. Never persisted or described. */
       token: RequestToken;
+      principal?: never;
       /** Static protocol/catalog headers, never Authorization. */
       headers?: Record<string, string>;
     }
   | {
       type: "request";
+      token?: never;
       /**
        * Resolve the Bearer token for the admitted caller instead. Callers the
        * policy does not accept are refused before the resolver runs.

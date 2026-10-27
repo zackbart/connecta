@@ -7,7 +7,7 @@ beforeTransportTest(() => {
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { remoteMcp, type RemoteMcpAuth } from "../src/connectors/remote-mcp.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
@@ -543,7 +543,7 @@ describe("call-scoped sent credentials", () => {
         }
         return server.fetch(input, init);
       });
-      const auth =
+      const auth: RemoteMcpAuth =
         mode === "basic"
           ? { type: "headers" as const, headers: { Authorization: `Basic ${btoa(`account:${SECRET}`)}` } }
           : mode === "request"

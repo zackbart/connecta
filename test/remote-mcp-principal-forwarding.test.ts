@@ -473,6 +473,14 @@ it("INV-11: principal forwarding is explicit, closed and unchanged when absent",
     { type: "headers", headers: {}, principal: { accept: "human", token } } as never,
   ];
   for (const auth of refused) expect(() => remoteMcp("notes", { url: URL_, ...(auth ? { auth } : {}) })).toThrow();
+  // The published type refuses the combination before startup does.
+  expect(() =>
+    remoteMcp("notes", {
+      url: URL_,
+      // @ts-expect-error token and principal are mutually exclusive
+      auth: { type: "request", token: async () => "token", principal: { accept: "human", token } },
+    }),
+  ).toThrow();
   expect(() =>
     remoteMcp("notes", {
       url: URL_,
