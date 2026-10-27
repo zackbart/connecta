@@ -1,5 +1,5 @@
 // Runs in Vitest's Node coordinator; both projects use native fetch over TCP.
-// Real refused and reset connections, so a test can see what each runtime's
+// Real connect failures and resets, so a test can see what each runtime's
 // fetch reports when a write's connection fails, and how many request bytes
 // the server received before it did (#902).
 import { createServer } from "node:http";
@@ -9,8 +9,10 @@ declare module "vitest" {
   export interface ProvidedContext {
     /** Origin of a server whose routes are listed in `setup`. */
     evidenceHttpServer: string;
-    /** A loopback origin nothing listens on: connecting is refused. */
-    refusedHttpOrigin: string;
+    /** Port zero cannot become a listener: listen(0) allocates a nonzero port. */
+    unreachableHttpOrigin: string;
+    /** Native coordinator error, including Darwin's port-zero rejection. */
+    unreachableHttpCode: "ECONNREFUSED" | "EADDRNOTAVAIL";
   }
 }
 
@@ -31,6 +33,20 @@ interface Exchange {
  * - `GET /<id>/exchanges`: what the server received for `<id>`.
  */
 export default async function setup(project: TestProject) {
+  // A released ephemeral port can be reused by another fixture. Port zero
+  // remains unreachable even while other servers allocate their own ports.
+  // Verify a native connect failure, rather than an HTTP or fetch-policy error.
+  const unreachable = "http://127.0.0.1:0";
+  const unreachableCode = await fetch(unreachable).then(
+    () => {
+      throw new Error("The transport fixture's unreachable origin answered.");
+    },
+    (error: unknown) => {
+      const code = (error as { cause?: { code?: string } } | undefined)?.cause?.code;
+      if (code !== "ECONNREFUSED" && code !== "EADDRNOTAVAIL") throw error;
+      return code;
+    },
+  );
   const exchanges = new Map<string, Exchange[]>();
   const server = createServer((request, response) => {
     const url = new URL(request.url!, "http://localhost");
@@ -62,14 +78,9 @@ export default async function setup(project: TestProject) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Transport evidence fixture has no TCP address.");
-  // Bind a port, then release it: connecting to it afterwards is refused.
-  const closed = createServer();
-  await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
-  const closedAddress = closed.address();
-  if (!closedAddress || typeof closedAddress === "string") throw new Error("Refused-port fixture has no TCP address.");
-  await new Promise<void>((resolve, reject) => closed.close((error) => (error ? reject(error) : resolve())));
   project.provide("evidenceHttpServer", `http://127.0.0.1:${address.port}`);
-  project.provide("refusedHttpOrigin", `http://127.0.0.1:${closedAddress.port}`);
+  project.provide("unreachableHttpOrigin", unreachable);
+  project.provide("unreachableHttpCode", unreachableCode);
   return async () => {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));

@@ -18,6 +18,22 @@ import { stripe } from "../src/providers/stripe/index.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { makeRegistry } from "./helpers.js";
 
+it("keeps the connect-failure target unreachable while another fixture allocates a listener", async () => {
+  const origin = new URL(inject("unreachableHttpOrigin"));
+  const competitor = createServer((_request, response) => response.end("{}"));
+  await new Promise<void>((resolve) => competitor.listen(0, origin.hostname, resolve));
+  try {
+    const address = competitor.address();
+    if (!address || typeof address === "string") throw new Error("The competing fixture has no TCP address.");
+    expect(origin.port).toBe("0");
+    expect(address.port).toBeGreaterThan(0);
+    await expect(fetch(origin)).rejects.toMatchObject({ cause: { code: inject("unreachableHttpCode") } });
+  } finally {
+    competitor.closeAllConnections();
+    await new Promise<void>((resolve) => competitor.close(() => resolve()));
+  }
+});
+
 /** A server whose first request gets `answer`; it reports what it received. */
 async function listen(answer: (close: () => void, response: import("node:http").ServerResponse) => void) {
   const received: Array<{ method: string; bytes: number }> = [];
