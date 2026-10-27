@@ -1471,7 +1471,7 @@ interface DriveTool {
   readonly writeSteps?: Readonly<Record<string, "once">>;
   readonly run: (args: JsonRecord, ctx: ConnectorContext) => Effect.Effect<any, HttpFailure, CallServices>;
 }
-export function buildTool(connection: Connection, tool: DriveTool): ApiTool {
+function buildTool(connection: Connection, tool: DriveTool): ApiTool {
   const isRead = tool.annotations.readOnlyHint;
   const isList = ["search_files", "list_folder_items", "list_permissions", "list_shared_drives"].includes(tool.name);
   const output = asRecord(catalogSchema(tool.contract.output, "output"));

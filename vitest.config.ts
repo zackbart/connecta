@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { build, buildSync, type Plugin } from "esbuild";
 
@@ -10,6 +9,8 @@ const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktr
 // workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
 // Pure logic runs only on Node; never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
+  // Granola bearer confinement, redirects, response bytes and signed continuation behavior.
+  "src/providers/granola/provider.test.ts",
   // Native UTF-8/Web Crypto content identity across physical index formats.
   "test/compact-index.test.ts",
   "test/storage-sql-d1.test.ts",
@@ -36,7 +37,7 @@ const WORKERS_SUITES = [
   "test/call-auxiliary-lifetime.test.ts",
   "test/call-renewal-lifetime.test.ts",
   "test/oauth-preparation-lifetime.test.ts",
-  "test/promise-boundary-lifetime.test.ts",
+  "test/cancellation-faults.test.ts",
   "test/operation-cancellation.test.ts",
   "test/remote-mcp-renewal-lifetime.test.ts",
   "test/direct-write-finalizer.test.ts",
@@ -74,7 +75,7 @@ const WORKERS_SUITES = [
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
   // Brace globs tolerate deleted files without enrolling other suites.
   "test/{http-kit,http-hatch,http-provider}.test.ts",
-  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,auth-elicitation,downstream-input}.test.ts",
+  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,auth-elicitation,downstream-input}.test.ts",
 ];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
@@ -203,7 +204,6 @@ const bindingName = (key: string) => `AUTH_ADMISSION_${key.toUpperCase().replace
 
 export default defineConfig({
   test: {
-    reporters: ["default", new CoverageReporter()],
     projects: [
       {
         // The deployment shapes are consumer projects: they import the package
@@ -237,6 +237,7 @@ export default defineConfig({
         },
         test: {
           name: "node",
+          allowOnly: false,
           tags: [{ name: "node" }, { name: "workers" }],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
@@ -310,6 +311,7 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
+          allowOnly: false,
           tags: [{ name: "node", skip: true }, { name: "workers" }],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",

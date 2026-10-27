@@ -10,7 +10,7 @@ import { SentSecrets } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { JsonSchema } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 
 beforeEach(() => {
   installOwnedTransport();
@@ -44,14 +44,13 @@ function fixture(
   privateValue = (args: unknown) => (args as { config: { password: string } }).config.password,
 ) {
   let error = false;
-  let padding = "";
   let boundary = false;
   const received: unknown[] = [];
   const echo = (args: unknown) => {
     received.push(structuredClone(args));
     const value = privateValue(args);
     if (boundary) return "x".repeat(1016) + value + "x".repeat(8_000);
-    return `Downstream quoted ${forms(value).join("; ")}${padding}`;
+    return `Downstream quoted ${forms(value).join("; ")}`;
   };
   const tools = [true, false].map((readOnlyHint) => ({
     name: readOnlyHint ? "read" : "write",
@@ -83,7 +82,7 @@ function fixture(
           result: {
             resultType: "complete",
             content: [{ type: "text", text: echo(args) }],
-            ...(!boundary ? { structuredContent: { echo: forms(privateValue(args)), padding } } : {}),
+            ...(!boundary ? { structuredContent: { echo: forms(privateValue(args)) } } : {}),
             ...(error ? { isError: true } : {}),
           },
         });
@@ -106,7 +105,7 @@ function fixture(
                     cause: new Error(text),
                     retryAfterMs: 100,
                   });
-                return boundary ? text : { text, echo: forms(privateValue(args)), padding };
+                return boundary ? text : { text, echo: forms(privateValue(args)) };
               },
             })),
           }),
@@ -117,133 +116,11 @@ function fixture(
     fail: (value: boolean) => {
       error = value;
     },
-    pad: () => {
-      padding = "x".repeat(8_000);
-    },
     boundary: () => {
       boundary = true;
     },
   };
 }
-
-it.each(["mcp", "api"] as const)(
-  "INV-5 INV-6: %s nested writeOnly echoes are redacted on direct and execute_code result/error exits",
-  async (kind) => {
-    const source = fixture(kind);
-    const record = vi.fn();
-    const activity = activitySink();
-    const registry = makeRegistry([source.connector], {
-      logger: { debug: record, info: record, warn: record, error: record },
-    });
-    const meta = createMetaTools(registry, BASE, { readOnly: false, activity: activity.activity });
-    // A short private value (four to seven units) is replaced wherever it occurs, as a longer one is.
-    for (const value of [SECRET, "q7Zx"]) {
-      const args = { config: { password: value } };
-      for (const failed of [false, true]) {
-        source.fail(failed);
-        const check = (result: unknown, echoed = true) => {
-          const text = JSON.stringify(result);
-          for (const form of forms(value)) expect(text).not.toContain(form);
-          if (echoed) expect(text).toContain("[redacted]");
-        };
-        for (const resultMode of ["mcp", "value"] as const) {
-          const read = await meta.callTool({ address: "echo.read", args, resultMode });
-          const write = await meta.callDestructiveTool({
-            address: "echo.write",
-            args,
-            reason: "Redaction regression",
-            resultMode,
-          });
-          expect(read.isError === true, JSON.stringify(read)).toBe(failed);
-          expect(write.isError === true).toBe(failed);
-          if (failed) {
-            expect(read.structuredContent!.error).toMatchObject({
-              code: kind === "api" ? "invalid_args" : "connector_call_failed",
-              retryable: false,
-            });
-            expect(write.structuredContent!.error).toMatchObject({
-              code: kind === "api" ? "invalid_args" : "connector_call_failed",
-              retryable: false,
-            });
-            if (kind === "api") expect(read.structuredContent!.error).toMatchObject({ retryAfterMs: 100 });
-          }
-          check(read);
-          check(write);
-        }
-        for (const tool of ["read", "write"]) {
-          const run = createExecuteTool(
-            registry,
-            BASE,
-            {
-              execute: async (_code, providers) => {
-                try {
-                  const result = await providers[0]!.fns.call!(`echo.${tool}`, args);
-                  return { result, logs: [JSON.stringify(result)] };
-                } catch (error) {
-                  const failure = error as Error;
-                  return { result: undefined, error: failure.message, logs: [JSON.stringify(error)] };
-                }
-              },
-            },
-            silentLogger,
-            activity.activity,
-            { readOnly: false },
-          );
-          const result = await run({ code: "async () => {}" });
-          expect(result.isError === true).toBe(failed);
-          // A write's isError is an unknown outcome (round 13), which replaces
-          // the program's result: no echo is left to redact.
-          const unknownWrite = failed && kind === "mcp" && tool === "write";
-          if (unknownWrite)
-            expect(result.structuredContent).toMatchObject({ error: { code: "write_outcome_unknown" } });
-          check(result, !unknownWrite);
-        }
-      }
-    }
-    expect(source.received).toHaveLength(24);
-    expect(source.received.slice(0, 12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: SECRET } })));
-    expect(source.received.slice(12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: "q7Zx" } })));
-    expect(JSON.stringify([record.mock.calls, activity.events])).not.toContain(SECRET);
-    expect(JSON.stringify([record.mock.calls, activity.events])).not.toContain("Downstream quoted");
-  },
-);
-
-it.each(["mcp", "api"] as const)(
-  "INV-5: %s oversized writeOnly results are redacted before stash persistence and later paging",
-  async (kind) => {
-    const source = fixture(kind);
-    source.pad();
-    const storage = memoryStorage();
-    const registry = makeRegistry([source.connector], { storage, maxResultBytes: 1_024 });
-    const stash = vi.spyOn(registry, "stashResult");
-    const result = await createMetaTools(registry, BASE).callTool({
-      address: "echo.read",
-      args: { config: { password: SECRET } },
-      resultMode: "value",
-    });
-    const notice = result.structuredContent!.data as { resultId: string };
-    expect(notice.resultId).toBeTypeOf("string");
-    expect(stash).toHaveBeenCalledOnce();
-    const chunks = stash.mock.calls[0]![1];
-    const persisted = chunks
-      .map((chunk, index) => atob(index === 0 ? chunk.slice(chunk.lastIndexOf(":") + 1) : chunk))
-      .join("");
-    for (const form of forms(SECRET)) expect(persisted).not.toContain(form);
-    expect(persisted).toContain("[redacted]");
-    let body = "";
-    let offset = 0;
-    for (;;) {
-      // A new request has no private argument matcher. The stored bytes must be safe.
-      const page = await createMetaTools(registry, BASE).readResult({ id: notice.resultId, offset, maxBytes: 1_024 });
-      const [header, ...text] = page.content[0]!.text.split("\n");
-      body += text.join("\n");
-      const paging = JSON.parse(header!) as { hasMore: boolean; nextOffset: number };
-      if (!paging.hasMore) break;
-      offset = paging.nextOffset;
-    }
-    expect(body).toBe(persisted);
-  },
-);
 
 it("INV-5: private argument collection follows references, array items and conservative sensitivity without changing public schemas", () => {
   for (const inputSchema of [

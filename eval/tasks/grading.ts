@@ -15,6 +15,7 @@ export function parseGrading(value = "route"): Grading {
 
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
+  "granola-workspace-journey": { route: [], outcome: ["delivered-data", "privacy", "read-only"] },
   "quickbooks-write-journey": {
     route: [],
     outcome: [
@@ -52,7 +53,11 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
               ...(task === 6 ? ["reconciled"] : []),
               ...((GOOGLE_EXPECTED[product][i] as Record<string, unknown>).ids ? ["complete-evidence"] : []),
               ...(task === 3 ? ["full-pages"] : []),
-              ...(task === 3 && ["docs", "sheets"].includes(product) ? ["delivered-data"] : []),
+              ...((task === 3 && ["docs", "sheets"].includes(product)) ||
+              (product === "drive" && task === 2) ||
+              (product === "docs" && task === 7)
+                ? ["delivered-data"]
+                : []),
               ...(task === 2 && ["docs", "sheets", "slides"].includes(product) ? ["joined"] : []),
               ...(product === "drive" && task === 4 ? ["revisions"] : []),
               ...(product === "sheets" && task === 7 ? ["metadata-read"] : []),

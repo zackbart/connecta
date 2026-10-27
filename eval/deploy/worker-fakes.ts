@@ -19,6 +19,7 @@ interface Env {
   PUBLIC_URL: string;
   TRACKER_URL: string;
   CHAT_URL: string;
+  BILLING_URL: string;
   LOADER: WorkerLoader;
 }
 
@@ -33,9 +34,16 @@ function build(env: Env) {
     // The Access stand-in's user, the one maintainer plain /mcp admits and
     // the one who manages connector auth (#837).
     maintainers: ["eval-operator"],
+    pools: { personal: { tools: ["billing"], members: ["eval-operator", "eval-member"], readOnly: true } },
     vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
     ui: operatorUi(),
     connectors: [
+      remoteMcp("billing", {
+        url: env.BILLING_URL,
+        title: "Billing",
+        authScope: "personal",
+        auth: { type: "credential", credential: { label: "API token" } },
+      }),
       remoteMcp("tracker", { url: env.TRACKER_URL, title: "Issue tracker", description: "Issues" }),
       remoteMcp("chat", { url: env.CHAT_URL, title: "Team chat", description: "Channels and messages" }),
     ],

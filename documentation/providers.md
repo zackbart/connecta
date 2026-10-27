@@ -7,6 +7,95 @@ roster](./integrating.md#add-or-remove-a-connector) covers the general
 procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
+## Granola
+
+```ts
+import { granola } from "@zackbart/connecta/providers/granola";
+
+const notes = granola("granola", { purpose: "Shared workspace meeting notes" });
+```
+
+Use a **workspace API key**, created by a Business or Enterprise workspace
+admin in Granola desktop Settings → Connectors → Workspace API keys → Create
+new key. Save it in this connection's credential slot through the operator UI;
+configure an encrypted vault as described in [shared credentials](./auth.md#connect-a-shared-credential).
+The shared, single-secret field is `value`. The provider fixes the origin to
+`https://public-api.granola.ai`, uses bearer authentication, and exposes reads
+only. It accepts `purpose`, optional `title`, `instructions`, and
+`maxResultBytes` and the common `readOnly` restriction. Even `readOnly: false`
+exposes only the five reviewed reads; it accepts no inline secret, origin override, personal auth
+scope, or option enabling writes.
+
+Workspace keys belong to the workspace, survive their creator leaving and do
+not expire; an admin can revoke them. They reach public notes and spaces with
+Granola API access enabled. For an existing space an admin uses Integrations →
+Granola API → Allow access with a workspace API key. Folders inherit the space
+setting. Workspace ownership does not grant unrelated private notes or the
+owner's private handwritten notes. Discover accessible IDs before filtering.
+Only notes with a generated summary and transcript are returned; a 404 does
+not prove absence. A successful credential test confirms accessible spaces,
+not the key's ownership type or access to every meeting. Granola enforces
+these permissions; Connecta cannot infer workspace versus personal key type
+from the secret. Do not substitute a personal API key or MCP OAuth token.
+
+The REST surface is `granola_api_search`, `granola_api_details`, and
+`granola_api_read`. Search discovers API operations, not meeting content.
+Reads cover `/v1/notes`, `/v1/notes/{note_id}`,
+`/v1/notes/{note_id}/transcript`, `/v1/folders`, and `/v1/spaces`. Use API IDs
+(`not_`, `fol_`, `spa_`), not UUIDs copied from web links. Date/folder/space
+filters and response `fields` narrowing follow the reviewed operation details.
+Audit, legal holds, webhook management and writes are refused, even if their
+contracts appear in operation discovery.
+
+Omit `query.cursor` on the first read. Continue with `page.nextCursor` as the
+top-level `cursor`, retaining the path and query filters. Continuations are
+bound to that request and are not raw Granola tokens. The vendor uses
+`query.page_size`: notes/folders/spaces default to 10 with maximum 30;
+transcripts default to 50 with maximum 100. Empty pages can have more data.
+No total count is inferred. HTTP 413 when using `include: "transcript"`
+requires a new note-detail read without include and paged transcript reads;
+the provider sends no hidden fallback requests. Photo download URLs grant
+unauthenticated access and are always withheld. Meeting text and sent
+credentials cross the same value-safety boundary before selection or paging.
+
+Granola documents 25 requests per 5-second burst and 5 requests/second
+sustained, shared across the workspace key's scope. The default per-runtime
+admission is 25 calls in a rolling 5-second window with concurrency 2. Other
+processes and integrations share the vendor allowance; the local counter
+cannot enforce a workspace-wide limit. A 429 returns `rate_limited` and
+Retry-After when supplied (otherwise a 5-second hint); calls are not retried
+automatically. Requests have a 30-second deadline and 4 MiB response ceiling.
+Oversized responses fail without presenting a partial success; inline result
+cuts retain the standard `truncated` paths.
+
+For hosted Granola MCP, use a distinct generic `remoteMcp()` connection to
+`https://mcp.granola.ai/mcp` with its user OAuth or enterprise-managed
+authorization. Granola MCP does not accept workspace API keys or service
+accounts. Its natural-language search is not a REST-provider capability.
+See [Granola's workspace-key guide](https://docs.granola.ai/help-center/sharing/integrations/granola-api#workspace-api-keys)
+and [API overview](https://docs.granola.ai/introduction).
+
+### Migrate a deployment-local Granola API adapter
+
+Replace the local `api("granola", …)` construction with
+`granola("granola", { purpose: "Shared workspace meeting notes" })`, retaining
+the same encrypted vault, encryption key, connector ID, shared owner and
+single-secret `value` field. The provider reuses that credential without
+copying it. Existing addresses `granola.granola_api_search`,
+`granola.granola_api_details`, and `granola.granola_api_read` remain stable.
+Keep existing pool references to `granola`. A differently named or personal
+credential field requires the operator to save a workspace key in the shared
+slot; do not read out or copy stored secrets through an agent.
+
+Compare local argument contracts before replacing the factory: the maintained
+search is operation discovery, details uses an indexed operation, and read
+uses a relative path and query. Replace raw `query.cursor` continuations with
+the bound top-level `cursor`, and start new pagination sequences after the
+upgrade. Responses use `{ status, data, page? }`. Remove local write tools or
+natural-language-search assumptions; do not keep duplicate factories with the
+same connector ID. If a local adapter used other tool names, update its
+callers explicitly. No data migration or downstream write is required.
+
 ## API sources and tool inventory
 
 Maintained providers pair reviewed API contracts and indexes with Connecta's
@@ -140,6 +229,20 @@ discovery for your deployment's catalog.
 - **API writes:** None.
 
 **Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/gmail).
+
+</details>
+
+<details>
+<summary>Granola (3 tools)</summary>
+
+[Setup](#granola). **API source:** [Upstream OpenAPI](https://docs.granola.ai/api-reference/openapi.json).
+
+- **Named reads:** None.
+- **Named writes:** None.
+- **API reads:** `granola_api_details`, `granola_api_read`, `granola_api_search`.
+- **API writes:** None.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/granola).
 
 </details>
 

@@ -14,13 +14,9 @@ proposed) designs the Effect provider kit that `api` providers are built on.
 
 `test/provider-standard.node.test.ts` enforces L, E, D, G and S on every
 provider folder, and `test/provider-conventions.test.ts` applies S on Node.
-`PENDING` in `test/provider-standard.ts` lists providers that have not landed
-step 1 or step 2. Names leave it and `test/provider-pending-baseline.json` together;
-none join either. CI's static job compares each baseline step with the PR base
-(the pre-push SHA on main; HEAD's first parent on nightly/manual runs), rejecting added or
-reinserted names even if both files change. Removals remain allowed; missing
-history or an unreadable baseline fails. No `CONNECTA_STANDARD_BASE` is needed.
-See AGENTS.md Verification.
+Every maintained provider has completed both migration steps. The generator
+and provider suites enforce the current layout, evidence, drift, guide and
+surface contracts. See AGENTS.md Verification.
 
 ## Which rules apply
 
@@ -536,8 +532,9 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
   acting on it: cite the page and its words in `evidence` and in the
   provider's review (`evidence/review.md`, or a `manual` check in a version 1
   `drift.json`, as Stripe does), keep `matches` to raw status, headers, method
-  and path, and add the provider to `AUTH_BEFORE_EXECUTION` in
-  `test/provider-failure-sweep.test.ts`. Without such a page, leave it out.
+  and path, and prove the refusal versus an ambiguous committed write through
+  an existing outcome journey or focused vendor fault probe. Do not copy a
+  provider declaration into a source-scanned exemption list. Without such a page, leave it out.
 - A provider that renews its credential after a 401 (a login, a refresh, a
   minted token) records it with `renewedAfterUnauthorized(request, sent,
   fresh)`: the one request that 401 answered (`answeredRequest(response)` in
@@ -573,7 +570,8 @@ its Conventions, and `drift.json`'s `generated` block. It reads the pending
 lists from `test/provider-pending-baseline.json` and refuses, before writing
 anything, a D violation in a provider past step 1 and a G violation in one
 past step 2, using the rule checks in `test/provider-standard.ts`. Do not
-hand-edit generated membership lists. Run it again after `providers:spec`, so
+hand-edit generated membership lists. Knip generation owns provider entrypoints;
+explicit fixture entrypoints used by dynamic generator hooks remain intact. Run it again after `providers:spec`, so
 the evidence digests follow the files.
 
 `pnpm run check:providers-generated` compares expected outputs without
@@ -590,7 +588,7 @@ behavior; `pnpm run eval:outcomes` checks representative real workflows.
 not enroll suites in workerd. Mixed suites tag native cases `workers` and broad
 logic cases `node`; Node runs both. Add native coverage when behavior depends
 on platform-specific fetch, streams, Web Crypto, request lifetimes or bytes.
-Cite applicable `INV-n` IDs in meaningful test titles.
+Use relevant `INV-n` citations to explain the contract a focused probe defends.
 
 `pnpm run providers:check` reads public API contracts only. Parser failures are
 provider-local findings; report them alongside API drift and standing manual

@@ -28,7 +28,7 @@ const ReadQuery = {
 };
 
 // Discovery calls this one parameter `presentationsId` (plural).
-export const getPresentation = get("getPresentation", "/presentations/:presentationsId", {
+const getPresentation = get("getPresentation", "/presentations/:presentationsId", {
   params: { presentationsId: Schema.String },
   query: ReadQuery,
   success: Schema.Unknown,

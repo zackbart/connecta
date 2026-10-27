@@ -16,7 +16,8 @@ export function withAccess(inner: { fetch: WorkerFetch }) {
       const access = {
         aud: "connecta-eval",
         getIdentity: async () => ({
-          user_uuid: "eval-operator",
+          // Local eval transport only: choose the other admitted fixture identity.
+          user_uuid: request.headers.get("x-eval-user") === "eval-member" ? "eval-member" : "eval-operator",
           email: "operator@example.com",
         }),
       };

@@ -1,6 +1,8 @@
 import { playReference } from "./agent/reference.js";
 import { QUICKBOOKS_WRITE_TASK } from "./tasks/quickbooks-writes.js";
 import { QUICKBOOKS_TASK } from "./tasks/quickbooks.js";
+import { GRANOLA_TASK } from "./tasks/granola.js";
+import { GRANOLA_KEY } from "./fakes/granola.js";
 /**
  * `pnpm run eval:smoke [--targets a,b] [--no-build] [--out path]` — boot both
  * deployment shapes from this checkout and drive them over MCP and a browser.
@@ -24,8 +26,10 @@ import { QUICKBOOKS_TASK } from "./tasks/quickbooks.js";
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import { strict as assert } from "node:assert";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { experimental_readRawConfig } from "wrangler";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -42,7 +46,8 @@ const SIX = META_TOOLS;
 const args = flags(process.argv.slice(2));
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `smoke-${stamp()}.json`));
 const selected = (
-  args.get("targets") ?? "node-template,node-fakes,worker-example,worker-fakes,node-quickbooks,worker-quickbooks"
+  args.get("targets") ??
+  "node-template,node-fakes,worker-example,worker-fakes,node-quickbooks,worker-quickbooks,node-granola,worker-granola"
 ).split(",");
 
 const STEP_MS = 120_000;
@@ -239,6 +244,32 @@ async function nodeTemplate(): Promise<SmokeTarget> {
       return app;
     });
     if (!ready) return target;
+    await step(checks, "installed consumer refuses invalid configuration before doing I/O", async () => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+        import { createConnecta, customExecutor } from '@zackbart/connecta';
+        import { strict as assert } from 'node:assert';
+        let calls = 0;
+        const executor = customExecutor({ execute: async () => { calls++; return { result: null }; } }, { lifecycle: 'self-managed' });
+        const base = { readOnly: false, connectors: [], executor, logger: 'silent' };
+        assert.throws(() => createConnecta({ ...base, calls: { maxResultBytes: NaN } }), /calls.maxResultBytes/);
+        assert.throws(() => createConnecta({ ...base, results: { maxStashBytes: -1 } }), /results.maxStashBytes/);
+        assert.throws(() => createConnecta({ ...base, allowedOrigins: ['https://client.example/'] }), /allowedOrigins/);
+        const touch = () => { calls++; throw new Error('unexpected storage I/O'); };
+        assert.throws(() => createConnecta({ ...base, storage: { get: touch, set: touch, delete: touch, list: touch } }), /compareAndSet/);
+        assert.throws(() => createConnecta({ ...base, executor: { execute() { calls++; } } }), /lifecycle/);
+        assert.equal(calls, 0);
+        await createConnecta(base).close();
+      `,
+        ],
+        { cwd: app, encoding: "utf8", timeout: 60_000 },
+      );
+      if (result.status !== 0) throw new Error((result.stderr || result.stdout).slice(-1_000));
+    });
     const port = await freePort();
     const origin = `http://127.0.0.1:${port}`;
     const database = join(work, "connecta.sqlite");
@@ -257,14 +288,16 @@ async function nodeTemplate(): Promise<SmokeTarget> {
       return "agent token stored in the deployment's SQLite database";
     });
     if (!provisioned) return target;
-    proc = startProcess(join(ROOT, "node_modules", ".bin", "tsx"), ["src/index.ts"], {
-      cwd: app,
-      env: {
-        PORT: String(port),
-        PUBLIC_URL: origin,
-        CONNECTA_DATABASE: database,
-      },
-    });
+    const boot = () =>
+      startProcess(join(ROOT, "node_modules", ".bin", "tsx"), ["src/index.ts"], {
+        cwd: app,
+        env: {
+          PORT: String(port),
+          PUBLIC_URL: origin,
+          CONNECTA_DATABASE: database,
+        },
+      });
+    proc = boot();
     const running = proc;
     const booted = await step(checks, "boot", () => waitForHealth(origin, running.child, running.output));
     if (!booted) return target;
@@ -294,6 +327,30 @@ async function nodeTemplate(): Promise<SmokeTarget> {
           throw new Error(`unexpected ${JSON.stringify(result)}`);
         return `time.get_now → ${result}`;
       },
+    });
+    await step(checks, "SQLite agent token survives a fresh Node consumer process", async () => {
+      await stopProcess(proc!.child);
+      const db = new DatabaseSync(database, { readOnly: true });
+      try {
+        const rows = db
+          .prepare("SELECT value FROM connecta_kv WHERE key = 'access-token:v1:agent:local-machine'")
+          .all();
+        assert.equal(rows.length, 1);
+        assert.ok(!String(rows[0]!.value).includes(token), "raw token never stored");
+      } finally {
+        db.close();
+      }
+      proc = boot();
+      await waitForHealth(origin, proc.child, proc.output);
+      const client = await connectMcp(`${origin}/agent/local-machine`, headers);
+      try {
+        const result = await client.call("call_tool", { address: "time.get_now", args: {} });
+        assert.equal(result.isError, false);
+        assert.ok(!Number.isNaN(Date.parse((parseJson(result.text) as { now: string }).now)));
+      } finally {
+        await client.close();
+      }
+      return "the existing token admits the rebuilt consumer and reads the clock";
     });
     // The operator UI serves maintainers only (#837), so the agent token stays out.
     target.screenshot = await uiCheck(checks, origin);
@@ -388,25 +445,33 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
     "CONNECTA_MAINTAINERS:eval-operator",
     `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
     ...(kind === "worker-example" ? ["DOWNSTREAM_TOKEN:unused-in-smoke"] : []),
-    ...(world ? [`TRACKER_URL:${world.service("tracker").url}`, `CHAT_URL:${world.service("chat").url}`] : []),
+    ...(world
+      ? [
+          `TRACKER_URL:${world.service("tracker").url}`,
+          `CHAT_URL:${world.service("chat").url}`,
+          `BILLING_URL:${world.service("billing").url}`,
+        ]
+      : []),
   ];
-  const proc = startProcess(
-    join(ROOT, "node_modules", ".bin", "wrangler"),
-    [
-      "dev",
-      "--config",
-      config,
-      "--ip",
-      "127.0.0.1",
-      "--port",
-      String(port),
-      "--persist-to",
-      persist,
-      "--show-interactive-dev-session=false",
-      ...vars.flatMap((variable) => ["--var", variable]),
-    ],
-    { cwd: ROOT, env: { WRANGLER_SEND_METRICS: "false", CI: "1" } },
-  );
+  const boot = () =>
+    startProcess(
+      join(ROOT, "node_modules", ".bin", "wrangler"),
+      [
+        "dev",
+        "--config",
+        config,
+        "--ip",
+        "127.0.0.1",
+        "--port",
+        String(port),
+        "--persist-to",
+        persist,
+        "--show-interactive-dev-session=false",
+        ...vars.flatMap((variable) => ["--var", variable]),
+      ],
+      { cwd: ROOT, env: { WRANGLER_SEND_METRICS: "false", CI: "1" } },
+    );
+  let proc = boot();
   try {
     const booted = await step(checks, "boot (wrangler dev)", () =>
       waitForHealth(origin, proc.child, proc.output, 90_000),
@@ -448,6 +513,127 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
           },
     );
     target.screenshot = await uiCheck(checks, origin);
+    if (world)
+      await step(
+        checks,
+        "D1 personal credentials survive restart without crossing owners or replaying writes",
+        async () => {
+          // Open the physical local D1 only while workerd is stopped. Trigger rows
+          // prove committed mutations, independent of route or adapter counters.
+          await stopProcess(proc.child);
+          const files = (await readdir(persist, { recursive: true })).filter((file) => {
+            if (!file.endsWith(".sqlite") || !file.includes("/d1/")) return false;
+            const db = new DatabaseSync(join(persist, file), { readOnly: true });
+            try {
+              return db.prepare("SELECT name FROM sqlite_master WHERE name = 'connecta_kv'").all().length === 1;
+            } finally {
+              db.close();
+            }
+          });
+          assert.equal(files.length, 1, "one D1 database holding deployment state");
+          const path = join(persist, files[0]!);
+          const inspect = <T>(read: (db: DatabaseSync) => T): T => {
+            const db = new DatabaseSync(path);
+            try {
+              return read(db);
+            } finally {
+              db.close();
+            }
+          };
+          inspect((db) =>
+            db.exec(`CREATE TABLE credential_writes (key TEXT, operation TEXT);
+        CREATE TRIGGER credential_insert AFTER INSERT ON connecta_kv
+        WHEN NEW.key LIKE '%:billing:credential:v1'
+        BEGIN INSERT INTO credential_writes VALUES (NEW.key, 'insert'); END;
+        CREATE TRIGGER credential_update AFTER UPDATE ON connecta_kv
+        WHEN NEW.key LIKE '%:billing:credential:v1'
+        BEGIN INSERT INTO credential_writes VALUES (NEW.key, 'update'); END;
+        CREATE TRIGGER credential_delete AFTER DELETE ON connecta_kv
+        WHEN OLD.key LIKE '%:billing:credential:v1'
+        BEGIN INSERT INTO credential_writes VALUES (OLD.key, 'delete'); END;`),
+          );
+          const restart = async () => {
+            await stopProcess(proc.child);
+            proc = boot();
+            await waitForHealth(origin, proc.child, proc.output, 90_000);
+          };
+          await restart();
+          const { chromium, expect } = await import("@playwright/test");
+          const browser = await chromium.launch();
+          const otherSecret = "another-owner-invalid-token";
+          const read = async (member = false) => {
+            const session = await connectMcp(`${origin}/mcp/personal`, member ? { "X-Eval-User": "eval-member" } : {});
+            try {
+              return await session.call("call_tool", {
+                address: "billing.find_customer",
+                args: { query: "Northwind" },
+              });
+            } finally {
+              await session.close();
+            }
+          };
+          try {
+            const page = await browser.newPage();
+            await page.goto(`${origin}/connectors/billing#connection`);
+            const card = page.locator("#credential-billing");
+            await card.getByRole("button", { name: "Add credential", exact: true }).click();
+            await card.getByLabel("API token", { exact: true }).fill(world.billingToken);
+            await card.getByRole("button", { name: "Save", exact: true }).click();
+            await expect(page.locator("#credentialNotice-billing")).toHaveText("Credential saved.");
+            const own = await read();
+            assert.equal(own.isError, false);
+            assert.match(own.text, /Northwind Traders/);
+            assert.equal((await read(true)).isError, true, "another member cannot use the saved credential");
+            const saved = await fetch(`${origin}/ui/credentials/billing`, {
+              method: "PUT",
+              headers: { "X-Eval-User": "eval-member", Origin: origin, "Content-Type": "application/json" },
+              body: JSON.stringify({ value: otherSecret }),
+            });
+            assert.equal(saved.status, 200);
+            assert.doesNotMatch(await saved.text(), new RegExp(otherSecret));
+            await restart();
+            await page.reload();
+            await expect(page.getByRole("button", { name: "Replace", exact: true })).toBeVisible();
+            await expect(page.locator("body")).not.toContainText(world.billingToken);
+            const persisted = await read();
+            assert.equal(persisted.isError, false);
+            assert.match(persisted.text, /Northwind Traders/);
+            assert.equal((await read(true)).isError, true, "the other member's invalid credential stays isolated");
+            const config = await fetch(`${origin}/ui/api/config`, { headers: { "X-Eval-User": "eval-member" } });
+            assert.equal(config.status, 200);
+            const body = (await config.json()) as { role: string; config?: unknown };
+            assert.equal(body.role, "member");
+            assert.equal(body.config, null);
+          } finally {
+            await browser.close();
+          }
+          await stopProcess(proc.child);
+          inspect((db) => {
+            const rows = db
+              .prepare(
+                "SELECT key, value, expires_at_ms FROM connecta_kv WHERE key LIKE '%:billing:credential:v1' ORDER BY key",
+              )
+              .all();
+            assert.equal(rows.length, 2);
+            assert.equal(new Set(rows.map((row) => row.key)).size, 2);
+            for (const row of rows) {
+              assert.equal(row.expires_at_ms, null);
+              assert.equal(JSON.parse(String(row.value)).algorithm, "AES-GCM");
+              assert.ok(!String(row.value).includes(world.billingToken) && !String(row.value).includes(otherSecret));
+            }
+            const writes = db.prepare("SELECT key, operation FROM credential_writes ORDER BY key").all();
+            assert.deepEqual(
+              writes.map((row) => row.key),
+              rows.map((row) => row.key),
+            );
+            assert.deepEqual(
+              writes.map((row) => row.operation),
+              ["insert", "insert"],
+            );
+          });
+          return "two encrypted durable owner rows, exactly one committed save each; Alice still reads Northwind after a fresh workerd process";
+        },
+      );
     return target;
   } finally {
     await stopProcess(proc.child);
@@ -459,21 +645,26 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
 }
 
 /** The same task and independent grader run against both real executors/stores. */
-async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promise<SmokeTarget> {
+async function providerJourney(
+  kind: "node-quickbooks" | "worker-quickbooks" | "node-granola" | "worker-granola",
+): Promise<SmokeTarget> {
+  const notes = kind.endsWith("granola");
   const checks: SmokeCheck[] = [];
   const target: SmokeTarget = {
     target: kind,
-    description: "Actual QuickBooks provider accounting and durable OAuth journey",
+    description: notes
+      ? "Actual Granola workspace meeting and shared-vault journey"
+      : "Actual QuickBooks provider accounting and durable OAuth journey",
     status: "fail",
     checks,
   };
-  for (const task of [QUICKBOOKS_TASK, QUICKBOOKS_WRITE_TASK])
+  for (const task of notes ? [GRANOLA_TASK] : [QUICKBOOKS_TASK, QUICKBOOKS_WRITE_TASK])
     await step(checks, task.title, async () => {
       await playReference(
         task,
         {
           mode: "reference",
-          ...(kind === "worker-quickbooks"
+          ...(kind.startsWith("worker-")
             ? {
                 deploy: async (world: World) => {
                   const persist = await mkdtemp(join(tmpdir(), "connecta-qb-workerd-"));
@@ -484,8 +675,8 @@ async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promis
                   await writeFile(
                     config,
                     JSON.stringify({
-                      name: "connecta-qb-smoke",
-                      main: join(ROOT, "eval/deploy/worker-quickbooks.ts"),
+                      name: notes ? "connecta-granola-smoke" : "connecta-qb-smoke",
+                      main: join(ROOT, notes ? "eval/deploy/worker-granola.ts" : "eval/deploy/worker-quickbooks.ts"),
                       compatibility_date: example.compatibility_date,
                       compatibility_flags: example.compatibility_flags,
                       d1_databases: example.d1_databases,
@@ -508,10 +699,14 @@ async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promis
                       "--show-interactive-dev-session=false",
                       "--var",
                       `PUBLIC_URL:${origin}`,
-                      "--var",
-                      `QUICKBOOKS_URL:${world.quickbooks.url}`,
-                      "--var",
-                      `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
+                      ...(notes
+                        ? ["--var", `GRANOLA_URL:${world.granola.url}`, "--var", `GRANOLA_KEY:${GRANOLA_KEY}`]
+                        : [
+                            "--var",
+                            `QUICKBOOKS_URL:${world.quickbooks.url}`,
+                            "--var",
+                            `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
+                          ]),
                       "--var",
                       `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
                     ],
@@ -557,7 +752,7 @@ async function quickBooks(kind: "node-quickbooks" | "worker-quickbooks"): Promis
           if (failures.length) throw new Error(failures.map((c) => c.id).join(", "));
         },
       );
-      return kind === "node-quickbooks"
+      return kind.startsWith("node-")
         ? "SQLite + QuickJS + managed agent token"
         : "native workerd + D1 + Dynamic Worker executor + managed agent token";
     });
@@ -573,8 +768,10 @@ if (!args.has("no-build")) {
   if (built.status !== 0) throw new Error("pnpm run build failed");
 }
 const runners: Record<string, () => Promise<SmokeTarget>> = {
-  "node-quickbooks": () => quickBooks("node-quickbooks"),
-  "worker-quickbooks": () => quickBooks("worker-quickbooks"),
+  "node-quickbooks": () => providerJourney("node-quickbooks"),
+  "worker-quickbooks": () => providerJourney("worker-quickbooks"),
+  "node-granola": () => providerJourney("node-granola"),
+  "worker-granola": () => providerJourney("worker-granola"),
   "node-template": nodeTemplate,
   "node-fakes": nodeFakes,
   "worker-example": () => worker("worker-example"),

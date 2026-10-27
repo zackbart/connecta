@@ -17,7 +17,7 @@ export const FORMS_REQUEST_KINDS = [
   "updateFormInfo",
   "updateSettings",
 ] as const;
-export const FORMS_REFUSALS: Readonly<Record<string, string>> = {
+const FORMS_REFUSALS: Readonly<Record<string, string>> = {
   "POST /forms/{formId}:setPublishSettings":
     "Publishing and response availability changes require separate product authorization; the owner can change them in Forms.",
   "POST /forms/{formId}/watches":

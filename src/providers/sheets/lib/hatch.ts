@@ -27,7 +27,7 @@ export const sheetsIndex = new OperationIndex(sheetsDiscovery, {
 });
 
 /** Decode range colons only. Encoded actions, ids and unreserved bytes still fail the shared backstop. */
-export function sheetsPath(path: string): string {
+function sheetsPath(path: string): string {
   const match = /^(\/spreadsheets\/[A-Za-z0-9_-]+\/values\/)([^/?#]+)$/.exec(path);
   if (!match) return path;
   const tail = match[2]!;
@@ -42,9 +42,7 @@ const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 
 /** Same scalar, range and write-cell ceilings as the named workflows, including filter-selected writes. */
-export function sheetsRequestProblem(
-  call: Pick<RestCall, "method" | "op" | "query" | "body" | "params">,
-): string | undefined {
+function sheetsRequestProblem(call: Pick<RestCall, "method" | "op" | "query" | "body" | "params">): string | undefined {
   const body = record(call.body);
   if (call.op.path === "/spreadsheets/{spreadsheetId}:batchUpdate") {
     const requests = body["requests"];

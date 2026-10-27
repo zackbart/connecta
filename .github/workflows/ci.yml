@@ -16,75 +16,29 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Every core check runs for every change. Share static/build setup; `check`
-# is the only required status. Applicable browser/audit/Eve failures also block it.
+# Every change runs build/installed-consumer, runtime, outcome, browser, audit
+# and Eve compatibility checks. `check` is the only required status.
 jobs:
-  static:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      changed-files: ${{ steps.changes.outcome }}
-      browser: ${{ steps.changes.outputs.browser }}
-      audit: ${{ steps.changes.outputs.audit }}
-      eve: ${{ steps.changes.outputs.eve }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-      - name: Select browser, audit and Eve checks
-        id: changes
-        env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BASE: ${{ github.event.before }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          base=${PR_BASE:-${PUSH_BASE:-HEAD^1}}
-          echo "base=$base" >> "$GITHUB_OUTPUT"
-          if [[ "$EVENT" != pull_request ]]; then
-            printf '%s\n' 'browser=true' 'audit=true' 'eve=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          test -n "$PR_BASE"
-          git fetch --no-tags --depth=1 origin "$PR_BASE"
-          git diff --name-only --no-renames -z "$base" HEAD > "$RUNNER_TEMP/changed-files"
-          # Canonical browser input list. The build reads operator-ui/{app,styles},
-          # tokens/page CSS, fonts and LICENSE. Playwright fixtures import the real
-          # server through helpers.ts, so src/ covers their shared auth/routes/core;
-          # fixtures/helpers cover their local dependencies; node.ts uses bin/ tool names.
-          if grep -zEq '^(src/|bin/|test/(browser/|fixtures/|helpers/|helpers\.ts$)|scripts/(build-operator-ui\.mjs|ci-settle-apt\.sh)$|playwright[^/]*\.config\.[^/]+$|tsconfig[^/]*\.json$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|LICENSE$|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
-            echo 'browser=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'browser=false' >> "$GITHUB_OUTPUT"
-          fi
-          if grep -zEq '(^|/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$|^\.github/workflows/ci\.yml$' "$RUNNER_TEMP/changed-files"; then
-            echo 'audit=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'audit=false' >> "$GITHUB_OUTPUT"
-          fi
-          # The helper's integration test imports the real agent server. Any
-          # core change can change that contract; keep its Node 24 check separate.
-          if grep -zEq '^(packages/connecta-eve/|src/|scripts/check-eve-package\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|\.github/workflows/(ci|publish)\.yml$)' "$RUNNER_TEMP/changed-files"; then
-            echo 'eve=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'eve=false' >> "$GITHUB_OUTPUT"
-          fi
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
-      - name: Reject new provider exemptions (decision 0011)
-        env:
-          BASE: ${{ steps.changes.outputs.base }}
-        run: |
-          test -n "$BASE"
-          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
-          git show "$BASE:test/provider-pending-baseline.json" | node scripts/check-provider-exemptions.mjs
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run check:static
       - run: pnpm run check:build
+      - run: pnpm run check:examples
+      - name: Verify installed consumers and Docker deployment
+        env:
+          CONNECTA_REQUIRE_DOCKER: "1"
+        run: pnpm run check:package
 
-  # The unfiltered Node run also enforces invariant and spec coverage.
+  # Retained fault probes complement deployed behavior journeys.
   node:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -144,8 +98,7 @@ jobs:
           retention-days: 14
 
   eve:
-    needs: static
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.eve == 'true') }}
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -164,8 +117,7 @@ jobs:
       - run: pnpm run check:eve-package
 
   browser:
-    needs: static
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.browser == 'true') }}
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -195,8 +147,7 @@ jobs:
           retention-days: 14
 
   audit:
-    needs: static
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.audit == 'true') }}
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -208,25 +159,21 @@ jobs:
       - run: pnpm --config.verify-deps-before-run=false run check:security
       - run: pnpm --config.verify-deps-before-run=false run check:security:eve
 
-  # Branch protection requires this name. Core jobs and classification must
-  # succeed; browser/audit/Eve may skip only when explicitly inapplicable.
+  # Branch protection requires this name. Every job must finish successfully;
+  # failures, cancellations, missing jobs and unexpected skips fail the gate.
   check:
-    needs: [static, node, workers, behavior, browser, audit, eve]
+    needs: [build, node, workers, behavior, browser, audit, eve]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require core and applicable checks
+      - name: Require every check
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
           jq -e '
             . as $jobs |
-            all(["static", "node", "workers", "behavior"][]; $jobs[.].result == "success") and
-            .static.outputs["changed-files"] == "success" and
-            all(["browser", "audit", "eve"][];
-              . as $job | $jobs.static.outputs[$job] as $applies |
-              ($applies == "true" and $jobs[$job].result == "success") or
-              ($applies == "false" and $jobs[$job].result == "skipped"))
+            all(["build", "node", "workers", "behavior", "browser", "audit", "eve"][];
+              $jobs[.].result == "success")
           ' <<< "$NEEDS" > /dev/null

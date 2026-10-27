@@ -15,7 +15,7 @@ export const DOCS: GoogleProduct = {
 };
 
 const DocumentId = { documentId: Schema.String };
-export const getDocument = get("getDocument", "/documents/:documentId", {
+const getDocument = get("getDocument", "/documents/:documentId", {
   params: DocumentId,
   query: {
     includeTabsContent: Schema.optionalKey(Schema.String),

@@ -10,6 +10,7 @@ export interface SavedGradeInputs {
   version: 1;
   trace: AgentTrace;
   world: {
+    granola?: World["granola"]["state"];
     quickbooks?: World["quickbooks"]["state"];
     google?: World["google"]["state"];
     rest?: World["rest"];
@@ -34,6 +35,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
     version: 1,
     trace,
     world: {
+      ...(world.options.granola ? { granola: world.granola.state } : {}),
       ...(world.options.quickbooks ? { quickbooks: world.quickbooks.state } : {}),
       ...(world.options.google ? { google: world.google.state } : {}),
       rest: world.rest,
@@ -122,6 +124,18 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
       ).length === 1,
       `ci.${run.runId}`,
     );
+  if (state.granola) {
+    requireEvidence(
+      Array.isArray(state.granola.notes) &&
+        Array.isArray(state.granola.transcript) &&
+        Array.isArray(state.granola.spaces) &&
+        Array.isArray(state.granola.folders) &&
+        state.granola.privateNote,
+      "granola",
+    );
+    Object.assign(world.granola.state, structuredClone(state.granola));
+  } else if (state.calls.some((c) => c.service === "granola"))
+    throw new Error("Incomplete saved grading evidence: granola");
   if (state.quickbooks) {
     requireEvidence(state.quickbooks.companies && Array.isArray(state.quickbooks.grants), "quickbooks");
     Object.assign(world.quickbooks.state, structuredClone(state.quickbooks));

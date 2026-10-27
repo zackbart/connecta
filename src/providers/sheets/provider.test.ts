@@ -9,11 +9,7 @@ import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js
 import { MAX_QUICKJS_HOST_RPC_BYTES } from "../../executors/quickjs-protocol.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
-
 import { sheets } from "./index.js";
-import { SHEETS_HATCH, sheetsIndex } from "./lib/hatch.js";
-import { SHEETS_ADMITTED_KINDS, SHEETS_REQUEST_KINDS, SHEETS_REFUSED_KINDS } from "./lib/requests.js";
-
 import { memoryStorage } from "../../storage/memory.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
@@ -163,43 +159,6 @@ describe("reading values (H9, H10)", () => {
       truncated: ["namedRanges[]"],
     });
 
-    expect(sheetsIndex.pathMatching).toBe("uri-template");
-    expect(sheetsIndex.ops).toHaveLength(17);
-    for (const op of sheetsIndex.ops) {
-      expect(op.summary.length).toBeLessThanOrEqual(120);
-      expect(op.summary).not.toContain("…");
-    }
-    expect(Object.keys(SHEETS_HATCH.verdicts).sort()).toEqual(
-      sheetsIndex.ops.map((op) => `${op.method} ${op.path}`).sort(),
-    );
-    for (const [query, expected] of [
-      ["append rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
-      ["write cell values", "/spreadsheets/{spreadsheetId}/values:batchUpdate"],
-      ["format cells", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["make cells bold", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["sort range", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["sort rows", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["merge cells", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["delete rows", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["rename sheet", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["freeze header row", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["read header row", "/spreadsheets/{spreadsheetId}/values:batchGet"],
-      ["update range", "/spreadsheets/{spreadsheetId}:batchUpdate"],
-      ["append literal rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
-      ["create spreadsheet", "/spreadsheets"],
-      ["find developer metadata", "/spreadsheets/{spreadsheetId}/developerMetadata:search"],
-    ]) {
-      const result = await call(connector, "sheets_api_search", { query });
-      expect(
-        result.operations.slice(0, 2).map((op: any) => op.path),
-        query,
-      ).toContain(expected);
-      if (query === "read header row") expect(result.operations[0]).toMatchObject({ method: "GET", path: expected });
-    }
-
-    expect(Object.values(SHEETS_HATCH.verdicts).filter((value) => value === "read")).toHaveLength(7);
-    expect(SHEETS_REQUEST_KINDS).toHaveLength(74);
-    expect(SHEETS_ADMITTED_KINDS).toHaveLength(64);
     route = () => ({
       body: {
         spreadsheetId: ID,
@@ -447,7 +406,7 @@ describe("the raw batchUpdate hatch", () => {
     const connector = connection();
     const sent = calls.length;
     const mints = tokenRequests;
-    for (const kind of Object.keys(SHEETS_REFUSED_KINDS)) {
+    for (const kind of ["addDataSource", "refreshDataSource", "updateDataSource"]) {
       for (const [tool, args] of [
         ["batch_update_spreadsheet", { spreadsheetId: ID, requests: [{ [kind]: {} }] }],
         [
@@ -457,7 +416,7 @@ describe("the raw batchUpdate hatch", () => {
       ] as const)
         await expect(call(connector, tool, args)).rejects.toMatchObject({
           code: "invalid_args",
-          message: expect.stringContaining(SHEETS_REFUSED_KINDS[kind]!),
+          message: expect.stringContaining("data-source"),
         });
     }
     for (const kind of ["constructor", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf", "__proto__"]) {

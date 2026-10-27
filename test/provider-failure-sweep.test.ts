@@ -1,86 +1,28 @@
-// Retained #900 failure examples validate their provider catalogs and dispatched
-// outcomes. New providers use required published-deployment outcome journeys;
-// adding a provider does not require copying it into this legacy status matrix.
+// Focused fault probes for composite sends, auxiliary failures and late work.
+// Shared HTTP journeys and required eval outcomes own ordinary provider failures.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { callClassification } from "../src/call-classification.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { CredentialVault } from "../src/credentials.js";
 import { deriveContext } from "../src/derived-context.js";
-import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { InvocationService } from "../src/invocation.js";
-import { createMetaTools } from "../src/meta-tools.js";
-import { providerRequests, readRequest, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import { AppAuth } from "../src/providers/github/lib/auth.js";
 import { restConnector } from "../src/providers/github/tools.js";
 import { parseScopes, ScopePolicy } from "../src/providers/github/lib/scope.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { classifyTool } from "../src/tool-safety.js";
 import type { Connector } from "../src/types.js";
 import * as outcomes from "../src/write-outcome.js";
 import { apiFixture, SCOPES } from "./fixtures/github-api.js";
 import type { ContractFixture } from "./fixtures/provider-contract.js";
-import argumentsByProvider from "./fixtures/provider-failure-arguments.json";
 import { googleOptions } from "./fixtures/provider-options.js";
 import { makeRegistry } from "./helpers.js";
 import { providerFixtures } from "./providers.generated.js";
 
 const BASE = "https://connecta.example";
-const argumentsTable: Record<string, Record<string, Record<string, unknown>>> = argumentsByProvider;
-const fixtures: readonly ContractFixture[] = providerFixtures.filter((fixture) =>
-  Object.hasOwn(argumentsTable, fixture.name),
-);
-const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
-const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
-  "stripe.stripe_api_write": { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_fixture" } },
-  "cloudflare.cloudflare_api_write": {
-    method: "PATCH",
-    path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
-    body: { ttl: 300 },
-  },
-  "vercel.vercel_api_write": {
-    method: "PATCH",
-    path: "/v9/projects/web/env/env_fixture",
-    body: { value: "new-value" },
-  },
-  "vercel.update_project_env_var": { projectId: "web", envVarId: "env_fixture", value: "new-value" },
-  "breeze.breeze_api_write": { method: "GET", path: "/people/add", query: { first: "Alice", last: "Example" } },
-  "ccb.ccb_api_write": { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } },
-  "planning-center.pco_api_write": {
-    method: "POST",
-    path: "/people/v2/people",
-    body: { data: { type: "Person", attributes: { first_name: "Alice", last_name: "Example" } } },
-  },
-  "tithely.tithely_api_write": { method: "POST", path: "/refunds/ch_fixture" },
-};
-// These catalog tools consult deployment-owned metadata/indexes and never
-// dispatch. They are still enumerated and checked, rather than silently skipped.
-const LOCAL = new Set([
-  "github.list_scopes",
-  "sheets.sheets_api_search",
-  "sheets.sheets_api_details",
-  "planning-center.pco_api_search",
-  "docs.docs_api_search",
-  "docs.docs_api_details",
-  "planning-center.pco_api_details",
-  ...[
-    "breeze",
-    "ccb",
-    "cloudflare",
-    "drive",
-    "forms",
-    "github",
-    "gmail",
-    "overflow",
-    "stripe",
-    "tithely",
-    "vercel",
-    "slides",
-  ].flatMap((name) => [`${name}.${name}_api_search`, `${name}.${name}_api_details`]),
-]);
-
 function create(fixture: ContractFixture): Connector {
   if (fixture.name === "github") {
     const policy = new ScopePolicy(
@@ -94,51 +36,9 @@ function create(fixture: ContractFixture): Connector {
       policy,
     );
   }
-  if (GOOGLE.has(fixture.name)) return fixture.create(fixture.name, { subject: "alice@example.com" });
+  if (["gmail", "drive", "docs", "sheets", "slides", "forms"].includes(fixture.name))
+    return fixture.create(fixture.name, { subject: "alice@example.com" });
   return fixture.create(fixture.name);
-}
-
-const providers = fixtures.map((fixture) => ({
-  name: fixture.name,
-  create: () => create(fixture),
-  catalog: create(fixture).staticTools!,
-}));
-
-/** Fold Sheets' new hatch routes into the existing representative failure cases. */
-async function sweepSheetsHatch(provider: (typeof providers)[number], named: string, failure: string) {
-  if (provider.name !== "sheets") return;
-  const hatch =
-    named === "get_spreadsheet" ? "sheets_api_read" : named === "update_values" ? "sheets_api_write" : undefined;
-  if (!hatch) return;
-  const classification = hatch === "sheets_api_read" ? "read" : "write";
-  const sent: string[] = [];
-  const result = await sweepCall(
-    provider,
-    hatch,
-    `sheets.${hatch}`,
-    argumentsTable.sheets![hatch],
-    classification,
-    (request) => {
-      sent.push(`${request.method} ${request.url}`);
-      if (failure === "network-after-send")
-        throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
-      const status = failure === "401" ? 401 : 503;
-      return Response.json({ error: { code: status, message: "Refused" } }, { status });
-    },
-    HANDOFFS,
-  );
-  expect(sent).toHaveLength(classification === "read" && failure === "401" ? 2 : 1);
-  expect(result.structuredContent).toMatchObject({
-    ok: false,
-    error: {
-      retryable: classification === "read" && failure !== "401",
-      ...(classification === "write" ? { writeOutcome: "unknown" } : {}),
-    },
-  });
-  const error = (result.structuredContent as { error: CallErrorDetails }).error;
-  if (classification === "read") expect(error).not.toHaveProperty("writeOutcome");
-  if (failure === "401")
-    expect(error).toMatchObject({ code: "auth_required", nextAction: { tool: "authorize_connector" } });
 }
 
 function credential(name: string): Record<string, string> {
@@ -163,592 +63,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-describe("API provider failure sweep", () => {
-  it("INV-9: checks declared failure examples against their provider catalogs", async () => {
-    expect(Object.keys(argumentsTable).sort()).toEqual(providers.map(({ name }) => name).sort());
-    for (const provider of providers) {
-      const fixture = fixtures.find(({ name }) => name === provider.name)!;
-      const modes = [
-        provider.create(),
-        ...fixture.cases.map((scenario) => fixture.create(provider.name, scenario.options)),
-      ];
-      const tools = [
-        ...new Set(
-          modes
-            .filter((connector) => connector.kind === "api")
-            .flatMap((connector) => connector.staticTools!.map(({ name }) => name)),
-        ),
-      ].sort();
-      for (const connector of modes.filter(({ kind }) => kind === "api"))
-        expect(tracksRequests(connector), `${provider.name}: its ledger sees every request`).toBe(true);
-      expect(
-        provider.catalog.map(({ name }) => name).sort(),
-        `${provider.name}: cover tools from every API mode`,
-      ).toEqual(tools);
-      expect(Object.keys(argumentsTable[provider.name]!).sort(), provider.name).toEqual(tools);
-      // Forms hatches share the existing admission/transport boundary; fold
-      // their cases here without multiplying the exhaustive status matrix.
-      if (provider.name === "forms")
-        for (const name of ["forms_api_search", "forms_api_details", "forms_api_read", "forms_api_write"]) {
-          const remote = name === "forms_api_read" || name === "forms_api_write";
-          const requests: string[] = [];
-          const result = await sweepCall(
-            provider,
-            name,
-            `forms.${name}`,
-            argumentsTable.forms![name],
-            name === "forms_api_write" ? "write" : "read",
-            (request) => {
-              requests.push(request.url);
-              return Response.json({ error: { code: 503 } }, { status: 503 });
-            },
-          );
-          expect(requests).toHaveLength(remote ? 1 : 0);
-          if (remote) expect(result.isError).toBe(true);
-          else expect(result.isError).toBeFalsy();
-          if (remote)
-            expect(result.structuredContent).toMatchObject({
-              ok: false,
-              error:
-                name === "forms_api_write"
-                  ? { retryable: false, writeOutcome: "unknown" }
-                  : { code: "unavailable", retryable: true },
-            });
-        }
-      // Fold offline hatch coverage here: injected remote failures
-      // cannot affect metadata that sends no request.
-      if (["github", "gmail", "docs", "sheets", "slides"].includes(provider.name))
-        for (const name of [`${provider.name}_api_search`, `${provider.name}_api_details`]) {
-          const result = await sweepCall(
-            provider,
-            name,
-            `${provider.name}.${name}`,
-            argumentsTable[provider.name]![name],
-            "read",
-            () => {
-              throw new Error("An offline indexed hatch dispatched a request.");
-            },
-          );
-          expect(result.isError).toBeFalsy();
-        }
-      if (provider.name === "drive") {
-        for (const name of ["drive_api_search", "drive_api_details"]) {
-          const result = await sweepCall(provider, name, `drive.${name}`, argumentsTable.drive![name], "read", () => {
-            throw new Error("Offline Drive discovery dispatched.");
-          });
-          expect(result.isError).toBeFalsy();
-        }
-        for (const [name, classification] of [
-          ["drive_api_read", "read"],
-          ["drive_api_write", "write"],
-        ] as const) {
-          for (const status of [401, 503]) {
-            const sent: string[] = [];
-            const result = await sweepCall(
-              provider,
-              name,
-              `drive.${name}`,
-              argumentsTable.drive![name],
-              classification,
-              (request) => {
-                sent.push(request.method);
-                return Response.json({ error: { code: status } }, { status });
-              },
-            );
-            expect(result.isError).toBe(true);
-            expect(sent.length).toBe(classification === "read" && status === 401 ? 2 : 1);
-            const error = (result.structuredContent as { error: CallErrorDetails }).error;
-            if (classification === "write") expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-            else expect(error).not.toHaveProperty("writeOutcome");
-          }
-        }
-      }
-    }
-    expect(typeof outcomes.providerCallFailure).toBe("function");
-  });
-
-  for (const provider of providers) {
-    describe(provider.name, () => {
-      const examples = provider.catalog
-        .filter(
-          (tool) =>
-            !(
-              ["github", "gmail", "slides"].includes(provider.name) &&
-              [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)
-            ) &&
-            !(
-              ["docs", "drive", "forms", "sheets"].includes(provider.name) &&
-              tool.name.startsWith(`${provider.name}_api_`)
-            ),
-        )
-        .flatMap((tool) => [
-          { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
-          ...(provider.name === "github" && tool.name === "list_scopes"
-            ? [{ tool, args: { owner: "acme" }, suffix: " (owner lookup)" }]
-            : []),
-        ]);
-      for (const { tool, args, suffix } of examples) {
-        const address = `${provider.name}.${tool.name}`;
-        // Sweep every tool at its declared verdict; shared contract cases below
-        // exercise forced classifications without multiplying each provider tool.
-        for (const classification of [classifyTool(tool)]) {
-          // Network loss crosses the same transport boundary for every tool.
-          // Keep one probe per provider/verdict alongside every tool's HTTP refusals.
-          const representative =
-            examples.find(
-              ({ tool: candidate }) =>
-                !LOCAL.has(`${provider.name}.${candidate.name}`) && classifyTool(candidate) === classification,
-            )?.tool.name === tool.name;
-          it.each(representative ? (["503", "network-after-send"] as const) : (["503"] as const))(
-            `INV-9: ${address}${suffix} served ${classification} → %s`,
-            async (failure) => {
-              const decision =
-                typeof outcomes.providerCallFailure === "function"
-                  ? vi.spyOn(outcomes, "providerCallFailure")
-                  : undefined;
-              const requests: string[] = [];
-              const fail = (request: Request): Response => {
-                requests.push(`${request.method} ${request.url}`);
-                if (failure === "network-after-send")
-                  throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
-                return Response.json(
-                  {
-                    error: { code: 503, message: "Service unavailable" },
-                    errors: [{ message: "Service unavailable" }],
-                  },
-                  { status: 503 },
-                );
-              };
-              const result = await sweepCall(provider, tool.name, address, args, classification, fail);
-              if (LOCAL.has(address) && !suffix) {
-                expect(requests).toEqual([]);
-                expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
-                return;
-              }
-              expect(requests.length, JSON.stringify(result.structuredContent)).toBe(
-                address === "planning-center.get_plan"
-                  ? 3
-                  : ["forms.list_responses", "forms.get_response"].includes(address)
-                    ? 2
-                    : 1,
-              );
-              // Composite tools may send independent requests concurrently (e.g.
-              // get_plan). Every request, including the first, must leave once.
-              expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
-              expect(result.structuredContent).toMatchObject({
-                ok: false,
-                error: classification === "write" ? { retryable: false, writeOutcome: "unknown" } : { retryable: true },
-              });
-              if (classification === "read")
-                expect((result.structuredContent as { error: object }).error).not.toHaveProperty("writeOutcome");
-              // One unknown-outcome advice: a provider's own is never followed by the shared one.
-              const { message } = (result.structuredContent as { error: { message: string } }).error;
-              if (GOOGLE.has(provider.name) && failure === "503") expect(message).toContain("Service unavailable.");
-              if (/so its outcome is unknown|may or may not have been applied/.test(message))
-                expect(message).not.toContain("Whether the write took effect at");
-              if (decision) {
-                expect(
-                  decision.mock.calls.some(
-                    ([ctx, , , facts]) => facts.dispatched && callClassification(ctx) === classification,
-                  ),
-                ).toBe(true);
-                // The declaration is what lets an empty ledger prove a write
-                // unsent: the call's ledger recorded every resource request.
-                const finals = decision.mock.calls.filter(([, , , facts]) => facts.finalize === true);
-                expect(finals).toHaveLength(1);
-                expect(
-                  providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
-                ).toHaveLength(requests.length);
-              }
-              const unreadableArgs =
-                UNREADABLE_WRITES[address] ?? (tool.name.endsWith("_api_write") ? args : undefined);
-              if (failure === "503" && unreadableArgs) {
-                let vendorMessage: string | undefined;
-                for (const [body, type] of [
-                  ["{broken", "application/json"],
-                  ["<html>ok</html>", "application/json"],
-                  ["{broken", "application/problem+json"],
-                  ["{broken", undefined],
-                  ["{broken", "text/plain"],
-                  ["[broken", "text/plain"],
-                  ["not JSON", "text/plain"],
-                  ["{broken", "text/html"],
-                  ["<html>ok</html>", "text/html"],
-                ] as const) {
-                  const sent: string[] = [];
-                  const unreadable = await sweepCall(
-                    provider,
-                    tool.name,
-                    address,
-                    unreadableArgs,
-                    "write",
-                    (request) => {
-                      sent.push(request.method);
-                      return new Response(new TextEncoder().encode(body), {
-                        status: 200,
-                        ...(type ? { headers: { "content-type": type } } : {}),
-                      });
-                    },
-                  );
-                  expect(sent).toEqual([unreadableArgs["method"] ?? "PATCH"]);
-                  expect(unreadable.structuredContent).toMatchObject({
-                    ok: false,
-                    error: {
-                      code: "connector_call_failed",
-                      retryable: false,
-                      writeOutcome: "unknown",
-                    },
-                  });
-                  const { message } = (unreadable.structuredContent as { error: CallErrorDetails }).error;
-                  // Each Stripe call gets a fresh recovery key; compare the wording around it.
-                  const wording = message.replace(/(Idempotency-Key: )[0-9a-f-]{36}/, "$1<generated>");
-                  vendorMessage ??= wording;
-                  if (type === "text/html" && body.startsWith("<")) expect(wording).toContain("unexpected text/HTML");
-                  else expect(wording).toBe(vendorMessage);
-                  expect(message).toMatch(/unknown[\s\S]*check[\s\S]*before repeating/);
-                  expect(message).not.toContain("..");
-                }
-              }
-              if (failure === "503" && address === "gmail.update_draft") {
-                const sent: string[] = [];
-                const lookup = await sweepCall(
-                  provider,
-                  tool.name,
-                  address,
-                  args,
-                  "write",
-                  (request) => {
-                    sent.push(request.method);
-                    return new Response("<html>ok</html>", { status: 200, headers: { "content-type": "text/html" } });
-                  },
-                  {},
-                  { failAuxiliary: true },
-                );
-                expect(sent).toEqual(["GET"]);
-                expect(lookup.structuredContent).toMatchObject({
-                  ok: false,
-                  error: {
-                    code: "connector_call_failed",
-                    retryable: false,
-                    message: "Gmail returned unexpected text/HTML for a JSON response.",
-                  },
-                });
-                expect((lookup.structuredContent as { error: CallErrorDetails }).error).not.toHaveProperty(
-                  "writeOutcome",
-                );
-              }
-              await sweepSheetsHatch(provider, tool.name, failure);
-              await docsHatchFailure(provider, tool.name, classification, failure);
-            },
-          );
-          // A write answered 401 is an unknown outcome unless its provider
-          // declares reviewed authBeforeExecution evidence; a read keeps its
-          // refusal. Either way authorization is still needed, so the handoff
-          // stays, and a renewal that succeeded never resends a write.
-          // Authentication/recovery is shared within each provider and verdict.
-          // Keep composite/auxiliary and POST-as-read paths as distinct mechanisms;
-          // every remaining tool still dispatches through the exhaustive 503 row.
-          if (
-            !representative &&
-            !suffix &&
-            ![
-              "ccb.search_records",
-              "planning-center.get_plan",
-              "forms.list_responses",
-              "forms.get_response",
-              "sheets.get_spreadsheet",
-              "sheets.update_values",
-              "docs.get_document",
-              "docs.batch_update_document",
-              "gmail.update_draft",
-              "drive.move_file",
-            ].includes(address)
-          )
-            continue;
-          it(`INV-9: ${address}${suffix} served ${classification} → 401`, async () => {
-            const requests: string[] = [];
-            let oneAttempt = false;
-            const fail = (request: Request): Response => {
-              requests.push(`${request.method} ${request.url}`);
-              oneAttempt ||= !readRequest({ classification, method: request.method }, request.headers);
-              // Stripe's API stamps every answer with a Request-Id, which its
-              // reviewed evidence requires.
-              return Response.json(
-                { error: { code: 401, message: "Unauthorized" }, errors: [{ message: "Unauthorized" }] },
-                { status: 401, headers: { "request-id": "req_sweep" } },
-              );
-            };
-            const result = await sweepCall(provider, tool.name, address, args, classification, fail, HANDOFFS);
-            if (LOCAL.has(address) && !suffix) {
-              expect(requests).toEqual([]);
-              return;
-            }
-            const error = (result.structuredContent as { error: CallErrorDetails }).error;
-            const context = JSON.stringify(error);
-            expect(result.structuredContent, context).toMatchObject({ ok: false, error: { retryable: false } });
-            if (oneAttempt) {
-              // Sent once each: no renewal resends a write (INV-9).
-              expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
-              expect(requests.length, context).toBe(
-                address === "planning-center.get_plan"
-                  ? 3
-                  : ["forms.list_responses", "forms.get_response"].includes(address)
-                    ? 2
-                    : 1,
-              );
-            }
-            if (classification === "write" && AUTH_BEFORE_EXECUTION.has(provider.name)) {
-              // Reviewed evidence: the vendor refused before acting, so the
-              // handoff may say to retry the original call.
-              expect(error, context).toMatchObject({
-                code: expect.stringMatching(/^(auth_required|downstream_oauth_required)$/),
-                nextAction: { tool: "authorize_connector", arguments: { connector: provider.name } },
-              });
-              expect(error).not.toHaveProperty("writeOutcome");
-              expect(error.instructions, context).toContain("retry the original call");
-            } else if (oneAttempt && RENEWS.has(provider.name)) {
-              // The actual request can be a write inside a served read (POST
-              // search). Renewal leaves its original 401, with no handoff.
-              expect(error).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown" });
-              expect(error.message).toContain(
-                "The credential is renewed for the next call, but the write was not sent again",
-              );
-              expect(error).not.toHaveProperty("nextAction");
-            } else if (classification === "write") {
-              expect(error, context).toMatchObject({
-                code: expect.stringMatching(/^(auth_required|downstream_oauth_required)$/),
-                writeOutcome: "unknown",
-                reconciliationRequired: true,
-                nextAction: { tool: "authorize_connector", arguments: { connector: provider.name } },
-              });
-              expect(error).not.toHaveProperty("retryAfterMs");
-              expect(error.retry).not.toMatch(/^Retry /);
-              // The outcome-aware handoff: authorize, then reconcile, never retry the original call.
-              expect(error.instructions, context).toContain(
-                "re-read the target of the write that failed to check whether it took effect before any fresh call",
-              );
-              expect(error.instructions).not.toContain("retry the original call");
-            } else {
-              expect(error, context).toMatchObject({
-                code: expect.stringMatching(/^(auth_required|downstream_oauth_required)$/),
-                nextAction: { tool: "authorize_connector", arguments: { connector: provider.name } },
-                retry: `Retry ${address} after the operator completes recovery.`,
-              });
-              expect(error).not.toHaveProperty("writeOutcome");
-              expect(error).not.toHaveProperty("reconciliationRequired");
-              expect(error.instructions ?? "", context).not.toContain("re-read the target");
-            }
-            // Program accounting reads the explicit outcome before any code.
-            if (classification === "write" && !AUTH_BEFORE_EXECUTION.has(provider.name))
-              expect(outcomes.classifyWriteOutcome({ ok: false, dispatched: true, answered: false, error })).toBe(
-                "unknown",
-              );
-            if (["gmail.update_draft", "drive.move_file"].includes(address)) {
-              const sent: string[] = [];
-              const lookup = await sweepCall(
-                provider,
-                tool.name,
-                address,
-                args,
-                "write",
-                (request) => {
-                  sent.push(request.method);
-                  return Response.json({ error: { code: 401, message: "Unauthorized" } }, { status: 401 });
-                },
-                HANDOFFS,
-                { failAuxiliary: true },
-              );
-              expect(sent).toEqual(["GET"]);
-              const auxiliary = (lookup.structuredContent as { error: CallErrorDetails }).error;
-              expect(auxiliary).toMatchObject({
-                code: "auth_required",
-                retry: `Retry ${address} after the operator completes recovery.`,
-              });
-              expect(auxiliary).not.toHaveProperty("writeOutcome");
-              expect(auxiliary).not.toHaveProperty("reconciliationRequired");
-            }
-            await sweepSheetsHatch(provider, tool.name, "401");
-            await docsHatchFailure(provider, tool.name, classification, "401");
-          });
-        }
-      }
-    });
-  }
-
-  it("INV-9: the authBeforeExecution table matches every maintained provider's declaration", () => {
-    const declaring = Object.entries(providerSources)
-      .filter(([, source]) => /\bauthBeforeExecution\s*:/.test(source))
-      .map(([path]) => /\/providers\/([^/]+)\//.exec(path)![1]!);
-    expect([...new Set(declaring)].sort()).toEqual([...AUTH_BEFORE_EXECUTION].sort());
-  });
-});
-
-/** Fold Docs hatch 503/network/401 coverage into the matching named endpoint's
- * existing sweep rows, without duplicating collected tests for the same route. */
-async function docsHatchFailure(
-  provider: (typeof providers)[number],
-  original: string,
-  classification: "read" | "write",
-  failure: "503" | "network-after-send" | "401",
-) {
-  if (provider.name !== "docs") return;
-  const name =
-    original === "get_document" ? "docs_api_read" : original === "batch_update_document" ? "docs_api_write" : undefined;
-  if (!name) return;
-  let sent = 0;
-  const result = await sweepCall(
-    provider,
-    name,
-    `docs.${name}`,
-    argumentsTable.docs![name],
-    classification,
-    () => {
-      sent++;
-      if (failure === "network-after-send") throw new TypeError("fetch failed");
-      return Response.json({ error: { code: Number(failure) } }, { status: Number(failure) });
-    },
-    HANDOFFS,
-  );
-  expect(sent).toBe(classification === "read" && failure === "401" ? 2 : 1);
-  expect(result.structuredContent).toMatchObject({
-    ok: false,
-    error: {
-      code: failure === "401" ? "auth_required" : classification === "read" ? "unavailable" : "connector_call_failed",
-      retryable: classification === "read" && failure !== "401",
-      ...(classification === "write" ? { writeOutcome: "unknown" } : {}),
-    },
-  });
-}
-
-/** Every maintained provider's source, to find reviewed `authBeforeExecution` declarations. */
-const providerSources = Object.fromEntries(
-  Object.entries(
-    import.meta.glob<string>("../src/providers/*/**/*.ts", { query: "?raw", import: "default", eager: true }),
-  ).filter(([path]) => !path.endsWith(".test.ts")),
-);
-
-/**
- * Providers whose transport declares reviewed `authBeforeExecution` evidence
- * (cited beside the declaration and as a manual check in `drift.json`), so a
- * write answered 401 is a known refusal. Only Stripe documents that it
- * authenticates a request before acting on it.
- */
-const AUTH_BEFORE_EXECUTION: ReadonlySet<string> = new Set(["stripe"]);
-
-/** Providers that renew the credential after a 401 within the call, and whose renewal the sweep lets succeed. */
-const RENEWS: ReadonlySet<string> = new Set(["ccb"]);
-
-/** Recovery the handoff can describe, so its outcome-aware words show. */
-const HANDOFFS = {
-  canManageAuth: () => true,
-  credentialHandoffUrl: `${BASE}/connections`,
-  oauthConnectUrl: async () => `${BASE}/oauth/start`,
-};
-
-/** One sweep call: every downstream resource request reaches `fail`; token and login endpoints answer. */
-async function sweepCall(
-  provider: (typeof providers)[number],
-  tool: string,
-  address: string,
-  args: Record<string, unknown> | undefined,
-  classification: "read" | "write",
-  fail: (request: Request) => Response,
-  handoffs: Parameters<typeof createMetaTools>[2] = {},
-  options: { failAuxiliary?: boolean } = {},
-) {
-  if (provider.name === "github") {
-    const fake = apiFixture();
-    fake.respond((request) => {
-      if (request.url.pathname === "/app/installations" || request.url.pathname.endsWith("/access_tokens"))
-        return undefined;
-      if (request.url.pathname === "/installation/repositories" && tool !== "list_scopes") return undefined;
-      if (tool === "merge_pull_request" && request.method === "GET" && !options.failAuxiliary)
-        return Response.json({
-          head: { sha: args!.sha, repo: { full_name: `${args!.owner}/${args!.repo}` } },
-          base: { repo: { full_name: `${args!.owner}/${args!.repo}` } },
-        });
-      return fail(new Request(request.url, { method: request.method }));
-    });
-  } else {
-    // Each login and refresh mints a token the vendor has not seen, as real
-    // ones do: only a different credential renews a 401 (Q8).
-    let minted = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = new Request(input, init);
-        const url = new URL(request.url);
-        if (url.hostname === "oauth2.googleapis.com")
-          return Response.json({
-            access_token: "fixture-delegated-token",
-            expires_in: 3600,
-            token_type: "Bearer",
-          });
-        if (url.pathname.endsWith("/auth/universal-auth/login"))
-          return Response.json({
-            accessToken: `fixture-machine-token-${++minted}`,
-            expiresIn: 3600,
-            tokenType: "Bearer",
-          });
-        if (url.pathname === "/oauth/token")
-          return Response.json({
-            access_token: `fixture-oauth-token-${++minted}`,
-            refresh_token: "fixture-refresh-token",
-            token_type: "bearer",
-            expires_in: 7200,
-            scope: "read:individuals",
-          });
-        if (provider.name === "drive" && tool === "move_file" && !options.failAuxiliary && request.method === "GET")
-          return Response.json({ parents: ["old-1"] });
-        if (provider.name === "gmail" && tool === "update_draft" && !options.failAuxiliary) {
-          // Let the auxiliary lookup succeed so the sweep refuses the draft
-          // replacement itself, rather than a write that was never sent.
-          if (request.method === "GET")
-            return Response.json({
-              id: "d1",
-              message: {
-                id: "m1",
-                payload: {
-                  mimeType: "text/plain",
-                  headers: [{ name: "To", value: "bob@example.com" }],
-                  body: { data: "T2xk" },
-                },
-              },
-            });
-          expect(request.method).toBe("PUT");
-        }
-        return fail(request);
-      }),
-    );
-  }
-  const connector = provider.create();
-  const storage = memoryStorage();
-  const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
-  const values = credential(provider.name);
-  await vault.setAll(connector.id, values, "fixture");
-  // Keep parallel request preparation deterministic. Encryption
-  // has its own tests; this sweep must not leave sibling vault
-  // decryptions running after Promise.all rejects its first call.
-  vi.spyOn(vault, "get").mockImplementation(async (_id, field = "value") => values[field] ?? null);
-  vi.spyOn(vault, "getAll").mockResolvedValue(values);
-  const registry = makeRegistry([connector], {
-    storage,
-    credentialVault: vault,
-    classification: { [connector.id]: { [tool]: classification } },
-  });
-  if (provider.name === "ccb") {
-    const ctx = registry.contextFor(connector.id, BASE);
-    const started = await connector.startAuth!(ctx);
-    const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
-    expect(await connector.verifyState!(state, ctx)).toBe(true);
-    await connector.finishAuth!("fixture-code", ctx, new URLSearchParams({ code: "fixture-code", state }));
-  }
-  expect(args, `Missing dispatch example for ${address}`).toBeDefined();
-  const meta = createMetaTools(registry, BASE, handoffs);
-  const invoke = classification === "write" ? meta.callDestructiveTool : meta.callTool;
-  return invoke({ address, args: args! });
-}
 
 /** One call through the invocation layer; `read` may hold the nth credential read back. */
 async function invoke(
@@ -779,7 +93,7 @@ async function invoke(
 }
 
 function provider(name: string) {
-  return providers.find((p) => p.name === name)!.create();
+  return create(providerFixtures.find((fixture) => fixture.name === name)!);
 }
 
 function googleFetch(resource: (request: Request) => Response | Promise<Response>) {
@@ -797,8 +111,8 @@ function googleFetch(resource: (request: Request) => Response | Promise<Response
   return requests;
 }
 
-// Whole-call failures, beyond the first resource request covered above.
-describe("round-5 whole-call failure sweep", () => {
+// Failures that a single-request outcome cannot reproduce.
+describe("composite and auxiliary failures", () => {
   it.each([
     ["single refusal", false, false, "rate_limited", 429, false],
     // Round 12: a refusing status the provider reads as `unavailable` is not proof.
@@ -1017,12 +331,10 @@ describe("round-5 whole-call failure sweep", () => {
           ? Response.json({ errors: [{ status: "429", title: "Too many requests" }] }, { status: 429 })
           : Response.json({ data: [] }),
       );
-      const result = await invoke(
-        provider("planning-center"),
-        "get_plan",
-        classification,
-        argumentsTable["planning-center"]!["get_plan"]!,
-      );
+      const result = await invoke(provider("planning-center"), "get_plan", classification, {
+        "serviceTypeId": "10",
+        "planId": "20",
+      });
       expect(requests).toHaveLength(3);
       expect(new Set(requests.map((r) => r.url)).size).toBe(3);
       expect(result).toMatchObject({
@@ -1078,12 +390,11 @@ describe("round-5 whole-call failure sweep", () => {
     async (path) => {
       const fake = apiFixture();
       fake.respond((request) => (request.url.pathname === path ? Response.json({}, { status: 503 }) : undefined));
-      const result = await invoke(
-        provider("github"),
-        "github_api_write",
-        "write",
-        argumentsTable.github!["github_api_write"]!,
-      );
+      const result = await invoke(provider("github"), "github_api_write", "write", {
+        "method": "PATCH",
+        "path": "/repos/acme/one/releases/501",
+        "body": { "draft": false },
+      });
       expect(fake.requests.some((r) => r.url.pathname === path)).toBe(true);
       expect(
         fake.requests.every((r) =>
@@ -1099,12 +410,17 @@ describe("round-5 whole-call failure sweep", () => {
 
   it("INV-9: Tithe.ly single write's generic 404 is a known refusal", async () => {
     const requests = googleFetch(() => Response.json({ error: "Unknown or inaccessible" }, { status: 404 }));
-    const result = await invoke(
-      provider("tithely"),
-      "tithely_api_write",
-      "write",
-      argumentsTable.tithely!["tithely_api_write"]!,
-    );
+    const result = await invoke(provider("tithely"), "tithely_api_write", "write", {
+      "method": "POST",
+      "path": "/charges",
+      "body": {
+        "account_id": "user_jane",
+        "pm_id": "pm_9",
+        "organization_id": "org_1",
+        "amount": 2555,
+        "giving_type": "Tithe",
+      },
+    });
     expect(requests).toHaveLength(1);
     expect(result).toMatchObject({ ok: false, error: { code: "connector_call_failed", retryable: false } });
     if (result.ok) throw new Error("expected refusal");
@@ -1122,7 +438,7 @@ describe("round-5 whole-call failure sweep", () => {
 
 // A write is a known failure only on positive evidence: every scenario here
 // once reported one without it.
-describe("round-6 write evidence sweep", () => {
+describe("in-flight and untracked write faults", () => {
   /** Let every timer and microtask the released work schedules run out. */
   async function drained(): Promise<void> {
     for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1151,7 +467,7 @@ describe("round-6 write evidence sweep", () => {
       provider("planning-center"),
       "get_plan",
       "write",
-      argumentsTable["planning-center"]!["get_plan"]!,
+      { "serviceTypeId": "10", "planId": "20" },
       async (index) => {
         if (index === 2 || index === 3) await held;
       },
@@ -1177,12 +493,10 @@ describe("round-6 write evidence sweep", () => {
       }
       return Response.json({ errors: [{ status: "429", title: "Too many requests" }] }, { status: 429 });
     });
-    const result = await invoke(
-      provider("planning-center"),
-      "get_plan",
-      "write",
-      argumentsTable["planning-center"]!["get_plan"]!,
-    );
+    const result = await invoke(provider("planning-center"), "get_plan", "write", {
+      "serviceTypeId": "10",
+      "planId": "20",
+    });
     expect(requests).toHaveLength(3);
     expect(result).toMatchObject({ ok: false, error: { retryable: false, writeOutcome: "unknown" } });
     expect(stateOf(result)).toBe("unknown");

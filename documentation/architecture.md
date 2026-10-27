@@ -763,9 +763,9 @@ adoption, OAuth handoff ownership, single-use connect links, every downstream
 OAuth grant write and consent claim, the result stash, and initialization of the cursor signing key.
 
 Every key is built in `src/storage/keys.ts`, which lists each family with its
-scope, version, codec, and TTL policy; `test/storage-keys.node.test.ts` fails when
-two families overlap, another source file spells a prefix (constant concatenation
-folded), or a storage call passes a key holding literal text. Core hands
+scope, version, codec, and TTL policy. Deployed-consumer persistence journeys
+check actual owner isolation in the physical database; key probes retain NUL
+refusal. Core hands
 subsystems namespaced views: `conn:<id>:` per connector, `principal:<key>:` per
 personal registry, `results:` and `subject:<key>:` for result paging.
 
@@ -1356,8 +1356,10 @@ acknowledgement, then reconciles vendor state with exactly one physical send.
 `test/provider-privacy-journey.node.test.ts` checks credential echoes over HTTP.
 Focused provider suites retain MIME/draft restrictions, revision conflicts,
 CCB routing, Planning Center product exclusions and deployment pins. Native
-HTTP framing, cursor and request-lifetime fault probes remain in the HTTP suites;
-catalog copies and decoder/adapter parity matrices are retired under #1072.
+HTTP framing, cursor and request-lifetime fault probes remain in the HTTP suites.
+The catalog-wide status sweep and its argument roster, catalog/ranking copies
+and unused paging strategy tests are retired under #1072. Provider workflows
+belong in the existing shared outcomes; a new tool requires no failure-matrix row.
 No legacy REST tool adapter remains.
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
@@ -1672,21 +1674,74 @@ capture determinism. Production invariants remain unchanged.
 Use the existing stateful fixture vendors and published-edge deployment adapters:
 
 - `pnpm run eval:outcomes` drives representative joins, retained paging, endpoint
-  refusal, auth handoff, value safety and refund recovery. Graders inspect
+  refusal, auth handoff, value safety and recovery after committed refunds,
+  cancellations, DNS and environment updates, plus a single GitHub draft release
+  and Google document partial creation and shared-drive permissions. Graders inspect
   independent downstream state and the physical mutation ledger, and reject
   wrong targets, duplicate writes, missing completion and interrupted trials.
+  Every reference also rejects a fabricated correct answer without the work.
+  Promoted read journeys reject erased MCP data even with the vendor ledger intact.
 - `pnpm run eval:smoke` boots the Node template, Node eval deployments and native
-  Workers deployments, including the actual QuickBooks provider, then exercises
+  Workers deployments, including the actual QuickBooks and Granola providers, then exercises
   MCP and the operator page.
+- The shared `granola-workspace-journey` outcome uses actual provider reads,
+  independent fake meeting state and physical cursor/filter requests on both
+  Node/SQLite/QuickJS and native Workers/D1. It covers transcript-too-large
+  recovery, empty intermediate pages, selected fields, withheld photo/credential
+  values and shared-vault reuse after application reconstruction. No-op,
+  fabricated-read and erased-delivery controls must fail.
+- `test/identity-write-journey.node.test.ts` uses the existing Node deployment
+  adapter, stateful MCP fake, SQLite vault and QuickJS to grade admitted human
+  and machine identities, pool isolation, fail-closed discovery, endpoint and
+  connector policy, physical mutation counts, ambiguous-write reconciliation,
+  credential ownership and payload-free activity. Independent decoding checks
+  returned private values and credential echoes; positive record facts must
+  still arrive. An explicitly writable pool also exercises reopening a
+  read-only deployment without bypassing connector policy.
+- `test/cancellation-journey.node.test.ts` observes a queued client's departure
+  without another vendor send, and an active client's departure after the
+  vendor commits. The vendor must see its held response socket close before
+  releasing it; a later MCP read recovers the committed intent exactly once.
+  `test/cancellation-faults.test.ts` keeps signal-less token-resolution,
+  warmed-credential digest, stalled body-cleanup and abort/grant races on Node
+  and workerd. These replace the universal Promise-method/seam/owner matrix
+  and its enrollment self-test, plus migration-only runtime wrapper checks.
+- `test/browser/operator-flows.spec.ts` serves the actual operator shell and
+  routes over TCP with file-backed SQLite. Sign-in, Settings provenance, OAuth
+  connect/disconnect and credential save/test/replace/remove survive closing and
+  reopening the app, database and vault. An independent SQL connection reads
+  trigger counts: one save, one replacement, one removal, and no credential
+  writes from reads or a rejected replacement. A real SQL trigger failure leaves the old
+  credential usable after restart. MCP calls verify that those edits preserve
+  the reader pool's actual read access and write refusal. Activity renders
+  successful calls recorded before restart without either credential value.
+- The existing Node-template `eval:smoke` target constructs invalid config from
+  published imports before any I/O and reuses a stored token after restarting
+  the consumer process. Its Worker-fakes target saves a personal credential in
+  Chromium, refuses another owner's use, saves that owner's invalid credential,
+  then restarts workerd on the same D1 directory. Actual downstream records
+  remain readable only to the correct owner. Direct SQL inspection finds two
+  distinct durable encrypted rows and exactly one committed save for each.
+- Keep focused SQL batch/schema/retention rollback, clock-skew and absolute
+  expiry, NUL/UTF-8 and literal-prefix, cross-connection claims, cancellation,
+  corrupt-row and tracing-secrecy probes. Keep operator identity/slot fences,
+  deadlines, CSRF, restricted-view projection and sink secrecy probes. These
+  cover faults that a successful browser journey cannot reproduce. Retired
+  evidence includes the key-prefix source scanner, config expected-object
+  matrices, operator structure snapshots and native-composition sentinels.
 - `test/provider-privacy-journey.node.test.ts` sends credentials through real
   HTTP MCP and a maintained API provider. Unknown vendor fields and keys carry
   raw, escaped, percent-encoded, base64 and Basic echoes through direct calls,
   QuickJS programs, failure and recovery. The independent decoder in
   `test/helpers/secret-echoes.ts` checks the wire responses for secret fragments;
   it does not normalize them to placeholders or compare saved output.
-- `test/provider-failure-sweep.test.ts` checks retained catalog examples for
-  dispatched failure, classification, auxiliary and composite write outcomes.
-  New providers use the required deployment outcomes above. Existing
+- `test/provider-hostile-response.node.test.ts` reconciles real HTTP mutations
+  after HTML, malformed JSON and oversized acknowledgements with one physical
+  send. It distinguishes Stripe's reviewed pre-execution 401 refusal, and checks
+  read failure facts, secrecy and recovery through direct and QuickJS calls.
+  `test/provider-failure-sweep.test.ts` retains only concrete auxiliary, composite,
+  in-flight and untracked-call fault probes; no provider/tool argument roster or
+  catalog/finalizer agreement sweep remains. Existing
   `test/sent-secrets.test.ts`, `test/sent-secret-output-boundary.test.ts`,
   `test/request-secret-redaction.test.ts` and `test/catalog-secret-redaction.test.ts`
   cover secrecy before projection, truncation, caching, paging and diagnostics.
@@ -1695,10 +1750,23 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   Native transport parity, OAuth and write-provenance suites retain their
   workerd coverage. The shared throwaway RSA key in `test/fixtures/rsa.ts` is
   used by write-provenance and unknown-write-advice fixtures.
-- The request, catalog, auxiliary-call, renewal and Promise-boundary lifetime
+- The request, catalog, auxiliary-call and renewal lifetime
   suites, plus `test/auth-admission-binding.test.ts`, exercise cancellation,
   held native work and garbage collection. These test actual request ownership;
   the retired capture scheduler's source guards were only harness constraints.
+
+The remaining probes defend distinct reachable failures: auth admission and
+native scheduler ownership, grant/callback fencing and refresh coordination,
+SDK replay/redirect/SSE attempts, nested write provenance and refusal evidence,
+unawaited program drain and failed-program accounting, catalog drift and paging
+revocation, and hostile serializers, structural echoes, truncation and persisted
+pages. Broad scripted-executor policy/privacy cross-products and repeated
+post-401 result/error-shape tables are retired. Protocol claims link executable
+evidence files in `spec/coverage.json`; the invariant contracts above are defended
+by the actual behavior assertions in these journeys and focused probes.
+The required CI gate includes build/declarations, Node and Workers probes,
+outcomes, browser flows, installed consumers and Docker, audits and real Eve
+compatibility. Further contributor cleanup is tracked in #1072.
 
 Add a compact fault journey only for a meaningful outcome those suites cannot
 observe. Reuse their fixtures and adapters; do not reintroduce a snapshot
@@ -1822,9 +1890,9 @@ declarations; elsewhere it lives in an unexported function or in
 (`ConnectorCallError`, `ExecutorAdmissionError`, `CallAdmissionError`) because
 callers and tests check `instanceof`, `name`, and `message`.
 
-Effect callers skip the Promise and take the program: `admit` and
-`acquireScoped` for request admission (`src/runtime/admission.ts`), `admitCall`
-and `acquireCallScoped` for call admission, `closeScope` and `closeScopeOnExit`
+Effect callers skip the Promise and take the program: `admit` for executor
+admission (`src/runtime/admission.ts`), `admitCall` and `acquireCallScoped` for
+call admission, `closeScope` and `closeScopeOnExit`
 for a connector scope, `withDeadlineEffect` where Promise code has
 `withDeadline`. The build prunes every declaration no `exports` target reaches,
 and `pnpm run check:declarations` fails if what remains names an Effect type.
@@ -2044,8 +2112,8 @@ published storage interfaces.
 The synchronous state-file parser, validation, file read, and one atomic
 SQLite import remain native synchronous leaves because `importStateFile` is a
 published synchronous API. `openSqlite` retains file modes, WAL, busy timeout,
-and database ownership. `test/sql-effect-contract.ts` runs native-path,
-affected-row, 50-claim, cancellation, and tracing checks on SQLite and native
+and database ownership. `test/sql-effect-contract.ts` retains affected-row,
+50-claim, typed-failure, cancellation, and tracing probes on SQLite and native
 D1. `test/kv-to-d1.test.ts` also reuses stores across separate workerd requests;
 the existing SQL contracts prove rollback, database-clock TTL, encodings,
 activity upgrades, and copy recovery.
@@ -3026,7 +3094,8 @@ compiling and configuring the real thing.
   rejections are observed; dispatch and lease guards still contain detached
   work. Per-await I/O cancellation remains useful for releasing resources,
   while prompt refusal is enforced at the boundary
-  (`test/promise-boundary-lifetime.test.ts`). Invocation owns
+  (`test/cancellation-faults.test.ts`, `test/operation-cancellation.test.ts`
+  and `test/cancellation-journey.node.test.ts`). Invocation owns
   the recovery and logical-call records it reads after teardown. Closing an
   outer call also revokes nested calls paused in preparation. Request-owned
   MCP sessions and token flights outlive individual calls and close with the
@@ -3119,8 +3188,9 @@ compiling and configuring the real thing.
   at construction) and the predicate matched, which the ledger records on the
   request. Only Stripe declares it (`src/providers/stripe/api.ts`, reviewed
   as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
-  `Request-Id`. `test/provider-failure-sweep.test.ts` holds that list to the
-  sources. Q8 is decided in one place, `settleWrite` in
+  `Request-Id`. The real HTTP hostile-response journey checks this refusal
+  against an ambiguous committed write; there is no copied declaration list.
+  Q8 is decided in one place, `settleWrite` in
   `src/write-outcome.ts`, once per logical call and over every request it
   recorded. The invocation calls it for every failure of a served write: a
   thrown or mapped error, a custom connector's, a program's call, and its
@@ -3369,29 +3439,17 @@ compiling and configuring the real thing.
   `write_outcome_unknown`. The caller's own abort reason still passes by
   identity for a read and for a served call, whose timeout passes through
   unchanged for the invocation to report.
-  The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
-  provider/tool on Node, fails on missing provider/tool examples or a
-  dispatched failure bypassing the helper, and covers served write/read
-  overrides with HTTP 503 for every tool and a connection reset after send
-  for each provider/verdict representative. HTTP 401 recovery uses those
-  representatives plus the distinct composite, auxiliary, owner-lookup and
-  POST-as-read paths.
-  Shared sender and real-socket evidence below own status/reset permutations.
-  Local metadata
-  tools prove zero sends; composite calls prove each distinct request leaves
-  once. The round-5 cases additionally cover Docs creation with initial text,
-  composite success followed by refusal, GitHub preflight failures, typed
-  handler errors after successful sends, Forms cursor conflicts after 200,
-  generic-code vendor refusals, auxiliary failures after resource dispatch,
-  redaction of refusal errors, and concurrent direct-call ledger isolation.
-  The round-6 cases cover a composite write's early refusal while siblings
-  await credentials or are in flight, requests started after the call ended,
-  connect-phase errnos with each body kind (all unknown for a write, and a
-  direct read stays retryable), a request aborted with a refusal-shaped
-  reason, an errno outside fetch's network error, and
-  undeclared handlers whose untracked send precedes a typed failure. Each
-  catalog case also checks that the ledger recorded every resource request
-  the network saw, and the inventory that every API connector declares it.
+  Shared provider outcomes and the real HTTP hostile-response journey check
+  returned data, failure/recovery, privacy and physical writes without a
+  catalog-wide status matrix. `test/provider-failure-sweep.test.ts` retains
+  fault probes for Docs creation with initial text, composite success followed
+  by refusal, GitHub preflight failures, typed handler errors after successful
+  sends, Forms cursor conflicts after 200, generic-code vendor refusals,
+  auxiliary failures after resource dispatch and concurrent direct-call isolation.
+  It also holds siblings awaiting credentials or already in flight when another
+  write fails, refuses requests after call closure, and probes network errors,
+  refusal-shaped abort reasons and untracked sends. Native transport and
+  request-lifetime suites retain their platform-specific evidence.
   `test/write-evidence.test.ts` uses real refused, reset, and held sockets on
   both runtimes: a refused write is unknown and a refused read retryable,
   including a write aborted with another fetch's real refusal as its reason

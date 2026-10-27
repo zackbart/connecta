@@ -116,7 +116,7 @@ export const GITHUB_VERDICTS: HatchDeclaration["verdicts"] = {
   [MERGE]: "refuse",
   ...Object.fromEntries([...INTERNAL_READS].map((key) => [key, "refuse" as const])),
 };
-export const GITHUB_NAMED = {
+const GITHUB_NAMED = {
   [MERGE]: "merge_pull_request",
   "GET /installation/repositories": "list_scopes",
   "GET /search/repositories": "search_scoped",
@@ -124,7 +124,7 @@ export const GITHUB_NAMED = {
   "GET /search/code": "search_scoped",
 };
 const adapter = githubPage("https://api.github.com");
-export const GITHUB_PAGES: HatchDeclaration["pages"] = Object.fromEntries(
+const GITHUB_PAGES: HatchDeclaration["pages"] = Object.fromEntries(
   githubIndex.ops
     .filter((op) => {
       const key = `${op.method} ${op.path}`;

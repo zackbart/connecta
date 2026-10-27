@@ -14,7 +14,7 @@ import { connect, get, operations } from "../../http/vendor.js";
 
 const repository = { owner: Schema.String, repo: Schema.String };
 const success = Schema.Unknown;
-export const GitHubApi = indexedVendor("GitHub", githubIndex, [
+const GitHubApi = indexedVendor("GitHub", githubIndex, [
   get("repository", "/repos/:owner/:repo", { params: repository, success }),
 ]);
 

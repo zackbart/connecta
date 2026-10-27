@@ -1,5 +1,5 @@
-// Local-only fixture for test/d1-storage.node.test.ts. getPlatformProxy
-// reads this binding and serves it from an in-memory local D1; nothing here
+// Local-only fixture for the packed-consumer smoke. getPlatformProxy reads
+// this binding and serves it from an in-memory local D1; nothing here
 // names a real database or deploys anywhere.
 {
   "name": "connecta-d1-storage-fixture",

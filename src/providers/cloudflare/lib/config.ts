@@ -2,7 +2,7 @@
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
 
 /** The two key schemes Cloudflare's v4 API accepts. */
-export type CloudflareKeyAuth = "apiToken" | "globalApiKey";
+type CloudflareKeyAuth = "apiToken" | "globalApiKey";
 
 /** Accounts and zones a connector may touch; everything else is refused. */
 export interface CloudflarePin {
