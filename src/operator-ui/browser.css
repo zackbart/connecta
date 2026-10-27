@@ -4,7 +4,7 @@
  * file under styles/ owns one area of the single-page app, so a change to one
  * page touches one file.
  */
-@import "tailwindcss" source(none);
+@import "./styles/reset.css";
 @import "./tokens.css";
 @import "./page.css";
 @import "./styles/fonts.css";
@@ -18,8 +18,3 @@
 @import "./styles/tokens.css";
 @import "./styles/settings.css";
 @import "./styles/member.css";
-@theme inline {
-  --color-muted: var(--text-2);
-  --color-accent: var(--accent);
-  --font-sans: var(--sans);
-}

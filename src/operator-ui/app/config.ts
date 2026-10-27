@@ -50,7 +50,6 @@ interface ShellConfig {
   /** The mark beside the brand: connecta's drawn "C", the served SVG favicon, or none. */
   brandMark: "connecta" | "favicon" | "none";
   productDescription: string;
-  productOperatorLabel: string;
 }
 
 const config = JSON.parse(document.getElementById("operatorConfig")!.textContent!) as ShellConfig;

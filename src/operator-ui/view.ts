@@ -1,5 +1,5 @@
 import type { AgentSlot } from "./agents.js";
-import type { OperatorRole, OperatorUiContractV2 } from "./contract.js";
+import type { OperatorPage, OperatorRole, OperatorUiContractV2 } from "./contract.js";
 import type { FixPromptKind } from "./fix-prompts.js";
 import type { UiConnector, UiData, UiProblem } from "./model.js";
 
@@ -22,7 +22,7 @@ export function registrationPathLabel(path: NonNullable<UiConnector["registratio
   return REGISTRATION_LABELS[path];
 }
 
-export type OperatorPage = "overview" | "endpoints" | "settings" | "connector" | "tokens" | "connections" | "activity";
+export type { OperatorPage } from "./contract.js";
 
 /** Pages the nav lists, in dashboard order. */
 export const OPERATOR_PAGES: readonly OperatorPage[] = [

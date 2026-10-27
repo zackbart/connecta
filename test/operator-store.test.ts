@@ -59,7 +59,6 @@ const PAGE_CONSTANTS = {
   TITLE_SUFFIX: " · Connecta",
   PRODUCT_NAME: "Connecta",
   PRODUCT_DESCRIPTION: "One MCP endpoint.",
-  PRODUCT_OPERATOR_LABEL: "Connecta operator",
 };
 
 interface FakeSession {
@@ -167,7 +166,6 @@ async function loadStore(
     titleSuffix: PAGE_CONSTANTS.TITLE_SUFFIX,
     productName: PAGE_CONSTANTS.PRODUCT_NAME,
     productDescription: PAGE_CONSTANTS.PRODUCT_DESCRIPTION,
-    productOperatorLabel: PAGE_CONSTANTS.PRODUCT_OPERATOR_LABEL,
     TOKEN_KEY: "connecta:token",
   }));
   const store = await import("../src/operator-ui/app/store.js");

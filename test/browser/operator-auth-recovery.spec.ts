@@ -122,3 +122,22 @@ test("INV-4: retries a transient Access failure on /ui/data without reload", asy
   expect(reads.filter((p) => p === "/ui/data").length).toBeGreaterThan(1);
   await expect(page.locator("#gate")).toHaveCount(0);
 });
+
+test("INV-4 INV-9: explicit Access Retry recovers and navigation sends only reads", async ({ page }) => {
+  persistIdentityFailure = true;
+  await page.clock.install();
+  await open(page);
+  await expect(page.locator("#gate")).toContainText("Cloudflare Access identity is unavailable");
+  const document = page.url();
+  const documents = reads.filter((path) => path === "/connectors/oauth").length;
+  persistIdentityFailure = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
+  expect(page.url()).toBe(document);
+  expect(reads.filter((path) => path === "/connectors/oauth")).toHaveLength(documents);
+  expect(reads.some((path) => path.startsWith("/ui/oauth/"))).toBe(false);
+});
