@@ -719,6 +719,9 @@ try {
     join(generatedRoot, "src", "config-contract.ts"),
     [
       'import { createConnecta, customExecutor, defineConfig, type AdmittingExecutor, type Connecta, type ConnectaCallsConfig, type ConnectaConfig, type ConnectaConfigDescription, type ConnectaDiscoveryConfig, type ExecutorLease, type KVStorage } from "@zackbart/connecta";',
+      'import { operatorPageTitle, type OperatorPage } from "@zackbart/connecta/ui";',
+      'const pages: Record<OperatorPage, string> = { overview: "Overview", endpoints: "Endpoints", settings: "Settings", connector: "Connector", tokens: "Tokens", connections: "Connectors", activity: "Activity" };',
+      'for (const page of Object.keys(pages) as OperatorPage[]) operatorPageTitle(page, "Workspace");',
       'const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });',
       "const legacyStorage = { get: async (_key: string) => null, set: async (_key: string, _value: string, _options?: { ttlSeconds?: number }) => {}, delete: async (_key: string) => {}, list: async (_prefix: string) => [], compareAndSet: async (_key: string, _expected: string | null, _next: string | null, _options?: { ttlSeconds?: number }) => true };",
       "// @ts-expect-error legacy storage lacks explicit absolute-expiry support",

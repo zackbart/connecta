@@ -1,5 +1,4 @@
 import type { ComponentProps, ReactNode, RefObject } from "react";
-import { Slot } from "@radix-ui/react-slot";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { Icon } from "./icons.js";
@@ -11,16 +10,13 @@ export function Button({
   className,
   variant = "default",
   size,
-  asChild,
   ...props
 }: ComponentProps<"button"> & {
   variant?: "default" | "primary" | "quiet" | "danger";
   /** `sm` for actions inside a row or card; the default is a page action. */
   size?: "sm";
-  asChild?: boolean;
 }) {
-  const Component = asChild ? Slot : "button";
-  return <Component className={classes("btn", variant, size, className)} {...props} />;
+  return <button className={classes("btn", variant, size, className)} {...props} />;
 }
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={classes("input", className)} {...props} />;

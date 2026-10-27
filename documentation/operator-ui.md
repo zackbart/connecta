@@ -519,8 +519,9 @@ says the snapshot is for maintainers. It requires the UI module and the
 existing doctor authentication environment variables; it runs no diagnostic
 program, follows no redirects, and prints no raw HTTP failure body.
 
-The operator shell uses React, TanStack Router/Query/Table, Radix, cmdk and
-Tailwind v4. Hanken Grotesk, JetBrains Mono, CSS, JavaScript and dependency notices are hashed assets
+The operator shell uses React, TanStack Router, Radix and cmdk. Esbuild bundles
+the authored CSS with an explicit browser reset; it generates no utility classes.
+Hanken Grotesk, JetBrains Mono, CSS, JavaScript and dependency notices are hashed assets
 under `/ui/assets/*`, served identically with immutable cache headers on Node
 and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. Ahead of the stylesheet, every operator page (sign-in
@@ -537,7 +538,11 @@ private browsing: a read finds nothing stored and a write keeps nothing, so a
 bearer token is not remembered there. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
-owns authenticated reads and existing mutations. An Access-only shell selects
+owns authenticated reads and existing mutations, with explicit identity and
+read-cycle AbortControllers, revision fences, and no query cache or automatic
+mutation replay. Browser-only view models ship inside the hashed bundle, with
+no duplicate standalone server modules. The shared contract owns the unchanged
+`OperatorPage` union exported from `@zackbart/connecta/ui`. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated
 API responses establish the session. A gated Access session offers Retry.
 Focus, visibility, and timer-driven recovery share one admission-read schedule
@@ -661,3 +666,11 @@ serve the authenticated shell and data. The browser lives in
 and [browser flows](https://github.com/zackbart/connecta/blob/main/test/browser/operator-ui.spec.ts)
 defend filtering and behavior. Use [Operator UI tests](./operator-tests.md)
 for the browser state matrix and Linux snapshot procedure.
+
+The browser flows also hold configuration and connector reads open across a
+bearer identity switch, observe cancellation of the old HTTP response, and
+require only the replacement viewer's data after navigation. A held OAuth poll
+must abort on navigation without sending its start again; the Access recovery
+flow checks explicit Retry and browser-history navigation without a document
+reload. The packed deployment journey compiles every `OperatorPage` through
+the public `@zackbart/connecta/ui` alias after declaration pruning.

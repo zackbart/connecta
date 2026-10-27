@@ -3,22 +3,11 @@ import { basename, dirname, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { build, transform } from "esbuild";
-import { compile } from "@tailwindcss/node";
-import { Scanner } from "@tailwindcss/oxide";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const generatedPath = resolve(root, "src/operator-ui/generated.ts");
 const pageStylesPath = resolve(root, "src/page-styles.ts");
 const checkOnly = process.argv.includes("--check");
-const cssDirectory = resolve(root, "src/operator-ui");
-const compiler = await compile(await readFile(resolve(cssDirectory, "browser.css"), "utf8"), {
-  base: cssDirectory,
-  onDependency() {},
-});
-const scanner = new Scanner({
-  sources: [{ base: resolve(cssDirectory, "app"), pattern: "**/*.{ts,tsx}", negated: false }],
-});
-let css = compiler.build(scanner.scan());
 const fontPaths = {
   "@fontsource-variable/hanken-grotesk/files/hanken-grotesk-latin-wght-normal.woff2": fileURLToPath(
     import.meta.resolve("@fontsource-variable/hanken-grotesk/files/hanken-grotesk-latin-wght-normal.woff2"),
@@ -27,7 +16,6 @@ const fontPaths = {
     import.meta.resolve("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2"),
   ),
 };
-for (const [specifier, path] of Object.entries(fontPaths)) css = css.replace(specifier, path);
 const result = await build({
   absWorkingDir: root,
   bundle: true,
@@ -38,17 +26,16 @@ const result = await build({
     script: "src/operator-ui/app/main.tsx",
     // Blocking in <head>: applies the saved color scheme before first paint.
     scheme: "src/operator-ui/app/scheme-init.ts",
-    styles: "operator:styles",
+    styles: "src/operator-ui/browser.css",
   },
   plugins: [
     {
-      name: "operator-styles",
+      name: "operator-fonts",
       setup(context) {
-        context.onResolve({ filter: /^operator:styles$/ }, () => ({ path: "styles", namespace: "operator" }));
-        context.onLoad({ filter: /.*/, namespace: "operator" }, () => ({
-          contents: css,
-          loader: "css",
-          resolveDir: cssDirectory,
+        // Resolve CSS font URLs through their exact package exports before
+        // esbuild hashes and emits their unchanged bytes.
+        context.onResolve({ filter: /^@fontsource-variable\/.+\.woff2$/ }, ({ path }) => ({
+          path: fontPaths[path],
         }));
       },
     },
