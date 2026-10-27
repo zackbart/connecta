@@ -1,18 +1,18 @@
 # @zackbart/connecta-eve
 
 Connect an Eve agent to a Connecta agent pool and load its endpoint instructions
-at the start of each turn. The helper runs in the Eve app; the Connecta server
+once per turn. The helper runs in the Eve app; the Connecta server
 runs separately. No `@zackbart/connecta` dependency is installed by this package.
 
-Requires **Node 24+** and **Eve >=0.83.0 <0.84.0**. Development and consumer
-checks use real Eve 0.83.0. The range covers its patch line; newer minor releases
+Requires **Node 24+** and **Eve >=0.84.0 <0.85.0**. Development and consumer
+checks use real Eve 0.84.0. The range covers its patch line; newer minor releases
 need a compatibility check. Helper releases share Connecta's version and tag;
 choose the helper version matching your server release.
 
 ## Install and add two files
 
 ```sh
-npm install @zackbart/connecta-eve eve@0.83.0
+npm install @zackbart/connecta-eve eve@0.84.0
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -55,9 +55,9 @@ again for each request, so rotation requires no process restart. A `getToken`
 callback can return a string or a promise of one; it overrides the environment.
 No user's identity is forwarded.
 
-## Eve 0.83.0 dependency override
+## Eve 0.84.0 dependency override
 
-Eve 0.83.0 pins undici 8.10.2. Connecta's development/test override does not ship
+Eve 0.84.0 pins undici 8.10.2. Connecta's development/test override does not ship
 with this helper, so the Eve app must apply its own override to 8.12.3 before
 installing. For an npm app, add this to its `package.json`, then reinstall and
 commit the lockfile:
@@ -66,7 +66,7 @@ commit the lockfile:
 { "overrides": { "eve": { "undici": "8.12.3" } } }
 ```
 
-For a pnpm app, add `overrides: { "eve@0.83.0>undici": "8.12.3" }` to its
+For a pnpm app, add `overrides: { "eve@0.84.0>undici": "8.12.3" }` to its
 `pnpm-workspace.yaml`. Check the resolved dependency graph and audit the app.
 Remove this override after upgrading to an Eve release that pins a fixed version
 and validating compatibility. The server's optional undici 6.29.1 peer is a
@@ -79,7 +79,8 @@ read-only Connecta pool when the agent must never write. For an interactive
 agent, add `gateWrites: true` to the connection to request user approval before
 any tool whose `readOnlyHint` is not `true`, including writable `execute_code`.
 `gateConnectaWrites` exports that policy for composition. An explicit Eve
-`approval` policy takes precedence over `gateWrites`.
+`approval`, either a policy or an approval configuration, takes precedence over
+`gateWrites`.
 
 The gate uses the host's cached annotations. If a read becomes a write before
 dispatch, Connecta applies its current classification; a writable pool can
@@ -92,7 +93,9 @@ Instructions use `server/discover` (MCP 2026-07-28), falling back to legacy
 non-OK status or an unsupported-method response. Network errors and timeouts
 never trigger initialize. Both JSON and SSE replies are accepted. Each request
 has a five-second timeout. Successful guidance is cached for ten minutes per
-resolver; `ttlMs` overrides that duration. A failed refresh keeps the last copy,
+resolver; `ttlMs` overrides that duration. Eve evaluates instructions before
+every model call; the helper keeps one result per turn in Eve's memo, so a turn
+sees the same guidance throughout and at most one refresh. A failed refresh keeps the last copy,
 or adds nothing if no fetch has succeeded, and waits 30 seconds before retrying.
 Tools remain usable. Instructions do not grant access.
 
@@ -129,7 +132,7 @@ dependency on it and never switches credential types automatically.
 
 In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
-on Node 24. This boots real Eve 0.83.0 with a packed, installed helper against
+on Node 24. This boots real Eve 0.84.0 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
 meta, native, and native-plus-code surfaces. Native listings include two
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must

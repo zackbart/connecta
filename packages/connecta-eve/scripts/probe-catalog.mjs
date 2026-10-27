@@ -276,14 +276,19 @@ async function cell(consumer, count, surface) {
     }
     const guidance = connectaInstructions({ url, pool: "assistant", getToken: () => token });
     const guidanceStart = performance.now();
-    const instructions = await guidance.events["turn.started"](
-      {},
-      { model: null, session: { id: "probe", auth: { current: null, initiator: null } }, channel: {}, messages: [] },
-    );
+    const memos = new Map();
+    const memo = async (key, fn) => {
+      const memoKey = JSON.stringify(key);
+      if (!memos.has(memoKey))
+        memos.set(memoKey, await fn({ idempotencyKey: memoKey, abortSignal: new AbortController().signal }));
+      return memos.get(memoKey);
+    };
+    const evaluate = (id) => guidance.evaluate({ memo, turn: { id, status: "running", input: [] } });
+    const instructions = await evaluate("probe_1");
     assert.match(instructions.content, /Seeded CRM/);
     const guidanceMs = performance.now() - guidanceStart;
     const cachedStart = performance.now();
-    assert.deepEqual(await guidance.events["turn.started"]({}, {}), instructions);
+    assert.deepEqual(await evaluate("probe_2"), instructions);
     const cachedGuidanceMs = performance.now() - cachedStart;
     const discovery = [];
     if (surface === "meta") {
@@ -506,7 +511,7 @@ if (option("cell")) {
         private: true,
         type: "module",
         dependencies: {
-          eve: "0.83.0",
+          eve: "0.84.0",
           "@zackbart/connecta-eve": `file:${archive}`,
           "@zackbart/connecta": `file:${coreArchive}`,
           "quickjs-emscripten": "0.32.0",
@@ -515,7 +520,7 @@ if (option("cell")) {
     );
     await writeFile(
       join(work, "pnpm-workspace.yaml"),
-      'minimumReleaseAgeExclude:\n  - eve@0.83.0\noverrides:\n  "eve@0.83.0>undici": 8.12.3\n',
+      'minimumReleaseAgeExclude:\n  - eve@0.84.0\noverrides:\n  "eve@0.84.0>undici": 8.12.3\n',
     );
     run("pnpm", ["install", "--prefer-offline", "--ignore-scripts"], work);
     await writeFile(join(output, "consumer-pnpm-lock.yaml"), await readFile(join(work, "pnpm-lock.yaml")));
@@ -565,7 +570,7 @@ if (option("cell")) {
       dirty: run("git", ["status", "--porcelain"]).trim(),
       node: process.version,
       pnpm: run("pnpm", ["--version"]).trim(),
-      eve: "0.83.0",
+      eve: "0.84.0",
       helper: manifest.version,
       helperArchiveSha256: hash(await readFile(archive)),
       coreArchiveSha256: hash(await readFile(coreArchive)),

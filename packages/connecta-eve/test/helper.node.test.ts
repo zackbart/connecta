@@ -5,7 +5,13 @@ import { createServer } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import { always, type ApprovalContext } from "eve/tools/approval";
 import { type McpClientConnectionDefinition, defineMcpClientConnection } from "eve/connections";
-import { type DynamicInstructionsResult, type DynamicSentinel, defineDynamic } from "eve/instructions";
+import {
+  type DynamicContext,
+  type DynamicInstructionsResult,
+  type DynamicSentinel,
+  type Memo,
+  defineDynamic,
+} from "eve/instructions";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { api } from "../../../src/connectors/api.js";
@@ -23,17 +29,24 @@ const connectionIsAny: IsAny<ReturnType<typeof connectaConnection>> = false;
 const instructionsAreAny: IsAny<ReturnType<typeof connectaInstructions>> = false;
 void [connectionIsAny, instructionsAreAny];
 
-function turn(instructions: DynamicSentinel<DynamicInstructionsResult>) {
-  const handler = instructions.events["turn.started"];
-  if (!handler) throw new Error("Missing turn.started resolver");
-  return handler(
-    {},
-    { model: null, session: { id: "test", auth: { current: null, initiator: null } }, channel: {}, messages: [] },
-  );
+// Each call evaluates a new turn unless it names one. Like Eve's memo, kept
+// results survive for the same key and are recomputed for a new one.
+let turns = 0;
+const memos = new Map<string, unknown>();
+function turn(instructions: DynamicSentinel<DynamicInstructionsResult>, id = `turn_${++turns}`) {
+  const memo: Memo = async (key, fn) => {
+    const memoKey = JSON.stringify(key);
+    if (!memos.has(memoKey)) {
+      memos.set(memoKey, await fn({ idempotencyKey: memoKey, abortSignal: new AbortController().signal }));
+    }
+    return memos.get(memoKey) as never;
+  };
+  // The resolver reads only the turn and memo; the rest of the frame is irrelevant.
+  return instructions.evaluate({ memo, turn: { id, status: "running", input: [] } } as unknown as DynamicContext);
 }
 
-// The real Eve factory normalizes credentialOwner to principalType. Narrow
-// its public auth union without replacing Eve's types with ambient stand-ins.
+// Narrow the real Eve factory's public auth union without replacing Eve's
+// types with ambient stand-ins.
 function authOf(connection: McpClientConnectionDefinition) {
   const auth = connection.auth;
   if (!auth || typeof auth === "function" || !("getToken" in auth) || !auth.getToken) {
@@ -142,6 +155,31 @@ it("discovers instructions, falls back to initialize/SSE, caches successes and f
   expect(
     await turn(connectaInstructions({ url: "https://connecta.example.com", getToken: () => token, fetch: fetcher })),
   ).toBeNull();
+});
+
+it("keeps one result per turn across Eve's repeated evaluations", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  let fetches = 0;
+  let signal: AbortSignal | null | undefined;
+  const fetcher: typeof fetch = async (_url, init) => {
+    fetches++;
+    signal = init?.signal;
+    return Response.json({ result: { instructions: `Guidance ${fetches}` } });
+  };
+  const instructions = connectaInstructions({
+    url: "https://connecta.example.com",
+    getToken: () => "cta_agent",
+    fetch: fetcher,
+    ttlMs: 0,
+  });
+  expect(await turn(instructions, "turn_shared")).toMatchObject({ content: "Connecta guidance:\nGuidance 1" });
+  expect(signal).toBeInstanceOf(AbortSignal);
+  vi.setSystemTime(Date.now() + 1);
+  // A later model call in the same turn reuses the memo despite the expired cache.
+  expect(await turn(instructions, "turn_shared")).toMatchObject({ content: "Connecta guidance:\nGuidance 1" });
+  expect(fetches).toBe(1);
+  expect(await turn(instructions)).toMatchObject({ content: "Connecta guidance:\nGuidance 2" });
+  expect(fetches).toBe(2);
 });
 
 it.each(["network", "timeout"])(
