@@ -43,6 +43,25 @@ clock, UTC, en-US, locally hosted fonts, disabled animations, hidden carets,
 and a 1280 × 900 viewport. Narrow fixtures use 390 × 844. Every test waits for
 its state and fonts before capturing.
 
+## Loading and recovery probes
+
+`test/operator-contract-server.test.ts` counts physical legacy MCP initialize,
+initialized, SSE GET and tools/list requests: cached admission and summary perform
+none, then one detail per connector performs one session and complete listing.
+The suite also checks default v2 compatibility, the unchanged member projection,
+blocked custom connectors and bounded essential token-slot failure.
+`test/ui.test.ts` checks complete detail schemas and independent sibling scope cleanup.
+
+`test/oauth-stored-observation.test.ts` covers absent, disconnected, tokenless,
+sealed/unreadable and issuer-mismatched grants, owner isolation, both built-in
+connector paths and custom connectors. Storage spies require zero auth mutations,
+including migration and resealing. `test/operator-store.test.ts` counts scoped
+refresh/focus/mutation/poll requests, coalescing and bounded retries, and verifies
+stale admission blocks privileged reads, connection writes and token actions while
+retaining the snapshot. Late reads, role/identity changes and concurrent polls
+exercise publication fences. Browser recovery and flow suites use real routes to
+check a usable shell with a stalled connector, OAuth return and scoped Refresh.
+
 ## Page and state matrix
 
 Each row runs empty, loading, error, populated, and restricted-viewer fixtures

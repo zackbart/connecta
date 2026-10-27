@@ -155,6 +155,8 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
           ]
         : [];
     }) ?? [];
+  const pending = contract?.config?.connectors.filter((c) => !rows.some((row) => row.id === c.id)) ?? [];
+  const total = rows.length + pending.length;
   const attention = new Set(rows.filter((row) => verdictFor(row.id, row, health).action).map((row) => row.id));
   const q = query.trim().toLowerCase();
   const visible = rows.filter(
@@ -163,7 +165,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
       [row.id, row.title, row.status].some((value) => value.toLowerCase().includes(q)),
   );
   const filters = [
-    { value: "all", label: "All", count: rows.length },
+    { value: "all", label: "All", count: total },
     { value: "attention", label: "Needs attention", count: attention.size },
     { value: "healthy", label: "Healthy", count: rows.length - attention.size },
   ] as const;
@@ -176,7 +178,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
           </h1>
           {contract ? (
             <h2 id="connectorLedgerHeading" className="meta" tabIndex={-1}>
-              {rows.length} {rows.length === 1 ? "connector" : "connectors"}
+              {total} {total === 1 ? "connector" : "connectors"}
             </h2>
           ) : null}
         </div>
@@ -191,7 +193,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
         <ContractState state={state} />
       ) : (
         <section className="section" aria-labelledby="connectorLedgerHeading">
-          {rows.length ? (
+          {total ? (
             <div className="connector-toolbar">
               <SegmentedControl label="Show connectors" value={filter} options={filters} onChange={setFilter} />
               <Input
@@ -204,6 +206,18 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
                 aria-label="Filter connectors"
               />
             </div>
+          ) : null}
+          {filter === "all" && pending.length ? (
+            <ul className="connector-grid" aria-label="Loading connectors">
+              {pending
+                .filter((c) => `${c.id} ${c.title ?? ""}`.toLowerCase().includes(q))
+                .map((c) => (
+                  <li key={c.id} className="connector-card" aria-busy="true">
+                    <ConnectorLink id={c.id} name={c.title ?? c.id} />
+                    <p className="meta">Loading connection…</p>
+                  </li>
+                ))}
+            </ul>
           ) : null}
           {visible.length && view === "matrix" ? (
             <ConnectorMatrix
@@ -219,7 +233,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
                 <ConnectorCard key={row.id} row={row} steady={health} />
               ))}
             </ul>
-          ) : (
+          ) : pending.length ? null : (
             <StateBlock>{rows.length ? "No matches" : "No connectors."}</StateBlock>
           )}
         </section>

@@ -721,7 +721,7 @@ describe("the operator page's catalog", () => {
     ]);
     // Catalog metadata the operator loaded and the agent already sees.
     expect(tools[0]?.description).toBe(`Reads ${planted("ui-description")}`);
-    expect(body.replace(planted("ui-description"), "")).not.toMatch(ANY_PLANTED);
+    expect(body.replaceAll(planted("ui-description"), "")).not.toMatch(ANY_PLANTED);
   });
 });
 

@@ -391,6 +391,21 @@ activity and access-token routes answer 404, and owners are `null`. Every respon
 allowed. One shape serves both roles; a field a role does not receive is
 `null` or empty, never omitted.
 
+The browser uses `GET /ui/api/config?live=cached` for admission. For maintainers,
+this mode performs no downstream status or catalog probes. `live.connectors`
+contains only known observations, or `[]`; absence means unobserved, never healthy
+or failed. The default URL and published v2 type remain unchanged. Members receive
+their existing projection in either mode. Cached metadata reads have a 500 ms
+budget each and the entire metadata build has a five-second budget, below the
+browser's 15-second admission deadline. Essential token-slot failure still returns 503. Optional reads degrade conservatively. No downstream session spans requests.
+
+Cached matrix counts use credential vault metadata or a built-in OAuth stored-auth
+observation in each owner's partition. This boolean observation opens sealed grants
+and checks token presence, disconnect state and issuer binding, without refreshing,
+authorizing, migrating or writing auth. Unreadable grants and custom connectors
+without this capability contribute an unconfirmed count of zero. For example,
+`notes_alice` reporting zero connected people does not prove that nobody connected.
+
 The maintainer view carries:
 
 - `config`, the construction-time `describeConfig()` snapshot, including
@@ -507,6 +522,15 @@ exception: clearing a stored value that cannot be read is accepted although
 `manage` lists only `save` in that state. Public HTML shells and static assets carry no catalog data.
 Access-token management also requires an interactive session.
 
+`GET /ui/connectors/:id` returns the existing auth controls plus an optional typed
+`overlay`, all from the same status/catalog observation. The overlay contains
+complete classified tools with input/output schemas, registration path, catalog
+age, and activity-derived last-call facts under the reader's disclosure policy.
+A failed or timed-out connector releases its own scope; siblings finish independently.
+The browser publishes the detail and overlay atomically. Config observations never
+overwrite a completed detail row. Each connector opens at most one live observation
+per page load; the summary `/ui/data` performs no downstream probes.
+
 `GET /ui/api/config?connector=<id>` narrows the same contract to one connector
 before status and catalog probes. For a maintainer, config, provenance, live
 rows and matrix cells contain only that connector's facts; for a member,
@@ -545,52 +569,39 @@ no duplicate standalone server modules. The shared contract owns the unchanged
 `OperatorPage` union exported from `@zackbart/connecta/ui`. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated
 API responses establish the session. A gated Access session offers Retry.
-Focus, visibility, and timer-driven recovery share one admission-read schedule
-with at least two seconds between passive attempts. An admission read takes
-the contract first and, for a maintainer, then `/ui/data` and the connector
-details, which reuse that contract rather than read it again. An in-flight
-passive attempt coalesces returns until its admission read finishes, so slow
-successful reads can publish. Each admission read shares one 15-second
-deadline, including token acquisition, fetches and response bodies. This is an admission deadline, not a request
-lifetime limit: it releases the recovery guard and exposes Retry without aborting
-the pending read or invalidating its identity/revision fence. A late healthy
-response still publishes if that cycle is current. Passive timers and returns
-coalesce onto the pending cycle, including after its deadline; they never start
-duplicate summary, token, config, detail or body reads. The passive retry schedule
-stays bounded and does not reset its budget on a deadline. Retry remains available
-during recovery configuration loading and supersedes and aborts the old cycle;
-identity changes, navigation and connector-page unmount also cancel it. Navigation
-that cancels pending data schedules a bounded reread for the destination. A scoped OAuth poll publishes only its connector's detail and live row. It does
-not supersede a pending full admission or catalog/auth cycle, release its
-recovery guard, or clear its deadline. That full cycle still publishes other
-connectors as they settle and decides recovery, retaining the newer polled row
-even when its summary was pending or its deadline exposed Retry. Only a newer
-full cycle, mutation, identity change, or sign-out fences older work. Owed
-publication neither spends nor resets the failed-read retry budget and adds no
-timer. Failed reads retry after
-2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
-those four automatic retries, a focus return can request one more read after
-the eight-second backoff, without replenishing the automatic budget. Retry
-resets the budget with a 150 ms click debounce. Successful reads and explicit
-identity transitions also reset recovery. Identity changes
-cancel pending retries and fence out responses from the previous identity.
-Queued focus callbacks carry the same identity fence. Explicit sign-out
-suppresses passive reads until an intentional sign-in or a new Clerk session.
+Focus, visibility and timer-driven admission recovery share a schedule with at
+least two seconds between passive attempts. Admission reads the cached contract
+first, then `/ui/data` for maintainers. Token acquisition, fetches and response
+bodies share a 15-second deadline. Once admission succeeds, connector details
+have independent deadlines and cannot withdraw deployment-wide admission.
 
-Catalog and connector auth details share one revisioned refresh cycle. Each
-completed connector publishes its catalog facts and auth controls together,
-while a slow provider leaves other rows usable.
-Catalog refresh, connector refresh, and mutation follow-up reads update both
-consumers together. A later refresh or mutation invalidates an older cycle's publication fence
-without aborting its read, and a failed contract read clears its old snapshot;
-the next refresh then reads the contract before any connector detail. After an explicit OAuth
-start, visible tabs poll only that connector's read-only catalog and auth facts
-every two seconds for up to 30 seconds. The scoped result replaces only that
-connector's matching live row and auth controls. Success, a failed read or status,
-disconnect, navigation away from the connector, unmount, or identity reset ends
-polling and aborts its in-flight reads. The deadline also aborts a stalled read.
-A later focus return can request another status read. Recovery never starts OAuth
-or replays a mutation.
+A passive admission deadline retains the last maintainer snapshot with a stale
+notice. Admission validity is separate from snapshot presence: privileged reads,
+connection writes and token actions require valid admission. A scoped connector
+result cannot restore it. Queued reads withheld locally after admission expires
+are discarded without clearing the snapshot or showing sign-in. A late full
+admission may publish behind its original identity and revision fences. HTTP
+401/403 refusal, identity change and sign-out clear immediately;
+member failures still remove their actionable projection. Retry aborts the old
+admission cycle; navigation and identity transitions cancel its reads. Passive
+attempts coalesce even after the deadline. Automatic admission retries remain
+bounded at 2, 2, 4 and 8 seconds; a later focus return can try again after backoff.
+
+Connector Refresh, focus recovery and mutation follow-ups read only affected
+connectors. Focus probes unhealthy rows, never healthy siblings. All detail reads
+share a four-request limit and coalesce per connector. Failures retry only their
+connector with the same bounded backoff; recovery never replays a mutation.
+Mutations cancel affected reads and advance their publication fence both at
+dispatch and on settlement, including failure. Follow-ups require an observation
+started after settlement, so a Refresh or retry started during the write cannot
+supply its result. Newer publications also fence older results per connector,
+while identity and full refresh revisions fence the complete view. An explicit
+OAuth start polls only that connector every two seconds for up to 30 seconds.
+Concurrent authorizations retain independent cancellation and publication. Success,
+failed reads, disconnect, navigation, unmount and identity reset stop the matching
+poll. Recovery never starts authorization. A scoped result cannot confirm identity,
+role, token slots or any other deployment-wide admission fact.
+
 Unreadable credential metadata uses `configured: null`, including named fields,
 and renders as unavailable with a retry prompt. It does not claim that the slot
 is empty. Overview, Endpoints, Connectors, connector

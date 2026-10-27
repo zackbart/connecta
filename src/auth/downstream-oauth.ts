@@ -1098,6 +1098,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (client) this.addClientAuthentication = (headers, params) => authenticateRemoteClient(client, headers, params);
   }
 
+  /** Stored facts only: no migration, sealing writes, refresh or discovery. */
+  storedAuthorization(issuer?: string): Promise<boolean> {
+    return runEdge(authOwnMethod<boolean>(KvOAuthProvider.prototype, this, "storedAuthorization", [issuer]));
+  }
+
   get redirectUrl(): string {
     return this.redirectUri;
   }
@@ -1987,6 +1992,30 @@ export class KvOAuthProvider implements OAuthClientProvider {
         );
       },
       KvOAuthProvider.prototype.openGrant,
+    );
+    registerAuthMethod(
+      KvOAuthProvider.prototype,
+      "storedAuthorization",
+      function (this: KvOAuthProvider, issuer?: string) {
+        return authFlow<boolean>(
+          function* (this: KvOAuthProvider) {
+            const raw = (yield authStorage(this.storage, "get", [GRANT])) as string | null;
+            const grant = (yield authInvoke(this, "openGrant", [raw])) as Grant;
+            if (isDisconnectedEpoch(grant.epoch)) return false;
+            const body = grant.body;
+            const configured = issuer ?? this.clientOptions?.client?.issuer;
+            const discovered = body.discovery;
+            if (
+              !configured &&
+              (!discovered || discovered.authorizationServerMetadata?.issuer !== discovered.authorizationServerUrl)
+            )
+              return false;
+            const expected = configured ?? discoveryIssuer(discovered);
+            return Boolean(expected && body.issuer === expected && body.tokens?.access_token);
+          }.bind(this),
+        ).pipe(Effect.catch(() => Effect.succeed(false)));
+      },
+      KvOAuthProvider.prototype.storedAuthorization,
     );
     registerAuthMethod(
       KvOAuthProvider.prototype,

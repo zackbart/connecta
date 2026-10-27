@@ -1,3 +1,4 @@
+import { withStoredAuth } from "../auth/stored-observation.js";
 import { authorizationParamsFor } from "../auth/oauth-authorization-params.js";
 import { authView } from "../auth/native-call.js";
 import { authFlow, authCall, authInvoke, authValue, authMethod, authCatch } from "../auth/native.js";
@@ -4572,5 +4573,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         0,
       ),
     );
+  if (isOauth) withStoredAuth(connector, (ctx) => newProvider(ctx).storedAuthorization());
   return connector;
 }

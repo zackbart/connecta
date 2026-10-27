@@ -422,6 +422,8 @@ export interface OperatorState {
   data: UiData | null;
   /** Operator contract v2, for either role; null until `/ui/api/config` answers. */
   contract: OperatorUiContractV2 | null;
+  /** Last full admission still authorizes privileged requests. */
+  admissionValid: boolean;
   /**
    * The role the last good contract confirmed. It outlives a failed refresh
    * that clears `contract`, so the next answer with a different role is
@@ -483,13 +485,15 @@ export function displayRole(state: Pick<OperatorState, "contract" | "role" | "da
 }
 
 /**
- * A confirmed maintainer's page is mounted without a contract behind it: a
+ * A maintainer's snapshot stays mounted while admission is unconfirmed: a
  * refresh failed, or its read ran past the deadline. The shell shows one
  * recovery banner with Retry above whichever page is open, and that page is
  * stale until a contract confirms the role again.
  */
-export function contractRecovering(state: Pick<OperatorState, "contract" | "role" | "data">): boolean {
-  return !state.contract && displayRole(state) === "maintainer";
+export function contractRecovering(
+  state: Pick<OperatorState, "contract" | "role" | "data" | "admissionValid">,
+): boolean {
+  return (!state.contract || !state.admissionValid) && displayRole(state) === "maintainer";
 }
 
 /**
@@ -534,6 +538,7 @@ function identityScopedState() {
     recoveryPending: false,
     data: null,
     contract: null,
+    admissionValid: false,
     role: null,
     contractPhase: "idle" as LoadPhase,
     health: "loading" as const,

@@ -422,7 +422,7 @@ test("INV-4: Clerk sign-in admits a session before loading real operator data", 
   expect(deployment.requests).toContainEqual({ method: "GET", path: "/ui/data", authorization: `Bearer ${TOKEN}` });
   expect(deployment.requests).toContainEqual({
     method: "GET",
-    path: "/ui/api/config",
+    path: "/ui/api/config?live=cached",
     authorization: `Bearer ${TOKEN}`,
   });
   expect(deployment.clerkLoads).toHaveLength(2);
@@ -492,6 +492,8 @@ test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and ca
   expect(deployment.exchanges[0]!.get("code_verifier")).toBeTruthy();
   await expect(consentPage.locator("body")).not.toContainText(ACCESS_TOKEN);
 
+  const siblingReads = deployment.requests.filter((r) => r.path === "/ui/connectors/vaulted").length;
+  const admissionReads = deployment.requests.filter((r) => r.path.startsWith("/ui/api/config")).length;
   const reread = page.waitForResponse((response) => new URL(response.url()).pathname === "/ui/connectors/oauth");
   await consentPage.close();
   await page.bringToFront();
@@ -500,6 +502,9 @@ test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and ca
   const connected = await reread;
   const facts = await connected.json();
   expect(facts.status).toBe("ok");
+  expect(facts.overlay.status).toBe("ok");
+  expect(deployment.requests.filter((r) => r.path === "/ui/connectors/vaulted")).toHaveLength(siblingReads);
+  expect(deployment.requests.filter((r) => r.path.startsWith("/ui/api/config"))).toHaveLength(admissionReads);
   expect(JSON.stringify(facts)).not.toContain(ACCESS_TOKEN);
   expect(JSON.stringify(facts)).not.toContain(REFRESH_TOKEN);
   await expect(page.getByRole("button", { name: "Disconnect OAuth service", exact: true })).toBeVisible();

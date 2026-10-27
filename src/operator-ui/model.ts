@@ -70,6 +70,8 @@ interface UiCredential {
 }
 
 export interface UiConnector {
+  /** Complete catalog and status from this detail request, when supported. */
+  overlay?: OperatorConnectorOverlay;
   id: string;
   /** Downstream authentication owner. Older payload fixtures omit it as shared. */
   authScope?: "shared" | "personal";

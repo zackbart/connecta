@@ -112,7 +112,7 @@ async function openShell(page: Page, scheme = "light", clerk = false, crowded = 
         accessTokenManagement: "available" as const,
       }
     : fixture;
-  await page.route("**/ui/api/config", async (route) => route.fulfill({ json: await fixtureContract(served) }));
+  await page.route("**/ui/api/config*", async (route) => route.fulfill({ json: await fixtureContract(served) }));
   await page.route("**/ui/data", (route) =>
     route.fulfill({
       json: { ...served, connectors: served.connectors.map((c) => ({ ...c, status: "loading", toolCount: 0 })) },
