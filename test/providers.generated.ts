@@ -10,13 +10,14 @@ import { fixture as fixture6, createAuthored as authored6 } from "../src/provide
 import { fixture as fixture7, createAuthored as authored7 } from "../src/providers/gmail/fixtures.js";
 import { fixture as fixture8, createAuthored as authored8 } from "../src/providers/overflow/fixtures.js";
 import { fixture as fixture9, createAuthored as authored9 } from "../src/providers/planning-center/fixtures.js";
-import { fixture as fixture10, createAuthored as authored10 } from "../src/providers/sheets/fixtures.js";
-import { fixture as fixture11, createAuthored as authored11 } from "../src/providers/slides/fixtures.js";
-import { fixture as fixture12, createAuthored as authored12 } from "../src/providers/stripe/fixtures.js";
-import { fixture as fixture13, createAuthored as authored13 } from "../src/providers/tithely/fixtures.js";
-import { fixture as fixture14, createAuthored as authored14 } from "../src/providers/vercel/fixtures.js";
+import { fixture as fixture10, createAuthored as authored10 } from "../src/providers/quickbooks/fixtures.js";
+import { fixture as fixture11, createAuthored as authored11 } from "../src/providers/sheets/fixtures.js";
+import { fixture as fixture12, createAuthored as authored12 } from "../src/providers/slides/fixtures.js";
+import { fixture as fixture13, createAuthored as authored13 } from "../src/providers/stripe/fixtures.js";
+import { fixture as fixture14, createAuthored as authored14 } from "../src/providers/tithely/fixtures.js";
+import { fixture as fixture15, createAuthored as authored15 } from "../src/providers/vercel/fixtures.js";
 
-export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14];
+export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15];
 
 export const providerKinds: Readonly<Record<string, string>> = {
   "breeze": "api",
@@ -29,6 +30,7 @@ export const providerKinds: Readonly<Record<string, string>> = {
   "gmail": "api",
   "overflow": "api",
   "planning-center": "api",
+  "quickbooks": "api",
   "sheets": "api",
   "slides": "api",
   "stripe": "api",
@@ -47,9 +49,10 @@ export const authoredFixtures: Readonly<Record<string, (() => Pick<Connector, "l
   "gmail": authored7,
   "overflow": authored8,
   "planning-center": authored9,
-  "sheets": authored10,
-  "slides": authored11,
-  "stripe": authored12,
-  "tithely": authored13,
-  "vercel": authored14,
+  "quickbooks": authored10,
+  "sheets": authored11,
+  "slides": authored12,
+  "stripe": authored13,
+  "tithely": authored14,
+  "vercel": authored15,
 };

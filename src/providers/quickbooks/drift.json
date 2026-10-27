@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "provider": "quickbooks",
+  "generated": {
+    "operations": [
+      "GET /account/{id}",
+      "GET /bill/{id}",
+      "GET /billpayment/{id}",
+      "GET /companyinfo/{id}",
+      "GET /customer/{id}",
+      "GET /invoice/{id}",
+      "GET /item/{id}",
+      "GET /payment/{id}",
+      "GET /query",
+      "GET /reports/AgedPayables",
+      "GET /reports/AgedReceivables",
+      "GET /reports/BalanceSheet",
+      "GET /reports/CashFlow",
+      "GET /reports/ProfitAndLoss",
+      "GET /vendor/{id}"
+    ],
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "type": "manual",
+      "source": "https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/account",
+      "reason": "No verified official REST OpenAPI document is available. Compare the reviewed entity read/query and report request contracts against Intuit's current Accounting API reference and official Postman collection; the Java SDK XSD is a data model, not a REST contract. Per-operation digests remain unrecorded until a supported official contract source is available.",
+      "lastVerified": "2026-10-26"
+    },
+    {
+      "type": "manual",
+      "source": "https://developer.intuit.com/.well-known/openid_configuration",
+      "reason": "Compare the authorization/token endpoints and Intuit's OAuth policy with the fixed deployment-owned app configuration. Confirm one-hour access tokens, rolling 100-day refresh validity and absolute five-year reauthorization, minor-version policy and modern report semantics against the primary sources recorded in evidence/review.md; discovery does not describe those policies.",
+      "lastVerified": "2026-10-26"
+    }
+  ]
+}

@@ -24,7 +24,13 @@ See AGENTS.md Verification.
 
 ## Which rules apply
 
-- **A new provider** meets the whole standard from its first commit. It never
+- **A new provider** supplies compact executable provider outcomes through the
+  published deployment adapters, required by `eval:outcomes` and `eval:smoke`.
+  Grade independent fake state, physical requests, final answers, identity and
+  secrecy; prove no-op and fabricated answers fail. Exercise Node and native
+  Workers where applicable. Under #1072 new providers do not add characterization
+  goldens or an exemption roster.
+  It meets the provider standard from its first commit. It never
   joins `PENDING`; the suite fails an off-standard new folder, and
   `providers:generate` refuses one that breaks D or G.
   Use `defineApiProvider` from `src/http/provider.ts` for a new API

@@ -90,6 +90,10 @@ export interface ApiOAuthConfig {
   authorizationEndpoint: string;
   /** Where codes are exchanged and refresh tokens redeemed. Absolute https URL. */
   tokenEndpoint: string;
+  /** Trusted RFC 7009 endpoint; disconnect removes the local grant then attempts revocation once. */
+  revocationEndpoint?: string;
+  /** Revocation body encoding, default form. JSON omits the RFC 7009 token_type_hint. */
+  revocationRequestFormat?: "form" | "json";
   /** The client id the provider issued for this deployment. */
   clientId: string;
   /**
@@ -258,6 +262,8 @@ export const API_OPTIONS = optionsOf<ApiOptions>()({
       "scope",
       "pkce",
       "apiOrigins",
+      "revocationEndpoint",
+      "revocationRequestFormat",
     ),
     authorizationParams: strings(),
     expectedCallbackParameters: strings(),

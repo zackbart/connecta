@@ -157,7 +157,8 @@ async function providerInventory(source, providers) {
           : "Upstream OpenAPI";
       provenance = `${link(kind, pin)}.`;
     } else {
-      provenance = `Hand-authored endpoint contracts; ${specifications.map((record) => link("upstream endpoint checks", record)).join(", ")}. No vendored OpenAPI document.`;
+      const checks = specifications.map((record) => link("upstream endpoint checks", record)).join(", ");
+      provenance = `Hand-authored endpoint contracts${checks ? `; ${checks}` : ""}. No vendored OpenAPI document.`;
     }
     for (const specification of specifications) {
       if (!specification.pin || specification.pin === pin?.discovery?.pin) continue;
