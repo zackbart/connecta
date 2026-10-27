@@ -425,8 +425,8 @@ async function cell(consumer, count, surface) {
     const streamed = (async () => {
       for await (const event of created.delivery.stream({ signal })) events.push(event);
     })();
-    const result = await created.delivery.result({ signal });
-    await streamed;
+    // Await both together so a failed stream read cannot reject unhandled.
+    const [result] = await Promise.all([created.delivery.result({ signal }), streamed]);
     const eveTurnMs = performance.now() - eveStart;
     await save(`${surface}-${count}-attempt.json`, {
       modelRequests,
