@@ -13,10 +13,12 @@ interface Env {
   PUBLIC_URL: string;
   CREDENTIAL_ENCRYPTION_KEY: string;
   QUICKBOOKS_URL: string;
+  QUICKBOOKS_WRITES: string;
 }
 let connecta: ReturnType<typeof createConnecta> | undefined;
 let token: string | undefined;
 let installed = false;
+let endpointReadOnly = false;
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (!installed) {
@@ -29,6 +31,7 @@ export default {
     ).token;
     // Local-only process controls; not a product route or configuration option.
     if (new URL(request.url).pathname === "/__eval/restart") {
+      endpointReadOnly = new URL(request.url).searchParams.get("readOnly") === "true";
       await connecta?.close();
       connecta = undefined;
       return new Response(null, { status: 204 });
@@ -36,17 +39,17 @@ export default {
     if (new URL(request.url).pathname === "/__eval/token") return Response.json({ token });
     connecta ??= createConnecta({
       publicUrl: env.PUBLIC_URL,
-      readOnly: false,
+      readOnly: endpointReadOnly,
       storage,
       agents: ["eval-machine"],
       accessTokens: accessTokens(storage),
       auth: quickbooksAuth,
       maintainers: ["alice", "bob"],
-      pools: quickbooksPools,
+      pools: quickbooksPools(env.QUICKBOOKS_WRITES === "true"),
       executor: workerExecutor({ loader: env.LOADER }),
       ui: operatorUi(),
       vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
-      connectors: quickbooksConnectors(),
+      connectors: quickbooksConnectors(env.QUICKBOOKS_WRITES === "true"),
     });
     return connecta.fetch(request, env, ctx);
   },

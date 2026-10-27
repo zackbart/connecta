@@ -16,7 +16,7 @@ stored agent tokens): a two-source join with one post, retained-result
 paging, one Stripe refund, reconciliation after a committed refund answered
 HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
 a secret rotation that never reads a value, and the QuickBooks accounting
-journey. Provider journeys also cover
+and named-write journeys. Provider journeys also cover
 CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
 write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal,
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
@@ -68,11 +68,29 @@ access token while Bob keeps working. Accounting evidence
 includes exact lookahead pages, customer joins, nested report rows and empty
 cells, plus named/hatch/fields secrecy while retaining public SyncToken.
 Hostile paths, raw SQL and unreviewed writes must send no vendor request.
-Compact provider fault probes reject null/malformed report rows and nonempty
-metadata-only queries while preserving valid empty results and blank amounts.
-The reference and no-op are required outcomes; a correct-looking dossier with
-its physical read ledger removed must fail. No vendor account or model is used.
-For a focused run use `pnpm run eval:outcomes --tasks quickbooks-accounting-journey`
+The separate `quickbooks-write-journey` opts into the three named writes while
+preserving the original read-only task. Both QuickBooks smoke targets also run
+this compact journey. A stateful vendor commits customer names, arbitrates two
+concurrent sparse updates against a caller-read SyncToken (one winner, one
+5010 conflict), and computes invoice tax and rounding from fixture settings.
+The grader checks exact requestid/body/company, committed state, preserved
+omitted names, public versions, privacy and one physical POST per intent.
+Invoices must carry NotSet, disabled payment flags, no email fields and no
+/send request, even with vendor autosend opt-in and stored customer contact.
+401, broken response transport, HTTP 500 and malformed success responses must
+remain nonretryable unknown outcomes. Actual customer/invoice reads reconcile
+committed failures and contradictory 200 replies without another creation.
+Returned services may be reordered and include vendor-computed subtotal rows.
+With concurrency one, a one-call budget permits only the company preflight
+GET; a four-call budget permits the complete three-read/one-POST invoice.
+Default/explicit connector
+read-only, endpoint/pool policy, arbitrary writes, malformed inputs and failed
+US-company/customer-currency/active-Service preflights cannot dispatch a write.
+The default outcome gate includes no-op, fabricated-state, absent-dispatch and
+duplicate-dispatch controls. Compact provider fault probes retain construction
+and malformed-envelope cases. No vendor account or model is used.
+For a focused run use
+`pnpm run eval:outcomes --tasks quickbooks-accounting-journey,quickbooks-write-journey`
 and `pnpm run eval:smoke --targets node-quickbooks,worker-quickbooks`.
 These executable outcomes replace a universal requirement for new provider
 characterization goldens under #1072; existing fixtures remain internally checked.

@@ -53,7 +53,7 @@ export interface Deployment {
   /** The operator saving a credential in the connection page. */
   openConnect(url: string): Promise<void>;
   setCredential(connectorId: string, value: string): Promise<void>;
-  restart?(): Promise<void>;
+  restart?(readOnly?: boolean): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -68,7 +68,8 @@ export async function startNodeDeployment(
   oauth?: FakeOAuth,
   surface: Surface = "six",
 ): Promise<Deployment> {
-  const { pool: selected, pools: taskPools, ...passthrough } = extra;
+  const { pool: selected, pools: taskPools, quickbooksWrites, ...passthrough } = extra;
+  let endpointReadOnly = false;
   // Plain /mcp serves maintainers only and an agent is never one (#837): the
   // agent token reaches every connector at the `eval` pool's /agent endpoint.
   const ids = [...(oauth ? ["oauth"] : []), ...connectors.map((spec) => spec.id)];
@@ -121,7 +122,7 @@ export async function startNodeDeployment(
     if (qb) restoreFetch = interceptQuickBooks(qb.url);
     const build = () =>
       createConnecta({
-        readOnly: false,
+        readOnly: endpointReadOnly,
         storage,
         agents: ["eval-machine"],
         accessTokens: accessTokens(storage),
@@ -205,8 +206,8 @@ export async function startNodeDeployment(
           ? {
               auth: quickbooksAuth,
               maintainers: ["alice", "bob"],
-              pools: quickbooksPools,
-              connectors: quickbooksConnectors(),
+              pools: quickbooksPools(quickbooksWrites === true),
+              connectors: quickbooksConnectors(quickbooksWrites === true),
             }
           : {}),
         ...(passthrough as Partial<Parameters<typeof createConnecta>[0]>),
@@ -251,7 +252,8 @@ export async function startNodeDeployment(
       },
       ...(qb
         ? {
-            restart: async () => {
+            restart: async (readOnly?: boolean) => {
+              endpointReadOnly = readOnly ?? endpointReadOnly;
               await connecta!.close();
               previousPrograms.push(...observed.programs);
               observed = cleanupExecutor = observedExecutor(surface);
