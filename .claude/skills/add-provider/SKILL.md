@@ -14,13 +14,9 @@ proposed) designs the Effect provider kit that `api` providers are built on.
 
 `test/provider-standard.node.test.ts` enforces L, E, D, G and S on every
 provider folder, and `test/provider-conventions.test.ts` applies S on Node.
-`PENDING` in `test/provider-standard.ts` lists providers that have not landed
-step 1 or step 2. Names leave it and `test/provider-pending-baseline.json` together;
-none join either. CI's static job compares each baseline step with the PR base
-(the pre-push SHA on main; HEAD's first parent on nightly/manual runs), rejecting added or
-reinserted names even if both files change. Removals remain allowed; missing
-history or an unreadable baseline fails. No `CONNECTA_STANDARD_BASE` is needed.
-See AGENTS.md Verification.
+Every maintained provider has completed both migration steps. The generator
+and provider suites enforce the current layout, evidence, drift, guide and
+surface contracts. See AGENTS.md Verification.
 
 ## Which rules apply
 
@@ -592,7 +588,7 @@ behavior; `pnpm run eval:outcomes` checks representative real workflows.
 not enroll suites in workerd. Mixed suites tag native cases `workers` and broad
 logic cases `node`; Node runs both. Add native coverage when behavior depends
 on platform-specific fetch, streams, Web Crypto, request lifetimes or bytes.
-Cite applicable `INV-n` IDs in meaningful test titles.
+Use relevant `INV-n` citations to explain the contract a focused probe defends.
 
 `pnpm run providers:check` reads public API contracts only. Parser failures are
 provider-local findings; report them alongside API drift and standing manual

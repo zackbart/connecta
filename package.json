@@ -195,7 +195,7 @@
     "preeval:outcomes": "node scripts/generate-version.mjs && pnpm run build:operator-ui",
     "eval:perf": "tsx eval/run-perf.ts",
     "eval:report": "tsx eval/report.ts",
-    "check:static": "node --test scripts/check-provider-exemptions.test.mjs && pnpm run format:check && pnpm run check:providers-generated && pnpm run check:docs && pnpm run check:changes && pnpm run check:operator-ui && pnpm run check:clerk-sdk && pnpm run check:lint && pnpm run check:unused && pnpm run typecheck",
+    "check:static": "pnpm run format:check && pnpm run check:providers-generated && pnpm run check:docs && pnpm run check:changes && pnpm run check:operator-ui && pnpm run check:clerk-sdk && pnpm run check:lint && pnpm run check:unused && pnpm run typecheck",
     "check:build": "pnpm run build && pnpm run check:declarations && pnpm run check:bundle",
     "check:fast": "pnpm run check:static && vitest run --config vitest.config.node.ts --changed origin/main --passWithNoTests",
     "check": "pnpm run check:static && pnpm run test && pnpm run check:build",

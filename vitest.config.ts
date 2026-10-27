@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { build, buildSync, type Plugin } from "esbuild";
 
@@ -205,7 +204,6 @@ const bindingName = (key: string) => `AUTH_ADMISSION_${key.toUpperCase().replace
 
 export default defineConfig({
   test: {
-    reporters: ["default", new CoverageReporter()],
     projects: [
       {
         // The deployment shapes are consumer projects: they import the package
@@ -239,6 +237,7 @@ export default defineConfig({
         },
         test: {
           name: "node",
+          allowOnly: false,
           tags: [{ name: "node" }, { name: "workers" }],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
@@ -312,6 +311,7 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
+          allowOnly: false,
           tags: [{ name: "node", skip: true }, { name: "workers" }],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",

@@ -1,5 +1,5 @@
 // Node-only: reads the MCP coverage record from the checkout.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const coverage = JSON.parse(readFileSync(new URL("../spec/coverage.json", import.meta.url), "utf8")) as {
@@ -11,7 +11,7 @@ const coverage = JSON.parse(readFileSync(new URL("../spec/coverage.json", import
     notes: string;
     issue?: string;
     decision?: string;
-    tests?: Array<{ file: string; title: string }>;
+    evidence?: string[];
   }>;
 };
 
@@ -66,22 +66,21 @@ describe("MCP specification coverage", () => {
     expect(coverage.features.map(({ id }) => id).sort()).toEqual([...FEATURES].sort());
   });
 
-  it("requires test evidence for implemented claims and decision references for future choices", () => {
+  it("links executable evidence for implemented claims and decisions for future choices", () => {
     for (const feature of coverage.features) {
       expect(["supported", "partial", "planned", "declined"], feature.id).toContain(feature.status);
       expect(feature.spec, feature.id).toMatch(/^https:\/\/modelcontextprotocol\.io\//);
       expect(feature.notes.trim().length, feature.id).toBeGreaterThan(0);
       if (["supported", "partial"].includes(feature.status)) {
-        expect(feature.tests?.length ?? 0, feature.id).toBeGreaterThan(0);
+        expect(feature.evidence?.length ?? 0, feature.id).toBeGreaterThan(0);
       } else {
         expect(feature.issue ?? feature.decision, feature.id).toMatch(
           /^https:\/\/github\.com\/zackbart\/connecta\/(?:issues|pull)\/\d+(?:#.*)?$/,
         );
       }
-      // The end-of-run reporter checks these against passing runner cases.
-      for (const reference of feature.tests ?? []) {
-        expect(reference.file, feature.id).toMatch(/^test\/.*\.test\.ts$/);
-        expect(reference.title.trim().length, feature.id).toBeGreaterThan(0);
+      for (const file of feature.evidence ?? []) {
+        expect(file, feature.id).toMatch(/^(?:test|eval|src\/providers)\/.+\.(?:ts|mjs)$/);
+        expect(existsSync(new URL(`../${file}`, import.meta.url)), `${feature.id}: ${file}`).toBe(true);
       }
     }
   });

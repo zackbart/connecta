@@ -1761,12 +1761,12 @@ SDK replay/redirect/SSE attempts, nested write provenance and refusal evidence,
 unawaited program drain and failed-program accounting, catalog drift and paging
 revocation, and hostile serializers, structural echoes, truncation and persisted
 pages. Broad scripted-executor policy/privacy cross-products and repeated
-post-401 result/error-shape tables are retired. Provider/HTTP cleanup, lower-layer
-operator/config/storage replacement, and INV/spec title evidence and CI
-simplification remain separate #1072 checklist items. This change keeps their
-remaining enforcement and the existing outcome graders. It also removes the
-unused internal scoped-admission helper and write-outcome re-export whose only
-consumers were retired tests; runtime and public API behavior are unchanged.
+post-401 result/error-shape tables are retired. Protocol claims link executable
+evidence files in `spec/coverage.json`; the invariant contracts above are defended
+by the actual behavior assertions in these journeys and focused probes.
+The required CI gate includes build/declarations, Node and Workers probes,
+outcomes, browser flows, installed consumers and Docker, audits and real Eve
+compatibility. Further contributor cleanup is tracked in #1072.
 
 Add a compact fault journey only for a meaningful outcome those suites cannot
 observe. Reuse their fixtures and adapters; do not reintroduce a snapshot

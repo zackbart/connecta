@@ -36,8 +36,9 @@ Static bearer secrets are retired.
 
 ## Invariants
 
-Each ID must appear in at least one passing Vitest test title under `test/` or `src/providers/<name>/`.
-The full Node run checks the executed test tree, including runtime skips.
+Defend these contracts through stateful outcome journeys and focused native
+fault probes. The [contributor behavioral evidence map](./documentation/architecture.md#behavioral-evidence-contributor)
+links the executable checks.
 
 - **INV-1: Fail-closed classification.** A runtime-discovered tool is a read exactly when
   `readOnlyHint === true` and `destructiveHint !== true`; otherwise it is a write.
