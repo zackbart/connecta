@@ -5,82 +5,24 @@ import { build, buildSync, type Plugin } from "esbuild";
 
 const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"];
 
-// Enroll suites that need Workers bindings/the Worker executor or exercise
-// workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
-// Pure logic runs only on Node; never list a *.node.test.ts suite.
+// workerd runs only suites that need real Workers bindings or isolates: D1,
+// KV, the Worker Loader executor, and service-bound Workers. Every other
+// suite runs once, on Node. Never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
-  // Granola bearer confinement, redirects, response bytes and signed continuation behavior.
-  "src/providers/granola/provider.test.ts",
-  // Native UTF-8/Web Crypto content identity across physical index formats.
-  "test/compact-index.test.ts",
   "test/storage-sql-d1.test.ts",
-  // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
-  // service-bound Workers. These skip or fail outside workerd.
-  "test/auth-admission-binding.test.ts",
-  "test/auth-admission-live.test.ts",
-  "test/auth-admission-workerd.test.ts",
+  "test/kv-to-d1.test.ts",
   "test/catalog-cache.test.ts",
-  "test/clerk-organization-workerd.test.ts",
-  "test/codemode-compat.test.ts",
+  "test/usage-guide.test.ts",
   "test/executor-native.test.ts",
   "test/executor-requests.test.ts",
   "test/guest-api-contract.test.ts",
-  "test/kv-to-d1.test.ts",
-  "test/usage-guide.test.ts",
-  // workerd's own fetch, stream, timer and unhandled-rejection behaviour,
-  // through real sockets and the MCP SDK edges.
-  "test/call-services.test.ts",
-  "test/guarded-transport-parity.test.ts",
-  "test/oauth-grant-parity.test.ts",
-  "test/auth-native.test.ts",
-  "test/auth-metadata-challenge.test.ts",
-  "test/call-revocation.test.ts",
-  "test/call-auxiliary-lifetime.test.ts",
-  "test/call-renewal-lifetime.test.ts",
-  "test/oauth-preparation-lifetime.test.ts",
-  "test/cancellation-faults.test.ts",
-  "test/operation-cancellation.test.ts",
-  "test/remote-mcp-renewal-lifetime.test.ts",
-  "test/direct-write-finalizer.test.ts",
-  "test/mcp-core.test.ts",
-  "test/upward-native.test.ts",
-  "test/skills-extension.test.ts",
-  "test/oauth-refresh-http.test.ts",
-  "test/oauth-authorization-params.test.ts",
-  "test/write-unauthorized-oauth.test.ts",
-  "test/remote-mcp.test.ts",
-  "test/remote-mcp-native.test.ts",
-  "test/remote-mcp-skills.test.ts",
-  "test/remote-mcp-headers.test.ts",
-  // A custom transport over a real service binding, and native fetch confinement.
+  "test/codemode-compat.test.ts",
+  "test/auth-admission-binding.test.ts",
+  "test/auth-admission-live.test.ts",
+  "test/auth-admission-workerd.test.ts",
+  "test/clerk-organization-workerd.test.ts",
   "test/remote-mcp-principal-forwarding.test.ts",
-  "test/server.test.ts",
-  "test/native-tools.test.ts",
   "test/unhandled-rejections.test.ts",
-  // Native response reads can print sensitive downstream text below JS sinks.
-  // workerd-native-output.node.test.ts also invokes these three by filename.
-  "test/operator-sinks.test.ts",
-  // Browser store fetch/body ordering and recovery deadlines on native timers.
-  "test/operator-store.test.ts",
-  "test/operator-agent-state.test.ts",
-  "test/clerk-operator-output.test.ts",
-  "test/byte-read-response.test.ts",
-  "test/write-evidence.test.ts",
-  "test/write-provenance.test.ts",
-  // Web Crypto: access tokens, the credential vault, Clerk and Access JWTs.
-  "test/google-service-account-token.test.ts",
-  "test/access-tokens.test.ts",
-  "test/vercel-agent.test.ts",
-  "test/clerk.test.ts",
-  "test/cloudflare-access-auth.test.ts",
-  "test/credentials.test.ts",
-  // Provider pin policy crosses native fetch, request budgets and Web Crypto cursors.
-  "src/providers/vercel/provider.pin.test.ts",
-  "src/providers/planning-center/provider.pagination.test.ts",
-  // Mixed suites use Vitest tags: only their native boundary cases rerun here.
-  // Brace globs tolerate deleted files without enrolling other suites.
-  "test/{http-kit,http-hatch,http-provider}.test.ts",
-  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,auth-elicitation,downstream-input}.test.ts",
 ];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
@@ -262,7 +204,6 @@ export default defineConfig({
           allowOnly: false,
           tags: [{ name: "node" }, { name: "workers" }],
           globalSetup: [
-            "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/remote-mcp-attempt-server.ts",
             "./test/fixtures/auth-admission-server.ts",
@@ -349,7 +290,6 @@ export default defineConfig({
           allowOnly: false,
           tags: [{ name: "node", skip: true }, { name: "workers" }],
           globalSetup: [
-            "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/clerk-backend-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/remote-mcp-attempt-server.ts",

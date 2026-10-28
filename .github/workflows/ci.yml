@@ -98,7 +98,6 @@ jobs:
           retention-days: 14
 
   eve:
-    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -117,7 +116,6 @@ jobs:
       - run: pnpm run check:eve-package
 
   browser:
-    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -147,7 +145,6 @@ jobs:
           retention-days: 14
 
   audit:
-    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

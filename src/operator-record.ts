@@ -34,8 +34,7 @@
 // one copied from an explicit list, checked against a constant table or a
 // grammar, and never taken from an error's message, cause, stack, data,
 // nested errors, or name. `logFailure` writes nothing else, and every status
-// message about a failure comes from `describeFailure`
-// (test/operator-record-sources.node.test.ts holds src/ to that).
+// message about a failure comes from `describeFailure`.
 //
 // Provenance is by identity, never by shape. Text that merely looks like
 // connecta's (an error named like one of its classes, a status sentence

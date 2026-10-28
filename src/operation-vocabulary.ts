@@ -11,7 +11,7 @@ type Vocabulary = (
 ) => boolean;
 const tools = new WeakMap<object, Vocabulary>();
 const connectors = new WeakMap<object, ReadonlyMap<string, Vocabulary>>();
-export const OPERATION_VOCABULARY_BOUNDS = {
+const OPERATION_VOCABULARY_BOUNDS = {
   operations: 8192,
   rowChars: 1024,
   chars: 2_097_152,

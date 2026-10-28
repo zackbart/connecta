@@ -3127,10 +3127,6 @@ The encoding lattice is exactly this, and anything outside it is out of scope:
   lattice, so redaction is not a defense against a downstream that reshapes a
   value on purpose.
 
-`test/sent-secret-output-boundary.test.ts` holds the evidence, including its
-`review round 3`, `review round 4` and `review round 5` blocks for these limits;
-`test/writeonly-wire-redaction.node.test.ts` runs the QuickJS guest cases.
-
 ### Source and tests
 
 [Decision 0007](https://github.com/zackbart/connecta/blob/main/decisions/0007-agent-pool-layout.md)
@@ -3153,8 +3149,6 @@ Downstream OAuth implementation and evidence are in
 [downstream-oauth.ts](https://github.com/zackbart/connecta/blob/main/src/auth/downstream-oauth.ts),
 [static-oauth.ts](https://github.com/zackbart/connecta/blob/main/src/auth/static-oauth.ts),
 [OAuth connect tests](https://github.com/zackbart/connecta/blob/main/test/oauth-connect.test.ts),
-[callback fencing](https://github.com/zackbart/connecta/blob/main/test/oauth-callback-fencing.test.ts),
-[refresh leases](https://github.com/zackbart/connecta/blob/main/test/oauth-refresh-lease.test.ts),
 and [API OAuth tests](https://github.com/zackbart/connecta/blob/main/test/api-oauth.test.ts).
 Use the test pointers within each section for narrower failure cases.
 
