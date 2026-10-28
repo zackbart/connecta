@@ -1668,17 +1668,24 @@ they are wire text or a string inside a result, and errors' own fields. The
 joined projection is matched, so a value split across adjacent leaves,
 such as text blocks or array items, is found; each match is replaced only in
 the leaves it touches, and the containers around them keep their shape. A
-number touched by a match is checked again after replacing the non-number
-pieces. Adjacent numbers are checked together. Rejected numbers become whole
-`[redacted]` markers before checking the remaining numbers again, since a new
-marker can create another matching seam. Numbers are kept only when no retained
-number is touched in the lane that will be returned. Each round either withholds
-more numbers or finishes, sharing the call's work budget; if any check cannot
-complete, every originally touched number becomes the string `[redacted]` whole.
-Both joined and leaf-by-leaf checks follow this rule. Bounded lanes, deep escapes,
-whole-field private matches and unchecked runs still withhold changed numbers whole. Text is reserialized only
-when something changed; otherwise its original
-bytes remain. Serialized JSON whose keys, syntax, and leaves together hold a run
+number touched by a match is first checked again beside the replaced string
+pieces, with adjacent numbers checked together: a number stays numeric when
+string replacement breaks the match. Every replacement is then checked in the
+lane as it will be returned, including partial string replacements and whole
+numbers, typed binary, decoded binary, whole-field private values and unchecked
+runs. A new match touching a kept piece withholds that whole part. The lane is
+checked again until nothing changes, including runs formed from `[redacted]`
+and a kept string piece or number, within a string or across leaves. A span
+wholly inside a placeholder remains the placeholder.
+Each changing round withholds at least one more part, so there are at most as
+many changing rounds as parts. Every round, including its bookkeeping, shares
+the call's work budget; an unaffordable leaf or seam check withholds every part it touched and every
+originally touched number still awaiting retention. Unchanged lanes pay for no
+recheck. Joined and leaf-by-leaf checks follow the same rule; large lanes check
+changed parts and the seams touching them without rereading unchanged leaf
+interiors. Bounded lanes and deep escapes withhold changed numbers whole.
+Text is reserialized only when something changed; otherwise its original bytes
+remain. Serialized JSON whose keys, syntax, and leaves together hold a run
 that no single leaf holds, as a value spanning tokens does, is withheld whole.
 Matching runs on the raw text and through one more layer of JSON string escapes
 at a time while the last layer still decodes an escape, at most eight layers;
@@ -1706,7 +1713,8 @@ fields that are refused instead of rewritten. Object keys are checked on their
 own, and a key holding a match is renamed. Image, audio, resource-blob, or
 `format: "base64"` content, or a REST body's `base64` beside its `contentType`,
 is checked as text and also decoded whole and checked as bytes and as UTF-8,
-then withheld whole as the base64 of `[redacted]` on a match; content that is
+then withheld whole as the base64 of `[redacted]` on a match, or empty if
+that replacement encoding cannot be returned safely; content that is
 not valid base64 as it stands is still checked through every text view. Base64
 or base64url in any string is decoded and checked in each of the string's text
 views: the text itself, the text with one layer of JSON escapes decoded
@@ -1795,11 +1803,15 @@ Every other value becomes the data JSON shows for it, checked, or is withheld:
 
 Typed binary is withheld as `[redacted]` when its bytes hold a match, checked as
 decoded binary content is, or when one of the numbers JSON shows for it does:
-its elements and, for the `Uint8Array` returned, its bytes, each checked as a
-JSON number and joined with its neighbours. Byte views are checked on their own,
-so they do not separate those numbers from neighbouring leaves. A one-to-three-character
-numeric private value, such as `7`, therefore withholds a typed array holding that
-element, as it withholds an equal JSON number. Each of those numbers is an entry
+the returned `Uint8Array`'s byte numbers join neighbouring leaves directly.
+For non-byte typed arrays, a separate projection substitutes the original
+element numbers for the byte numbers, keeping the same neighbours. Neither
+numeric view interrupts the other; the raw byte view is checked on its own.
+A match in either numeric projection withholds the binary as one whole part,
+so its placeholder is checked beside its neighbours before return. Each number
+is also checked as a whole field: a one-to-three-character numeric private
+value, such as `7`, withholds a typed array holding that element, as it
+withholds an equal JSON number. Each of those numbers is an entry
 of the walk's 1,048,576-entry budget, so binary past it is withheld whole.
 Connecta returns downstream binary as base64 text, which none of this limits;
 only in-process code can return a typed array. With nothing registered for a

@@ -1000,17 +1000,23 @@ own leaves, and errors' own fields (non-enumerable diagnostics and causes
 included). The joined projection is matched raw and through each JSON
 decoding layer, so a form split across adjacent leaves is found; each match is
 replaced only in the leaves it touches, so public runs, links, annotations and
-container shapes stay. Touched numbers are checked together with non-number
-pieces already replaced. Rejected numbers become whole `[redacted]` markers
-before the remaining numbers are checked again, since a marker can form a new
-matching seam. A number is kept only when no retained number is touched in the
-lane that will be returned. Each round either withholds more numbers or finishes,
-and shares the call's work budget; any incomplete check withholds every
-originally touched number whole. The joined and leaf-by-leaf paths use this
-same rule. Bounded lanes, deep escapes, whole-field private matches and
-unchecked runs still withhold changed numbers whole. The walk reads every field
-once, from its descriptor, and
-returns what it checked. A caller's container stands only as verified plain
+container shapes stay. Touched numbers are first checked together with non-number
+pieces already replaced, so a number stays numeric when replacing a neighbouring
+string breaks the match. Every replacement is then checked in the lane as it
+will be returned: partial string replacements, whole numbers, typed binary,
+decoded binary, whole-field private matches and unchecked runs included.
+A newly formed match reaching a kept piece withholds that entire part, and the
+lane is checked again until nothing changes. This includes matches formed from
+`[redacted]` text and a kept neighbour, within one string or across leaves;
+a span wholly inside a placeholder remains the placeholder. Each changing
+round withholds at least one more part, so there are at most as many changing
+rounds as parts. Every round, including its bookkeeping, shares the call's work
+budget. An unaffordable leaf or seam check withholds every part it touched, including any originally
+touched numbers awaiting retention. Unchanged lanes pay for no recheck.
+Joined and leaf-by-leaf matching follow the same rule; large lanes recheck
+changed parts and the seams touching them without rereading unchanged leaf
+interiors. Bounded lanes and deep escapes withhold changed numbers whole.
+The walk reads every field once, from its descriptor, and returns what it checked. A caller's container stands only as verified plain
 data: prototype `Object.prototype`, `Array.prototype` or `null`, no `toJSON` on
 its chain, no symbol-keyed field, every field a data property it read (an
 array's holes read through its prototypes), and nothing in it changed. Anything
@@ -1023,9 +1029,12 @@ as plain data; an array that is not plain as a plain array of its indices; a
 `String`, `Number` or `Boolean` wrapper as its primitive; a `toJSON` result,
 called once and checked; a function or symbol as the placeholder; a typed array,
 `DataView` or `ArrayBuffer` as a fresh `Uint8Array` of its bytes, which are
-checked as bytes on their own and, with the elements it held, as the numbers
-JSON shows for them, joined with neighbouring leaves without an intervening
-byte view. The type table is in [auth.md](./auth.md). An own accessor is
+checked as bytes on their own. Its returned byte numbers join neighbouring
+leaves directly in one projection; non-byte typed arrays' original element
+numbers substitute for those bytes in a separate projection with the same
+neighbours. Neither numeric view interrupts the other. Each binary is one
+whole-withheld part, so a match immediately exposes its placeholder to the lane
+check. The type table is in [auth.md](./auth.md). An own accessor is
 never invoked: an object's copy leaves it out, an array index holds the
 placeholder. A change copies the containers on its path on first write, so a
 caller's value is never mutated. An array's non-index fields are never read:
@@ -1055,7 +1064,9 @@ hold a run of a form that no single leaf holds is withheld whole.
 The guarantee: **no caller-visible text holds a registered form whole, nor any
 run of K = 8 consecutive UTF-16 units of a registered form of a value at least K
 long, in the raw text or any JSON-decoded layer; text cut where the cut can end
-inside a form loses that unfinished tail, however short.** Registered forms are
+inside a form loses that unfinished tail, however short.** Runs formed from
+placeholder text and kept text or numbers are covered too; the placeholder
+itself is reserved replacement text. Registered forms are
 the raw value, its URL/form encodings (either percent hex case), base64 and
 base64url, and the `Bearer `/`token ` framings. The framing words are public, so
 no indexed run starts inside them; a run reaching K units of the value is
