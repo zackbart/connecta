@@ -1695,6 +1695,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A closed scope keeps its (emptied) entry, so a late or future lookup finds
   // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
+  // Post-connect auth checks keep the exact provider that bound this client,
+  // even if another attempt has since replaced the request scope's state.
+  const connectedProviders = new WeakMap<Client, KvOAuthProvider>();
   const cacheOwner = {};
   // A cached transport may dispatch concurrent calls and listings. Register
   // its actual sent auth with every operation using that client, including
@@ -3434,6 +3437,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           }
         }
         state.client = c;
+        if (provider) connectedProviders.set(c, provider);
         state.connectedGeneration = genAtStart;
         state.authRequired = false;
         const discover = c.getDiscoverResult();
@@ -3521,9 +3525,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * Read after connecting: connect has bound the epoch, migrated an older
    * layout, and refused a disconnected one within the scope's lifetime.
    */
-  const granted = authMethod((ctx: ConnectorContext) =>
+  const granted = authMethod((provider: KvOAuthProvider) =>
     authFlow<boolean>(function* () {
-      return Boolean(yield authInvoke(newProvider(ctx), "tokens", []));
+      return Boolean(yield authInvoke(provider, "tokens", []));
     }),
   );
 
@@ -3534,7 +3538,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * well-known URLs, the same issuer and resource checks, consent state, and
    * CIMD/DCR/static client order. Nothing is sent to the MCP endpoint.
    */
-  const startUnchallenged = authMethod((ctx: ConnectorContext) =>
+  const startUnchallenged = authMethod((ctx: ConnectorContext, provider: KvOAuthProvider) =>
     authFlow<ConnectorStatus>(function* () {
       const required = {
         state: "auth_required",
@@ -3542,10 +3546,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       } as const;
       // A test transport carries no OAuth flow to start.
       if (opts._transportFactory) return required;
-      // Bound to the live epoch, which the connect just found connected: a
-      // reset or disconnect meanwhile fails this flow's writes.
-      const provider = newProvider(ctx);
-      (yield authInvoke(provider, "beginFlow", [])) as string;
+      // Keep the successful connect's bound epoch. Starting another flow here
+      // would let a Restart adopt this older attempt into the replacement.
       // Never started, this transport holds no session or stream to close.
       const transport = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
       const internals = transport as unknown as {
@@ -4168,10 +4170,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           }),
         );
         try {
-          (yield authCall(ensureConnected, [ctx, state])) as Client;
+          const client = (yield authCall(ensureConnected, [ctx, state])) as Client;
           // The grant decides, as it does for a call: a downstream that
           // answers without credentials is not connected for this owner.
-          if (isOauth && !((yield authCall(granted, [ctx])) as boolean))
+          if (isOauth && !((yield authCall(granted, [connectedProviders.get(client)!])) as boolean))
             return (yield authCall(report, [
               { state: "auth_required", message: "Authorization required \u2014 open the URL to connect." },
             ])) as ConnectorStatus;
@@ -4314,9 +4316,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           try {
             // The handshake runs first, so a 401 challenge's
             // `resource_metadata` starts consent as it always has.
-            (yield authCall(ensureConnected, [ctx, state])) as Client;
-            if (!((yield authCall(granted, [ctx])) as boolean))
-              return (yield authCall(startUnchallenged, [ctx])) as ConnectorStatus;
+            const client = (yield authCall(ensureConnected, [ctx, state])) as Client;
+            const provider = connectedProviders.get(client)!;
+            if (!((yield authCall(granted, [provider])) as boolean))
+              return (yield authCall(startUnchallenged, [ctx, provider])) as ConnectorStatus;
             return {
               state: "ok",
               message: "Already authorized \u2014 connection is healthy.",

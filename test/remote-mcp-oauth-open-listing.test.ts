@@ -7,13 +7,14 @@ import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError } from "../src/errors.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "../src/oauth-sealing.js";
+import { statusFailure } from "../src/operator-record.js";
 import { providerCallContext } from "../src/provider-call.js";
-import { oauthFlowKeys } from "../src/storage/keys.js";
+import { negotiationKeys, oauthFlowKeys, oauthGrantKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { connectorContext } from "./fixtures/misc.js";
+import { connectorContext, deferred } from "./fixtures/misc.js";
 import { oauthVault, seedGrant, storedGrant } from "./fixtures/oauth.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { createTestConnecta, fetchTestUiDetails, required, silentLogger } from "./helpers.js";
@@ -192,6 +193,67 @@ async function authorized(c: Connector, seal?: Sealer): Promise<KVStorage> {
 }
 
 describe("remoteMcp() OAuth when the downstream lists without authorization (#1111)", () => {
+  it.each([
+    ["start", "negotiation persistence"],
+    ["start", "grant read"],
+    ["status", "negotiation persistence"],
+  ] as const)("fails %s superseded by Restart during post-handshake %s (#1120)", async (operation, pause) => {
+    const server = openListing();
+    const backing = memoryStorage();
+    const reached = deferred<void>();
+    const resume = deferred<void>();
+    let hold = true;
+    let persisted = false;
+    const storage: KVStorage = {
+      ...backing,
+      async get(key) {
+        const value = await backing.get(key);
+        if (hold && persisted && pause === "grant read" && key === oauthGrantKeys.grant) {
+          hold = false;
+          reached.resolve();
+          await resume.promise;
+        }
+        return value;
+      },
+      async set(key, value, options) {
+        if (key.startsWith(negotiationKeys.family.prefixes[0])) {
+          if (hold && pause === "negotiation persistence") {
+            hold = false;
+            reached.resolve();
+            await resume.promise;
+          }
+          persisted = true;
+        }
+        return backing.set(key, value, options);
+      },
+    };
+    const c = connector();
+    const starting = operation === "start" ? c.startAuth!(scope(storage)) : c.status!(scope(storage));
+    try {
+      await reached.promise;
+      const restarter = reader(storage);
+      const originalEpoch = await restarter.liveEpoch();
+      await restarter.resetAuthorization();
+      const replacement = required(await storedGrant(storage));
+      expect(replacement.epoch).not.toBe(originalEpoch);
+
+      resume.resolve();
+      const result = await starting;
+
+      expect(result.state).toBe("error");
+      if (operation === "start")
+        expect(result.message).toContain("authorization changed while this request was in flight; try again");
+      else expect(classifyCallError(statusFailure(result))).toMatchObject({ code: "unavailable", retryable: true });
+      expect(result.authorizationUrl).toBeUndefined();
+      expect(await storage.list(oauthFlowKeys.prefix)).toEqual([]);
+      expect(await storedGrant(storage)).toEqual(replacement);
+      expect(server.counts).toEqual({ register: 0, token: 0, refresh: 0 });
+    } finally {
+      resume.resolve();
+      await starting;
+    }
+  });
+
   it("starts consent with no grant, and a completed consent authorizes tool calls", async () => {
     const server = openListing();
     const seal = sealer();
