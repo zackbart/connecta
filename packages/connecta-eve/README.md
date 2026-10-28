@@ -4,15 +4,15 @@ Connect an Eve agent to a Connecta agent pool and load its endpoint instructions
 once per turn. The helper runs in the Eve app; the Connecta server
 runs separately. No `@zackbart/connecta` dependency is installed by this package.
 
-Requires **Node 24+** and **Eve >=0.84.0 <0.85.0**. Development and consumer
-checks use real Eve 0.84.0. The range covers its patch line; newer minor releases
+Requires **Node 24+** and **Eve >=0.86.0 <0.87.0**. Development and consumer
+checks use real Eve 0.86.0. The range covers its patch line; newer minor releases
 need a compatibility check. Helper releases share Connecta's version and tag;
 choose the helper version matching your server release.
 
 ## Install and add two files
 
 ```sh
-npm install @zackbart/connecta-eve eve@0.84.0
+npm install @zackbart/connecta-eve eve@0.86.0
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -89,9 +89,9 @@ Each selected name must match `[a-z0-9_-]+`. A throwing selector or an invalid
 name fails the turn, even when guidance is cached. Handle lookup failures in
 your selector if it should fall back to a least-privileged pool.
 
-## Eve 0.84.0 dependency override
+## Eve 0.86.0 dependency override
 
-Eve 0.84.0 pins undici 8.10.2. Connecta's development/test override does not ship
+Eve 0.86.0 pins undici 8.10.2. Connecta's development/test override does not ship
 with this helper, so the Eve app must apply its own override to 8.12.3 before
 installing. For an npm app, add this to its `package.json`, then reinstall and
 commit the lockfile:
@@ -100,7 +100,7 @@ commit the lockfile:
 { "overrides": { "eve": { "undici": "8.12.3" } } }
 ```
 
-For a pnpm app, add `overrides: { "eve@0.84.0>undici": "8.12.3" }` to its
+For a pnpm app, add `overrides: { "eve@0.86.0>undici": "8.12.3" }` to its
 `pnpm-workspace.yaml`. Check the resolved dependency graph and audit the app.
 Remove this override after upgrading to an Eve release that pins a fixed version
 and validating compatibility. The server's optional undici 6.29.1 peer is a
@@ -176,7 +176,7 @@ custom audience, even when Vercel signed them.
 
 In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
-on Node 24. This boots real Eve 0.84.0 with a packed, installed helper against
+on Node 24. This boots real Eve 0.86.0 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
 meta, native, and native-plus-code surfaces. Native listings include two
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must

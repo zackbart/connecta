@@ -161,7 +161,7 @@ try {
     keyFetches,
     exchanges,
     runtime: process.version,
-    eve: "0.84.0",
+    eve: "0.86.0",
     oidc: "4.0.3",
     trust: "Local RSA, intercepted JWKS/exchange and in-process Request.signal; no live platform or paid model",
   };

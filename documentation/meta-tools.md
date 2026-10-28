@@ -1311,7 +1311,7 @@ window, a native `tools/list` carries a 300-second private cache hint, against
 an hour on meta endpoints. This hint does not guarantee that a host refreshes
 its cached annotations; the stale-approval race is accepted on writable pools.
 
-**Listing.** `tools/list` is one page with no cursor (Eve 0.84 reads only the
+**Listing.** `tools/list` is one page with no cursor (Eve 0.86 reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
 JSON-RPC error asking the operator to narrow the pool; nothing is silently
 dropped. A connector whose catalog cannot load is left out of that listing
