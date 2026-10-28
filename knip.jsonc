@@ -56,6 +56,8 @@
         "*.ts"
       ],
       "ignoreDependencies": [
+        // Native workerd module used by the service-binding RPC fixture.
+        "cloudflare",
         // `tsx` needed an exemption until `drift:check` named it in a script: its
         // other uses — the forked QuickJS child, the Node template's runner — are
         // ones knip cannot see. Delete that script and it needs the exemption back.

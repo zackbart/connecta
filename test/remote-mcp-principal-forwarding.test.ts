@@ -11,13 +11,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { remoteMcp, type RemoteMcpOptions } from "../src/connectors/remote-mcp.js";
+import { closeConnectorScope } from "../src/connector-scope.js";
 import type { ConnectorCaller } from "../src/connector-caller.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { accessTokens } from "../src/access-tokens.js";
 import type { PrincipalRequestToken, RequestPrincipal, RequestToken } from "../src/request-token.js";
 import type { AuthenticatedIdentity, InboundAuth, KVStorage, Logger } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { connectorContext, scriptedExecutor } from "./fixtures/misc.js";
+import { connectorContext, deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
@@ -616,3 +617,85 @@ it.skipIf(!binding)("forwards the admitted person over a Workers service binding
   expect(publicRoute.status).toBe(403);
   await publicRoute.body?.cancel();
 });
+
+it.skipIf(!bindings?.NOTES_RPC)(
+  "INV-7: operator config and details dispose service-binding RPC responses",
+  WORKERS,
+  async () => {
+    const rpc = bindings!.NOTES_RPC as unknown as {
+      request(url: string, init?: RequestInit): Promise<Response & Disposable>;
+    };
+    const results: ReturnType<typeof vi.fn>[] = [];
+    const connector = remoteMcp("notes", {
+      url: URL_,
+      fetch: async (input, init) => {
+        const { signal: _signal, ...rpcInit } = init ?? {};
+        const response = await rpc.request(String(input), rpcInit);
+        const dispose = response[Symbol.dispose].bind(response);
+        const disposed = vi.fn(dispose);
+        Object.defineProperty(response, Symbol.dispose, { value: disposed });
+        results.push(disposed);
+        return response;
+      },
+      auth: { type: "request", token: async () => "alice.signed" },
+    });
+    const { connecta } = await deployment(connector);
+    try {
+      for (const path of ["/ui/api/config", "/ui/connectors/notes"]) {
+        const response = await connecta.fetch(new Request(BASE + path, { headers: { Authorization: "Bearer alice" } }));
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(JSON.stringify(body)).toContain("whoami");
+      }
+    } finally {
+      await connecta.close();
+    }
+    expect(results.length).toBeGreaterThan(0);
+    for (const disposed of results) expect(disposed).toHaveBeenCalledOnce();
+  },
+);
+
+it.skipIf(!bindings?.NOTES_RPC)(
+  "INV-7: a late RPC response is disposed without extending a cancelled probe",
+  WORKERS,
+  async () => {
+    const received = deferred<void>();
+    const release = deferred<void>();
+    const disposed = vi.fn();
+    const rpc = bindings!.NOTES_RPC as unknown as {
+      request(url: string, init?: RequestInit): Promise<Response & Disposable>;
+    };
+    const connector = remoteMcp("notes", {
+      url: URL_,
+      fetch: async (input, init) => {
+        const { signal: _signal, ...rpcInit } = init ?? {};
+        const response = await rpc.request(String(input), rpcInit);
+        const dispose = response[Symbol.dispose].bind(response);
+        Object.defineProperty(response, Symbol.dispose, {
+          value: () => {
+            disposed();
+            dispose();
+          },
+        });
+        received.resolve();
+        await release.promise;
+        return response;
+      },
+      auth: { type: "request", token: async () => "alice.signed" },
+    });
+    const ctx = scoped(connector, undefined);
+    const pending = connector.status!(ctx);
+    try {
+      await received.promise;
+      await closeConnectorScope(connector, ctx);
+      // Cancellation settles the probe before the custom fetch returns.
+      await pending;
+      expect(disposed).not.toHaveBeenCalled();
+      release.resolve();
+      await vi.waitFor(() => expect(disposed).toHaveBeenCalledOnce());
+    } finally {
+      release.resolve();
+      await closeConnectorScope(connector, ctx);
+    }
+  },
+);
