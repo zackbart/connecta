@@ -72,6 +72,8 @@ interface UiCredential {
 }
 
 export interface UiConnector {
+  /** Opaque admitted viewer partition, present on HTTP detail responses. */
+  viewerKey?: string;
   /** Complete catalog and status from this detail request, when supported. */
   overlay?: OperatorConnectorOverlay;
   id: string;
@@ -112,6 +114,8 @@ export interface UiConnector {
 export type CredentialManagementCapability = "available" | "requires_operator" | "vault_not_configured" | "no_slots";
 
 export interface UiData {
+  /** Opaque admitted viewer partition, present on HTTP summaries. */
+  viewerKey?: string;
   accessTokenManagement?: "available" | "requires_operator";
   serverInfo: Pick<ConnectaConfigDescription["server"], "name" | "version">;
   /** Version of the installed @zackbart/connecta package. */

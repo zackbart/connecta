@@ -15,6 +15,7 @@ const CLERK_KEY = `pk_live_${Buffer.from("clerk.example.com$").toString("base64"
 let server: Server;
 let origin: string;
 const fixture: UiData = {
+  viewerKey: "opaque-viewer",
   serverInfo: { name: "Production", version: "1.0" },
   connectaVersion: "0.29",
   activityEnabled: true,
@@ -119,7 +120,12 @@ async function openShell(page: Page, scheme = "light", clerk = false, crowded = 
     }),
   );
   await page.route("**/ui/connectors/*", (route) =>
-    route.fulfill({ json: fixture.connectors.find((c) => route.request().url().split("/").pop() === c.id) }),
+    route.fulfill({
+      json: {
+        ...fixture.connectors.find((c) => route.request().url().split("/").pop() === c.id),
+        viewerKey: "opaque-viewer",
+      },
+    }),
   );
   await page.addInitScript(
     `localStorage.setItem('connecta:token', ${JSON.stringify(TOKEN)}); localStorage.setItem('connecta:scheme', ${JSON.stringify(scheme)});`,

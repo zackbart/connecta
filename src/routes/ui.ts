@@ -13,6 +13,7 @@ import type { Connector } from "../types.js";
 import { CONNECTA_FAVICON_SVG, operatorPageForPath, renderUiHtml } from "../ui.js";
 import {
   authorized,
+  operatorViewerKey,
   refuse,
   scopeFor,
   serveOperator,
@@ -193,7 +194,11 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
         signal: request.signal,
         timeoutError: new Error("Activity observation timed out."),
       }).pipe(Effect.catch(() => Effect.succeed("unavailable" as const)));
-    return privateJson({ ...detail, permissions: permissions(connector) });
+    return privateJson({
+      ...detail,
+      viewerKey: yield* operatorViewerKey(context, authz),
+      permissions: permissions(connector),
+    });
   });
 }
 
@@ -212,6 +217,7 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
     // declared pool, since they administer them all.
     const pools = [...opts.pools.keys()];
     return privateJson({
+      viewerKey: yield* operatorViewerKey(context, authz),
       ...(pools.length ? { pools } : {}),
       serverInfo: opts.config.serverInfo,
       connectaVersion: CONNECTA_VERSION,

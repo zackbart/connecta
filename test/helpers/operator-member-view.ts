@@ -286,7 +286,9 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
   expect(live.activity, "live.activity").toBe("forbidden");
   expect(body.agents, "agents").toEqual([]);
   expect(body.matrix, "matrix").toEqual([]);
-  oneOf(exact(body.you, "you", ["interactive"]).interactive, [true, false], "you.interactive");
+  const you = exact(body.you, "you", ["interactive", "viewerKey"]);
+  oneOf(you.interactive, [true, false], "you.interactive");
+  text(you.viewerKey, "you.viewerKey");
 
   const pools = list(body.pools, "pools");
   unique(

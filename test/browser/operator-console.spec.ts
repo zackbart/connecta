@@ -83,10 +83,20 @@ async function install(
     }
     const member = (contract as OperatorUiContractV2).role === "member";
     if (path === "/ui/api/config") return route.fulfill({ json: contract });
-    if (path === "/ui/data") return route.fulfill(member ? PRIVATE_404 : { json: data });
+    if (path === "/ui/data")
+      return route.fulfill(
+        member ? PRIVATE_404 : { json: { ...data, viewerKey: (contract as OperatorUiContractV2).you.viewerKey } },
+      );
     if (path.startsWith("/ui/connectors/"))
       return route.fulfill(
-        member ? PRIVATE_404 : { json: data.connectors.find((c) => c.id === path.split("/").pop()) },
+        member
+          ? PRIVATE_404
+          : {
+              json: {
+                ...data.connectors.find((c) => c.id === path.split("/").pop()),
+                viewerKey: (contract as OperatorUiContractV2).you.viewerKey,
+              },
+            },
       );
     if (path === "/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/ui/api/activity") return route.fulfill({ json: { events: [] } });

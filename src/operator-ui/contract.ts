@@ -178,7 +178,11 @@ export interface OperatorUiContractV2 {
   matrix: OperatorConnectorPoolCell[];
   /** Member only; [] for maintainers, who read live.connectors. */
   connectors: OperatorMemberConnector[];
-  you: { interactive: boolean };
+  you: {
+    interactive: boolean;
+    /** Opaque admitted identity partition; never an authorization credential. */
+    viewerKey: string;
+  };
 }
 
 /** The operator contract `GET /ui/api/config` serves; schema version 1 was removed (#837). */

@@ -1018,13 +1018,17 @@ export class Registry implements RegistryView {
           );
         }
       }
-      this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
       const provenance = catalogExpiry(ctx);
       const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
-      this.catalogAccess.set(id, {
-        state: freshUntil > Date.now() ? "fresh" : "stale",
-        observedAt: new Date().toISOString(),
-      });
+      // Principal-forwarded listings belong to one caller, never to the shared
+      // operator observation store. The actual catalog cache is identity-bound.
+      if (!forwardsPrincipal(connector)) {
+        this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
+        this.catalogAccess.set(id, {
+          state: freshUntil > Date.now() ? "fresh" : "stale",
+          observedAt: new Date().toISOString(),
+        });
+      }
       return markCatalogFreshness(accepted, freshUntil);
     });
   }

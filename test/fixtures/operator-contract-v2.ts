@@ -297,7 +297,7 @@ export const OPERATOR_V2_MAINTAINER = {
   agents,
   matrix,
   connectors: [],
-  you: { interactive: true },
+  you: { interactive: true, viewerKey: "opaque-viewer" },
 } satisfies OperatorUiContractV2;
 
 const memberConnectors: OperatorMemberConnector[] = [
@@ -375,7 +375,7 @@ export const OPERATOR_V2_MEMBER = {
   agents: [],
   matrix: [],
   connectors: memberConnectors,
-  you: { interactive: true },
+  you: { interactive: true, viewerKey: "opaque-viewer" },
 } satisfies OperatorUiContractV2;
 
 const notesSlot = config.connectors.find((c) => c.id === "notes")!.credential!;

@@ -39,7 +39,15 @@ import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector, ConnectorStatus, IdentityReference, ToolDef } from "../types.js";
 import { uiProblemFor } from "../ui.js";
 import { workspaceSubjectOf } from "../workspace-subject.js";
-import { authorized, refuse, scopeFor, serveOperator, type Answer, type Authorized } from "./operator.js";
+import {
+  authorized,
+  operatorViewerKey,
+  refuse,
+  scopeFor,
+  serveOperator,
+  type Answer,
+  type Authorized,
+} from "./operator.js";
 import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
 import { admitsMaintainer, mayManageConnector, privateJson, readsActivity, type RouteContext } from "./shared.js";
 
@@ -631,7 +639,7 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
       agents,
       matrix,
       connectors: [],
-      you: { interactive: authz.identity.interactive },
+      you: { interactive: authz.identity.interactive, viewerKey: yield* operatorViewerKey(context, authz) },
     };
     return privateJson(contract);
   });
@@ -814,7 +822,7 @@ function memberRead(
       agents: [],
       matrix: [],
       connectors,
-      you: { interactive: authz.identity.interactive },
+      you: { interactive: authz.identity.interactive, viewerKey: yield* operatorViewerKey(context, authz) },
     };
     return privateJson(contract);
   });

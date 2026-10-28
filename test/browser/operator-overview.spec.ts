@@ -55,9 +55,15 @@ async function install(page: Page, contract: OperatorUiContractV2, served: UiDat
     const member = contract.role === "member";
     if (path === "/ui/api/config") return route.fulfill({ json: contract });
     if (path === "/ui/data")
-      return route.fulfill(member ? { status: 404, json: { error: "Not found" } } : { json: served });
+      return route.fulfill(
+        member
+          ? { status: 404, json: { error: "Not found" } }
+          : { json: { ...served, viewerKey: contract.you.viewerKey } },
+      );
     if (path.startsWith("/ui/connectors/"))
-      return route.fulfill({ json: served.connectors.find((c) => c.id === path.split("/").pop()) ?? {} });
+      return route.fulfill({
+        json: { ...served.connectors.find((c) => c.id === path.split("/").pop()), viewerKey: contract.you.viewerKey },
+      });
     if (path === "/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/ui/api/activity") return route.fulfill({ json: { events: [] } });
     if (path === "/ui/access-tokens") return route.fulfill({ json: OPERATOR_V2_SLOTS });

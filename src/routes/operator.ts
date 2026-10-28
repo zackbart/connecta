@@ -22,8 +22,10 @@
 // Imported by the /ui and /activity graphs only; never from the root entry.
 
 import { Effect } from "effect";
+import { operatorViewerKeys } from "../storage/keys.js";
+import type { KVStorage } from "../types.js";
 import type { RegistryScope, RegistryView } from "../registry.js";
-import { runEdge } from "../runtime/run.js";
+import { runEdge, withDeadlineEffect } from "../runtime/run.js";
 import { isMaintainer } from "../membership.js";
 import {
   admitsMaintainer,
@@ -74,6 +76,59 @@ export function authorizedPerson(
   return Effect.suspend(() =>
     admitted(authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext, opts.config.logger)),
   );
+}
+
+// Cache resolved keys only; request promises and identities never outlive a read.
+const viewerSigningKeys = new WeakMap<KVStorage, CryptoKey>();
+
+/** Stable across isolates, opaque even for guessable Access email identities. */
+export function operatorViewerKey(context: RouteContext, authz: Authorized): Effect.Effect<string, Answer> {
+  const attempt = <A>(read: () => Promise<A>) => Effect.tryPromise({ try: read, catch: (error) => error });
+  return withDeadlineEffect(
+    () =>
+      Effect.gen(function* () {
+        const storage = context.opts.config.storage;
+        let key = viewerSigningKeys.get(storage);
+        if (!key) {
+          let raw = yield* attempt(() => storage.get(operatorViewerKeys.signingKey));
+          if (raw === null) {
+            const candidate = crypto.randomUUID();
+            raw = (yield* attempt(() => storage.compareAndSet(operatorViewerKeys.signingKey, null, candidate)))
+              ? candidate
+              : yield* attempt(() => storage.get(operatorViewerKeys.signingKey));
+          }
+          if (!raw || !/^[0-9a-f-]{36}$/.test(raw))
+            return yield* Effect.fail(new Error("Operator viewer key unavailable"));
+          const bytes = new TextEncoder().encode(raw);
+          key = yield* attempt(() =>
+            crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]),
+          );
+          viewerSigningKeys.set(storage, key);
+        }
+        const { principal, subject, actor, interactive, agent } = authz.identity;
+        const identity = new TextEncoder().encode(
+          JSON.stringify([
+            principal?.namespace,
+            principal?.id,
+            subject?.namespace,
+            subject?.id,
+            actor.kind,
+            actor.namespace,
+            actor.id,
+            interactive,
+            agent,
+          ]),
+        );
+        const signingKey = key;
+        const digest = yield* attempt(() => crypto.subtle.sign("HMAC", signingKey, identity));
+        return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      }),
+    {
+      timeoutMs: 500,
+      signal: context.request.signal,
+      timeoutError: new Error("Operator viewer key timed out"),
+    },
+  ).pipe(Effect.catch(() => refuse("operator identity could not be read", 503)));
 }
 
 /** The partition an identity carries into a registry view of the given connectors. */

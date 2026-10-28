@@ -8,7 +8,7 @@ import { observeAgentAdmission } from "../src/agent-observation.js";
 import { readConfig } from "../src/config.js";
 import { customExecutor } from "../src/index.js";
 import { runEdge } from "../src/runtime/run.js";
-import { agentObservationKeys } from "../src/storage/keys.js";
+import { agentObservationKeys, operatorViewerKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectaConfig } from "../src/index.js";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
@@ -158,7 +158,9 @@ describe("operator agent admission observations", () => {
           },
         ]);
         expect(fetcher).not.toHaveBeenCalled();
-        expect(await storage.list("")).toEqual(before);
+        // The viewer binding initializes one opaque signing key, never an agent credential.
+        expect(await storage.list("")).toEqual([...before, operatorViewerKeys.signingKey].sort());
+        expect(view.you.viewerKey).not.toBe(await storage.get(operatorViewerKeys.signingKey));
         expect(agentRows(view, [])[0]).toMatchObject({ actions: tokens ? ["issue"] : [], lastSeenAt: null });
         expect(attentionItems(view).filter((item) => item.kind === "agent")).toEqual([]);
         const shell = await app.fetch(new Request(`${BASE}/tokens`));

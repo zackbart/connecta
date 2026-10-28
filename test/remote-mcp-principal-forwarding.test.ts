@@ -919,3 +919,67 @@ it("operator authentication is the admission fact, independent of the provider's
     await connecta.close();
   }
 });
+
+it("operator observations and opaque viewer keys never cross admitted principals (#1150)", NODE, async () => {
+  forbidGlobalFetch();
+  const downstream = notes((exchange) =>
+    exchange.authorization?.endsWith("-bob") ? new Response(null, { status: 401 }) : undefined,
+  );
+  const storage = memoryStorage();
+  const make = () =>
+    remoteMcp("notes", {
+      url: URL_,
+      fetch: downstream.fetch,
+      versionNegotiation: "legacy",
+      auth: { type: "request", principal: { accept: "human", token: resolver() } },
+    });
+  let aliceKey: string | undefined;
+  // Reconstructing the deployment with the same storage also keeps the opaque
+  // key stable: Workers may serve adjacent requests from different isolates.
+  for (let instance = 0; instance < 2; instance++) {
+    const { connecta } = await deployment(make(), { storage: { ...storage } });
+    const read = async <T = OperatorUiContractV2>(id: string, path: string): Promise<T> => {
+      const response = await connecta.fetch(
+        new Request(`${BASE}${path}`, { headers: { Authorization: `Bearer ${id}`, "X-Connecta-Viewer": "forged" } }),
+      );
+      expect(response.status).toBe(200);
+      return response.json() as Promise<T>;
+    };
+    try {
+      const alice = await read("alice", "/ui/api/config");
+      const key = alice.you.viewerKey;
+      expect(key).toEqual(expect.any(String));
+      expect(key.length).toBeGreaterThanOrEqual(32);
+      for (const identity of ["alice", "bob", NAMESPACE, "forged"]) expect(key).not.toContain(identity);
+      if (aliceKey) expect(key).toBe(aliceKey);
+      aliceKey = key;
+      expect(alice.live.connectors[0]).toMatchObject({ status: "ok" });
+      const aliceDetail = await read<UiConnector>("alice", "/ui/connectors/notes");
+      expect(aliceDetail).toMatchObject({ viewerKey: key, status: "ok", toolCount: 2 });
+      const bob = await read("bob", "/ui/api/config?live=cached");
+      expect(bob.you.viewerKey).toEqual(expect.any(String));
+      expect(bob.you.viewerKey).not.toBe(key);
+      expect(bob.live.connectors).toEqual([]);
+      expect(await read("bob", "/ui/data")).toMatchObject({
+        viewerKey: bob.you.viewerKey,
+        connectors: [{ status: "loading", tools: [] }],
+      });
+      const bobDetail = await read<UiConnector>("bob", "/ui/connectors/notes");
+      expect(bobDetail.catalogAccess).toBeUndefined();
+      expect(bobDetail.overlay?.catalogAgeMs).toBeNull();
+      expect(bobDetail).toMatchObject({
+        viewerKey: bob.you.viewerKey,
+        status: "auth_required",
+        problem: "caller_refused",
+        tools: [],
+        overlay: { status: "auth_required", tools: [] },
+      });
+      const bobLive = await read("bob", "/ui/api/config");
+      expect(bobLive.you.viewerKey).toBe(bob.you.viewerKey);
+      expect(bobLive.live.connectors[0]).toMatchObject({ status: "auth_required", tools: [] });
+      expect(downstream.wire.some((exchange) => exchange.authorization?.endsWith("-bob"))).toBe(true);
+    } finally {
+      await connecta.close();
+    }
+  }
+});

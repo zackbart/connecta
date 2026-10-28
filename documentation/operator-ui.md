@@ -380,7 +380,12 @@ routes and preconditions. Shared credentials always require a maintainer.
 (`OperatorUiContractV2`) from `@zackbart/connecta/ui`, `schemaVersion: 2`.
 Its declarations ship in `dist/operator-ui/contract.d.ts` in the installed package. Schema
 version 1, `hasGrant`, `you.grants`, and `you.permissions` were removed;
-v2 keeps `you.interactive` to describe whether the session is interactive. It is the page's
+v2 keeps `you.interactive` to describe whether the session is interactive.
+`you.viewerKey` is a server-derived opaque partition for the admitted viewer,
+stable across requests and isolates sharing deployment storage. It contains no
+raw identity or email and grants no access. The first operator read initializes
+one random signing key in deployment storage; viewer identities and observations
+are not stored there. The config response is the page's
 only gate: a signed-out caller gets the auth provider's 401 challenge, and a
 `cta_` agent token the machine-only 401 Bearer challenge every human route
 gives it; a maintainer, or a person listed in a pool's `members`, gets 200
@@ -393,8 +398,9 @@ allowed. One shape serves both roles; a field a role does not receive is
 
 The browser uses `GET /ui/api/config?live=cached` for admission. For maintainers,
 this mode performs no downstream status or catalog probes. `live.connectors`
-contains only known observations, or `[]`; absence means unobserved, never healthy
-or failed. The default URL and published v2 type remain unchanged. Members receive
+is `[]`; no principal-specific status or catalog is read from a shared observation
+store. Absence means unobserved, never healthy or failed. The URL and schema
+version remain unchanged. Members receive
 their existing projection in either mode. Cached metadata reads have a 500 ms
 budget each and the entire metadata build has a five-second budget, below the
 browser's 15-second admission deadline. Essential token-slot failure still returns 503. Optional reads degrade conservatively. No downstream session spans requests.
@@ -526,7 +532,10 @@ Principal-forwarding `remoteMcp()` connectors check status and catalog as the
 operator admitted on that request, under their configured `accept` policy.
 The resolver and configured transport reach the real downstream; success is
 `ok`, and a failure keeps its actual status classification. Another principal
-never reuses that operator's client, even if their tokens match. Other request
+never reuses that operator's client, even if their tokens match. Their catalog
+age and freshness observations are not retained in the shared status store;
+`catalogAgeMs` is `null` and `catalogAccess` is absent for these connectors.
+The actual catalog cache remains identity-bound. Other request
 auth, credential, OAuth and headers auth keep their existing status behavior.
 
 When no admitted caller is available, these connectors return `per_caller`:
@@ -547,7 +556,12 @@ the config snapshot, and never treats a `per_caller` overlay as an error.
 complete classified tools with input/output schemas, registration path, catalog
 age, and activity-derived last-call facts under the reader's disclosure policy.
 A failed or timed-out connector releases its own scope; siblings finish independently.
-The browser publishes the detail and overlay atomically. Config observations never
+The summary and each detail carry `viewerKey` for the principal admitted to that
+request. The browser publishes the detail and overlay atomically only when that
+key matches admission. A changed viewer key, including an Access switch between
+two maintainers, cancels pending reads and clears retained observations before
+readmission. Coalescing and publication are partitioned by viewer and connector.
+Config observations never
 overwrite a completed detail row. Each connector opens at most one live observation
 per page load; the summary `/ui/data` performs no downstream probes.
 

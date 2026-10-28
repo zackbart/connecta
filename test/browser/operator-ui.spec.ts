@@ -42,6 +42,7 @@ const REAL_BASE = "https://connecta.test";
 
 function data(): UiData {
   return {
+    viewerKey: "opaque-viewer",
     serverInfo: { name: "browser-test", version: "host" },
     connectaVersion: "package",
     credentialManagement: "available",
@@ -156,6 +157,7 @@ test.beforeAll(async () => {
       const full = served;
       sendJson(response, 200, {
         ...full,
+        viewerKey: "opaque-viewer",
         connectors: full.connectors.map(({ id, title, permissions, oauth }) => ({
           id,
           title,
@@ -182,6 +184,7 @@ test.beforeAll(async () => {
       const contract = await fixtureContract(served);
       sendJson(response, 200, {
         ...connector,
+        viewerKey: "opaque-viewer",
         overlay: contract.live.connectors.find((row) => row.id === connector.id),
       });
       return;
@@ -464,6 +467,7 @@ test("INV-4 INV-10: OAuth polling publishes only its connector and leaves siblin
     return route.fulfill({
       json: {
         ...row,
+        viewerKey: contract.you.viewerKey,
         ...(connected ? { status: "ok" } : {}),
         overlay: { ...overlay, ...(connected ? { status: "ok", problem: undefined } : {}) },
       },
