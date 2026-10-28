@@ -949,13 +949,19 @@ Basic form components so a raw echo is covered too. Public client IDs remain
 visible. Redaction replaces these values and their auth prefixes, mixed JSON
 escapes, URL encodings, and base64/base64url forms with `[redacted]`.
 
-Every redaction is one pass over a text projection of the whole value: string
+Every redaction builds one text projection of the whole value: string
 and number leaves in serialization order, nested JSON strings parsed into their
 own leaves, and errors' own fields (non-enumerable diagnostics and causes
-included). The joined projection is matched once, raw and through each JSON
+included). The joined projection is matched raw and through each JSON
 decoding layer, so a form split across adjacent leaves is found; each match is
 replaced only in the leaves it touches, so public runs, links, annotations and
-container shapes stay. The walk reads every field once, from its descriptor, and
+container shapes stay. A touched number is kept only if checking the lane again,
+with non-number pieces replaced and touched numbers kept, finds no match touching
+it; adjacent numbers are checked together. The second check shares the call's
+work budget, and an unaffordable check withholds touched numbers whole as
+`[redacted]`. Bounded lanes, deep escapes, whole-field private matches and
+unchecked runs still withhold changed numbers whole. The walk reads every field
+once, from its descriptor, and
 returns what it checked. A caller's container stands only as verified plain
 data: prototype `Object.prototype`, `Array.prototype` or `null`, no `toJSON` on
 its chain, no symbol-keyed field, every field a data property it read (an

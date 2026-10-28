@@ -173,6 +173,83 @@ describe("the output boundary's projection", () => {
     });
   });
 
+  it.each(["payload", "envelope"] as const)(
+    "INV-5: %s keeps a number when replacing the string beside it breaks their credential run (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@examplecorp.com");
+      const value = {
+        hostCalls: { attempted: 1, admitted: 1, succeeded: 1, failed: 0 },
+        _meta: { "io.modelcontextprotocol/serverInfo": { name: "examplecorp-connecta", version: "1" } },
+      };
+      expect(secrets.redact(value, mode)).toEqual({
+        hostCalls: { attempted: 1, admitted: 1, succeeded: 1, failed: 0 },
+        _meta: { "io.modelcontextprotocol/serverInfo": { name: `${MARK}-connecta`, version: "1" } },
+      });
+      expect(secrets.redact({ n: 10, x: { name: "examplecorp-connecta" } }, mode)).toEqual({
+        n: 10,
+        x: { name: `${MARK}-connecta` },
+      });
+    },
+  );
+
+  it.each(["payload", "envelope"] as const)(
+    "INV-5: %s still withholds numbers holding a credential run alone or together after string replacement (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      const value = "12345678-private";
+      secrets.secret(value);
+      for (const input of [
+        { a: 1234, b: 5678 },
+        { n: 12345678 },
+        { n: 991234567899 },
+        { a: 1234, b: 5678, text: "-private" },
+        { n: 12345678, text: "-private" },
+      ]) {
+        const safe: Record<string, unknown> = secrets.redact(input, mode);
+        for (const [name, part] of Object.entries(input)) if (typeof part === "number") expect(safe[name]).toBe(MARK);
+        expect(leakedRun(everyValue(safe).join(""), value)).toBeUndefined();
+      }
+      // Here only the seam held eight units. Replacing its string piece is sufficient.
+      expect(secrets.redact({ n: 1234, text: "5678-private" }, mode)).toEqual({ n: 1234, text: MARK });
+    },
+  );
+
+  it("INV-5: an unaffordable number recheck and a bounded lane still withhold a touched number whole (#1118)", () => {
+    const secrets = new SentSecrets();
+    secrets.secret("alice@examplecorp.com");
+    const parts = ["10", "examplecorp-connecta"];
+    // Fault probe: exactly enough work for the initial raw scan, none for the retry.
+    const scan = { budget: { work: 2 * parts.join("").length, nodes: 100 }, payload: false };
+    expect(secrets["safeParts"](parts, [1, 0], scan, false)).toEqual([MARK, `${MARK}-connecta`]);
+    expect(scan.budget.work).toBe(0);
+    expect(secrets["safeParts"](parts, [1, 0], secrets["scan"](false), true)).toEqual([MARK, `${MARK}-connect${MARK}`]);
+    // Force leaf-by-leaf matching: the large leaf cannot fit, but the initial seam can.
+    for (const [work, number] of [
+      [100, MARK],
+      [160, "10"],
+    ] as const) {
+      const limited = { budget: { work, nodes: 100 }, payload: false };
+      expect(secrets["safeParts"](["x".repeat(100), ...parts], [0, 1, 0], limited, false)).toEqual([
+        MARK,
+        number,
+        `${MARK}-connecta`,
+      ]);
+    }
+  });
+
+  it("INV-5: deep decoding still withholds touched numbers whole (#1118)", () => {
+    const secrets = new SentSecrets();
+    secrets.secret("alice@examplecorp.com");
+    let deep = "\\u0041";
+    for (let layer = 0; layer < 10; layer++) deep = JSON.stringify(deep).slice(1, -1);
+    expect(secrets.redact({ n: 10, name: "examplecorp-connecta", deep })).toEqual({
+      n: MARK,
+      name: `${MARK}-connecta`,
+      deep: MARK,
+    });
+  });
+
   it.each(["drive", "resource", "image"])(
     "INV-5: declared %s binary content is decoded at every byte alignment and withheld whole as the marker",
     (kind) => {
@@ -232,6 +309,7 @@ describe("the output boundary's projection", () => {
     const long = set("s".repeat(524_289));
     expect(long.redact({ text: "short unchecked content", id: "ab", n: 7 })).toEqual({ text: MARK, id: "ab", n: 7 });
     expect(long.redact({ a: "abcd", b: "efgh" })).toEqual({ a: MARK, b: MARK });
+    expect(long.redact({ a: 1234, b: 5678 })).toEqual({ a: MARK, b: MARK });
     const deep: Record<string, unknown> = {};
     let cursor = deep;
     for (let depth = 0; depth < 520; depth++) cursor = cursor["child"] = {};
@@ -250,6 +328,23 @@ describe("the output boundary's projection", () => {
     const seam = secrets.redact({ a: `${filler}${TOKEN.slice(0, 5)}`, b: `${TOKEN.slice(5)} public`, c: filler });
     expect(leakedRun(`${seam.a.slice(-40)}${seam.b}`, TOKEN)).toBeUndefined();
     expect(seam.b).toBe(`${MARK} public`);
+  });
+
+  it("INV-5: leaf-by-leaf seam checks retain a number only when the remaining budget proves it safe (#1118)", () => {
+    const secrets = set("alice@examplecorp.com");
+    const filler = "x".repeat(18_000_000);
+    const safe = secrets.redact({ first: filler, big: filler, n: 10, name: "examplecorp-connecta" });
+    expect(safe.first === filler).toBe(true);
+    expect({ big: safe.big, n: safe.n, name: safe.name }).toEqual({ big: MARK, n: 10, name: `${MARK}-connecta` });
+    const digits = set("12345678-private");
+    const numeric = digits.redact({ first: filler, big: filler, a: 1234, b: 5678, text: "-private" });
+    expect(numeric.first === filler).toBe(true);
+    expect({ big: numeric.big, a: numeric.a, b: numeric.b, text: numeric.text }).toEqual({
+      big: MARK,
+      a: MARK,
+      b: MARK,
+      text: MARK,
+    });
   });
 });
 

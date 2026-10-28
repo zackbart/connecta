@@ -12,6 +12,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { EXECUTE_OUTPUT } from "../src/meta-output.js";
 import { InvocationService } from "../src/invocation.js";
 import { SentSecrets, sentSecretsFor, trackCredentialReads } from "../src/sent-secrets.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -21,7 +22,9 @@ import { seedGrant } from "./fixtures/oauth.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, spyLogger } from "./fixtures/misc.js";
-import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
+import { modernRequest } from "./fixtures/client-identity.js";
+import { readJsonRpc } from "./fixtures/http.js";
+import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const SECRET = "zq7-echo/+with=encoding";
@@ -62,6 +65,51 @@ async function exercise(connector: Connector, options: Parameters<typeof makeReg
 }
 
 describe("call-scoped sent credentials", () => {
+  it("INV-5: execute_code keeps schema-valid integer hostCalls through the final MCP envelope redaction (#1118)", async () => {
+    const called = vi.fn();
+    const app = createTestConnecta({
+      serverInfo: { name: "examplecorp-connecta", version: "1" },
+      logger: silentLogger,
+      connectors: [
+        {
+          id: "notes",
+          kind: "api",
+          listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+          callTool: async (_name, _args, ctx) => {
+            sentSecretsFor(ctx).secret("alice@examplecorp.com");
+            called();
+            return { count: 10, name: "examplecorp-connecta" };
+          },
+        },
+      ],
+      executor: {
+        execute: async (_code, providers) => ({ result: await providers[0]!.fns.call!("notes.read", {}) }),
+      },
+    });
+    try {
+      const body = await readJsonRpc(
+        await app.fetch(
+          modernRequest("tools/call", {
+            name: "execute_code",
+            arguments: { code: 'async () => await connecta.call("notes.read")' },
+          }),
+        ),
+      );
+      expect(called).toHaveBeenCalledOnce();
+      expect(body.error).toBeUndefined();
+      expect(body.result.isError).toBeFalsy();
+      expect(body.result.structuredContent).toMatchObject({
+        result: { data: { count: 10, name: "[redacted]-connecta" } },
+        hostCalls: { attempted: 1, admitted: 1, succeeded: 1, failed: 0 },
+      });
+      expect((await EXECUTE_OUTPUT["~standard"].validate(body.result.structuredContent)).issues).toBeUndefined();
+      expect(JSON.parse(body.result.content[0].text)).toEqual(body.result.structuredContent);
+      expect(body.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("[redacted]-connecta");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("INV-5: copies nested error data and causes without raw, prefixed, encoded or Basic credentials, and withholds a header line whose name or credential prefix a private value took", () => {
     const secrets = new SentSecrets();
     secrets.header(`Basic ${btoa(`account:${SECRET}`)}`);
