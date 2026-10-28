@@ -1810,13 +1810,13 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
 
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
-  hostLimits: { maxHostCalls: number; hostCallTimeoutMs: number },
+  hostLimits: { maxHostCalls: number; callTimeoutMs: number; hostCallTimeoutMs: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
   readOnly: boolean,
   native = false,
-) => `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+) => `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
@@ -1922,7 +1922,8 @@ export function registerExecuteTool(
         emitBudgets,
         {
           ...hostLimits,
-          hostCallTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs,
+          // connecta.call falls back to calls.defaultTimeoutMs; result, skill and read always use hostCallTimeoutMs.
+          callTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs,
         },
         hasConnectorGuides(connectors),
         connectors,

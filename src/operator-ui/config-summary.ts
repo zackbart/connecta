@@ -207,7 +207,7 @@ const LIMITS: Record<string, { label: string; short?: string; headline?: number 
   "results.maxStashEntries": { label: "Stash entries" },
   "execute.maxEmittedBytes": { label: "Program output", short: "Output" },
   "execute.maxEmittedBlocks": { label: "Output blocks" },
-  "execute.hostCallTimeoutMs": { label: "Host call timeout", short: "Call timeout" },
+  "execute.hostCallTimeoutMs": { label: "Host call timeout", short: "Host call" },
   "execute.maxResultChars": { label: "Program return (chars)", short: "Return (chars)" },
   "requests.maxQueueSize": { label: "Request queue", short: "Queue" },
   "requests.queueTimeoutMs": { label: "Request queue wait", short: "Queue wait" },

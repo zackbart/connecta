@@ -855,7 +855,7 @@ it.each([undefined, 30])(
     try {
       const listed = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: "test-token-123" }));
       const advertised = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
-      expect(advertised.description).toContain("0.04s/host call");
+      expect(advertised.description).toContain("0.04s/call (0.01s result/skill/read).");
       const deadlineMs = requestedMs ?? 40;
       const invoke = async (name: string, args: object) => {
         downstream = new Promise<void>((resolve) => (started = resolve));

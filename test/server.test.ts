@@ -802,6 +802,57 @@ describe("execute_code registration (code mode)", () => {
       await expect(run({ maxResultChars }, 10)).rejects.toThrow(`ConnectaConfig.execute.maxResultChars ${message}`);
     }
   });
+
+  it("advertises the deadline each host call actually gets when calls.defaultTimeoutMs differs", async () => {
+    const stalledId = crypto.randomUUID();
+    const inner = memoryStorage();
+    const storage = {
+      ...inner,
+      async get(key: string) {
+        // A result read that never answers, so only the utility deadline ends it.
+        if (key.includes(stalledId)) return new Promise<never>(() => {});
+        return inner.get(key);
+      },
+    };
+    const connecta = createTestConnecta({
+      connectors: [calcApi()],
+      auth: machineAuth(TOKEN),
+      storage,
+      publicUrl: BASE,
+      calls: { defaultTimeoutMs: 2_000 },
+      execute: { hostCallTimeoutMs: 100 },
+      executor: scriptedExecutor(async (fns) => {
+        try {
+          return await required(fns.result)(stalledId);
+        } catch (error) {
+          return (error as { details?: unknown }).details;
+        }
+      }),
+    });
+    try {
+      const listed = await readJsonRpc(await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }));
+      const description = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code")
+        .description as string;
+      const advertised = /Limits: .*?, (\d+(?:\.\d+)?)s\/call \((\d+(?:\.\d+)?)s result\/skill\/read\)\./.exec(
+        description,
+      );
+      expect(advertised?.slice(1)).toEqual(["2", "0.1"]);
+      const ran = await readJsonRpc(
+        await mcpRpc(
+          connecta,
+          "tools/call",
+          { name: "execute_code", arguments: { code: "async () => connecta.result(id)" } },
+          { token: TOKEN },
+        ),
+      );
+      expect(ran.result.structuredContent.result).toMatchObject({
+        code: "timeout",
+        details: { operation: "connecta.result", deadlineMs: Number(advertised![2]) * 1_000 },
+      });
+    } finally {
+      await connecta.close();
+    }
+  });
 });
 
 it("serves /health over HTTP without redirecting to the public URL", async () => {
