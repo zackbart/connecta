@@ -33,7 +33,7 @@ import {
   PROGRAM_RESULT_WIRE_BYTES,
   type ProgramResultHandle,
 } from "./program-result.js";
-import { MAX_EXECUTE_LOG_CHARS, truncateExecuteText } from "./executor-result.js";
+import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } from "./executor-result.js";
 import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
@@ -81,7 +81,6 @@ export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
  */
 export const EXECUTE_MAX_EMITTED_BYTES = CONFIG_DEFAULTS.execute.maxEmittedBytes;
 export const EXECUTE_MAX_EMITTED_BLOCKS = CONFIG_DEFAULTS.execute.maxEmittedBlocks;
-const EXECUTE_MAX_RESULT_CHARS = CONFIG_DEFAULTS.execute.maxResultChars;
 const CALL_SIGNATURE =
   "Use connecta.call(address, args?, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }). address must be a canonical connector.tool string.";
 const diagnosticsEncoder = new TextEncoder();
@@ -264,7 +263,7 @@ export class EmitCollector {
     readonly maxBytes: number,
     readonly maxBlocks: number,
     private readonly diagnostics?: ExecuteDiagnostics,
-    private readonly maxResultChars: number = EXECUTE_MAX_RESULT_CHARS,
+    private readonly maxResultChars = MAX_EXECUTE_RESULT_CHARS,
   ) {}
 
   accept(raw: unknown): void {
@@ -1360,7 +1359,7 @@ export function createExecuteTool(
     logger,
   };
   const hostCallTimeoutMs = resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS);
-  const maxResultChars = resolveBudget(config.maxResultChars, EXECUTE_MAX_RESULT_CHARS);
+  const maxResultChars = resolveBudget(config.maxResultChars, MAX_EXECUTE_RESULT_CHARS);
 
   const play = (
     program: string,

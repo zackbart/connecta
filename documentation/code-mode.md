@@ -678,18 +678,21 @@ with emitted text: 24,000 (~6k tokens) by default, configurable from 4,000 to
 1,000,000. Raise it when agents need large results whole and the model's
 context can afford them, since every paging round trip costs a model step.
 The response carries a return twice (text content and `structuredContent`),
-JSON-escaped, and MCP has no response-size limit of its own, so the
-client's limits apply; `admission.requests.maxBodyBytes` bounds request bodies
-only. Redaction scans the whole envelope once, so its cost grows with the cap.
+and Connecta has no response-size limit of its own, so the client's limits
+apply; `admission.requests.maxBodyBytes` bounds request bodies only. Claude Code,
+for one, passes at most 50,000 characters of text and can reject a larger result
+with no content (see [truncated direct-call results](./meta-tools.md#truncated-direct-call-results)),
+so keep the cap below what every client of the deployment accepts. Redaction scans the whole envelope once, so its cost grows with the cap.
 The cap does not change stash paging: pages still obey the stashed call's
 `maxResultBytes` and the 32 KiB bridge ceiling.
 An oversized return is stashed as compact JSON through the same
 result store as direct calls. The returned notice carries `truncated`, `resultId`,
 `totalBytes`, `hint`, `nextOffset: 0`, and an executable `nextAction` that pages
 with `connecta.result`. Its page size is `floor((maxResultChars - 1024) / 6)`
-bytes, at most 32 KiB, so a page fits the next program's return even when every
-byte escapes to six characters (3,829 bytes by default); direct-call notices use
-the same size. It also retains `totalChars` and a bounded `preview`.
+bytes, so a page fits the next program's return even when every byte escapes to
+six characters (3,829 bytes by default), at most the stashed call's
+`maxResultBytes` and the 32 KiB bridge ceiling; direct-call notices use the same
+size. It also retains `totalChars` and a bounded `preview`.
 The recovery action and hint precede the preview, so clients that spill results
 after the first 2,000 characters retain the handle and the instruction.
 Small returns pass through unchanged; Connecta does not select fields.

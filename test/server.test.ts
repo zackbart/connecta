@@ -780,10 +780,11 @@ describe("execute_code registration (code mode)", () => {
     expect(raised.limit).toEqual({ value: 150_000, source: "config" });
     expect(raised.content.result).toEqual({ rows: "x".repeat(100_000) });
 
-    // Past the raised cap, the notice pages in larger steps that still fit it.
+    // Past the raised cap, the notice pages in the largest step the stash serves
+    // (calls.maxResultBytes, 24,000), not the 24,829 the return cap alone allows.
     const over = await run({ maxResultChars: 150_000 }, 200_000);
     expect(over.content.result).toMatchObject({ truncated: true, resultId: expect.any(String) });
-    expect(pageBytes(over.content)).toBe(24_829);
+    expect(pageBytes(over.content)).toBe(24_000);
     expect(JSON.stringify(over.content.result).length).toBeLessThanOrEqual(150_000);
 
     // Emitted text shares whichever cap the deployment set.

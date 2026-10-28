@@ -257,6 +257,16 @@ interface ResultStash {
   programChars?: number;
 }
 
+/**
+ * The page a notice's nextAction asks a program to read: it fits the program's
+ * return even if every byte escapes to six JSON characters, with room for the
+ * page envelope, and never asks for more than the stash or bridge will serve.
+ */
+function programPageBytes(results: ResultStash): number {
+  const fits = Math.floor(((results.programChars ?? MAX_EXECUTE_RESULT_CHARS) - 1024) / 6);
+  return Math.max(4, Math.min(fits, results.cap, PROGRAM_RESULT_PAGE_BYTES));
+}
+
 /** Opens a write's notice, ahead of any paging instruction. */
 const WRITE_ALREADY_RAN = "This write already ran: do not call it again to see its result.";
 
@@ -417,7 +427,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
               // A byte may cost six JSON characters when escaped. Leave room for the
               // result id, page counters, and continuation metadata in the returned page.
               arguments: {
-                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.min(Math.floor(((results.programChars ?? MAX_EXECUTE_RESULT_CHARS) - 1024) / 6), PROGRAM_RESULT_PAGE_BYTES)} })`,
+                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${programPageBytes(results)} })`,
               },
             },
     };
