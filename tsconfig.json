@@ -24,7 +24,6 @@
     // src/ imports the package by its own name, and the template's own
     // program (tsconfig.template.node.json) still checks it against the
     // shipped declarations.
-    "baseUrl": ".",
     "paths": {
       "@zackbart/connecta": ["./src/index.ts"],
       // The two published subpaths whose target is not `src/<subpath>.ts`.
