@@ -1605,6 +1605,36 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "P2",
+    name: "INV-4: skill accepts the skills tool's { name } shape and the connecta.skills alias with one accounting",
+    code: `async () => {
+      const byObject = await connecta.skill({ name: "connector:reader" });
+      const byAlias = await connecta.skills("connector:reader");
+      const byAliasObject = await connecta.skills({ name: "connector:reader" });
+      try { await connecta.skills({}); }
+      catch (error) {
+        return {
+          same: byObject.text === byAlias.text && byAlias.text === byAliasObject.text,
+          name: byAliasObject.name,
+          invalid: { code: error.code, message: error.message },
+        };
+      }
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        same: true,
+        name: "connector:reader",
+        invalid: {
+          code: "invalid_args",
+          message:
+            'Use connecta.skill("usage") or connecta.skill("connector:<id>") with an exact skill name; the skills tool lists names.',
+        },
+      });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 3, failed: 1 });
+    },
+  },
+  {
     clauses: "R4",
     name: "INV-3 INV-4: native skill URIs and aliases reach the same documents in real guests",
     code: `async () => {
@@ -1682,8 +1712,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     ["callTool('reader.read')", "ReferenceError", "Use connecta.call"],
     ["callTool.query()", "ReferenceError", "Use connecta.call"],
     ["skills()", "ReferenceError", "Use connecta.call"],
-    ["await connecta.guide('usage')", "TypeError", "Use connecta.call"],
-    ["await connecta.skills('usage')", "TypeError", "Use connecta.call"],
+    ["await connecta.guide('usage')", "TypeError", 'connecta.skill("usage")'],
     ["const connecta = {}; await connecta.call('reader.read')", "TypeError", "Do not shadow connecta"],
   ].map(([source, name, hint]): ContractCase => ({
     clauses: "E6",
@@ -3198,7 +3227,7 @@ return fs;
       const result = record(outcome);
       // Both executors expose the same finite namespace without inherited members.
       expect(result.inheritedType).toBe("undefined");
-      expect(result.methods).toEqual(["call", "describe", "emit", "read", "result", "search", "skill"]);
+      expect(result.methods).toEqual(["call", "describe", "emit", "read", "result", "search", "skill", "skills"]);
       expect(result.frozen).toBe(true);
       for (const removed of ["ui", "batch", "__callNamespace"]) {
         expect(String(result[removed]).length).toBeGreaterThan(0);

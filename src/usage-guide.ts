@@ -84,8 +84,8 @@ Split remaining reads. Never replay writes for their output.
 
 ## Per-connector guides
 
-Fetch a listed guide with skills by its exact name, or \`connecta.skill(name)\`
-inside a program; it returns \`{ name, text, format: "text" }\`.
+Fetch a listed guide by its exact name with the skills tool, or
+\`connecta.skill(name)\` inside a program; it returns \`{ name, text, format: "text" }\`.
 \`guideRequired: true\` is a hard stop. connector_required and approval_required
 remain after schema expansion; schema_truncated clears after exact describe.
 Otherwise fetch for units, pagination, aliases, or sequences.

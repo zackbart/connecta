@@ -1096,7 +1096,7 @@ function metaToolsForRequest(
                 {
                   type: "text",
                   text:
-                    'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
+                    "Available skills. Fetch one by exact name with this skills tool, or connecta.skill(name) in a program.\n\n" +
                     listing.map((skill) => `- \`${skill.name}\` — ${skill.description}`).join("\n"),
                 },
               ],

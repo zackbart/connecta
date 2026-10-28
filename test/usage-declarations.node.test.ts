@@ -50,10 +50,11 @@ it("INV-3: advertised guest signatures match the shipped declaration and runtime
   };
   visit(initializer);
   expect(namespace).toBeDefined();
-  expect(
-    namespace!.properties
-      .map((p) => p.name?.getText(initializer))
-      .filter((n) => n !== "__proto__")
-      .sort(),
-  ).toEqual(advertised);
+  const members = namespace!.properties.filter((p) => p.name?.getText(initializer) !== "__proto__");
+  // The only undeclared member is connecta.skills, the same host function as skill.
+  expect(members.map((p) => p.name?.getText(initializer)).sort()).toEqual([...advertised, "skills"].sort());
+  const alias = members.find((p) => p.name?.getText(initializer) === "skills");
+  expect(alias && ts.isPropertyAssignment(alias) ? alias.initializer.getText(initializer) : undefined).toBe(
+    "provider.skill",
+  );
 });

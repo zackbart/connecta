@@ -413,7 +413,11 @@ The `get_result` meta-tool is removed.
 top-level `skills`, within the admitted connector view. It reads the registry
 behind native `skills/get` and `resources/read`, including opted-in downstream
 skills. It returns
-`{ name, format: "text", text }`; an unknown name is `not_found`.
+`{ name, format: "text", text }`; an unknown name is `not_found`. It also
+accepts the top-level tool's `{ name }` object, and `connecta.skills` is an
+undeclared alias of `connecta.skill` with the same host-call accounting, because
+models copy the `skills` tool's shape into programs. Any other argument is
+`invalid_args`, with a message naming `connecta.skill("usage")`.
 
 ### Parallel calls
 
