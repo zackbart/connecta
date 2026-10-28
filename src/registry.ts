@@ -320,6 +320,8 @@ const STASH_LEDGER_BACKOFF_CAP_MS = 250;
 const STASH_WRITE_TIMEOUT_MS = 30_000;
 /** Total cleanup/release or settlement budget, including ledger retries. */
 const STASH_COMPLETION_TIMEOUT_MS = 15_000;
+/** Reservation, chunk writes and completion share one finite outer budget. */
+const STASH_TIMEOUT_MS = STASH_WRITE_TIMEOUT_MS + STASH_COMPLETION_TIMEOUT_MS;
 
 /** Stop waiting without starting background storage work after the deadline. */
 function completeStash(effect: Effect.Effect<unknown, unknown, Storage>): Effect.Effect<void, unknown, Storage> {
@@ -860,6 +862,7 @@ export class Registry implements RegistryView {
    * row in one ledger record in storage, booked by compare-and-set before any
    * chunk is written, so every isolate and process sharing the store sees the
    * same entries and bytes. A pending write keeps its finite charge reserved.
+   * The whole operation, including reservation, stops after 45 seconds.
    * Writes stop after 30 seconds; absolute chunk expiries cannot pass the
    * booked deadline even on late commit. Rejected responses leave writes
    * unconfirmed and retain their charge. Cleanup/release and settlement each
@@ -1247,7 +1250,10 @@ export class Registry implements RegistryView {
           if (!written) yield* release;
           else yield* completeStash(settle);
           return written;
-        }).pipe(Effect.provideService(Storage, self.opts.storage)),
+        }).pipe(
+          Effect.timeoutOrElse({ duration: Duration.millis(STASH_TIMEOUT_MS), orElse: () => Effect.succeed(false) }),
+          Effect.provideService(Storage, self.opts.storage),
+        ),
       recheckResultAccess: () => Effect.succeed(true),
       storeOAuthHandoff: (self, connectorId, state, principalKey) =>
         Effect.gen(function* () {

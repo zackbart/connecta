@@ -119,6 +119,51 @@ export function stashClockSkewContract(open: StashFixtureFactory): void {
 export function stashChargeContract(open: StashFixtureFactory): void {
   stashClockSkewContract(open);
 
+  it("INV-7: bounds reservation reads and starts no storage work after a stalled read resumes", async () => {
+    const f = await clocked(open);
+    let entered!: () => void;
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const compareAndSet = vi.fn(f.storage.compareAndSet.bind(f.storage));
+    const storage: KVStorage = {
+      ...f.storage,
+      async get(key) {
+        if (key === stashLedgerKeys.ledger) {
+          entered();
+          await gate;
+        }
+        return f.storage.get(key);
+      },
+      compareAndSet,
+    };
+    let outcome: boolean | undefined;
+    const pending = make(storage)
+      .stashResult("stalled-reservation", ["x"], 900)
+      .then((value) => {
+        outcome = value;
+      });
+    try {
+      await reading;
+      await vi.advanceTimersByTimeAsync(WRITE_MS + COMPLETION_MS - 1);
+      expect(outcome).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(outcome).toBe(false);
+      release();
+      await pending;
+      expect(compareAndSet).not.toHaveBeenCalled();
+      expect(await f.storage.get(chunk("stalled-reservation"))).toBeNull();
+    } finally {
+      release();
+      await pending;
+      f.restore();
+    }
+  });
+
   it("INV-7: prunes an expired charge from a still-live ledger with aligned clocks", async () => {
     const f = await clocked(open);
     try {

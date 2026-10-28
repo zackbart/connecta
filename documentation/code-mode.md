@@ -880,6 +880,10 @@ Programs and direct calls use the same invocation deadline and stages. A call's
 (default 15,000). A guest may request a longer individual call, but the sandbox
 and request ceilings still bound the whole run. Timeout details are agent-facing;
 operator records retain only checked classifications and numeric facts.
+Result processing, including stash reservation, uses the same remaining call
+budget and request cancellation. If it cannot finish after a successful call,
+the error is non-retryable `result_processing_failed`; the write already
+happened and stays successful in program write accounting.
 A dispatched write timeout becomes `write_outcome_unknown` and retains its
 deadline details even when the program catches the failure. A completed
 maintained-provider call that reports a timeout keeps `timeout` when its complete
@@ -905,17 +909,17 @@ deadline past the ceiling means raising the ceiling too.
 **L4.** Per-execution bounds that are contract, identical in both executors
 because connecta enforces them above the sandbox:
 
-| Bound                                                                                   | Value                                                                                                        |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Host calls per execution, shared by every guest call except `emit`                      | 20 by default, `execute.maxHostCalls`                                                                        |
-| Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites`                                                                           |
-| Deadline per host call                                                                  | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, and the connector call |
-| Discovery page                                                                          | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                      |
-| `describe` addresses                                                                    | ≤ 100                                                                                                        |
-| `describe` nearby suggestions                                                           | ≤ 3 canonical addresses per failed entry                                                                     |
-| Caller text echoed by `describe` recovery                                               | ≤ 512 UTF-8 bytes per field, plus `…`                                                                        |
-| Result                                                                                  | 24,000 serialized characters                                                                                 |
-| Logs presented to the model                                                             | 4,000 characters                                                                                             |
+| Bound                                                                                   | Value                                                                                                                           |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Host calls per execution, shared by every guest call except `emit`                      | 20 by default, `execute.maxHostCalls`                                                                                           |
+| Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites`                                                                                              |
+| Deadline per host call                                                                  | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, the connector call, and result processing |
+| Discovery page                                                                          | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                                         |
+| `describe` addresses                                                                    | ≤ 100                                                                                                                           |
+| `describe` nearby suggestions                                                           | ≤ 3 canonical addresses per failed entry                                                                                        |
+| Caller text echoed by `describe` recovery                                               | ≤ 512 UTF-8 bytes per field, plus `…`                                                                                           |
+| Result                                                                                  | 24,000 serialized characters                                                                                                    |
+| Logs presented to the model                                                             | 4,000 characters                                                                                                                |
 
 For any tool whose output declares `page`, continue while `page.hasMore` is true.
 When approaching the program's host-call limit, return `page.nextCursor` before
