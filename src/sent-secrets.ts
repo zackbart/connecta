@@ -1346,6 +1346,23 @@ export class SentSecrets {
     return this.idle() ? value : (this.project(value, this.scan(true)).value as string);
   }
 
+  /** An SDK response body, checked after it has been fully read so late registrations
+   * still apply. An idle set leaves the original serialization untouched. */
+  serializedAgentOutput(body: string, json: boolean): string {
+    if (this.idle()) return body;
+    if (json) {
+      // Structured redaction joins text blocks, including secrets split across them.
+      try {
+        return JSON.stringify(redactAgentOutput(this, JSON.parse(body)));
+      } catch {
+        /* Non-JSON diagnostics still pass through the text boundary. */
+      }
+    }
+    // A second serialized pass over parsed JSON would mistake a blob's encoding
+    // for credential bytes. Only non-JSON bodies take this text path.
+    return redactAgentOutput(this, body);
+  }
+
   /** A plain-data snapshot of `value` with every match removed: own enumerable data properties
    * (an error's own fields, non-enumerable ones included), read once each. Accessors are never
    * invoked, except an error's stack and the accessors its class defines, read once into the
@@ -1987,7 +2004,7 @@ export class SentSecrets {
     const seen = { keys: new Map<string, string>(), scalars: new Map<string, string>() };
     // Errors' unregistered names, as walked: a copy whose name changed holds the placeholder.
     const named: [copy: Holder, slot: string, name: string][] = [];
-    // Typed binary: where its copy was put, and the leaves its numbers and bytes span.
+    // Typed binary: where its copy was put, and the leaves its numbers span.
     const binaries: [frame: Frame, slot: PropertyKey, owner: number, start: number, end: number][] = [];
     // The accessors each prototype's chain defines, found once per call.
     const chains = new Map<object, string[]>();
@@ -2154,8 +2171,9 @@ export class SentSecrets {
       return text;
     };
     /** Typed binary as the fresh Uint8Array of its bytes. Its leaves are the numbers JSON shows
-     * for it and for its copy, each element's and each byte's, and its bytes; a match in any
-     * withholds it whole, as does a size past the node budget. */
+     * for it and for its copy, each element's and each byte's. The byte view is checked alone,
+     * so it cannot interrupt numeric seams; a match in any view withholds it whole, as does a
+     * size past the node budget. */
     const typed = (
       { bytes, elements }: NonNullable<ReturnType<typeof binaryOf>>,
       frame: Frame,
@@ -2171,9 +2189,9 @@ export class SentSecrets {
       if (numbers)
         for (let index = 0; index < numbers.length; index++) leaf(String(numbers[index]), NUMBER, sink, index, owner);
       for (let index = 0; index < bytes.length; index++) leaf(DECIMAL[bytes[index]!]!, NUMBER, sink, index, owner);
-      leaf(latin1(bytes), BYTES, sink, 0, owner);
       binaries.push([frame, slot, owner, start, parts.length]);
-      return bytes;
+      const text = latin1(bytes);
+      return this.checked([text], [BYTES], scan)[0] === text ? bytes : withheld(owner);
     };
     const container = (
       item: object,
