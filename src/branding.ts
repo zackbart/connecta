@@ -10,7 +10,7 @@ export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" vie
   <path class="fg" d="M27 9.4A13 13 0 1 0 27 22.6l-4.4-2.5a8 8 0 1 1 0-8.2z"/>
 </svg>`;
 
-export interface ResolvedTheme {
+interface ResolvedTheme {
   accent?: string;
   radius?: string;
   fontFamily?: string;
@@ -109,7 +109,7 @@ const COLOR_SCHEMES = ["system", "light", "dark"] as const;
  * has to fall back to the stylesheet default instead of refusing to serve the
  * page. `droppedThemeTokens` names the drops for the startup warning.
  */
-export function resolveTheme(theme?: ConnectaTheme): ResolvedTheme {
+function resolveTheme(theme?: ConnectaTheme): ResolvedTheme {
   const accent = trimmedString(theme?.accent);
   const fontFamily = trimmedString(theme?.fontFamily);
   const monoFamily = trimmedString(theme?.monoFamily);
@@ -218,7 +218,7 @@ function accentTokens(accent: string): { onAccent: string; darkText: string } {
  * There is no escaping here: every value has already passed a gate above, and
  * anything that would need escaping is dropped rather than rewritten.
  */
-export function themeCss(theme: ResolvedTheme): string {
+function themeCss(theme: ResolvedTheme): string {
   const derived = theme.accent ? accentTokens(theme.accent) : undefined;
   const declarations = [
     theme.accent ? `--accent:${theme.accent}` : "",

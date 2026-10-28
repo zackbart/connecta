@@ -226,7 +226,7 @@ An admitted non-preflight `/mcp` request then takes five steps in
    ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
    handed out, and retiring a scoping boundary into fail-open is worse than any
    404 — then register the six meta-tools on a fresh `McpServer`
-   (`test/server.test.ts`, `test/code-first-surface.test.ts`).
+   (`test/server.test.ts`).
 
 ### Modern request metadata and transport refusals
 
@@ -443,9 +443,7 @@ Only an omitted or `undefined` `callAdmission` selects a connector's default.
 The shared schema rejects malformed defined policies at factory construction,
 and the registry validates custom connector policies before registration.
 Falsy values such as `false`, `null`, `0`, and `""` are construction errors
-(INV-11), never a way to disable admission. The generated provider fixtures
-exercise these refusals and unchanged defaults in
-`test/call-admission-options.test.ts`.
+(INV-11), never a way to disable admission.
 
 ### Production Worker disconnects
 
@@ -1283,9 +1281,8 @@ parse as text, so connecta reads downstream bodies as bytes
 (`src/byte-read-response.ts`), `ctx.oauth.fetch()` answers included. The
 operator page may show catalog metadata the operator loaded (descriptions,
 schemas), but withholds a tool name outside the grammar as it does in records.
-`test/operator-record-sources.node.test.ts` is a secondary lint over every other
-log call in `src/`. Fix the sink, not the source: a filter at each source missed
-the next one. Recorded HTTP status facts survive the bare write-401 fallback,
+Fix the sink, not the source: a filter at each source missed the next one.
+Recorded HTTP status facts survive the bare write-401 fallback,
 Google's uncertain-write wording, and oversized-response mapping; see
 [Read failure records](./operating.md#read-failure-records) for their operator
 meaning. These facts do not change agent error fields or write outcomes.
@@ -1732,8 +1729,7 @@ path, or fields a schema leaves undeclared; such paths still apply at
 runtime).
 
 `test/fixtures/value-safety.ts` is the shared harness each vendor's
-`provider.safety.node.test.ts` runs; `reviewProblems` is pure, and
-`test/value-safety-harness.node.test.ts` proves wrong paths fail it. It fails
+`provider.safety.node.test.ts` runs; `reviewProblems` is pure. It fails
 on candidates from another pin, format, or option set; an unreviewed
 candidate; a verdict for an operation the index lacks; a table path the stamp
 lacks (unresolved, or edited since `providers:spec`); a flagged field no path,
@@ -1794,14 +1790,6 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   returned private values and credential echoes; positive record facts must
   still arrive. An explicitly writable pool also exercises reopening a
   read-only deployment without bypassing connector policy.
-- `test/cancellation-journey.node.test.ts` observes a queued client's departure
-  without another vendor send, and an active client's departure after the
-  vendor commits. The vendor must see its held response socket close before
-  releasing it; a later MCP read recovers the committed intent exactly once.
-  `test/cancellation-faults.test.ts` keeps signal-less token-resolution,
-  warmed-credential digest, stalled body-cleanup and abort/grant races on Node
-  and workerd. These replace the universal Promise-method/seam/owner matrix
-  and its enrollment self-test, plus migration-only runtime wrapper checks.
 - `test/browser/operator-flows.spec.ts` serves the actual operator shell and
   routes over TCP with file-backed SQLite. Sign-in, Settings provenance, OAuth
   connect/disconnect and credential save/test/replace/remove survive closing and
@@ -1835,17 +1823,10 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   after HTML, malformed JSON and oversized acknowledgements with one physical
   send. It distinguishes Stripe's reviewed pre-execution 401 refusal, and checks
   read failure facts, secrecy and recovery through direct and QuickJS calls.
-  `test/provider-failure-sweep.test.ts` retains only concrete auxiliary, composite,
-  in-flight and untracked-call fault probes; no provider/tool argument roster or
-  catalog/finalizer agreement sweep remains. Existing
-  `test/sent-secrets.test.ts`, `test/sent-secret-output-boundary.test.ts`,
-  `test/request-secret-redaction.test.ts` and `test/catalog-secret-redaction.test.ts`
-  cover secrecy before projection, truncation, caching, paging and diagnostics.
-- `test/write-evidence.node.test.ts`, `test/remote-mcp-attempts.node.test.ts` and
-  `test/oauth-credential-attempts.node.test.ts` inspect physical socket sends.
-  Native transport parity, OAuth and write-provenance suites retain their
-  workerd coverage. The shared throwaway RSA key in `test/fixtures/rsa.ts` is
-  used by write-provenance and unknown-write-advice fixtures.
+  Existing `test/sent-secrets.test.ts` covers secrecy before projection,
+  truncation, caching, paging and diagnostics.
+- The shared throwaway RSA key in `test/fixtures/rsa.ts` is used by
+  write-provenance and unknown-write-advice fixtures.
 - `test/executor-requests.test.ts` runs overlapping `execute_code` programs
   as separate workerd requests through the real Worker Loader executor, with
   real TCP host calls that read their own request's signal. Queued programs
@@ -1860,9 +1841,8 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   `test/request-context.node.test.ts` pins the same wake order and async context
   on Node for executor and call admission and QuickJS host calls, and gives back
   grants that shutdown overtook.
-- The request, catalog, auxiliary-call and renewal lifetime
-  suites, plus `test/auth-admission-binding.test.ts`, exercise cancellation,
-  held native work and garbage collection. These test actual request ownership;
+- `test/request-context.node.test.ts` and `test/auth-admission-binding.test.ts`
+  exercise cancellation, held native work and garbage collection. These test actual request ownership;
   the retired capture scheduler's source guards were only harness constraints.
 
 The remaining probes defend distinct reachable failures: auth admission and
@@ -1904,8 +1884,7 @@ behind the same redirect wrapper and a same-origin guard.
 client replacement, transport confinement and secrecy on Node, and a real
 service binding on workerd.
 `test/google-service-account-token.test.ts` exercises signing/cache behavior on
-Node and workerd; `test/google-service-account-remote.node.test.ts` checks
-real-socket token/MCP requests, invalidation and one physical attempt per write.
+Node.
 Operator setup lives in [Google hosted MCP](./auth.md#google-service-account-tokens-and-hosted-mcp).
 
 `createConnecta` takes closed typed `ui`, `vault`, and `activity`
@@ -2312,8 +2291,7 @@ An accepted write's blocked retry retains its original HTTP status; a slot
 occupied by an auxiliary read instead names the separate write step needed.
 Structured resend advice reaches output only when the core permits it. Generic
 unknown writes retain the core's diagnostic wait; Q8 removes it. The mapping
-adds no Promise entry or lifetime owner. `provider-failure-sweep.test.ts`,
-`guarded-attempts.node.test.ts`, `call-services.test.ts` and the native
+adds no Promise entry or lifetime owner. `call-services.test.ts` and the native
 transport suites exercise these contracts through invocation, physical sockets
 and request closure. `http-kit.test.ts` retains focused numeric/text fact,
 request-equivalence and bulk-capacity fault probes. The migration-era
@@ -3099,7 +3077,7 @@ host/transport additions. Root and all other caps and historical baselines are
 unchanged by D3. Separate-input costs are not a combined gzip measurement;
 the integrated deployment must be measured again.
 
-`test/server.test.ts` asserts production routing directly on Node and workerd:
+`test/server.test.ts` asserts production routing directly on Node:
 raw prefixes and malformed suffixes, extension methods, CIMD before auth/UI/body
 reads, Response/error identity, unmatched fallthrough, concurrent request
 isolation, and body-held permits through end/failure/cancel/abort/abandonment.
@@ -3243,9 +3221,7 @@ compiling and configuring the real thing.
   accounting and claim ownership keep their existing ordering. Late
   rejections are observed; dispatch and lease guards still contain detached
   work. Per-await I/O cancellation remains useful for releasing resources,
-  while prompt refusal is enforced at the boundary
-  (`test/cancellation-faults.test.ts`, `test/operation-cancellation.test.ts`
-  and `test/cancellation-journey.node.test.ts`). Invocation owns
+  while prompt refusal is enforced at the boundary. Invocation owns
   the recovery and logical-call records it reads after teardown. Closing an
   outer call also revokes nested calls paused in preparation. Request-owned
   MCP sessions and token flights outlive individual calls and close with the
@@ -3262,11 +3238,9 @@ compiling and configuring the real thing.
   transfers preparation, token exchange and fenced rotation commit to the
   storage coordinator under its own deadlines and deferred-work hook; only
   the caller's wait still closes with the call. That completion
-  cannot resume a closed call or resend its resource request
-  (`test/call-renewal-lifetime.test.ts`,
-  `test/remote-mcp-renewal-lifetime.test.ts`). Explicit request revocation also
-  aborts pending authorization-code exchange and refuses late token writes
-  (`test/operation-cancellation.test.ts`). Request closure
+  cannot resume a closed call or resend its resource request. Explicit request
+  revocation also aborts pending authorization-code exchange and refuses late
+  token writes. Request closure
   revokes views and calls first, then runs every finalizer in reverse order,
   collecting failures. The caller's original cancellation signal is retained
   separately from the lease signal, so normal teardown never looks like caller
@@ -3346,7 +3320,7 @@ compiling and configuring the real thing.
   thrown or mapped error, a custom connector's, a program's call, and its
   own deadline or the caller's cancellation, when no connector failure
   arrives at all. It reads the logical call's requests
-  (`logicalCallRequests`), which hold every resource request dispatched
+  (`LogicalLedger`'s `sent`), which hold every resource request dispatched
   under the call from any ledger: nested `api()` calls, remote MCP, guarded
   transports, `ctx.fetch` and the kit. Without an invocation (a direct call,
   or a context no invocation opened), only the outermost boundary calls it,
@@ -3591,23 +3565,8 @@ compiling and configuring the real thing.
   unchanged for the invocation to report.
   Shared provider outcomes and the real HTTP hostile-response journey check
   returned data, failure/recovery, privacy and physical writes without a
-  catalog-wide status matrix. `test/provider-failure-sweep.test.ts` retains
-  fault probes for Docs creation with initial text, composite success followed
-  by refusal, GitHub preflight failures, typed handler errors after successful
-  sends, Forms cursor conflicts after 200, generic-code vendor refusals,
-  auxiliary failures after resource dispatch and concurrent direct-call isolation.
-  It also holds siblings awaiting credentials or already in flight when another
-  write fails, refuses requests after call closure, and probes network errors,
-  refusal-shaped abort reasons and untracked sends. Native transport and
-  request-lifetime suites retain their platform-specific evidence.
-  `test/write-evidence.test.ts` uses real refused, reset, and held sockets on
-  both runtimes: a refused write is unknown and a refused read retryable,
-  including a write aborted with another fetch's real refusal as its reason
-  after the server read its body; `test/write-evidence.node.test.ts` covers a
-  Planning Center POST that undici resends after a 421 to a closed listener, a
-  DELETE that a `RetryAgent` resends after a reset, and a streamed body and a
-  `Blob` with an overridden `stream()` that undici partly sends before its
-  producer fails. Each has the server holding the write and reports unknown.
+  catalog-wide status matrix. Native transport and request-lifetime suites
+  retain their platform-specific evidence.
   Additional tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),
   `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each
@@ -3867,12 +3826,7 @@ restoration, typed failures and interruption. The D4 native proof fixtures insta
 their intentional throwing Promise shells before registration, so they establish
 native composition without authorizing bypass of later replacements.
 
-`remote-mcp-native.test.ts` runs native SDK/cache/request-boundary cases on Node
-and workerd. `remote-mcp-native-bundle.node.test.ts` additionally loads an actual
-minified production bundle to verify call/cache registration, request Context,
-native storage, saved-original delegates, custom replacements and closed-owner
-refusal. Existing wire, physical-attempt, cache and OAuth lifetime suites remain
-the compatibility evidence.
+Existing wire, cache and OAuth suites remain the compatibility evidence.
 
 ### Native upward MCP orchestration (contributor)
 
@@ -3926,8 +3880,7 @@ identity, credential, storage, executor and tool callbacks. Connecta's OAuth-lin
 binding, TTL, progress, closing and one-use claims are native orchestration around
 those leaves. The supported protocol and unsupported-feature refusals remain
 unchanged. Native consumer, failure, decorator, sharing, close and minified-bundle
-regressions live in `upward-native.test.ts` and
-`upward-native-bundle.node.test.ts`; existing wire, continuation, redaction,
+regressions live in `upward-native.test.ts`; existing wire, continuation, redaction,
 physical-attempt and body/admission suites remain compatibility evidence.
 
 The combined native/operator graph has a measured contributor bundle allowance

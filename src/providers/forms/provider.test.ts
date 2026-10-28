@@ -1,5 +1,4 @@
-// The Google Forms connection. Shared failure coverage lives in
-// test/provider-failure-sweep.test.ts; delegation, subjects, and tokens in
+// The Google Forms connection. Delegation, subjects, and tokens live in
 // test/google-workspace-delegation.test.ts. This suite covers additional
 // behavior: refusals, cuts, declared keys, result bounds, and cursors.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

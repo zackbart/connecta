@@ -236,5 +236,3 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
     },
   };
 }
-
-export const nodeGuardedTransport = createNodeGuardedTransport();

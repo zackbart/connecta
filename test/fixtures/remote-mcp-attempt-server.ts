@@ -24,7 +24,11 @@ export default async function setup(project: TestProject) {
   const control = createServer(async (request, response) => {
     const key = request.url!.slice(1);
     if (request.method === "GET") {
-      const probe = probes.get(key)!;
+      const probe = probes.get(key);
+      if (!probe) {
+        response.writeHead(404).end();
+        return;
+      }
       response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ received: probe.received, closed: probe.closed, wire: probe.wire }));
       return;
     }

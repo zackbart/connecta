@@ -65,7 +65,7 @@ export type GuestBlock = { type: "text"; text: string } | { type: "image" | "aud
 
 type SchemaFormat = "json" | "compact" | "typescript";
 
-export interface CatalogSearchArgs {
+interface CatalogSearchArgs {
   query?: string;
   connector?: string;
   safety?: "readOnly" | "approvalRequired" | "all";
@@ -75,7 +75,7 @@ export interface CatalogSearchArgs {
   includeSchemas?: SchemaFormat;
   includeSchemaKeys?: boolean;
 }
-export interface CatalogDescribeArgs {
+interface CatalogDescribeArgs {
   address?: unknown;
   addresses?: unknown;
   format?: SchemaFormat;
@@ -105,7 +105,7 @@ interface CatalogSearchFailure extends CatalogFailureDetail {
   >;
   retry?: string;
 }
-export interface CatalogSearchPage {
+interface CatalogSearchPage {
   catalogErrors: CatalogSearchFailure[];
   absence?: {
     service: string;
@@ -135,7 +135,7 @@ export interface CatalogSearchPage {
     guidance?: string;
   };
 }
-export type CatalogSearchResult = CatalogSearchPage & {
+type CatalogSearchResult = CatalogSearchPage & {
   tools: Array<
     CatalogSearchTool & {
       connectorTitle?: string;
@@ -144,7 +144,7 @@ export type CatalogSearchResult = CatalogSearchPage & {
     }
   >;
 };
-export interface CatalogDescription {
+interface CatalogDescription {
   address: string;
   schemaFormat?: "json" | "text";
   name?: string;
