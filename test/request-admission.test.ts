@@ -60,6 +60,85 @@ describe("request admission", () => {
     vi.useRealTimers();
   });
 
+  it("INV-7/INV-9: the request deadline stops a held final program-return stash", WORKERS, async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const backing = memoryStorage();
+    const storage = {
+      ...backing,
+      get: vi.fn(async (key: string) => {
+        if (key === stashLedgerKeys.ledger) {
+          entered.resolve();
+          await release.promise;
+        }
+        return backing.get(key);
+      }),
+      set: vi.fn(backing.set),
+      delete: vi.fn(backing.delete),
+      list: vi.fn(backing.list),
+      compareAndSet: vi.fn(backing.compareAndSet),
+    };
+    let writes = 0;
+    const deployment = createTestConnecta({
+      connectors: [
+        connectorWith({
+          id: "notes",
+          kind: "api",
+          tools: [{ name: "save", annotations: { readOnlyHint: false } }],
+          call: async () => {
+            writes++;
+            return { saved: true };
+          },
+        }),
+      ],
+      storage,
+      logger: silentLogger,
+      executor: scriptedExecutor(async (fns) => {
+        await fns.call!("notes.save", {});
+        return "x".repeat(300_000);
+      }),
+      admission: {
+        requests: { concurrency: 1, maxQueueSize: 0, maxDurationMs: 100 },
+        code: { concurrency: 1, maxQueueSize: 0 },
+      },
+    });
+    let ended = false;
+    const pending = deployment
+      .fetch(
+        mcpRpc("tools/call", {
+          name: "execute_code",
+          arguments: { code: "async () => { await connecta.call('notes.save', {}); return 'x'.repeat(300000); }" },
+        }),
+      )
+      .then((response) => {
+        ended = true;
+        return response;
+      });
+    try {
+      await entered.promise;
+      expect(writes).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(ended).toBe(true);
+      const health = await deployment.fetch(new Request(`${BASE}/health`));
+      expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 }, code: { active: 0 } } });
+      const callsAtEnd = [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+        (operation) => operation.mock.calls.length,
+      );
+      release.resolve();
+      await settle();
+      expect(
+        [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+          (operation) => operation.mock.calls.length,
+        ),
+      ).toEqual(callsAtEnd);
+      expect(writes).toBe(1);
+    } finally {
+      release.resolve();
+      await settle();
+      await pending;
+    }
+  });
+
   it.each([
     { route: "execute_code", earlyReturn: false },
     { route: "execute_code", earlyReturn: true },

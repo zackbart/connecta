@@ -25,6 +25,89 @@ afterEach(() => {
 });
 const BASE = "https://connecta.test";
 
+it("INV-7/INV-9: cancellation settles a held final program return without starting more storage work", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const backing = memoryStorage();
+  const storage = {
+    ...backing,
+    get: vi.fn(async (key: string) => {
+      if (key === stashLedgerKeys.ledger) {
+        entered.resolve();
+        await release.promise;
+      }
+      return backing.get(key);
+    }),
+    set: vi.fn(backing.set),
+    delete: vi.fn(backing.delete),
+    list: vi.fn(backing.list),
+    compareAndSet: vi.fn(backing.compareAndSet),
+  };
+  let writes = 0;
+  const registry = makeRegistry(
+    [
+      connectorWith({
+        id: "notes",
+        kind: "api",
+        tools: [{ name: "save", annotations: { readOnlyHint: false } }],
+        call: async () => {
+          writes++;
+          return { saved: true };
+        },
+      }),
+    ],
+    { storage },
+  );
+  const admission = new AdmissionController({ concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000 });
+  const executor = withExecutorAdmission(
+    scriptedExecutor(async (fns) => {
+      await fns.call!("notes.save", {});
+      return "x".repeat(300_000);
+    }),
+    admission,
+  );
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger);
+  const caller = new AbortController();
+  const pending = execute(
+    { code: "async () => { await connecta.call('notes.save', {}); return 'x'.repeat(300000); }" },
+    { signal: caller.signal },
+  );
+  let ended = false;
+  void pending.then(() => {
+    ended = true;
+  });
+  try {
+    await entered.promise;
+    expect(writes).toBe(1);
+    expect(admission.snapshot().active).toBe(0);
+    caller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ended).toBe(true);
+    expect(await pending).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "executor_cancelled", retryable: false, writes: { succeeded: 1, failed: 0, unknown: 0 } },
+      },
+    });
+    const callsAtEnd = [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+      (operation) => operation.mock.calls.length,
+    );
+    release.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+        (operation) => operation.mock.calls.length,
+      ),
+    ).toEqual(callsAtEnd);
+    expect(writes).toBe(1);
+  } finally {
+    release.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await pending;
+  }
+});
+
 it("INV-7/INV-9: a direct write refuses promptly on cancellation while its result reservation is held", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();

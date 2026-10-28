@@ -874,6 +874,10 @@ and request cancellation, so shorter call or request limits stop stash waits
 sooner. Program paging runs in that same scope; a stalled storage promise cannot
 retain its executor permit after cancellation. Late storage responses start no
 further stash work.
+Final program-return stashing composes through its registered Effect program
+after the executor scope closes, under the caller's cancellation rather than
+the closed run's signal. Cancellation settles the handler while preserving
+completed-write accounting; it cannot resume stashing after a held read returns.
 
 Caller time only nominates charges for pruning. Before discarding one, the
 ledger writes a probe with that charge's absolute deadline and reads it back.

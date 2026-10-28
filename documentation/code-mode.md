@@ -874,6 +874,10 @@ including discovery. The response returns `executor_cancelled` without awaiting
 a wedged executor or `acquire()` that ignores its signal. It releases the lease;
 a late-granted lease releases on arrival. Nothing request-bound survives the
 request. Whether guest computation stops is the executor's (`X3`).
+Final program-return paging remains request-owned after the executor lease is
+released. Cancellation stops its storage waits and starts no further stash
+operations when a pending storage response arrives. An in-process caller receives
+`executor_cancelled` with any completed writes counted in `writes.succeeded`.
 
 Programs and direct calls use the same invocation deadline and stages. A call's
 `timeoutMs` wins, then `calls.defaultTimeoutMs`, then `execute.hostCallTimeoutMs`
