@@ -823,9 +823,10 @@ export function createMcpRoute(opts: ServerOptions): {
         // TransformStream whose pull-ahead can exceed the inspection bound.
         const localRequest = new Request(request, {
           signal: localAbort.signal,
-          // This is an inbound SDK view, not an outgoing keepalive fetch;
-          // Node rejects an explicit stream with the latter flag enabled.
+          // This is an inbound SDK view, not an outgoing keepalive or no-cors
+          // fetch; Node rejects an explicit stream with either.
           ...(request.body ? { body: request.body, duplex: "half", keepalive: false } : {}),
+          ...(request.body && request.mode === "no-cors" ? { mode: "cors" as const } : {}),
         });
         if (admission.success && admission.success.waitMs > 0) {
           opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {

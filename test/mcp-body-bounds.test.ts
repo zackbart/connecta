@@ -402,6 +402,36 @@ describe("authenticated MCP body limits", () => {
     }
   });
 
+  // workerd implements neither field; Node rejects an explicit stream with no-cors.
+  it(
+    "INV-7: accepts a buffered no-cors body through the request-local signal wrapper",
+    { tags: ["node"] },
+    async () => {
+      const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const { c } = await deployment(encoder.encode(body).length);
+      try {
+        const response = await c.fetch(
+          new Request(`${BASE}/mcp`, {
+            method: "POST",
+            mode: "no-cors",
+            headers: {
+              Authorization: "Bearer alice",
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "MCP-Protocol-Version": "2025-06-18",
+            },
+            body,
+          }),
+        );
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ jsonrpc: "2.0", id: 1, result: { tools: expect.any(Array) } });
+        expect(await admittedTotal(c)).toBe(1);
+      } finally {
+        await c.close();
+      }
+    },
+  );
+
   it("INV-7: accepts a buffered keepalive body through the request-local signal wrapper", WORKERS, async () => {
     const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     const { c } = await deployment(encoder.encode(body).length);
