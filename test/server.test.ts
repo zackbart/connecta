@@ -13,7 +13,8 @@ import { activityHistory } from "../src/activity.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
 import { calcApi, fakeClerkAuth, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { createTestConnecta } from "./helpers.js";
+import { createTestConnecta, required } from "./helpers.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
 
 import type { ActivityStore, ToolCallActivityEvent } from "../src/activity.js";
 import { clerkAuth } from "../src/auth/clerk.js";
@@ -738,6 +739,67 @@ describe("execute_code registration (code mode)", () => {
     const description = await executeDescription();
     expect(description).toContain("Writable endpoint: programs may read and write; the client approves.");
     expect(description).not.toContain("resume_execution");
+  });
+
+  it("returns programs whole up to execute.maxResultChars, shares it with emitted text, and pages to it", async () => {
+    async function run(execute: { maxResultChars?: number } | undefined, returnChars: number, emitChars = 0) {
+      const connecta = createTestConnecta({
+        connectors: [calcApi()],
+        auth: machineAuth(TOKEN),
+        storage: memoryStorage(),
+        publicUrl: BASE,
+        ...(execute ? { execute } : {}),
+        executor: scriptedExecutor(async (fns) => {
+          if (emitChars) await required(fns.emit)({ type: "text", text: "y".repeat(emitChars) });
+          return { rows: "x".repeat(returnChars) };
+        }),
+      });
+      const ran = await readJsonRpc(
+        await mcpRpc(
+          connecta,
+          "tools/call",
+          { name: "execute_code", arguments: { code: "async () => rows" } },
+          { token: TOKEN },
+        ),
+      );
+      const limit = connecta.describeConfig().limits.execute.maxResultChars;
+      await connecta.close();
+      return { content: ran.result.structuredContent, limit };
+    }
+    const pageBytes = (content: { result: { nextAction: { arguments: { code: string } } } }) =>
+      Number(/maxBytes: (\d+)/.exec(content.result.nextAction.arguments.code)?.[1]);
+
+    // The default is unchanged: 100,000 characters are stashed behind a notice.
+    const fallback = await run(undefined, 100_000);
+    expect(fallback.limit).toEqual({ value: 24_000, source: "default" });
+    expect(fallback.content.result).toMatchObject({ truncated: true, resultId: expect.any(String) });
+    expect(pageBytes(fallback.content)).toBe(3_829);
+
+    // Raised, the same return arrives whole in one step.
+    const raised = await run({ maxResultChars: 150_000 }, 100_000);
+    expect(raised.limit).toEqual({ value: 150_000, source: "config" });
+    expect(raised.content.result).toEqual({ rows: "x".repeat(100_000) });
+
+    // Past the raised cap, the notice pages in larger steps that still fit it.
+    const over = await run({ maxResultChars: 150_000 }, 200_000);
+    expect(over.content.result).toMatchObject({ truncated: true, resultId: expect.any(String) });
+    expect(pageBytes(over.content)).toBe(24_829);
+    expect(JSON.stringify(over.content.result).length).toBeLessThanOrEqual(150_000);
+
+    // Emitted text shares whichever cap the deployment set.
+    expect((await run({ maxResultChars: 150_000 }, 10, 30_000)).content.isError).not.toBe(true);
+    expect((await run(undefined, 10, 30_000)).content.error).toMatchObject({
+      code: "result_too_large",
+      message: expect.stringContaining("24,000-character program result limit"),
+    });
+
+    for (const [maxResultChars, message] of [
+      [3_999, "must be a whole number of at least 4,000"],
+      [1_000_001, "must be at most 1,000,000"],
+      [1.5, "must be a whole number of at least 4,000"],
+    ] as const) {
+      await expect(run({ maxResultChars }, 10)).rejects.toThrow(`ConnectaConfig.execute.maxResultChars ${message}`);
+    }
   });
 });
 

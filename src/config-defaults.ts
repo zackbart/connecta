@@ -28,6 +28,7 @@ export const CONFIG_DEFAULTS = {
     hostCallTimeoutMs: 15_000,
     watchdogMs: 120_000,
     maxWrites: 10,
+    maxResultChars: 24_000,
   },
   admission: {
     requests: {

@@ -172,6 +172,14 @@ const execute = {
    * budget every call already spends. Default 10.
    */
   maxWrites: whole({ min: 1, default: D.execute.maxWrites }),
+  /**
+   * Serialized characters a program may return, shared with emitted text,
+   * before Connecta stashes the return and answers with a paging notice.
+   * Default 24_000 (~6k tokens). Raise it when agents need large results whole
+   * and the model's context can afford them: each paging round trip costs a
+   * model step. From 4_000 to 1_000_000.
+   */
+  maxResultChars: whole({ min: 4_000, max: 1_000_000, default: D.execute.maxResultChars }),
 };
 
 function admissionPool(defaults: {
@@ -814,5 +822,6 @@ export function executeLimits(config: ResolvedConfig) {
     hostCallTimeoutMs: config.execute.hostCallTimeoutMs,
     watchdogMs: config.execute.watchdogMs,
     maxWrites: config.execute.maxWrites,
+    maxResultChars: config.execute.maxResultChars,
   };
 }

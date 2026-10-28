@@ -673,11 +673,23 @@ fields. Program-authored projection saved bytes; host heuristics could drop
 deliberately returned fields. Helpers need [#222](https://github.com/zackbart/connecta/issues/222)
 evidence that programs fail to project.
 
-**R2.** The boundary is 24,000 serialized characters (~6k tokens), shared with
-emitted text. An oversized return is stashed as compact JSON through the same
+**R2.** The boundary is `execute.maxResultChars` serialized characters, shared
+with emitted text: 24,000 (~6k tokens) by default, configurable from 4,000 to
+1,000,000. Raise it when agents need large results whole and the model's
+context can afford them, since every paging round trip costs a model step.
+The response carries a return twice (text content and `structuredContent`),
+JSON-escaped, and MCP has no response-size limit of its own, so the
+client's limits apply; `admission.requests.maxBodyBytes` bounds request bodies
+only. Redaction scans the whole envelope once, so its cost grows with the cap.
+The cap does not change stash paging: pages still obey the stashed call's
+`maxResultBytes` and the 32 KiB bridge ceiling.
+An oversized return is stashed as compact JSON through the same
 result store as direct calls. The returned notice carries `truncated`, `resultId`,
 `totalBytes`, `hint`, `nextOffset: 0`, and an executable `nextAction` that pages
-with `connecta.result`. It also retains `totalChars` and a bounded `preview`.
+with `connecta.result`. Its page size is `floor((maxResultChars - 1024) / 6)`
+bytes, at most 32 KiB, so a page fits the next program's return even when every
+byte escapes to six characters (3,829 bytes by default); direct-call notices use
+the same size. It also retains `totalChars` and a bounded `preview`.
 The recovery action and hint precede the preview, so clients that spill results
 after the first 2,000 characters retain the handle and the instruction.
 Small returns pass through unchanged; Connecta does not select fields.
@@ -790,8 +802,8 @@ a successful result, appended to `content` after the JSON envelope, which gains
 response (`R6`). `structuredContent` stays the envelope alone — emission is
 presentation, not a second data channel.
 
-**M3.** Text emission shares `R2`'s 24,000 serialized-character cap, less 512
-characters reserved for the envelope (23,488 for emitted text). Its
+**M3.** Text emission shares `R2`'s `execute.maxResultChars` cap, less 512
+characters reserved for the envelope (23,488 for emitted text by default). Its
 serialized block size reduces the return budget, and oversized text fails with
 `result_too_large`. Image/audio blocks use the separate transport budget and
 reach the model as real MCP media content, including when `emit` is not awaited.
@@ -922,7 +934,7 @@ because connecta enforces them above the sandbox:
 | `describe` addresses                                                                    | ≤ 100                                                                                                                           |
 | `describe` nearby suggestions                                                           | ≤ 3 canonical addresses per failed entry                                                                                        |
 | Caller text echoed by `describe` recovery                                               | ≤ 512 UTF-8 bytes per field, plus `…`                                                                                           |
-| Result                                                                                  | 24,000 serialized characters                                                                                                    |
+| Result                                                                                  | 24,000 serialized characters by default, `execute.maxResultChars` (4,000–1,000,000)                                             |
 | Logs presented to the model                                                             | 4,000 characters                                                                                                                |
 
 For any tool whose output declares `page`, continue while `page.hasMore` is true.

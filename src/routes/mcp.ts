@@ -501,6 +501,7 @@ function serveMcp(
         credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
         ...(activity ? { activity } : {}),
         defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
+        maxProgramResultChars: opts.config.execute.maxResultChars,
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         discoveryConcurrency: opts.config.discovery.concurrency,
         requestSignal,
