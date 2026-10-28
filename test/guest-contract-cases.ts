@@ -1635,6 +1635,24 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "E6",
+    name: "INV-6: an unrelated TypeError after a valid connecta.skills call keeps the generic hint",
+    code: `async () => {
+      await connecta.skills("connector:reader");
+      return null.items.length;
+    }`,
+    check(outcome) {
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+        },
+      });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 1, failed: 0 });
+    },
+  },
+  {
     clauses: "R4",
     name: "INV-3 INV-4: native skill URIs and aliases reach the same documents in real guests",
     code: `async () => {

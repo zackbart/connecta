@@ -936,9 +936,8 @@ function sandboxProvider(
       Effect.tryPromise({
         try: async () => {
           // Accept the top-level skills tool's { name } shape too: models copy it into programs.
-          if (name && typeof name === "object" && typeof (name as { name?: unknown }).name === "string")
-            name = (name as { name: string }).name;
-          if (typeof name !== "string")
+          const skillName = name && typeof name === "object" ? (name as { name?: unknown }).name : name;
+          if (typeof skillName !== "string")
             throw guestFailure(
               "invalid_args",
               'Use connecta.skill("usage") or connecta.skill("connector:<id>") with an exact skill name; the skills tool lists names.',
@@ -955,7 +954,7 @@ function sandboxProvider(
             probeTimeoutMs: limits.probeTimeoutMs,
             defer: limits.defer,
           });
-          return { name, format: "text", text: await skills.text(name) };
+          return { name: skillName, format: "text", text: await skills.text(skillName) };
         },
         catch: (err) =>
           err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,

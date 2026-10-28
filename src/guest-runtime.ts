@@ -238,8 +238,8 @@ export function programError(
   ) {
     hint = "Do not shadow connecta. Use the host-provided connecta global.";
   } else if (
-    /callTool|\bskills\b|connecta\.(?:guide|skills)/.test(message) ||
-    (["TypeError", "ReferenceError"].includes(name) && /connecta\.(?:guide|skills)\b/.test(code))
+    /callTool|\bskills\b|connecta\.guide/.test(message) ||
+    (["TypeError", "ReferenceError"].includes(name) && /connecta\.guide\b/.test(code))
   ) {
     hint =
       'Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill("usage"). Services are addressed by connector.tool, never guest globals.';

@@ -113,7 +113,8 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 
 1. **Expose each provider as a guest global** whose properties are its `fns`,
    called with the program's arguments and awaited. Connecta supplies `search`,
-   `describe`, `call`, `read`, `result`, `skill`, and `emit`.
+   `describe`, `call`, `read`, `result`, `skill`, and `emit`; the prelude also
+   binds the guest's `skills` alias to `skill`.
 2. **Evaluate `prelude` after the provider globals exist and before the
    program.** It is trusted host code that installs the immutable namespace
    and waits for emission acknowledgements. Capture runner intrinsics first;
@@ -202,7 +203,8 @@ belonged to shortcut dispatch and stay retired; nothing reuses those ids.
 
 ## The surface
 
-Seven functions: `search`, `describe`, `call`, `read`, `result`, `skill`, and `emit`.
+Seven functions: `search`, `describe`, `call`, `read`, `result`, `skill`, and `emit`,
+plus `skills`, an undeclared alias bound to the same host function as `skill`.
 All return awaitable values; emission also works without `await`. The namespace
 has no inherited members. Unknown properties are undefined, and calling them
 fails as a guest `TypeError`. The host also dispatches only own members of `fns`.
