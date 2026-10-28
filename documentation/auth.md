@@ -1475,13 +1475,13 @@ body contains tokens. Fetch has already sent the request body; a refresh
 fingerprint is resolved as a definitive failure and the grant requires re-consent. A
 redirected code exchange is refused and its SDK retry cannot resend the code.
 
-| Outcome after dispatch                                                                           | Result                                                                                                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Valid tokens durably committed                                                                   | Mark the fingerprint resolved and release waiters with committed tokens. Within the epoch only a new fingerprint can be dispatched next.                                                                                     |
-| Definitive provider failure                                                                      | `auth_required`. Mark the fingerprint resolved and conditionally remove its grant tokens. Includes every 3xx without following it and complete failures such as 5xx, 408, 425, and 429.                                      |
-| Network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Mark the fingerprint ambiguous and conditionally remove its grant tokens. Identical-token re-consent cannot reopen it.                                                                                      |
-| Valid rotation whose grant commit retries are exhausted                                          | `auth_required`. Record the definitive commit failure as resolved and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK.                                                                     |
-| Epoch changed during commit                                                                      | Drop the response tokens and record the definitive failure as resolved. Restart, Disconnect, or issuer replacement determines the newer grant. A consent that completed before this resolution cannot reuse its fingerprint. |
+| Outcome after dispatch                                                                           | Result                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Valid tokens durably committed                                                                   | Mark the fingerprint resolved and release waiters with committed tokens. Within the epoch only a new fingerprint can be dispatched next.                                                                                                           |
+| Definitive provider failure                                                                      | `auth_required`. Mark the fingerprint resolved and conditionally remove its grant tokens. Includes every 3xx without following it and complete failures such as 5xx, 408, 425, and 429.                                                            |
+| Network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Mark the fingerprint ambiguous and conditionally remove its grant tokens when storage answers within the cleanup bound. An outstanding fingerprint remains fenced if storage stalls. Identical-token re-consent cannot reopen it. |
+| Valid rotation whose grant commit retries are exhausted                                          | `auth_required`. Record the definitive commit failure as resolved and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK.                                                                                           |
+| Epoch changed during commit                                                                      | Drop the response tokens and record the definitive failure as resolved. Restart, Disconnect, or issuer replacement determines the newer grant. A consent that completed before this resolution cannot reuse its fingerprint.                       |
 
 Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
 shared-storage record at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
@@ -1494,7 +1494,10 @@ storage-owned 120-second TTL. SQLite and D1 create and check expiry with the
 database clock inside each statement. Custom shared stores must also use a
 storage-owned clock. Cross-isolate clock comparisons never permit takeover of
 a dispatched record. The refresh HTTP request and response body have a
-20-second deadline. Contenders wait at most 35 seconds with 10 ms to 250 ms
+20-second deadline. After the response or a dispatched exchange failure,
+grant commit and cleanup share a separate 20-second deadline, including all
+storage reads, CAS retries, fingerprint resolution, and lease release.
+Contenders wait at most 35 seconds with 10 ms to 250 ms
 backoff. A waiter deadline returns retryable `unavailable`, keeps the grant,
 and starts no consent. It never permits resending a spent token.
 
@@ -1538,7 +1541,7 @@ preparation recorded the fingerprint as spent, it stays spent even if the send
 was subsequently cancelled or a local destination guard refused it.
 
 After dispatch, caller and SDK cancellation end only that caller's wait. The
-exchange and grant commit continue under the HTTP deadline. The runtime passes
+exchange and grant commit continue under their own deadlines. The runtime passes
 completion to Workers `waitUntil`; paths without that hook keep a background
 promise. The holder re-reads the grant and retries the commit with its in-memory
 response tokens up to 32 times after CAS contention or storage errors. Each
@@ -1546,6 +1549,16 @@ attempt checks the epoch, issuer, and current refresh token. A changed epoch
 drops the response tokens. Another consent's credentials remain intact. A lost
 commit answer can be recovered by reading the committed grant. Exhausting the
 commit retries requires re-consent.
+
+Expiry of the commit/cleanup deadline reports `OAuth refresh outcome is unknown`
+and requires authorization. Every exit settles the local flight and releases its
+owner partition without awaiting further storage. Late storage answers cannot
+resume the expired coordinator or start another commit or completion write.
+An already submitted CAS may still land; unconfirmed grant commits leave the
+durable spent fingerprint outstanding, so the consumed token cannot be sent
+again. Later callers read durable state rather than joining an expired local
+flight. If cleanup could not finish, the storage-owned holder TTL allows them
+to record an ambiguous outcome and conditionally discard the old grant.
 
 Lease release uses CAS after the commit or re-consent decision. Completion
 records include a SHA-256 digest of the committed token response, excluding
