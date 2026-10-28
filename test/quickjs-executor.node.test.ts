@@ -1,11 +1,15 @@
 // Node-only: runs the Node QuickJS child-process executor.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import { InvocationFailure } from "../src/invocation.js";
-import type { AdmittingExecutor } from "../src/types.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { sentSecretsFor } from "../src/sent-secrets.js";
+import type { AdmittingExecutor, Connector } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { calcConnector, makeRegistry, silentLogger } from "./helpers.js";
 
 // Real child startup and IPC need generous hang guards on a loaded host.
@@ -202,5 +206,84 @@ describe("authenticated host failures (E1, X11)", () => {
     expect(out.structuredContent).toMatchObject({
       result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] },
     });
+  });
+});
+
+describe("credential echoes reach the QuickJS guest only checked", () => {
+  const BASE = "https://wire-redaction.test";
+  const REDACTED = "[redacted]";
+  let executor: AdmittingExecutor;
+  beforeAll(() => {
+    executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+  });
+  afterAll(async () => {
+    vi.unstubAllGlobals();
+    await executor.close?.();
+  });
+
+  it("INV-5: public-schema remote tools redact bare numeric bearer credentials in direct modes and QuickJS", async () => {
+    const token = "12345678";
+    const downstream = httpDownstream(
+      (server) =>
+        server.registerTool(
+          "read",
+          { description: "Read public data", annotations: { readOnlyHint: true } },
+          async () => ({ content: [{ type: "text", text: token }] }),
+        ),
+      {
+        capture: (request) => {
+          expect(request.headers.get("authorization")).toBe(`Bearer ${token}`);
+        },
+      },
+    );
+    vi.stubGlobal("fetch", downstream.fetch);
+    const registry = makeRegistry([
+      remoteMcp("remote", {
+        url: downstream.url,
+        auth: { type: "headers", headers: { Authorization: `Bearer ${token}` } },
+      }),
+    ]);
+    for (const resultMode of ["mcp", "value"] as const) {
+      const result = await createMetaTools(registry, BASE).callTool({ address: "remote.read", resultMode });
+      expect(result.isError).toBeFalsy();
+      expect(JSON.stringify(result)).not.toContain(token);
+      expect(JSON.stringify(result)).toContain(REDACTED);
+    }
+    const execute = createExecuteTool(registry, BASE, executor, silentLogger);
+    const whole = await execute({ code: 'async () => await connecta.call("remote.read")' });
+    expect(whole.isError, JSON.stringify(whole.structuredContent)).toBeFalsy();
+    expect(whole.structuredContent).toMatchObject({ result: { data: REDACTED, format: "text" } });
+    // Seven units are below the final scanner's threshold, so only what the
+    // guest received decides what returns, as a string or converted to a number.
+    const sliced = await execute({
+      code: 'async () => { const { data } = await connecta.call("remote.read"); return [String(data).slice(0, 7), Number(data)]; }',
+    });
+    expect(sliced.isError, JSON.stringify(sliced.structuredContent)).toBeFalsy();
+    expect(sliced.structuredContent).toMatchObject({ result: [REDACTED.slice(0, 7), null] });
+    vi.unstubAllGlobals();
+  });
+
+  it("INV-5: an array whose toJSON echoes a credential reaches the QuickJS guest only checked", async () => {
+    const token = "Q8!wZ2?A7@vR4#";
+    const connector: Connector = {
+      id: "wire",
+      kind: "api",
+      async listTools() {
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool(_name, _args, ctx) {
+        sentSecretsFor(ctx).add(token);
+        // Its entries are public; what serialization sends is the toJSON result.
+        return Object.assign(["public"], { toJSON: () => ({ echo: token }) });
+      },
+    };
+    const result = await createExecuteTool(
+      makeRegistry([connector]),
+      BASE,
+      executor,
+      silentLogger,
+    )({ code: 'async () => (await connecta.call("wire.read")).data.echo.slice(0, 7)' });
+    expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
   });
 });
