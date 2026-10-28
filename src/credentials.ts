@@ -1,3 +1,4 @@
+import { advanceCatalogRevision } from "./catalog-revision.js";
 import type { CredentialMetadata, CredentialVault as Vault } from "./credential-contract.js";
 import type { ConnectorCredentialValues, KVStorage } from "./types.js";
 
@@ -262,11 +263,13 @@ export class CredentialVault implements Vault {
       ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
     };
     await this.storage.set(storageKey(connectorId, owner), JSON.stringify(envelope));
+    advanceCatalogRevision(this);
     return (await this.metadata(connectorId, owner))!;
   }
 
   async delete(connectorId: string, owner?: string): Promise<void> {
     await this.storage.delete(storageKey(connectorId, owner));
+    advanceCatalogRevision(this);
   }
 
   /** Encrypt downstream OAuth state under the vault key; nothing is stored. */

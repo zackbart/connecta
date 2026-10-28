@@ -25,6 +25,7 @@ import type {
   ResponseCacheStore,
 } from "@modelcontextprotocol/client";
 import { MAX_CACHE_TTL_MS, specTypeSchemas } from "@modelcontextprotocol/client";
+import { advanceCatalogRevision, catalogRevision } from "./catalog-revision.js";
 import { callerOf } from "./connector-caller.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Context } from "effect";
@@ -41,6 +42,7 @@ import type { ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } 
 interface CatalogCacheSettings {
   storage: KVStorage;
   partition: string;
+  credentialRevision?: () => number;
   sharedPartition?: string;
   defaultTtlMs: number;
   minTtlMs: number;
@@ -413,6 +415,19 @@ class CatalogPolicy extends Context.Service<CatalogPolicy, CatalogCacheSettings>
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void {
   setViewService(ctx, CatalogPolicy, value);
 }
+
+/** Revalidate retained reads without storage I/O or credential material. */
+export function retainedCatalogIdentity(ctx: ConnectorContext): string {
+  const policy = serviceFor(ctx, CatalogPolicy);
+  return JSON.stringify([
+    policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
+    ctx.baseUrl,
+    ctx.publicUrl,
+    catalogRevision(policy?.storage ?? ctx.storage),
+    policy?.credentialRevision?.() ?? 0,
+  ]);
+}
+
 interface CacheScope {
   closed: boolean;
   abort: AbortController;
@@ -591,13 +606,19 @@ const invalidateCatalogCacheNative = /* @__PURE__ */ registerAuth(
   invalidateCatalogCache,
   (storage: KVStorage, connectorId: string) =>
     authFlow<void>(function* () {
-      (yield authStorage(storage, "set", [
-        responseCacheKeys.generation(connectorId),
-        crypto.randomUUID(),
-        {
-          ttlSeconds: GENERATION_TTL_SECONDS,
-        },
-      ])) as void;
+      advanceCatalogRevision(storage);
+      try {
+        (yield authStorage(storage, "set", [
+          responseCacheKeys.generation(connectorId),
+          crypto.randomUUID(),
+          {
+            ttlSeconds: GENERATION_TTL_SECONDS,
+          },
+        ])) as void;
+      } finally {
+        // A read started while the durable fence was pending must also expire.
+        advanceCatalogRevision(storage);
+      }
     }),
 );
 interface Manifest {

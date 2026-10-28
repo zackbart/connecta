@@ -1,3 +1,4 @@
+import { catalogRevision } from "./catalog-revision.js";
 import { authCall, authInvoke } from "./auth/native.js";
 import { Clock, Duration, Effect, Random } from "effect";
 import { activityRequest } from "./activity-request.js";
@@ -15,6 +16,7 @@ import {
   customCatalogFallback,
   invalidateCatalogCache,
   observeUncachedCatalogRefresh,
+  retainedCatalogIdentity,
   storeCustomCatalogFallback,
   type CatalogToolFingerprint,
 } from "./catalog-cache.js";
@@ -761,6 +763,7 @@ export class Registry implements RegistryView {
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),
+      credentialRevision: () => catalogRevision(this.opts.credentialVault),
       sharedPartition: JSON.stringify([baseUrl, this.opts.publicUrl ?? null, scope?.caller?.pool ?? null]),
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
@@ -1301,31 +1304,34 @@ export class Registry implements RegistryView {
         Effect.suspend(() => {
           if (!self.connectors.has(id)) return Effect.fail(new Error(`Unknown connector "${id}"`));
           const owner = self.contextFor(id, baseUrl, requestScope, callOptions, scope);
-          return duringViewEffect(owner, (signal) => {
-            if (!requestScope)
-              return self.loadTools(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope);
-            let loads = self.requestCatalogLoads.get(requestScope);
-            if (!loads) {
-              loads = new Map();
-              self.requestCatalogLoads.set(requestScope, loads);
-            }
-            const requestLoads = loads;
-            const key = JSON.stringify([id, scope?.principalKey, scope?.subjectKey, scope?.caller]);
-            let load = requestLoads.get(key);
-            if (!load) {
-              const started = new SharedRead(
-                (signal) => self.loadTools(id, baseUrl, requestScope, { ...callOptions, signal }, scope),
-                () => {
-                  if (requestLoads.get(key) === started) requestLoads.delete(key);
-                  if (requestLoads.size === 0) self.requestCatalogLoads.delete(requestScope);
-                },
-                requestScope,
-              );
-              requestLoads.set(key, started);
-              load = started;
-            }
-            return load.join(signal);
-          });
+          return duringViewEffect(owner, (signal) =>
+            Effect.gen(function* () {
+              if (!requestScope)
+                return yield* self.loadTools(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope);
+              const identity = self.connectors.get(id)?.staticTools ? "static" : retainedCatalogIdentity(owner);
+              let loads = self.requestCatalogLoads.get(requestScope);
+              if (!loads) {
+                loads = new Map();
+                self.requestCatalogLoads.set(requestScope, loads);
+              }
+              const requestLoads = loads;
+              const key = JSON.stringify([id, scope?.principalKey, scope?.subjectKey, scope?.caller, identity]);
+              let load = requestLoads.get(key);
+              if (!load) {
+                const started = new SharedRead(
+                  (signal) => self.loadTools(id, baseUrl, requestScope, { ...callOptions, signal }, scope),
+                  () => {
+                    if (requestLoads.get(key) === started) requestLoads.delete(key);
+                    if (requestLoads.size === 0) self.requestCatalogLoads.delete(requestScope);
+                  },
+                  requestScope,
+                );
+                requestLoads.set(key, started);
+                load = started;
+              }
+              return yield* load.join(signal);
+            }),
+          );
         }),
       credentialDriftFor: (self, id) =>
         Effect.gen(function* () {

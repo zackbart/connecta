@@ -12,10 +12,192 @@ import { openRequest } from "../src/runtime/call.js";
 import type { ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeRegistry } from "./helpers.js";
+import { CredentialVault } from "../src/credentials.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
 
 const BASE = "https://connecta.test";
 
 describe("request-scoped catalog cache", () => {
+  it("performs zero additional storage get/list calls on unchanged repeat searches", async () => {
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    const connectors = ["records", "notes"].map((id) =>
+      connectorWith({
+        id,
+        credential: { label: "Key" },
+        tools: async (ctx) => {
+          await ctx.credential!.get();
+          await ctx.storage.get(oauthGrantKeys.grant);
+          return [{ name: "read_record", annotations: { readOnlyHint: true } }];
+        },
+      }),
+    );
+    for (const { id } of connectors) {
+      await vault.set(id, "credential", "alice");
+      await storage.set(scopes.connector(id) + oauthGrantKeys.grant, "grant");
+    }
+    const get = vi.spyOn(storage, "get");
+    const list = vi.spyOn(storage, "list");
+    const service = new CatalogService(makeRegistry(connectors, { storage, credentialVault: vault }), BASE);
+    try {
+      expect((await service.search({ query: "record" })).entries).toHaveLength(2);
+      expect(get).toHaveBeenCalled();
+      get.mockClear();
+      list.mockClear();
+      for (const query of ["record", "read", "record"]) {
+        expect((await service.search({ query })).entries).toHaveLength(2);
+      }
+      expect(get).not.toHaveBeenCalled();
+      expect(list).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      list.mockRestore();
+      openRequest(service.requestScope).close();
+    }
+  });
+
+  it("does not join an older registry flight after invalidation in the same request", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let reads = 0;
+    const registry = makeRegistry([
+      connectorWith({
+        id: "records",
+        tools: async () => {
+          if (++reads === 1) {
+            entered();
+            await waiting;
+            return [{ name: "old_record", annotations: { readOnlyHint: true } }];
+          }
+          return [{ name: "new_record", annotations: { readOnlyHint: true } }];
+        },
+      }),
+    ]);
+    const service = new CatalogService(registry, BASE);
+    try {
+      const first = service.search({ query: "record" });
+      await started;
+      await registry.invalidateStored("records");
+      const second = service.search({ query: "record" });
+      release();
+      await first;
+      expect((await second).entries.map((entry) => entry.tool.name)).toEqual(["new_record"]);
+      expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "new_record",
+      ]);
+    } finally {
+      release();
+      openRequest(service.requestScope).close();
+    }
+  });
+
+  it("replaces a retained catalog and search index after invalidation and refresh in the same request", async () => {
+    let name = "old_record";
+    const registry = makeRegistry([
+      connectorWith({ id: "records", tools: async () => [{ name, annotations: { readOnlyHint: true } }] }),
+    ]);
+    const service = new CatalogService(registry, BASE);
+    try {
+      expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "old_record",
+      ]);
+      name = "new_record";
+      await registry.invalidateStored("records");
+      expect((await registry.getTools("records", BASE, service.requestScope)).map((tool) => tool.name)).toEqual([
+        "new_record",
+      ]);
+      expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "new_record",
+      ]);
+      expect((await service.search({ query: "old_record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "new_record",
+      ]);
+      expect((await service.loadConnector("records")).map((tool) => tool.name)).toEqual(["new_record"]);
+    } finally {
+      openRequest(service.requestScope).close();
+    }
+  });
+
+  it.each(["invalidate", "set", "clear"])("revalidates credentials mid-request (%s)", async (operation) => {
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    await vault.set("records", "old-credential", "alice");
+    const registry = makeRegistry(
+      [
+        connectorWith({
+          id: "records",
+          credential: { label: "Key" },
+          tools: async (ctx) => [
+            {
+              name: (await ctx.credential!.get()) === "old-credential" ? "old_record" : "new_record",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+      ],
+      { storage, credentialVault: vault },
+    );
+    const service = new CatalogService(registry, BASE);
+    try {
+      expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "old_record",
+      ]);
+      if (operation === "clear") await vault.delete("records");
+      else await vault.set("records", "new-credential", "alice");
+      // The credential administration route invalidates after updating the vault.
+      if (operation === "invalidate") await registry.invalidateStored("records");
+      expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "new_record",
+      ]);
+      expect((await service.search({ query: "old_record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "new_record",
+      ]);
+    } finally {
+      openRequest(service.requestScope).close();
+    }
+  });
+
+  it("revalidates a stored OAuth grant change in the same request", async () => {
+    const storage = memoryStorage();
+    const key = scopes.connector("records") + oauthGrantKeys.grant;
+    await storage.set(key, "old-grant");
+    const registry = makeRegistry(
+      [
+        connectorWith({
+          id: "records",
+          tools: async (ctx) => [
+            {
+              name: (await ctx.storage.get(oauthGrantKeys.grant)) === "old-grant" ? "old_record" : "new_record",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+      ],
+      { storage },
+    );
+    const service = new CatalogService(registry, BASE);
+    try {
+      expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "old_record",
+      ]);
+      await storage.set(key, "new-grant");
+      // OAuth connect/disconnect/restart routes invalidate after changing grants.
+      await registry.invalidateStored("records");
+      expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
+        "new_record",
+      ]);
+    } finally {
+      openRequest(service.requestScope).close();
+    }
+  });
+
   it("INV-8: a native complete-catalog ceiling failure reaches Effect.result without a partial catalog", async () => {
     const connector = connectorWith({ id: "large", tools: Array(MAX_CATALOG_TOOLS + 1).fill({ name: "read" }) });
     const service = new CatalogService(makeRegistry([connector]), BASE);
