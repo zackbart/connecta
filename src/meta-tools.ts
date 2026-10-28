@@ -48,7 +48,7 @@ import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "
 import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
 import type { Logger, ToolDef } from "./types.js";
-import { PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
+import { PROGRAM_RESULT_PAGE_BYTES, PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
 import type { NativeCallRoute } from "./native-tools.js";
 
 export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
@@ -241,6 +241,18 @@ interface ResultStash {
    * tool; everywhere else paging is `connecta.result` inside execute_code.
    */
   pagingTool?: "read_result";
+  /** `execute.maxResultChars` of the program that runs nextAction. Default 24_000. */
+  programChars?: number;
+}
+
+/**
+ * The page a notice's nextAction asks a program to read: it fits the program's
+ * return even if every byte escapes to six JSON characters, with room for the
+ * page envelope, and never asks for more than the stash or bridge will serve.
+ */
+function programPageBytes(results: ResultStash): number {
+  const fits = Math.floor(((results.programChars ?? MAX_EXECUTE_RESULT_CHARS) - 1024) / 6);
+  return Math.max(4, Math.min(fits, results.cap, PROGRAM_RESULT_PAGE_BYTES));
 }
 
 /** Opens a write's notice, ahead of any paging instruction. */
@@ -403,7 +415,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
               // A byte may cost six JSON characters when escaped. Leave room for the
               // result id, page counters, and continuation metadata in the returned page.
               arguments: {
-                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
+                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${programPageBytes(results)} })`,
               },
             },
     };
@@ -493,9 +505,20 @@ export function guardProgramReturn(
   logger: Logger,
   maxChars: number,
   completedWrite: boolean,
+  programChars?: number,
 ): Promise<unknown> {
   return runEdge(
-    guardProgramReturnNative(value, registry, baseUrl, dependencies, secrets, logger, maxChars, completedWrite),
+    guardProgramReturnNative(
+      value,
+      registry,
+      baseUrl,
+      dependencies,
+      secrets,
+      logger,
+      maxChars,
+      completedWrite,
+      programChars,
+    ),
   );
 }
 const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
@@ -509,6 +532,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     logger: Logger,
     maxChars: number,
     completedWrite: boolean,
+    programChars?: number,
   ) {
     return authFlow<unknown>(function* () {
       const serialized = serializeResultText(value);
@@ -532,6 +556,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         },
         write: completedWrite,
         cap,
+        ...(programChars !== undefined ? { programChars } : {}),
         set: authMethod((id: string, chunks: string[], ttl: number) =>
           registryProgram(registry, "stashResult", id, chunks, ttl),
         ),
@@ -818,6 +843,8 @@ function metaToolsForRequest(
     downstreamInput?: boolean;
     /** A native endpoint without execute_code: truncation notices page with read_result. */
     pagingTool?: "read_result" | undefined;
+    /** `execute.maxResultChars`, which sizes the pages truncation notices ask programs to read. */
+    maxProgramResultChars?: number | undefined;
     activitySource?: "native" | undefined;
   } = {},
 ) {
@@ -946,6 +973,7 @@ function metaToolsForRequest(
                     write: resolved.definition.classification !== "read",
                     cap,
                     ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
+                    ...(opts.maxProgramResultChars !== undefined ? { programChars: opts.maxProgramResultChars } : {}),
                     set: authMethod((id: string, value: string[], ttlSeconds: number) =>
                       registryProgram(registry, "stashResult", id, value, ttlSeconds),
                     ),
@@ -1547,6 +1575,8 @@ export function registerMetaTools(
     requestSignal?: AbortSignal | undefined;
     defer?: DeferredWork | undefined;
     requestScope?: object | undefined;
+    /** `execute.maxResultChars`: sizes the pages truncation notices ask programs to read. */
+    maxProgramResultChars?: number | undefined;
     /**
      * A native pool: register only `skills`, plus `read_result` when the pool
      * has no execute_code, and return the route native tool calls take.
@@ -1555,6 +1585,7 @@ export function registerMetaTools(
   },
 ): NativeCallRoute | undefined {
   const mt = createMetaTools(registry, ctx.baseUrl, {
+    maxProgramResultChars: ctx.maxProgramResultChars,
     ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
     ...(ctx.native ? { activitySource: "native" as const } : {}),
     downstreamInput: Boolean(ctx.authElicitation),

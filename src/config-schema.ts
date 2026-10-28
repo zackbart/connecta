@@ -99,7 +99,7 @@ function ownValue(value: object, key: string): unknown {
 
 interface WholeOptions {
   /** Smallest accepted value. */
-  min: 0 | 1;
+  min: number;
   /** Largest accepted value, when there is one. */
   max?: number;
   /** Unit named in the `max` refusal, e.g. "milliseconds". */
@@ -110,12 +110,17 @@ interface WholeOptions {
 export function whole(options: WholeOptions & { default: number }): Field<number, number, true>;
 export function whole(options: WholeOptions): Field<number, number | undefined, true>;
 export function whole(options: WholeOptions & { default?: number }): Field<number, number | undefined, true> {
-  const kind = options.min === 1 ? "positive" : "non-negative";
+  const kind =
+    options.min === 0
+      ? "a non-negative whole number"
+      : options.min === 1
+        ? "a positive whole number"
+        : `a whole number of at least ${options.min.toLocaleString("en-US")}`;
   return {
     optional: true,
     parse: (value, path) => {
       if (typeof value !== "number" || !Number.isSafeInteger(value) || value < options.min) {
-        fail(`${path} must be a ${kind} whole number.`);
+        fail(`${path} must be ${kind}.`);
       }
       if (options.max !== undefined && value > options.max) {
         fail(

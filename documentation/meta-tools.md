@@ -528,8 +528,10 @@ The default cap sits under both lines with room to spare. Preview plus notice
 stays under 25,000 bytes, which is under 50,000 characters for any text, because
 a character is at least one UTF-8 byte, and under 25,000 tokens for any text,
 because a token covers at least one byte. A `connecta.result` page is bounded by the same
-inline byte cap, and 24,000 matches the program result boundary in
-[code mode](./code-mode.md). A deployment whose
+inline byte cap, and 24,000 matches the default program result boundary in
+[code mode](./code-mode.md) (`execute.maxResultChars`). The `maxBytes` in
+`nextAction` is sized so one page fits that boundary under worst-case JSON
+escaping, capped by the call's own inline cap: 3,829 bytes by default. A deployment whose
 clients take more can raise the cap, and one whose clients take less can lower
 it, per connector if need be; a result between 24,000 and 50,000 bytes that
 used to arrive whole now pages. A client that spills rather than rejects keeps

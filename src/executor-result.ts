@@ -1,8 +1,9 @@
 import type { ExecuteResult } from "./types.js";
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { msg } from "./errors.js";
 
 /** ~6k tokens. Sandbox code should filter data down before returning. */
-export const MAX_EXECUTE_RESULT_CHARS = 24_000;
+export const MAX_EXECUTE_RESULT_CHARS: number = CONFIG_DEFAULTS.execute.maxResultChars;
 export const MAX_EXECUTE_LOG_CHARS = 4_000;
 
 export function serializeResultText(value: unknown): string {

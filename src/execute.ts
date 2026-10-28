@@ -263,6 +263,7 @@ export class EmitCollector {
     readonly maxBytes: number,
     readonly maxBlocks: number,
     private readonly diagnostics?: ExecuteDiagnostics,
+    private readonly maxResultChars = MAX_EXECUTE_RESULT_CHARS,
   ) {}
 
   accept(raw: unknown): void {
@@ -293,10 +294,10 @@ export class EmitCollector {
       // Embedded resource text shares the result cap too; binary blobs use
       // the transport budget, just like images and audio.
       if (block.type === "resource" && "text" in block.resource) textChars += serialized.length;
-      if (textChars > MAX_EXECUTE_RESULT_CHARS - 512) {
+      if (textChars > this.maxResultChars - 512) {
         throw guestFailure(
           "result_too_large",
-          "Emitted text shares the 24,000-character program result limit. Reduce the text before emitting it.",
+          `Emitted text shares the ${this.maxResultChars.toLocaleString("en-US")}-character program result limit. Reduce the text before emitting it.`,
         );
       }
       count++;
@@ -1339,6 +1340,8 @@ interface RunnerConfig {
   readOnly?: boolean | undefined;
   /** Writes one program may send on a writable endpoint (`execute.maxWrites`). Default 10. */
   maxWrites?: number | undefined;
+  /** Serialized characters a program may return, shared with emitted text. Default 24_000. */
+  maxResultChars?: number | undefined;
 }
 
 /** Runs one `execute_code` program and answers as the tool does. */
@@ -1361,6 +1364,7 @@ export function createExecuteTool(
     logger,
   };
   const hostCallTimeoutMs = resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS);
+  const maxResultChars = resolveBudget(config.maxResultChars, MAX_EXECUTE_RESULT_CHARS);
 
   const play = (
     program: string,
@@ -1377,6 +1381,7 @@ export function createExecuteTool(
         resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
         resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
         diagnostics,
+        maxResultChars,
       );
       const resultDependencies: ProgramResultDependency[] = [];
       const dispatchController = new AbortController();
@@ -1501,7 +1506,8 @@ export function createExecuteTool(
         emitted,
         diagnostics,
         program,
-        guardResult: (value: unknown, maxChars: number) =>
+        // Emitted text shares the return cap; a follow-up page run gets all of it.
+        guardResult: (value: unknown) =>
           authCall<unknown>(guardProgramReturn, [
             value,
             registry,
@@ -1509,8 +1515,9 @@ export function createExecuteTool(
             [...new Map(resultDependencies.map((dependency) => [JSON.stringify(dependency), dependency])).values()],
             sentSecrets,
             logger,
-            maxChars,
+            maxResultChars - emitted.textChars,
             programWrites.hasSucceeded,
+            maxResultChars,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -1608,7 +1615,7 @@ interface RunReport {
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
   program: string;
-  guardResult: (value: unknown, maxChars: number) => Effect.Effect<unknown, unknown>;
+  guardResult: (value: unknown) => Effect.Effect<unknown, unknown>;
 }
 
 /** An execution that never produced an ExecuteResult, as the model sees it. */
@@ -1711,7 +1718,7 @@ function finishedRun(
     // error path so captured logs survive instead of a raw SDK 500.
     let result: unknown;
     try {
-      result = yield* guardResult(outcome.result, MAX_EXECUTE_RESULT_CHARS - emitted.textChars);
+      result = yield* guardResult(outcome.result);
     } catch (err) {
       const message = `Error: result is not JSON-serializable: ${msg(err)}`;
       return failureResponse(message, {
@@ -1873,6 +1880,8 @@ export function registerExecuteTool(
     readOnly?: boolean | undefined;
     /** Writes one program may send on a writable endpoint. Default 10. */
     maxWrites?: number | undefined;
+    /** Serialized characters a program may return. Default 24_000. */
+    maxResultChars?: number | undefined;
     /** A native pool: the lead sentence names direct tool calls instead of call_tool. */
     native?: boolean | undefined;
   },
@@ -1903,6 +1912,7 @@ export function registerExecuteTool(
     defer: ctx.defer,
     readOnly: ctx.readOnly,
     maxWrites,
+    maxResultChars: ctx.maxResultChars,
     requestScope: ctx.requestScope,
   });
   server.registerTool(

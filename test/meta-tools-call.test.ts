@@ -231,7 +231,7 @@ describe("call_tool size guard + connecta.result", () => {
       nextAction: {
         tool: "execute_code",
         arguments: {
-          code: `async () => await connecta.result(${JSON.stringify(parsed.data.resultId)}, { offset: 0, maxBytes: 3829 })`,
+          code: `async () => await connecta.result(${JSON.stringify(parsed.data.resultId)}, { offset: 0, maxBytes: 100 })`,
         },
       },
     });
