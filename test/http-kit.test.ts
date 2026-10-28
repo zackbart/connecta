@@ -56,7 +56,7 @@ import {
 import { indexedVendor } from "../src/providers/_shared/rest/kit.js";
 import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
 import { continuationKeys } from "../src/storage/keys.js";
-import { kitInput, read, write, list } from "../src/http/tools.js";
+import { read, write, list } from "../src/http/tools.js";
 import {
   connect,
   vendor,
@@ -596,13 +596,14 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
   });
 
   it("INV-1: counts string length in code points in both renderings, and refuses a check the catalog cannot state", () => {
+    const input = Schema.Struct({
+      code: Schema.String.check(isMinChars(2), isMaxChars(3)),
+      note: Schema.optionalKey(Schema.String.check(isMaxChars(4))),
+    });
     const tool = read(acme(), {
       name: "names",
       description: "Bounded names.",
-      input: Schema.Struct({
-        code: Schema.String.check(isMinChars(2), isMaxChars(3)),
-        note: Schema.optionalKey(Schema.String.check(isMaxChars(4))),
-      }),
+      input,
       output: Schema.Unknown,
       run: () => Effect.succeed(null),
     });
@@ -610,7 +611,6 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       properties: { code: { type: "string", minLength: 2, maxLength: 3 }, note: { type: "string", maxLength: 4 } },
     });
     const values = ["😀", "😀😀", "😀😀😀", "😀😀😀😀", "e\u0301", "\ud800", "\ud800\ud800", "ab\udc00", "abcd"];
-    const input = kitInput(tool)!;
     for (const name of ["code", "note"]) {
       for (const value of values) {
         const args = { code: "ab", [name]: value };

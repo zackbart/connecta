@@ -1,3 +1,4 @@
+import { decodeBase64url } from "./bytes.js";
 import { upwardStep } from "./upward.js";
 import { authCall, authInvoke, authFlow, authStorage, registerAuth } from "./auth/native.js";
 import { runEdge } from "./runtime/run.js";
@@ -72,10 +73,7 @@ function encodeSegment(value: string): string {
 
 function decodeSegment(value: string): string {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid handoff encoding");
-  const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
-  const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-    Uint8Array.from(binary, (char) => char.charCodeAt(0)),
-  );
+  const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(decodeBase64url(value));
   if (encodeSegment(decoded) !== value) throw new Error("Noncanonical handoff encoding");
   return decoded;
 }

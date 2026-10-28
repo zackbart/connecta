@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import { classificationCode, ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
-import { viewSecrets, wrapViewCredentials } from "./runtime/call.js";
+import { viewSecrets } from "./runtime/call.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
 import { REDACTED } from "./redaction-marker.js";
@@ -724,7 +724,7 @@ function headerSpace(text: string, at: number): boolean {
 
 /**
  * The echo's spans with the value of every sensitive header line (`headerLine`'s names) added,
- * read on the text before the echo is replaced (#703). An echoed private value can take part of a
+ * read on the text before the echo is replaced. An echoed private value can take part of a
  * header's name, its `:`, or a credential prefix such as `Bearer `, so the line cannot be read
  * after replacement; read here, the whole value goes, every cookie pair and any short tail with
  * it. A line that is not a sensitive header keeps its text. One forward pass; nothing is kept.
@@ -2580,9 +2580,6 @@ export function registerCredentialValues(
     else secrets.add(value);
   }
 }
-export function trackCredentialReads(ctx: ConnectorContext): void {
-  wrapViewCredentials(ctx);
-}
 
 /** A connector's result or error as it enters: every connector's credentials and the
  * request's private arguments, under payload rules. */
@@ -2601,9 +2598,7 @@ export function requestSentSecrets(ctx: ConnectorContext): SentSecrets {
  * extracted from. Redact it whole first: a cut through an echoed form can leave a remnant
  * shorter than any fragment the output boundary matches, and a normalized number or
  * extracted substring may no longer hold the form at all. */
-export function redactBeforeCut<T>(ctx: ConnectorContext, value: T): T {
-  return requestSentSecrets(ctx).redact(value);
-}
+export const redactBeforeCut = redactSentSecrets;
 
 /** Base64, or base64url with `url`, of bytes or UTF-8 text Connecta returns to an agent: a
  * download, an attachment, a REST body, a page cursor. Every such encoding goes through here,

@@ -316,7 +316,7 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
         return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
       }
       // Every caller of this function is a human route. Agents reach pools only at
-      // `/agent/<pool>` (#837), so a workload or `cta_` credential refuses here
+      // `/agent/<pool>`, so a workload or `cta_` credential refuses here
       // without verification, and never falls back to a cookie, session or Access context.
       if (machineCredential) {
         return {
@@ -483,7 +483,7 @@ function agentChallenge(): { ok: false; response: Response } {
 }
 
 /**
- * Admission at an agent endpoint, `/agent/<pool>` (#837). Only the built-in
+ * Admission at an agent endpoint, `/agent/<pool>`. Only the built-in
  * agent credential adapters are consulted: Clerk and Access never run, cookies and Clerk
  * handshake parameters are stripped, and the runtime context, which carries
  * Access's `ctx.access` even on a bypassed path, is never passed. Anything but
@@ -666,7 +666,7 @@ export function isSameOrigin(request: Request, baseUrl: string): boolean {
   }
 }
 
-export function withSecurityHeaders(response: Response, requestUrl: URL, _path: string): Response {
+export function withSecurityHeaders(response: Response, requestUrl: URL): Response {
   const headers = response.headers.get("Content-Type")?.toLowerCase().startsWith("text/html")
     ? htmlSecurityHeaders(response.headers)
     : new Headers(response.headers);
@@ -685,7 +685,7 @@ export function withSecurityHeaders(response: Response, requestUrl: URL, _path: 
 type AuthorizedIdentity = Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>;
 
 /**
- * Plain `/mcp` and every operator route admit a maintainer (#837). An open
+ * Plain `/mcp` and every operator route admit a maintainer. An open
  * deployment has no inbound auth and so no maintainers: its one anonymous
  * caller keeps the whole default endpoint, as the startup warning says.
  */
@@ -695,7 +695,7 @@ export function admitsMaintainer(opts: ServerOptions, authz: AuthorizedIdentity)
 
 /**
  * The declared pool `/mcp/<name>` serves to this person, or undefined for the
- * same 404. An agent is never admitted here, even when listed (#837).
+ * same 404. An agent is never admitted here, even when listed.
  */
 export function memberPool(
   opts: ServerOptions,
@@ -719,7 +719,7 @@ export function agentPool(
 }
 
 /**
- * The connectors of every pool this identity is a member of (#837): what a
+ * The connectors of every pool this identity is a member of: what a
  * pool member may ever manage, and only their personal ones among these.
  */
 export function memberConnectors(
@@ -738,7 +738,7 @@ export function memberConnectors(
 
 /**
  * Whether this identity may start, finish, or remove a connector's auth
- * (#837). Only an interactive person ever may; an agent or any other machine
+ * Only an interactive person ever may; an agent or any other machine
  * credential manages nothing. Shared auth is deployment-wide, so it takes a
  * maintainer. A personal connector takes a stable principal that is a
  * maintainer, whose plain `/mcp` includes it, or a member of a pool that
@@ -759,7 +759,7 @@ export function mayManageConnector(
   return pools === "all" || pools.has(connector.id);
 }
 
-/** Agent token list, issue, rotate, and revoke: an interactive maintainer only (#837). */
+/** Agent token list, issue, rotate, and revoke: an interactive maintainer only. */
 export function managesAgentTokens(opts: ServerOptions, authz: AuthorizedIdentity): boolean {
   return (
     authz.identity.interactive && authz.identity.agent === undefined && isMaintainer(opts.maintainers, authz.identity)
@@ -767,7 +767,7 @@ export function managesAgentTokens(opts: ServerOptions, authz: AuthorizedIdentit
 }
 
 /**
- * Activity reads: a maintainer principal, interactive or not (#837). Members
+ * Activity reads: a maintainer principal, interactive or not. Members
  * and agents read none, and an open deployment has no maintainer.
  */
 export function readsActivity(opts: ServerOptions, authz: AuthorizedIdentity): boolean {

@@ -1,3 +1,4 @@
+import { toolError } from "./tool-error.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { upwardStep } from "./upward.js";
 import type { CatalogResolution } from "./catalog-service.js";
@@ -72,8 +73,7 @@ function failure(
   code: "invalid_request_state" | "auth_declined" | "auth_cancelled" | "auth_round_limit",
   message: string,
 ): ToolResult {
-  const structuredContent = { ok: false, error: { code, message, retryable: false } };
-  return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent, isError: true };
+  return toolError({ code, message, retryable: false }, { ok: false });
 }
 
 /** Request-local auth recovery at the MCP boundary, never inside a guest provider. */

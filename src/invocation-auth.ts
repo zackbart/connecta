@@ -1,3 +1,4 @@
+import { bytesToHex } from "./bytes.js";
 import { authCall, authFlow, registerAuth } from "./auth/native.js";
 import { upwardStep } from "./upward.js";
 import { runEdge } from "./runtime/run.js";
@@ -62,9 +63,7 @@ export async function classificationDigest(definition: ToolDef): Promise<string>
         schema,
       }),
     );
-    return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
-      byte.toString(16).padStart(2, "0"),
-    ).join("");
+    return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
   } catch {
     // A digest refusal blocks recovery, not an ordinary call.
     return "";

@@ -8,12 +8,7 @@ import { uiData } from "./routes/ui-data.js";
 import { runEdge } from "./runtime/run.js";
 import type { CredentialVault } from "./credential-contract.js";
 import { type DeferredWork } from "./connector-scope.js";
-import {
-  type CredentialManagementCapability,
-  type UiData,
-  type UiProblem,
-  type UiToolSafety,
-} from "./operator-ui/model.js";
+import { type CredentialManagementCapability, type UiData, type UiProblem } from "./operator-ui/model.js";
 import {
   OPERATOR_UI_STYLE_PATH,
   OPERATOR_UI_SCHEME_PATH,
@@ -21,7 +16,7 @@ import {
   OPERATOR_UI_NOTICES_PATH,
 } from "./operator-ui/generated.js";
 import type { RegistryView } from "./registry.js";
-import type { ConnectaBranding, ConnectaTheme, Connector, ConnectorStatus, ToolDef, UiAuthConfig } from "./types.js";
+import type { ConnectaBranding, ConnectaTheme, Connector, ConnectorStatus, UiAuthConfig } from "./types.js";
 
 export {
   filterUiConnectors,
@@ -61,12 +56,6 @@ export function operatorPageTitle(page: OperatorPage, configuredTitle: string): 
   return `${OPERATOR_PAGE_LABELS[page]} · ${configuredTitle}`;
 }
 
-/** Report the verdict the registry stored, independent of whether an endpoint is read-only. */
-export function uiToolSafety(definition: ToolDef): UiToolSafety {
-  if (definition.classification === "read") return "runs_in_programs";
-  return "needs_approval";
-}
-
 /**
  * The fix-prompt key for a connector that is not usable. Chosen from the
  * status state and the connector's declared auth shape — configuration, never
@@ -86,17 +75,6 @@ export function uiProblemFor(
     return connector.credential ? "credential_required" : "auth_required";
   }
   return observed.catalogFailed ? "catalog_failed" : undefined;
-}
-
-export function credentialManagementCapability(input: {
-  eligibleOperator: boolean;
-  hasCredentialSlots: boolean;
-  hasCredentialVault: boolean;
-}): CredentialManagementCapability {
-  if (!input.eligibleOperator) return "requires_operator";
-  if (!input.hasCredentialSlots) return "no_slots";
-  if (!input.hasCredentialVault) return "vault_not_configured";
-  return "available";
 }
 
 /**

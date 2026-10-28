@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { resourceUriMatchesTemplate, resourceUriMatchesTemplates } from "../src/connectors/resource-uri.js";
+import { resourceUriMatchesTemplates } from "../src/connectors/resource-uri.js";
 
 it.each([
   ["docs://manual/{id}/{id}", "docs://manual/a/a"],
@@ -193,3 +193,7 @@ it("INV-3 INV-7: scans almost the full match budget before an end-of-URI mismatc
     refusal: "resource_match_budget_exceeded",
   });
 });
+
+function resourceUriMatchesTemplate(uri: string, uriTemplate: string): boolean {
+  return resourceUriMatchesTemplates(uri, [{ uriTemplate }]).matched;
+}

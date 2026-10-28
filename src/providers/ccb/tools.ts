@@ -1,3 +1,4 @@
+import { asRecord, asArray } from "../_shared/json.js";
 // CCB v2 curated projections, bound numbered pages and reviewed POST data search.
 import { Effect, Schema } from "effect";
 import { type ApiTool } from "../../connectors/api-connector.js";
@@ -19,14 +20,6 @@ import {
   type Query,
 } from "./api.js";
 type JsonRecord = Record<string, any>;
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type Compact<T> = { [K in keyof T as IsAny<T[K]> extends true ? K : undefined extends T[K] ? never : K]: T[K] } & {

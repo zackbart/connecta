@@ -1,3 +1,5 @@
+import { asArray, asRecord } from "../_shared/json.js";
+import { compact } from "../_shared/json.js";
 // Breeze's curated surface: projections and profile encoders earn named tools; the standard hatch supplies coverage.
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -8,12 +10,9 @@ import { RequestSecrets, Classification, type CallServices } from "../../http/se
 import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
 import { read, list, write as writeTool } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
-import { asArray, asRecord, type JsonRecord, READ_ENDPOINTS } from "./api.js";
+import { type JsonRecord, READ_ENDPOINTS } from "./api.js";
 const DEFAULT_EVENT_LIMIT = 100;
 const ObjectValue = Schema.Record(Schema.String, Schema.Unknown);
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 function timestamp(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || value === "" || value.startsWith("0000-00-00")) {

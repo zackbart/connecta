@@ -46,6 +46,3 @@ export function recordRecovery(ctx: ConnectorContext, facts: Readonly<Record<str
   if (!serviceFor(ctx, Recovery)) recordFor(ctx);
   serviceFor(ctx, Recovery)?.recordNow?.(facts);
 }
-export function recoveryFor(ctx: object | undefined): Readonly<Record<string, string>> | undefined {
-  return ctx ? serviceFor(ctx, RecordedRecovery)?.facts : undefined;
-}

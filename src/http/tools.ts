@@ -1,4 +1,4 @@
-// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
+// Provider kit. Unreachable from src/index.ts.
 //
 // Tool builders. A tool is a name, a description, an input Schema, an output
 // Schema, and a program; the builder renders both Schemas as catalog JSON
@@ -83,7 +83,6 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly run: (args: I["Type"]) => Effect.Effect<O["Type"], HttpFailure, CallServices>;
 }
 
-const inputs = new WeakMap<ApiTool, Input>();
 const keyed = new WeakSet<ApiTool>();
 
 /** Whether a kit write builder declared an idempotency key for this tool. */
@@ -123,11 +122,6 @@ function originalOrder<A>(decoded: A, original: unknown): A {
     return out;
   };
   return copy(decoded, original) as A;
-}
-
-/** The input Schema a kit tool decodes with, for the catalog/decoder agreement check. */
-export function kitInput(tool: ApiTool): Input | undefined {
-  return inputs.get(tool);
 }
 
 /** A Struct's own property names, for `fields`. */
@@ -570,7 +564,6 @@ function build<I extends Input, O extends Schema.Top>(
       );
     });
   registerToolEntry(tool, (args, ctx) => program(args, ctx, inLogicalCall(ctx)));
-  inputs.set(tool, spec.input);
   if (idempotency) keyed.add(tool);
   return tool;
 }

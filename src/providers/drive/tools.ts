@@ -1,3 +1,5 @@
+import { asRecord, asArray, compact } from "../_shared/json.js";
+import { decodeBase64, decodeBase64url } from "../../bytes.js";
 // Google Drive named workflows, bounded projections and bound continuation on the provider kit.
 import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -100,15 +102,6 @@ const PERMISSION_FIELDS =
 const ALL_DRIVES = { supportsAllDrives: true } as const;
 type JsonRecord = Record<string, any>;
 type ContentFormat = "markdown" | "csv" | "text" | "base64" | "unavailable";
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
@@ -305,8 +298,7 @@ function encodeCursor(ctx: ConnectorContext, resume: Resume): string {
 const FINGERPRINT = /^[A-Za-z0-9_-]{16}$/;
 function decodeCursor(cursor: string): Resume {
   try {
-    const base = cursor.replace(/-/g, "+").replace(/_/g, "/");
-    const json = new TextDecoder().decode(fromBase64(base + "=".repeat((4 - (base.length % 4)) % 4)));
+    const json = new TextDecoder().decode(decodeBase64url(cursor, true));
     const [token, skip, size, scope, page, last] = JSON.parse(json) as unknown[];
     const midPage =
       typeof page === "string" && FINGERPRINT.test(page) && typeof last === "string" && FINGERPRINT.test(last);
@@ -562,17 +554,6 @@ function base64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
-function fromBase64(value: string): Uint8Array {
-  let binary: string;
-  try {
-    binary = atob(value);
-  } catch {
-    throw new ConnectorCallError("invalid_args", "contentBase64 is not valid base64.");
-  }
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
 /**
  * Why the content tool returns no content for a file, as the note says it.
  * Only a well-formed id or media type is interpolated; anything else Drive
@@ -814,7 +795,7 @@ function media(args: JsonRecord):
     };
   }
   if (hasBinary) {
-    const bytes = fromBase64(args["contentBase64"]);
+    const bytes = contentBytes(args["contentBase64"]);
     if (bytes.length > BINARY_INLINE_BYTES) {
       throw new ConnectorCallError(
         "invalid_args",
@@ -1628,5 +1609,13 @@ function decisionInputs(file: JsonRecord, keys: readonly string[]): void {
       )
         decisionFailure();
     }
+  }
+}
+
+function contentBytes(value: string): Uint8Array {
+  try {
+    return decodeBase64(value);
+  } catch {
+    throw new ConnectorCallError("invalid_args", "contentBase64 is not valid base64.");
   }
 }

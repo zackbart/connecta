@@ -1,4 +1,5 @@
-// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
+import { bytesToHex, decodeBase64url } from "../bytes.js";
+// Provider kit. Unreachable from src/index.ts.
 //
 // List tools take one page at a time. Lookahead detects an extra row; bound
 // cursors authenticate the tool, arguments, connection and credential owner.
@@ -76,9 +77,7 @@ async function signingKey(storage: KVStorage): Promise<CryptoKey> {
   if (cached) return cached;
   let raw = await storage.get(continuationKeys.signingKey);
   if (raw === null) {
-    const candidate = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
-      byte.toString(16).padStart(2, "0"),
-    ).join("");
+    const candidate = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
     raw = (await storage.compareAndSet(continuationKeys.signingKey, null, candidate))
       ? candidate
       : await storage.get(continuationKeys.signingKey);
@@ -138,7 +137,7 @@ export const boundCursor = {
       const expected = yield* digest(tool, args);
       let parsed: unknown;
       try {
-        parsed = JSON.parse(new TextDecoder().decode(fromBase64url(token)));
+        parsed = JSON.parse(new TextDecoder().decode(decodeBase64url(token)));
       } catch {
         parsed = undefined;
       }
@@ -155,7 +154,7 @@ export const boundCursor = {
       if (token !== base64url(JSON.stringify({ v: record.v, d: record.d, c: record.c, m: record.m })))
         return yield* Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", STRAY_CURSOR) }));
       const key = yield* keyForCall;
-      const mac = fromBase64url(record.m);
+      const mac = decodeBase64url(record.m);
       const binding = yield* ContinuationBinding;
       const claims = new TextEncoder().encode(
         canonicalJson([record.v, binding.connection, binding.principal, record.d, record.c]),
@@ -176,9 +175,7 @@ function digest(tool: string, args: Readonly<Record<string, unknown>>): Effect.E
     .map((key) => [key, args[key]]);
   const bytes = new TextEncoder().encode(canonicalJson([tool, shape]));
   return Effect.promise(() => crypto.subtle.digest("SHA-256", bytes)).pipe(
-    Effect.map((hash) =>
-      Array.from(new Uint8Array(hash).slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join(""),
-    ),
+    Effect.map((hash) => bytesToHex(new Uint8Array(hash).slice(0, 16))),
   );
 }
 
@@ -190,9 +187,4 @@ function base64urlBytes(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function fromBase64url(token: string): Uint8Array {
-  const binary = atob(token.replace(/-/g, "+").replace(/_/g, "/"));
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }

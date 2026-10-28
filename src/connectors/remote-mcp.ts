@@ -1,3 +1,5 @@
+import { wrapViewCredentials } from "../runtime/call.js";
+import { sha256Hex, utf8Length } from "../bytes.js";
 import { withStoredAuth } from "../auth/stored-observation.js";
 import { authorizationParamsFor } from "../auth/oauth-authorization-params.js";
 import { authView } from "../auth/native-call.js";
@@ -75,7 +77,6 @@ import {
   requestSentSecrets,
   sentSecretsFor,
   shortSecretWarning,
-  trackCredentialReads,
   type SentSecrets,
 } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
@@ -432,32 +433,13 @@ const MAX_SKILL_BYTES = 16 * 1024 * 1024;
 const MAX_SKILL_READ_RPC_BYTES = 6 * MAX_SKILL_BYTES + 1024 * 1024;
 
 /** Count UTF-8 without allocating another full copy of a bounded response. */
-function skillTextBytes(value: string): number {
-  let bytes = 0;
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code < 0x80) bytes++;
-    else if (code < 0x800) bytes += 2;
-    else if (
-      code >= 0xd800 &&
-      code <= 0xdbff &&
-      i + 1 < value.length &&
-      value.charCodeAt(i + 1) >= 0xdc00 &&
-      value.charCodeAt(i + 1) <= 0xdfff
-    ) {
-      bytes += 4;
-      i++;
-    } else bytes += 3;
-  }
-  return bytes;
-}
 
 function skillObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function skillJsonBytes(value: unknown): number {
-  return skillTextBytes(JSON.stringify(value));
+  return utf8Length(JSON.stringify(value));
 }
 
 function validSkill(value: unknown): value is ConnectorSkill {
@@ -566,11 +548,7 @@ function skillReadSchema(uri: string): StandardSchemaV1<unknown, ConnectorSkillR
           return { issues: [{ message: "Unexpected skill resource contents." }] };
         }
         const mimeType = typeof content.mimeType === "string" ? { mimeType: content.mimeType } : {};
-        if (
-          typeof content.text === "string" &&
-          !("blob" in content) &&
-          skillTextBytes(content.text) <= MAX_SKILL_BYTES
-        ) {
+        if (typeof content.text === "string" && !("blob" in content) && utf8Length(content.text) <= MAX_SKILL_BYTES) {
           return { value: [{ uri, ...mimeType, text: content.text }] };
         }
         if (
@@ -1070,18 +1048,6 @@ function base64Utf8(value: string): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary);
-}
-
-/**
- * Hex SHA-256 of a credential, used only to notice that a cached client
- * connected with a value the vault no longer holds. WebCrypto rather than a
- * `node:` hash: the whole core has to keep running unchanged on Workers.
- */
-async function digestOf(value: string): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
-  let hex = "";
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
-  return hex;
 }
 
 /**
@@ -1705,7 +1671,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // handshake/discovery requests and OAuth rotations. Remove settled users.
   const activeContexts = new WeakMap<ConnectionState, Set<ConnectorContext>>();
   // Resource headers are non-secret context by contract. They never join the
-  // sent set, so arguments and results equal to them pass unchanged (#1108).
+  // sent set, so arguments and results equal to them pass unchanged.
   // An argument mirrored as `Mcp-Param-*` carrying a resource value is the
   // same context under a name the tracker may read as credential-shaped.
   const resourceValues = new Set(Object.values(extraHeaders ?? {}));
@@ -3131,7 +3097,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
           // The principal joins the client's identity: another principal never
           // reuses this client, even if its resolver returns the same token.
-          credentialDigest = (yield authCall(digestOf, [
+          credentialDigest = (yield authCall(sha256Hex, [
             principal ? JSON.stringify([principal, credentialValue]) : credentialValue,
           ])) as string;
           if (
@@ -3286,7 +3252,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const negotiationDigest = yield* promised(
           authMethod(
             () =>
-              authCall(digestOf, [
+              authCall(sha256Hex, [
                 JSON.stringify([
                   opts.url,
                   opts.versionNegotiation ?? "auto",
@@ -3347,7 +3313,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   ? authMethod(() =>
                       authFlow<string>(function* () {
                         const tokens = yield authInvoke(provider, "tokens", []);
-                        return yield authCall<string>(digestOf, [JSON.stringify(tokens)]);
+                        return yield authCall<string>(sha256Hex, [JSON.stringify(tokens)]);
                       }),
                     )
                   : undefined,
@@ -4420,7 +4386,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const withActiveSecrets = authMethod(
     <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult: boolean = true, preserveInput: boolean = false) =>
       authFlow<T>(function* () {
-        trackCredentialReads(ctx);
+        wrapViewCredentials(ctx);
         const secrets = sentSecretsFor(ctx);
         if (opts.auth?.type === "headers") {
           for (const value of Object.values(opts.auth.headers)) secrets.header(value);

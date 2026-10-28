@@ -1,6 +1,7 @@
+import { readOnlyNotice } from "../_shared/guide.js";
 import { skill } from "./skill.generated.js";
 /**
- * Tithe.ly's giving API (v1) on the provider kit (decision 0010). No SDK
+ * Tithe.ly's giving API (v1) on the provider kit. No SDK
  * exists to depend on, and none would be welcome: this is a payments API, and
  * every tool was chosen and written, not generated (decision record 0001:
  * hand-authored tools). The vendor lives in `api.ts` and the tools in
@@ -147,7 +148,7 @@ function usageGuide(options: Readonly<TithelyOptions>): ProviderGuideInput {
       sensitiveFields(options) === "return"
         ? "This connection returns organizations' payout bank and legal-contact details through tithely_api_read; the named reads still omit them."
         : "This connection withholds organizations' payout bank and legal-contact details from every result.",
-      ...(options.readOnly === true ? ["This connection is read-only: every write is refused."] : []),
+      ...readOnlyNotice(options.readOnly === true),
       ...(options.defaultPageSize !== undefined
         ? [`List tools return ${options.defaultPageSize} rows by default on this connection.`]
         : []),

@@ -1,3 +1,4 @@
+import { asRecord, asArray, compact } from "../_shared/json.js";
 // Google Docs named projections and bounded writes over the provider kit.
 import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -33,18 +34,6 @@ const ELEMENT_PAGE_BYTES = 64 * 1024;
 /** Characters of each index row's text preview. */
 const PREVIEW_CHARS = 80;
 type JsonRecord = Record<string, any>;
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
@@ -445,7 +434,7 @@ function revisionAfter(reply: JsonRecord, dropped: string[]): string | undefined
   return keptId(asRecord(reply["writeControl"])["requiredRevisionId"], "revisionId", "revisionId", dropped);
 }
 
-// No cause: what it would carry is a transport, stream, or parser error that can quote the reply (#695).
+// No cause: what it would carry is a transport, stream, or parser error that can quote the reply.
 function uncertain(message: string, ctx: ConnectorContext): unknown {
   return providerCallFailure(
     ctx,

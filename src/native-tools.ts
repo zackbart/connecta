@@ -1,3 +1,4 @@
+import { bytesToHex } from "./bytes.js";
 import { duringViewEffect } from "./runtime/call.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { Effect } from "effect";
@@ -61,7 +62,7 @@ const shortHashNative = /* @__PURE__ */ registerAuth(shortHash, function (text: 
     const digest = new Uint8Array(
       yield* upwardStep(authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", enc.encode(text)])),
     );
-    return [...digest.subarray(0, HASH_CHARS / 2)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return bytesToHex(digest.subarray(0, HASH_CHARS / 2));
   });
 });
 

@@ -1,3 +1,4 @@
+import { asRecord } from "../_shared/json.js";
 // Breeze's reviewed GET-only vendor. HTTP methods do not establish safety: see tools.ts.
 import { type Context, Effect, Schema } from "effect";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
@@ -12,14 +13,6 @@ export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 1000;
 export const BREEZE_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export type JsonRecord = Record<string, any>;
-
-export function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-export function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
 
 // --- The read hatch's allowlist ----------------------------------------------
 
@@ -632,7 +625,7 @@ export const breezeSafety: SafetyOptions = {
 function shortText(value: unknown, secrets: Context.Service.Shape<typeof RequestSecrets>): string | undefined {
   if (typeof value === "string") return value.trim() || undefined;
   if (value === undefined || value === null) return undefined;
-  // The kit redacted the answer's values and kept its keys (#703); serialized, a key is text
+  // The kit redacted the answer's values and kept its keys; serialized, a key is text
   // the cut below could split, so the whole text is checked before it is cut.
   const text = secrets.redact(JSON.stringify(value));
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;

@@ -1,3 +1,4 @@
+import { asRecord, asArray, compact } from "../../_shared/json.js";
 import { ConnectorCallError } from "../../../errors.js";
 export type JsonRecord = Record<string, any>;
 export type Query = Record<string, string | number | boolean | undefined>;
@@ -10,18 +11,6 @@ export interface Resource {
 }
 
 export type Included = Map<string, Resource>;
-
-export function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-export function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-export function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 
 function isResource(value: unknown): value is Resource {
   const record = asRecord(value);

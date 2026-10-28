@@ -57,13 +57,7 @@
       ],
       "ignoreDependencies": [
         // Native workerd module used by the service-binding RPC fixture.
-        "cloudflare",
-        // `tsx` needed an exemption until `drift:check` named it in a script: its
-        // other uses — the forked QuickJS child, the Node template's runner — are
-        // ones knip cannot see. Delete that script and it needs the exemption back.
-        // `wrangler` — the deployment CLI and the schema provider for
-        // examples/worker/wrangler.jsonc — is reached by the deployment smoke
-        // and packed-consumer checks through its programmatic API.
+        "cloudflare"
       ]
     },
     "packages/connecta-eve": {
