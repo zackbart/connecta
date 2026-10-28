@@ -13,6 +13,3 @@ packageConfigs:
 allowBuilds:
   esbuild: true
   workerd: true
-
-minimumReleaseAgeExclude:
-  - eve@0.84.0
