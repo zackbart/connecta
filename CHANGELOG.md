@@ -2,6 +2,29 @@
 
 All notable changes to this package are documented here.
 
+## 0.37.0 — 2026-10-27
+
+Connecta 0.37.0 lets a `remoteMcp()` connection reach a trusted first-party downstream as the caller Connecta admitted, with no per-person OAuth. Request auth's new `principal` option gives the token resolver that caller's reference: people by default, and declared agents only with `accept: "human-or-agent"`. The new optional `fetch` carries all of the connector's MCP traffic, for example through a Workers service binding to a sibling Worker. The downstream must accept a forwarded identity only on its binding entrypoint or behind a verified signature. Operator status checks carry no caller, so a principal-forwarding connector reports `auth_required` on the operator pages even when calls succeed.
+
+Concurrent programs on Workers no longer fail with "Cannot call this AsyncLocalStorage bound function outside of the request in which it was created." Queued `execute_code` programs, MCP requests, connector calls and OAuth refresh waiters now resume in their own request. `workerExecutor()`'s default queue deadline rises from 5 to 60 seconds, so a queued run can wait through one default guest deadline. Queue plus run time can approach two minutes, so clients should allow deadlines to match. The pool is per isolate, as before.
+
+The operator UI no longer probes every connector twice on each page load. Maintainer admission now reads stored observations only. Each connector is then probed once, independently, and refreshes and recovery touch only the connectors involved. A slow refresh keeps the last snapshot visible as stale instead of blanking the page. The default `GET /ui/api/config` response is unchanged for other consumers.
+
+Remote MCP OAuth now decides status and consent from the stored grant. Top-level `headers` values are no longer redacted as sent secrets. Nothing here is breaking. Deployments that use neither principal forwarding nor custom `fetch` need no configuration change, but should review the longer queue deadline. The root bundle cap rose to 404,500 B gzip in #1110.
+
+### Added
+
+- Let `remoteMcp()` reach a trusted first-party downstream as the admitted caller. Request auth's new `principal: { accept, token }` gives the resolver the admitted person's `{ kind: "human", namespace, id }`, and declared agents only with `accept: "human-or-agent"`. Every other caller is refused with `auth_required` before resolving. Arguments, programs and headers cannot change the principal, and a different principal never reuses a client. An optional `fetch`, such as a Workers service binding, carries all of a connector's MCP traffic under the configured URL's HTTPS, redirect and origin rules; it cannot be combined with OAuth. Existing auth modes are unchanged.
+
+### Fixed
+
+- `remoteMcp()` top-level `headers` values are no longer treated as sent secrets. Every call in a code-mode program now reaches the downstream with arguments equal to a header value intact, instead of `[redacted]` after the first call, and results, catalogs and errors that echo a header value return it unchanged. `auth` headers and other credentials are still registered and redacted as before.
+- `remoteMcp()` OAuth now decides on the owner's stored grant rather than on a healthy handshake. A downstream that answers `initialize` and `tools/list` without credentials and challenges only `tools/call` (Google's hosted BigQuery MCP, for one) no longer reports "Already authorized": with no grant, Connect, Restart, a start after Disconnect, and `authorize_connector` start consent from the resource's RFC 9728 metadata and return its URL, and the operator status and UI report `auth_required` until a grant exists. An existing grant still reports `ok` without starting a new flow.
+- Resume a queued `execute_code` program, MCP request, connector call or OAuth refresh waiter in its own request, whichever request released the slot or finished the refresh. On Workers with compatibility date 2025-06-16 or later, workerd's September 2026 releases refused that cross-request resume: the releasing program failed with `Executor failed: Cannot call this AsyncLocalStorage bound function outside of the request in which it was created.`, and the queued one later hit `Executor admission timed out`. A slot granted just before the executor or call admission closes is given back and refused with `executor_closed` (or the call-admission `closed` refusal), so no program or call starts after shutdown. QuickJS host calls now also run in the async context of the request running the program, not the request that spawned its warm child. `workerExecutor()`'s default queue deadline rises from 5 to 60 seconds, so a queued run can wait out one default guest deadline; the pool remains two runs and eight queued per isolate, and `admission` still replaces the defaults. Queue refusals remain `executor_overloaded` with `retryable: true` and `retryAfterMs`.
+- Admit maintainer pages without live connector probes, load each connector once with its complete catalog and auth controls, scope refresh and recovery to affected connectors, and keep the last maintainer snapshot visible when admission becomes stale.
+  
+  Discard queued reads withheld by stale admission without showing sign-in, and fence connector reads again when credential or OAuth mutations settle so follow-ups observe post-write state.
+
 ## 0.36.2 — 2026-10-27
 
 Connecta 0.36.2 makes Google's hosted MCP servers, such as BigQuery, usable through generic `remoteMcp()` connections. The new `@zackbart/connecta/google` entry mints Google service-account tokens for request-local auth, so agent pools can share a service-account connection without a browser consent. The service account acts as itself, or as a Workspace user when a delegation subject is given. A rejected token is dropped and re-minted for the next request; dispatched writes are never replayed.
