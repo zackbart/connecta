@@ -46,6 +46,28 @@ function decode(part: string): Uint8Array<ArrayBuffer> {
 }
 
 describe("Google service-account request tokens", () => {
+  it("reports token authentication failures as auth_required without contacting MCP or exposing token errors", async () => {
+    response = () =>
+      Response.json({ error: "invalid_grant", error_description: "TOKEN_ERROR_SENTINEL" }, { status: 400 });
+    const mcpFetch = vi.fn();
+    const connector = remoteMcp("warehouse", {
+      url: "https://bigquery.googleapis.com/mcp",
+      fetch: mcpFetch,
+      auth: { type: "request", token: googleServiceAccountToken(options()) },
+    });
+    const ctx = connectorContext();
+    try {
+      const status = await connector.status!(ctx);
+      expect(assertions).toHaveLength(1);
+      expect(mcpFetch).not.toHaveBeenCalled();
+      expect(status).toEqual({ state: "auth_required", message: "Authorization required — open the URL to connect." });
+      expect(JSON.stringify(status)).not.toContain("TOKEN_ERROR_SENTINEL");
+      expect(JSON.stringify(status)).not.toContain(assertions[0]);
+    } finally {
+      await connector.closeScope?.(ctx);
+    }
+  });
+
   it.each([undefined, "alice@example.com"])("signs a verifiable assertion with subject %s", async (subject) => {
     const now = Date.now();
     vi.spyOn(Date, "now").mockReturnValue(now);

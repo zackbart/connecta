@@ -2678,6 +2678,15 @@ transport, are not stored or described, and a changed token replaces the client.
 This mode refuses cleartext non-loopback origins. Optional `auth.headers` carry
 static protocol/catalog controls and cannot set Authorization.
 
+Status reports `auth_required` when a request-token or principal resolver returns
+an empty or invalid token or throws a typed authentication failure, including
+authentication failures from `googleServiceAccountToken`. Resolution failure
+sends no request to the MCP endpoint. Status uses the existing fixed authorization
+notice and never includes the resolver's error message. Typed outage and
+permission failures, and a resolver that throws anything other than a typed
+`ConnectorCallError`, remain error statuses; such an untyped failure still fails
+calls with `auth_required`.
+
 Return the same token for the same caller while it remains valid, and cache a
 minted token until shortly before it expires. A value that changes on every
 resolution replaces the client each time; a change that lands while a call
