@@ -1346,6 +1346,23 @@ export class SentSecrets {
     return this.idle() ? value : (this.project(value, this.scan(true)).value as string);
   }
 
+  /** An SDK response body, checked after it has been fully read so late registrations
+   * still apply. An idle set leaves the original serialization untouched. */
+  serializedAgentOutput(body: string, json: boolean): string {
+    if (this.idle()) return body;
+    if (json) {
+      // Structured redaction joins text blocks, including secrets split across them.
+      try {
+        return JSON.stringify(redactAgentOutput(this, JSON.parse(body)));
+      } catch {
+        /* Non-JSON diagnostics still pass through the text boundary. */
+      }
+    }
+    // A second serialized pass over parsed JSON would mistake a blob's encoding
+    // for credential bytes. Only non-JSON bodies take this text path.
+    return redactAgentOutput(this, body);
+  }
+
   /** A plain-data snapshot of `value` with every match removed: own enumerable data properties
    * (an error's own fields, non-enumerable ones included), read once each. Accessors are never
    * invoked, except an error's stack and the accessors its class defines, read once into the
