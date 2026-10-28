@@ -114,6 +114,13 @@ for (const mode of ["request", "principal"] as const) {
       },
       state: "error",
     })),
+    {
+      failure: "untyped resolver failure",
+      token: async () => {
+        throw new Error(SENTINEL);
+      },
+      state: "error",
+    },
   ])(
     `INV-6 INV-10: ${mode} resolver status classifies $failure without dispatch or resolver text`,
     async ({ token, state }) => {

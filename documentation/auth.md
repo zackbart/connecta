@@ -2683,7 +2683,9 @@ an empty or invalid token or throws a typed authentication failure, including
 authentication failures from `googleServiceAccountToken`. Resolution failure
 sends no request to the MCP endpoint. Status uses the existing fixed authorization
 notice and never includes the resolver's error message. Typed outage and
-permission failures remain error statuses with their original classification.
+permission failures, and a resolver that throws anything other than a typed
+`ConnectorCallError`, remain error statuses; such an untyped failure still fails
+calls with `auth_required`.
 
 Return the same token for the same caller while it remains valid, and cache a
 minted token until shortly before it expires. A value that changes on every
