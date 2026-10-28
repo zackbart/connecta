@@ -1000,8 +1000,9 @@ as plain data; an array that is not plain as a plain array of its indices; a
 `String`, `Number` or `Boolean` wrapper as its primitive; a `toJSON` result,
 called once and checked; a function or symbol as the placeholder; a typed array,
 `DataView` or `ArrayBuffer` as a fresh `Uint8Array` of its bytes, which are
-checked as bytes and, with the elements it held, as the numbers JSON shows for
-them. The type table is in [auth.md](./auth.md). An own accessor is
+checked as bytes on their own and, with the elements it held, as the numbers
+JSON shows for them, joined with neighbouring leaves without an intervening
+byte view. The type table is in [auth.md](./auth.md). An own accessor is
 never invoked: an object's copy leaves it out, an array index holds the
 placeholder. A change copies the containers on its path on first write, so a
 caller's value is never mutated. An array's non-index fields are never read:
@@ -1179,6 +1180,14 @@ The matcher is cached until its set changes; the empty set has a fast path.
 including errors, and every host-to-guest value or rejection passes through
 it. Both MCP transports also pass their serialized response through it, covering
 JSON-RPC errors, HTTP diagnostics, structured content, and paging responses.
+After fully reading an SDK response body, an idle request set (no registered
+forms or unregistered values) returns the original text without parsing or
+reserializing it, so clients receive exactly the bytes the SDK serialized. Only
+an active set reparses the body, which also canonicalizes numbers a handler
+emitted through `JSON.rawJSON` (an out-of-range value becomes `null`, digits past
+double precision are rounded); clients must not rely on either behaviour. A set
+activated before the read completes still applies structured redaction, with
+the text fallback for non-JSON diagnostics.
 Per-call redaction remains before diagnostic truncation, paging, and emits. Paging stores only request-redacted text before encoding
 chunks, so a later request needs no original credentials. Programs retain the
 request set only for the run so later outputs cannot reconstruct an echo.
