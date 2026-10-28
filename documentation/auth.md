@@ -1860,10 +1860,25 @@ structured value, and before result paging, emits, and program outputs/errors/lo
 its `authorization_servers`, and advertised token and registration endpoints.
 A challenged `resource_metadata` URL must have the same origin as the
 configured connector `url`: scheme, host, and port after normal URL parsing.
-This applies during status, authorization starts, and tool calls, even with
-cached discovery. A different origin is refused before any metadata fetch,
-with non-retryable `connector_call_failed`; there is no allowlist. Paths may
-differ: a resource at `https://crm.example.com/mcp` may challenge with
+This applies during status, authorization starts, and tool calls. A different
+origin is refused before SDK discovery, with non-retryable
+`connector_call_failed` and a fixed message that includes no challenged URL
+or host; there is no allowlist.
+
+Before every SDK discovery read, including authorization callbacks and flows
+without a challenge, a cached `resourceMetadataUrl` outside the configured
+origin (or a malformed URL) and its cached resource document are discarded
+from the discovery state given to the SDK. The stored grant is not changed by
+that read. The SDK rediscovers resource metadata using the current same-origin
+challenge, or the configured resource's same-origin well-known locations when
+there is no challenge. The cached authorization-server binding is retained so
+callback issuer checks still apply. If rediscovery changes a pending consent's
+discovery binding, its callback refuses before code exchange; start a new
+consent. If same-origin resource metadata returns 404, the cached
+authorization-server fallback can still complete consent against its stored
+binding. A foreign cached metadata URL is never requested, including when an older SDK flow saved only the URL after a 404.
+
+Paths may differ: a resource at `https://crm.example.com/mcp` may challenge with
 `https://crm.example.com/oauth/resources/tickets`. Google's per-tool shape,
 `https://bigquery.googleapis.com/.well-known/oauth-protected-resource/<tool>`,
 is likewise accepted for a resource on `https://bigquery.googleapis.com`.
@@ -1881,8 +1896,9 @@ targeting the host's private network:
   working. LAN and link-local addresses stay refused.
 
 A refused URL is never requested. Discovery, registration, and code exchange
-fail with a non-retryable `connector_call_failed` naming the host and nothing
-else from the URL. A refused refresh never reaches the token endpoint. If the
+fail with a non-retryable `connector_call_failed`. Resource-metadata origin
+refusals include no advertised host; other URL refusals name only the host. A
+refused refresh never reaches the token endpoint. If the
 send gate already recorded its fingerprint, that fingerprint remains blocked
 and the grant requires re-consent. Redirects cannot route around the
 rule; token requests never follow them, and resource redirects follow only

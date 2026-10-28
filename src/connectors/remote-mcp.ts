@@ -2109,12 +2109,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             authFlow<void>(function* () {
               // This seam receives every 401, during status, starts, and live
               // calls. Use the SDK's parser so the check covers exactly the
-              // metadata URL it would honor, before discovery or cached grants.
+              // challenged URL it would honor. The provider separately drops
+              // foreign cached resource metadata on every SDK discovery read,
+              // including callbacks and flows without a challenge.
               const { resourceMetadataUrl } = extractWWWAuthenticateParams(ctx.response);
               if (resourceMetadataUrl && resourceMetadataUrl.origin !== destination.origin) {
                 throw new RemoteMcpDestinationError(
                   id,
-                  `${resourceMetadataUrl.host || "the target"} names resource metadata outside the configured resource origin`,
+                  "resource metadata outside the configured resource origin is not allowed",
                 );
               }
               yield authInvoke(Reflect, "apply", [
@@ -2645,7 +2647,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       metadataUrl,
       oauthScope,
       undefined,
-      { name: ctx.oauthClientName, client: staticClient, secrets: sentSecretsFor(ctx), authorizationParams },
+      {
+        name: ctx.oauthClientName,
+        client: staticClient,
+        secrets: sentSecretsFor(ctx),
+        authorizationParams,
+        resourceOrigin: destination.origin,
+      },
     );
     if (state) state.provider = provider;
     return provider;

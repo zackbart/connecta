@@ -46,7 +46,9 @@ interface McpRequest {
   authorization: string | null;
 }
 
-function openListing(options: { toolResource?: string; refreshTokens?: string[]; metadataUrl?: string } = {}) {
+function openListing(
+  options: { toolResource?: string; refreshTokens?: string[]; metadataUrl?: string; challenge?: boolean } = {},
+) {
   const challengedMetadata = options.metadataUrl ?? toolMetadataUrl;
   const downstream = httpDownstream(
     (server) => {
@@ -116,7 +118,10 @@ function openListing(options: { toolResource?: string; refreshTokens?: string[];
       if (rpc === "tools/call" && !valid.has(authorization ?? "")) {
         return new Response(null, {
           status: 401,
-          headers: { "www-authenticate": `Bearer resource_metadata="${challengedMetadata}"` },
+          headers:
+            options.challenge === false
+              ? {}
+              : { "www-authenticate": `Bearer resource_metadata="${challengedMetadata}"` },
         });
       }
       return downstream.fetch(input, init);
@@ -338,6 +343,153 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
       expect(server.calls()).toHaveLength(1);
     },
   );
+
+  it.each([false, true])(
+    "drops a cached foreign metadata URL on a live call (complete metadata: %s)",
+    async (complete) => {
+      const foreign = "https://foreign.example/metadata";
+      const server = openListing({ refreshTokens: ["refresh-0"], challenge: false });
+      const fetchStub = fetch;
+      const foreignRequests = vi.fn();
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === foreign) {
+          foreignRequests();
+          return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+        }
+        return fetchStub(input, init);
+      });
+      const storage = await carriedGrant();
+      await new KvOAuthProvider("svc", storage, REDIRECT).saveDiscoveryState({
+        authorizationServerUrl: issuer,
+        resourceMetadataUrl: foreign,
+        ...(complete ? { resourceMetadata: { resource: mcpUrl, authorization_servers: [issuer] } } : {}),
+      });
+      const c = connector();
+
+      await expect(ping(c, storage)).resolves.toMatchObject({ content: [{ type: "text", text: "pong" }] });
+
+      expect(foreignRequests).not.toHaveBeenCalled();
+      expect(server.metadata).toEqual([resourceMetadataUrl]);
+      expect(server.counts.refresh).toBe(1);
+    },
+  );
+
+  it.each([false, true])(
+    "rediscovers foreign cached metadata for consent (same-origin challenge: %s)",
+    async (challenge) => {
+      const foreign = "https://foreign.example/metadata";
+      const server = openListing();
+      const fetchStub = fetch;
+      const requests = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === foreign) return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+        if (challenge && String(input) === mcpUrl)
+          return new Response(null, {
+            status: 401,
+            headers: { "www-authenticate": `Bearer resource_metadata="${toolMetadataUrl}"` },
+          });
+        return fetchStub(input, init);
+      });
+      vi.stubGlobal("fetch", requests);
+      const storage = memoryStorage();
+      await seedGrant(storage, {
+        issuer,
+        client: { value: { client_id: "client-0" } },
+        discovery: {
+          authorizationServerUrl: issuer,
+          resourceMetadataUrl: foreign,
+          resourceMetadata: { resource: mcpUrl, authorization_servers: [issuer] },
+        },
+      });
+      const c = connector();
+      const context = scope(storage);
+      onTestFinished(() => c.closeScope?.(context));
+
+      await expect(c.startAuth!(context)).resolves.toMatchObject({
+        state: "auth_required",
+        authorizationUrl: expect.stringContaining(`${issuer}/authorize?`),
+      });
+
+      expect(requests.mock.calls.filter(([url]) => String(url) === foreign)).toHaveLength(0);
+      expect(server.metadata).toEqual([challenge ? toolMetadataUrl : resourceMetadataUrl]);
+    },
+  );
+
+  it("keeps consent completable when same-origin rediscovery returns 404", async () => {
+    openListing();
+    const fetchStub = fetch;
+    const requests = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname.startsWith("/.well-known/oauth-protected-resource"))
+        return new Response(null, { status: 404 });
+      return fetchStub(input, init);
+    });
+    vi.stubGlobal("fetch", requests);
+    const foreign = "https://foreign.example/metadata";
+    const storage = memoryStorage();
+    await seedGrant(storage, {
+      issuer,
+      client: { value: { client_id: "client-0" } },
+      discovery: {
+        authorizationServerUrl: issuer,
+        resourceMetadataUrl: foreign,
+        authorizationServerMetadata: {
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+        },
+      },
+    });
+    const c = connector();
+    const context = scope(storage);
+    onTestFinished(() => c.closeScope?.(context));
+    const started = await c.startAuth!(context);
+    expect(started).toMatchObject({
+      state: "auth_required",
+      authorizationUrl: expect.stringContaining(`${issuer}/authorize?`),
+    });
+
+    await consent(c, storage, started.authorizationUrl);
+
+    expect(requests.mock.calls.filter(([url]) => String(url) === foreign)).toHaveLength(0);
+    expect(await reader(storage).tokens()).toMatchObject({ access_token: "access-1" });
+  });
+
+  it("keeps bearer-in-host challenges out of live call failures and logs", async () => {
+    const token = "sensitive-access-token";
+    const server = openListing({ metadataUrl: `https://${token}.foreign.example/metadata` });
+    const storage = memoryStorage();
+    await seedGrant(storage, { issuer, tokens: { access_token: token, token_type: "Bearer" } });
+    const c = connector();
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => {
+      lines.push(
+        args.map((arg) => (arg instanceof Error ? `${arg.stack} ${String(arg.cause)}` : JSON.stringify(arg))).join(" "),
+      );
+    };
+    const spies = (["debug", "error", "info", "log", "warn"] as const).map((method) =>
+      vi.spyOn(console, method).mockImplementation(record),
+    );
+    onTestFinished(() => {
+      for (const spy of spies) spy.mockRestore();
+    });
+    const context = providerCallContext(
+      { ...scope(storage), logger: { debug: record, info: record, warn: record, error: record } },
+      "read",
+    );
+    attachCallClassification(context, "read");
+    onTestFinished(() => c.closeScope?.(context));
+
+    const refused = await failureOf(
+      c.callTool("ping", {}, context, { definition: { name: "ping", annotations: { readOnlyHint: true } } }),
+    );
+
+    expect(refused.classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(String(refused.error)).not.toContain(token);
+    expect(JSON.stringify(refused.classified)).not.toContain(token);
+    expect(JSON.stringify(lines)).not.toContain(token);
+    expect(server.metadata).toEqual([]);
+  });
 
   it("refuses per-tool metadata naming another resource before any token request", async () => {
     const server = openListing({ refreshTokens: ["refresh-0"], toolResource: "https://other.example/mcp" });
