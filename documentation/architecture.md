@@ -989,8 +989,9 @@ as plain data; an array that is not plain as a plain array of its indices; a
 `String`, `Number` or `Boolean` wrapper as its primitive; a `toJSON` result,
 called once and checked; a function or symbol as the placeholder; a typed array,
 `DataView` or `ArrayBuffer` as a fresh `Uint8Array` of its bytes, which are
-checked as bytes and, with the elements it held, as the numbers JSON shows for
-them. The type table is in [auth.md](./auth.md). An own accessor is
+checked as bytes on their own and, with the elements it held, as the numbers
+JSON shows for them, joined with neighbouring leaves without an intervening
+byte view. The type table is in [auth.md](./auth.md). An own accessor is
 never invoked: an object's copy leaves it out, an array index holds the
 placeholder. A change copies the containers on its path on first write, so a
 caller's value is never mutated. An array's non-index fields are never read:
