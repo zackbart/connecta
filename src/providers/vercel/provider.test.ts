@@ -802,10 +802,14 @@ describe("vercel() with a deployment team pin", () => {
       ).rejects.toBeDefined();
     }
     expect(sent).toEqual([]);
-    answer = () => Response.json({ accountId: "team_bob" });
-    await expect(call("vercel_api_write", { method: "DELETE", path: "/v9/projects/prj_bob" })).rejects.toMatchObject({
-      code: "provider_permission_denied",
-    });
-    expect(sent.map(({ method }) => method)).toEqual(["GET"]);
+    // A well-formed foreign project and one with no provable identity.
+    for (const project of [{ id: "prj_bob", accountId: "team_bob" }, { accountId: "team_bob" }]) {
+      sent = [];
+      answer = () => Response.json(project);
+      await expect(call("vercel_api_write", { method: "DELETE", path: "/v9/projects/prj_bob" })).rejects.toMatchObject({
+        code: "provider_permission_denied",
+      });
+      expect(sent.map(({ method }) => method)).toEqual(["GET"]);
+    }
   });
 });
