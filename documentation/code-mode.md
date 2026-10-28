@@ -881,7 +881,11 @@ operations when a pending storage response arrives. An in-process caller receive
 
 Programs and direct calls use the same invocation deadline and stages. A call's
 `timeoutMs` wins, then `calls.defaultTimeoutMs`, then `execute.hostCallTimeoutMs`
-(default 15,000). A guest may request a longer individual call, but the sandbox
+(default 15,000). `connecta.result`, `connecta.skill` and `connecta.read` always
+use `execute.hostCallTimeoutMs`. The `execute_code` description advertises the
+`connecta.call` default as `<n>s/host call`, or, when `calls.defaultTimeoutMs`
+differs, both deadlines, for example `25s/call (15s result/skill/read)`.
+A guest may request a longer individual call, but the sandbox
 and request ceilings still bound the whole run. Timeout details are agent-facing;
 operator records retain only checked classifications and numeric facts.
 Result processing, including stash reservation, uses the same remaining call

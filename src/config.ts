@@ -120,11 +120,12 @@ const discovery = {
 const calls = {
   /**
    * Deadline (ms) for `call_tool`/`call_destructive_tool` calls that pass no
-   * `timeoutMs`. An explicit per-call value wins. Opt-in: unset by default, so
-   * existing long-running calls gain no surprise deadline.
+   * `timeoutMs`. An explicit per-call value wins. Unset by default, when those
+   * calls fall back to `execute.hostCallTimeoutMs`.
    *
-   * Each call makes one attempt. `execute_code` host calls are
-   * unaffected because they already carry their own bound.
+   * Each call makes one attempt. `connecta.call` inside `execute_code` uses
+   * it too, ahead of `execute.hostCallTimeoutMs`; `connecta.result`,
+   * `connecta.skill` and `connecta.read` do not.
    */
   defaultTimeoutMs: whole({ min: 1 }),
   /**
@@ -155,8 +156,10 @@ const execute = {
   maxHostCalls: whole({ min: 1, default: D.execute.maxHostCalls }),
   /**
    * Deadline for each host call a program makes, in milliseconds. Default
-   * 15_000. Raise it for providers whose legitimate calls run longer, such as
-   * analytics queries; `call_tool`'s own `timeoutMs` is unaffected.
+   * 15_000. `connecta.call` and the direct call tools use it only when
+   * `calls.defaultTimeoutMs` is unset, and an explicit per-call `timeoutMs`
+   * always wins. Raise it for providers whose legitimate calls run longer,
+   * such as analytics queries.
    */
   hostCallTimeoutMs: whole({ min: 1, default: D.execute.hostCallTimeoutMs }),
   /**
