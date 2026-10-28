@@ -100,13 +100,11 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
     sql(`DELETE FROM connecta_kv WHERE key IN (
       SELECT key FROM connecta_kv WHERE expires_at_ms <= ${now} LIMIT ${SWEEP_ROWS}
     )`);
+  // One atomic batch, one round trip, as `set()` pays. The comparison and
+  // mutation stay one statement; only its affected-row count decides the
+  // result, never the sweep's.
   const runCas = (statement: SqlStatement) =>
-    Effect.gen(function* () {
-      yield* driver.run(expirySweep());
-      // The comparison and mutation stay atomic in one statement. Only its
-      // affected-row count determines the result, never the sweep's count.
-      return yield* driver.run(statement);
-    });
+    Effect.map(driver.batch([expirySweep(), statement]), (changes) => changes[1] ?? 0);
   const expiryOptions = (opts?: Parameters<KVStorage["set"]>[2]) => {
     if (opts?.expiresAtMs !== undefined) {
       if (!Number.isSafeInteger(opts.expiresAtMs) || opts.ttlSeconds !== undefined) {
