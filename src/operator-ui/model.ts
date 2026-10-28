@@ -2,7 +2,8 @@ import type { ConnectaConfigDescription } from "../describe-config.js";
 import type { CatalogAccessObservation, ResourceTemplateRefusalCode } from "../types.js";
 import type { OperatorConnectorOverlay, OperatorTool } from "./contract.js";
 
-type UiToolSafety = "runs_in_programs" | "needs_approval";
+/** Tool verdicts, independent of whether the selected pool is read-only. */
+export type UiToolSafety = "runs_in_programs" | "needs_approval";
 
 export interface UiTool extends Pick<OperatorTool, "name" | "address" | "description"> {
   /** Absent only in payloads older than the field; the page then shows no badge. */

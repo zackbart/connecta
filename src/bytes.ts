@@ -29,7 +29,10 @@ export function utf8Length(value: string, limit = Infinity): number {
 }
 
 export function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 /** Optional padding preserves callers that pad before handing input to atob. */
