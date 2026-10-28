@@ -1004,15 +1004,23 @@ container shapes stay. Touched numbers are first checked together with non-numbe
 pieces already replaced, so a number stays numeric when replacing a neighbouring
 string breaks the match. Every replacement is then checked in the lane as it
 will be returned: partial string replacements, whole numbers, typed binary,
-decoded binary, whole-field private matches and unchecked runs included.
+decoded binary, whole-field private matches and unchecked runs included. A
+withheld error number contributes empty text, matching its `undefined` field on
+the error copy. An unregistered error name is one whole-withheld group, even
+when its text was parsed into several JSON leaves: any changed leaf collapses
+that group to one placeholder before settling. JSON strings withheld for a
+match spanning tokens, and scalars withheld while walking, contribute their
+actual placeholders instead of their discarded contents.
 A newly formed match reaching a kept piece withholds that entire part, and the
 lane is checked again until nothing changes. This includes matches formed from
 `[redacted]` text and a kept neighbour, within one string or across leaves;
 a span wholly inside a placeholder remains the placeholder. Each changing
 round withholds at least one more part, so there are at most as many changing
 rounds as parts. Every round, including its bookkeeping, shares the call's work
-budget. An unaffordable leaf or seam check withholds every part it touched, including any originally
-touched numbers awaiting retention. Unchanged lanes pay for no recheck.
+budget. An unaffordable leaf or seam check withholds every participating part,
+including neighbours untouched by the original scan and any originally touched
+numbers awaiting retention. A marker that could not itself be scanned still
+participates in its seam windows. Unchanged lanes pay for no recheck.
 Joined and leaf-by-leaf matching follow the same rule; large lanes recheck
 changed parts and the seams touching them without rereading unchanged leaf
 interiors. Bounded lanes and deep escapes withhold changed numbers whole.
@@ -1061,7 +1069,13 @@ Connecta mints and authenticates are kept whole: they hold only sealed state or
 Connecta's own facts. Serialized JSON whose keys, syntax and leaves together
 hold a run of a form that no single leaf holds is withheld whole.
 
-The guarantee: **no caller-visible text holds a registered form whole, nor any
+Settling covers this joined projection, including whole replacement markers;
+object keys, JSON punctuation and fixed framing do not join that lane. Keys
+are checked alone, and serialized token-spanning matches follow the separate
+whole-JSON rule above.
+
+The guarantee for these checked text views and projections: **no caller-visible
+text holds a registered form whole, nor any
 run of K = 8 consecutive UTF-16 units of a registered form of a value at least K
 long, in the raw text or any JSON-decoded layer; text cut where the cut can end
 inside a form loses that unfinished tail, however short.** Runs formed from

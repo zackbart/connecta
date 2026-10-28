@@ -1673,20 +1673,29 @@ pieces, with adjacent numbers checked together: a number stays numeric when
 string replacement breaks the match. Every replacement is then checked in the
 lane as it will be returned, including partial string replacements and whole
 numbers, typed binary, decoded binary, whole-field private values and unchecked
-runs. A new match touching a kept piece withholds that whole part. The lane is
-checked again until nothing changes, including runs formed from `[redacted]`
+runs. Omitted error numbers contribute empty text; a changed error name
+contributes one whole placeholder, including when its JSON text had several
+leaves. Whole JSON withholding and scalars withheld during the walk contribute
+their placeholders before settling. A new match touching a kept piece withholds
+that whole part. The lane is checked again until nothing changes, including
+runs formed from `[redacted]`
 and a kept string piece or number, within a string or across leaves. A span
 wholly inside a placeholder remains the placeholder.
 Each changing round withholds at least one more part, so there are at most as
 many changing rounds as parts. Every round, including its bookkeeping, shares
-the call's work budget; an unaffordable leaf or seam check withholds every part it touched and every
-originally touched number still awaiting retention. Unchanged lanes pay for no
-recheck. Joined and leaf-by-leaf checks follow the same rule; large lanes check
+the call's work budget; an unaffordable leaf or seam check withholds every
+participant, including previously untouched neighbours and every originally
+touched number still awaiting retention. A marker that could not itself be
+scanned remains in its seam windows. Unchanged lanes pay for no recheck.
+Joined and leaf-by-leaf checks follow the same rule; large lanes check
 changed parts and the seams touching them without rereading unchanged leaf
 interiors. Bounded lanes and deep escapes withhold changed numbers whole.
 Text is reserialized only when something changed; otherwise its original bytes
 remain. Serialized JSON whose keys, syntax, and leaves together hold a run
 that no single leaf holds, as a value spanning tokens does, is withheld whole.
+Settling covers the joined leaves and whole replacement markers; object keys,
+JSON punctuation and fixed framing do not join that lane. Keys are checked
+alone, and serialized token-spanning matches use the whole-JSON rule above.
 Matching runs on the raw text and through one more layer of JSON string escapes
 at a time while the last layer still decodes an escape, at most eight layers;
 text still holding escapes past that is withheld. Each decoded layer is scanned

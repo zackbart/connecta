@@ -116,6 +116,80 @@ describe("the output boundary's projection", () => {
     }
 
     it.each(paths)(
+      "INV-5: $mode, large=$large settles the seam exposed by omitting an error number",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        for (const secret of ["test-credential-12345678", "abcd5678-private"]) secrets.secret(secret);
+        const input = Object.assign(new Error(), { stack: undefined, before: "abcd", count: 12345678, after: "5678" });
+        const safe = redact(secrets, input, mode, large);
+        expect(safe).toBeInstanceOf(Error);
+        expect(safe.count).toBeUndefined();
+        expect(everyValue(safe).join("")).not.toContain("abcd5678");
+        expect([safe.before, safe.after]).toEqual([MARK, MARK]);
+        expect(input.count).toBe(12345678);
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large settles whole error names before their numeric neighbours",
+      ({ mode, large }) => {
+        for (const name of ["example.com-public", '{"a":"example.com-public"}', '{"a":5,"b":"example.com-public"}']) {
+          const secrets = new SentSecrets();
+          for (const secret of ["example.com-private", "dacted]0-private"]) secrets.secret(secret);
+          const input = Object.assign(new Error(), { stack: undefined, name, n: 0 });
+          const safe = redact(secrets, input, mode, large);
+          expect(safe.name).toBe(MARK);
+          expect(safe.n).toBeUndefined();
+          expect(everyValue(safe).join("")).not.toContain("dacted]0");
+          expect(input.name).toBe(name);
+          expect(input.n).toBe(0);
+        }
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large projects a whole withheld JSON string as its placeholder",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        for (const secret of ['prefix-"a":"pub-suffix', "dacted]0-private"]) secrets.secret(secret);
+        const input = ['{"a":"public"}', 0];
+        expect(redact(secrets, input, mode, large)).toEqual([MARK, MARK]);
+        expect(input).toEqual(['{"a":"public"}', 0]);
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large projects walk-time scalar withholding as a placeholder",
+      ({ mode, large }) => {
+        const secrets = set("null");
+        secrets.secret("dacted]0-private");
+        // Envelope mode keeps short private scalars. The large path's padding
+        // still leaves a marker adjacent to 0, so that neighbour is withheld.
+        expect(redact(secrets, [null, 0], mode, large)).toEqual(
+          mode === "envelope" ? [null, large ? MARK : 0] : [MARK, MARK],
+        );
+      },
+    );
+
+    it.each(["payload", "envelope", "values"] as const)(
+      "INV-5: %s withholds untouched neighbours when a placeholder cannot be scanned",
+      (mode) => {
+        const secrets = new SentSecrets();
+        for (const secret of ["example.com-private", "dacted]0-private"]) secrets.secret(secret);
+        const scan = { budget: { work: 29, nodes: 100 }, payload: mode !== "envelope" };
+        expect(secrets["checked"](["example.com", "0"], [0, 1], scan)).toEqual([MARK, MARK]);
+        expect(scan.budget.work).toBeLessThan(29);
+        // A walk-time replacement already starts as a marker in the first scan.
+        const markerScan = { budget: { work: 3, nodes: 100 }, payload: mode !== "envelope" };
+        expect(secrets["checked"]([MARK, "0"], [0, 1], markerScan)).toEqual([MARK, MARK]);
+        secrets.arguments({ value: "budget-only-private-value" }, schema);
+        const safe = secrets.redact(["!".repeat(33_554_412), "example.com", 0], mode);
+        expect(safe.slice(1)).toEqual([MARK, MARK]);
+        expect(everyValue(safe).join("")).not.toContain("dacted]0");
+      },
+    );
+
+    it.each(paths)(
       "INV-5: $mode, large=$large settles a withheld binary's placeholder beside a number",
       ({ mode, large }) => {
         const secrets = new SentSecrets();
