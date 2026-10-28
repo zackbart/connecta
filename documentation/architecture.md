@@ -2050,7 +2050,9 @@ The mapping records each request's own served provenance and raw 401 facts.
 reservation's answer even for a read-classified tool issuing a physical write.
 An accepted write's blocked retry retains its original HTTP status; a slot
 occupied by an auxiliary read instead names the separate write step needed.
-Structured resend advice reaches output only when the core permits it. Unknown write outcomes suppress retry and wait advice. The mapping
+Structured resend advice reaches output only when the core permits it. Unknown
+write outcomes are never retryable; a generic one keeps the core's diagnostic
+`retryAfterMs`, and one settled by a 401 drops it. The mapping
 adds no Promise entry or lifetime owner. `call-services.test.ts` and the native
 transport suites exercise these contracts through invocation, physical sockets
 and request closure. `http-kit.test.ts` retains focused numeric/text fact,
