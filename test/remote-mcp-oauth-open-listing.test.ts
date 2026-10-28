@@ -193,10 +193,77 @@ async function authorized(c: Connector, seal?: Sealer): Promise<KVStorage> {
 }
 
 describe("remoteMcp() OAuth when the downstream lists without authorization (#1111)", () => {
+  it.each(["status", "call"] as const)(
+    "starts consent after %s in the same request scope (#1120)",
+    async (operation) => {
+      const server = openListing();
+      const storage = memoryStorage();
+      const c = connector();
+      const ctx = providerCallContext(scope(storage), "read");
+      attachCallClassification(ctx, "read");
+      onTestFinished(() => c.closeScope?.(ctx));
+
+      if (operation === "status") {
+        const status = await c.status!(ctx);
+        expect(status.state).toBe("auth_required");
+        expect(status.authorizationUrl).toBeUndefined();
+      } else {
+        const failure = await failureOf(
+          c.callTool("ping", {}, ctx, { definition: { name: "ping", annotations: { readOnlyHint: true } } }),
+        );
+        expect(failure.classified.code).toBe("downstream_oauth_required");
+      }
+      expect(server.counts).toEqual({ register: 0, token: 0, refresh: 0 });
+      expect(await storage.list(oauthFlowKeys.prefix)).toEqual([]);
+      expect(server.calls()).toHaveLength(operation === "call" ? 1 : 0);
+
+      const started = await c.startAuth!(ctx);
+
+      expect(started.state).toBe("auth_required");
+      expect(started.authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
+      expect(server.counts).toEqual({ register: 1, token: 0, refresh: 0 });
+      expect(await c.verifyState!(stateOf(started.authorizationUrl), scope(storage))).toBe(true);
+      if (operation === "call") {
+        const grant = await storedGrant(storage);
+        const flows = await storage.list(oauthFlowKeys.prefix);
+        const failure = await failureOf(
+          c.callTool("ping", {}, ctx, { definition: { name: "ping", annotations: { readOnlyHint: true } } }),
+        );
+        expect(failure.classified.code).toBe("downstream_oauth_required");
+        expect(server.calls()).toHaveLength(1);
+        expect(server.counts).toEqual({ register: 1, token: 0, refresh: 0 });
+        expect(await storedGrant(storage)).toEqual(grant);
+        expect(await storage.list(oauthFlowKeys.prefix)).toEqual(flows);
+      }
+    },
+  );
+
+  it("keeps status passive after startAuth in the same request scope (#1120)", async () => {
+    const server = openListing();
+    const storage = memoryStorage();
+    const c = connector();
+    const ctx = scope(storage);
+    onTestFinished(() => c.closeScope?.(ctx));
+    const started = await c.startAuth!(ctx);
+    expect(started.authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
+    const grant = await storedGrant(storage);
+    const flows = await storage.list(oauthFlowKeys.prefix);
+    const counts = { ...server.counts };
+
+    const status = await c.status!(ctx);
+
+    expect(status.state).toBe("auth_required");
+    expect(status.authorizationUrl).toBeUndefined();
+    expect(await storedGrant(storage)).toEqual(grant);
+    expect(await storage.list(oauthFlowKeys.prefix)).toEqual(flows);
+    expect(server.counts).toEqual(counts);
+  });
+
   it.each([
     ["start", "negotiation persistence"],
     ["start", "grant read"],
     ["status", "negotiation persistence"],
+    ["start after call", "grant read"],
   ] as const)("fails %s superseded by Restart during post-handshake %s (#1120)", async (operation, pause) => {
     const server = openListing();
     const backing = memoryStorage();
@@ -228,7 +295,18 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
       },
     };
     const c = connector();
-    const starting = operation === "start" ? c.startAuth!(scope(storage)) : c.status!(scope(storage));
+    const ctx = scope(storage);
+    if (operation === "start after call") {
+      hold = false;
+      const passive = providerCallContext(ctx, "read");
+      attachCallClassification(passive, "read");
+      const failure = await failureOf(
+        c.callTool("ping", {}, passive, { definition: { name: "ping", annotations: { readOnlyHint: true } } }),
+      );
+      expect(failure.classified.code).toBe("downstream_oauth_required");
+      hold = true;
+    }
+    const starting = operation === "status" ? c.status!(ctx) : c.startAuth!(ctx);
     try {
       await reached.promise;
       const restarter = reader(storage);
@@ -241,7 +319,7 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
       const result = await starting;
 
       expect(result.state).toBe("error");
-      if (operation === "start")
+      if (operation !== "status")
         expect(result.message).toContain("authorization changed while this request was in flight; try again");
       else expect(classifyCallError(statusFailure(result))).toMatchObject({ code: "unavailable", retryable: true });
       expect(result.authorizationUrl).toBeUndefined();

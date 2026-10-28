@@ -1349,7 +1349,9 @@ with the gate a call passes:
 | Tokens (any expiry) | Connects; `ok`, or `auth_required` when a 401 needs consent | Connects; `ok` without starting a flow when healthy                                                                                                                                                                                                                                |
 
 A start without a challenge runs the same SDK flow as a 401 without
-`resource_metadata`. Issuer and resource checks, consent state, PKCE, and
+`resource_metadata`. An explicit start after a status check or call in the same
+request scope can start consent in the connection's original epoch; the status
+check and call remain passive. Issuer and resource checks, consent state, PKCE, and
 the CIMD, registration, and static-client order are unchanged, and nothing is
 sent to the MCP endpoint. A call never starts consent. A call's 401 that names
 per-tool metadata, such as `/.well-known/oauth-protected-resource/<tool>`,

@@ -3538,7 +3538,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * well-known URLs, the same issuer and resource checks, consent state, and
    * CIMD/DCR/static client order. Nothing is sent to the MCP endpoint.
    */
-  const startUnchallenged = authMethod((ctx: ConnectorContext, provider: KvOAuthProvider) =>
+  const startUnchallenged = authMethod((ctx: ConnectorContext, connectedProvider: KvOAuthProvider) =>
     authFlow<ConnectorStatus>(function* () {
       const required = {
         state: "auth_required",
@@ -3546,8 +3546,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       } as const;
       // A test transport carries no OAuth flow to start.
       if (opts._transportFactory) return required;
-      // Keep the successful connect's bound epoch. Starting another flow here
-      // would let a Restart adopt this older attempt into the replacement.
+      // A cached connection may belong to a passive status or call. Give this
+      // explicit start its own authorization-capable provider without widening
+      // the transport's authority or adopting a Restart's replacement epoch.
+      const epoch = (yield authInvoke(connectedProvider, "flowEpoch", [])) as string;
+      const provider = newProvider(ctx);
+      (yield authInvoke(provider, "beginFlow", [epoch])) as string;
       // Never started, this transport holds no session or stream to close.
       const transport = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
       const internals = transport as unknown as {
@@ -4314,6 +4318,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           }
           if (ctx.signal?.aborted) throw ctx.signal.reason;
           try {
+            // A passive call's refusal stays latched for status and calls. A
+            // successful connection with no tokens still permits explicit
+            // consent, bound to that connection rather than the live grant.
+            if (state.authRequired && state.client) {
+              const provider = connectedProviders.get(state.client)!;
+              if (!((yield authCall(granted, [provider])) as boolean))
+                return (yield authCall(startUnchallenged, [ctx, provider])) as ConnectorStatus;
+            }
             // The handshake runs first, so a 401 challenge's
             // `resource_metadata` starts consent as it always has.
             const client = (yield authCall(ensureConnected, [ctx, state])) as Client;
@@ -4325,7 +4337,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               message: "Already authorized \u2014 connection is healthy.",
             };
           } catch (err) {
-            if (state.authRequired) {
+            if (state.authRequired && requiresAuthorization(err)) {
               let authorizationUrl: string | undefined;
               try {
                 authorizationUrl = (yield state.attemptProvider
