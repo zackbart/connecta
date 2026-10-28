@@ -2,7 +2,11 @@ import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Executor, InboundAuth } from "../src/types.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
-import { mcpRpc } from "./fixtures/http.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { connectorWith } from "./fixtures/connectors.js";
+import { deferred, scriptedExecutor } from "./fixtures/misc.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { scopes, stashLedgerKeys } from "../src/storage/keys.js";
 import { registerTestMaintainer } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
@@ -55,6 +59,185 @@ describe("request admission", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  it("INV-7/INV-9: the request deadline stops a held final program-return stash", WORKERS, async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const backing = memoryStorage();
+    const storage = {
+      ...backing,
+      get: vi.fn(async (key: string) => {
+        if (key === stashLedgerKeys.ledger) {
+          entered.resolve();
+          await release.promise;
+        }
+        return backing.get(key);
+      }),
+      set: vi.fn(backing.set),
+      delete: vi.fn(backing.delete),
+      list: vi.fn(backing.list),
+      compareAndSet: vi.fn(backing.compareAndSet),
+    };
+    let writes = 0;
+    const deployment = createTestConnecta({
+      connectors: [
+        connectorWith({
+          id: "notes",
+          kind: "api",
+          tools: [{ name: "save", annotations: { readOnlyHint: false } }],
+          call: async () => {
+            writes++;
+            return { saved: true };
+          },
+        }),
+      ],
+      storage,
+      logger: silentLogger,
+      executor: scriptedExecutor(async (fns) => {
+        await fns.call!("notes.save", {});
+        return "x".repeat(300_000);
+      }),
+      admission: {
+        requests: { concurrency: 1, maxQueueSize: 0, maxDurationMs: 100 },
+        code: { concurrency: 1, maxQueueSize: 0 },
+      },
+    });
+    let ended = false;
+    const pending = deployment
+      .fetch(
+        mcpRpc("tools/call", {
+          name: "execute_code",
+          arguments: { code: "async () => { await connecta.call('notes.save', {}); return 'x'.repeat(300000); }" },
+        }),
+      )
+      .then((response) => {
+        ended = true;
+        return response;
+      });
+    try {
+      await entered.promise;
+      expect(writes).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(ended).toBe(true);
+      const health = await deployment.fetch(new Request(`${BASE}/health`));
+      expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 }, code: { active: 0 } } });
+      const callsAtEnd = [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+        (operation) => operation.mock.calls.length,
+      );
+      release.resolve();
+      await settle();
+      expect(
+        [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+          (operation) => operation.mock.calls.length,
+        ),
+      ).toEqual(callsAtEnd);
+      expect(writes).toBe(1);
+    } finally {
+      release.resolve();
+      await settle();
+      await pending;
+    }
+  });
+
+  it.each([
+    { route: "execute_code", earlyReturn: false },
+    { route: "execute_code", earlyReturn: true },
+    { route: "call_destructive_tool", earlyReturn: false },
+    { route: "call_tool", earlyReturn: false },
+  ])(
+    "INV-7/INV-9: $route (early return: $earlyReturn) releases admission while result reservation stalls",
+    { ...WORKERS, timeout: 30_000 },
+    async ({ route, earlyReturn }) => {
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const backing = memoryStorage();
+      const get = vi.fn(async (key: string) => {
+        if (key === stashLedgerKeys.ledger) {
+          entered.resolve();
+          await release.promise;
+        }
+        return backing.get(key);
+      });
+      let writes = 0;
+      const read = route === "call_tool";
+      const connector = connectorWith({
+        id: "notes",
+        kind: "api",
+        maxResultBytes: 1_024,
+        tools: [{ name: "save", annotations: { readOnlyHint: read } }],
+        call: async () => {
+          if (!read) writes++;
+          return { text: "x".repeat(300_000) };
+        },
+      });
+      const deployment = createTestConnecta({
+        connectors: [connector],
+        storage: { ...backing, get },
+        logger: silentLogger,
+        executor: scriptedExecutor(async (fns) => {
+          const pending = fns.call!("notes.save", {});
+          if (!earlyReturn) return await pending;
+          void pending.catch(() => {});
+          await entered.promise;
+          return "returned before result processing";
+        }),
+        execute: { hostCallTimeoutMs: 20, watchdogMs: 35 },
+        admission: {
+          requests: { concurrency: 1, maxQueueSize: 0, maxDurationMs: 100 },
+          code: { concurrency: 1, maxQueueSize: 0 },
+        },
+      });
+      let ended = false;
+      const pending = deployment
+        .fetch(
+          mcpRpc("tools/call", {
+            name: route,
+            arguments:
+              route === "execute_code"
+                ? { code: "async () => await connecta.call('notes.save', {})" }
+                : { address: "notes.save", args: {}, timeoutMs: 20 },
+          }),
+        )
+        .then(async (response) => {
+          const rpc = await readJsonRpc(response);
+          ended = true;
+          return { status: response.status, rpc };
+        });
+      try {
+        await entered.promise;
+        expect(writes).toBe(read ? 0 : 1);
+        await vi.advanceTimersByTimeAsync(20);
+        expect(ended).toBe(true);
+        await vi.advanceTimersByTimeAsync(80);
+        expect(ended).toBe(true);
+        const health = await deployment.fetch(new Request(`${BASE}/health`));
+        expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 }, code: { active: 0 } } });
+        const response = await pending;
+        expect(response.status).toBe(200);
+        if (!earlyReturn) {
+          expect(response.rpc.result).toMatchObject({
+            isError: true,
+            structuredContent: { error: { code: "result_processing_failed", retryable: false } },
+          });
+          if (route === "execute_code") {
+            expect(response.rpc.result.structuredContent.error.writes).toEqual({ succeeded: 1, failed: 0, unknown: 0 });
+          }
+          expect(response.rpc.result.structuredContent.error.writeOutcome).toBeUndefined();
+          expect(response.rpc.result.structuredContent.error.message).toContain("completed");
+        }
+        const readsAtEnd = get.mock.calls.length;
+        release.resolve();
+        await settle();
+        expect(get).toHaveBeenCalledTimes(readsAtEnd);
+        expect(await backing.list(scopes.results)).toEqual([]);
+        expect(writes).toBe(read ? 0 : 1);
+      } finally {
+        release.resolve();
+        await settle();
+        await pending;
+      }
+    },
+  );
 
   it("aborts an in-flight connector call at the total request deadline", WORKERS, async () => {
     let started = 0;

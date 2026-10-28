@@ -428,6 +428,13 @@ new entries. A later attempt deletes expired entries before reusing their
 capacity; a failed deletion keeps the charge. These bounds cover all processes and Worker isolates sharing the store.
 Compare-and-set reserves each charge in one storage ledger before any chunk
 is written; chunk TTLs cannot exceed the charge deadline.
+The whole stash, including reservation, stops waiting after 45 seconds, or sooner
+when the call's remaining deadline or request cancellation ends result processing.
+A completed call whose result processing is cut off returns the non-retryable
+`result_processing_failed`: any write already happened and must not be repeated
+to recover its result. Programs keep that write in `writes.succeeded`, even if
+paging is cancelled. A full or unavailable stash that answers within the budget
+still returns the ordinary truncated result and paging-unavailable hint.
 
 Results belong to the authenticated subject whenever auth supplies a subject or
 user id, independently of activity configuration, under the provider's namespace

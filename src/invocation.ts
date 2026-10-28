@@ -1033,15 +1033,24 @@ export class InvocationService {
           (elapsed) => {
             resultProcessingMs += elapsed;
           },
-          Effect.tap(processing, () =>
-            Effect.sync(() => {
-              if (inputRequiredValue) return;
-              try {
-                this.registry.observeOutputShape(completed.connector.id, completed.definition, observedResult);
-              } catch {
-                // Shape learning is advisory. It cannot change a completed call.
-              }
+          Effect.tap(
+            withDeadlineEffect(() => processing, {
+              ...defined({
+                timeoutMs:
+                  context.timeoutMs === undefined ? undefined : Math.max(1, context.timeoutMs - (Date.now() - started)),
+                signal: context.requestSignal,
+              }),
+              timeoutError: new ConnectorCallError("timeout", "Result processing exceeded the tool call deadline."),
             }),
+            () =>
+              Effect.sync(() => {
+                if (inputRequiredValue) return;
+                try {
+                  this.registry.observeOutputShape(completed.connector.id, completed.definition, observedResult);
+                } catch {
+                  // Shape learning is advisory. It cannot change a completed call.
+                }
+              }),
           ),
         ),
       );
@@ -1050,7 +1059,7 @@ export class InvocationService {
         failed(
           framingError(
             "result_processing_failed",
-            "The downstream call completed, but its result could not be processed. Do not repeat the call to recover its result.",
+            "The downstream call completed, but its result could not be processed. Any write already happened. Do not repeat the call to recover its result.",
           ),
         );
       if (Exit.isFailure(processed)) return unprocessable();

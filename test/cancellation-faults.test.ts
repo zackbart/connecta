@@ -5,20 +5,230 @@ import { CredentialVault } from "../src/credentials.js";
 import { openRequest, viewLease } from "../src/runtime/call.js";
 import { providerCallContext } from "../src/provider-call.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { AdmissionController } from "../src/executor-admission.js";
+import { AdmissionController, withExecutorAdmission } from "../src/executor-admission.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { deferred } from "./fixtures/misc.js";
+import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
-import { makeRegistry } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
+import { createExecuteTool } from "../src/execute.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { connectorWith } from "./fixtures/connectors.js";
+import { stashLedgerKeys } from "../src/storage/keys.js";
 
 beforeEach(() => {
   installOwnedTransport();
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 const BASE = "https://connecta.test";
+
+it("INV-7/INV-9: cancellation settles a held final program return without starting more storage work", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const backing = memoryStorage();
+  const storage = {
+    ...backing,
+    get: vi.fn(async (key: string) => {
+      if (key === stashLedgerKeys.ledger) {
+        entered.resolve();
+        await release.promise;
+      }
+      return backing.get(key);
+    }),
+    set: vi.fn(backing.set),
+    delete: vi.fn(backing.delete),
+    list: vi.fn(backing.list),
+    compareAndSet: vi.fn(backing.compareAndSet),
+  };
+  let writes = 0;
+  const registry = makeRegistry(
+    [
+      connectorWith({
+        id: "notes",
+        kind: "api",
+        tools: [{ name: "save", annotations: { readOnlyHint: false } }],
+        call: async () => {
+          writes++;
+          return { saved: true };
+        },
+      }),
+    ],
+    { storage },
+  );
+  const admission = new AdmissionController({ concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000 });
+  const executor = withExecutorAdmission(
+    scriptedExecutor(async (fns) => {
+      await fns.call!("notes.save", {});
+      return "x".repeat(300_000);
+    }),
+    admission,
+  );
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger);
+  const caller = new AbortController();
+  const pending = execute(
+    { code: "async () => { await connecta.call('notes.save', {}); return 'x'.repeat(300000); }" },
+    { signal: caller.signal },
+  );
+  let ended = false;
+  void pending.then(() => {
+    ended = true;
+  });
+  try {
+    await entered.promise;
+    expect(writes).toBe(1);
+    expect(admission.snapshot().active).toBe(0);
+    caller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ended).toBe(true);
+    expect(await pending).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "executor_cancelled", retryable: false, writes: { succeeded: 1, failed: 0, unknown: 0 } },
+      },
+    });
+    const callsAtEnd = [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+      (operation) => operation.mock.calls.length,
+    );
+    release.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      [storage.get, storage.set, storage.delete, storage.list, storage.compareAndSet].map(
+        (operation) => operation.mock.calls.length,
+      ),
+    ).toEqual(callsAtEnd);
+    expect(writes).toBe(1);
+  } finally {
+    release.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await pending;
+  }
+});
+
+it("INV-7/INV-9: a direct write refuses promptly on cancellation while its result reservation is held", async () => {
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const backing = memoryStorage();
+  let writes = 0;
+  const registry = makeRegistry(
+    [
+      connectorWith({
+        id: "notes",
+        kind: "api",
+        maxResultBytes: 1_024,
+        tools: [{ name: "save", annotations: { readOnlyHint: false } }],
+        call: async () => {
+          writes++;
+          return { text: "x".repeat(20_000) };
+        },
+      }),
+    ],
+    {
+      storage: {
+        ...backing,
+        get: async (key) => {
+          if (key === stashLedgerKeys.ledger) {
+            entered.resolve();
+            await release.promise;
+          }
+          return backing.get(key);
+        },
+      },
+    },
+  );
+  const caller = new AbortController();
+  const tools = createMetaTools(registry, BASE, { requestSignal: caller.signal });
+  const pending = tools.callDestructiveTool({ address: "notes.save", args: {} });
+  try {
+    await entered.promise;
+    caller.abort();
+    expect(await promptly(pending)).toBe("resolved");
+    const result = await pending;
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: { error: { code: "result_processing_failed", retryable: false } },
+    });
+    expect(result.structuredContent?.error).not.toHaveProperty("writeOutcome");
+    expect(JSON.stringify(result)).toContain("write already happened");
+    expect(writes).toBe(1);
+  } finally {
+    release.resolve();
+    await pending;
+  }
+});
+
+it(
+  "INV-7/INV-9: cancelling program result processing frees its code lease and retains the completed write",
+  { timeout: 30_000 },
+  async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const backing = memoryStorage();
+    let writes = 0;
+    const registry = makeRegistry(
+      [
+        connectorWith({
+          id: "notes",
+          kind: "api",
+          tools: [{ name: "save", annotations: { readOnlyHint: false } }],
+          call: async () => {
+            writes++;
+            return { text: "x".repeat(300_000) };
+          },
+        }),
+      ],
+      {
+        storage: {
+          ...backing,
+          get: async (key) => {
+            if (key === stashLedgerKeys.ledger) {
+              entered.resolve();
+              await release.promise;
+            }
+            return backing.get(key);
+          },
+        },
+      },
+    );
+    const admission = new AdmissionController({ concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000 });
+    const executor = withExecutorAdmission(
+      scriptedExecutor(async (fns) => fns.call!("notes.save", {})),
+      admission,
+    );
+    const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+      hostCallTimeoutMs: 20,
+      watchdogMs: 35,
+    });
+    const caller = new AbortController();
+    const pending = execute({ code: "async () => await connecta.call('notes.save', {})" }, { signal: caller.signal });
+    let ended = false;
+    void pending.then(() => {
+      ended = true;
+    });
+    try {
+      await entered.promise;
+      expect(admission.snapshot().active).toBe(1);
+      caller.abort();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(ended).toBe(true);
+      expect(admission.snapshot().active).toBe(0);
+      const result = await pending;
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: { error: { writes: { succeeded: 1, failed: 0, unknown: 0 } } },
+      });
+      expect(writes).toBe(1);
+    } finally {
+      release.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      await pending;
+    }
+  },
+);
 
 // Observe refusal while the hostile dependency is still held. Completing the
 // fixture must never be what makes a cancelled production operation settle.

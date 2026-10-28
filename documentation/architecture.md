@@ -892,6 +892,16 @@ that charge until its deadline. Booking retries recognize their own reservation
 ID and reuse its stored deadline, including a final read after an ambiguous
 last CAS. A lost swap or transient storage error backs off and re-reads, up to
 32 attempts. A full ledger or unconfirmed exhausted booking returns no result id.
+The entire stash operation, including reservation reads, has a 45-second
+outer budget. Invocation result processing shares the call's remaining deadline
+and request cancellation, so shorter call or request limits stop stash waits
+sooner. Program paging runs in that same scope; a stalled storage promise cannot
+retain its executor permit after cancellation. Late storage responses start no
+further stash work.
+Final program-return stashing composes through its registered Effect program
+after the executor scope closes, under the caller's cancellation rather than
+the closed run's signal. Cancellation settles the handler while preserving
+completed-write accounting; it cannot resume stashing after a held read returns.
 
 Caller time only nominates charges for pruning. Before discarding one, the
 ledger writes a probe with that charge's absolute deadline and reads it back.

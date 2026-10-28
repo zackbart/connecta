@@ -1,4 +1,4 @@
-import { authCall, authInvoke, authMethod } from "./auth/native.js";
+import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
 import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
@@ -608,99 +608,110 @@ function sandboxProvider(
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
     readOnly: limits.readOnly,
-    processResult: async (
-      value: unknown,
-      resolved: ResolvedCatalogTool,
-      secrets: SentSecrets,
-      format: "json" | "text",
-      raw: unknown,
-    ) => {
-      const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
-        pageProgramResult(registry, baseUrl, resolved, data, valueFormat, secrets, requestScope, wireBytes);
-      const envelope =
-        resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
-          ? (raw as Record<string, unknown>)
-          : undefined;
-      const dataKey = envelope
-        ? "toolResult" in envelope
-          ? "toolResult"
-          : envelope.structuredContent !== undefined
-            ? "structuredContent"
-            : undefined
-        : undefined;
-      // Preserve #788 before even inspecting presentation. Paging serializes
-      // the structured value synchronously; no native metadata is visited.
-      if (
-        dataKey !== undefined &&
-        diagnosticsEncoder.encode(JSON.stringify(value)).byteLength > PROGRAM_RESULT_INLINE_BYTES
-      ) {
-        return page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
-      }
-      const content = envelope?.content;
-      if (
-        !Array.isArray(content) ||
-        !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
-      ) {
-        return transportResult(await page(value, format));
-      }
-      const unavailablePresentation = (): ProgramResultHandle => ({
-        format: "paged",
-        valueFormat: "json",
-        totalBytes: 0,
-        truncated: true,
-        hint: "Paging is unavailable. Native presentation exceeds byte, node or depth limits, or is not acyclic JSON. Reduce the downstream presentation before forwarding it.",
-      });
-      let snapshot: Record<string, unknown>;
-      let retained: GuestNativeBlock[] | undefined;
-      try {
-        // Oversized but bounded envelopes may still use the existing stash.
-        // Measure without copying them; only inline native blocks are retained.
-        const measured = boundedNativeValue(
-          envelope,
-          Math.max(EXECUTE_MAX_EMITTED_BYTES, limits.emitCollector?.maxBytes ?? 0),
-          false,
-        );
-        if (measured.bytes <= PROGRAM_RESULT_INLINE_BYTES) {
-          retained = boundedNativeValue(content, PROGRAM_RESULT_INLINE_BYTES, true).value;
-          snapshot = { ...envelope, content: retained };
-        } else {
-          snapshot = envelope!;
-        }
-      } catch (error) {
-        if (!(error instanceof NativePresentationLimit)) throw error;
-        const result = dataKey === undefined ? undefined : transportResult(await page(value, format));
-        const notice = unavailablePresentation();
-        return result ? { value: result, native: { value: notice } } : notice;
-      }
-      // Snapshot blocks before either stash operation yields. Start both
-      // serializations now so an oversized presentation's pages also own the
-      // original bytes even if the structured-data stash pauses.
-      const resultPending = dataKey === undefined ? undefined : page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
-      const nativePending = page(snapshot, "json");
-      const result = await resultPending;
-      const native = await nativePending;
-      let valueResult: unknown;
-      if (native.format === "paged") {
-        valueResult = result ? transportResult(result) : undefined;
-        if (!native.resultId || native.totalBytes > PROGRAM_RESULT_INLINE_BYTES) {
-          return valueResult ? { value: valueResult, native: { value: native } } : native;
-        }
-      }
-      // Redaction can shrink an oversized original below the inline cap. It
-      // still has no retained snapshot: keep its handle, never mint a ref to
-      // absent or connector-owned blocks.
-      if (!retained) {
-        const notice = native.format === "paged" ? native : unavailablePresentation();
-        const valueResult = result ? transportResult(result) : undefined;
-        return valueResult ? { value: valueResult, native: { value: notice } } : notice;
-      }
-      const ref = crypto.randomUUID();
-      nativeResults.set(ref, retained);
-      return {
-        ...(valueResult ? { value: valueResult } : {}),
-        native: { ref, value: transportResult(native), dataKey },
-      };
-    },
+    processResult: authMethod(
+      (value: unknown, resolved: ResolvedCatalogTool, secrets: SentSecrets, format: "json" | "text", raw: unknown) =>
+        Effect.gen(function* () {
+          // Dispatch succeeded before presentation began. Cancellation of paging
+          // cannot turn this completed write into an unknown or failed write.
+          sending.settle?.("ok");
+          const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
+            authCall<Awaited<ReturnType<typeof pageProgramResult>>>(pageProgramResult, [
+              registry,
+              baseUrl,
+              resolved,
+              data,
+              valueFormat,
+              secrets,
+              requestScope,
+              wireBytes,
+            ]);
+          const envelope =
+            resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
+              ? (raw as Record<string, unknown>)
+              : undefined;
+          const dataKey = envelope
+            ? "toolResult" in envelope
+              ? "toolResult"
+              : envelope.structuredContent !== undefined
+                ? "structuredContent"
+                : undefined
+            : undefined;
+          // Preserve #788 before even inspecting presentation. Paging serializes
+          // the structured value synchronously; no native metadata is visited.
+          if (
+            dataKey !== undefined &&
+            diagnosticsEncoder.encode(JSON.stringify(value)).byteLength > PROGRAM_RESULT_INLINE_BYTES
+          ) {
+            return yield* page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
+          }
+          const content = envelope?.content;
+          if (
+            !Array.isArray(content) ||
+            !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
+          ) {
+            return transportResult(yield* page(value, format));
+          }
+          const unavailablePresentation = (): ProgramResultHandle => ({
+            format: "paged",
+            valueFormat: "json",
+            totalBytes: 0,
+            truncated: true,
+            hint: "Paging is unavailable. Native presentation exceeds byte, node or depth limits, or is not acyclic JSON. Reduce the downstream presentation before forwarding it.",
+          });
+          let snapshot: Record<string, unknown>;
+          let retained: GuestNativeBlock[] | undefined;
+          try {
+            // Oversized but bounded envelopes may still use the existing stash.
+            // Measure without copying them; only inline native blocks are retained.
+            const measured = boundedNativeValue(
+              envelope,
+              Math.max(EXECUTE_MAX_EMITTED_BYTES, limits.emitCollector?.maxBytes ?? 0),
+              false,
+            );
+            if (measured.bytes <= PROGRAM_RESULT_INLINE_BYTES) {
+              retained = boundedNativeValue(content, PROGRAM_RESULT_INLINE_BYTES, true).value;
+              snapshot = { ...envelope, content: retained };
+            } else {
+              snapshot = envelope!;
+            }
+          } catch (error) {
+            if (!(error instanceof NativePresentationLimit)) throw error;
+            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format));
+            const notice = unavailablePresentation();
+            return result ? { value: result, native: { value: notice } } : notice;
+          }
+          // Snapshot blocks before either stash operation yields. Start both
+          // serializations now so an oversized presentation's pages also own the
+          // original bytes even if the structured-data stash pauses.
+          const resultPending =
+            dataKey === undefined ? undefined : page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
+          const nativePending = page(snapshot, "json");
+          const [result, native] = yield* Effect.all([resultPending ?? Effect.succeed(undefined), nativePending], {
+            concurrency: "unbounded",
+          });
+          let valueResult: unknown;
+          if (native.format === "paged") {
+            valueResult = result ? transportResult(result) : undefined;
+            if (!native.resultId || native.totalBytes > PROGRAM_RESULT_INLINE_BYTES) {
+              return valueResult ? { value: valueResult, native: { value: native } } : native;
+            }
+          }
+          // Redaction can shrink an oversized original below the inline cap. It
+          // still has no retained snapshot: keep its handle, never mint a ref to
+          // absent or connector-owned blocks.
+          if (!retained) {
+            const notice = native.format === "paged" ? native : unavailablePresentation();
+            const valueResult = result ? transportResult(result) : undefined;
+            return valueResult ? { value: valueResult, native: { value: notice } } : notice;
+          }
+          const ref = crypto.randomUUID();
+          nativeResults.set(ref, retained);
+          return {
+            ...(valueResult ? { value: valueResult } : {}),
+            native: { ref, value: transportResult(native), dataKey },
+          };
+        }),
+    ),
     beforeWrite: (target: ResolvedCatalogTool): Effect.Effect<WriteDecision> =>
       Effect.sync((): WriteDecision => {
         if (programWrites?.isClosed) {
@@ -1472,7 +1483,9 @@ export function createExecuteTool(
               Effect.suspend(() => {
                 programWrites.close();
                 dispatchController.abort();
-                return programWrites.drain();
+                // Finalizers are masked by default. The request must be able
+                // to stop this wait as well as the invocations being drained.
+                return programWrites.drain().pipe(Effect.interruptible);
               }),
             ),
           ),
@@ -1483,7 +1496,7 @@ export function createExecuteTool(
         diagnostics,
         program,
         guardResult: (value: unknown, maxChars: number) =>
-          guardProgramReturn(
+          authCall<unknown>(guardProgramReturn, [
             value,
             registry,
             baseUrl,
@@ -1492,7 +1505,7 @@ export function createExecuteTool(
             logger,
             maxChars,
             programWrites.hasSucceeded,
-          ),
+          ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
         Effect.flatMap((exit) =>
@@ -1520,7 +1533,21 @@ export function createExecuteTool(
               failedRun(redactAgentOutput(sentSecrets, Cause.squash(exit.cause)), logger, reported),
             );
           }
-          return Effect.promise(() => finishedRun(redactAgentOutput(sentSecrets, exit.value), reported));
+          // The executor lease is already released, but presenting its return
+          // still belongs to the caller. Compose the registered stash program
+          // here so cancellation interrupts storage waits and their continuations.
+          const cancelled = new ExecutorAdmissionError(
+            "executor_cancelled",
+            "Execution was cancelled during result processing.",
+          );
+          return withDeadlineEffect(() => finishedRun(redactAgentOutput(sentSecrets, exit.value), reported), {
+            ...(callerSignal ? { signal: callerSignal } : {}),
+            timeoutError: cancelled,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.succeed(failedRun(callerSignal?.aborted ? cancelled : error, logger, reported)),
+            ),
+          );
         }),
         (unfinished) => {
           // Every run response passes through write accounting.
@@ -1567,7 +1594,7 @@ interface RunReport {
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
   program: string;
-  guardResult: (value: unknown, maxChars: number) => Promise<unknown>;
+  guardResult: (value: unknown, maxChars: number) => Effect.Effect<unknown, unknown>;
 }
 
 /** An execution that never produced an ExecuteResult, as the model sees it. */
@@ -1610,88 +1637,90 @@ function failedRun(err: unknown, logger: Logger, { emitted, diagnostics, program
 }
 
 /** The response for an ExecuteResult: the program's error or its value. */
-async function finishedRun(
+function finishedRun(
   outcome: ExecuteResult,
   { emitted, diagnostics, program, guardResult }: RunReport,
-): Promise<ToolResult> {
-  if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
-    return failureResponse("Executor failed: expected an ExecuteResult object.", {
-      emitted,
-      diagnostics,
-      code: "executor_failed",
-    });
-  }
-  const logs = executeLogs(outcome.logs);
-  if (outcome.error !== undefined && typeof outcome.error !== "string") {
-    return failureResponse("Executor failed: ExecuteResult.error must be a string.", {
-      logs,
-      emitted,
-      diagnostics,
-      code: "executor_failed",
-    });
-  }
-  if (outcome.error !== undefined) {
-    const failure = outcome.failure?.call;
-    if (outcome.failure?.timeout) {
-      const { elapsedMs, deadlineMs } = outcome.failure.timeout;
-      const message = `Operation "execute_code" timed out during sandbox after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`;
+): Effect.Effect<ToolResult, unknown> {
+  return authFlow<ToolResult>(function* () {
+    if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
+      return failureResponse("Executor failed: expected an ExecuteResult object.", {
+        emitted,
+        diagnostics,
+        code: "executor_failed",
+      });
+    }
+    const logs = executeLogs(outcome.logs);
+    if (outcome.error !== undefined && typeof outcome.error !== "string") {
+      return failureResponse("Executor failed: ExecuteResult.error must be a string.", {
+        logs,
+        emitted,
+        diagnostics,
+        code: "executor_failed",
+      });
+    }
+    if (outcome.error !== undefined) {
+      const failure = outcome.failure?.call;
+      if (outcome.failure?.timeout) {
+        const { elapsedMs, deadlineMs } = outcome.failure.timeout;
+        const message = `Operation "execute_code" timed out during sandbox after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`;
+        return failureResponse(message, {
+          logs,
+          emitted,
+          diagnostics,
+          code: {
+            code: "timeout",
+            message,
+            retryable: false,
+            details: { operation: "execute_code", stage: "sandbox", elapsedMs, deadlineMs },
+          },
+        });
+      }
+      return failureResponse(failure?.message ?? outcome.error, {
+        logs,
+        emitted,
+        diagnostics,
+        code:
+          failure ??
+          programError(
+            {
+              name:
+                outcome.failure?.name ?? /^(SyntaxError|ReferenceError|TypeError|RangeError):/.exec(outcome.error)?.[1],
+              message: outcome.error || "Execution failed without an error message.",
+              ...(outcome.failure?.line !== undefined ? { line: outcome.failure.line - 1 } : {}),
+            },
+            program,
+          ),
+      });
+    }
+    // A result crossing back as a host BigInt (or otherwise unserializable
+    // value) makes JSON.stringify throw — keep that inside the structured
+    // error path so captured logs survive instead of a raw SDK 500.
+    let result: unknown;
+    try {
+      result = yield* guardResult(outcome.result, MAX_EXECUTE_RESULT_CHARS - emitted.textChars);
+    } catch (err) {
+      const message = `Error: result is not JSON-serializable: ${msg(err)}`;
       return failureResponse(message, {
         logs,
         emitted,
         diagnostics,
-        code: {
-          code: "timeout",
-          message,
-          retryable: false,
-          details: { operation: "execute_code", stage: "sandbox", elapsedMs, deadlineMs },
-        },
+        code: "executor_failed",
       });
     }
-    return failureResponse(failure?.message ?? outcome.error, {
-      logs,
-      emitted,
-      diagnostics,
-      code:
-        failure ??
-        programError(
-          {
-            name:
-              outcome.failure?.name ?? /^(SyntaxError|ReferenceError|TypeError|RangeError):/.exec(outcome.error)?.[1],
-            message: outcome.error || "Execution failed without an error message.",
-            ...(outcome.failure?.line !== undefined ? { line: outcome.failure.line - 1 } : {}),
-          },
-          program,
-        ),
+    const response = jsonResult({
+      result,
+      ...(emitted.blocks.length > 0 ? { emitted: emitted.blocks.length } : {}),
+      ...(logs ? { logs } : {}),
+      ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
     });
-  }
-  // A result crossing back as a host BigInt (or otherwise unserializable
-  // value) makes JSON.stringify throw — keep that inside the structured
-  // error path so captured logs survive instead of a raw SDK 500.
-  let result: unknown;
-  try {
-    result = await guardResult(outcome.result, MAX_EXECUTE_RESULT_CHARS - emitted.textChars);
-  } catch (err) {
-    const message = `Error: result is not JSON-serializable: ${msg(err)}`;
-    return failureResponse(message, {
-      logs,
-      emitted,
-      diagnostics,
-      code: "executor_failed",
-    });
-  }
-  const response = jsonResult({
-    result,
-    ...(emitted.blocks.length > 0 ? { emitted: emitted.blocks.length } : {}),
-    ...(logs ? { logs } : {}),
-    ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
+    if (emitted.blocks.length > 0) {
+      // Emitted image/audio blocks are valid MCP content that ToolResult's
+      // text-only typing does not model — the same acknowledged gap
+      // guardContent lives with for downstream block passthrough.
+      response.content.push(...(emitted.blocks as unknown as typeof response.content));
+    }
+    return response;
   });
-  if (emitted.blocks.length > 0) {
-    // Emitted image/audio blocks are valid MCP content that ToolResult's
-    // text-only typing does not model — the same acknowledged gap
-    // guardContent lives with for downstream block passthrough.
-    response.content.push(...(emitted.blocks as unknown as typeof response.content));
-  }
-  return response;
 }
 
 function executeLogs(value: unknown): string | undefined {
