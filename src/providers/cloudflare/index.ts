@@ -1,3 +1,4 @@
+import { readOnlyNotice } from "../_shared/guide.js";
 import { skill } from "./skill.generated.js";
 /**
  * No official `cloudflare` SDK on purpose. Cloudflare's v4 API is
@@ -184,7 +185,7 @@ function usageGuide(options: Readonly<CloudflareOptions>): ProviderGuideInput {
         : ["No additional deployment pin: the credential's vendor permissions define its reachable estate."]),
       ...(accountId ? [`Default account id: ${accountId}.`] : []),
       ...(zoneId ? [`Default zone id: ${zoneId}.`] : []),
-      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+      ...readOnlyNotice(options.readOnly),
     ],
     required: true,
   };

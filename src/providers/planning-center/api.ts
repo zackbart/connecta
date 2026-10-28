@@ -1,3 +1,4 @@
+import { asArray, asRecord } from "../_shared/json.js";
 import { Effect, Schema } from "effect";
 import type { GuardedRequest } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
@@ -18,7 +19,7 @@ import { TABLE } from "./safety.js";
 import type { ConnectorCredentialConfig } from "../../types.js";
 import type { PlanningCenterOptions } from "./index.js";
 import { excludedApps, series } from "./lib/guide.js";
-import { asRecord, asArray, resources, attribute, pageOf, type Query } from "./lib/json-api.js";
+import { resources, attribute, pageOf, type Query } from "./lib/json-api.js";
 import {
   PLANNING_CENTER_API_BASE_URL,
   PLANNING_CENTER_APPS,

@@ -61,7 +61,7 @@ function usage(message) {
   if (message) console.error(`drift:check: ${message}`);
   console.error(
     [
-      "usage: pnpm run drift:check [options]",
+      "usage: pnpm exec tsx scripts/drift-check.mjs [options]",
       "",
       "  --specs                  only compare touched endpoints with published specs",
       "  --provider <id>          limit to one provider (repeatable)",

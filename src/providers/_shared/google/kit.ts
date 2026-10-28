@@ -1,3 +1,4 @@
+import { asRecord, asArray } from "../json.js";
 // Google Workspace on the provider kit (decision 0010; C.7 step 1 under 0011).
 // Shared by every Workspace product; never its own export. `workspace.ts`
 // keeps shared options, connection parsing and subject resolution;
@@ -29,16 +30,6 @@ import { subjectFor, workspaceConnection, type GoogleWorkspaceOptions, type Work
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
 import { googleNamedOperation, requireGoogleIndex } from "./hatch.js";
 import type { OperationIndex } from "../rest/operation-index.js";
-
-type Json = Record<string, unknown>;
-
-function asRecord(value: unknown): Json {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
 
 // --- Errors ------------------------------------------------------------------------
 

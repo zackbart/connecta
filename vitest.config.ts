@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { build, buildSync, type Plugin } from "esbuild";
 
 const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"];
@@ -54,15 +54,31 @@ function executorBundles() {
   };
 }
 
+// The pool runs Miniflare 5, which cannot take an `external` socket as a
+// Worker's `outboundService` (only as a service binding). Route the Worker's
+// outbound fetches to a forwarding Worker whose binding is that TCP socket, so
+// every request still leaves workerd over TCP to `address`, after the calling
+// Worker's own Request validation and with workerd's own cancellation.
+function externalOutbound(name: string, address: string) {
+  return {
+    name,
+    modules: true,
+    script: "export default { fetch: (request, env) => env.EXTERNAL.fetch(request) };",
+    compatibilityDate: "2025-01-01",
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
+    serviceBindings: { EXTERNAL: { external: { address, http: {} } } },
+  };
+}
+
 // An organization-mode clerkAuth in a Worker of its own, with the Worker
 // example's compatibility settings, so its Backend API fetches meet workerd's
 // own Request validation and each request to it is a separate Worker request
 // (test/clerk-organization-workerd.test.ts). Every outbound fetch it makes
-// goes over TCP to the Clerk Backend API stand-in at `backend`. Built once
+// goes over TCP, through its outbound Worker, to the Clerk Backend API stand-in. Built once
 // per config load; restart watch mode after editing this fixture or any
 // bundled dependency (including src/auth/clerk.ts).
 let clerkOrganizationScript: Promise<string> | undefined;
-async function clerkOrganizationWorker(backend: string) {
+async function clerkOrganizationWorker() {
   const transport: Plugin = {
     name: "clerk-organization-transport",
     setup(bundle) {
@@ -87,7 +103,7 @@ async function clerkOrganizationWorker(backend: string) {
     script: await clerkOrganizationScript,
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
-    outboundService: { external: { address: backend, http: {} } },
+    outboundService: "clerk-organization-outbound",
   };
 }
 
@@ -120,7 +136,7 @@ function fixtureBundle(entry: string, external?: string[]): Promise<string> {
 async function authAdmissionWorker(backend?: string) {
   return {
     name: backend ? "auth-admission-sdk" : "auth-admission",
-    ...(backend ? { outboundService: { external: { address: backend, http: {} } } } : {}),
+    ...(backend ? { outboundService: "auth-admission-sdk-outbound" } : {}),
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal", "enable_weak_ref"],
     modules: true,
@@ -168,6 +184,10 @@ async function executorRequestsWorker(origin: string) {
 
 export default defineConfig({
   test: {
+    // Vitest 5 enables the persistent module cache by default. Under a full
+    // run, @cloudflare/vitest-plugin's workerd runtime exits mid-file when its
+    // modules come from that cache, so every run transforms afresh, as Vitest 4 did.
+    fsModuleCache: false,
     projects: [
       {
         // The deployment shapes are consumer projects: they import the package
@@ -274,9 +294,11 @@ export default defineConfig({
                   compatibilityFlags: ["nodejs_compat"],
                   d1Databases: { DB: "sql-lifetimes" },
                 },
-                clerkOrganizationWorker(inject("clerkBackendServer")),
+                clerkOrganizationWorker(),
+                externalOutbound("clerk-organization-outbound", inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
+                externalOutbound("auth-admission-sdk-outbound", new URL(inject("authAdmissionServer")).host),
                 executorRequestsWorker(inject("authAdmissionServer")),
                 ...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) =>
                   authAdmissionEntryWorker(`auth-admission-entry-${key}`, inject("authAdmissionServer")),

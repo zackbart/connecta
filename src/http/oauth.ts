@@ -1,4 +1,4 @@
-// Refresh-once middleware (decision 0010, B.2). Unreachable from src/index.ts.
+// Refresh-once middleware. Unreachable from src/index.ts.
 //
 // Refresh-once for a connection that authenticates with a token it can
 // renew: a downstream OAuth grant, a service-account assertion, a machine

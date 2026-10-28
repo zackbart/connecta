@@ -221,9 +221,9 @@ function ageLabel(ms: number): string {
 }
 
 /** Big value, small label: one diagnostic fact. */
-function Metric({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: string }) {
+function Metric({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
-    <div className={tone ? `metric ${tone}` : "metric"}>
+    <div className="metric">
       <dt className="metric-label">{label}</dt>
       <dd>
         <span className="metric-value">{value}</span>

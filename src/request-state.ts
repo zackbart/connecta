@@ -1,3 +1,4 @@
+import { sha256Hex } from "./bytes.js";
 import { ProtocolError, INVALID_PARAMS } from "@modelcontextprotocol/server";
 
 export const REQUEST_STATE_TTL_MS = 10 * 60_000;
@@ -25,8 +26,5 @@ export function canonicalState(value: unknown): string {
 }
 
 export async function requestDigest(tool: string, args: Record<string, unknown>): Promise<string> {
-  const bytes = new TextEncoder().encode(canonicalState({ tool, args }));
-  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
+  return sha256Hex(canonicalState({ tool, args }));
 }

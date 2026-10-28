@@ -559,10 +559,6 @@
   gap: 0.125rem;
   margin: 0;
 }
-.metric.flagged {
-  background: var(--warn-soft);
-  border-color: var(--warn-line);
-}
 .metric-value {
   font-size: var(--text-xl);
   font-variant-numeric: tabular-nums;
@@ -570,9 +566,6 @@
   letter-spacing: -0.02em;
   line-height: 1.2;
   overflow-wrap: anywhere;
-}
-.metric.flagged .metric-value {
-  color: var(--warn);
 }
 .metric-label {
   color: var(--text-3);

@@ -1,3 +1,4 @@
+import { readOnlyNotice } from "../_shared/guide.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { defineApiProvider } from "../../http/provider.js";
 import type { ProviderGuideInput } from "../../provider.js";
@@ -119,7 +120,7 @@ function usageGuide(options: Readonly<StripeOptions>): ProviderGuideInput {
             `Connected account: ${account}. Every call acts as this Connect account; the platform account's own objects are out of reach here.`,
           ]
         : []),
-      ...(options.readOnly === true ? ["This connection is read-only: every write is refused."] : []),
+      ...readOnlyNotice(options.readOnly === true),
     ],
     required: true,
   };

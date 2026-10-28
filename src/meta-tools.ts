@@ -1,3 +1,4 @@
+import { toolError } from "./tool-error.js";
 import { upwardStep } from "./upward.js";
 import type { InputRequiredResult } from "@modelcontextprotocol/server";
 import type { InvocationOutcome } from "./invocation.js";
@@ -83,15 +84,7 @@ function errorResult(message: string): ToolResult {
 }
 
 function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
-  const result = jsonResult({
-    error: {
-      code: error.code,
-      message: error.message,
-      retryable: false,
-    },
-  });
-  result.isError = true;
-  return result;
+  return toolError({ code: error.code, message: error.message, retryable: false });
 }
 
 const discoveryResult = function (operation: () => unknown | Promise<unknown>, hint: string) {
@@ -139,8 +132,8 @@ function isValidResultOffset(value: number): boolean {
  * Backwards, never forwards: re-serving a few bytes the caller already has is
  * recoverable, silently skipping the rest of a character is not. Offsets the
  * server itself produced (`nextOffset`) are already boundaries and come back
- * unchanged, so this only moves an offset a client computed on its own
- * (issue #38). An offset at or past `bytes.length` is left alone — there is no
+ * unchanged, so this only moves an offset a client computed on its own.
+ * An offset at or past `bytes.length` is left alone — there is no
  * character there to split.
  */
 function alignStartToCharBoundary(bytes: Uint8Array, offset: number): number {
@@ -224,12 +217,7 @@ function base64Of(bytes: Uint8Array): string {
  * The one serialization every result guard measures, stashes, and pages: JSON
  * text for whatever JSON can represent, and `String(value)` for the returns
  * JSON renders as `undefined` — a handler that returns nothing, a function, or
- * a Symbol. `JSON.stringify` is *typed* as returning `string` while actually
- * returning `undefined` for those, which is how a handler returning `undefined`
- * reached clients as a `{"type":"text"}` block carrying no `text` at all: the
- * size guard measured `enc.encode(undefined)` — the empty string, per the
- * WebIDL default — and emitted the non-string unchanged (issue #42). `null`
- * needs no special case; JSON renders it as `"null"`.
+ * a Symbol. `null` needs no special case; JSON renders it as `"null"`.
  *
  * Shared by `guardText`, `guardValue`, and execute_code's `guardResultValue` so
  * the three give one answer to the same question. A value JSON cannot serialize
@@ -367,7 +355,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
     try {
       // Base64 permits byte-range decoding, and splitting the envelope across
       // keys keeps a page's storage read proportional to the page instead of to
-      // the whole result (issue #540). Chunk 0 carries the header; the connecta.result
+      // the whole result. Chunk 0 carries the header; the connecta.result
       // reader below maps a byte offset back to chunk index and base64 quad.
       const chunkBytes = resultChunkBytes(totalBytes);
       const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
@@ -673,16 +661,11 @@ function escapedHeadOf(bytes: Uint8Array, cap: number): string {
  * Bound a downstream MCP `content` array by `cap`.
  *
  * A lone text block is measured, stashed, previewed, and paged as its text:
- * its envelope adds nothing but a wrapper and a second layer of JSON escaping,
- * which made a JSON payload's preview unreadable and inflated every page.
+ * its envelope adds nothing but a wrapper and a second layer of JSON escaping.
  *
  * Anything else is measured as the serialized envelope — the same string that
  * gets stashed and paged, and the one that counts every block rather than only
- * the text ones. Both halves matter (issue #43). Measuring only text blocks
- * meant an oversized all-image result scored zero bytes and was returned inline
- * unbounded, with no `resultId` to page from; and measuring one string while
- * truncating another left `totalBytes` describing something the cap was never
- * compared against.
+ * the text ones. Measure the same representation that gets truncated and paged.
  *
  * Over the cap, what a client gets depends on whether a preview is usable.
  * Several text blocks preview as their text joined by newlines, while
@@ -1026,7 +1009,7 @@ function metaToolsForRequest(
         const recoveryRequired =
           structuredRecovery ||
           // Sanitized `unavailable` diagnostics ride the structured shape too;
-          // the plain-text path would drop them (#539).
+          // the plain-text path would drop them.
           outcome.error.details !== undefined ||
           // So does a conflict's `current`: where things stand is the retry.
           outcome.error.current !== undefined ||
@@ -1373,7 +1356,7 @@ function metaToolsForRequest(
           // client that computes its own offsets can land inside a multi-byte
           // character, which would decode as U+FFFD; the offset actually served is
           // the boundary at or before it, and it is what the response reports back
-          // as `offset` (issue #38).
+          // as `offset`.
           const offset = start + alignStartToCharBoundary(bytes, requestedOffset - start);
           // Both sides of `maxBytes` are validated by now — the argument above, the
           // cap at intake — so `offset + maxBytes` always reaches past `offset`.

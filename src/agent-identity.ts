@@ -1,4 +1,4 @@
-// Code-declared agents (#837): the names deployment code lists in `agents`,
+// Code-declared agents: the names deployment code lists in `agents`,
 // the identity an admitted agent carries, and the built-in providers trusted
 // to assert it. Pure, so core reads it without reaching credential modules.
 

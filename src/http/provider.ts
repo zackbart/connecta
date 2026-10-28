@@ -1,4 +1,4 @@
-// Internal provider kit (decision 0010, B.4). Unreachable from src/index.ts.
+// Internal provider kit. Unreachable from src/index.ts.
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
 import { OAUTH_CHALLENGE_MAX_BYTES } from "../auth/renewable-grant.js";

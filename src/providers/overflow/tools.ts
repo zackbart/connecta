@@ -1,3 +1,5 @@
+import { compact as compactDefined } from "../_shared/json.js";
+import { asRecord, asArray } from "../_shared/json.js";
 // Overflow's curated kit tools: standard pages, safe projections and narrowing fields.
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -13,20 +15,12 @@ type JsonRecord = Record<string, any>;
 type QueryValue = string | number | boolean | readonly (string | number | boolean)[] | undefined;
 type Query = Record<string, QueryValue>;
 
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type Compact<T> = { [K in keyof T as IsAny<T[K]> extends true ? K : undefined extends T[K] ? never : K]: T[K] } & {
   [K in keyof T as IsAny<T[K]> extends true ? never : undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
 };
 function compact<T extends object>(value: T): Compact<T> {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Compact<T>;
+  return compactDefined(value) as Compact<T>;
 }
 
 /** A `{ id, name }` reference, or undefined when Overflow sent none. */

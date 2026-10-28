@@ -186,7 +186,7 @@ function credentialRequest(
     if (request.method === "DELETE") {
       // Clearing nothing is refused, as testing nothing is, so the route
       // agrees with the operator contract, which offers `clear` only once a
-      // value is stored in the caller's partition (#837). A value that cannot
+      // value is stored in the caller's partition. A value that cannot
       // be read may still be cleared: removing it is how one recovers.
       const stored = yield* Effect.tryPromise({
         try: () => vault.metadata(connectorId, owner),

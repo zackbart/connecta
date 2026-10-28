@@ -1,3 +1,5 @@
+import { asRecord, asArray, compact } from "../_shared/json.js";
+import { decodeBase64url } from "../../bytes.js";
 // Curated Gmail workflows over real Effect declarations and the standard kit boundary.
 import { Effect, Option } from "effect";
 import { defined, type ApiTool } from "../../connectors/api-connector.js";
@@ -45,15 +47,6 @@ const MAX_ATTACHMENT_BYTES = 1024 * 1024;
 /** Same direct-call ceiling and minimum result budget as Drive content reads. */
 const MAX_ATTACHMENT_RESULT_BYTES = 4 * 1024 * 1024;
 type JsonRecord = Record<string, any>;
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
@@ -104,15 +97,6 @@ function htmlToText(ctx: ConnectorContext, html: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
-function base64UrlBytes(data: string): Uint8Array {
-  const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
 function charsetOf(ctx: ConnectorContext, part: JsonRecord): string {
   const type = header(part, "Content-Type") ?? "";
   if (redactBeforeCut(ctx, type) !== type) return "[redacted]";
@@ -139,7 +123,7 @@ function decodeIn(
 } {
   let bytes: Uint8Array;
   try {
-    bytes = base64UrlBytes(data);
+    bytes = decodeBase64url(data, true);
   } catch {
     return { text: "" };
   }
@@ -427,7 +411,7 @@ function attachmentBytes(
     if (provenance) validateSize(provenance.originalLength);
     let bytes: Uint8Array;
     try {
-      bytes = base64UrlBytes(data);
+      bytes = decodeBase64url(data, true);
     } catch {
       throw new ConnectorCallError("connector_call_failed", "Gmail returned invalid base64url attachment data.", {
         retryable: false,
@@ -732,7 +716,7 @@ function openCursor(cursor: unknown, tool: string, call: string): CursorClaims |
   if (cursor === undefined) return undefined;
   let claims: CursorClaims | undefined;
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(base64UrlBytes(String(cursor)))) as unknown;
+    const parsed = JSON.parse(new TextDecoder().decode(decodeBase64url(String(cursor), true))) as unknown;
     if (parsed && typeof parsed === "object" && (parsed as CursorClaims).v === 1) claims = parsed as CursorClaims;
   } catch {
     claims = undefined;

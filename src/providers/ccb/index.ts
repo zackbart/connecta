@@ -1,3 +1,4 @@
+import { readOnlyNotice } from "../_shared/guide.js";
 import { CCB_ENVIRONMENTS, CCB_MEDIA_TYPE } from "./lib/constants.js";
 import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
@@ -195,7 +196,7 @@ export const ccb = defineApiProvider<CcbOptions>({
       ...(!writable(options)
         ? ["Configured scopes permit only reads: ccb_api_write is omitted and writes are refused."]
         : []),
-      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+      ...readOnlyNotice(options.readOnly),
       ...(options.defaultPerPage !== undefined
         ? [`Named lists default to ${options.defaultPerPage} rows on this connection.`]
         : []),
