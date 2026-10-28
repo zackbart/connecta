@@ -315,6 +315,17 @@ surface, and the endpoint's `readOnly`.
 `test/execute.test.ts` asserts the parity directly, because a sandbox path that
 quietly diverges is how generated code would mint a capability.
 
+Catalog search retains private, stable arrays for each request's registry and
+safety view, so repeated searches reuse the lexical index. Endpoint and connector
+read-only policy, hidden tools, classification and caller/pool grants still
+bound the visible corpus. Views are keyed by their source catalog array, so a
+replacement read cannot inherit an older index; failed reads remain evicted.
+No snapshot or index is shared across requests. Search and describe clone only
+selected definitions before returning schemas or annotations; `loadConnector()`
+and native catalog listings still return independent copies. Observed output
+schemas are resolved when rendering each page rather than retained in the index.
+`test/catalog-service.test.ts` guards reuse and mutation isolation.
+
 Program result paging shares `meta-tools.ts`'s direct-call stash envelope and
 reader. `program-result.ts` owns executor-independent byte limits;
 `execute.ts` issues bounded transfer cursors, and `guest-runtime.ts` reconstructs
