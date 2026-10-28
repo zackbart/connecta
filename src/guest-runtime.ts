@@ -163,6 +163,8 @@ export function guestInitializer(): string {
     read: provider.read,
     result: provider.result,
     skill: provider.skill,
+    // Undeclared alias: models write connecta.skills, the top-level tool's name.
+    skills: provider.skill,
     emit(block) {
       const ref = block && typeof block === "object" ? weakGet(nativeRefs, block) : undefined;
       return trackEmission(emit(ref || block));
@@ -236,11 +238,11 @@ export function programError(
   ) {
     hint = "Do not shadow connecta. Use the host-provided connecta global.";
   } else if (
-    /callTool|\bskills\b|connecta\.(?:guide|skills)/.test(message) ||
-    (["TypeError", "ReferenceError"].includes(name) && /connecta\.(?:guide|skills)\b/.test(code))
+    /callTool|\bskills\b|connecta\.guide/.test(message) ||
+    (["TypeError", "ReferenceError"].includes(name) && /connecta\.guide\b/.test(code))
   ) {
     hint =
-      "Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill(name). Services are addressed by connector.tool, never guest globals.";
+      'Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill("usage"). Services are addressed by connector.tool, never guest globals.';
   }
   return {
     code: "program_error",
