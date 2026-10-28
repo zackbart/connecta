@@ -5,6 +5,8 @@
       "entry": [
         "src/index.ts",
         "src/node.ts",
+        "src/d1.ts",
+        "src/sqlite.ts",
         "src/worker.ts",
         "src/json-schema.ts",
         "src/google.ts",

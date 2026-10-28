@@ -3,11 +3,9 @@ import {
   accessTokenKeys,
   catalogKeys,
   credentialKeys,
-  kvCopyKeys,
   oauthConnectKeys,
   oauthFlowKeys,
   oauthHandoffKeys,
-  oauthV2Keys,
   resultKeys,
   scopes,
 } from "../src/storage/keys.js";
@@ -31,9 +29,7 @@ it("rejects NUL in every unencoded key component, including identity scopes", ()
     () => credentialKeys.credential(bad),
     () => credentialKeys.credential("svc", bad),
     () => oauthFlowKeys.flow(bad),
-    () => oauthV2Keys.value(oauthV2Keys.field.tokens, bad),
     () => oauthConnectKeys.used(bad),
-    () => kvCopyKeys.cursor(bad),
   ];
   for (const build of builders) {
     expect(build).toThrow(/U\+0000 \(NUL\)/);

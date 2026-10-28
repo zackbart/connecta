@@ -42,8 +42,8 @@ afterEach(async () => {
 async function storage(): Promise<KVStorage> {
   try {
     const module = "cloudflare:test";
-    const { env } = (await import(/* @vite-ignore */ module)) as { env: { KV_COPY_TARGET: D1Database } };
-    return d1Storage(env.KV_COPY_TARGET);
+    const { env } = (await import(/* @vite-ignore */ module)) as { env: { STORAGE_DB: D1Database } };
+    return d1Storage(env.STORAGE_DB);
   } catch {
     const module = "node:sqlite";
     const { DatabaseSync } = (await import(/* @vite-ignore */ module)) as typeof import("node:sqlite");

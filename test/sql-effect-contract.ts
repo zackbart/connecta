@@ -266,6 +266,9 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
         return span;
       },
     });
+    // Exercise a SqlClient Statement as well as the native batch below: batch
+    // alone bypasses Statement tracing and cannot detect a missing suppression.
+    expect(await runEdge(native.get("secret-key").pipe(Effect.withTracer(tracer)))).toBe("secret-value");
     const error = await runEdge(
       native.compareAndSet("secret-key", "secret-value", "next").pipe(Effect.withTracer(tracer)),
     ).catch((e: unknown) => e);

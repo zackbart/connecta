@@ -16,7 +16,7 @@ import {
 } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthGrantKeys, oauthV2Keys, scopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { withAbortableTimeout, withDeadline } from "../src/timeout.js";
 import type { KVStorage } from "../src/types.js";
 import { connectorContext as ctx, deferred, scriptedExecutor, spyLogger } from "./fixtures/misc.js";
@@ -591,49 +591,6 @@ describe("remoteMcp() connector", () => {
     } finally {
       release.resolve();
       await Promise.allSettled([first, second]);
-      await connector.closeScope!(context);
-    }
-  });
-
-  it.each(["scope closes"])("stops a layout 2 migration during beginFlow when the %s", async () => {
-    const backing = memoryStorage();
-    const tokensKey = oauthV2Keys.value(oauthV2Keys.field.tokens, null);
-    const grant = JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" });
-    await backing.set(tokensKey, grant);
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    const storage: KVStorage = {
-      ...backing,
-      async get(key) {
-        if (key === tokensKey) {
-          entered.resolve();
-          await release.promise;
-        }
-        return backing.get(key);
-      },
-    };
-    const transport = vi.fn();
-    const connector = remoteMcp("down", {
-      url: "https://downstream.test/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: transport,
-    });
-    const context = { ...ctx(storage), requestScope: {} };
-    const pending = connector.status!(context);
-    await entered.promise;
-    try {
-      await connector.closeScope!(context);
-      release.resolve();
-      await expect(pending).resolves.toMatchObject({ state: "error" });
-      // A cancelled waiter returned before the detached connect did. Let
-      // the released in-memory storage promise chain finish before checking.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(await backing.get(oauthGrantKeys.grant)).toBeNull();
-      expect(await backing.get(tokensKey)).toBe(grant);
-      expect(transport).not.toHaveBeenCalled();
-    } finally {
-      release.resolve();
-      await pending;
       await connector.closeScope!(context);
     }
   });

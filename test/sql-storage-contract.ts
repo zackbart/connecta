@@ -1,5 +1,4 @@
-import { runEdge } from "../src/runtime/run.js";
-import { copyIntoSqlEffect } from "../src/storage/sql-native.js";
+import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
 import { INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
 import { activityFixtureTime } from "./fixtures/activity-time.js";
@@ -9,7 +8,6 @@ import { agentFrictionForCode } from "../src/activity-friction.js";
 import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 import { stashChargeContract } from "./stash-charge-contract.js";
 import { compareAndSetContract } from "./storage-contract.js";
-import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import * as sqlStores from "../src/storage/sql.js";
 
 /** Failure injection shared by Node SQLite, proxied D1, and native Workers D1. */
@@ -63,31 +61,6 @@ export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "s
       { key: "new:last", value: "last", expires_at_ms: null },
       { key: "new:middle", value: "middle", expires_at_ms: null },
     ]);
-  });
-
-  it("rolls back earlier keys when a later key in copyIntoSql fails", async () => {
-    const { db, driver, storage, rows, before } = await setup();
-    await db.exec(`CREATE TRIGGER fail_copy BEFORE INSERT ON connecta_kv
-      WHEN NEW.key = 'copy:last' BEGIN SELECT RAISE(ABORT, 'injected copy failure'); END`);
-    const entries = [
-      { key: "copy:first", value: "first", expiresAtMs: null },
-      { key: "existing", value: "changed", expiresAtMs: null },
-      { key: "copy:last", value: "last", expiresAtMs: null },
-    ];
-    const options = { overwrite: true, now: Date.now() };
-    await expect(runEdge(copyIntoSqlEffect(nativeSqlDriver(driver), entries, options))).rejects.toThrow(
-      /injected copy failure/,
-    );
-    expect(await rows()).toEqual(before);
-
-    await db.exec("DROP TRIGGER fail_copy");
-    await expect(runEdge(copyIntoSqlEffect(nativeSqlDriver(driver), entries, options))).resolves.toEqual([
-      "copied",
-      "overwritten",
-      "copied",
-    ]);
-    for (const entry of entries) expect(await storage.get(entry.key)).toBe(entry.value);
-    expect(await storage.get("remove")).toBe("keep");
   });
 
   it("rolls back the expiry sweep when the later storage.set write fails", async () => {

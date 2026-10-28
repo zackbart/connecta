@@ -10,6 +10,30 @@ type UnsafeCreateConnecta = (config: Record<PropertyKey, unknown>) => unknown;
 const unsafeCreateConnecta = createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
+  it.each<[Record<string, unknown>, string]>([
+    [{ execute: { resumableWrites: true } }, "execute.resumableWrites"],
+    [{ execute: { pausedRunTtlSeconds: 60 } }, "execute.pausedRunTtlSeconds"],
+    [{ trust: "trusted" }, "trust"],
+    [{ pools: { team: { tools: ["crm"], members: ["alice"], trust: "read-only" } } }, "pools.team.trust"],
+    [{ pools: { team: { tools: ["crm"], members: ["alice"], grant: () => true } } }, "pools.team.grant"],
+    [{ grant: () => true }, "grant"],
+    ...[
+      "connectorAccess",
+      "credentialAdministration",
+      "personalConnection",
+      "accessTokenManagement",
+      "activityAccess",
+    ].map((key): [Record<string, unknown>, string] => [{ identity: { [key]: () => true } }, "identity"]),
+    [{ identity: {} }, "identity"],
+  ])("INV-11: rejects retired options with the generic unknown-option error (%s)", (options, path) => {
+    expect(() => unsafeCreateConnecta({ connectors: [], readOnly: false, executor, ...options })).toThrow(
+      expect.objectContaining({
+        name: "ConfigError",
+        message: `Unknown Connecta configuration option:\n- ConnectaConfig.${path}`,
+      }),
+    );
+  });
+
   it("wraps a frozen custom executor without losing private-field receivers or admission", async () => {
     const events: string[] = [];
     class SelfManaged {
