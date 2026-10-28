@@ -1130,6 +1130,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly refreshNow: () => number = Date.now,
     private readonly clientOptions?: {
       authorizationParams?: ReadonlyArray<readonly [string, string]>;
+      /** Remote MCP resource metadata may only be learned on this configured origin. */
+      resourceOrigin?: string;
       name?: string | undefined;
       client?: RemoteOAuthClient | undefined;
       secrets?: SentSecrets | undefined;
@@ -2694,9 +2696,28 @@ export class KvOAuthProvider implements OAuthClientProvider {
             if (this.signal?.aborted) throw aborted(this.signal);
             const { body } = (yield authInvoke(this, "activeGrant", [])) as Grant;
             if (this.signal?.aborted) throw aborted(this.signal);
-            const state = body.discovery;
+            let state = body.discovery;
+            if (state?.resourceMetadataUrl && this.clientOptions?.resourceOrigin) {
+              let sameOrigin = false;
+              try {
+                sameOrigin = new URL(state.resourceMetadataUrl).origin === this.clientOptions.resourceOrigin;
+              } catch {
+                // A malformed legacy URL is no more usable than a foreign one.
+              }
+              if (!sameOrigin) {
+                // Never hand the SDK a legacy foreign URL or its resource
+                // document. Keep the issuer binding for callbacks, but force
+                // same-origin resource discovery on every SDK path. This read
+                // does not mutate the stored grant.
+                state = { ...state };
+                delete state.resourceMetadataUrl;
+                delete state.resourceMetadata;
+              }
+            }
             this.assertCredentialFree(state, body);
-            this.consentDiscovery = state;
+            // Bind consent to durable discovery until the SDK saves a new
+            // state. A same-origin metadata 404 can leave the cache unchanged.
+            this.consentDiscovery = body.discovery;
             return state;
           }.bind(this),
         );

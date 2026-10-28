@@ -1,5 +1,5 @@
-import { UnauthorizedError } from "@modelcontextprotocol/client";
-import type { FetchLike, Transport } from "@modelcontextprotocol/client";
+import { auth, UnauthorizedError } from "@modelcontextprotocol/client";
+import type { FetchLike, OAuthDiscoveryState, Transport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { beforeEach, afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
@@ -112,17 +112,19 @@ async function consent(c: Connector, storage: KVStorage, url: string | undefined
  * `forget`, the way a provider purges a registration. A known client's
  * code or refresh token always redeems.
  */
-function authorizationServer() {
+function authorizationServer(options: { url?: string; metadataUrl?: string; issuer?: string } = {}) {
+  const resource = options.url ?? mcpUrl;
+  const metadata = options.metadataUrl ?? resourceMetadataUrl;
   const counts = { register: 0, fetches: 0, token: 0, mcp: 0 };
-  let selectedIssuer = issuer;
+  let selectedIssuer = options.issuer ?? issuer;
   let urlClients = false;
   let stall: (() => void) | undefined;
   const known = new Set<string>();
   const fetchStub: FetchLike = async (input, init = {}) => {
     counts.fetches++;
     const url = new URL(input);
-    if (url.href === resourceMetadataUrl) {
-      return Response.json({ resource: mcpUrl, authorization_servers: [selectedIssuer] });
+    if (url.href === new URL(metadata).href) {
+      return Response.json({ resource, authorization_servers: [selectedIssuer] });
     }
     if (url.href === `${selectedIssuer}/.well-known/oauth-authorization-server`) {
       return Response.json({
@@ -154,7 +156,7 @@ function authorizationServer() {
         refresh_token: `refresh-${counts.token}`,
       });
     }
-    if (url.href === mcpUrl) {
+    if (url.href === resource) {
       counts.mcp++;
       if (stall) {
         // Never answers; only the connection's own abort ends it.
@@ -167,7 +169,7 @@ function authorizationServer() {
       }
       return new Response(null, {
         status: 401,
-        headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` },
+        headers: { "www-authenticate": `Bearer resource_metadata="${metadata}"` },
       });
     }
     throw new Error(`Unexpected OAuth test request: ${url.href}`);
@@ -201,6 +203,213 @@ async function withServer(run: (server: ReturnType<typeof authorizationServer>) 
     vi.unstubAllGlobals();
   }
 }
+
+describe("remoteMcp() challenged resource metadata origin (#1115)", () => {
+  const foreignMetadata = [
+    "https://foreign.example/private-path?private-query=value",
+    "https://downstream.example:8443/private-path?private-query=value",
+    "http://downstream.example/private-path?private-query=value",
+  ];
+
+  describe.each(["status", "startAuth", "listTools"] as const)("%s", (operation) => {
+    it.each(foreignMetadata)("refuses %s before any metadata request", async (metadataUrl) => {
+      const server = authorizationServer({ metadataUrl });
+      const requests = vi.fn(server.fetchStub);
+      vi.stubGlobal("fetch", requests);
+      const storage = memoryStorage();
+      // Status must reach the downstream rather than stop at a missing grant.
+      await seedGrant(storage, { issuer, tokens: { access_token: "access-old", token_type: "Bearer" } });
+      const c = connector();
+      const context = scope(storage);
+      onTestFinished(() => c.closeScope?.(context));
+
+      let message: string | undefined;
+      if (operation === "listTools") {
+        const error = await c.listTools(context).then(
+          () => {
+            throw new Error("expected metadata origin refusal");
+          },
+          (error: unknown) => error,
+        );
+        const classified = classifyCallError(error);
+        expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+        message = classified.message;
+      } else {
+        const status = await c[operation]!(context);
+        expect(status.state).toBe("error");
+        expect(status.authorizationUrl).toBeUndefined();
+        message = status.message;
+      }
+      if (operation === "status") {
+        // Passive status keeps only typed failure facts, as for other URL refusals.
+        expect(message).toContain("RemoteMcpDestinationError, connector_call_failed");
+      } else {
+        expect(message).toContain("resource metadata outside the configured resource origin");
+      }
+      expect(message).not.toMatch(/private-path|private-query/);
+      expect(requests.mock.calls.filter(([url]) => new URL(url).href === metadataUrl)).toHaveLength(0);
+      expect(server.counts.mcp).toBeGreaterThan(0);
+      expect(server.counts.register).toBe(0);
+      expect(server.counts.token).toBe(0);
+      expect(requests.mock.calls.every(([url]) => new URL(url).href === mcpUrl)).toBe(true);
+    });
+  });
+
+  describe.each(["status", "startAuth", "listTools", "finishAuth"] as const)("cached discovery on %s", (operation) => {
+    it.each(["url-only", "complete", "sdk-fallback"] as const)(
+      "discards foreign metadata from %s before discovery",
+      async (cache) => {
+        const foreign = "https://foreign.example/metadata";
+        const storage = memoryStorage();
+        const cachedIssuer = cache === "sdk-fallback" ? new URL(mcpUrl).origin : issuer;
+        let discovery: OAuthDiscoveryState = {
+          authorizationServerUrl: cachedIssuer,
+          resourceMetadataUrl: foreign,
+          ...(cache === "complete"
+            ? { resourceMetadata: { resource: mcpUrl, authorization_servers: [cachedIssuer] } }
+            : {}),
+        };
+        if (cache === "sdk-fallback") {
+          // Produce the URL-only state the SDK persists when resource metadata
+          // returns 404 but AS fallback and refresh succeed, as before #1115.
+          const fallbackIssuer = cachedIssuer;
+          const provider = new KvOAuthProvider("svc", storage, REDIRECT);
+          await seedGrant(storage, {
+            issuer: fallbackIssuer,
+            client: { value: { client_id: "client-0" } },
+            tokens: { access_token: "access-old", token_type: "Bearer", refresh_token: "refresh-old" },
+          });
+          expect(
+            await auth(provider, {
+              serverUrl: mcpUrl,
+              resourceMetadataUrl: new URL(foreign),
+              fetchFn: async (input) => {
+                const url = new URL(String(input));
+                if (url.href === foreign) return new Response(null, { status: 404 });
+                if (url.pathname.endsWith("/token"))
+                  return Response.json({ access_token: "access-new", token_type: "Bearer" });
+                return Response.json({
+                  issuer: fallbackIssuer,
+                  authorization_endpoint: `${fallbackIssuer}/authorize`,
+                  token_endpoint: `${fallbackIssuer}/token`,
+                  response_types_supported: ["code"],
+                  code_challenge_methods_supported: ["S256"],
+                });
+              },
+            }),
+          ).toBe("AUTHORIZED");
+          const cached = await provider.discoveryState();
+          expect(cached).toMatchObject({ resourceMetadataUrl: foreign });
+          expect(cached?.resourceMetadata).toBeUndefined();
+          discovery = cached!;
+        }
+        await seedGrant(storage, {
+          issuer: cachedIssuer,
+          client: { value: { client_id: "client-0" } },
+          tokens: { access_token: "access-old", token_type: "Bearer" },
+          discovery: { ...discovery },
+        });
+        const state =
+          operation === "finishAuth"
+            ? stateOf(await seedConsent(storage, `${cachedIssuer}/authorize?client_id=client-0`))
+            : undefined;
+        const server = authorizationServer({ issuer: cachedIssuer });
+        const requests = vi.fn(async (input: Parameters<FetchLike>[0], init?: RequestInit) => {
+          const url = new URL(String(input));
+          if (
+            url.href === foreign ||
+            url.href === resourceMetadataUrl ||
+            url.pathname === "/.well-known/oauth-protected-resource/mcp"
+          )
+            return Response.json({ resource: mcpUrl, authorization_servers: [cachedIssuer] });
+          if (url.href === mcpUrl) return new Response(null, { status: 401 });
+          return server.fetchStub(input, init);
+        });
+        vi.stubGlobal("fetch", requests);
+        const c = connector();
+        const context = scope(storage);
+        onTestFinished(() => c.closeScope?.(context));
+        // The result may need consent; neither reads nor a callback may follow
+        // the old origin. All must rediscover resource metadata at this origin.
+        if (operation === "finishAuth") {
+          // Rediscovery changes the consent's discovery binding, so an old
+          // callback must refuse before exchanging its code.
+          await expect(
+            c.finishAuth!("consented", context, new URLSearchParams({ code: "consented", state: state! })),
+          ).rejects.toMatchObject({ code: "unavailable", retryable: true });
+          expect(server.counts.token).toBe(0);
+        } else if (operation === "listTools") {
+          await expect(c.listTools(context)).rejects.toMatchObject({ code: "downstream_oauth_required" });
+        } else {
+          await expect(c[operation]!(context)).resolves.toMatchObject({ state: "auth_required" });
+        }
+        expect(requests.mock.calls.filter(([url]) => new URL(String(url)).href === foreign)).toHaveLength(0);
+        expect(
+          requests.mock.calls.some(([url]) =>
+            new URL(String(url)).pathname.startsWith("/.well-known/oauth-protected-resource"),
+          ),
+        ).toBe(true);
+      },
+    );
+  });
+
+  it.each(["status", "startAuth", "listTools"] as const)(
+    "keeps bearer-in-host challenges out of %s and logs",
+    async (operation) => {
+      const token = "sensitive-access-token";
+      const server = authorizationServer({ metadataUrl: `https://${token}.foreign.example/metadata` });
+      const requests = vi.fn(server.fetchStub);
+      vi.stubGlobal("fetch", requests);
+      const output = consoleOutput();
+      const lines: string[] = [];
+      const record = (...args: unknown[]) => {
+        lines.push(
+          args
+            .map((arg) => (arg instanceof Error ? `${arg.stack} ${String(arg.cause)}` : JSON.stringify(arg)))
+            .join(" "),
+        );
+      };
+      const storage = memoryStorage();
+      await seedGrant(storage, { issuer, tokens: { access_token: token, token_type: "Bearer" } });
+      const c = connector();
+      const context = { ...scope(storage), logger: { debug: record, info: record, warn: record, error: record } };
+      onTestFinished(() => c.closeScope?.(context));
+      const result = await c[operation]!(context).catch((error: unknown) => ({
+        error: String(error),
+        classified: classifyCallError(error),
+      }));
+
+      expect(JSON.stringify(result)).not.toContain(token);
+      expect(JSON.stringify(lines)).not.toContain(token);
+      expect(output()).not.toContain(token);
+      expect(requests.mock.calls.every(([url]) => new URL(String(url)).href === mcpUrl)).toBe(true);
+    },
+  );
+
+  it.each([
+    [mcpUrl, "https://downstream.example/oauth/resources/tickets"],
+    [mcpUrl, "https://DOWNSTREAM.example:443/oauth/resources/tickets"],
+    [
+      "https://bigquery.googleapis.com/mcp",
+      "https://bigquery.googleapis.com/.well-known/oauth-protected-resource/query",
+    ],
+  ])("accepts same-origin metadata for %s at %s", async (url, metadataUrl) => {
+    const server = authorizationServer({ url, metadataUrl });
+    const requests = vi.fn(server.fetchStub);
+    vi.stubGlobal("fetch", requests);
+    const c = remoteMcp("svc", { url, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+    const context = scope(memoryStorage());
+    onTestFinished(() => c.closeScope?.(context));
+
+    const started = await c.startAuth!(context);
+    expect(started).toMatchObject({
+      state: "auth_required",
+      authorizationUrl: expect.stringContaining(`${issuer}/authorize?`),
+    });
+    expect(requests.mock.calls.filter(([url]) => new URL(url).href === new URL(metadataUrl).href)).toHaveLength(1);
+    expect(server.counts.register).toBe(1);
+  });
+});
 
 describe("remoteMcp() oauth status via _transportFactory", () => {
   it("UnauthorizedError → auth_required, with no consent URL for a passive status", async () => {
