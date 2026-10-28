@@ -137,6 +137,12 @@ const TEXT = 0;
 const NUMBER = 1;
 const BINARY = 2;
 const BYTES = 3;
+// A typed binary's joined numbers are withheld together, including on an error.
+const NUMBERS = 4;
+// A changed numeric diagnostic is absent from the error's text projection.
+const ERROR_NUMBER = 5;
+const numeric = (kind: number | undefined) => kind === NUMBER || kind === NUMBERS || kind === ERROR_NUMBER;
+const replacement = (kind: number | undefined) => (kind === BINARY || kind === ERROR_NUMBER ? "" : REDACTED);
 
 /** Payload scans also match short private values; envelope scans leave Connecta's own
  * identifiers, counts and addresses to them. */
@@ -1099,14 +1105,13 @@ class Matcher {
 }
 
 /** A nested JSON string in a projection: the container and slot it is written back to, its
- * parsed value, the nested JSON holding it, whether its tokens hold a run no leaf holds, and
- * whether anything in it changed. */
+ * parsed value, the nested JSON holding it, and whether anything in it changed. Text with a
+ * match spanning tokens is withheld before its leaves enter the projection. */
 interface Nested {
   frame: object;
   slot: PropertyKey;
   json: unknown;
   owner: number;
-  crossing: boolean;
   dirty: boolean;
 }
 
@@ -1632,10 +1637,14 @@ export class SentSecrets {
    * charged to the call's budget, and a part it cannot pay for is withheld. A `bounded` lane is
    * text cut short, which also loses an unfinished tail. Nothing else matches a string that is
    * returned: the matching steps below are called only from here. */
-  private checked(parts: string[], kinds: readonly number[], scan: Scan, bounded = false): string[] {
-    const safe = this.safeParts(parts, kinds, scan, bounded);
-    this.encodedLeaves(parts, kinds, safe, scan);
-    return safe;
+  private checked(
+    parts: string[],
+    kinds: readonly number[],
+    scan: Scan,
+    bounded = false,
+    normalize?: (lane: string[]) => void,
+  ): string[] {
+    return this.safeParts(parts, kinds, scan, bounded, normalize);
   }
 
   /** Cursor claims: the whole text and its encoding under the boundary's rules, then every
@@ -1746,7 +1755,7 @@ export class SentSecrets {
       // Binary and bytes any match changed are withheld whole already.
       const kind = kinds[index]!;
       const text = safe[index]!;
-      if (kind === NUMBER || text === REDACTED || this.memo.get(text) === true) continue;
+      if (numeric(kind) || text === REDACTED || this.memo.get(text) === true) continue;
       if ((!scan.payload && this.memo.has(text)) || (kind !== TEXT && text !== parts[index])) continue;
       const pair = (group: number): boolean => {
         if (group < 0) {
@@ -1798,64 +1807,112 @@ export class SentSecrets {
     }
   }
 
-  /** Keep touched numbers only after checking the lane with rejected numbers replaced whole.
-   * Each rejection can create another marker seam, so repeat until no retained number changes.
-   * Each round keeps fewer candidates or finishes, and shares the call's budget; an incomplete
-   * or deep check keeps every original withholding decision, including earlier safe candidates.
-   * The leaf-by-leaf path repeats its bounded leaf and seam checks instead of joining again. */
-  private retainNumbers(parts: string[], safe: string[], numbers: number[], scan: Scan, leafByLeaf = false): string[] {
-    if (!numbers.length) return safe;
+  /** Check replacements as returned, including their placeholder seams. Numbers touched by
+   * the first scan get one chance beside the replaced strings; every later hit withholds its
+   * entire part. Each changing round therefore removes at least one remaining part. Unchanged
+   * lanes pay for no retry. Large lanes recheck changed parts and the seams touching them; an
+   * unaffordable check withholds every part it read and all original retention candidates. */
+  private settleParts(
+    parts: string[],
+    safe: string[],
+    scan: Scan,
+    numbers: number[] = [],
+    leafByLeaf = false,
+    kinds?: readonly number[],
+    normalize?: (lane: string[]) => void,
+  ): string[] {
+    let touched = new Set(parts.flatMap((part, index) => (part !== safe[index] ? [index] : [])));
+    if (!touched.size) return safe;
     const lane = [...safe];
     for (const index of numbers) lane[index] = parts[index]!;
-    let retained = numbers;
-    while (retained.length) {
-      let checked: string[];
-      if (leafByLeaf) {
-        const recheck = { numbers: new Set(retained), complete: true };
-        checked = this.leafByLeaf(lane, scan, undefined, recheck);
-        if (!recheck.complete) return safe;
-      } else {
-        const matches = this.spansOf(lane.join(""), scan, scan.payload);
-        if (!matches || matches.deep) return safe;
-        checked = replaceParts(lane, matches.spans);
+    normalize?.(lane);
+    while (touched.size) {
+      // Pay for round bookkeeping even when no registered matcher could scan (for
+      // example, an oversized private registration governed only by withholdRuns).
+      if (!spend(scan, lane.length)) {
+        const withheld = lane.map((part, index) => part && replacement(kinds?.[index]));
+        normalize?.(withheld);
+        return withheld;
       }
-      const kept = retained.filter((index) => {
-        if (checked[index] === lane[index]) return true;
-        lane[index] = REDACTED;
-        return false;
-      });
-      if (kept.length === retained.length) break;
-      retained = kept;
+      let checked: string[];
+      const recheck = { parts: touched, complete: true };
+      const matches = leafByLeaf ? undefined : this.spansOf(lane.join(""), scan, scan.payload);
+      if (matches && !matches.deep) checked = replaceParts(lane, matches.spans);
+      else checked = this.leafByLeaf(lane, scan, undefined, recheck);
+      const limit = this.limit(scan);
+      if (limit < Infinity) checked = withholdRuns(lane, checked, limit);
+      if (!recheck.complete)
+        for (const index of numbers) if (checked[index] === parts[index]) checked[index] = replacement(kinds?.[index]);
+      normalize?.(checked);
+      const next = new Set<number>();
+      for (let index = 0; index < lane.length; index++) {
+        if (checked[index] === lane[index] || (lane[index] === REDACTED && checked[index] !== "")) continue;
+        const withheld = replacement(kinds?.[index]);
+        // Whole-field groups project one marker and empty remaining parts.
+        const value = checked[index] === "" ? "" : withheld;
+        if (lane[index] === value) continue;
+        lane[index] = value;
+        next.add(index);
+      }
+      touched = next;
     }
-    for (const index of numbers) safe[index] = lane[index]!;
-    return safe;
+    return lane;
   }
 
   /** The parts' joined text, with each part's replacement. A touched number is checked again
    * after string replacement before withholding it whole. Tiny or short whole private values,
    * deep matches and unchecked runs still withhold changed numbers whole. A bounded lane also
    * loses an unfinished tail, and withholds every touched number without a second check. */
-  private safeParts(parts: string[], kinds: readonly number[], scan: Scan, bounded: boolean): string[] {
+  private safeParts(
+    parts: string[],
+    kinds: readonly number[],
+    scan: Scan,
+    bounded: boolean,
+    normalize?: (lane: string[]) => void,
+  ): string[] {
     if (!parts.length) return parts;
     const text = parts.join("");
     // A form too large to register or index could begin anywhere in what was read.
     const matches = bounded && this.uncheckedTail() ? undefined : this.spansOf(text, scan, scan.payload);
     if (bounded && (!matches || matches.deep)) return parts.map((part) => part && REDACTED);
     if (bounded) this.openSpans(text, matches!.spans);
-    let safe = matches ? replaceParts(parts, matches.spans) : this.leafByLeaf(parts, scan, kinds);
+    const numbers: number[] = [];
+    let safe = matches ? replaceParts(parts, matches.spans) : this.leafByLeaf(parts, scan, kinds, undefined, numbers);
     if (matches && !bounded && !matches.deep)
-      safe = this.retainNumbers(
-        parts,
-        safe,
-        kinds.flatMap((kind, index) => (kind === NUMBER && safe[index] !== parts[index] ? [index] : [])),
-        scan,
-      );
+      for (let index = 0; index < parts.length; index++)
+        if (numeric(kinds[index]) && safe[index] !== parts[index]) numbers.push(index);
     if (matches?.deep) safe = safe.map((next, index) => (parts[index]!.includes("\\") ? REDACTED : next));
+    const whole = new Set<number>();
     if (scan.payload && this.smallForms)
-      safe = safe.map((next, index) => (this.whole(parts[index]!) ? REDACTED : next));
+      safe = safe.map((next, index) => {
+        // Typed numeric groups checked their individual whole values while walking.
+        if (kinds[index] === NUMBERS || !this.whole(parts[index]!)) return next;
+        whole.add(index);
+        return REDACTED;
+      });
     const limit = this.limit(scan);
     if (limit < Infinity) safe = withholdRuns(parts, safe, limit);
-    return safe.map((next, index) => (next !== parts[index] && kinds[index] === NUMBER ? REDACTED : next));
+    safe = safe.map((next, index) => (next !== parts[index] && numeric(kinds[index]) ? REDACTED : next));
+    this.encodedLeaves(parts, kinds, safe, scan);
+    // Declared binary leaves as the checked encoding of the marker, not its partial text.
+    let marker: string | undefined;
+    safe = safe.map((next, index) => {
+      if (next === parts[index] || kinds[index] !== BINARY) return next;
+      const encoded = btoa(REDACTED);
+      marker ??= this.checked([encoded], [TEXT], scan)[0] === encoded ? encoded : "";
+      return marker;
+    });
+    safe = safe.map((next, index) => (next !== parts[index] && kinds[index] === ERROR_NUMBER ? "" : next));
+    normalize?.(safe);
+    return this.settleParts(
+      parts,
+      safe,
+      scan,
+      numbers.filter((index) => !whole.has(index) && limit === Infinity),
+      !matches,
+      kinds,
+      normalize,
+    );
   }
 
   /** Leaves too large to match joined within the work budget: each is matched alone, in order,
@@ -1866,13 +1923,13 @@ export class SentSecrets {
     parts: string[],
     scan: Scan,
     kinds?: readonly number[],
-    recheck?: { numbers: ReadonlySet<number>; complete: boolean },
+    recheck?: { parts: ReadonlySet<number>; complete: boolean },
+    candidates?: number[],
   ): string[] {
     const spans = parts.map((part, index) => {
-      // On the retry the other parts already hold their replacements. Only the touched
-      // numbers and their seams need checking; never treat an unaffordable neighbour as a
-      // replacement that the lane does not actually contain.
-      if (recheck && !recheck.numbers.has(index)) return [];
+      // Only changed parts and their seams need checking on a retry. Kept neighbours
+      // remain exactly as returned, even when their full text would not fit again.
+      if (recheck && !recheck.parts.has(index)) return [];
       const matches = this.spansOf(part, scan, scan.payload);
       if (recheck && (!matches || matches.deep)) recheck.complete = false;
       return !matches || (matches.deep && part.includes("\\")) ? undefined : matches.spans;
@@ -1880,7 +1937,7 @@ export class SentSecrets {
     let pieces: { index: number; start: number; text: string }[] = [];
     const seam = () => {
       const text = pieces.map((piece) => piece.text).join("");
-      const needed = pieces.length > 1 && (!recheck || pieces.some((piece) => recheck.numbers.has(piece.index)));
+      const needed = pieces.length > 1 && (!recheck || pieces.some((piece) => recheck.parts.has(piece.index)));
       const matches = needed ? this.spansOf(text, scan, scan.payload) : { spans: [], deep: false };
       if (recheck && (!matches || matches.deep)) recheck.complete = false;
       const ranges = matches ? merged(matches.spans) : [];
@@ -1899,7 +1956,9 @@ export class SentSecrets {
       pieces = [];
     };
     parts.forEach((part, index) => {
-      if (!spans[index]) return seam();
+      // A failed retry, or a marker already introduced while walking, still
+      // contains this part in the returned lane. Keep its unchecked seams.
+      if (!spans[index] && !recheck && part !== REDACTED) return seam();
       if (part.length <= 2 * SEAM_UNITS) return void pieces.push({ index, start: 0, text: part });
       pieces.push({ index, start: 0, text: part.slice(0, SEAM_UNITS) });
       seam();
@@ -1910,15 +1969,23 @@ export class SentSecrets {
       const own = spans[index];
       return !own ? part && REDACTED : own.length ? replace(part, own) : part;
     });
+    const numbers = kinds
+      ? kinds.flatMap((kind, index) =>
+          numeric(kind) && spans[index]?.length && safe[index] !== parts[index] ? [index] : [],
+        )
+      : [];
+    if (candidates) {
+      for (const index of numbers) candidates.push(index);
+      return safe;
+    }
     return kinds
-      ? this.retainNumbers(
+      ? this.settleParts(
           parts,
-          safe,
-          kinds.flatMap((kind, index) =>
-            kind === NUMBER && spans[index]?.length && safe[index] !== parts[index] ? [index] : [],
-          ),
+          safe.map((next, index) => (next !== parts[index] && numeric(kinds[index]) ? REDACTED : next)),
           scan,
+          numbers,
           true,
+          kinds,
         )
       : safe;
   }
@@ -2002,10 +2069,12 @@ export class SentSecrets {
     const active = new Set<object>();
     // Keys and scalars repeat across rows; each is checked once per call.
     const seen = { keys: new Map<string, string>(), scalars: new Map<string, string>() };
-    // Errors' unregistered names, as walked: a copy whose name changed holds the placeholder.
-    const named: [copy: Holder, slot: string, name: string][] = [];
-    // Typed binary: where its copy was put, and the leaves its numbers span.
-    const binaries: [frame: Frame, slot: PropertyKey, owner: number, start: number, end: number][] = [];
+    // An error name may contain parsed JSON. Any change collapses all of its
+    // projected leaves to one placeholder before the surrounding lane settles.
+    const named: { copy: Holder; slot: string; start: number; end: number; withheld: boolean }[] = [];
+    // Non-byte typed arrays have an alternate numeric projection, in the same slots as
+    // their returned bytes. Neither representation can interrupt the other's neighbours.
+    const elements = new Map<number, string>();
     // The accessors each prototype's chain defines, found once per call.
     const chains = new Map<object, string[]>();
     let changed = false;
@@ -2013,7 +2082,8 @@ export class SentSecrets {
       changed = true;
       if (owner >= 0) nested[owner]!.dirty = true;
     };
-    const withheld = (owner: number) => {
+    const withheld = (frame: Frame, slot: PropertyKey, owner: number) => {
+      leaf(REDACTED, TEXT, frame, slot, owner);
       touch(owner);
       return REDACTED;
     };
@@ -2118,8 +2188,8 @@ export class SentSecrets {
         if (level < MAX_DECODE_LEVELS && /^\s*["[{]/.test(item) && spend(scan, item.length)) {
           const parsed = parse(item);
           if (parsed) {
-            const entry: Nested = { frame, slot, json: undefined, owner, crossing: false, dirty: false };
-            entry.crossing = this.spansTokens(item, scan);
+            if (this.spansTokens(item, scan)) return withheld(frame, slot, owner);
+            const entry: Nested = { frame, slot, json: undefined, owner, dirty: false };
             const index = nested.push(entry) - 1;
             // Parsed JSON is this walk's own, so it is written in place.
             const holder: Frame = { target: entry, shared: false, parent: undefined, slot: "json" };
@@ -2131,21 +2201,21 @@ export class SentSecrets {
         return item;
       }
       if (typeof item === "number" || typeof item === "bigint") {
-        leaf(String(item), NUMBER, frame, slot, owner);
+        leaf(String(item), frame.target instanceof Error ? ERROR_NUMBER : NUMBER, frame, slot, owner);
         return item;
       }
       if (typeof item === "boolean" || item === null)
-        return check(seen.scalars, String(item), NUMBER) === String(item) ? item : withheld(owner);
+        return check(seen.scalars, String(item), NUMBER) === String(item) ? item : withheld(frame, slot, owner);
       // A function carries no data, and every exit's serializer would call a toJSON it holds; a
       // symbol carries none either. Both are withheld.
-      if (typeof item === "function" || typeof item === "symbol") return withheld(owner);
+      if (typeof item === "function" || typeof item === "symbol") return withheld(frame, slot, owner);
       if (typeof item !== "object") return item;
-      if (active.has(item) || depth > MAX_WALK_DEPTH) return withheld(owner);
+      if (active.has(item) || depth > MAX_WALK_DEPTH) return withheld(frame, slot, owner);
       active.add(item);
       try {
         return container(item, frame, slot, depth, level, owner, owned);
       } catch {
-        return withheld(owner); // A proxy trap or a toJSON that threw.
+        return withheld(frame, slot, owner); // A proxy trap or a toJSON that threw.
       } finally {
         active.delete(item);
       }
@@ -2170,28 +2240,38 @@ export class SentSecrets {
         leaf(text, BINARY, frame, slot, owner);
       return text;
     };
-    /** Typed binary as the fresh Uint8Array of its bytes. Its leaves are the numbers JSON shows
-     * for it and for its copy, each element's and each byte's. The byte view is checked alone,
-     * so it cannot interrupt numeric seams; a match in any view withholds it whole, as does a
-     * size past the node budget. */
+    /** Typed binary is one whole-withheld numeric part: its byte numbers are adjacent to
+     * neighbours in the returned lane, and original elements substitute in a separate lane.
+     * Individual numeric whole-value matches and the raw byte view are also checked. */
     const typed = (
-      { bytes, elements }: NonNullable<ReturnType<typeof binaryOf>>,
+      { bytes, elements: constructor }: NonNullable<ReturnType<typeof binaryOf>>,
       frame: Frame,
       slot: PropertyKey,
       owner: number,
     ): unknown => {
-      const numbers = elements ? new elements(bytes.buffer) : undefined;
-      if (!fits(bytes.length + (numbers?.length ?? 0) + 1) || !spend(scan, Math.ceil(bytes.length / 8)))
-        return withheld(owner);
-      // The leaves write nowhere: the copy's slot is settled once they are checked.
-      const sink: Frame = { target: [], shared: false, parent: undefined, slot };
-      const start = parts.length;
-      if (numbers)
-        for (let index = 0; index < numbers.length; index++) leaf(String(numbers[index]), NUMBER, sink, index, owner);
-      for (let index = 0; index < bytes.length; index++) leaf(DECIMAL[bytes[index]!]!, NUMBER, sink, index, owner);
-      binaries.push([frame, slot, owner, start, parts.length]);
-      const text = latin1(bytes);
-      return this.checked([text], [BYTES], scan)[0] === text ? bytes : withheld(owner);
+      const numbers = constructor ? new constructor(bytes.buffer) : undefined;
+      let clean = fits(bytes.length + (numbers?.length ?? 0) + 1) && spend(scan, Math.ceil(bytes.length / 8));
+      const decimal = (values: ArrayLike<number | bigint>): string => {
+        const text: string[] = [];
+        for (let index = 0; index < values.length; index++) {
+          const number = values === bytes ? DECIMAL[bytes[index]!]! : String(values[index]);
+          if (scan.payload && this.smallForms && this.whole(number)) clean = false;
+          text.push(number);
+        }
+        return text.join("");
+      };
+      // Refuse oversize arrays before building their numeric projection.
+      if (!clean) {
+        return withheld(frame, slot, owner);
+      }
+      const text = decimal(bytes);
+      const original = numbers ? decimal(numbers) : undefined;
+      const binary = latin1(bytes);
+      clean &&= this.checked([binary], [BYTES], scan)[0] === binary;
+      if (clean && original !== undefined) elements.set(parts.length, original);
+      leaf(clean ? text : REDACTED, NUMBERS, frame, slot, owner);
+      if (!clean) touch(owner);
+      return clean ? bytes : REDACTED;
     };
     const container = (
       item: object,
@@ -2210,7 +2290,7 @@ export class SentSecrets {
         if (primitive) return visit(primitive.value, frame, slot, depth + 1, level, owner, false);
         // What serialization would read: a toJSON result, checked in place of the container.
         const toJSON = inherited(item, "toJSON", WITHHELD_ACCESSOR);
-        if (toJSON === WITHHELD_ACCESSOR) return withheld(owner);
+        if (toJSON === WITHHELD_ACCESSOR) return withheld(frame, slot, owner);
         if (typeof toJSON === "function") {
           const result: unknown = toJSON.call(item, String(slot));
           if (result !== null && typeof result === "object") serialized.add(result);
@@ -2233,7 +2313,7 @@ export class SentSecrets {
       owned: boolean,
     ): unknown => {
       const length = item.length;
-      if (!fits(length)) return withheld(owner);
+      if (!fits(length)) return withheld(frame, slot, owner);
       const own = walked(frame, item, slot, owned);
       for (let index = 0; index < length; index++) {
         const descriptor = Object.getOwnPropertyDescriptor(item, index);
@@ -2241,7 +2321,7 @@ export class SentSecrets {
           // A hole serializes as what its prototypes hold at its index: a data field is checked
           // and copied in, an accessor is withheld unread, and nothing leaves the hole as it is.
           const found = owned ? undefined : inherited(item, String(index), WITHHELD_ACCESSOR);
-          if (found === WITHHELD_ACCESSOR) replace(own, index, REDACTED, owner);
+          if (found === WITHHELD_ACCESSOR) replace(own, index, withheld(own, index, owner), owner);
           else if (found !== undefined) {
             replaced.push([own, index, found]);
             const next = visit(found, own, index, depth + 1, level, owner, owned);
@@ -2250,7 +2330,7 @@ export class SentSecrets {
           continue;
         }
         if (!("value" in descriptor)) {
-          replace(own, index, REDACTED, owner);
+          replace(own, index, withheld(own, index, owner), owner);
           continue;
         }
         const next = visit(descriptor.value, own, index, depth + 1, level, owner, owned);
@@ -2274,7 +2354,7 @@ export class SentSecrets {
       owned: boolean,
     ): unknown => {
       const names = Object.getOwnPropertyNames(item);
-      if (!fits(names.length)) return withheld(owner);
+      if (!fits(names.length)) return withheld(frame, slot, owner);
       const prototype = Object.getPrototypeOf(item) as object | null;
       let plain =
         owned ||
@@ -2366,8 +2446,19 @@ export class SentSecrets {
         else if (error && key === "name" && typeof value === "string" && keptErrorName(prototype, value)) next = value;
         else if (typeof value === "string" && binaryField(field, key)) next = declared(value, target, name, owner);
         else {
+          const start = parts.length;
+          const nestedStart = nested.length;
           next = visit(value, target, name, depth + 1, level, owner, owned);
-          if (error && key === "name" && typeof value === "string" && target === own) named.push([out, name, value]);
+          if (error && key === "name" && typeof value === "string" && target === own) {
+            if (parts.length === start) leaf("", TEXT, target, name, owner);
+            named.push({
+              copy: out,
+              slot: name,
+              start,
+              end: parts.length,
+              withheld: next !== value || nested.slice(nestedStart).some((entry) => entry.dirty),
+            });
+          }
         }
         if (target !== own) continue;
         if (!plain) put(out, name, next, extra ? false : visible[index]);
@@ -2379,7 +2470,24 @@ export class SentSecrets {
     };
     const root: Frame = { target: { value: undefined }, shared: false, parent: undefined, slot: "value" };
     (root.target as Holder)["value"] = visit(value, root, "value", 0, 0, -1, false);
-    const safe = this.checked(parts, kinds, scan);
+    const normalize = named.length
+      ? (lane: string[]) => {
+          for (const entry of named) {
+            for (let index = entry.start; !entry.withheld && index < entry.end; index++)
+              if (lane[index] !== parts[index]) entry.withheld = true;
+            if (entry.withheld)
+              for (let index = entry.start; index < entry.end; index++)
+                lane[index] = index === entry.start ? REDACTED : "";
+          }
+        }
+      : undefined;
+    let lane = parts;
+    if (elements.size) {
+      const original = parts.map((part, index) => elements.get(index) ?? part);
+      const checked = this.checked(original, kinds, scan, false, normalize);
+      lane = checked.map((part, index) => (part === original[index] ? parts[index]! : part));
+    }
+    const safe = this.checked(lane, kinds, scan, false, normalize);
     // Structure first, then the leaves inside it and typed binary, then nested JSON from the
     // innermost out.
     // A slot replaced by a toJSON result walked there takes the copy that result already got,
@@ -2389,7 +2497,6 @@ export class SentSecrets {
       put(writable(frame), slot, child && child.target === next && child.copy ? child.copy : next);
     }
     for (const frame of copied) writable(frame);
-    let marker: string | undefined;
     for (let index = 0; index < parts.length; index++) {
       const next = safe[index]!;
       const kind = kinds[index]!;
@@ -2398,33 +2505,17 @@ export class SentSecrets {
         continue;
       }
       const holder = writable(frames[index]!);
-      // Declared binary is withheld as the encoded marker, itself checked; a typed number on an
-      // error is dropped rather than turned into text.
-      if (kind === BINARY) {
-        const encoded = btoa(REDACTED);
-        marker ??= this.checked([encoded], [BINARY], scan)[0] === encoded ? encoded : "";
-      }
-      put(
-        holder,
-        slots[index]!,
-        kind === BINARY ? marker : kind === NUMBER && holder instanceof Error ? undefined : next,
-      );
+      // A typed number on an error is dropped rather than turned into text.
+      put(holder, slots[index]!, kind === ERROR_NUMBER ? undefined : next);
       touch(owners[index]!);
-    }
-    for (const [frame, slot, owner, start, end] of binaries) {
-      let clean = true;
-      for (let index = start; clean && index < end; index++) clean = safe[index] === parts[index];
-      if (clean) continue;
-      put(writable(frame), slot, REDACTED);
-      touch(owner);
     }
     for (let index = nested.length - 1; index >= 0; index--) {
       const entry = nested[index]!;
-      if (!entry.crossing && !entry.dirty) continue;
-      put(writable(entry.frame as Frame), entry.slot, entry.crossing ? REDACTED : JSON.stringify(entry.json));
+      if (!entry.dirty) continue;
+      put(writable(entry.frame as Frame), entry.slot, JSON.stringify(entry.json));
       touch(entry.owner);
     }
-    for (const [copy, slot, name] of named) if (copy[slot] !== name) put(copy, slot, REDACTED);
+    for (const entry of named) if (entry.withheld) put(entry.copy, entry.slot, REDACTED);
     return { value: (root.target as Holder)["value"], changed };
   }
 }

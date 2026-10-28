@@ -99,6 +99,204 @@ afterEach(() => {
 });
 
 describe("the output boundary's projection", () => {
+  describe("placeholder and typed-element seams (#1149)", () => {
+    const paths = (["payload", "envelope", "values"] as const).flatMap((mode) =>
+      [false, true].map((large) => ({ mode, large })),
+    );
+    const filler = "!".repeat(18_000_000);
+    function redact<T>(secrets: SentSecrets, value: T, mode: "payload" | "envelope" | "values", large: boolean): T {
+      if (!large) return secrets.redact(value, mode);
+      // Private registrations give the joined scan a 64 MiB work budget. Two 18 MB
+      // leaves exceed it, forcing real leaf-by-leaf matching, including the final seams.
+      secrets.arguments({ value: "budget-only-private-value" }, schema);
+      const leaves = vi.spyOn(secrets as never, "leafByLeaf");
+      const safe = secrets.redact({ padding: [filler, filler], value }, mode);
+      expect(leaves).toHaveBeenCalled();
+      return safe.value;
+    }
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large settles the seam exposed by omitting an error number",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        for (const secret of ["test-credential-12345678", "abcd5678-private"]) secrets.secret(secret);
+        const input = Object.assign(new Error(), { stack: undefined, before: "abcd", count: 12345678, after: "5678" });
+        const safe = redact(secrets, input, mode, large);
+        expect(safe).toBeInstanceOf(Error);
+        expect(safe.count).toBeUndefined();
+        expect(everyValue(safe).join("")).not.toContain("abcd5678");
+        expect([safe.before, safe.after]).toEqual([MARK, MARK]);
+        expect(input.count).toBe(12345678);
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large settles whole error names before their numeric neighbours",
+      ({ mode, large }) => {
+        for (const name of ["example.com-public", '{"a":"example.com-public"}', '{"a":5,"b":"example.com-public"}']) {
+          const secrets = new SentSecrets();
+          for (const secret of ["example.com-private", "dacted]0-private"]) secrets.secret(secret);
+          const input = Object.assign(new Error(), { stack: undefined, name, n: 0 });
+          const safe = redact(secrets, input, mode, large);
+          expect(safe.name).toBe(MARK);
+          expect(safe.n).toBeUndefined();
+          expect(everyValue(safe).join("")).not.toContain("dacted]0");
+          expect(input.name).toBe(name);
+          expect(input.n).toBe(0);
+        }
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large projects a whole withheld JSON string as its placeholder",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        for (const secret of ['prefix-"a":"pub-suffix', "dacted]0-private"]) secrets.secret(secret);
+        const input = ['{"a":"public"}', 0];
+        expect(redact(secrets, input, mode, large)).toEqual([MARK, MARK]);
+        expect(input).toEqual(['{"a":"public"}', 0]);
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large projects walk-time scalar withholding as a placeholder",
+      ({ mode, large }) => {
+        const secrets = set("null");
+        secrets.secret("dacted]0-private");
+        // Envelope mode keeps short private scalars. The large path's padding
+        // still leaves a marker adjacent to 0, so that neighbour is withheld.
+        expect(redact(secrets, [null, 0], mode, large)).toEqual(
+          mode === "envelope" ? [null, large ? MARK : 0] : [MARK, MARK],
+        );
+      },
+    );
+
+    it.each(["payload", "envelope", "values"] as const)(
+      "INV-5: %s withholds untouched neighbours when a placeholder cannot be scanned",
+      (mode) => {
+        const secrets = new SentSecrets();
+        for (const secret of ["example.com-private", "dacted]0-private"]) secrets.secret(secret);
+        const scan = { budget: { work: 29, nodes: 100 }, payload: mode !== "envelope" };
+        expect(secrets["checked"](["example.com", "0"], [0, 1], scan)).toEqual([MARK, MARK]);
+        expect(scan.budget.work).toBeLessThan(29);
+        // A walk-time replacement already starts as a marker in the first scan.
+        const markerScan = { budget: { work: 3, nodes: 100 }, payload: mode !== "envelope" };
+        expect(secrets["checked"]([MARK, "0"], [0, 1], markerScan)).toEqual([MARK, MARK]);
+        secrets.arguments({ value: "budget-only-private-value" }, schema);
+        const safe = secrets.redact(["!".repeat(33_554_412), "example.com", 0], mode);
+        expect(safe.slice(1)).toEqual([MARK, MARK]);
+        expect(everyValue(safe).join("")).not.toContain("dacted]0");
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large settles a withheld binary's placeholder beside a number",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        for (const secret of ["test-credential-12345678", "alice@example.com", "dacted]0-private"])
+          secrets.secret(secret);
+        const input = { binary: new Uint8Array([12, 34, 56, 78, 9]), n: 0, text: "example-connecta" };
+        const safe = redact(secrets, input, mode, large);
+        expect(safe).toEqual({ binary: MARK, n: MARK, text: `${MARK}-connecta` });
+        expect(everyValue(safe).join("")).not.toContain("dacted]0");
+        expect(input.n).toBe(0);
+        expect(input.binary).toEqual(new Uint8Array([12, 34, 56, 78, 9]));
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large follows placeholder seams into previously untouched numbers",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        secrets.secret("example01-[redacted]0-[redacted]1-[redacted]2-private");
+        const safe = redact(secrets, ["example", 0, 1, 2], mode, large);
+        expect(safe).toEqual([MARK, MARK, MARK, MARK]);
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large settles partial string replacements within and across leaves",
+      ({ mode, large }) => {
+        for (const input of [["example.com", "0"], ["example.com0"]]) {
+          const secrets = new SentSecrets();
+          secrets.secret("example.com-private");
+          secrets.secret("dacted]0-private");
+          expect(redact(secrets, input, mode, large)).toEqual(input.map(() => MARK));
+        }
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large checks byte and original element numbers with the same neighbours",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        secrets.secret("test-credential-12345678");
+        // 334 is the original Int16 element on this little-endian fixture; 78 is
+        // the first byte returned. Each projection must meet its own neighbour.
+        for (const binary of [
+          new Int16Array(Uint8Array.of(78, 1).buffer),
+          new Float64Array(Uint8Array.of(78, 1, 0, 0, 0, 0, 0, 0).buffer),
+        ]) {
+          expect(redact(secrets, { before: 123456, binary }, mode, large)).toEqual({ before: MARK, binary: MARK });
+          const original = new SentSecrets();
+          original.secret(`original-element-${123456}${binary[0]}-private`);
+          expect(redact(original, { before: 123456, binary }, mode, large)).toEqual({ before: MARK, binary: MARK });
+          const after = new SentSecrets();
+          after.secret(`original-element-${binary[0]}567890-private`);
+          expect(redact(after, { binary, after: 567890 }, mode, large)).toEqual({ binary: MARK, after: MARK });
+        }
+      },
+    );
+
+    it.each(paths)(
+      "INV-5: $mode, large=$large preserves schema-valid numbers once string replacement breaks the run",
+      ({ mode, large }) => {
+        const secrets = new SentSecrets();
+        secrets.secret("alice@example.com");
+        expect(redact(secrets, { hostCalls: { failed: 0 }, _meta: { name: "example-connecta" } }, mode, large)).toEqual(
+          {
+            hostCalls: { failed: 0 },
+            _meta: { name: `${MARK}-connecta` },
+          },
+        );
+      },
+    );
+
+    it("INV-5: whole private values, unchecked runs and decoded binary replacements settle their neighbours", () => {
+      const small = set("7");
+      small.secret("dacted]0-private");
+      expect(small.redact([7, "0"])).toEqual([MARK, MARK]);
+      const limited = set("s".repeat(524_289));
+      limited.secret("dacted]0-private");
+      expect(limited.redact(["xxxxxxxx", 0])).toEqual([MARK, MARK]);
+      const decoded = new SentSecrets();
+      decoded.secret(TOKEN);
+      decoded.secret("dacted]0-private");
+      expect(decoded.redact([encoded(`xx${TOKEN.slice(3, 11)}z`), "0"])).toEqual([MARK, MARK]);
+    });
+
+    it("INV-5: an unchanged lane pays for its initial scan only", () => {
+      const secrets = new SentSecrets();
+      secrets.secret(TOKEN);
+      const spans = vi.spyOn(secrets as never, "spansOf");
+      const parts = ["public?!", "42"];
+      const scan = { budget: { work: 1000, nodes: 100 }, payload: false };
+      expect(secrets["checked"](parts, [0, 1], scan)).toEqual(parts);
+      expect(spans).toHaveBeenCalledTimes(1);
+      expect(scan.budget.work).toBe(1000 - 2 * parts.join("").length);
+    });
+
+    it("INV-5: typed numeric groups keep individual whole-field rules and withhold whole on errors", () => {
+      const bytes = new Uint8Array([1, 2]);
+      expect(set("12").redact(bytes)).toEqual(bytes);
+      expect(set("2").redact(bytes)).toBe(MARK);
+      const secrets = new SentSecrets();
+      secrets.secret("test-credential-12345678");
+      const error = Object.assign(new Error("Public diagnostic."), { binary: new Uint8Array([12, 34, 56, 78, 9]) });
+      expect(secrets.redact(error).binary).toBe(MARK);
+    });
+  });
+
   it.each(echoForms(SECRET))(
     "INV-5: a whole %s form split into one-unit leaves is found across them, in nested JSON and error fields, without mutating the input",
     (_name, form) => {
@@ -269,8 +467,10 @@ describe("the output boundary's projection", () => {
       const kinds = [1, 1, 0, 1, 0];
       const safe =
         path === "joined" ? secrets["safeParts"](parts, kinds, scan, false) : secrets["leafByLeaf"](parts, scan, kinds);
-      expect(safe).toEqual([MARK, MARK, `${MARK}-connecta`, MARK, `${MARK}-connecta`]);
-      expect(scan.budget.work).toBe(0);
+      for (const index of [0, 1, 3]) expect(safe[index]).toBe(MARK);
+      expect(safe.every((part) => part.includes(MARK))).toBe(true);
+      expect(safe.join("")).not.toContain("dacted]0");
+      expect(scan.budget.work).toBeLessThan(work);
     },
   );
 
@@ -280,20 +480,14 @@ describe("the output boundary's projection", () => {
     const parts = ["10", "examplecorp-connecta"];
     // Fault probe: exactly enough work for the initial raw scan, none for the retry.
     const scan = { budget: { work: 2 * parts.join("").length, nodes: 100 }, payload: false };
-    expect(secrets["safeParts"](parts, [1, 0], scan, false)).toEqual([MARK, `${MARK}-connecta`]);
+    // The retry must now prove string pieces safe too; neither part fits.
+    expect(secrets["safeParts"](parts, [1, 0], scan, false)).toEqual([MARK, MARK]);
     expect(scan.budget.work).toBe(0);
     expect(secrets["safeParts"](parts, [1, 0], secrets["scan"](false), true)).toEqual([MARK, `${MARK}-connect${MARK}`]);
     // Force leaf-by-leaf matching: the large leaf cannot fit, but the initial seam can.
-    for (const [work, number] of [
-      [100, MARK],
-      [160, "10"],
-    ] as const) {
+    for (const work of [100, 160]) {
       const limited = { budget: { work, nodes: 100 }, payload: false };
-      expect(secrets["safeParts"](["x".repeat(100), ...parts], [0, 1, 0], limited, false)).toEqual([
-        MARK,
-        number,
-        `${MARK}-connecta`,
-      ]);
+      expect(secrets["safeParts"](["x".repeat(100), ...parts], [0, 1, 0], limited, false)).toEqual([MARK, MARK, MARK]);
     }
   });
 
