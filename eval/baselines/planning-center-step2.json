@@ -93,7 +93,7 @@
         ],
         "pluginInventory": []
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/before-codex.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/before-codex.json",
       "rawSha256": "d43786c4304be6badbf589b49a5569d261a3b90efc2ee399c125cd8b190b6ff9",
       "passed": 10,
       "total": 14
@@ -192,7 +192,7 @@
           "mcp__connecta__skills"
         ]
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/before-claude.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/before-claude.json",
       "rawSha256": "14631f7ea8e6cfd765aea5db0710884fb3a2ebf11b25e2a1939ec309a22ba43f",
       "passed": 14,
       "total": 14
@@ -287,7 +287,7 @@
         ],
         "pluginInventory": []
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/before-final-codex.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/before-final-codex.json",
       "rawSha256": "2cbe8d9684bb8654b14430dbec87c52c21f9dcef77bcd94fc2b57b72aeb486ab",
       "passed": 11,
       "total": 14
@@ -386,7 +386,7 @@
           "mcp__connecta__skills"
         ]
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/before-final-claude.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/before-final-claude.json",
       "rawSha256": "5f1fa4b5f09083aa3b2cadfacc9b1324d84bea224a4aa8446372e76c7db69ca4",
       "passed": 14,
       "total": 14
@@ -481,7 +481,7 @@
         ],
         "pluginInventory": []
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/after-final-codex.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/after-final-codex.json",
       "rawSha256": "801464bfda2b2f54142e277e1a978d2e57f585d5d7477e3333bdf3be09ddd865",
       "passed": 12,
       "total": 14
@@ -580,7 +580,7 @@
           "mcp__connecta__skills"
         ]
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/after-final-claude.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/after-final-claude.json",
       "rawSha256": "ceba0722a3eedebaffbb978a50f3d5afeb086901170958c2293084c4089388b2",
       "passed": 14,
       "total": 14
@@ -675,7 +675,7 @@
         ],
         "pluginInventory": []
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r1-codex.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r1-codex.json",
       "rawSha256": "39e1ef7f6f45904bdce0200cf72368d21041560f57d88290eaef06eadcecac88",
       "passed": 12,
       "total": 14
@@ -774,7 +774,7 @@
           "mcp__connecta__skills"
         ]
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r1-claude.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r1-claude.json",
       "rawSha256": "faa7060dc4c0bf066435362289e96a9b3ea929050a0be4f0f829edf071e41848",
       "passed": 14,
       "total": 14
@@ -869,7 +869,7 @@
         ],
         "pluginInventory": []
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r2-codex.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r2-codex.json",
       "rawSha256": "1aa66e634d2379bf4b39e7ec2e907816189ac18a3b1a9462aa3560a4435f6a9a",
       "passed": 11,
       "total": 14
@@ -968,7 +968,7 @@
           "mcp__connecta__skills"
         ]
       },
-      "rawFile": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r2-claude.json",
+      "rawFile": "/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/after-r2-claude.json",
       "rawSha256": "6ccc19f84198bef41134182688fc92f1bf93e49caa5b55bb1982be5920deede6",
       "passed": 14,
       "total": 14

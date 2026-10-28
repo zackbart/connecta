@@ -70,7 +70,7 @@ purge trial. These `after-*` diagnostics are separate from both complete AFTER
 arms. Earlier metadata/adapter/error polish is disclosed in the commit history.
 
 Original full JSON and logs remain under
-`/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/`. The committed
+`/home/operator/.t3/scratch/connecta-orchestrator/step2/cloudflare/`. The committed
 summary records artifact hashes, clean source commits, task/harness hashes and
 CLI versions (Codex 0.163.0, Claude 2.1.309).
 

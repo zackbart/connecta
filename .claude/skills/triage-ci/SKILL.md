@@ -7,27 +7,9 @@ description: Diagnose a red connecta CI run - read the aggregate check gate, rec
 
 ## Read the gate
 
-[ci.yml](../../../.github/workflows/ci.yml) requires build, Node, Workers,
-behavior, browser, audit and Eve on every PR, main push, nightly and manual run.
-`check` uses `if: always()` and requires all seven jobs to succeed. Failures,
-cancellations, missing jobs and unexpected skips fail it. Inspect the newest
-head's run; superseded PR runs are cancelled.
-
-- `build`: static checks, build/declarations/bundle caps, example typechecks
-  and installed-consumer/generated-deployment smoke. Docker is required.
-- `node`: all retained Node suites through `vitest.config.node.ts`.
-- `workers`: runtime-sensitive `WORKERS_SUITES` in
-  [vitest.config.ts](../../../vitest.config.ts). Mixed suites tag native cases
-  `workers`; workerd skips `node` cases, while Node runs both.
-- `behavior`: required outcome controls and deployed Node/Workers smoke.
-- `browser`: Playwright behavior retries twice in CI; visual never retries.
-  Any failed attempt retains `playwright-report` with HTML, diffs and traces.
-- `audit`: core production and helper full dependency graphs without installs.
-- `eve`: real Eve helper checks and isolated runtime/type consumers on Node 24.
-
-[Provider drift](../../../.github/workflows/provider-drift.yml) remains
-separate, weekly and manual, and advisory. It separates changed contracts from
-standing manual reviews; its parser tests remain in Node.
+Read [AGENTS.md's verification policy](../../../AGENTS.md#verification) for
+CI jobs, the aggregate gate and advisory workflows. Inspect the newest head's
+run; [ci.yml](../../../.github/workflows/ci.yml) is the executable definition.
 
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
@@ -73,8 +55,6 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
 ## Locally
 
-`pnpm run check:fast` runs static checks and Vitest’s built-in
-`--changed origin/main` selection on Node as the partial inner loop. `pnpm run check` runs CI's
-core checks locally; browser and audit are also required in CI. `release:check` adds Chromium, examples, audit and
-package/Docker smoke. Other agents
-share this machine; check `uptime` before blaming a timeout on your change.
+Follow [AGENTS.md](../../../AGENTS.md#verification) for local and release
+checks. Other agents share this machine; check `uptime` before blaming a
+timeout on your change.

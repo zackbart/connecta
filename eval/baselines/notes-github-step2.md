@@ -58,8 +58,7 @@ trial deadlines, concurrency one per runner and at most two total model trials.
 - Harness: `44b849de4d88399c2ae97174e11417b12a0c615d5f7615835c7379f8285fcb47`.
 - GitHub task file: `70a402b3194ee16150b66f7626dfbf907d3a2470116399e0e2f0fa3b47fb40e0`.
 
-BEFORE and AFTER have identical task/harness hashes. The report-only CLI
-`eval/report-github-step2.ts` changes neither hash, prompts, state nor graders.
+BEFORE and AFTER have identical task/harness hashes.
 
 ## Corrections and retained diagnostic arms
 
@@ -100,10 +99,8 @@ replies count in full. Max means the largest such reply. These are model-visible
 bytes; selected calls include refused attempts.
 
 Full JSON, ledgers and transcripts remain in
-`/home/zackbart/.t3/scratch/connecta-orchestrator/step2/github/` as
+`/home/operator/.t3/scratch/connecta-orchestrator/step2/github/` as
 `before-final-{luna,sonnet}.json` and `after-{luna,sonnet}.json`.
-Regenerate the committed summary with
-`pnpm exec tsx eval/report-github-step2.ts <that-directory>`.
 Reference selftests cover all seven AFTER tasks and six supported BEFORE tasks
 on six/code surfaces and route/outcome grading, including no-op, missing HTTP
 and duplicate-write counterexamples.

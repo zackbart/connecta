@@ -31,9 +31,8 @@ implementation boundary. Use these sections for the affected subsystem.
 | Find code and deployment evidence       | [Source map](#where-else-to-look), [sharp edges](#sharp-edges), [repository policy](https://github.com/zackbart/connecta/blob/main/AGENTS.md) |
 
 Source paths and test names in each section identify its implementation and
-regression evidence. Recorded production probes and bundle measurements are
-historical observations tied to their stated date or version, not current
-benchmarks or proof that planned replacements have shipped.
+regression evidence. Decision records preserve historical measurements; current
+contracts and executable evidence describe the implementation.
 
 ## The two lifetimes
 
@@ -447,133 +446,20 @@ Falsy values such as `false`, `null`, `0`, and `""` are construction errors
 
 ### Production Worker disconnects
 
-The original production probe for [#573](https://github.com/zackbart/connecta/issues/573)
-ran on 2026-09-25 with compatibility date `2025-01-01`, first with no flags and
-then with `enable_request_signal`. It used Wrangler 4.114.0 and a Node 26.9.0
-client. A raw Worker stream established the runtime behavior; a custom auth
-provider returning a synthetic streaming 401 exercised Connecta's real admission
-wrapper. Each case had its own Connecta instance with one request permit and no
-queue. Health checks and subsequent MCP requests confirmed the same isolate ID.
-The [recorded observations](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect-2026-09-25.json)
-contain all twelve cases, including served flags and client-end timing.
-
-| Response and flag                                     | Raw stream abort / cancel | Connecta source abort / cancel | Admission after response; next request |
-| ----------------------------------------------------- | ------------------------- | ------------------------------ | -------------------------------------- |
-| Heartbeats, no flag                                   | neither                   | neither                        | active 1; 503                          |
-| Idle with a pending timer, no flag                    | neither                   | neither                        | active 1; 503                          |
-| Heartbeats, request signal enabled                    | abort only                | both                           | active 0; 200                          |
-| Idle with a pending timer, request signal enabled     | abort only                | both                           | active 0; 200                          |
-| One chunk, then no timer or I/O, either configuration | neither                   | neither                        | active 1; 503                          |
-
-The last row is a different failure. The client observed the response end
-_before_ its planned disconnect, although the source never closed itself.
-The runtime ended the response without running JavaScript cleanup. This does
-not show a missing abort on a still-live request. The other cases remained open
-until the client aborted. Admission was sampled 1.5 seconds later, followed by
-an actual MCP request; this measures retained capacity, not an infinite leak.
-
-Enable `enable_request_signal` when deploying on Workers: it let Connecta's
-abort listener cancel the source and release admission for live responses in
-this experiment. It does not solve runtime-ended streams. The admitted-request
-bound above recovers capacity on the first later request at or after its
+Enable `enable_request_signal` when deploying on Workers so Connecta can cancel
+the source and release admission for live responses. It does not solve
+runtime-ended streams. The admitted-request bound above recovers capacity on the first later request at or after its
 deadline, even if the old request's timer never ran. This is capacity recovery,
 not proof that workerd cancelled an old stream. A still-live request reaches
 the same hard deadline and is aborted in its own context.
 Cloudflare documents the flag in its
 [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
 
-### Authentication release by collection on workerd
-
-Measured on 2026-10-20 with workerd 1.20260722.1 (Miniflare 4.20260722.0),
-compatibility date `2025-01-01`:
-
-- `FinalizationRegistry` and `WeakRef` are undefined without
-  `enable_weak_ref`; the flag's default-on date is 2025-05-05.
-- With `enable_weak_ref` and `enable_request_signal`, an object reachable only
-  through a fetch continuation is finalized once its invocation ends and
-  workerd cancels the fetch; while the invocation runs it is not. Pending
-  timers and listeners on the request's signal do not keep it.
-- Strong values in a WeakMap keyed by a `Request` (even one the handler
-  created), properties set on a `Request`, and WeakMap values keyed by its
-  `Headers`, `ctx` or `env` stay reachable after the invocation ends. The
-  lifetime registry in `src/auth-admission.ts` therefore stores `WeakRef`s.
-- No `gc()` is exposed. Allocating large arrays (32 × 1 MiB per request)
-  triggers collections, but the most recent unreachable object often survives
-  them; V8 in this build scans the native stack conservatively. The inspector's
-  precise `HeapProfiler.collectGarbage` freed it.
-- In the Workers Vitest harness (`@cloudflare/vitest-plugin`, formerly `vitest-pool-workers`), an isolate that had already collected
-  one scenario's cancelled work sometimes kept a later scenario's cancelled
-  work reachable through 400 rounds of pressure; standalone Miniflare never
-  did. `test/auth-admission-binding.test.ts` gives each collection scenario a
-  fresh isolate and requires two of four sentinels collected before asserting
-  that live charges stayed counted.
-
-A second production run on the same date tested the request bound at 2,000 ms.
-All twelve raw-stream and MCP cases passed with both flag configurations. Live
-MCP requests still rejected a competing request with 503 before the deadline;
-the first MCP request after the deadline returned all eight tools with 200 in
-the original isolate. Admission then reported zero active requests. Without the
-flag, the source still recorded no abort or cancellation, so recovery did not
-rely on runtime cleanup. The [recovery observations](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect-recovered-2026-09-25.json)
-also retain two inconclusive queue-handoff cases: concurrent client connections
-reached different isolates and could not establish an abandoned queued waiter.
-A [second trial using HTTP/2](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect-h2-2026-09-25.json)
-repeated the twelve passing core cases and verified queued cancellation with
-request signals enabled. Even on one HTTP/2 connection, the no-signal queue case
-crossed isolates and remained inconclusive. The Node and workerd regression
-suites cover expired waiters, orphaned handoffs, and identity-safe late release
-deterministically.
-
-The [historical probe source](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/worker-disconnect.mjs)
-and observations are retained in Git history, outside the current checkout and
-npm package. The probe deployed a disposable Worker containing only synthetic
-data, verified the served configuration, saved observations, and deleted the
-Worker in `finally`. It used no `waitUntil`, which would change the lifetime
-being measured. The production runtime build number was not exposed by the
-deployment; these findings are tied to the date and flags above.
-
 ### Production Access bypass for agent endpoints
 
-P0 of [#837](https://github.com/zackbart/connecta/issues/837) asked whether
-`/agent/*` can skip a Worker-level Cloudflare Access application, so an agent
-sends only its `cta_` token, while every other path keeps Access and
-`ctx.access`. It can. The probe ran on 2026-10-15 against a disposable Worker on
-its `workers.dev` hostname, with compatibility date `2026-09-01`, `cf`
-1.0.0-beta.14, Wrangler 4.114.0, and curl 8.7.1 with `--path-as-is`, so raw
-paths reached the edge unnormalized. The Worker-level application allowed only
-a probe service token. Its unauthenticated refusal was therefore Access's 403
-page rather than a login redirect. The [observations](https://github.com/zackbart/connecta/blob/main/scripts/probes/access-agent-bypass-2026-10-15.json)
-record three identical rounds after each configuration change had produced
-three consecutive matching responses.
-
-- **Precedence.** A self-hosted application whose destination is
-  `{ "type": "public", "uri": "<host>/agent/*" }`, with one `bypass` policy
-  including `everyone`, overrides the Worker-level application on matching
-  paths only. Unauthenticated requests reach the Worker there. `/mcp`, `/`,
-  and every unmatched path still get the Access refusal. A service token is
-  still admitted on them with `ctx.access` from the Worker-level application.
-  This confirms Cloudflare's documented hierarchy, and that Worker-level
-  protection still covers the `workers.dev` hostname.
-- **`ctx.access` on a bypassed request is present, not absent.** Its `aud` is
-  nonempty and is the _path_ application's AUD, not the Worker-level one.
-  `getIdentity()` resolved to `undefined` for every credential tested: none, a
-  valid service token, a `cta_`-style bearer token, and a forged
-  `Cf-Access-Jwt-Assertion`. A service token on a protected path also gave
-  `undefined` identity, carrying the Worker-level AUD. A human
-  `CF_Authorization` cookie on a bypassed path was not tested, so what
-  `getIdentity()` returns there is unknown. That is one more reason the agent
-  route ignores Access context rather than relying on its contents.
-- **API shape.** A Worker destination is exclusive to one application. A
-  second application with `{ "type": "worker", "worker_id" }` plus `uri` or
-  `path` was refused with 409 `destination belongs to another application`. The
-  bypass must be hostname-and-path, stored with domain `<host>/agent/*`, and it
-  covers only that exact hostname.
-- **Propagation.** Creating or deleting each application took 15–19 seconds to
-  settle across runs. While a deployment or application change was propagating,
-  the edge returned transient 500 (`error code: 1104`) and 404 (`error code:
-  1042` or `1043`) responses. The recorded run has one such 404, on the
-  Worker-level-only service-token control for `/agent/x`. Deleting the path
-  application restored the 403 on `/agent/x`.
+Access uses a hostname-and-path bypass application for `/agent/*`; the
+Worker-level application protects other paths. A bypassed request can still
+carry `ctx.access`, so agent routes ignore that context.
 
 | Raw request path           | Access outcome | Worker pathname (+ search) |
 | -------------------------- | -------------- | -------------------------- |
@@ -605,130 +491,24 @@ leading `//`, and treats `%2f` as data, not a separator. The effective Worker
 pathname, `new URL(request.url).pathname`, is the raw request path with case,
 escapes, and slashes untouched, except that dot segments arrive resolved:
 `/mcp/../agent/x` arrives as `/agent/x`. Every path that
-resolves outside `/agent/*`, including every `/mcp` form, stayed protected. The
+resolves outside `/agent/*`, including every `/mcp` form, remains protected. The
 inverse is the risk: Access bypasses paths
 that connecta must not treat as an agent pool. Connecta's router compares raw
 pathnames without decoding, case folding, or slash collapsing, so an `/agent/`
-route must keep that property. It should accept exactly
-`/agent/<pool>`, with `<pool>` byte-equal to a declared pool name. It should
-refuse an empty segment, a trailing slash, any extra segment, `%`, uppercase
-variants, and a leading `//`, all with the same 404. It must ignore
+route keeps that property. It accepts exactly
+`/agent/<pool>`, with `<pool>` byte-equal to a declared pool name. It refuses
+an empty segment, a trailing slash, any extra segment, `%`, uppercase
+variants, and a leading `//`, all with the same 404. It ignores
 `ctx.access` entirely, since a bypassed request still carries an AUD.
 [Agent endpoints](./auth.md#agent-endpoints) implement exactly this in
 `src/routes/agent-path.ts`, and `test/agent-endpoints.test.ts` replays every
 row of the table above. The hyphenated row stands for any two-part pool name
-such as `<agent>-<user>`. The pool names in the recorded paths were replaced
-with placeholders after the run; the edge behavior for that path shape was
-unaffected.
+such as `<agent>-<user>`.
 
-To configure the bypass, keep the Worker-level application described in
-[Cloudflare Access on Workers](./auth.md#cloudflare-access-on-workers). Then,
-for each hostname agents use (the `workers.dev` hostname, each Custom Domain,
-or route host), add a self-hosted Access application. In the dashboard, set
-domain to that hostname and path to `agent/*`, with one policy whose action is
-**Bypass** and whose include rule is **Everyone**. Through the API, that is:
-
-```json
-{
-  "type": "self_hosted",
-  "name": "connecta agents",
-  "destinations": [{ "type": "public", "uri": "connecta.example.com/agent/*" }],
-  "policies": [{ "name": "agents bypass", "decision": "bypass", "include": [{ "everyone": {} }] }]
-}
-```
-
-Only the `workers.dev` hostname was probed. A Custom Domain application is the
-same documented hostname-and-path form, but it was not observed here. Do not
-rely on a fixed wait after a change. Changes settled in 15–19 seconds, yet one
-earlier round still saw a 403 on a bypassed path more than 30 seconds after
-the change. Test only after the positive and negative controls agree together
-for several consecutive rounds. The positive controls are bypassed paths
-reaching the Worker with the path AUD and a service token reaching a protected
-path with the Worker-level AUD; the negative controls are `/mcp` and `/`
-returning the Access refusal. The current script requires five such rounds
-after creating the bypass and three after other changes. The recorded run
-predates this: after the bypass it converged only the positive `/agent/x`
-control, then waited a fixed 90 seconds, and its negative controls were checked
-in the recorded rounds rather than before them.
-
-To repeat from a repository checkout, run
-`node scripts/probes/access-agent-bypass.mjs --profile <name> [output.json]`.
-`--profile` is required and has no default; every `cf` call passes it
-explicitly. Name the profile for the account that should host the probe; it
-needs
-Access application, policy, and service-token writes, plus Workers script
-writes. The script deploys and deletes the Worker with `cf`. `cf deploy` builds
-through Wrangler 4.136.0 or newer, so the probe installs Wrangler 4.145.0 into
-its temporary project. Wrangler needs no login. The script records only the
-count of existing Access applications, then names everything it creates
-`connecta-probe-<run>`. It force-deletes and verifies each resource in
-`finally`, then checks that the non-probe application ids are unchanged.
-Observations record statuses, outcome classes, pathnames, and which
-application's AUD matched, compared by digest inside the Worker. They contain no
-hostnames, account ids, tokens, cookies, or JWTs. `cf` delete commands prompt
-for confirmation and exit 0 without deleting when stdin is not a terminal, so
-the script passes `--force`. `cf deploy` printed `Deploy complete` and then
-kept running, so the script stops it after that line. The recorded run deployed
-with Wrangler 4.114.0 and used `cf` for Access. A standalone deploy and delete
-verified the `cf` deploy and delete path. The full probe has not been rerun on
-that path.
-
-Every subprocess (`cf`, `curl`, `npm`) runs through one runner. It enforces a
-deadline by killing the process group, keeps stdout and stderr in memory, and
-returns only facts: success, exit code, timeout, HTTP status, numeric API
-code, and an error slug from a fixed set (anything else is `unknown`). Commands
-that return data are parsed inside the runner against schemas that copy only
-whitelisted fields: ids, names, counts, booleans, and the Worker's `ctx.access`
-summary. Credentials stay in a holder that prints as `[secret]`. An unexpected
-shape, including `null` where a list belongs, is a failure, never an empty
-result. Errors are fixed diagnostics plus those facts. Teardown deletes every
-tracked id on its own. Then Access applications, service tokens, and Workers
-each get their own bounded discovery-and-delete pass by name, for resources
-whose create response was lost, so a failure in one family never skips
-another. Each discovered resource is deleted independently. Access policies are
-inline on their applications and go with them. A resource counts as gone only
-when a successful lookup omits it, and the final inventory verifies each family
-separately. Run
-`node scripts/probes/access-agent-bypass.mjs --self-test` to check the runner
-offline. It feeds canary secrets, suffixed slugs, malformed JSON, and a stalled
-process tree through it. It also runs teardown against a fake `cf` whose
-application listing always fails, after a lost token-create response, and
-checks that the token is still found and deleted. It also checks that a Worker
-that refuses deletion does not block another Worker's deletion. It runs no real
-`cf`, `curl`, or network command. This
-hardening and the joint convergence are verified offline only and have not run
-against Cloudflare.
+For the operator procedure and Access application JSON, see
+[Agent endpoints behind Cloudflare Access](./deploying.md#agent-endpoints-behind-cloudflare-access).
 
 ### Alchemy Worker deployment
-
-Two throwaway deployments on 2026-10-20 verified the Worker example's
-Alchemy path with alchemy 2.0.0-beta.83, effect 4.0.5, and Alchemy local
-state, then deleted every resource and confirmed by re-listing. Alchemy
-uploads the full Worker with `PUT /workers/scripts/<name>`, the endpoint an
-earlier full deploy had been suspected of losing `ctx.access` through.
-
-The first deployment ran a near copy of the stack with a temporary diagnostic
-route. With an Access service token in a non-identity policy, the Worker saw
-`ctx.access` carrying the Worker-level application's AUD and no identity, as
-expected for a service token. D1, the Worker Loader, R2, and secret bindings
-worked; `/agent/*` reached connecta through the bypass; `/ui/api/config`
-returned 403 `Cloudflare Access human identity required`; and
-`connecta doctor` passed with a `cta_` token issued inside the Worker. A code
-update through `alchemy deploy` kept the script tag, `ctx.access`, and D1 rows.
-Three consecutive probe rounds agreed.
-
-The second deployment ran the shipped `alchemy.run.ts` from the packed package
-in a separate project on Node 26, changing only resource names and the Access policy
-(a service token). The edge checks in the example's "Verify after deploying"
-held for three or more rounds after each deploy. `alchemy destroy` deleted the
-Worker and both Access applications and orphaned the retained D1 database; the
-next deploy adopted it by name with its rows. After deleting local state, a
-deploy reused the Worker with the same script tag, and `applicationId` took
-both Access applications over with unchanged AUDs and no duplicates. Removing
-`applicationId` afterwards planned an in-place update, and a further deploy
-planned no changes. The account API token needed only Workers Scripts Write,
-D1 Write, Access: Apps and Policies Write, and Access: Organizations, Identity
-Providers, and Groups Read.
 
 Four findings shape the operator rules. Alchemy local state under
 `.alchemy/state/` records secret binding values in plaintext. Alchemy sends no
@@ -736,8 +516,7 @@ Four findings shape the operator rules. Alchemy local state under
 `alchemy dev` does not provide `ctx.access` to a plain fetch Worker, so local
 development stays on `wrangler dev` and its `access.dev` identity. D1 needs
 `RemovalPolicy.retain()` so `alchemy destroy` cannot delete a deployment's
-state. Not verified: `Cloudflare.state()` remote state, custom domains, and
-taking over a Worker first deployed with Wrangler.
+state.
 
 npm strips `.gitignore` from the package, so the copied Worker example's
 ignore rules ship as `examples/worker/gitignore`, renamed by the README's copy
@@ -1453,9 +1232,7 @@ acknowledgement, then reconciles vendor state with exactly one physical send.
 Focused provider suites retain MIME/draft restrictions, revision conflicts,
 CCB routing, Planning Center product exclusions and deployment pins. Native
 HTTP framing, cursor and request-lifetime fault probes remain in the HTTP suites.
-The catalog-wide status sweep and its argument roster, catalog/ranking copies
-and unused paging strategy tests are retired under #1072. Provider workflows
-belong in the existing shared outcomes; a new tool requires no failure-matrix row.
+Provider workflows belong in the existing shared outcomes.
 No legacy REST tool adapter remains.
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
@@ -1757,12 +1534,6 @@ and reports only added, removed and changed counts in the caller's partition.
 
 #### Behavioral evidence (contributor)
 
-The characterization snapshot engine, provider JSON snapshots, source scheduler
-and its self-tests are retired under
-[#1072](https://github.com/zackbart/connecta/issues/1072). Provider changes no
-longer require golden enrollment, snapshot updates, byte equivalence or nightly
-capture determinism. Production invariants remain unchanged.
-
 Use the existing stateful fixture vendors and published-edge deployment adapters:
 
 - `pnpm run eval:outcomes` drives representative joins, retained paging, endpoint
@@ -1842,21 +1613,20 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   on Node for executor and call admission and QuickJS host calls, and gives back
   grants that shutdown overtook.
 - `test/request-context.node.test.ts` and `test/auth-admission-binding.test.ts`
-  exercise cancellation, held native work and garbage collection. These test actual request ownership;
-  the retired capture scheduler's source guards were only harness constraints.
+  exercise cancellation, held native work and garbage collection. These test
+  actual request ownership.
 
 The remaining probes defend distinct reachable failures: auth admission and
 native scheduler ownership, grant/callback fencing and refresh coordination,
 SDK replay/redirect/SSE attempts, nested write provenance and refusal evidence,
 unawaited program drain and failed-program accounting, catalog drift and paging
 revocation, and hostile serializers, structural echoes, truncation and persisted
-pages. Broad scripted-executor policy/privacy cross-products and repeated
-post-401 result/error-shape tables are retired. Protocol claims link executable
+pages. Protocol claims link executable
 evidence files in `spec/coverage.json`; the invariant contracts above are defended
 by the actual behavior assertions in these journeys and focused probes.
 The required CI gate includes build/declarations, Node and Workers probes,
 outcomes, browser flows, installed consumers and Docker, audits and real Eve
-compatibility. Further contributor cleanup is tracked in #1072.
+compatibility.
 
 Add a compact fault journey only for a meaningful outcome those suites cannot
 observe. Reuse their fixtures and adapters; do not reintroduce a snapshot
@@ -2187,17 +1957,8 @@ is the existing exact `effect` pin. Connecta does not adopt `@effect/sql-d1`:
 its 4.0.5 batch API drops metadata and its binding contract is wider than
 Connecta's published structural interface.
 
-The D.2 architecture allowance was measured against `0e314247` using cached
-official `node:22-slim` (Node 22.23.4, zlib 1.3.1-e00f703), no network, and
-read-only bundle artifacts: `/d1` grew from 62,516 to 88,305 bytes gzip
-(+25,789); the Worker example grew from 729,847 to 756,375 (+26,528).
-Final typed-driver failure normalization measures 88,319 and 756,377 bytes
-on that same official runtime. Executing real services and statement operations requires those runtime
-semantics; the earlier identity-compiler facade did not provide them. The
-explicit allowance changes only `/d1`'s cap from 62,542 to 90,000 bytes and
-the Worker example's cap from 743,000 to 760,000. Historical baselines and
-all other caps stay fixed. Final integration must remeasure the combined
-implementation and satisfy the same compatibility and privacy contracts.
+Bundle caps and baselines are authoritative in
+[`scripts/bundle-budget.json`](https://github.com/zackbart/connecta/blob/main/scripts/bundle-budget.json).
 
 The platform connection capability contains no request state. D1 prepares in
 the current request and retains no prepared handles or promises. SQLite keeps
@@ -2272,7 +2033,7 @@ Stripe declares HTTP 409 as a conflict, alongside its fact-driven 429
 classification to an oversized 424 reply, preserving the dependency-failure
 meaning when the bounded body cannot be read. The original ceiling diagnostic
 and answered status remain; the core still decides write outcomes. It does not
-apply to 401 or alter Q8. A fixed read-phase fact distinguishes failed body
+apply to 401 or change write-outcome settlement. A fixed read-phase fact distinguishes failed body
 reads from malformed JSON only for vendors declaring that wording; raw
 exceptions never enter diagnostics. Other providers retain their mapping and
 wording.
@@ -2289,13 +2050,11 @@ The mapping records each request's own served provenance and raw 401 facts.
 reservation's answer even for a read-classified tool issuing a physical write.
 An accepted write's blocked retry retains its original HTTP status; a slot
 occupied by an auxiliary read instead names the separate write step needed.
-Structured resend advice reaches output only when the core permits it. Generic
-unknown writes retain the core's diagnostic wait; Q8 removes it. The mapping
+Structured resend advice reaches output only when the core permits it. Unknown write outcomes suppress retry and wait advice. The mapping
 adds no Promise entry or lifetime owner. `call-services.test.ts` and the native
 transport suites exercise these contracts through invocation, physical sockets
 and request closure. `http-kit.test.ts` retains focused numeric/text fact,
-request-equivalence and bulk-capacity fault probes. The migration-era
-kit/core verdict comparison is retired under #1072. Maintained API providers use the kit through their
+request-equivalence and bulk-capacity fault probes. Maintained API providers use the kit through their
 explicit provider subpaths; it stays off the root import graph and published
 declarations expose Promises.
 
@@ -2306,8 +2065,7 @@ declarations expose Promises.
   are Promises. A connector is called with `Effect.tryPromise`, never asked to
   return an Effect.
 - **Inbound authorization.** `authorize` in `src/routes/shared.ts` ships in
-  the declarations and in the `./activity` bundle; converting it cost 32 KB
-  gzip there for nothing a caller could see.
+  the declarations and in the `./activity` bundle.
 - **Pure synchronous code.** Ranking, schema rendering, classification,
   `validateToolInput`, the host-call budget, the emit collector, failure
   framing, and result shaping. The microtask scheduler never yields to I/O, so
@@ -3067,15 +2825,7 @@ including structural lookalikes and genuine router errors, retain their identity
 
 Four public `effect/http/*` modules are allowed only in the private dispatcher;
 all other root-purity and optional-implementation boundaries remain enforced.
-Direct public module imports avoid the area's barrel cost. The local D3
-measurement over the reviewed D1/D2 stack is root 373,435 to 393,470 bytes gzip
-and Worker 758,274 to 774,384 (official Node 22.23.4/zlib 1.3.1-e00f703, identical
-repository bundle options). The barrel alternative measures 423,348/787,614.
-The parent accepted this measured native-routing cost with a Worker cap of
-785,000 bytes, including room for separately measured native-auth and reviewed
-host/transport additions. Root and all other caps and historical baselines are
-unchanged by D3. Separate-input costs are not a combined gzip measurement;
-the integrated deployment must be measured again.
+Direct public module imports avoid the area's barrel cost.
 
 `test/server.test.ts` asserts production routing directly on Node:
 raw prefixes and malformed suffixes, extension methods, CIMD before auth/UI/body
@@ -3089,85 +2839,20 @@ Root purity, declaration and bundle checks own import boundaries and size caps.
 The frozen legacy dispatcher, source transforms, diagnostic latency loops and
 rejected Effect MCP adapters were migration evidence; their historical source
 is linked from decision 0016 rather than rebuilt by ordinary tests.
-The upward MCP protocol leaves remain SDK implementations, with D7's separate
-native-orchestration work and compatibility evidence unchanged.
+The upward MCP protocol leaves remain SDK implementations with native
+orchestration and compatibility evidence.
 
-### Why not Schema or HttpApi for core routes
+### Validation and HTTP boundaries
 
-Both were measured and both lost. `effect` is imported through its barrel,
-which defeats tree-shaking: the first conversion step measured about +20 ms
-of Worker cold start for it, and that cost was accepted over deep imports at
-every call site. The catch is that a module the barrel reaches is paid for in
-full, however little of it is used. Effect Schema for config validation and the
-meta-tool inputs came to about +62 KB gzip and +13 ms of cold start in the
-root, for a validator no clearer than the hand-written schema in `src/config.ts`; the
-meta-tool inputs stay zod, which the MCP SDK bundles regardless. `HttpApi` for
-the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
-on `./activity`, and matching the wire format meant opting out of most of what
-it does: unowned paths fall through rather than 404, a wrong method is a JSON
-405, and the content-type and size checks run before a body is read. The root
-entry imports `effect` and the four public HTTP modules confined to the private
-dispatcher (`test/purity.node.test.ts`).
-Effect 4.x is a long-term-support line, but its area barrels `effect/http`,
-`effect/http-api`, `effect/schema`, and `effect/sql` are still tagged
-`@stability unstable` and can change within it; only core modules such as
-`effect/Schema` are stable. That is why Effect is pinned to one exact version
-and every Effect upgrade is its own deliberate pull request. A deployment
-that also depends on Effect, such as the Worker example's Alchemy stack, must pin the
-same version to resolve a single copy. Connecta's own lockfile and packed
-install are checked for one copy (`test/package-surface.node.test.ts` and
-`scripts/check-package.mjs`).
+Config validation uses `src/config.ts`; meta-tool inputs use Zod, which the MCP
+SDK also depends on. Core routing uses the narrow public HTTP adapter above.
+Effect is pinned exactly; deployments using Effect must resolve the same version.
+`test/package-surface.node.test.ts` and `scripts/check-package.mjs` check one copy.
+Per-provider bundles are reported, not capped, because their standalone graphs
+include the shared core again. Deployed non-provider shapes are capped by
+`scripts/bundle-budget.json`.
 
-The stable `4.0.0` release was re-evaluated on 2026-10-01 with this
-[historical probe source](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/effect-v4-evaluation.mjs),
-retained in Git history rather than the current checkout.
-The [raw observations](https://github.com/zackbart/connecta/blob/1ab92695f2636f904274d900ce209553358ff1f3/scripts/probes/effect-v4-evaluation-2026-10-01.json)
-are synthetic Node requests and neutral esbuild bundles, not live-client or
-workerd lifetime verification. Bundle figures add representative prototypes
-alongside the current code; they do not claim savings from removing old code.
-
-Two native input schemas with validation and JSON Schema rendering add 62,148
-bytes gzip to the root, taking it from 303,083 to 365,231 against a 339,526
-cap. Effect can reject excess properties when both decoding and rendering use
-`onExcessProperty: "error"`; its default strips them. The generated schemas
-still differ from the published meta-tool schemas, including record rendering and
-composed numeric bounds. A Schema replacement would need to preserve that
-contract and memoized rendering. Both MCP SDK packages still depend on Zod,
-so changing our inputs alone does not remove Zod from an installation.
-
-A one-endpoint `HttpApi` prototype adds 106,634 bytes gzip to `./ui` and 106,453
-to `./activity`. Even plain `HttpRouter` adds 45,324 to `./ui`, taking it to
-130,023 against a 128,983 cap. Both default handlers return an empty 404 for a
-wrong method and an unowned path; our routes need a JSON 405 for the former
-and module fallthrough for the latter. Their `toWebHandler` also builds its
-layer immediately and owns a runner, so adopting it would require proving
-global-scope safety and preserving our scheduler and response-lifetime rules.
-Those historical defaults are not the production adapter: the narrow public
-HttpRouter dispatch above preserves explicit method refusals, unowned fallthrough
-and the existing edge runner without `toWebHandler`.
-
-Effect's MCP server has a separate compatibility gate. Its `2026-07-28`
-adapter accepted a stateless `tools/list`, but its `2025-06-18` adapter refused
-a fresh request with 400. Initialization issued a session, and that session's
-next request returned 404 on a fresh handler; Connecta served the same fresh
-legacy list with 200 JSON and no session. The stable package exports no MCP
-client, so it also cannot replace our downstream SDK and OAuth implementation.
-[Issue #622](https://github.com/zackbart/connecta/issues/622) records the server
-parity requirements. These historical measurements supported retaining MCP protocol and validation
-implementations. Production HTTP dispatch now uses the separately proven narrow
-public adapter above; stable v4 alone did not establish its compatibility.
-
-The core's cost is recorded rather than guessed. Against 0.24.4 the root entry
-grew from 235,346 to 279,526 bytes gzip, the Worker example from 263,949 to
-314,336, and each provider by about 36 KB, since each reaches Effect through
-`remoteMcp()`. `pnpm run check:bundle` caps the deployed shapes (the root,
-`./worker`, `./ui`, the operator UI assets, `./d1`, `./auth/access-tokens`,
-the Worker example, and the other non-provider entries) against
-`scripts/bundle-budget.json`. Per-provider entries are reported with their
-size and change from baseline but not capped: every deployment already imports
-the root, which carries the Effect core, so a provider's standalone bundle
-counts that core a second time. An install carries about 53 MB of `effect`, with
-no dependencies of its own.
+[Decision 0019](https://github.com/zackbart/connecta/blob/main/decisions/0019-core-validation-http-boundaries.md) records the rejected Schema/HttpApi measurements.
 
 ## Where else to look
 
@@ -3314,7 +2999,7 @@ compiling and configuring the real thing.
   as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
   `Request-Id`. The real HTTP hostile-response journey checks this refusal
   against an ambiguous committed write; there is no copied declaration list.
-  Q8 is decided in one place, `settleWrite` in
+  Write outcomes are decided in one place, `settleWrite` in
   `src/write-outcome.ts`, once per logical call and over every request it
   recorded. The invocation calls it for every failure of a served write: a
   thrown or mapped error, a custom connector's, a program's call, and its
@@ -3652,10 +3337,10 @@ OAuth retry, grant, response-decoding or ownership orchestration.
 there before claiming a code/refresh grant, so an unsupported Node host consumes
 neither. The base-fetch leaves in static OAuth and remote MCP call
 `sendCredentialPost`; remote registration and disconnect revocation do so too.
-D4 must preserve this preflight and the distinction between request-owned code
+The adapters preserve this preflight and the distinction between request-owned code
 exchange and coordinator-owned refresh after claim submission. The existing
 spent-token algorithm intentionally remains conservative after a submitted claim,
-even if a later CONNECT fails before destination dispatch. D6 must preserve the
+even if a later CONNECT fails before destination dispatch. Remote MCP preserves the
 SDK JSON-RPC envelope distinction at the leaf: protocol POSTs are not credential
 POSTs; forms and registration JSON are. Discovery GETs remain native fetch.
 
@@ -3743,22 +3428,6 @@ unchanged. A narrow machine check restores only those two exact adjacent
 pairs and requires byte equality, with no other type, export or reference
 change. All 88 declarations still exclude Effect and have complete references.
 
-The superseding 2026-10-25 D3/D4 cost ruling authorizes only Worker
-`maxGzip: 785000` (previously 760000) and Clerk `maxGzip: 85000` (previously
-63087). Official cached Node 22.23.4 / zlib 1.3.1-e00f703 measured Clerk at
-47,688 -> 80,961 bytes gzip (+33,273): the generated SDK is unchanged, while
-native Effect adds 91.8 KB raw plus the native helper and small auth-source
-growth. The isolated D4 candidate measured Worker at 762,666, root at 377,177
-and D1 at 88,321 bytes gzip. Optional-graph optimization brought UI to 342,955,
-so the earlier unused UI allowance is revoked and its original 345000 cap
-remains. Historical baselines, root/D1 and all other caps, dependency pins and
-security/API gates remain unchanged. These independent measurements do not
-predict a combined gzip by addition; final artifacts must be rebuilt. Native
-registration, decorated fallback and request/native-storage semantics also
-require a smoke through an actual minified production bundle. Final post-hook
-official artifacts measure root 377,290, D1 88,321, Clerk 80,959, UI 342,959
-and Worker 762,774 bytes gzip, all within those caps.
-
 ### Native remote MCP programs (contributor)
 
 Remote MCP connection joins, credential and epoch checks, catalog intake,
@@ -3782,7 +3451,7 @@ restore that same owner. Every operation captures its own generation, credential
 identity and listing binding before waiting; a later listing cannot adopt an
 abandoned publication. Request closure revokes the connector and cache scopes.
 No client, transport, response, signal, promise or live request Context is shared
-across inbound requests. D4's bounded refresh coordinator retains its separate
+across inbound requests. The bounded refresh coordinator retains its separate
 ownership, synchronous submission gate and waiting-request handoff.
 
 Two deliberate Promise waits remain: a connect waiter receives the Deferred's
@@ -3821,7 +3490,7 @@ select the underlying current methods at dispatch, including namespaces created
 while a source method is decorated. Original SQL shells call their own native
 program directly. Tests cover current and previously selected programs, own and
 inherited saved-original delegates, get/set/CAS and activity record/list,
-restoration, typed failures and interruption. The D4 native proof fixtures install
+restoration, typed failures and interruption. The native auth proof fixtures install
 their intentional throwing Promise shells before registration, so they establish
 native composition without authorizing bypass of later replacements.
 
@@ -3882,15 +3551,6 @@ unchanged. Native consumer, failure, decorator, sharing, close and minified-bund
 regressions live in `upward-native.test.ts`; existing wire, continuation, redaction,
 physical-attempt and body/admission suites remain compatibility evidence.
 
-The combined native/operator graph has a measured contributor bundle allowance
-in PR #1060: the UI gzip cap is 346,000 bytes, with its historical baseline
-unchanged. The official full checker measured 345,228 bytes after regenerating
-the merged UI assets. Removing unused Invocation/Catalog registration retention
-returned the public Worker entry from 198,744 to 77,426 bytes; live minified
-Context, inherited-method, decorator and restoration proofs retain native
-composition. Root, example Worker, public Worker, D1 and Clerk caps remain
-unchanged. This cost decision grants no later request-body-limit allowance.
-
 ### Catalog operation vocabulary (contributor)
 
 The standard hatch privately registers bounded vendor operation text against its
@@ -3905,13 +3565,3 @@ cache. Exact authored names and complete authored matches precede API pointers;
 ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
 The published discovery contract states compilation, query and cache bounds.
 No request identity, signal, credential or promise enters a vocabulary cache.
-
-### Authenticated body-bound cost (contributor)
-
-The separate #860 change has a measured allowance only for the example Worker
-gzip cap, from 785,000 to 786,000 bytes, with its historical baseline unchanged.
-The official full checker measures 785,036 bytes against D7's exact 784,948-byte
-lower graph, an actual 88-byte increase. It reuses the bounded platform body
-inspector, preserves native orchestration and avoids a new reader lifecycle.
-Root, UI, public Worker, D1, Clerk and asset caps remain fixed. The cost ruling
-does not approve protocol, cancellation or authority semantics.

@@ -1,6 +1,6 @@
 # Google Slides step 2 evaluation (#703)
 
-Seven fake-only workflows compare main's original Slides surface with the standard indexed surface. All seven are existing capabilities, so the comparable subset is the full task set. The [summary JSON](./google-slides-step2.json) records every trial, original artifact SHA-256, source/CLI/protocol metadata, checks, final answers, tool attempts, dispatch counts, discovery bytes and usage. Complete unmodified saved worlds and transcripts remain under `/home/zackbart/.t3/scratch/connecta-orchestrator/step2/slides/`.
+Seven fake-only workflows compare main's original Slides surface with the standard indexed surface. All seven are existing capabilities, so the comparable subset is the full task set. The [summary JSON](./google-slides-step2.json) records every trial, original artifact SHA-256, source/CLI/protocol metadata, checks, final answers, tool attempts, dispatch counts, discovery bytes and usage. Complete unmodified saved worlds and transcripts remain under `/home/operator/.t3/scratch/connecta-orchestrator/step2/slides/`.
 
 ## Frozen protocol
 

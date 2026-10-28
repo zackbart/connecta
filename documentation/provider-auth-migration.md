@@ -1,15 +1,9 @@
 # Provider auth migration
 
-Hosted selections described in this historical migration are now removed.
-For Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub hosted connections,
-use the [current hosted MCP migration guide](./hosted-mcp-migration.md).
-The API migrations below remain applicable.
-
-Use this upgrade guide when moving a Stripe, Vercel, or Cloudflare
-deployment from 0.30 to 0.31, where `auth` selects each provider's
-implementation.
-[Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
-version changes; [integrating services](./integrating.md) covers new connectors.
+This guide covers the 0.30-to-0.31 change to auth-selected implementations.
+For current versions, follow [deployment upgrades](./deploying.md#upgrade-an-existing-deployment)
+and [hosted MCP migration](./hosted-mcp-migration.md); hosted selectors below
+are historical.
 
 A dual provider requires `auth`. `{ type: "oauth" }` connects the vendor's
 hosted MCP server, OAuth only. A key type connects Connecta's REST connector

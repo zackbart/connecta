@@ -19,19 +19,9 @@ npm start
 ```
 
 Keep the template's pinned `undici` dependency and its `listen` import from
-`@zackbart/connecta/node`. `listen` installs the owned HTTP transport used by
-every maintained-provider request, reads included, remote MCP writes, and
-downstream OAuth token, registration and revocation POSTs.
-Without `listen()`, maintained-provider writes, reviewed POST reads and remote
-MCP writes are refused before sending; downstream OAuth credential POSTs also
-require the owned sender. It connects directly by default. For an HTTP(S) CONNECT
-proxy, configure `listen(connecta, { port, proxy: "http://proxy.example.com:8080" })`
-in `src/index.ts`. Ambient proxy variables and host dispatchers do not configure
-the owned sender. Remote MCP reads and OAuth discovery GETs retain native fetch
-and need their own host proxy policy. An uncertain refresh requires fresh
-authorization rather than replaying the spent token. See
-[Node transport requirements](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md#start-on-node)
-for proxy credentials and TLS trust.
+`@zackbart/connecta/node`. Follow the
+[Node transport and proxy requirements](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md#start-on-node)
+when changing `src/index.ts` or configuring egress.
 
 The manifest approves only `esbuild@0.28.2` to run its install script. `tsx`
 uses esbuild to run this TypeScript source, so that script is part of the

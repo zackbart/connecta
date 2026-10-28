@@ -5,7 +5,7 @@
   {
    "arm": "before",
    "runner": "codex",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/slides/before-luna.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/slides/before-luna.json",
    "rawSha256": "967d322f760687232fc65f19a5ce70750415749da3e8b6ab153c7364478705ba",
    "meta": {
     "createdAt": "2026-10-24T17:07:37.311Z",
@@ -54,7 +54,7 @@
   {
    "arm": "before",
    "runner": "claude",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/slides/before-sonnet.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/slides/before-sonnet.json",
    "rawSha256": "2a4fbe99c9d03174b05e6fd3e5a560a84683f7af8da6cc85f8bd023b015cdabb",
    "meta": {
     "createdAt": "2026-10-24T17:07:37.190Z",
@@ -103,7 +103,7 @@
   {
    "arm": "after",
    "runner": "codex",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/slides/after-luna.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/slides/after-luna.json",
    "rawSha256": "a06bb05a1820044b4bee4f06d6da09c569f3cee35469e7b405f406b7d279cad1",
    "meta": {
     "createdAt": "2026-10-24T17:13:25.361Z",
@@ -152,7 +152,7 @@
   {
    "arm": "after",
    "runner": "claude",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/slides/after-sonnet.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/slides/after-sonnet.json",
    "rawSha256": "d1214f6ab321c7249455beef046b524dd1b5cf3e22da3a5756f3b8eb8ad198e7",
    "meta": {
     "createdAt": "2026-10-24T17:13:25.388Z",

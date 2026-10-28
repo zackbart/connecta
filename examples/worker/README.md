@@ -261,31 +261,10 @@ the Access policy or application.
 
 ### Let agents through Access
 
-`ConnectaAgents` in `alchemy.run.ts` is a second self-hosted Access
-application whose destination is `<PUBLIC_URL host>/agent/*`, with a single
-policy whose action is **Bypass** and whose include rule is **Everyone**. The
-Worker-level application still protects every other path. Never bypass any
-other path. To serve agents on another hostname too, add a destination for it,
-for example `{ type: "public", uri: "agents.example.com/agent/*" }`. Through the
-Access API, the application is:
-
-```json
-{
-  "type": "self_hosted",
-  "name": "connecta agents",
-  "destinations": [{ "type": "public", "uri": "connecta.example.com/agent/*" }],
-  "policies": [{ "name": "agents bypass", "decision": "bypass", "include": [{ "everyone": {} }] }]
-}
-```
-
-It must be a hostname-and-path (`public`) destination: a second Worker
-destination is refused because the Worker-level application owns it. Changes
-took 15–19 seconds to settle when probed, occasionally longer, with transient
-edge errors meanwhile. Do not rely on a fixed wait; repeat
-[Verify after deploying](#verify-after-deploying). Connecta ignores Access
-context on `/agent/*` and refuses every other spelling of that namespace before
-auth. [Deploying Connecta](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md#agent-endpoints-behind-cloudflare-access)
-records the untested cases and the propagation details.
+`ConnectaAgents` in `alchemy.run.ts` declares the agent bypass. Follow
+[Agent endpoints behind Cloudflare Access](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md#agent-endpoints-behind-cloudflare-access)
+for the hostname-and-path application, API JSON, matching rules and controls.
+Repeat [Verify after deploying](#verify-after-deploying) after Access changes.
 
 ### Moving a Wrangler-deployed Worker to Alchemy
 

@@ -4,7 +4,7 @@ Seven fake-only tasks compare the original Vercel surface with decision 0011's
 standard hatch and named tools. [Task definitions](../tasks/vercel.ts), the
 [isolated fake](../fakes/vercel.ts), and state/HTTP-ledger/final-answer graders
 run through the real provider. Full unmodified JSON, transcripts and saved worlds
-remain in `/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/`.
+remain in `/home/operator/.t3/scratch/connecta-orchestrator/step2/vercel/`.
 The [summary](./vercel-step2.json) retains every trial, source/protocol/CLI hash,
 call count, named-tool usage, discovery size and exact write destinations.
 

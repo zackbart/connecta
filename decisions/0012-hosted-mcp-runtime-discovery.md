@@ -3,6 +3,7 @@ status: accepted
 date: 2026-10-22
 issues: [703]
 supersedes: []
+amends: [0011-provider-standard.md, 0009-effect-native-rewrite.md]
 ---
 
 # Hosted MCP is generic runtime-discovered configuration
