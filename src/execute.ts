@@ -42,11 +42,12 @@ import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
-import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
+import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import { normalizeTimeoutMs } from "./timeout.js";
 import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
+import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { executorProgram } from "./runtime/executor.js";
 import {
   connectorGuide,
@@ -1361,6 +1362,8 @@ export function createExecuteTool(
     diagnosticsRequested: boolean | undefined,
     callerSignal: AbortSignal | undefined,
     requestScope: object,
+    hostCalls: HostCalls,
+    programWrites: ProgramWrites,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
@@ -1370,8 +1373,6 @@ export function createExecuteTool(
         resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
         diagnostics,
       );
-      const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
-      const programWrites = new ProgramWrites();
       const resultDependencies: ProgramResultDependency[] = [];
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
@@ -1515,58 +1516,49 @@ export function createExecuteTool(
           budgetFailure ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit)) : Effect.succeed(exit),
         ),
       );
-      return Effect.map(
-        Effect.flatMap(exited, (exit) => {
-          // A synchronous fire-and-forget burst can also settle its executor in
-          // this turn. The host's terminal refusal always wins over that value.
-          if (budgetFailure instanceof HostCallBudgetExceeded) {
-            const failed = failureResponse(budgetFailure.details.message, {
-              code: budgetFailure.details,
-              logs: executeLogs(executorLogs),
-              emitted,
-              diagnostics,
-            });
-            return Effect.succeed(failed);
-          }
-          if (Exit.isFailure(exit)) {
-            return Effect.succeed(
-              failedRun(redactAgentOutput(sentSecrets, Cause.squash(exit.cause)), logger, reported),
-            );
-          }
-          // The executor lease is already released, but presenting its return
-          // still belongs to the caller. Compose the registered stash program
-          // here so cancellation interrupts storage waits and their continuations.
-          const cancelled = new ExecutorAdmissionError(
-            "executor_cancelled",
-            "Execution was cancelled during result processing.",
-          );
-          return withDeadlineEffect(() => finishedRun(redactAgentOutput(sentSecrets, exit.value), reported), {
-            ...(callerSignal ? { signal: callerSignal } : {}),
-            timeoutError: cancelled,
-          }).pipe(
-            Effect.catch((error) =>
-              Effect.succeed(failedRun(callerSignal?.aborted ? cancelled : error, logger, reported)),
-            ),
-          );
-        }),
-        (unfinished) => {
-          // Every run response passes through write accounting.
-          const response = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
-          // Calls abandoned by the guest are failed when the run cancels them.
-          // These counters are Connecta's own integers, attached after the final payload check.
-          const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-          response.structuredContent = { ...response.structuredContent, hostCalls: counts };
-          if (response.content[0]?.type === "text")
-            response.content[0].text = JSON.stringify(response.structuredContent);
-          return response;
-        },
-      );
+      return Effect.flatMap(exited, (exit) => {
+        // A synchronous fire-and-forget burst can also settle its executor in
+        // this turn. The host's terminal refusal always wins over that value.
+        if (budgetFailure instanceof HostCallBudgetExceeded) {
+          const failed = failureResponse(budgetFailure.details.message, {
+            code: budgetFailure.details,
+            logs: executeLogs(executorLogs),
+            emitted,
+            diagnostics,
+          });
+          return Effect.succeed(failed);
+        }
+        if (Exit.isFailure(exit)) {
+          return Effect.succeed(failedRun(redactAgentOutput(sentSecrets, Cause.squash(exit.cause)), logger, reported));
+        }
+        // The executor lease is already released, but presenting its return
+        // still belongs to the caller. Compose the registered stash program
+        // here so cancellation interrupts storage waits and their continuations.
+        const cancelled = new ExecutorAdmissionError(
+          "executor_cancelled",
+          "Execution was cancelled during result processing.",
+        );
+        return withDeadlineEffect(() => finishedRun(redactAgentOutput(sentSecrets, exit.value), reported), {
+          ...(callerSignal ? { signal: callerSignal } : {}),
+          timeoutError: cancelled,
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.succeed(failedRun(callerSignal?.aborted ? cancelled : error, logger, reported)),
+          ),
+        );
+      });
     });
 
-  return agentOutputOperations(
-    (requestScope) => ({
-      execute: authMethod(
-        ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) => {
+  return authMethod(
+    ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) =>
+      Effect.suspend(() => {
+        const requestScope = config.requestScope ?? {};
+        const sentSecrets = sentSecretsForRequest(requestScope);
+        const owner = requestOwner(requestScope);
+        if (!owner.open) return Effect.fail(owner.controller.signal.reason);
+        const hostCalls: HostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
+        const programWrites = new ProgramWrites();
+        const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
           // that first so a huge direct-call string is never encoded in full.
           if (
@@ -1574,20 +1566,37 @@ export function createExecuteTool(
             new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES
           ) {
             const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-            const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
-            response.structuredContent = {
-              ...response.structuredContent,
-              hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
-            };
-            response.content[0]!.text = JSON.stringify(response.structuredContent);
-            return Effect.succeed(response);
+            return Effect.succeed(
+              failureResponse(message, { code: { code: "invalid_args", message, retryable: false } }),
+            );
           }
-          return Effect.suspend(() => play(normalizeProgramSource(code), diagnostics, options.signal, requestScope));
-        },
-      ),
-    }),
-    config.requestScope,
-  ).execute;
+          return play(
+            normalizeProgramSource(code),
+            diagnostics,
+            options.signal,
+            requestScope,
+            hostCalls,
+            programWrites,
+          );
+        });
+        return response.pipe(
+          Effect.provideService(RequestScope, owner),
+          Effect.map((unfinished) => {
+            // Every response, including intake refusals, crosses accounting and
+            // exactly one envelope check at this operation boundary.
+            const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
+            // Calls abandoned by the guest are failed when the run cancels them.
+            // Connecta attaches its own integers after the envelope check.
+            const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
+            result.structuredContent = { ...result.structuredContent, hostCalls: counts };
+            if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
+            return result;
+          }),
+          Effect.catchDefect(Effect.fail),
+          Effect.mapError((error) => redactAgentOutput(sentSecrets, error)),
+        );
+      }),
+  );
 }
 
 interface RunReport {

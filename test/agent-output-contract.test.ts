@@ -1,7 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { api } from "../src/connectors/api.js";
+import { authCall } from "../src/auth/native.js";
+import { createExecuteTool } from "../src/execute.js";
+import type { ToolResult } from "../src/meta-tools.js";
+import { ProgramWrites } from "../src/program-writes.js";
+import { runEdge } from "../src/runtime/run.js";
 import { registerMetaTools } from "../src/meta-tools.js";
+import type { Executor } from "../src/types.js";
 import type { McpClientContext } from "../src/mcp-client-context.js";
 import { SentSecrets, sentSecretsForRequest } from "../src/sent-secrets.js";
 import { calcApi } from "./fixtures/http.js";
@@ -517,3 +523,137 @@ it("INV-5 INV-7: a stalled-listen deadline refusal redacts and cancels the reque
     await app.close();
   }
 });
+
+it.each(["promise", "native"] as const)(
+  "INV-5 INV-7 INV-9: %s execute responses cross one envelope pass after accounting, before trusted counters (#1128)",
+  async (entrypoint) => {
+    for (const ending of [
+      "success",
+      "failure",
+      "throw",
+      "budget",
+      "cancel",
+      "oversize",
+      "emits",
+      "diagnostics",
+      "write-failure",
+      "write-unknown",
+    ]) {
+      const requestScope = {};
+      const secrets = sentSecretsForRequest(requestScope);
+      secrets.secret(TOKEN);
+      // An envelope-only credential: the intake refusal never enters payload checks.
+      secrets.secret("65536-byte");
+      if (ending === "cancel") secrets.secret("Execution was cancelled.");
+      if (ending === "write-unknown") secrets.secret("A write this program sent");
+      const envelopes: Array<{ value: unknown; hadCounters: boolean }> = [];
+      const original = secrets.redact.bind(secrets);
+      const redaction = vi.spyOn(secrets, "redact").mockImplementation((value, mode) => {
+        if (
+          mode === "envelope" &&
+          value &&
+          typeof value === "object" &&
+          "content" in value &&
+          "structuredContent" in value
+        ) {
+          envelopes.push({ value, hadCounters: "hostCalls" in (value.structuredContent as object) });
+        }
+        return original(value, mode);
+      });
+      const accounting = vi.spyOn(ProgramWrites.prototype, "finish");
+      let physicalWrites = 0;
+      const controller = new AbortController();
+      const entered = deferred<void>();
+      const cancelled = deferred<{ result: string }>();
+      const execute = vi.fn<Executor["execute"]>(async (_code, providers) => {
+        const fns = providers[0]!.fns;
+        await fns.call!(ending.startsWith("write-") ? "notes.write" : "notes.read", {}).catch(() => {});
+        if (ending === "budget") await fns.call!("notes.read", {}).catch(() => {});
+        if (ending === "cancel") {
+          entered.resolve();
+          return cancelled.promise;
+        }
+        if (ending === "throw") throw Object.assign(new Error(TOKEN), { logs: [TOKEN] });
+        if (ending === "emits") await fns.emit!({ type: "text", text: TOKEN });
+        return {
+          result: TOKEN,
+          logs: [TOKEN],
+          ...(["failure", "write-failure"].includes(ending) ? { error: TOKEN } : {}),
+        };
+      });
+      const handler = createExecuteTool(
+        makeRegistry([
+          {
+            id: "notes",
+            kind: "api",
+            listTools: async () => [
+              { name: "read", annotations: { readOnlyHint: true } },
+              { name: "write", annotations: { destructiveHint: true } },
+            ],
+            callTool: async (name) => {
+              if (name === "write") {
+                physicalWrites++;
+                if (ending === "write-unknown") throw new Error(TOKEN);
+              }
+              return TOKEN;
+            },
+          },
+        ]),
+        "https://connecta.test",
+        { execute },
+        silentLogger,
+        undefined,
+        { requestScope, maxHostCalls: 1 },
+      );
+      try {
+        const args = {
+          code: ending === "oversize" ? "x".repeat(65_537) : "async () => null",
+          diagnostics: ending === "diagnostics",
+        };
+        const options = { signal: controller.signal };
+        const pending =
+          entrypoint === "promise" ? handler(args, options) : runEdge(authCall<ToolResult>(handler, [args, options]));
+        if (ending === "cancel") {
+          await entered.promise;
+          controller.abort(new Error(TOKEN));
+        }
+        const result = await pending;
+        expect(envelopes, ending).toHaveLength(1);
+        expect(envelopes[0]!.hadCounters, ending).toBe(false);
+        expect(accounting, ending).toHaveBeenCalledOnce();
+        expect(envelopes[0]!.value, ending).toBe(accounting.mock.results[0]!.value);
+        expect(execute, ending).toHaveBeenCalledTimes(ending === "oversize" ? 0 : 1);
+        const serialized = JSON.stringify(result);
+        expect(serialized, ending).not.toContain(TOKEN);
+        expect(serialized, ending).toContain("[redacted]");
+        expect(serialized, ending).not.toContain("65536-byte");
+        expect(JSON.parse(result.content[0]!.text!), ending).toEqual(result.structuredContent);
+        const failed = ["failure", "throw", "budget", "cancel", "oversize", "write-failure", "write-unknown"].includes(
+          ending,
+        );
+        expect(!!result.isError, ending).toBe(failed);
+        expect(result.structuredContent!.hostCalls, ending).toEqual({
+          attempted: ending === "oversize" ? 0 : ending === "budget" ? 2 : 1,
+          admitted: ending === "oversize" ? 0 : 1,
+          succeeded: ["oversize", "write-unknown"].includes(ending) ? 0 : 1,
+          failed: ["budget", "write-unknown"].includes(ending) ? 1 : 0,
+        });
+        if (ending === "emits") expect(result.content[1]).toEqual({ type: "text", text: "[redacted]" });
+        if (ending === "diagnostics") expect(result.structuredContent).toHaveProperty("diagnostics.operations");
+        expect(physicalWrites, ending).toBe(ending.startsWith("write-") ? 1 : 0);
+        if (ending.startsWith("write-"))
+          expect(result.structuredContent!.error).toMatchObject({
+            writes: {
+              succeeded: ending === "write-failure" ? 1 : 0,
+              failed: 0,
+              unknown: ending === "write-unknown" ? 1 : 0,
+            },
+          });
+      } finally {
+        cancelled.resolve({ result: TOKEN });
+        redaction.mockRestore();
+        accounting.mockRestore();
+      }
+    }
+  },
+);
