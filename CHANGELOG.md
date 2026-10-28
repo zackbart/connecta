@@ -4,7 +4,7 @@ All notable changes to this package are documented here.
 
 ## 0.37.1 — 2026-10-28
 
-0.37.1 is a patch release of fixes and request-path performance work. It has no breaking changes and needs no configuration change. Deployments on 0.37.0 can upgrade in place.
+0.37.1 is a patch release of fixes and request-path performance work. It needs no configuration change, and deployments on 0.37.0 can upgrade in place. One type change is additive: connector status gains a `per_caller` state, so code that switches exhaustively over status states must handle it.
 
 The headline fix is #1118: `execute_code` could return `hostCalls.failed` (and other numbers beside a redacted string) as `"[redacted]"`, which broke the tool's own output schema, so MCP clients that validate structured content rejected the whole result. Redaction now keeps a number unless it still holds part of a registered form after the strings around it are replaced, and Connecta's own counters are attached after redaction. Redaction also now rechecks a lane after every placeholder replacement until nothing changes, and typed arrays no longer hide a run split across them and their neighbours, so the documented guarantee holds in those corners too.
 
@@ -13,6 +13,8 @@ If a remote MCP connector forwards the admitted principal (`auth.principal`), it
 Security: a remote MCP OAuth challenge naming protected-resource metadata on a different origin from the connector URL, whether in the challenge or cached from an earlier grant, is now refused before any fetch.
 
 Reliability: OAuth refresh commits are bounded when storage stalls; a connect that straddles an OAuth Restart can no longer act in the newer epoch; executor permits are released when result stashing stalls; timed-out listen candidates and expired connector waiters no longer hold or receive admission; SQLite and D1 reclaim expired rows written by compare-and-set; request-token resolver failures show as `auth_required` in status; the MCP body bound holds on Node 24 and later; and a search in the same request sees catalog changes Connecta itself made.
+
+Operator pages: a principal-forwarding `remoteMcp` connector no longer shows "Authorization needed" when its calls work. The page checks it as the admitted operator, under the same `accept` policy as a call, and a check with no caller reports the neutral `per_caller` state. Cloudflare Access deployments no longer send an admitted browser a sign-in challenge when Access verification context is missing, as seen on fresh isolates; they answer a retryable 503 and log a classified reason for every operator 401. Startup no longer warns about missing OAuth state checks for connectors that never exchange a code, and operator status and config requests dispose workerd RPC results.
 
 Performance: each `execute_code` response is scanned for secrets once instead of twice, repeated searches in a request reuse one lexical index, and responses with no registered secrets skip JSON re-serialization at the MCP route. The root bundle cap rises to 407,000 B gzip to cover these fixes.
 
@@ -38,6 +40,11 @@ Performance: each `execute_code` response is scanned for secrets once instead of
 - Refuse expired connector call admission waiters before granting a permit, even when the event loop delays their timeout callback.
 - Revalidate request-retained catalogs using in-process catalog invalidation and credential mutation fences, without storage reads on unchanged repeat searches, replacing derived search indexes when a fence changes.
 - Keep typed-array, DataView, and ArrayBuffer numbers adjacent to neighbouring leaves during redaction, while checking their byte views separately and withholding binary whose bytes or numbers hold a match.
+- Report principal-forwarding remote MCP connectors truthfully on the operator page: check as the admitted operator under the same caller policy as a call, and show actual downstream failures without a deployment-secret diagnosis or fix prompt. Checks without an admitted caller return the non-error `per_caller` state ("Authenticates as each caller; verified on use."). Adding `per_caller` to the public status union is an additive type change; exhaustive status consumers must handle it.
+
+  Operator observations are isolated by an opaque admitted viewer key, including same-role Cloudflare Access identity changes during pending probes.
+- Return retryable 503s when Cloudflare Access verification context is unavailable for an assertion-bearing request or its trusted AUD is unusable, including on a fresh instance. Keep admission closed until Access supplies verified human identity, and log classified, non-secret facts for unavailable verification and every operator 401.
+- Warn about missing OAuth state verification only for connectors that declare code-exchange support. Dispose remote MCP RPC responses at the request boundary, including operator configuration and status probes.
 
 ### Security
 
