@@ -90,6 +90,10 @@ value is validated at construction. Malformed policies, including `false`,
 `null`, `0`, and `""`, throw before serving requests; they never disable
 admission or select a default. Custom connector policies are validated when
 the deployment constructs its registry.
+A queued connector call whose wait reaches `queueTimeoutMs` is refused with a
+concurrency `rate_limited` error, even if timer delivery is delayed. For example,
+with `maxConcurrency: 1` and `queueTimeoutMs: 10`, releasing the occupied slot
+after 40 ms refuses the expired waiter instead of dispatching it.
 
 ## Maintained integrations
 

@@ -218,11 +218,12 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
     await runEdge(native.get("init"));
     const controller = new AbortController();
     const reason = new Error("caller cancelled");
-    const original = sql.run.bind(sql);
+    const original = sql.batch.bind(sql);
+    const run = vi.spyOn(sql, "run");
     const dispatch = vi
-      .spyOn(sql, "run")
-      .mockImplementation((statement) =>
-        original(statement).pipe(
+      .spyOn(sql, "batch")
+      .mockImplementation((statements) =>
+        original(statements).pipe(
           Effect.andThen(Effect.sync(() => controller.abort(reason))),
           Effect.andThen(Effect.never),
         ),
@@ -231,10 +232,17 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
       await expect(
         runEdge(native.compareAndSet("committed", null, "holder"), { signal: controller.signal }),
       ).rejects.toBe(reason);
+      // The sweep and the claim travel in one batch.
       expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0]![0].map((statement) => statement.sql.trimStart().split(" ")[0])).toEqual([
+        "DELETE",
+        "INSERT",
+      ]);
+      expect(run).not.toHaveBeenCalled();
       expect(await runEdge(native.get("committed"))).toBe("holder");
     } finally {
       dispatch.mockRestore();
+      run.mockRestore();
     }
     expect(await runEdge(native.compareAndSet("committed", null, "replay"))).toBe(false);
     const preAborted = new AbortController();
