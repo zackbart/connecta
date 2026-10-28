@@ -25,6 +25,7 @@ import type {
   ResponseCacheStore,
 } from "@modelcontextprotocol/client";
 import { MAX_CACHE_TTL_MS, specTypeSchemas } from "@modelcontextprotocol/client";
+import { advanceCatalogRevision, catalogRevision } from "./catalog-revision.js";
 import { callerOf } from "./connector-caller.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Context } from "effect";
@@ -35,12 +36,13 @@ import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
 import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { oauthGrantKeys, responseCacheKeys } from "./storage/keys.js";
+import { responseCacheKeys } from "./storage/keys.js";
 import type { ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } from "./types.js";
 
 interface CatalogCacheSettings {
   storage: KVStorage;
   partition: string;
+  credentialRevision?: () => number;
   sharedPartition?: string;
   defaultTtlMs: number;
   minTtlMs: number;
@@ -414,32 +416,18 @@ export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSet
   setViewService(ctx, CatalogPolicy, value);
 }
 
-/** Read the existing cache partition and fences without creating cache state. */
-export function retainedCatalogIdentity(ctx: ConnectorContext, connectorId: string): Effect.Effect<string, unknown> {
-  return Effect.gen(function* () {
-    const policy = serviceFor(ctx, CatalogPolicy);
-    const generation = yield* authStorage<string | null>(policy?.storage ?? ctx.storage, "get", [
-      responseCacheKeys.generation(connectorId),
-    ]);
-    const credential = yield* authValue(() => ctx.credential?.getAll());
-    const grant = yield* authStorage<string | null>(ctx.storage, "get", [oauthGrantKeys.grant]);
-    // Only a digest of auth material is retained; vault values and sealed
-    // OAuth state never become part of a request cache key or definition.
-    const auth =
-      credential || grant
-        ? (yield* authCall<{ fingerprint: string }>(fingerprintSerializedCatalog, [
-            JSON.stringify([credential ?? null, grant]),
-          ])).fingerprint
-        : null;
-    return JSON.stringify([
-      policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
-      ctx.baseUrl,
-      ctx.publicUrl,
-      generation,
-      auth,
-    ]);
-  });
+/** Revalidate retained reads without storage I/O or credential material. */
+export function retainedCatalogIdentity(ctx: ConnectorContext): string {
+  const policy = serviceFor(ctx, CatalogPolicy);
+  return JSON.stringify([
+    policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
+    ctx.baseUrl,
+    ctx.publicUrl,
+    catalogRevision(policy?.storage ?? ctx.storage),
+    policy?.credentialRevision?.() ?? 0,
+  ]);
 }
+
 interface CacheScope {
   closed: boolean;
   abort: AbortController;
@@ -618,13 +606,19 @@ const invalidateCatalogCacheNative = /* @__PURE__ */ registerAuth(
   invalidateCatalogCache,
   (storage: KVStorage, connectorId: string) =>
     authFlow<void>(function* () {
-      (yield authStorage(storage, "set", [
-        responseCacheKeys.generation(connectorId),
-        crypto.randomUUID(),
-        {
-          ttlSeconds: GENERATION_TTL_SECONDS,
-        },
-      ])) as void;
+      advanceCatalogRevision(storage);
+      try {
+        (yield authStorage(storage, "set", [
+          responseCacheKeys.generation(connectorId),
+          crypto.randomUUID(),
+          {
+            ttlSeconds: GENERATION_TTL_SECONDS,
+          },
+        ])) as void;
+      } finally {
+        // A read started while the durable fence was pending must also expire.
+        advanceCatalogRevision(storage);
+      }
     }),
 );
 interface Manifest {

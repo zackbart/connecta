@@ -660,7 +660,7 @@ export class CatalogService {
   private readonly readOnly: boolean;
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
-  // success stays while its generation and credentials match, so a search
+  // success stays while its in-process invalidation fence matches, so a search
   // and the call after it see one current catalog. The cache owns a deep copy;
   // each asker receives another at public boundaries. Search keeps private, stable safety views
   // so its lexical index can be reused without exposing cached definitions.
@@ -758,15 +758,12 @@ export class CatalogService {
   // that joins it each end on their own terms, and the read is cancelled only
   // once every asker has gone (#571).
   private catalog(id: string, callOptions: ConnectorOperationOptions): Effect.Effect<ToolDef[], unknown> {
-    return Effect.gen({ self: this }, function* () {
+    return Effect.suspend(() => {
       // Authored static definitions never depend on a downstream cache or
       // credentials. Keep their discovery independent of credential reads.
       const identity = this.registry.getConnector(id)?.staticTools
         ? "static"
-        : yield* retainedCatalogIdentity(
-            this.registry.contextFor(id, this.baseUrl, this.requestScope, callOptions),
-            id,
-          );
+        : retainedCatalogIdentity(this.registry.contextFor(id, this.baseUrl, this.requestScope, callOptions));
       let retained = this.catalogs.get(id);
       if (!retained || retained.identity !== identity) {
         const started: SharedRead<ToolDef[]> = new SharedRead(
@@ -788,7 +785,7 @@ export class CatalogService {
         retained = { identity, read: started };
         this.catalogs.set(id, retained);
       }
-      return yield* retained.read.join(callOptions.signal);
+      return retained.read.join(callOptions.signal);
     });
   }
 

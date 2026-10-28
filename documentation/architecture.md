@@ -320,11 +320,16 @@ safety view, so repeated searches reuse the lexical index. Endpoint and connecto
 read-only policy, hidden tools, classification and caller/pool grants still
 bound the visible corpus. Views are keyed by their source catalog array, so a
 replacement read cannot inherit an older index; failed reads remain evicted.
-Before reusing a dynamic catalog, the request checks the existing cache generation, admitted auth
-partition, stored credentials and OAuth grant identity. A change replaces the
-retained read and its derived search views without adding cross-request state.
-Registry flights use the same identity, so a replacement cannot join a listing
-started before invalidation or credential rotation.
+Before reusing a dynamic catalog, the request checks an in-process revision fence,
+without storage reads, decryption or hashing. Catalog invalidation (including
+operator refresh and OAuth connect/disconnect/restart) advances a counter for the
+registry's cache store; built-in vault set/clear advances a counter for that vault.
+These weakly held counters contain no catalogs, credentials or caller identity;
+catalogs and derived views remain request-local. A moved fence replaces the
+retained read and its search views, and prevents joining an older registry flight.
+Changes made through another process/isolate or directly in storage need not be
+observed mid-request; the next request uses the durable generation and auth checks.
+Custom vault mutations must also invalidate the registry's catalog.
 Authored static catalogs remain independent of credential reads.
 No snapshot or index is shared across requests. Search and describe clone only
 selected definitions before returning schemas or annotations; `loadConnector()`

@@ -19,6 +19,44 @@ import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
 const BASE = "https://connecta.test";
 
 describe("request-scoped catalog cache", () => {
+  it("performs zero additional storage get/list calls on unchanged repeat searches", async () => {
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    const connectors = ["records", "notes"].map((id) =>
+      connectorWith({
+        id,
+        credential: { label: "Key" },
+        tools: async (ctx) => {
+          await ctx.credential!.get();
+          await ctx.storage.get(oauthGrantKeys.grant);
+          return [{ name: "read_record", annotations: { readOnlyHint: true } }];
+        },
+      }),
+    );
+    for (const { id } of connectors) {
+      await vault.set(id, "credential", "alice");
+      await storage.set(scopes.connector(id) + oauthGrantKeys.grant, "grant");
+    }
+    const get = vi.spyOn(storage, "get");
+    const list = vi.spyOn(storage, "list");
+    const service = new CatalogService(makeRegistry(connectors, { storage, credentialVault: vault }), BASE);
+    try {
+      expect((await service.search({ query: "record" })).entries).toHaveLength(2);
+      expect(get).toHaveBeenCalled();
+      get.mockClear();
+      list.mockClear();
+      for (const query of ["record", "read", "record"]) {
+        expect((await service.search({ query })).entries).toHaveLength(2);
+      }
+      expect(get).not.toHaveBeenCalled();
+      expect(list).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      list.mockRestore();
+      openRequest(service.requestScope).close();
+    }
+  });
+
   it("does not join an older registry flight after invalidation in the same request", async () => {
     let release!: () => void;
     let entered!: () => void;
@@ -87,7 +125,7 @@ describe("request-scoped catalog cache", () => {
     }
   });
 
-  it.each([true, false])("revalidates credentials mid-request (invalidate: %s)", async (invalidate) => {
+  it.each(["invalidate", "set", "clear"])("revalidates credentials mid-request (%s)", async (operation) => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
     await vault.set("records", "old-credential", "alice");
@@ -111,9 +149,10 @@ describe("request-scoped catalog cache", () => {
       expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
         "old_record",
       ]);
-      await vault.set("records", "new-credential", "alice");
+      if (operation === "clear") await vault.delete("records");
+      else await vault.set("records", "new-credential", "alice");
       // The credential administration route invalidates after updating the vault.
-      if (invalidate) await registry.invalidateStored("records");
+      if (operation === "invalidate") await registry.invalidateStored("records");
       expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
         "new_record",
       ]);
@@ -149,6 +188,8 @@ describe("request-scoped catalog cache", () => {
         "old_record",
       ]);
       await storage.set(key, "new-grant");
+      // OAuth connect/disconnect/restart routes invalidate after changing grants.
+      await registry.invalidateStored("records");
       expect((await service.search({ query: "record" })).entries.map((entry) => entry.tool.name)).toEqual([
         "new_record",
       ]);

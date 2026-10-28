@@ -2,4 +2,4 @@
 type: fixed
 ---
 
-Revalidate request-retained catalogs against the existing cache generation and credential identity, replacing derived search indexes when either changes.
+Revalidate request-retained catalogs using in-process catalog invalidation and credential mutation fences, without storage reads on unchanged repeat searches, replacing derived search indexes when a fence changes.

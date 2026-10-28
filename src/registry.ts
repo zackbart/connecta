@@ -1,3 +1,4 @@
+import { catalogRevision } from "./catalog-revision.js";
 import { authCall, authInvoke } from "./auth/native.js";
 import { Clock, Duration, Effect, Random } from "effect";
 import { activityRequest } from "./activity-request.js";
@@ -760,6 +761,7 @@ export class Registry implements RegistryView {
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),
+      credentialRevision: () => catalogRevision(this.opts.credentialVault),
       sharedPartition: JSON.stringify([baseUrl, this.opts.publicUrl ?? null, scope?.caller?.pool ?? null]),
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
@@ -1300,9 +1302,7 @@ export class Registry implements RegistryView {
             Effect.gen(function* () {
               if (!requestScope)
                 return yield* self.loadTools(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope);
-              const identity = self.connectors.get(id)?.staticTools
-                ? "static"
-                : yield* retainedCatalogIdentity(owner, id);
+              const identity = self.connectors.get(id)?.staticTools ? "static" : retainedCatalogIdentity(owner);
               let loads = self.requestCatalogLoads.get(requestScope);
               if (!loads) {
                 loads = new Map();
