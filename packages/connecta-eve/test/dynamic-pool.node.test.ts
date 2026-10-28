@@ -1,4 +1,4 @@
-// Node-only: uses real Eve 0.84's reaction runner, checkpointed memos and replay guard.
+// Node-only: uses real Eve 0.86's reaction runner, checkpointed memos and replay guard.
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import type { DynamicSentinel } from "eve/connections";

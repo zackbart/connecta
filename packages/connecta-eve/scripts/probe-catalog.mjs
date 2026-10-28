@@ -515,7 +515,7 @@ if (option("cell")) {
         private: true,
         type: "module",
         dependencies: {
-          eve: "0.84.0",
+          eve: "0.86.0",
           "@zackbart/connecta-eve": `file:${archive}`,
           "@zackbart/connecta": `file:${coreArchive}`,
           "quickjs-emscripten": "0.32.0",
@@ -524,7 +524,7 @@ if (option("cell")) {
     );
     await writeFile(
       join(work, "pnpm-workspace.yaml"),
-      'minimumReleaseAgeExclude:\n  - eve@0.84.0\noverrides:\n  "eve@0.84.0>undici": 8.12.3\n',
+      'minimumReleaseAgeExclude:\n  - eve@0.86.0\noverrides:\n  "eve@0.86.0>undici": 8.12.3\n',
     );
     run("pnpm", ["install", "--prefer-offline", "--ignore-scripts"], work);
     await writeFile(join(output, "consumer-pnpm-lock.yaml"), await readFile(join(work, "pnpm-lock.yaml")));
@@ -574,7 +574,7 @@ if (option("cell")) {
       dirty: run("git", ["status", "--porcelain"]).trim(),
       node: process.version,
       pnpm: run("pnpm", ["--version"]).trim(),
-      eve: "0.84.0",
+      eve: "0.86.0",
       helper: manifest.version,
       helperArchiveSha256: hash(await readFile(archive)),
       coreArchiveSha256: hash(await readFile(coreArchive)),
