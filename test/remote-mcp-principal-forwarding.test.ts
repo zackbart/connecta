@@ -705,7 +705,6 @@ it.skipIf(!bindings?.NOTES_RPC)(
     }
   },
 );
-||||||| parent of 3b4b9f2d (Report principal-forwarding connectors truthfully on the operator page (#1150))
 
 it.each(["human", "human-or-agent"] as const)(
   "operator status verifies the real downstream as the admitted human (%s)",
