@@ -371,6 +371,10 @@ endpoint admission, core counts streamed bytes before any SDK or native tool
 body reader. A body exactly at the cap proceeds through normal protocol
 validation. Past the cap, core stops reading, cancels both stream branches and
 returns HTTP 413 with JSON-RPC code `-33006`, `"MCP request body too large."`.
+The inspection reads through the first chunk crossing the cap; the clone's tee
+may pull one further chunk. The request-local signal wrapper reuses the input
+body explicitly, without an intermediate pipe that could pull additional chunks
+ahead. Bytes already buffered by the caller or host are outside this read bound.
 The response retains the request's existing admission lifetime and releases
 the permit when delivery ends. Caller cancellation and the existing request
 deadline also cancel stalled reads. `describeConfig().limits.requests.maxBodyBytes`
