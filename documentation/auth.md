@@ -1652,12 +1652,15 @@ they are wire text or a string inside a result, and errors' own fields. The
 joined projection is matched, so a value split across adjacent leaves,
 such as text blocks or array items, is found; each match is replaced only in
 the leaves it touches, and the containers around them keep their shape. A
-number touched by a match is kept only if a second check of the lane, after
-replacing the non-number pieces and keeping the touched numbers, finds no match
-touching it. Adjacent numbers are checked together. This check shares the call's
-work budget; if it cannot complete, the touched number becomes the string
-`[redacted]` whole. Bounded lanes, deep escapes, whole-field private matches and
-unchecked runs still withhold changed numbers whole. Text is reserialized only
+number touched by a match is checked again after replacing the non-number
+pieces. Adjacent numbers are checked together. Rejected numbers become whole
+`[redacted]` markers before checking the remaining numbers again, since a new
+marker can create another matching seam. Numbers are kept only when no retained
+number is touched in the lane that will be returned. Each round either withholds
+more numbers or finishes, sharing the call's work budget; if any check cannot
+complete, every originally touched number becomes the string `[redacted]` whole.
+Both joined and leaf-by-leaf checks follow this rule. Bounded lanes, deep escapes,
+whole-field private matches and unchecked runs still withhold changed numbers whole. Text is reserialized only
 when something changed; otherwise its original
 bytes remain. Serialized JSON whose keys, syntax, and leaves together hold a run
 that no single leaf holds, as a value spanning tokens does, is withheld whole.

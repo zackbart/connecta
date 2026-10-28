@@ -215,6 +215,65 @@ describe("the output boundary's projection", () => {
     },
   );
 
+  it.each(["payload", "envelope", "values", "leafByLeaf"] as const)(
+    "INV-5: %s checks retained numbers against the markers actually returned (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@example.com");
+      secrets.secret("test-credential-12345678[redacted]0-private");
+      const input = [12345678, 0, "example-connecta"];
+      const safe =
+        mode === "leafByLeaf"
+          ? secrets["leafByLeaf"](input.map(String), secrets["scan"](false), [1, 1, 0])
+          : secrets.redact(input, mode);
+      // Keeping 0 after withholding the first number would return the registered run dacted]0.
+      expect(safe).toEqual([MARK, MARK, `${MARK}-connecta`]);
+      expect(everyValue(safe).join("")).not.toContain("dacted]0");
+    },
+  );
+
+  it.each(["payload", "envelope", "values", "leafByLeaf"] as const)(
+    "INV-5: %s repeats number checks as withholding propagates across two marker seams (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@example.com");
+      secrets.secret("test-credential-12345678[redacted]0-private");
+      secrets.secret("00example/private");
+      const input = [12345678, 0, 0, "example-connecta", 42];
+      const safe =
+        mode === "leafByLeaf"
+          ? secrets["leafByLeaf"](input.map(String), secrets["scan"](false), [1, 1, 1, 0, 1])
+          : secrets.redact(input, mode);
+      // The first scan rejects 12345678; the next rejects only the first 0. Withholding
+      // that 0 creates another dacted]0 seam, so the last 0 needs another check.
+      expect(safe).toEqual([MARK, MARK, MARK, `${MARK}-connecta`, mode === "leafByLeaf" ? "42" : 42]);
+      expect(everyValue(safe).join("")).not.toContain("dacted]0");
+    },
+  );
+
+  it.each(["joined", "leafByLeaf"] as const)(
+    "INV-5: an unaffordable later %s check withholds every originally touched number (#1118)",
+    (path) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@example.com");
+      secrets.secret("test-credential-12345678[redacted]0-private");
+      const parts = ["12345678", "0", "example-connecta", "0", "example-connecta"];
+      const lane = ["12345678", "0", `${MARK}-connecta`, "0", `${MARK}-connecta`];
+      // Pay for the initial checks and one retry only. The last 0 is safe in that
+      // retry, but cannot be kept without validating the lane after rejecting 12345678.
+      const work =
+        path === "joined"
+          ? 2 * (parts.join("").length + lane.join("").length)
+          : 4 * parts.join("").length + 2 * ("1234567800".length + lane.join("").length);
+      const scan = { budget: { work, nodes: 100 }, payload: false };
+      const kinds = [1, 1, 0, 1, 0];
+      const safe =
+        path === "joined" ? secrets["safeParts"](parts, kinds, scan, false) : secrets["leafByLeaf"](parts, scan, kinds);
+      expect(safe).toEqual([MARK, MARK, `${MARK}-connecta`, MARK, `${MARK}-connecta`]);
+      expect(scan.budget.work).toBe(0);
+    },
+  );
+
   it("INV-5: an unaffordable number recheck and a bounded lane still withhold a touched number whole (#1118)", () => {
     const secrets = new SentSecrets();
     secrets.secret("alice@examplecorp.com");

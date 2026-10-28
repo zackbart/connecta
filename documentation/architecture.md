@@ -955,11 +955,14 @@ own leaves, and errors' own fields (non-enumerable diagnostics and causes
 included). The joined projection is matched raw and through each JSON
 decoding layer, so a form split across adjacent leaves is found; each match is
 replaced only in the leaves it touches, so public runs, links, annotations and
-container shapes stay. A touched number is kept only if checking the lane again,
-with non-number pieces replaced and touched numbers kept, finds no match touching
-it; adjacent numbers are checked together. The second check shares the call's
-work budget, and an unaffordable check withholds touched numbers whole as
-`[redacted]`. Bounded lanes, deep escapes, whole-field private matches and
+container shapes stay. Touched numbers are checked together with non-number
+pieces already replaced. Rejected numbers become whole `[redacted]` markers
+before the remaining numbers are checked again, since a marker can form a new
+matching seam. A number is kept only when no retained number is touched in the
+lane that will be returned. Each round either withholds more numbers or finishes,
+and shares the call's work budget; any incomplete check withholds every
+originally touched number whole. The joined and leaf-by-leaf paths use this
+same rule. Bounded lanes, deep escapes, whole-field private matches and
 unchecked runs still withhold changed numbers whole. The walk reads every field
 once, from its descriptor, and
 returns what it checked. A caller's container stands only as verified plain

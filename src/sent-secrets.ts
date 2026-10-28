@@ -1781,22 +1781,36 @@ export class SentSecrets {
     }
   }
 
-  /** Keep a touched number only if checking the lane after the other parts' replacements
-   * proves no match still touches it. Adjacent numbers remain joined for this check. It shares
-   * the call's budget; an unaffordable or deep check keeps the original withholding decision.
+  /** Keep touched numbers only after checking the lane with rejected numbers replaced whole.
+   * Each rejection can create another marker seam, so repeat until no retained number changes.
+   * Each round keeps fewer candidates or finishes, and shares the call's budget; an incomplete
+   * or deep check keeps every original withholding decision, including earlier safe candidates.
    * The leaf-by-leaf path repeats its bounded leaf and seam checks instead of joining again. */
   private retainNumbers(parts: string[], safe: string[], numbers: number[], scan: Scan, leafByLeaf = false): string[] {
     if (!numbers.length) return safe;
     const lane = [...safe];
     for (const index of numbers) lane[index] = parts[index]!;
-    let checked: string[];
-    if (leafByLeaf) checked = this.leafByLeaf(lane, scan, undefined, new Set(numbers));
-    else {
-      const matches = this.spansOf(lane.join(""), scan, scan.payload);
-      if (!matches || matches.deep) return safe;
-      checked = replaceParts(lane, matches.spans);
+    let retained = numbers;
+    while (retained.length) {
+      let checked: string[];
+      if (leafByLeaf) {
+        const recheck = { numbers: new Set(retained), complete: true };
+        checked = this.leafByLeaf(lane, scan, undefined, recheck);
+        if (!recheck.complete) return safe;
+      } else {
+        const matches = this.spansOf(lane.join(""), scan, scan.payload);
+        if (!matches || matches.deep) return safe;
+        checked = replaceParts(lane, matches.spans);
+      }
+      const kept = retained.filter((index) => {
+        if (checked[index] === lane[index]) return true;
+        lane[index] = REDACTED;
+        return false;
+      });
+      if (kept.length === retained.length) break;
+      retained = kept;
     }
-    for (const index of numbers) if (checked[index] === lane[index]) safe[index] = lane[index]!;
+    for (const index of numbers) safe[index] = lane[index]!;
     return safe;
   }
 
@@ -1831,20 +1845,27 @@ export class SentSecrets {
    * and one that does not fit is withheld without spending what a smaller one needs. A run
    * crossing from one kept leaf into the next, through any short leaves between them, is then
    * matched SEAM_UNITS deep on each side of the seam. */
-  private leafByLeaf(parts: string[], scan: Scan, kinds?: readonly number[], recheck?: ReadonlySet<number>): string[] {
+  private leafByLeaf(
+    parts: string[],
+    scan: Scan,
+    kinds?: readonly number[],
+    recheck?: { numbers: ReadonlySet<number>; complete: boolean },
+  ): string[] {
     const spans = parts.map((part, index) => {
       // On the retry the other parts already hold their replacements. Only the touched
       // numbers and their seams need checking; never treat an unaffordable neighbour as a
       // replacement that the lane does not actually contain.
-      if (recheck && !recheck.has(index)) return [];
+      if (recheck && !recheck.numbers.has(index)) return [];
       const matches = this.spansOf(part, scan, scan.payload);
+      if (recheck && (!matches || matches.deep)) recheck.complete = false;
       return !matches || (matches.deep && part.includes("\\")) ? undefined : matches.spans;
     });
     let pieces: { index: number; start: number; text: string }[] = [];
     const seam = () => {
       const text = pieces.map((piece) => piece.text).join("");
-      const needed = pieces.length > 1 && (!recheck || pieces.some((piece) => recheck.has(piece.index)));
+      const needed = pieces.length > 1 && (!recheck || pieces.some((piece) => recheck.numbers.has(piece.index)));
       const matches = needed ? this.spansOf(text, scan, scan.payload) : { spans: [], deep: false };
+      if (recheck && (!matches || matches.deep)) recheck.complete = false;
       const ranges = matches ? merged(matches.spans) : [];
       let offset = 0;
       for (const piece of pieces) {
