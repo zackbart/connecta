@@ -6,8 +6,6 @@ import { runEdge } from "../runtime/run.js";
 import { registerNativeStorage, registerNativeActivity } from "../runtime/native-storage.js";
 import { nativeSqlDriver } from "./sql-driver.js";
 import { nativeSqlStorage, nativeSqlActivityStore } from "./sql-native.js";
-/** The 0.28-compatible key-value table and expiry index. */
-export { KV_SCHEMA } from "./sql-schema.js";
 
 type SqlValue = string | number | null;
 
@@ -31,20 +29,6 @@ export interface SqlDriver {
 
 /** The two drivers, as `describe()` names them. */
 export type SqlKind = "d1" | "sqlite";
-
-export interface SqlCopyEntry {
-  readonly key: string;
-  readonly value: string;
-  /** Epoch milliseconds; null never expires. */
-  readonly expiresAtMs: number | null;
-}
-
-/**
- * What a copy did with one entry: written where no live row was, left alone
- * because the live row already held the value, refused because it held
- * another (`conflict`), or replaced under `overwrite` (`overwritten`).
- */
-export type SqlCopyOutcome = "copied" | "unchanged" | "conflict" | "overwritten";
 
 export interface SqlActivityOptions {
   /**

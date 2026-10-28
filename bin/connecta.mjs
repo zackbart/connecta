@@ -4,7 +4,7 @@ import { copyFile, cp, lstat, mkdtemp, readFile, rename, rm, symlink, writeFile 
 import { CONNECTA_VERSION } from "./version.mjs";
 import { META_TOOL_NAMES } from "./meta-tool-names.mjs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const [command, ...args] = process.argv.slice(2);
@@ -19,7 +19,6 @@ function shellCd(path) {
 function usage() {
   console.log(`Usage:
   connecta init [directory]
-  connecta migrate-state <state.json> <connecta.sqlite>
   CONNECTA_TOKEN=<bearer> connecta doctor [--config] [--url http://localhost:8787] [--pool <name>]
   CF_ACCESS_CLIENT_ID=<id> CF_ACCESS_CLIENT_SECRET=<secret> connecta doctor --url https://worker.example`);
 }
@@ -307,46 +306,9 @@ async function doctor() {
   );
 }
 
-/**
- * One-shot copy of a 0.28 `fileStorage` JSON state file into the SQLite
- * database 0.29 stores everything in. Stop the old deployment first; the file
- * is read, never changed.
- */
-async function migrateState() {
-  if (args.length !== 2 || args.some((arg) => arg.startsWith("--"))) {
-    usage();
-    process.exitCode = 1;
-    return;
-  }
-  const [statePath, databasePath] = args.map((arg) => resolve(process.cwd(), arg));
-  const { importStateFile, openSqlite } = await import(pathToFileURL(join(packageRoot, "dist", "sqlite.js")).href);
-  let database;
-  try {
-    database = openSqlite(databasePath);
-  } catch {
-    throw new Error("State migration failed: could not open the SQLite database");
-  }
-  let closeFailed = false;
-  try {
-    const result = importStateFile(database, statePath);
-    console.log(
-      `Imported ${result.imported} entries from ${statePath} into ${databasePath}` +
-        ` (${result.kept} already present, ${result.expired} expired).`,
-    );
-  } finally {
-    try {
-      database.close();
-    } catch {
-      closeFailed = true;
-    }
-  }
-  if (closeFailed) throw new Error("State migration failed: could not close the SQLite database");
-}
-
 try {
   if (command === "init") await init();
   else if (command === "doctor") await doctor();
-  else if (command === "migrate-state") await migrateState();
   else {
     usage();
     process.exitCode = command === "--help" || command === "-h" ? 0 : 1;

@@ -337,8 +337,9 @@ pools: {
 
 ## Verify
 
-1. Start the deployment; construction errors name each removed option's
-   replacement.
+1. Start the deployment; 0.33 construction errors name each removed option's
+   replacement. Releases after 0.37.1 use generic unknown-option errors;
+   use this guide for replacements.
 2. Sign in as a maintainer and confirm plain `/mcp` and the operator UI work.
 3. Run `connecta doctor --pool <pool>` with each agent's token, and confirm
    the same token at `/mcp` is refused.

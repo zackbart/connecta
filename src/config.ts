@@ -655,53 +655,6 @@ export interface ResolvedConfig extends Omit<Parsed, "serverInfo" | "agents"> {
   };
 }
 
-/** Pause-only options #672 removed with `resume_execution`. */
-const RETIRED_PAUSE_OPTIONS = ["ConnectaConfig.execute.resumableWrites", "ConnectaConfig.execute.pausedRunTtlSeconds"];
-
-/** Access options pools replaced (#837, decisions/0006). */
-const isRetiredPoolGrant = (path: string): boolean => /^ConnectaConfig\.pools\.[^.]+\.grant$/.test(path);
-
-/** Management resolvers maintainers and pool membership replaced (#837, decisions/0006). */
-const RETIRED_IDENTITY: ReadonlyArray<readonly [string, string]> = [
-  ["credentialAdministration", "maintainers administer shared credentials and OAuth grants. List them in maintainers."],
-  [
-    "personalConnection",
-    "pool members connect and disconnect their own personal connectors in their pools, and maintainers their own. Add people to a pool's members.",
-  ],
-  [
-    "accessTokenManagement",
-    "maintainers issue, rotate, and revoke agent tokens from an interactive session. List them in maintainers.",
-  ],
-  ["activityAccess", "maintainers read activity; activity.readGate can still narrow it. List them in maintainers."],
-];
-
-/** `trust`, on the deployment or a pool, was replaced by `readOnly` (#820). */
-const isRetiredTrust = (path: string): boolean =>
-  path === "ConnectaConfig.trust" || (path.startsWith("ConnectaConfig.pools.") && path.endsWith(".trust"));
-
-/**
- * `identity` was removed whole (#837), so the walk reports only the section.
- * Name each key it still holds, read by descriptor without running a getter
- * or echoing a value, so a retired resolver's message names its replacement.
- */
-function expandRetiredIdentity(config: unknown, paths: string[]): string[] {
-  if (!paths.includes("ConnectaConfig.identity")) return paths;
-  let keys: string[] = [];
-  try {
-    const descriptor = Reflect.getOwnPropertyDescriptor(config as object, "identity");
-    const value: unknown = descriptor && "value" in descriptor ? descriptor.value : undefined;
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      keys = Reflect.ownKeys(value).filter((key): key is string => typeof key === "string");
-    }
-  } catch {
-    keys = [];
-  }
-  if (keys.length === 0) return paths;
-  return paths.flatMap((path) =>
-    path === "ConnectaConfig.identity" ? keys.map((key) => `ConnectaConfig.identity.${key}`) : [path],
-  );
-}
-
 function rejectUnknownOptions(paths: string[]): void {
   if (paths.length === 0) return;
   throw new ConfigError(
@@ -715,27 +668,6 @@ function rejectUnknownOptions(paths: string[]): void {
         : "") +
       (paths.includes("ConnectaConfig.execute.approval")
         ? "\nexecute.approval was removed. The MCP client owns approval; set readOnly: true on the deployment or a pool to refuse writes."
-        : "") +
-      (paths.some((path) => RETIRED_PAUSE_OPTIONS.includes(path))
-        ? "\nPrograms no longer pause at writes, so there is nothing to configure: writable endpoints let programs and call_destructive_tool write; readOnly endpoints refuse every write (issue #672). Delete the option."
-        : "") +
-      (paths.includes("ConnectaConfig.identity.connectorAccess")
-        ? "\nidentity.connectorAccess was removed (#837): pools are the access model. List who may use plain /mcp in maintainers, and give each pool its tools and members. A guarded { tool, requireReadOnly: true } grant becomes a pool with readOnly: true."
-        : "") +
-      RETIRED_IDENTITY.filter(([key]) => paths.includes(`ConnectaConfig.identity.${key}`))
-        .map(([key, replacement]) => `\nidentity.${key} was removed (#837): ${replacement}`)
-        .join("") +
-      (paths.some((path) => path === "ConnectaConfig.identity" || path.startsWith("ConnectaConfig.identity."))
-        ? "\nThe identity section was removed (#837): maintainers and pool members decide access and management. Delete it."
-        : "") +
-      (paths.includes("ConnectaConfig.grant")
-        ? "\nThe top-level grant was removed (#837); list the people who may use plain /mcp in maintainers."
-        : "") +
-      (paths.some(isRetiredPoolGrant)
-        ? "\nPool grant was removed (#837); list who may open the pool in its members."
-        : "") +
-      (paths.some(isRetiredTrust)
-        ? '\ntrust was removed (#820); set readOnly, which every deployment now chooses explicitly. trust: "read-only" becomes readOnly: true, which now also refuses call_destructive_tool. trust: "trusted" becomes readOnly: false. A pool inherits the deployment readOnly unless it sets its own.'
         : ""),
   );
 }
@@ -774,7 +706,7 @@ export function resolveConfig(config: ConnectaConfig): ResolvedConfig {
  */
 export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; resolved: ResolvedConfig } {
   const read = readPlain(config, "ConnectaConfig", CONFIG);
-  rejectUnknownOptions(expandRetiredIdentity(config, read.unknown));
+  rejectUnknownOptions(read.unknown);
   const input = read.value as ConnectaConfig;
   const parsed = CONFIG.parse(input, "ConnectaConfig");
   assertCoherent(parsed);

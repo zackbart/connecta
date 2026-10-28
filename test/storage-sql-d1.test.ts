@@ -1,16 +1,26 @@
-// Independent review probes against native workerd D1 (PR #1045 review r1).
+// SQL contracts against native workerd D1 and separate Worker requests.
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it, vi } from "vitest";
-import { d1Storage, type D1DatabaseBinding } from "../src/d1.js";
+import { d1ActivityStore, d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
-import { sqlCasExpiryContract } from "./sql-storage-contract.js";
+import { sqlEffectContract } from "./sql-effect-contract.js";
+import {
+  sqlActivityRollbackContract,
+  sqlBatchRollbackContract,
+  sqlCasExpiryContract,
+  sqlStashFixture,
+  type SqlFixture,
+} from "./sql-storage-contract.js";
+import { stashClockSkewContract } from "./stash-charge-contract.js";
 
 const bindings = await (async () => {
   try {
     const testModule = "cloudflare:test";
-    const { env } = (await import(/* @vite-ignore */ testModule)) as { env: { KV_COPY_TARGET?: D1Database } };
-    return env.KV_COPY_TARGET ? { db: env.KV_COPY_TARGET } : undefined;
+    const { env } = (await import(/* @vite-ignore */ testModule)) as {
+      env: { STORAGE_DB?: D1Database; SQL_LIFETIMES: Fetcher };
+    };
+    return env.STORAGE_DB ? { db: env.STORAGE_DB, worker: env.SQL_LIFETIMES } : undefined;
   } catch {
     return undefined;
   }
@@ -25,27 +35,36 @@ async function fresh(): Promise<D1Database> {
   return db;
 }
 
-describe.skipIf(!bindings)("CAS expiry reclamation over native Workers D1", () => {
-  sqlCasExpiryContract(async () => {
-    const db = await fresh();
-    return {
-      storage: () => d1Storage(db),
-      async exec(sql, ...params) {
+async function open(): Promise<SqlFixture> {
+  const db = await fresh();
+  return {
+    storage: () => d1Storage(db),
+    activity: (options) => d1ActivityStore(db, options),
+    async exec(sql, ...params) {
+      await db
+        .prepare(sql)
+        .bind(...params)
+        .run();
+    },
+    async rows<Row>(sql: string, ...params: (string | number | null)[]) {
+      return (
         await db
           .prepare(sql)
           .bind(...params)
-          .run();
-      },
-      async rows<Row>(sql: string, ...params: (string | number | null)[]) {
-        return (
-          await db
-            .prepare(sql)
-            .bind(...params)
-            .all<Row>()
-        ).results;
-      },
-    };
-  });
+          .all<Row>()
+      ).results;
+    },
+  };
+}
+
+describe.skipIf(!bindings)("CAS expiry reclamation over native Workers D1", () => {
+  sqlCasExpiryContract(open);
+});
+
+describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {
+  sqlBatchRollbackContract(open);
+  sqlActivityRollbackContract(open);
+  sqlEffectContract(open);
 });
 
 /** Only the structural members connecta declares; nothing else is reachable. */
@@ -160,5 +179,36 @@ describe.skipIf(!bindings)("review r1: D1 binding error identity", () => {
     mode = "off";
     await storage.set("k", "v");
     expect(await storage.get("k")).toBe("v");
+  });
+});
+
+describe.skipIf(!bindings)("stash capacity over native Workers D1", () => {
+  stashClockSkewContract(async () => {
+    return sqlStashFixture(await open());
+  });
+});
+
+describe.skipIf(!bindings)("native SQL service request ownership", () => {
+  it("INV-7: reuses stores across real workerd requests without sharing clients, promises, or prepared handles", async () => {
+    const worker = bindings!.worker;
+    const key = crypto.randomUUID();
+    const fetch = async (path: string) => {
+      const response = await worker.fetch(`https://sql.test${path}`);
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const claims = await Promise.all(
+      Array.from({ length: 50 }, (_, index) => fetch(`/claim?key=${key}&owner=owner-${index}`)),
+    );
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await fetch(`/get?key=${key}`)).toBe(`owner-${claims.indexOf(true)}`);
+    for (let index = 0; index < 3; index++) await fetch(`/activity?owner=request-${index}`);
+    expect(await fetch("/list")).toMatchObject({
+      events: expect.arrayContaining([
+        expect.objectContaining({ requestId: "request-0" }),
+        expect.objectContaining({ requestId: "request-1" }),
+        expect.objectContaining({ requestId: "request-2" }),
+      ]),
+    });
   });
 });

@@ -1286,16 +1286,13 @@ connector](#downstream-oauth-on-api) stores no client. A vault without the
 optional `seal`/`open` members keeps the body plaintext with a startup
 warning; no vault, plaintext as always.
 
-**From 0.28 (layout 2).** The first read of an owner's grant that finds no
-record reads layout 2 once: the active generation's issuer-stamped client,
-tokens, and discovery (sealed values open under their old keys), kept only
-when every credential carries a stamp and the stamps agree with each other
-and with discovery. It writes them as the grant record by compare-and-set,
-then deletes every layout-2 key, cleanup lineage included. A disconnected
-connector stays disconnected; a cancelled request migrates nothing. Grants
-from before issuer binding (v0.8.1 and earlier) and pending consents are not
-carried, so those connectors need Connect again. Rolling back past this
-release finds no layout-2 grant and needs consent.
+**Pre-layout-3 grants.** The layout-2 migration and historical-key cleanup
+are removed. An owner with only old keys is treated as unauthorized; a warning
+names the unsupported layout and the need to Connect again or migrate on
+0.37.1. The check inspects key names only, never old credential values, and
+leaves them untouched. Existing layout-3 records remain readable even with an
+obsolete cleanup marker. Complete every owner's grant migration on 0.37.1
+before upgrading, or reconnect afterward; follow [Retired layout migrations](./migration-retired-layouts.md).
 
 ## Starting, restarting, and disconnecting
 
@@ -1397,12 +1394,8 @@ exchange. Both built-in `finishAuth` adapters require `callbackParams` with a
 nonempty `state`, even with PKCE disabled or after a separate `verifyState` call.
 A missing state is refused before discovery, registration, or token dispatch.
 
-Layout-2 migration commits `cleanupPending` in the new grant before deleting
-historical keys. Every later grant read retries deletion, then clears the
-marker by CAS only when deletion succeeds. Restart preserves this obligation.
-Disconnect commits a tombstone with the marker and always removes historical
-keys for the connector and owner, including when a modern grant already exists.
-A crash during cleanup cannot restore the disconnected grant.
+Disconnect commits a layout-3 tombstone. Restart and Disconnect never read or
+restore historical layout-2 keys.
 
 Disconnect first removes the grant and fences its epoch with CAS. When that
 removed grant's saved authorization-server metadata advertises a revocation
@@ -1434,7 +1427,7 @@ lease's `claimed` to `dispatched` CAS and a separate fingerprint CAS at
 `oauth:refresh-spent:<sha256(refresh_token)>`. The latter must succeed before
 any HTTP request leaves. Connector and owner storage namespaces partition both
 records. Spent records have **no TTL**, contain no token, and are never deleted
-by completion, failure, migration cleanup, Restart, Disconnect, or epoch sweeps.
+by completion, failure, Restart, Disconnect, or epoch sweeps.
 Copy these durable records during storage migration.
 
 Each fingerprint record names its dispatch epoch, holder, and resolution state:
@@ -1981,8 +1974,8 @@ anything, so SDK hook order cannot mix servers or cross a reset.
 
 Management follows `maintainers` and pool `members`; no resolver configures it. The former `identity.credentialAdministration`,
 `identity.personalConnection`, `identity.accessTokenManagement`, and
-`identity.activityAccess` each fail construction naming their replacement,
-and so does the `identity` section itself, even empty.
+`identity.activityAccess` fail construction as unknown options under `identity`,
+including an empty `identity` section.
 
 | Action                                    | Who may                                                                                                                                        |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |

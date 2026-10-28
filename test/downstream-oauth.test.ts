@@ -5,14 +5,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { vaultOAuthSealer, type OAuthStateSealer } from "../src/oauth-sealing.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import {
-  OAUTH_FLOW_TTL_SECONDS,
-  oauthConnectKeys,
-  oauthFlowKeys,
-  oauthGrantKeys,
-  oauthV2Keys,
-  type OAuthV2ValueKey,
-} from "../src/storage/keys.js";
+import { OAUTH_FLOW_TTL_SECONDS, oauthConnectKeys, oauthFlowKeys, oauthGrantKeys } from "../src/storage/keys.js";
 import type { KVStorage, Logger } from "../src/types.js";
 import { required, silentLogger } from "./helpers.js";
 import { deferred, spyLogger } from "./fixtures/misc.js";
@@ -20,8 +13,7 @@ import { consentKey, storedGrant } from "./fixtures/oauth.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 
 // The provider over layout 3: one grant record per owner (`oauth:grant`) and
-// one flow record per consent (`oauth:flow:<sha256(state)>`), and the one-shot
-// migration from layout 2 (#707). The refresh coordinator and remoteMcp()'s
+// one flow record per consent (`oauth:flow:<sha256(state)>`). The refresh coordinator and remoteMcp()'s
 // flows have suites of their own.
 
 const BASE = "https://connecta.test";
@@ -579,213 +571,82 @@ describe("KvOAuthProvider sealed state", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Layout 2 (0.22 through 0.28): six values per epoch at `oauth:<field>`,
-// suffixed `:epoch:<generation>` once a `v2:` generation owned them. The first
-// grant read that finds no record migrates it, then deletes it.
-// ---------------------------------------------------------------------------
-describe("layout 2 migration", () => {
-  const F = oauthV2Keys.field;
-  const v2 = (generation: string, value: unknown, stamp: Record<string, unknown> = {}) =>
-    JSON.stringify({ connectaOAuthVersion: 2, generation, ...stamp, value });
+describe("retired OAuth layouts", () => {
+  it.each(["legacy", "v2:live"])(
+    "refuses %s layout-2 grants without reading credentials or leaking token text",
+    async (generation) => {
+      const backing = memoryStorage();
+      const suffix = generation === "legacy" ? "" : `:epoch:${generation}`;
+      const secret = "SENTINEL-retired-token";
+      await backing.set("oauth:generation", generation);
+      for (const [field, value] of Object.entries({ client, tokens: { ...tokens, access_token: secret }, discovery }))
+        await backing.set(
+          `oauth:${field}${suffix}`,
+          JSON.stringify({ connectaOAuthVersion: 2, generation, issuer: ISSUER, value }),
+        );
+      const before = await backing.list("");
+      const storage = {
+        ...backing,
+        get: vi.fn(backing.get),
+        compareAndSet: vi.fn(backing.compareAndSet),
+        delete: vi.fn(backing.delete),
+      };
+      const logger = spyLogger();
+      const sealer = sealerFor(CREDENTIAL_KEY, logger.logger);
+      const open = vi.spyOn(sealer, "open");
+      const p = provider(storage, { sealer });
+      await expect(p.tokens(ctxA)).resolves.toBeUndefined();
+      await expect(p.clientInformation(ctxA)).resolves.toBeUndefined();
+      await expect(p.discoveryState()).resolves.toBeUndefined();
+      await expect(p.storedAuthorization(ISSUER)).resolves.toBe(false);
+      await expect(p.liveEpoch()).resolves.toBe("initial");
+      expect(storage.get.mock.calls.every(([key]) => key === GRANT)).toBe(true);
+      expect(open).not.toHaveBeenCalled();
+      expect(storage.compareAndSet).not.toHaveBeenCalled();
+      expect(storage.delete).not.toHaveBeenCalled();
+      expect(await backing.list("")).toEqual(before);
+      const warnings = JSON.stringify(logger.warn.mock.calls);
+      expect(warnings).toContain("unsupported pre-layout-3 OAuth grant");
+      expect(warnings).toContain("Connect again to authorize");
+      expect(warnings).toContain("0.37.1");
+      expect(warnings).not.toContain(secret);
+      // Fresh consent replaces the absent grant; old keys cannot be resurrected by reset.
+      await p.saveTokens(tokens, ctxA);
+      expect(await p.tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
+      await p.resetAuthorization(true);
+      expect(await p.tokens(ctxA)).toBeUndefined();
+      expect(await p.operatorDisconnected()).toBe(true);
+    },
+  );
 
-  /** Seed one generation's values; `legacy` writes the unsuffixed keys and no generation. */
-  async function seedV2(
-    storage: KVStorage,
-    generation: string,
-    values: Partial<Record<OAuthV2ValueKey, string>>,
-  ): Promise<void> {
-    if (generation !== "legacy") await storage.set(oauthV2Keys.generation, generation);
-    const epoch = generation.startsWith("v2:") ? generation : null;
-    for (const [field, raw] of Object.entries(values)) {
-      await storage.set(oauthV2Keys.value(field as OAuthV2ValueKey, epoch), raw);
-    }
-  }
-
-  it("migrates a legacy grant from stamped envelopes, discovery bare, and carries no consent", async () => {
-    const storage = memoryStorage();
-    await seedV2(storage, "legacy", {
-      [F.client]: v2("legacy", client, { issuer: ISSUER, binding: BINDING }),
-      [F.tokens]: v2("legacy", tokens, { issuer: ISSUER }),
-      [F.discovery]: JSON.stringify(discovery),
-      [F.pending]: v2("legacy", `${ISSUER}/authorize?state=old`),
-      [F.verifier]: v2("legacy", "old-verifier"),
-      [F.state]: v2("legacy", "old"),
-    });
-    const p = provider(storage);
-    expect(await p.tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
-
-    expect(await storedGrant(storage)).toEqual({
-      connectaOAuth: 3,
-      epoch: expect.stringMatching(/^v3:/),
-      body: { issuer: ISSUER, client: { value: client, binding: BINDING }, tokens, discovery },
-    });
-    expect(await storage.list("")).toEqual([GRANT]);
-    expect(await p.pendingAuthorizationUrl()).toBeUndefined();
-    expect(await p.verifyState("old")).toBe(false);
-  });
-
-  it("migrates a v2 epoch's suffixed grant, carried client and binding included, and deletes every layout 2 key", async () => {
-    const storage = memoryStorage();
-    const generation = "v2:live";
-    await seedV2(storage, generation, {
-      [F.client]: v2(generation, client, { issuer: ISSUER, binding: BINDING, carried: true }),
-      [F.tokens]: v2(generation, tokens, { issuer: ISSUER }),
-      [F.discovery]: v2(generation, discovery),
-      [F.pending]: v2(generation, `${ISSUER}/authorize?state=old`, { writtenAt: Date.now() }),
-      [F.verifier]: v2(generation, "old-verifier"),
-      [F.state]: v2(generation, "old"),
-    });
-    // An older epoch's residue, the legacy names, cleanup lineage, and a
-    // spent connect link that is not layout 2's to delete.
-    await storage.set(
-      oauthV2Keys.value(F.tokens, "v2:older"),
-      v2("v2:older", { access_token: "older", token_type: "Bearer" }, { issuer: ISSUER }),
+  it("keeps layout-3 grants with an obsolete cleanup marker readable without touching old keys", async () => {
+    const backing = memoryStorage();
+    await backing.set(
+      GRANT,
+      JSON.stringify({
+        connectaOAuth: 3,
+        epoch: "v3:existing",
+        cleanupPending: true,
+        body: { issuer: ISSUER, tokens },
+      }),
     );
-    await storage.set(oauthV2Keys.value(F.client, null), JSON.stringify({ client_id: "legacy-client" }));
-    await storage.set(`oauth:cleanup:${encodeURIComponent("v2:older")}`, JSON.stringify(["legacy"]));
-    await storage.set(`oauth:cleanup-at:${encodeURIComponent("v2:older")}`, JSON.stringify({ legacy: 1 }));
-    const used = oauthConnectKeys.used("spent-nonce");
-    await storage.set(used, "1");
-
-    const p = provider(storage, { binding: BINDING });
-    expect(await p.clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
-    const grant = required(await storedGrant(storage));
-    expect(grant.body).toEqual({
-      issuer: ISSUER,
-      client: { value: client, binding: BINDING, carried: true },
-      tokens,
-      discovery,
-    });
-    expect(grant.epoch).toMatch(/^v3:/);
-    expect(grant.epoch).not.toBe(generation);
-    expect((await storage.list("")).sort()).toEqual([GRANT, used].sort());
-
-    // Carried with tokens, the registration survives the next restart too.
-    await p.resetAuthorization(false, true);
-    expect((await storedGrant(storage))?.body?.client).toEqual({ value: client, binding: BINDING, carried: true });
+    await backing.set("oauth:tokens", "SENTINEL-retired-token");
+    const storage = { ...backing, list: vi.fn(backing.list), delete: vi.fn(backing.delete) };
+    await expect(provider(storage).tokens(ctxA)).resolves.toEqual({ ...tokens, ...ctxA });
+    expect(storage.list).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(await backing.get("oauth:tokens")).toBe("SENTINEL-retired-token");
   });
 
-  it("opens sealed v2 values with their old physical key, and leaves behind what does not open", async () => {
-    const sealer = sealerFor();
-    const generation = "v2:sealed";
-    const sealed = async (field: OAuthV2ValueKey, plaintext: string, label = oauthV2Keys.value(field, generation)) =>
-      JSON.stringify({ connectaOAuthSealed: 1, sealed: await sealer.seal(label, plaintext) });
-    const seed = async (storage: KVStorage, tokensLabel?: string) =>
-      seedV2(storage, generation, {
-        [F.client]: await sealed(F.client, v2(generation, client, { issuer: ISSUER })),
-        [F.tokens]: await sealed(F.tokens, v2(generation, tokens, { issuer: ISSUER }), tokensLabel),
-      });
-
+  it("reports retired OAuth state without a vault and does not open malformed stored text", async () => {
     const storage = memoryStorage();
-    await seed(storage);
-    expect(await provider(storage, { sealer }).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
-    const raw = required((await storage.get(GRANT)) ?? undefined);
-    expect(JSON.parse(raw)).toEqual({
-      connectaOAuth: 3,
-      epoch: expect.stringMatching(/^v3:/),
-      sealed: expect.any(String),
-    });
-    expect(raw).not.toContain("secret-access");
-    expect(await provider(storage, { sealer }).clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
-
-    // Tokens sealed under another key than their own do not open: the
-    // client that does is kept on its own.
-    const moved = memoryStorage();
-    await seed(moved, oauthV2Keys.value(F.tokens, null));
-    expect(await provider(moved, { sealer }).tokens()).toBeUndefined();
-    expect((await storedGrant(moved))?.body).toBeUndefined();
-    expect(await provider(moved, { sealer }).clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
-
-    // Without a sealer nothing opens, and the grant migrates empty.
-    const unsealed = memoryStorage();
-    await seed(unsealed);
-    expect(await provider(unsealed).tokens()).toBeUndefined();
-    expect(await storedGrant(unsealed)).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/) });
-    expect(await unsealed.list("")).toEqual([GRANT]);
-  });
-
-  it("migrates a disconnected generation as a disconnect tombstone", async () => {
-    const storage = memoryStorage();
-    const generation = "disconnected:abc";
-    await seedV2(storage, generation, { [F.tokens]: v2(generation, tokens, { issuer: ISSUER }) });
-    const p = provider(storage);
-    expect(await p.operatorDisconnected()).toBe(true);
-    expect(await p.tokens()).toBeUndefined();
-    expect(await storedGrant(storage)).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^disconnected:/) });
-    expect(await storage.list("")).toEqual([GRANT]);
-  });
-
-  const other = "https://auth-b.example";
-  it.each<{ held: string; generation: string; values: Partial<Record<OAuthV2ValueKey, string>> }>([
-    {
-      held: "unstamped values from before v0.9",
-      generation: "legacy",
-      values: { [F.client]: JSON.stringify(client), [F.tokens]: JSON.stringify(tokens) },
-    },
-    {
-      held: "stamps naming different servers",
-      generation: "v2:a",
-      values: { [F.client]: v2("v2:a", client, { issuer: ISSUER }), [F.tokens]: v2("v2:a", tokens, { issuer: other }) },
-    },
-  ])("migrates empty from $held", async ({ generation, values }) => {
-    const storage = memoryStorage();
-    await seedV2(storage, generation, values);
-    const p = provider(storage);
-    expect(await p.tokens()).toBeUndefined();
-    expect(await p.clientInformation()).toBeUndefined();
-    expect(await p.operatorDisconnected()).toBe(false);
-    expect(await storedGrant(storage)).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/) });
-    expect(await storage.list("")).toEqual([GRANT]);
-  });
-
-  it("migrates once: two concurrent first reads write one record, and a later read does nothing more", async () => {
-    const backing = memoryStorage();
-    await seedV2(backing, "legacy", { [F.tokens]: v2("legacy", tokens, { issuer: ISSUER }) });
-    const both = deferred<void>();
-    let lists = 0;
-    let written = 0;
-    const storage: KVStorage = {
-      ...backing,
-      async list(prefix) {
-        if (++lists === 2) both.resolve();
-        await both.promise;
-        return backing.list(prefix);
-      },
-      async compareAndSet(key, expected, next, options) {
-        const ok = await backing.compareAndSet(key, expected, next, options);
-        if (key === GRANT && ok) written++;
-        return ok;
-      },
-    };
-    const [a, b] = [provider(storage), provider(storage)];
-    expect(await Promise.all([a.tokens(ctxA), b.tokens(ctxA)])).toEqual([
-      { ...tokens, ...ctxA },
-      { ...tokens, ...ctxA },
-    ]);
-    expect(lists).toBe(4);
-    expect(written).toBe(2);
-    expect(await a.liveEpoch()).toBe(await b.liveEpoch());
-
-    const raw = await backing.get(GRANT);
-    expect(await provider(storage).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
-    expect(lists).toBe(4);
-    expect(await backing.get(GRANT)).toBe(raw);
-    expect(await backing.list("")).toEqual([GRANT]);
-  });
-
-  it("keeps layout 2 when its record cannot be written", async () => {
-    const backing = memoryStorage();
-    await seedV2(backing, "legacy", { [F.tokens]: v2("legacy", tokens, { issuer: ISSUER }) });
-    const storage: KVStorage = {
-      ...backing,
-      compareAndSet: async () => {
-        throw new Error("storage unavailable");
-      },
-    };
-    await expect(provider(storage).tokens()).rejects.toThrow();
-    expect(await backing.list("")).toEqual([oauthV2Keys.value(F.tokens, null)]);
-    expect(await provider(backing).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
+    const secret = "SENTINEL-malformed-retired-token";
+    await storage.set("oauth:tokens", `{${secret}`);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(provider(storage).tokens(ctxA)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Connect again to authorize"));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    expect(await storage.get(GRANT)).toBeNull();
   });
 
   it("writes nothing when a never-authorized connector's grant is read (INV-10)", async () => {

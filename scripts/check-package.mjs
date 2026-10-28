@@ -297,6 +297,7 @@ try {
     "documentation/auth.md",
     "documentation/code-mode.md",
     "documentation/migration-0.33.md",
+    "documentation/migration-retired-layouts.md",
     "templates/node/.dockerignore",
     "templates/node/.env.example",
     "templates/node/AGENTS.md",
@@ -430,7 +431,11 @@ const d1Module = await import("@zackbart/connecta/d1");
 if (typeof d1Module.d1Storage !== "function" || typeof d1Module.d1ActivityStore !== "function") {
   throw new Error("missing D1 storage adapters");
 }
+for (const name of ["copyKvToD1", "markKvToD1Live", "KvToD1CopyError"]) {
+  if (name in d1Module) throw new Error(name + " remains on the D1 subpath");
+}
 const sqliteModule = await import("@zackbart/connecta/sqlite");
+if ("importStateFile" in sqliteModule) throw new Error("state importer remains on the SQLite subpath");
 const smokeDb = sqliteModule.openSqlite(":memory:");
 const smokeStorage = sqliteModule.sqliteStorage(smokeDb);
 if (!(await smokeStorage.compareAndSet("smoke", null, "1")) ||
@@ -729,6 +734,24 @@ try {
     join(generatedRoot, "src", "config-contract.ts"),
     [
       'import { createConnecta, customExecutor, defineConfig, type AdmittingExecutor, type Connecta, type ConnectaCallsConfig, type ConnectaConfig, type ConnectaConfigDescription, type ConnectaDiscoveryConfig, type ExecutorLease, type KVStorage } from "@zackbart/connecta";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { copyKvToD1 } from "@zackbart/connecta/d1";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { markKvToD1Live } from "@zackbart/connecta/d1";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { KvToD1CopyError } from "@zackbart/connecta/d1";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { KVNamespaceBinding } from "@zackbart/connecta/d1";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { KvToD1CopyOptions } from "@zackbart/connecta/d1";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { KvToD1Counts } from "@zackbart/connecta/d1";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { KvToD1CopyResult } from "@zackbart/connecta/d1";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { importStateFile } from "@zackbart/connecta/sqlite";',
+      "// @ts-expect-error past-layout migration export is removed",
+      'import type { StateFileImport } from "@zackbart/connecta/sqlite";',
       'import { googleServiceAccountToken } from "@zackbart/connecta/google";',
       'import { remoteMcp } from "@zackbart/connecta";',
       'export const warehouse = (serviceAccount: string) => remoteMcp("warehouse", { url: "https://bigquery.googleapis.com/mcp", authScope: "shared", auth: { type: "request", token: googleServiceAccountToken({ serviceAccount, scopes: ["https://www.googleapis.com/auth/bigquery"] }) } });',
@@ -965,27 +988,29 @@ try {
   }
 
   // Exercise the installed package and real QuickJS with an original v0.23
-  // secret. Only the template's access-token module, over the migrated
+  // secret. Only the template's access-token module, over the existing
   // database, can admit this doctor request; CONNECTA_TOKEN has no server role.
   const legacyTokens = JSON.parse(await readFile(join(root, "test", "fixtures", "access-tokens-v023.json"), "utf8"));
-  // The v0.23 records arrive the way a 0.28 Node deployment kept them, in a
-  // `fileStorage` JSON state file, and reach SQLite through the installed
-  // CLI's one-shot migration: the upgrade path the template documents.
-  const legacyStateFile = join(generatedRoot, "legacy-token-state.json");
-  await writeFile(
-    legacyStateFile,
-    JSON.stringify(Object.fromEntries(Object.entries(legacyTokens.records).map(([key, value]) => [key, { value }]))),
-  );
   const legacyState = join(generatedRoot, "legacy-token-state.sqlite");
-  const migrated = run(
-    join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-    ["migrate-state", legacyStateFile, legacyState],
+  // These supported token records already live in SQLite; the pre-SQLite importer is retired.
+  run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { openSqlite, sqliteStorage } from "@zackbart/connecta/sqlite";
+    const db = openSqlite(process.argv[1]);
+    try {
+      const storage = sqliteStorage(db);
+      for (const [key, value] of Object.entries(JSON.parse(process.argv[2]))) await storage.set(key, value);
+    } finally { db.close(); }
+  `,
+      legacyState,
+      JSON.stringify(legacyTokens.records),
+    ],
     generatedRoot,
   );
-  const recordCount = Object.keys(legacyTokens.records).length;
-  if (!migrated.includes(`Imported ${recordCount} entries`)) {
-    throw new Error(`migrate-state did not import the legacy records: ${migrated}`);
-  }
   const legacyPort = await freePort();
   let legacyOutput = "";
   const legacyDeployment = spawn(generatedTsx, ["src/index.ts"], {
