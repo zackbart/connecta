@@ -1798,10 +1798,43 @@ export class SentSecrets {
     }
   }
 
-  /** The parts' joined text, matched once, with each part's replacement. A tiny or short
-   * private value equal to a whole part withholds it. A number or a serialized container that
-   * a match touches is withheld whole. A bounded lane also loses an unfinished tail, and is
-   * withheld whole when the set could not tell where one begins. */
+  /** Keep touched numbers only after checking the lane with rejected numbers replaced whole.
+   * Each rejection can create another marker seam, so repeat until no retained number changes.
+   * Each round keeps fewer candidates or finishes, and shares the call's budget; an incomplete
+   * or deep check keeps every original withholding decision, including earlier safe candidates.
+   * The leaf-by-leaf path repeats its bounded leaf and seam checks instead of joining again. */
+  private retainNumbers(parts: string[], safe: string[], numbers: number[], scan: Scan, leafByLeaf = false): string[] {
+    if (!numbers.length) return safe;
+    const lane = [...safe];
+    for (const index of numbers) lane[index] = parts[index]!;
+    let retained = numbers;
+    while (retained.length) {
+      let checked: string[];
+      if (leafByLeaf) {
+        const recheck = { numbers: new Set(retained), complete: true };
+        checked = this.leafByLeaf(lane, scan, undefined, recheck);
+        if (!recheck.complete) return safe;
+      } else {
+        const matches = this.spansOf(lane.join(""), scan, scan.payload);
+        if (!matches || matches.deep) return safe;
+        checked = replaceParts(lane, matches.spans);
+      }
+      const kept = retained.filter((index) => {
+        if (checked[index] === lane[index]) return true;
+        lane[index] = REDACTED;
+        return false;
+      });
+      if (kept.length === retained.length) break;
+      retained = kept;
+    }
+    for (const index of numbers) safe[index] = lane[index]!;
+    return safe;
+  }
+
+  /** The parts' joined text, with each part's replacement. A touched number is checked again
+   * after string replacement before withholding it whole. Tiny or short whole private values,
+   * deep matches and unchecked runs still withhold changed numbers whole. A bounded lane also
+   * loses an unfinished tail, and withholds every touched number without a second check. */
   private safeParts(parts: string[], kinds: readonly number[], scan: Scan, bounded: boolean): string[] {
     if (!parts.length) return parts;
     const text = parts.join("");
@@ -1809,7 +1842,14 @@ export class SentSecrets {
     const matches = bounded && this.uncheckedTail() ? undefined : this.spansOf(text, scan, scan.payload);
     if (bounded && (!matches || matches.deep)) return parts.map((part) => part && REDACTED);
     if (bounded) this.openSpans(text, matches!.spans);
-    let safe = matches ? replaceParts(parts, matches.spans) : this.leafByLeaf(parts, scan);
+    let safe = matches ? replaceParts(parts, matches.spans) : this.leafByLeaf(parts, scan, kinds);
+    if (matches && !bounded && !matches.deep)
+      safe = this.retainNumbers(
+        parts,
+        safe,
+        kinds.flatMap((kind, index) => (kind === NUMBER && safe[index] !== parts[index] ? [index] : [])),
+        scan,
+      );
     if (matches?.deep) safe = safe.map((next, index) => (parts[index]!.includes("\\") ? REDACTED : next));
     if (scan.payload && this.smallForms)
       safe = safe.map((next, index) => (this.whole(parts[index]!) ? REDACTED : next));
@@ -1822,15 +1862,27 @@ export class SentSecrets {
    * and one that does not fit is withheld without spending what a smaller one needs. A run
    * crossing from one kept leaf into the next, through any short leaves between them, is then
    * matched SEAM_UNITS deep on each side of the seam. */
-  private leafByLeaf(parts: string[], scan: Scan): string[] {
-    const spans = parts.map((part) => {
+  private leafByLeaf(
+    parts: string[],
+    scan: Scan,
+    kinds?: readonly number[],
+    recheck?: { numbers: ReadonlySet<number>; complete: boolean },
+  ): string[] {
+    const spans = parts.map((part, index) => {
+      // On the retry the other parts already hold their replacements. Only the touched
+      // numbers and their seams need checking; never treat an unaffordable neighbour as a
+      // replacement that the lane does not actually contain.
+      if (recheck && !recheck.numbers.has(index)) return [];
       const matches = this.spansOf(part, scan, scan.payload);
+      if (recheck && (!matches || matches.deep)) recheck.complete = false;
       return !matches || (matches.deep && part.includes("\\")) ? undefined : matches.spans;
     });
     let pieces: { index: number; start: number; text: string }[] = [];
     const seam = () => {
       const text = pieces.map((piece) => piece.text).join("");
-      const matches = pieces.length > 1 ? this.spansOf(text, scan, scan.payload) : { spans: [], deep: false };
+      const needed = pieces.length > 1 && (!recheck || pieces.some((piece) => recheck.numbers.has(piece.index)));
+      const matches = needed ? this.spansOf(text, scan, scan.payload) : { spans: [], deep: false };
+      if (recheck && (!matches || matches.deep)) recheck.complete = false;
       const ranges = matches ? merged(matches.spans) : [];
       let offset = 0;
       for (const piece of pieces) {
@@ -1854,10 +1906,21 @@ export class SentSecrets {
       pieces.push({ index, start: part.length - SEAM_UNITS, text: part.slice(-SEAM_UNITS) });
     });
     seam();
-    return parts.map((part, index) => {
+    const safe = parts.map((part, index) => {
       const own = spans[index];
       return !own ? part && REDACTED : own.length ? replace(part, own) : part;
     });
+    return kinds
+      ? this.retainNumbers(
+          parts,
+          safe,
+          kinds.flatMap((kind, index) =>
+            kind === NUMBER && spans[index]?.length && safe[index] !== parts[index] ? [index] : [],
+          ),
+          scan,
+          true,
+        )
+      : safe;
   }
 
   /** Serialized JSON whose keys, syntax and leaves together hold a K-unit run of a form: one

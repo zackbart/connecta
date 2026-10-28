@@ -1665,11 +1665,19 @@ program returns, logs, and emits, and relayed input prompts. Each redaction
 projects the whole value: string and number leaves in serialization order,
 JSON objects, arrays, and string literals parsed into their own leaves whether
 they are wire text or a string inside a result, and errors' own fields. The
-joined projection is matched once, so a value split across adjacent leaves,
+joined projection is matched, so a value split across adjacent leaves,
 such as text blocks or array items, is found; each match is replaced only in
 the leaves it touches, and the containers around them keep their shape. A
-number that a match touches becomes the string `[redacted]`, so the JSON stays
-valid. Text is reserialized only when something changed; otherwise its original
+number touched by a match is checked again after replacing the non-number
+pieces. Adjacent numbers are checked together. Rejected numbers become whole
+`[redacted]` markers before checking the remaining numbers again, since a new
+marker can create another matching seam. Numbers are kept only when no retained
+number is touched in the lane that will be returned. Each round either withholds
+more numbers or finishes, sharing the call's work budget; if any check cannot
+complete, every originally touched number becomes the string `[redacted]` whole.
+Both joined and leaf-by-leaf checks follow this rule. Bounded lanes, deep escapes,
+whole-field private matches and unchecked runs still withhold changed numbers whole. Text is reserialized only
+when something changed; otherwise its original
 bytes remain. Serialized JSON whose keys, syntax, and leaves together hold a run
 that no single leaf holds, as a value spanning tokens does, is withheld whole.
 Matching runs on the raw text and through one more layer of JSON string escapes
@@ -2794,6 +2802,11 @@ auth: {
 - The connector stays shared. Connecta keeps no per-principal credential state
   and never stores, logs or describes the principal or the token. `describe()`
   reports `mode: "request"` as for any request resolver.
+- The resolver's returned token is registered as a credential: every eight-unit
+  run of it is withheld from all agent output in that request. An unsigned
+  principal reference must therefore be opaque, such as the principal id or a
+  random handle. Never return an email such as `alice@example.com` or another
+  domain-bearing string that also appears in the deployment's own names.
 
 #### Over a Workers service binding
 

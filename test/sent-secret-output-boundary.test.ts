@@ -173,6 +173,142 @@ describe("the output boundary's projection", () => {
     });
   });
 
+  it.each(["payload", "envelope"] as const)(
+    "INV-5: %s keeps a number when replacing the string beside it breaks their credential run (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@examplecorp.com");
+      const value = {
+        hostCalls: { attempted: 1, admitted: 1, succeeded: 1, failed: 0 },
+        _meta: { "io.modelcontextprotocol/serverInfo": { name: "examplecorp-connecta", version: "1" } },
+      };
+      expect(secrets.redact(value, mode)).toEqual({
+        hostCalls: { attempted: 1, admitted: 1, succeeded: 1, failed: 0 },
+        _meta: { "io.modelcontextprotocol/serverInfo": { name: `${MARK}-connecta`, version: "1" } },
+      });
+      expect(secrets.redact({ n: 10, x: { name: "examplecorp-connecta" } }, mode)).toEqual({
+        n: 10,
+        x: { name: `${MARK}-connecta` },
+      });
+    },
+  );
+
+  it.each(["payload", "envelope"] as const)(
+    "INV-5: %s still withholds numbers holding a credential run alone or together after string replacement (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      const value = "12345678-private";
+      secrets.secret(value);
+      for (const input of [
+        { a: 1234, b: 5678 },
+        { n: 12345678 },
+        { n: 991234567899 },
+        { a: 1234, b: 5678, text: "-private" },
+        { n: 12345678, text: "-private" },
+      ]) {
+        const safe: Record<string, unknown> = secrets.redact(input, mode);
+        for (const [name, part] of Object.entries(input)) if (typeof part === "number") expect(safe[name]).toBe(MARK);
+        expect(leakedRun(everyValue(safe).join(""), value)).toBeUndefined();
+      }
+      // Here only the seam held eight units. Replacing its string piece is sufficient.
+      expect(secrets.redact({ n: 1234, text: "5678-private" }, mode)).toEqual({ n: 1234, text: MARK });
+    },
+  );
+
+  it.each(["payload", "envelope", "values", "leafByLeaf"] as const)(
+    "INV-5: %s checks retained numbers against the markers actually returned (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@example.com");
+      secrets.secret("test-credential-12345678[redacted]0-private");
+      const input = [12345678, 0, "example-connecta"];
+      const safe =
+        mode === "leafByLeaf"
+          ? secrets["leafByLeaf"](input.map(String), secrets["scan"](false), [1, 1, 0])
+          : secrets.redact(input, mode);
+      // Keeping 0 after withholding the first number would return the registered run dacted]0.
+      expect(safe).toEqual([MARK, MARK, `${MARK}-connecta`]);
+      expect(everyValue(safe).join("")).not.toContain("dacted]0");
+    },
+  );
+
+  it.each(["payload", "envelope", "values", "leafByLeaf"] as const)(
+    "INV-5: %s repeats number checks as withholding propagates across two marker seams (#1118)",
+    (mode) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@example.com");
+      secrets.secret("test-credential-12345678[redacted]0-private");
+      secrets.secret("00example/private");
+      const input = [12345678, 0, 0, "example-connecta", 42];
+      const safe =
+        mode === "leafByLeaf"
+          ? secrets["leafByLeaf"](input.map(String), secrets["scan"](false), [1, 1, 1, 0, 1])
+          : secrets.redact(input, mode);
+      // The first scan rejects 12345678; the next rejects only the first 0. Withholding
+      // that 0 creates another dacted]0 seam, so the last 0 needs another check.
+      expect(safe).toEqual([MARK, MARK, MARK, `${MARK}-connecta`, mode === "leafByLeaf" ? "42" : 42]);
+      expect(everyValue(safe).join("")).not.toContain("dacted]0");
+    },
+  );
+
+  it.each(["joined", "leafByLeaf"] as const)(
+    "INV-5: an unaffordable later %s check withholds every originally touched number (#1118)",
+    (path) => {
+      const secrets = new SentSecrets();
+      secrets.secret("alice@example.com");
+      secrets.secret("test-credential-12345678[redacted]0-private");
+      const parts = ["12345678", "0", "example-connecta", "0", "example-connecta"];
+      const lane = ["12345678", "0", `${MARK}-connecta`, "0", `${MARK}-connecta`];
+      // Pay for the initial checks and one retry only. The last 0 is safe in that
+      // retry, but cannot be kept without validating the lane after rejecting 12345678.
+      const work =
+        path === "joined"
+          ? 2 * (parts.join("").length + lane.join("").length)
+          : 4 * parts.join("").length + 2 * ("1234567800".length + lane.join("").length);
+      const scan = { budget: { work, nodes: 100 }, payload: false };
+      const kinds = [1, 1, 0, 1, 0];
+      const safe =
+        path === "joined" ? secrets["safeParts"](parts, kinds, scan, false) : secrets["leafByLeaf"](parts, scan, kinds);
+      expect(safe).toEqual([MARK, MARK, `${MARK}-connecta`, MARK, `${MARK}-connecta`]);
+      expect(scan.budget.work).toBe(0);
+    },
+  );
+
+  it("INV-5: an unaffordable number recheck and a bounded lane still withhold a touched number whole (#1118)", () => {
+    const secrets = new SentSecrets();
+    secrets.secret("alice@examplecorp.com");
+    const parts = ["10", "examplecorp-connecta"];
+    // Fault probe: exactly enough work for the initial raw scan, none for the retry.
+    const scan = { budget: { work: 2 * parts.join("").length, nodes: 100 }, payload: false };
+    expect(secrets["safeParts"](parts, [1, 0], scan, false)).toEqual([MARK, `${MARK}-connecta`]);
+    expect(scan.budget.work).toBe(0);
+    expect(secrets["safeParts"](parts, [1, 0], secrets["scan"](false), true)).toEqual([MARK, `${MARK}-connect${MARK}`]);
+    // Force leaf-by-leaf matching: the large leaf cannot fit, but the initial seam can.
+    for (const [work, number] of [
+      [100, MARK],
+      [160, "10"],
+    ] as const) {
+      const limited = { budget: { work, nodes: 100 }, payload: false };
+      expect(secrets["safeParts"](["x".repeat(100), ...parts], [0, 1, 0], limited, false)).toEqual([
+        MARK,
+        number,
+        `${MARK}-connecta`,
+      ]);
+    }
+  });
+
+  it("INV-5: deep decoding still withholds touched numbers whole (#1118)", () => {
+    const secrets = new SentSecrets();
+    secrets.secret("alice@examplecorp.com");
+    let deep = "\\u0041";
+    for (let layer = 0; layer < 10; layer++) deep = JSON.stringify(deep).slice(1, -1);
+    expect(secrets.redact({ n: 10, name: "examplecorp-connecta", deep })).toEqual({
+      n: MARK,
+      name: `${MARK}-connecta`,
+      deep: MARK,
+    });
+  });
+
   it.each(["drive", "resource", "image"])(
     "INV-5: declared %s binary content is decoded at every byte alignment and withheld whole as the marker",
     (kind) => {
@@ -232,6 +368,7 @@ describe("the output boundary's projection", () => {
     const long = set("s".repeat(524_289));
     expect(long.redact({ text: "short unchecked content", id: "ab", n: 7 })).toEqual({ text: MARK, id: "ab", n: 7 });
     expect(long.redact({ a: "abcd", b: "efgh" })).toEqual({ a: MARK, b: MARK });
+    expect(long.redact({ a: 1234, b: 5678 })).toEqual({ a: MARK, b: MARK });
     const deep: Record<string, unknown> = {};
     let cursor = deep;
     for (let depth = 0; depth < 520; depth++) cursor = cursor["child"] = {};
@@ -250,6 +387,23 @@ describe("the output boundary's projection", () => {
     const seam = secrets.redact({ a: `${filler}${TOKEN.slice(0, 5)}`, b: `${TOKEN.slice(5)} public`, c: filler });
     expect(leakedRun(`${seam.a.slice(-40)}${seam.b}`, TOKEN)).toBeUndefined();
     expect(seam.b).toBe(`${MARK} public`);
+  });
+
+  it("INV-5: leaf-by-leaf seam checks retain a number only when the remaining budget proves it safe (#1118)", () => {
+    const secrets = set("alice@examplecorp.com");
+    const filler = "x".repeat(18_000_000);
+    const safe = secrets.redact({ first: filler, big: filler, n: 10, name: "examplecorp-connecta" });
+    expect(safe.first === filler).toBe(true);
+    expect({ big: safe.big, n: safe.n, name: safe.name }).toEqual({ big: MARK, n: 10, name: `${MARK}-connecta` });
+    const digits = set("12345678-private");
+    const numeric = digits.redact({ first: filler, big: filler, a: 1234, b: 5678, text: "-private" });
+    expect(numeric.first === filler).toBe(true);
+    expect({ big: numeric.big, a: numeric.a, b: numeric.b, text: numeric.text }).toEqual({
+      big: MARK,
+      a: MARK,
+      b: MARK,
+      text: MARK,
+    });
   });
 });
 

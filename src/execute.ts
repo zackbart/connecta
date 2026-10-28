@@ -1524,15 +1524,16 @@ export function createExecuteTool(
         }),
         (unfinished) => {
           // Every run response passes through write accounting.
-          const response = programWrites.finish(unfinished);
+          const response = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
           // Calls abandoned by the guest are failed when the run cancels them.
+          // These counters are Connecta's own integers, attached after the final payload check.
           const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
           response.structuredContent = { ...response.structuredContent, hostCalls: counts };
           if (response.content[0]?.type === "text")
             response.content[0].text = JSON.stringify(response.structuredContent);
           return response;
         },
-      ).pipe(Effect.map((result) => redactAgentOutput(sentSecrets, result)));
+      );
     });
 
   return agentOutputOperations(
