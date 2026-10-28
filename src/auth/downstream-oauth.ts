@@ -24,6 +24,7 @@ import {
   OAUTH_REFRESH_LEASE_SECONDS,
   oauthFlowKeys,
   oauthGrantKeys,
+  retiredOAuthKeys,
   oauthRefreshActiveKeys,
   oauthRefreshKeys,
   oauthRefreshSpentKeys,
@@ -61,13 +62,7 @@ import {
   type RefreshFailure,
   type RefreshResponseOutcome,
 } from "./oauth-token-response.js";
-import {
-  deleteV2Keys,
-  discoveryIssuer,
-  readV2Grant,
-  type MigratedGrant,
-  type MigratedGrantBody,
-} from "./oauth-v2-migration.js";
+import { discoveryIssuer, type OAuthGrantBody } from "./oauth-grant.js";
 
 /** @internal Keep the SDK's cloned body reads inside the code exchange's request. */
 export function codeExchangeResponse(response: Response, signal: AbortSignal): Response {
@@ -913,7 +908,7 @@ const MAX_GRANT_WRITES = 32;
  */
 const PENDING_AUTHORIZATION_MAX_AGE_MS = 10 * 60 * 1000;
 
-type GrantBody = MigratedGrantBody & {
+type GrantBody = OAuthGrantBody & {
   /** The exact resolved storage write observed before this consent committed. */
   refreshConsent?: { digest: string; resolution: string };
 };
@@ -926,7 +921,6 @@ type GrantBody = MigratedGrantBody & {
  * issue it.
  */
 interface Grant {
-  cleanupPending?: true;
   epoch: string;
   flow?: string;
   body: GrantBody;
@@ -934,7 +928,6 @@ interface Grant {
 
 /** A grant as stored: the body sealed when the vault can seal. */
 interface StoredGrant {
-  cleanupPending?: true;
   connectaOAuth: typeof GRANT_VERSION;
   epoch: string;
   flow?: string;
@@ -1142,7 +1135,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (client) this.addClientAuthentication = (headers, params) => authenticateRemoteClient(client, headers, params);
   }
 
-  /** Stored facts only: no migration, sealing writes, refresh or discovery. */
+  /** Stored facts only: no sealing writes, refresh or discovery. */
   storedAuthorization(issuer?: string): Promise<boolean> {
     return runEdge(authOwnMethod<boolean>(KvOAuthProvider.prototype, this, "storedAuthorization", [issuer]));
   }
@@ -1167,39 +1160,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return runEdge(authOwnMethod<T>(KvOAuthProvider.prototype, this, "wait", [work, signal]));
   }
 
-  /** Legacy helpers must fence their inner reads/deletes too, not just our join. */
-  private preparationStorage(signal: AbortSignal | null | undefined): KVStorage {
-    if (!signal) return this.storage;
-    const storage = this.storage;
-    return {
-      ...storage,
-      get: authMethod((key: string) => {
-        return authInvoke(this, "wait", [
-          authMethod(() => {
-            return authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>;
-          }),
-          signal,
-        ]) as Effect.Effect<string | null, unknown>;
-      }),
-      list: authMethod((prefix: string) => {
-        return authInvoke(this, "wait", [
-          authMethod(() => {
-            return authStorage(storage, "list", [prefix]) as Effect.Effect<string[], unknown>;
-          }),
-          signal,
-        ]) as Effect.Effect<string[], unknown>;
-      }),
-      delete: authMethod((key: string) => {
-        return authInvoke(this, "wait", [
-          authMethod(() => {
-            return authStorage(storage, "delete", [key]) as Effect.Effect<void, unknown>;
-          }),
-          signal,
-        ]) as Effect.Effect<void, unknown>;
-      }),
-    };
-  }
-
   // --- the grant record ---------------------------------------------------
 
   /** The grant's additional authenticated data: record and epoch. */
@@ -1221,7 +1181,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * The grant as stored now, migrating layout 2 on first sight. A plaintext
+   * The current grant record. A plaintext
    * body, written before the vault could seal, is sealed where it lies by
    * compare-and-set; a failure leaves it readable for the next write to seal.
    */
@@ -1235,16 +1195,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
         grant: Grant;
       }>(KvOAuthProvider.prototype, this, "readGrant", [signal]),
     );
-  }
-
-  /** Layout 2 migration and its cleanup retain the reading operation's owner. */
-  private migrate(signal: AbortSignal | null | undefined): Promise<string | null> {
-    return runEdge(authOwnMethod<string | null>(KvOAuthProvider.prototype, this, "migrate", [signal]));
-  }
-
-  /** Deletion is retried on every read, including reads after a reset. */
-  private cleanupV2(raw: string, signal: AbortSignal | null | undefined = this.signal): Promise<string | null> {
-    return runEdge(authOwnMethod<string | null>(KvOAuthProvider.prototype, this, "cleanupV2", [raw, signal]));
   }
 
   /** The grant a bound flow reads: a replaced epoch fails it. */
@@ -1295,7 +1245,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
       if (this.codeExchange) throw this.flowSuperseded();
       return {
         epoch: `${ACTIVE_EPOCH_PREFIX}${crypto.randomUUID()}`,
-        ...(grant.cleanupPending ? { cleanupPending: true as const } : {}),
         body,
       };
     }
@@ -1860,7 +1809,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /** Static adapters supply trusted configuration without persisting client secrets. */
-  protected revocationSnapshot(body: MigratedGrantBody): { body: MigratedGrantBody; client?: RemoteOAuthClient } {
+  protected revocationSnapshot(body: OAuthGrantBody): { body: OAuthGrantBody; client?: RemoteOAuthClient } {
     return { body, ...(this.clientOptions?.client ? { client: this.clientOptions.client } : {}) };
   }
 
@@ -1966,7 +1915,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
             const stored: StoredGrant = {
               connectaOAuth: GRANT_VERSION,
               epoch: grant.epoch,
-              ...(grant.cleanupPending ? { cleanupPending: true as const } : {}),
               ...(grant.flow !== undefined ? { flow: grant.flow } : {}),
             };
             if (Object.keys(grant.body).length > 0) {
@@ -2029,7 +1977,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
             }
             return {
               epoch: stored.epoch,
-              ...(stored.cleanupPending ? { cleanupPending: true as const } : {}),
               ...(stored.flow !== undefined ? { flow: stored.flow } : {}),
               body: grantBody(body),
             };
@@ -2076,9 +2023,19 @@ export class KvOAuthProvider implements OAuthClientProvider {
               }),
               signal,
             ])) as string | null;
-            if (raw === null) raw = (yield authInvoke(this, "migrate", [signal])) as string | null;
-            if (raw !== null && storedGrant(raw)?.cleanupPending)
-              raw = (yield authInvoke(this, "cleanupV2", [raw, signal])) as string | null;
+            if (raw === null) {
+              // Inspect names only: retired credentials are never opened or copied.
+              const keys = (yield authInvoke(this, "wait", [
+                authMethod(() => authStorage(this.storage, "list", [retiredOAuthKeys.scan])),
+                signal,
+              ])) as string[];
+              if (keys.some((key) => retiredOAuthKeys.prefixes.some((prefix) => key.startsWith(prefix))))
+                (this.sealer ?? console).warn(
+                  `[connecta] connector "${this.connectorId}" has an unsupported pre-layout-3 OAuth grant; ` +
+                    "treating it as absent. Connect again to authorize, or restore a backup and run the " +
+                    "OAuth migration on Connecta 0.37.1 before upgrading.",
+                );
+            }
             const grant = (yield authInvoke(this, "openGrant", [raw, signal])) as Grant;
             if (raw !== null && this.sealer && storedGrant(raw)?.body !== undefined) {
               const sealed = (yield authInvoke(this, "encodeGrant", [grant, signal])) as string;
@@ -2100,119 +2057,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
         );
       },
       KvOAuthProvider.prototype.readGrant,
-    );
-    registerAuthMethod(
-      KvOAuthProvider.prototype,
-      "migrate",
-      function (this: KvOAuthProvider, signal: AbortSignal | null | undefined) {
-        return authFlow<string | null>(
-          function* (this: KvOAuthProvider) {
-            const sealer = this.sealer;
-            const found = (yield authInvoke(this, "wait", [
-              authMethod(() => {
-                return authCall(readV2Grant, [
-                  this.preparationStorage(signal),
-                  sealer && {
-                    ...sealer,
-                    open: authMethod((label: string, value: string) => {
-                      return authInvoke(this, "wait", [
-                        authMethod(() => {
-                          return authInvoke(sealer, "open", [label, value]) as Effect.Effect<string, unknown>;
-                        }),
-                        signal,
-                      ]) as Effect.Effect<string, unknown>;
-                    }),
-                  },
-                ]) as Effect.Effect<MigratedGrant | undefined, unknown>;
-              }),
-              signal,
-            ])) as MigratedGrant | undefined;
-            if (!found) return null;
-            const prefix = found.disconnected ? DISCONNECTED_EPOCH_PREFIX : ACTIVE_EPOCH_PREFIX;
-            const encoded = (yield authInvoke(this, "encodeGrant", [
-              {
-                epoch: `${prefix}${crypto.randomUUID()}`,
-                body: found.body,
-                cleanupPending: true,
-              },
-              signal,
-            ])) as string;
-            let written: boolean;
-            try {
-              written = (yield authInvoke(this, "wait", [
-                authMethod(() => {
-                  return authStorage(this.storage, "compareAndSet", [GRANT, null, encoded]) as Effect.Effect<
-                    boolean,
-                    unknown
-                  >;
-                }),
-                signal,
-              ])) as boolean;
-            } catch {
-              if (signal?.aborted) throw aborted(signal);
-              throw this.credentialWriteError();
-            }
-            return (yield written
-              ? authValue(() => encoded)
-              : authInvoke(this, "wait", [
-                  authMethod(() => {
-                    return authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>;
-                  }),
-                  signal,
-                ])) as string | null;
-          }.bind(this),
-        );
-      },
-      KvOAuthProvider.prototype.migrate,
-    );
-    registerAuthMethod(
-      KvOAuthProvider.prototype,
-      "cleanupV2",
-      function (this: KvOAuthProvider, raw: string, signal: AbortSignal | null | undefined) {
-        signal = signal === undefined ? this.signal : signal;
-
-        return authFlow<string | null>(
-          function* (this: KvOAuthProvider) {
-            try {
-              if (
-                !((yield authInvoke(this, "wait", [
-                  authMethod(() => {
-                    return authCall(deleteV2Keys, [this.preparationStorage(signal)]) as Effect.Effect<boolean, unknown>;
-                  }),
-                  signal,
-                ])) as boolean)
-              )
-                return raw;
-              const grant = (yield authInvoke(this, "openGrant", [raw, signal])) as Grant;
-              delete grant.cleanupPending;
-              const cleared = (yield authInvoke(this, "encodeGrant", [grant, signal])) as string;
-              if (
-                (yield authInvoke(this, "wait", [
-                  authMethod(() => {
-                    return authStorage(this.storage, "compareAndSet", [GRANT, raw, cleared]) as Effect.Effect<
-                      boolean,
-                      unknown
-                    >;
-                  }),
-                  signal,
-                ])) as boolean
-              )
-                return cleared;
-              return (yield authInvoke(this, "wait", [
-                authMethod(() => {
-                  return authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>;
-                }),
-                signal,
-              ])) as string | null;
-            } catch {
-              if (signal?.aborted) throw aborted(signal);
-              // The durable marker survives both deletion and marker-clear failures.
-              return raw;
-            }
-          }.bind(this),
-        );
-      },
-      KvOAuthProvider.prototype.cleanupV2,
     );
     registerAuthMethod(
       KvOAuthProvider.prototype,
@@ -3803,10 +3647,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 grant: Grant;
               };
               const carried = preserveClient && !operatorDisconnected ? this.carriableClient(grant) : undefined;
-              const encoded = (yield authInvoke(this, "encodeGrant", [
-                { epoch, body: carried ?? {}, cleanupPending: true },
-                null,
-              ])) as string;
+              const encoded = (yield authInvoke(this, "encodeGrant", [{ epoch, body: carried ?? {} }, null])) as string;
               let written: boolean;
               try {
                 written = (yield authStorage(this.storage, "compareAndSet", [GRANT, raw, encoded])) as boolean;
@@ -3816,7 +3657,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
               if (written) {
                 this.refreshCoordinator?.retire(grant.epoch);
                 try {
-                  (yield authInvoke(this, "cleanupV2", [encoded, null])) as string | null;
                   (yield authInvoke(this, "sweepConsents", [])) as void;
                   (yield authInvoke(this, "sweepRefreshLeases", [])) as void;
                 } finally {

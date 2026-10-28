@@ -92,5 +92,7 @@ on Node, in Docker, or on Cloudflare Workers. The
 | [Operator documentation](./documentation/README.md) | Setup, feature availability, upgrades, and exact contracts.              |
 
 Upgrading? Follow the [upgrade guide](./documentation/deploying.md#upgrade-an-existing-deployment).
+Pre-0.29 storage and OAuth layouts must first migrate on 0.37.1; see the
+[required bridge upgrade](./documentation/migration-retired-layouts.md).
 Breaking changes are expected before 1.0. See the [changelog](./CHANGELOG.md)
 and [security policy](./SECURITY.md).

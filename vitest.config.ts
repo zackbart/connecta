@@ -10,7 +10,6 @@ const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktr
 // suite runs once, on Node. Never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
   "test/storage-sql-d1.test.ts",
-  "test/kv-to-d1.test.ts",
   "test/catalog-cache.test.ts",
   "test/usage-guide.test.ts",
   "test/executor-native.test.ts",
@@ -256,13 +255,10 @@ export default defineConfig({
                 "enable_weak_ref",
               ],
               workerLoaders: { LOADER: {} },
-              // A real local Workers KV namespace and D1 database for the
-              // one-shot KV → D1 copy (test/kv-to-d1.test.ts).
-              kvNamespaces: ["KV_COPY_SOURCE"],
-              d1Databases: ["KV_COPY_TARGET"],
+              // Native D1 for the SQL and catalog cache contracts.
+              d1Databases: ["STORAGE_DB"],
               serviceBindings: {
                 CLERK_ORGANIZATION: "clerk-organization",
-                SQL_LIFETIMES: "sql-lifetimes",
                 // A first-party MCP downstream whose identity entrypoint only a binding reaches.
                 NOTES_MCP: { name: "notes-mcp", entrypoint: "connecta" },
                 NOTES_PUBLIC: "notes-mcp",
@@ -285,14 +281,6 @@ export default defineConfig({
                   script: await fixtureBundle("./test/fixtures/notes-binding-worker.ts", ["cloudflare:workers"]),
                   compatibilityDate: "2025-01-01",
                   compatibilityFlags: ["nodejs_compat"],
-                },
-                {
-                  name: "sql-lifetimes",
-                  modules: true,
-                  script: await fixtureBundle("./test/fixtures/d1-native-worker.ts"),
-                  compatibilityDate: "2025-01-01",
-                  compatibilityFlags: ["nodejs_compat"],
-                  d1Databases: { DB: "sql-lifetimes" },
                 },
                 clerkOrganizationWorker(),
                 externalOutbound("clerk-organization-outbound", inject("clerkBackendServer")),

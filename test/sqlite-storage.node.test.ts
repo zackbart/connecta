@@ -1,14 +1,11 @@
 // Node-only: exercises the node:sqlite storage and activity adapters against real files.
-import { buildSync } from "esbuild";
-import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { Registry } from "../src/registry.js";
-import { importStateFile, openSqlite, sqliteActivityStore, sqliteStorage } from "../src/sqlite.js";
+import { openSqlite, sqliteActivityStore, sqliteStorage } from "../src/sqlite.js";
 import { silentLogger } from "./helpers.js";
 import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
 
@@ -82,81 +79,5 @@ describe("sqliteStorage in a file", () => {
     );
     expect(accepted.filter(Boolean)).toHaveLength(64);
     expect(await sqliteStorage(path).list("results:result:")).toHaveLength(64);
-  });
-});
-
-describe("importStateFile", () => {
-  it("INV-6: withholds a trigger's imported value from import errors and migrate-state output", async () => {
-    const directory = tempDirectory();
-    const statePath = join(directory, "state.json");
-    const databasePath = join(directory, "connecta.sqlite");
-    const secret = "planted-import-value-7f3a9c";
-    writeFileSync(
-      statePath,
-      JSON.stringify({
-        "conn:svc:credential:v1": { value: "first" },
-        "conn:svc:oauth:tokens": { value: secret },
-      }),
-    );
-    const db = track(openSqlite(databasePath));
-    await sqliteStorage(db).get("warm");
-    db.exec(`CREATE TRIGGER refuse_import BEFORE INSERT ON connecta_kv
-      WHEN NEW.value != 'first' BEGIN SELECT RAISE(ABORT, NEW.value); END`);
-    expect(() => importStateFile(db, statePath)).toThrow(
-      "State import failed: could not import entry 2 into the key-value table",
-    );
-    expect(db.prepare("SELECT key FROM connecta_kv").all()).toEqual([]);
-
-    // Exercise the real CLI against a fresh bundle of the source, without
-    // depending on dist having been built before the test suite runs.
-    mkdirSync(join(directory, "bin"));
-    for (const file of ["connecta.mjs", "version.mjs", "meta-tool-names.mjs"]) {
-      copyFileSync(fileURLToPath(new URL(`../bin/${file}`, import.meta.url)), join(directory, "bin", file));
-    }
-    writeFileSync(join(directory, "package.json"), JSON.stringify({ type: "module" }));
-    buildSync({
-      entryPoints: [fileURLToPath(new URL("../src/sqlite.ts", import.meta.url))],
-      outfile: join(directory, "dist/sqlite.js"),
-      bundle: true,
-      platform: "node",
-      format: "esm",
-    });
-    const result = spawnSync(
-      process.execPath,
-      [join(directory, "bin/connecta.mjs"), "migrate-state", statePath, databasePath],
-      { encoding: "utf8" },
-    );
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain(
-      "[connecta] State import failed: could not import entry 2 into the key-value table",
-    );
-    expect(result.stdout + result.stderr).not.toContain(secret);
-    expect(db.prepare("SELECT key FROM connecta_kv").all()).toEqual([]);
-  });
-
-  it("INV-6: refuses a malformed file without quoting its keys or text", () => {
-    const directory = tempDirectory();
-    const secret = "planted-state-secret-7f3a9c";
-    const db = track(openSqlite(join(directory, "connecta.sqlite")));
-    const cases = [
-      // V8's parse error quotes the text around the fault.
-      `{"conn:notes:oauth:tokens": {"value": "${secret}"`,
-      `{"${secret}":{"value":"1"}, oops}`,
-      JSON.stringify({ "a": { value: "1" }, [`conn:${secret}`]: { value: 2 } }),
-    ];
-    for (const [index, content] of cases.entries()) {
-      const path = join(directory, `state-${index}.json`);
-      writeFileSync(path, content);
-      let message = "";
-      try {
-        importStateFile(db, path);
-      } catch (error) {
-        message = (error as Error).message;
-      }
-      expect(message).toMatch(/not a connecta state file/);
-      expect(message).not.toContain(secret);
-    }
-    expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
   });
 });

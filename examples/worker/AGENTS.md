@@ -67,12 +67,10 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
 - All state lives in the one D1 database bound as `CONNECTA_DB`, through
   `d1Storage` (and `d1ActivityStore`) from `@zackbart/connecta/d1`. Do not add
   a KV namespace, a second database, or a copied storage adapter; connecta
-  creates its own tables. The only KV binding is in `kv-to-d1.wrangler.jsonc`,
-  which is never deployed. It exists for the one-shot copy from a 0.28 Workers
-  KV deployment (README.md § "Upgrading from 0.28"). Back up, block traffic
-  and background writers, drain, wait for stable KV, copy and verify, deploy
-  while maintenance remains, then mark cutover before reopening traffic. Never
-  rerun stale KV after cutover. Retain backups before removing KV.
+  creates its own tables. Pre-0.29 Workers KV state must be copied on
+  Connecta 0.37.1 before upgrading past that bridge release; follow the installed
+  package's `documentation/migration-retired-layouts.md`. The current example
+  includes no KV copy script or binding.
 - Add application logic only inside deliberate `api()` connector handlers.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability set;

@@ -118,19 +118,12 @@ first use, and commits one row per write. Back it up as one file, together
 with its `-wal` file while the server runs. Node 22 and 23 print an
 experimental-feature warning for `node:sqlite` once at startup.
 
-Upgrading from 0.28, which kept state in `.connecta-state.json`: stop the
-server, then copy the old file into the database once, before the first start:
-
-```sh
-npx connecta migrate-state .connecta-state.json .connecta.sqlite
-```
-
-In the container, mount the old file and import it into the volume:
-`docker compose run --rm -v "$PWD/.connecta-state.json:/import/state.json:ro"
-connecta npx connecta migrate-state /import/state.json /data/connecta.sqlite`. It copies every live entry with its expiry, keeps any
-key the database already holds, and never changes the old file; delete that
-once the deployment is verified. The 0.28 activity log
-(`.connecta-activity.jsonl`) is not imported; history starts fresh.
+Upgrading from the pre-SQLite JSON state format requires importing it with
+Connecta 0.37.1 before installing the release that removes migrations. The
+current package has no `importStateFile` or `connecta migrate-state`; SQLite
+never reads `.connecta-state.json`. Follow the installed package's
+`documentation/migration-retired-layouts.md`, including opening every OAuth
+grant on 0.37.1, before changing the pin.
 
 A build with no lockfile in the context resolves the pinned Connecta version
 itself, and a lockfile npm writes inside the image never reaches this project.

@@ -5,15 +5,13 @@
 // `sqliteActivityStore` its activity history; both create their tables on
 // first use. Node-only: nothing reachable from the root entry imports this.
 
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { effectSqlDriver, sqlDriverEdge, sqlSync } from "./storage/sql-driver.js";
 import type { ActivityStore } from "./activity.js";
 import type { KVStorage } from "./types.js";
-import { validateStorageKey } from "./storage/keys.js";
 import {
-  KV_SCHEMA,
   sqlActivityStore,
   type SqlActivityOptions,
   type SqlDriver,
@@ -118,96 +116,4 @@ export function sqliteStorage(database: SqliteDatabase): KVStorage {
  */
 export function sqliteActivityStore(database: SqliteDatabase, options?: SqliteActivityOptions): ActivityStore {
   return sqlActivityStore(sqliteDriver(database), "sqlite", options);
-}
-
-export interface StateFileImport {
-  /** Entries copied into the database. */
-  imported: number;
-  /** Entries left alone because the database already held their key. */
-  kept: number;
-  /** Entries whose TTL had already passed. */
-  expired: number;
-}
-
-/**
- * One-shot migration from the 0.28 `fileStorage` JSON state file: copy every
- * live entry, with its expiry, into the database's key-value table. Run it
- * once, with the old deployment stopped, before the first start on SQLite.
- *
- * Keys the database already holds are kept, so a second run copies nothing
- * twice and never overwrites state written since. The file is read, never
- * changed; delete it once the deployment is verified. A file that is not a
- * state file throws before anything is written.
- */
-export function importStateFile(
-  database: SqliteDatabase,
-  statePath: string,
-  now: number = Date.now(),
-): StateFileImport {
-  const text = readFileSync(statePath, "utf8");
-  // The file holds stored state (tokens, sealed credentials), and these
-  // errors reach the operator's terminal, so they name the file and an entry's
-  // position, never a key or the parser's account, which quotes the text.
-  let loaded: unknown;
-  try {
-    loaded = JSON.parse(text);
-  } catch {
-    throw new TypeError(`${statePath} is not a connecta state file: it is not valid JSON`);
-  }
-  if (loaded === null || typeof loaded !== "object" || Array.isArray(loaded)) {
-    throw new TypeError(`${statePath} is not a connecta state file`);
-  }
-  const entries = Object.entries(loaded as Record<string, unknown>);
-  for (const [index, [key, entry]] of entries.entries()) {
-    validateStorageKey(key);
-    const valid =
-      entry !== null &&
-      typeof entry === "object" &&
-      typeof (entry as { value?: unknown }).value === "string" &&
-      (!("exp" in entry) || Number.isFinite((entry as { exp?: unknown }).exp));
-    if (!valid) {
-      throw new TypeError(`${statePath} is not a connecta state file: entry ${index + 1} has no string value`);
-    }
-  }
-  let db: DatabaseSync | undefined;
-  let transaction = false;
-  let step = "open the SQLite database";
-  const result: StateFileImport = { imported: 0, kept: 0, expired: 0 };
-  try {
-    db = typeof database === "string" ? openSqlite(database) : database;
-    step = "begin the import transaction";
-    db.exec("BEGIN IMMEDIATE");
-    transaction = true;
-    step = "prepare the key-value table";
-    for (const statement of KV_SCHEMA) db.exec(statement);
-    const insert = db.prepare(
-      `INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, ?)
-       ON CONFLICT (key) DO NOTHING`,
-    );
-    for (const [index, [key, entry]] of entries.entries()) {
-      step = `import entry ${index + 1} into the key-value table`;
-      const { value, exp } = entry as { value: string; exp?: number };
-      if (exp !== undefined && exp <= now) {
-        result.expired += 1;
-        continue;
-      }
-      if (Number(insert.run(key, value, exp === undefined ? null : Math.ceil(exp)).changes) > 0) {
-        result.imported += 1;
-      } else {
-        result.kept += 1;
-      }
-    }
-    step = "commit the import transaction";
-    db.exec("COMMIT");
-  } catch {
-    if (transaction) {
-      try {
-        db!.exec("ROLLBACK");
-      } catch {
-        // Rollback errors can contain stored text too. Report the failed step.
-      }
-    }
-    throw new Error(`State import failed: could not ${step}`);
-  }
-  return result;
 }

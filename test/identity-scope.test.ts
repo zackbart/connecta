@@ -473,19 +473,15 @@ describe("member references at construction", () => {
     [
       "identity.connectorAccess",
       { identity: { connectorAccess: () => "all" } },
-      "identity.connectorAccess was removed (#837): pools are the access model. List who may use plain /mcp in maintainers, and give each pool its tools and members. A guarded { tool, requireReadOnly: true } grant becomes a pool with readOnly: true.",
+      "Unknown Connecta configuration option:\n- ConnectaConfig.identity",
     ],
-    [
-      "the top-level grant",
-      { grant: () => true },
-      "The top-level grant was removed (#837); list the people who may use plain /mcp in maintainers.",
-    ],
+    ["the top-level grant", { grant: () => true }, "Unknown Connecta configuration option:\n- ConnectaConfig.grant"],
     [
       "a pool grant",
       { pools: { team: { tools: ["wiki"], members: ["bob"], grant: () => true } } },
-      "Pool grant was removed (#837); list who may open the pool in its members.",
+      "Unknown Connecta configuration option:\n- ConnectaConfig.pools.team.grant",
     ],
-  ])("INV-11: refuses the removed %s and names its replacement", (_name, config, message) => {
+  ])("INV-11: refuses the removed %s as an unknown option", (_name, config, message) => {
     const attempt = build({ auth: users(), maintainers: ["alice"], ...(config as Partial<ConnectaConfig>) });
     expect(attempt).toThrow(message);
   });

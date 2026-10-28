@@ -57,7 +57,7 @@ import {
   registerAuthMethod,
 } from "./native.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
-import type { MigratedGrantBody } from "./oauth-v2-migration.js";
+import type { OAuthGrantBody } from "./oauth-grant.js";
 import { bindRenewableGrant, OAUTH_CHALLENGE_MAX_BYTES, type RenewableGrant } from "./renewable-grant.js";
 
 /**
@@ -366,7 +366,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
     };
   }
 
-  protected override revocationSnapshot(body: MigratedGrantBody) {
+  protected override revocationSnapshot(body: OAuthGrantBody) {
     const { settings } = this;
     return {
       body: {

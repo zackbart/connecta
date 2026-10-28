@@ -49,7 +49,7 @@ type KeyTtl =
   | { readonly kind: "fixed"; readonly seconds: number }
   | { readonly kind: "configured"; readonly by: string };
 
-export interface KeyFamily {
+interface KeyFamily {
   readonly name: string;
   readonly scope: "root" | "partition" | "connector";
   /** Static prefixes of every key the family writes, inside its scope. */
@@ -185,7 +185,7 @@ export const catalogKeys = {
     name: "catalog",
     scope: "root",
     prefixes: ["catalog:"],
-    // Retired v2/v3 listings are inventoried for migration; no runtime reads them.
+    // Retired v2/v3 listings expire on their original TTL; no runtime reads them.
     version: { number: 3, in: "value" },
     codec: textCodec,
     ttl: {
@@ -298,41 +298,6 @@ export const credentialKeys = {
     `${owner ? scopes.principal(owner) : ""}${scopes.connector(connectorId)}credential:v1`,
 } as const satisfies Keyed;
 
-/** Seconds a Workers KV → D1 copy's resume point stays usable. */
-export const KV_COPY_CURSOR_TTL_SECONDS = 7 * 24 * 60 * 60;
-
-/**
- * Where a one-shot Workers KV → D1 copy (`copyKvToD1` in `src/d1.ts`) resumes,
- * held in D1 under a random token. Workers KV's own list cursor can spell the
- * last key it listed, so the caller holds the token and never the cursor.
- */
-export const kvCopyKeys = {
-  family: {
-    name: "kv-copy",
-    scope: "root",
-    prefixes: ["kv-copy:v1:"],
-    version: { number: 1, in: "key" },
-    codec: textCodec,
-    ttl: { kind: "fixed", seconds: KV_COPY_CURSOR_TTL_SECONDS },
-    durable: false,
-  },
-  cursor: (token: string) => validateStorageKey(`kv-copy:v1:cursor:${token}`),
-} as const satisfies Keyed;
-
-/** Once traffic uses D1, copying stale KV state is refused. */
-export const kvCutoverKeys = {
-  family: {
-    name: "kv-cutover",
-    scope: "root",
-    prefixes: ["kv-cutover:v1:"],
-    version: { number: 1, in: "key" },
-    codec: textCodec,
-    ttl: { kind: "durable" },
-    durable: true,
-  },
-  source: (source: string) => validateStorageKey(`kv-cutover:v1:${encodeURIComponent(source)}`),
-} as const satisfies Keyed;
-
 // --- connector families ---------------------------------------------------
 
 /** Seconds a consent's flow record stays claimable, the same as its link. */
@@ -422,43 +387,6 @@ export const oauthRefreshActiveKeys = {
   holder: (epoch: string, holder: string) => validateStorageKey(`oauth:refresh-active:${epoch}:${holder}`),
 } as const satisfies Keyed;
 
-/** The values layout 2 stored, each under its historical key. */
-const oauthV2Field = {
-  client: "oauth:client",
-  tokens: "oauth:tokens",
-  pending: "oauth:pending",
-  verifier: "oauth:verifier",
-  state: "oauth:state",
-  discovery: "oauth:discovery",
-} as const;
-
-export type OAuthV2ValueKey = (typeof oauthV2Field)[keyof typeof oauthV2Field];
-
-/**
- * Layout 2, read once to migrate it into a grant record and then deleted:
- * each value at its field key, suffixed `:epoch:<generation>` once a modern
- * generation owned it; the active generation at `oauth:generation`; a reset's
- * cleanup lineage at `oauth:cleanup:` and `oauth:cleanup-at:`.
- */
-export const oauthV2Keys = {
-  family: {
-    name: "oauth-v2",
-    scope: "connector",
-    prefixes: [...Object.values(oauthV2Field), "oauth:generation", "oauth:cleanup:", "oauth:cleanup-at:"],
-    version: { number: 2, in: "value" },
-    codec: textCodec,
-    ttl: { kind: "durable" },
-    durable: true,
-  },
-  field: oauthV2Field,
-  /** One listing covers every layout 2 key; the reader keeps those above. */
-  scan: "oauth:",
-  /** A value's physical key; `epoch` null is the historical unsuffixed name. */
-  value: (key: OAuthV2ValueKey, epoch: string | null) =>
-    validateStorageKey(epoch === null ? key : `${key}:epoch:${epoch}`),
-  generation: "oauth:generation",
-} as const satisfies Keyed;
-
 /** Single-use browser links (`used`/`started`/`failed`/`closed`) and MRTR rounds. */
 export const oauthConnectKeys = {
   family: {
@@ -504,66 +432,18 @@ export const inputRetryKeys = {
   used: (nonce: string) => validateStorageKey(`input-retry:v1:${nonce}`),
 } as const satisfies Keyed;
 
-/**
- * Every family, for the overlap and coverage checks and for migrations that
- * copy only what a deployment cannot recreate. Keys a custom connector writes
- * through its own `ctx.storage` belong to that connector, inside its
- * namespace, and are not listed here.
- */
-export const KEY_FAMILIES: readonly KeyFamily[] = [
-  continuationKeys.family,
-  operatorViewerKeys.family,
-  resultKeys.family,
-  stashLedgerKeys.family,
-  stashExpiryKeys.family,
-  catalogKeys.family,
-  responseCacheKeys.family,
-  oauthHandoffKeys.family,
-  accessTokenKeys.family,
-  agentObservationKeys.family,
-  credentialKeys.family,
-  oauthGrantKeys.family,
-  oauthFlowKeys.family,
-  oauthRefreshKeys.family,
-  oauthRefreshSpentKeys.family,
-  oauthRefreshActiveKeys.family,
-  oauthV2Keys.family,
-  oauthConnectKeys.family,
-  negotiationKeys.family,
-  inputRetryKeys.family,
-  kvCopyKeys.family,
-  kvCutoverKeys.family,
-];
-
-// Principal, connector, and subject segments are hex digests and connector
-// ids, so none holds a colon.
-const PRINCIPAL_SCOPE = /^principal:[^:]*:/;
-const CONNECTOR_SCOPE = /^conn:[^:]*:/;
-const PARTITION_SCOPE = /^(?:results:|subject:[^:]*:)/;
-
-/**
- * The family a physical key belongs to, for reports that count keys without
- * naming them: one-shot migrations report per family, never per key. A key
- * no family claims is `connector-owned` when a custom connector wrote it
- * through its own `ctx.storage`, and `unclassified` otherwise (a key an older release wrote).
- */
-export function familyOfKey(key: string): string {
-  let rest = key.replace(PRINCIPAL_SCOPE, "");
-  let scope: KeyFamily["scope"] = "root";
-  for (const [pattern, nested] of [
-    [CONNECTOR_SCOPE, "connector"],
-    [PARTITION_SCOPE, "partition"],
-  ] as const) {
-    const match = pattern.exec(rest);
-    if (match) {
-      rest = rest.slice(match[0].length);
-      scope = nested;
-      break;
-    }
-  }
-  const family = KEY_FAMILIES.find(
-    (candidate) => candidate.scope === scope && candidate.prefixes.some((prefix) => rest.startsWith(prefix)),
-  );
-  if (family) return family.name;
-  return scope === "connector" ? "connector-owned" : "unclassified";
-}
+/** Retired OAuth names are inspected only to report that fresh consent is required. */
+export const retiredOAuthKeys = {
+  scan: "oauth:",
+  prefixes: [
+    "oauth:client",
+    "oauth:tokens",
+    "oauth:pending",
+    "oauth:verifier",
+    "oauth:state",
+    "oauth:discovery",
+    "oauth:generation",
+    "oauth:cleanup:",
+    "oauth:cleanup-at:",
+  ],
+} as const;

@@ -6,6 +6,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import * as d1 from "../src/d1.js";
+import * as sqlite from "../src/sqlite.js";
 import type { ConnectaConfig, RemoteMcpOptions } from "../src/index.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -94,6 +96,23 @@ describe("public package boundary", () => {
     // the repository. Neither belongs in every install.
     expect(packageJson.files).not.toContain("src");
     expect(packageJson.files).not.toContain("assets");
+  });
+
+  it("keeps SQL storage subpaths while removing past-layout migration exports", () => {
+    expect(Object.keys(d1).sort()).toEqual(["d1ActivityStore", "d1Storage"]);
+    expect(Object.keys(sqlite).sort()).toEqual(["openSqlite", "sqliteActivityStore", "sqliteStorage"]);
+    expect(packageJson.exports).toHaveProperty("./d1");
+    expect(packageJson.exports).toHaveProperty("./sqlite");
+    const help = spawnSync(process.execPath, [join(ROOT, "bin/connecta.mjs"), "--help"], { encoding: "utf8" });
+    expect(help.status).toBe(0);
+    expect(help.stdout).not.toContain("migrate-state");
+    const retired = spawnSync(
+      process.execPath,
+      [join(ROOT, "bin/connecta.mjs"), "migrate-state", "state.json", "connecta.sqlite"],
+      { encoding: "utf8" },
+    );
+    expect(retired.status).toBe(1);
+    expect(retired.stdout).not.toContain("migrate-state");
   });
 
   it("keeps repository agent instructions and decision history out of the package", () => {

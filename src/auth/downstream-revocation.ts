@@ -9,7 +9,7 @@ import {
   type RemoteOAuthClient,
 } from "./downstream-client-metadata.js";
 import { authCall, authFlow, authProgram, registerAuth } from "./native.js";
-import { discoveryIssuer, type MigratedGrantBody } from "./oauth-v2-migration.js";
+import { discoveryIssuer, type OAuthGrantBody } from "./oauth-grant.js";
 
 /** Local removal succeeded; provider-side removal needs the operator's attention. */
 export class OAuthRevocationError extends ConnectorCallError {
@@ -25,7 +25,7 @@ const REVOCATION_DEADLINE_MS = 20_000;
 
 /** Revoke only the issuer-bound snapshot removed by a successful reset CAS, once. */
 export function revokeDownstreamGrant(
-  body: MigratedGrantBody,
+  body: OAuthGrantBody,
   send: FetchLike,
   configuredClient?: RemoteOAuthClient,
 ): Promise<void> {
@@ -33,7 +33,7 @@ export function revokeDownstreamGrant(
 }
 const revokeDownstreamGrantNative = /* @__PURE__ */ registerAuth(
   revokeDownstreamGrant,
-  function (body: MigratedGrantBody, send: FetchLike, configuredClient?: RemoteOAuthClient) {
+  function (body: OAuthGrantBody, send: FetchLike, configuredClient?: RemoteOAuthClient) {
     return authFlow<void>(function* () {
       const metadata = body.discovery?.authorizationServerMetadata;
       const revocation = metadata as

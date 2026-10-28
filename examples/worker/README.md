@@ -21,14 +21,13 @@ migrations, and secrets.
 
 ## Files
 
-| File                                                   | What it is                                                                                                                                                        |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                                         | the Worker entrypoint — starts the configuration, under 30 lines                                                                                                  |
-| `src/connecta.config.ts`                               | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)`                                                                                    |
-| `alchemy.run.ts`                                       | the deployment: Worker, vars, secrets, D1, Worker Loader, and both Access applications                                                                            |
-| `wrangler.jsonc`                                       | local `wrangler dev` only, with a simulated Access identity; never used to deploy                                                                                 |
-| `gitignore`                                            | the copied deployment's `.gitignore`, shipped under this name because npm strips `.gitignore` ([Copied into its own repository](#copied-into-its-own-repository)) |
-| `scripts/copy-kv-to-d1.mjs`, `kv-to-d1.wrangler.jsonc` | one-shot copy of a 0.28 Workers KV deployment's state into D1, run once and deleted ([Upgrading from 0.28](#upgrading-from-028))                                  |
+| File                     | What it is                                                                                                                                                        |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`           | the Worker entrypoint — starts the configuration, under 30 lines                                                                                                  |
+| `src/connecta.config.ts` | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)`                                                                                    |
+| `alchemy.run.ts`         | the deployment: Worker, vars, secrets, D1, Worker Loader, and both Access applications                                                                            |
+| `wrangler.jsonc`         | local `wrangler dev` only, with a simulated Access identity; never used to deploy                                                                                 |
+| `gitignore`              | the copied deployment's `.gitignore`, shipped under this name because npm strips `.gitignore` ([Copied into its own repository](#copied-into-its-own-repository)) |
 
 Construct Connecta once per isolate and pass `ctx` through to `fetch`, as the
 example entrypoint does.
@@ -336,7 +335,7 @@ it reports, run Alchemy and Wrangler only on a trusted machine, keep
 `alchemy dev` and `wrangler dev` bound to localhost, and give the API token
 only the four permissions in [Deploy](#deploy) and a short expiry.
 
-`wrangler` serves only `wrangler dev` and `scripts/copy-kv-to-d1.mjs`. A
+`wrangler` serves local `wrangler dev`. A
 `tsconfig.json` like the following lets `tsc --noEmit`
 resolve `D1Database`, `WorkerLoader`, and `ExecutionContext`, and checks the
 stack:
@@ -602,87 +601,14 @@ Each shape moves to the one `CONNECTA_DB` binding:
 
 #### Copying Workers KV state into D1
 
-Storage keys did not change in 0.29. `copyKvToD1(kv, db, { source })` from
-`@zackbart/connecta/d1` preserves live keys, exact values including vault
-ciphertext, and absolute expiries. The source is the KV namespace id. Counts
-and failures name only families, never keys or values. Oversized UTF-8 strings
-or rows are skipped and counted as invalid against D1's
-[2,000,000-byte limit](https://developers.cloudflare.com/d1/platform/limits/).
-A different live D1 value or expiry is a conflict, kept by default.
-
-Use a maintenance window. Copying while either deployment serves can restore
-revoked tokens, stale refresh tokens, or disconnected connectors. A rerun is
-safe only while the source remains stable and D1 has no new application writes.
-The script reads the source id from `kv-to-d1.wrangler.jsonc` and checks two
-consecutive listing/hash passes before a copy or verification pass. The config
-uses remote KV and D1 bindings and is never deployed.
-
-Prepare the new configuration without deploying it. Use the existing activity
-D1 database as `CONNECTA_DB`, keeping its name and id; otherwise create one
-with `wrangler d1 create connecta`. Remove `kv_namespaces` and copied adapters.
-Configuration lives in `src/connecta.config.ts` and
-`src/index.ts` is the entry point. Set the plain var `CONNECTA_ACTIVITY = "on"`
-so preserved activity remains visible. Bind only `CONNECTA_DB` and `LOADER` for storage/execution;
-keep existing auth vars and the credential secret.
-Fill in the copy config's namespace id and the same D1 database name/id,
-then `wrangler login` and check the prepared deployment with a dry run.
-
-1. Back up KV with a bulk export including values and expiration metadata.
-   Export D1 with `wrangler d1 export <db> --remote --output before-cutover.sql`.
-   Store backups securely and preserve the exact credential encryption key,
-   whatever secret name the deployment stores it under.
-2. Block traffic using maintenance mode or turn the route off. Stop cron,
-   queue consumers, scheduled jobs, and every other KV/D1 writer. Drain all
-   in-flight requests, including OAuth callbacks and token refreshes.
-3. Wait at least **60 seconds after the last write**, or the longest configured
-   KV `cacheTtl`, whichever is greater. KV propagation can take longer, so this
-   is a minimum, not proof of consistency. See
-   [KV consistency](https://developers.cloudflare.com/kv/concepts/how-kv-works/).
-   Confirm a stable source with two consecutive listing/hash passes that match;
-   the script performs this check. If they differ, stay in maintenance, wait
-   longer, and repeat. Expiring entries may also require another pass.
-4. Copy **before switching traffic** with
-   `node scripts/copy-kv-to-d1.mjs --maintenance`. Resolve all `invalid` and
-   `conflicts` counts under maintenance; either makes the script exit non-zero.
-   An oversized entry requires a deliberate per-family remediation, not a
-   retry of the same value. Overwrite only families explicitly reviewed as
-   stale in D1, for example `--maintenance --overwrite-family catalog`.
-   Token/OAuth/vault families require the operator to confirm D1 rows are stale
-   and also pass `--confirm-stale-d1`; never infer this from a conflict alone.
-   There is no blanket `--overwrite`. Then run
-   `node scripts/copy-kv-to-d1.mjs --maintenance --verify`. It compares SHA-256
-   hashes of exact values and absolute expiries for live source keys, reports
-   `verified` / `mismatches` counts by family only, and exits non-zero on any
-   invalid entry or mismatch. Keep traffic and writers stopped until these
-   counts are resolved. A verification pass does not rewrite copied entries.
-5. Deploy the D1 configuration with the deployment's `wrangler deploy` while maintenance remains.
-   Run `connecta doctor --pool <pool>` using Access service credentials plus a
-   stored `cta_` bearer through `CONNECTA_TOKEN`. Verify an existing
-   OAuth connector without re-consent, an existing `cta_` token, a connector
-   using a vault credential, and prior activity in the Activity view. Run
-   these controlled checks with other traffic and background writers blocked.
-6. Seal the source with
-   `node scripts/copy-kv-to-d1.mjs --maintenance --mark-live`, then reopen
-   traffic and background writers. The permanent D1 marker refuses later
-   copies. Never rerun after traffic resumes. `--i-know-this-is-stale` is only
-   an emergency override after stopping writers again and assessing stale KV;
-   it does not make stale tokens or credentials safe to restore.
-   Retain backups before deleting the KV namespace. After a clean observation
-   period, remove the copy script/config and delete KV with
-   `wrangler kv namespace delete --namespace-id <id>`.
-
-An in-Worker copy can call
-`copyKvToD1(env.CONNECTA_KV, env.CONNECTA_DB, { source: namespaceId, cursor })`
-from a guarded one-off route under the same maintenance procedure. Each call
-reads at most `maxKeys` keys, default 500. For near-limit rows use 200 or fewer
-so additional byte-bounded D1 batches fit the invocation's query budget.
-Loop until `done`, passing each returned cursor. Tokens keep KV's raw cursor
-in D1 for seven days, are bound to the source id, and are atomically consumed.
-Unknown, spent, or foreign-source tokens are refused without echoing them.
-On failure, use the error's replacement token or restart under maintenance.
-Call `markKvToD1Live(db, namespaceId)` before reopening traffic, and remove the
-route and KV binding. The source stability check is the operator's duty when
-using the API directly. Remote bindings remain unverified until deploy day.
+Complete this conversion on Connecta 0.37.1 before installing the release
+that removes migrations. The current `/d1` subpath provides `d1Storage` and
+`d1ActivityStore`; it no longer exports `copyKvToD1`, `markKvToD1Live`, or
+migration types, and this example no longer includes the copy script/config.
+Use the 0.37.1 package's Worker example under maintenance, verify the copy,
+mark cutover, and open every owner's OAuth grant on that bridge release.
+Follow [Retired layout migrations](../../documentation/migration-retired-layouts.md)
+for the required order and recovery. Never copy stale KV into a live database.
 
 ## Activity history (optional)
 

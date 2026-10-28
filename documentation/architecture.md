@@ -537,15 +537,8 @@ activity table beside it. `src/storage/sql.ts` owns the Promise edges.
 Each store creates its tables on first use. `memoryStorage()` is the default
 and the test double. Workers KV and the 0.28 JSON file store are gone: KV is
 eventually consistent and cannot compare-and-set, and the file store rewrote
-its whole file on every write. Each has a one-shot copy into its replacement,
-`copyKvToD1` on `/d1` and `connecta migrate-state` on Node. Both copy live
-entries verbatim, because physical keys did not change, and both keep any key
-the target already holds. `copyKvToD1` reports counts per key family
-(`familyOfKey` in `src/storage/keys.ts`), never a key. It resumes through a
-source-bound, atomically claimed token, because Workers KV's own list cursor
-can spell a key. Copy under maintenance after KV stabilizes, verify hashes
-and expiries, and mark cutover before reopening traffic; the permanent D1
-marker refuses stale copies afterward.
+its whole file on every write. Their one-shot copies were removed; deployments with old state must finish
+conversion on 0.37.1 before upgrading. See [Retired layout migrations](./migration-retired-layouts.md).
 
 `KVStorage` is `get`/`set`/`delete`/`list(prefix)`/`compareAndSet`, all
 required, and `createConnecta` refuses storage missing one (INV-11).
@@ -1935,10 +1928,8 @@ request fixture and native-output suites supply runtime parity evidence.
 
 ### Native SQL storage (contributor)
 
-`src/storage/sql-native.ts` composes KV, activity schema upgrades, retention,
-and bounded SQL copies as Effects. `src/storage/d1-copy.ts` composes the
-Workers KV copy, source-bound resume claims, verification, cutover guard, and
-recovery. Public factories and copy functions retain their Promise contracts;
+`src/storage/sql-native.ts` composes KV, activity schema upgrades, and retention
+as Effects. Public factories retain their Promise contracts;
 custom Promise SQL drivers retain the fallback lift.
 
 `src/storage/sql-driver.ts` constructs a public Effect 4.0.5 `SqlClient`
@@ -1985,14 +1976,11 @@ value, matching that fallback. Interruption remains interruption. The lookup
 module imports no SQL or platform implementation and does not change the
 published storage interfaces.
 
-The synchronous state-file parser, validation, file read, and one atomic
-SQLite import remain native synchronous leaves because `importStateFile` is a
-published synchronous API. `openSqlite` retains file modes, WAL, busy timeout,
+`openSqlite` retains file modes, WAL, busy timeout,
 and database ownership. `test/sql-effect-contract.ts` retains affected-row,
 50-claim, typed-failure, cancellation, and tracing probes on SQLite and native
-D1. `test/kv-to-d1.test.ts` also reuses stores across separate workerd requests;
-the existing SQL contracts prove rollback, database-clock TTL, encodings,
-activity upgrades, and copy recovery.
+D1. The existing SQL contracts prove rollback, database-clock TTL, encodings,
+and activity upgrades.
 
 ### Internal provider HTTP failures (contributor)
 

@@ -9,8 +9,8 @@ import { sqlCasExpiryContract } from "./sql-storage-contract.js";
 const bindings = await (async () => {
   try {
     const testModule = "cloudflare:test";
-    const { env } = (await import(/* @vite-ignore */ testModule)) as { env: { KV_COPY_TARGET?: D1Database } };
-    return env.KV_COPY_TARGET ? { db: env.KV_COPY_TARGET } : undefined;
+    const { env } = (await import(/* @vite-ignore */ testModule)) as { env: { STORAGE_DB?: D1Database } };
+    return env.STORAGE_DB ? { db: env.STORAGE_DB } : undefined;
   } catch {
     return undefined;
   }

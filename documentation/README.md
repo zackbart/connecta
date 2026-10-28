@@ -36,6 +36,9 @@ The separate `@zackbart/connecta-eve` helper is available from 0.35.0. Its
 [package guide](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
 owns installation, supported Node/Eve versions, and token-source setup.
 
+For pre-0.29 storage or OAuth grants, complete the [retired layout migrations](./migration-retired-layouts.md)
+on 0.37.1 before upgrading past that bridge release.
+
 ## Contract reference
 
 | Guide                                                            | Owns                                                                                                          |
@@ -46,6 +49,7 @@ owns installation, supported Node/Eve versions, and token-source setup.
 | [Architecture (contributor reference)](./architecture.md)        | Request lifetimes, routes, storage, configuration, import boundaries, and Effect implementation               |
 | [Operator UI](./operator-ui.md)                                  | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation    |
 | [Operator UI tests (contributor reference)](./operator-tests.md) | Browser state matrix, real-server flows, and snapshot maintenance                                             |
+| [Retired layout migrations](./migration-retired-layouts.md)      | Required 0.37.1 bridge for KV, JSON state, and OAuth layout-2 grants                                          |
 | [Migration to 0.33](./migration-0.33.md)                         | Upgrade actions from 0.32 options to maintainers, members, agents, agent endpoints, and pool owners           |
 | [Provider migration for 0.29](./provider-migration-0.29.md)      | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
 | [Provider migration for 0.35](./provider-migration-0.35.md)      | Provider upgrade actions for 0.35.0                                                                           |
