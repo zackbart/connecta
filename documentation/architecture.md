@@ -1150,9 +1150,12 @@ it. Both MCP transports also pass their serialized response through it, covering
 JSON-RPC errors, HTTP diagnostics, structured content, and paging responses.
 After fully reading an SDK response body, an idle request set (no registered
 forms or unregistered values) returns the original text without parsing or
-reserializing it. SDK JSON retains the same meaning; its whitespace and escapes
-need no normalization. A set activated before the read completes still applies
-structured redaction, with the text fallback for non-JSON diagnostics.
+reserializing it, so clients receive exactly the bytes the SDK serialized. Only
+an active set reparses the body, which also canonicalizes numbers a handler
+emitted through `JSON.rawJSON` (an out-of-range value becomes `null`, digits past
+double precision are rounded); clients must not rely on either behaviour. A set
+activated before the read completes still applies structured redaction, with
+the text fallback for non-JSON diagnostics.
 Per-call redaction remains before diagnostic truncation, paging, and emits. Paging stores only request-redacted text before encoding
 chunks, so a later request needs no original credentials. Programs retain the
 request set only for the run so later outputs cannot reconstruct an echo.
