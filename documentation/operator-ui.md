@@ -564,9 +564,8 @@ readmission. Coalescing and publication are partitioned by viewer and connector.
 The browser learns of an Access switch only from a response tagged with the new
 viewer. Until then the page is still the previous viewer's: a read that began
 before the switch may still land in it, just as its earlier rows remain on
-screen. An explicit refresh never joins a read in flight; it starts its own,
-whose answer for the new viewer triggers readmission. Quiet polls, focus probes
-and recovery retries may still share one read per connector and viewer.
+screen. The first answer for the new viewer triggers readmission, which clears
+everything retained.
 Config observations never
 overwrite a completed detail row. Each connector opens at most one live observation
 per page load; the summary `/ui/data` performs no downstream probes.
