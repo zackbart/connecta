@@ -53,12 +53,13 @@
     "./providers/slides round-1 measurement is 386,289 B gzip standalone (#703), Node 26.12.0 and zlib-ng 1.3.1. Same-toolchain merged main f9bf5afb measures 362,798 B: +23,491 B. The build report gives the current measurement. This includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). Combined Google merge snapshot over main db979604 measures 386,289 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
     "./providers/stripe measures 379,663 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/tithely remeasures at 333,313 B gzip in its decision 0011 step 2, from 323,386 B on main at 57176ce1 (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations (budgeted, paged discovery), and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
-    "./providers/vercel standalone gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899)."
+    "./providers/vercel standalone gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899).",
+    "The 0.37.1 fix set (#1145) raises only the root cap, 404,500 to 407,000 B, once for the whole set instead of per PR. Official CI check:build (Node 22) root gzip: 0.37.0 at 7236bc82 404,114 B; main 97a4fb26 after #1131, #1132, #1133, #1135, #1136, #1137 and #1140 404,476 B (+362). Open fixes against 0.37.0: #1123 (OAuth resource-metadata origin) 404,625 B (+511), #1134 (number seams) 404,303 B (+189), #1138 (connect epoch) 404,119 B (+5), #1141 (request-owned result stashing) 404,675 B (+561); #1143 against #1134 404,339 B (+36); #1142 and #1144 are unmeasured. Each adds bounded checks, cancellation or fencing that the fixed defects lacked; no dependency is added. baselineGzip and every other cap are unchanged."
   ],
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 404500
+      "maxGzip": 407000
     },
     "./json-schema": {
       "baselineGzip": 5870,
