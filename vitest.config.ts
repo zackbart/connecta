@@ -184,6 +184,10 @@ async function executorRequestsWorker(origin: string) {
 
 export default defineConfig({
   test: {
+    // Vitest 5 enables the persistent module cache by default. Under a full
+    // run, @cloudflare/vitest-plugin's workerd runtime exits mid-file when its
+    // modules come from that cache, so every run transforms afresh, as Vitest 4 did.
+    fsModuleCache: false,
     projects: [
       {
         // The deployment shapes are consumer projects: they import the package
