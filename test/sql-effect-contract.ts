@@ -219,19 +219,18 @@ export function sqlEffectContract(open: () => Promise<SqlFixture>): void {
     const controller = new AbortController();
     const reason = new Error("caller cancelled");
     const original = sql.run.bind(sql);
-    const dispatch = vi
-      .spyOn(sql, "run")
-      .mockImplementation((statement) =>
-        original(statement).pipe(
-          Effect.andThen(Effect.sync(() => controller.abort(reason))),
-          Effect.andThen(Effect.never),
-        ),
-      );
+    const dispatch = vi.spyOn(sql, "run").mockImplementation((statement) => {
+      const operation = original(statement);
+      // Dispatch the expiry sweep normally; cancel only after the claim.
+      if (!statement.sql.startsWith("INSERT")) return operation;
+      return operation.pipe(Effect.andThen(Effect.sync(() => controller.abort(reason))), Effect.andThen(Effect.never));
+    });
     try {
       await expect(
         runEdge(native.compareAndSet("committed", null, "holder"), { signal: controller.signal }),
       ).rejects.toBe(reason);
-      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledTimes(2);
+      expect(dispatch.mock.calls.filter(([statement]) => statement.sql.startsWith("INSERT"))).toHaveLength(1);
       expect(await runEdge(native.get("committed"))).toBe("holder");
     } finally {
       dispatch.mockRestore();

@@ -209,6 +209,66 @@ export interface SqlFixture {
   rows<Row>(sql: string, ...params: (string | number | null)[]): Promise<Row[]>;
 }
 
+/** Physical expiry reclamation and CAS results on both real SQL drivers. */
+export function sqlCasExpiryContract(open: () => Promise<Pick<SqlFixture, "storage" | "exec" | "rows">>): void {
+  it("reclaims expired unique keys under CAS-only traffic", async () => {
+    const db = await open();
+    const storage = db.storage();
+    for (let index = 0; index < 200; index++) {
+      expect(await storage.compareAndSet(`nonce:${index}`, null, "claimed", { expiresAtMs: 1 })).toBe(true);
+    }
+    expect(await storage.list("")).toEqual([]);
+    // Reads hide expired rows; inspect the database to prove writes reclaim them.
+    expect(await db.rows("SELECT COUNT(*) AS count FROM connecta_kv")).toEqual([{ count: 1 }]);
+    expect(await storage.compareAndSet("live", null, "held")).toBe(true);
+    expect(await db.rows("SELECT key, value FROM connecta_kv")).toEqual([{ key: "live", value: "held" }]);
+  });
+
+  it.each([
+    ["insert", null, "new", true, "new"],
+    ["refused insert", null, "new", false, "held"],
+    ["update", "held", "new", true, "new"],
+    ["refused update", "other", "new", false, "held"],
+    ["delete", "held", null, true, null],
+    ["refused delete", "other", null, false, "held"],
+  ] as const)(
+    "bounds the expiry sweep on %s and preserves the CAS result",
+    async (kind, expected, next, result, value) => {
+      const db = await open();
+      const storage = db.storage();
+      await storage.get("warm");
+      if (kind !== "insert") expect(await storage.compareAndSet("target", null, "held")).toBe(true);
+      for (let index = 0; index < 40; index++) {
+        await db.exec(
+          "INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, ?)",
+          `expired:${index}`,
+          "old",
+          1,
+        );
+      }
+      expect(await storage.compareAndSet("target", expected, next)).toBe(result);
+      expect(await storage.get("target")).toBe(value);
+      expect(await db.rows("SELECT COUNT(*) AS count FROM connecta_kv WHERE expires_at_ms = 1")).toEqual([
+        { count: 24 },
+      ]);
+
+      // No expired rows remain: the sweep's zero must not turn a successful CAS false.
+      await db.exec("DELETE FROM connecta_kv WHERE expires_at_ms = 1");
+      expect(await storage.compareAndSet("target", value, "again")).toBe(true);
+      expect(await storage.compareAndSet("target", "again", null)).toBe(true);
+      expect(await storage.get("target")).toBeNull();
+    },
+  );
+
+  it("keeps null-to-null comparisons read-only", async () => {
+    const db = await open();
+    const storage = db.storage();
+    expect(await storage.compareAndSet("expired", null, "old", { expiresAtMs: 1 })).toBe(true);
+    expect(await storage.compareAndSet("expired", null, null)).toBe(true);
+    expect(await db.rows("SELECT key FROM connecta_kv")).toEqual([{ key: "expired" }]);
+  });
+}
+
 export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | "rows">) {
   const inner = db.storage();
   await inner.get("warm");
@@ -238,6 +298,7 @@ export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | 
  * suite: each driver's suite calls it inside its `describe`.
  */
 export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
+  sqlCasExpiryContract(open);
   sqlBatchRollbackContract(open);
   sqlActivityRollbackContract(open);
   sqlEffectContract(open);

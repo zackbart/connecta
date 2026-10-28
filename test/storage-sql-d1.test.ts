@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
+import { sqlCasExpiryContract } from "./sql-storage-contract.js";
 
 const bindings = await (async () => {
   try {
@@ -23,6 +24,29 @@ async function fresh(): Promise<D1Database> {
   await db.prepare("DROP TABLE IF EXISTS tool_call_activity").run();
   return db;
 }
+
+describe.skipIf(!bindings)("CAS expiry reclamation over native Workers D1", () => {
+  sqlCasExpiryContract(async () => {
+    const db = await fresh();
+    return {
+      storage: () => d1Storage(db),
+      async exec(sql, ...params) {
+        await db
+          .prepare(sql)
+          .bind(...params)
+          .run();
+      },
+      async rows<Row>(sql: string, ...params: (string | number | null)[]) {
+        return (
+          await db
+            .prepare(sql)
+            .bind(...params)
+            .all<Row>()
+        ).results;
+      },
+    };
+  });
+});
 
 /** Only the structural members connecta declares; nothing else is reachable. */
 function structural(db: D1Database, hooks: { onBatch?: () => void; onRun?: (sql: string) => void; calls: string[] }) {

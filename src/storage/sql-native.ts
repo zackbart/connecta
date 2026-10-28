@@ -5,9 +5,9 @@
 // three methods; nothing in this module knows which one it has. It imports no
 // platform module, so the Worker subpath can carry it.
 //
-// Atomicity. Every compare-and-set is one statement. SQLite executes a
-// statement atomically against the database file, and D1 runs one database's
-// statements one at a time against its primary, so a comparison and its write
+// Atomicity. Every compare-and-set comparison and mutation share one statement.
+// SQLite executes a statement atomically against the database file, and D1
+// runs one database's statements one at a time against its primary, so a comparison and its write
 // cannot interleave with another request's: of fifty concurrent claims on an
 // absent key, exactly one changes a row.
 //
@@ -96,6 +96,17 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
   // SQLite and D1 evaluate 'now' in the database, never in a caller isolate.
   const now = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
   const live = `(expires_at_ms IS NULL OR expires_at_ms > ${now})`;
+  const expirySweep = () =>
+    sql(`DELETE FROM connecta_kv WHERE key IN (
+      SELECT key FROM connecta_kv WHERE expires_at_ms <= ${now} LIMIT ${SWEEP_ROWS}
+    )`);
+  const runCas = (statement: SqlStatement) =>
+    Effect.gen(function* () {
+      yield* driver.run(expirySweep());
+      // The comparison and mutation stay atomic in one statement. Only its
+      // affected-row count determines the result, never the sweep's count.
+      return yield* driver.run(statement);
+    });
   const expiryOptions = (opts?: Parameters<KVStorage["set"]>[2]) => {
     if (opts?.expiresAtMs !== undefined) {
       if (!Number.isSafeInteger(opts.expiresAtMs) || opts.ttlSeconds !== undefined) {
@@ -127,9 +138,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
         yield* ensure();
         const expiry = expiryOptions(opts);
         yield* driver.batch([
-          sql(`DELETE FROM connecta_kv WHERE key IN (
-            SELECT key FROM connecta_kv WHERE expires_at_ms <= ${now} LIMIT ${SWEEP_ROWS}
-          )`),
+          expirySweep(),
           sql(
             `INSERT INTO connecta_kv (key, value, expires_at_ms)
            VALUES (?, ?, ${expiry.expression})
@@ -181,8 +190,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
         }
         if (next === null) {
           return (
-            (yield* driver.run(sql(`DELETE FROM connecta_kv WHERE key = ? AND ${live} AND value = ?`, key, expected))) >
-            0
+            (yield* runCas(sql(`DELETE FROM connecta_kv WHERE key = ? AND ${live} AND value = ?`, key, expected))) > 0
           );
         }
         let expiry: ReturnType<typeof expiryOptions>;
@@ -198,7 +206,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
           // Insert, or take over a row that has expired. A live row makes the
           // upsert's WHERE false, so nothing changes and the claim is refused.
           return (
-            (yield* driver.run(
+            (yield* runCas(
               sql(
                 `INSERT INTO connecta_kv (key, value, expires_at_ms)
            VALUES (?, ?, ${expiry.expression})
@@ -214,7 +222,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
           );
         }
         return (
-          (yield* driver.run(
+          (yield* runCas(
             sql(
               `UPDATE connecta_kv SET value = ?, expires_at_ms = ${expiry.expression}
          WHERE key = ? AND ${live} AND value = ?`,
