@@ -46,7 +46,8 @@ interface McpRequest {
   authorization: string | null;
 }
 
-function openListing(options: { toolResource?: string; refreshTokens?: string[] } = {}) {
+function openListing(options: { toolResource?: string; refreshTokens?: string[]; metadataUrl?: string } = {}) {
+  const challengedMetadata = options.metadataUrl ?? toolMetadataUrl;
   const downstream = httpDownstream(
     (server) => {
       server.registerTool(
@@ -75,9 +76,9 @@ function openListing(options: { toolResource?: string; refreshTokens?: string[] 
   };
   const fetchStub: FetchLike = async (input, init = {}) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.href === resourceMetadataUrl || url.href === toolMetadataUrl) {
+    if (url.href === resourceMetadataUrl || url.href === challengedMetadata) {
       metadata.push(url.href);
-      const resource = url.href === toolMetadataUrl ? (options.toolResource ?? mcpUrl) : mcpUrl;
+      const resource = url.href === challengedMetadata ? (options.toolResource ?? mcpUrl) : mcpUrl;
       return Response.json({ resource, authorization_servers: [issuer] });
     }
     if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
@@ -115,7 +116,7 @@ function openListing(options: { toolResource?: string; refreshTokens?: string[] 
       if (rpc === "tools/call" && !valid.has(authorization ?? "")) {
         return new Response(null, {
           status: 401,
-          headers: { "www-authenticate": `Bearer resource_metadata="${toolMetadataUrl}"` },
+          headers: { "www-authenticate": `Bearer resource_metadata="${challengedMetadata}"` },
         });
       }
       return downstream.fetch(input, init);
@@ -306,6 +307,37 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
     expect(server.calls().map((call) => call.authorization)).toEqual(["Bearer access-0", "Bearer access-1"]);
     expect(await reader(storage).tokens()).toMatchObject({ access_token: "access-1", refresh_token: "refresh-1" });
   });
+
+  it.each([
+    ["https://foreign.example/private-path?private-query=value", false],
+    ["https://downstream.example:8443/private-path", false],
+    ["http://downstream.example/private-path", false],
+    ["https://foreign.example/private-path?private-query=value", true],
+  ] as const)(
+    "refuses call-time metadata at %s (cached discovery: %s) without fetching it (#1115)",
+    async (metadataUrl, cached) => {
+      const server = openListing({ refreshTokens: ["refresh-0"], metadataUrl });
+      const storage = await carriedGrant();
+      if (cached) {
+        await new KvOAuthProvider("svc", storage, REDIRECT).saveDiscoveryState({
+          authorizationServerUrl: issuer,
+          resourceMetadataUrl,
+          resourceMetadata: { resource: mcpUrl, authorization_servers: [issuer] },
+        });
+      }
+      const c = connector();
+
+      const refused = await failureOf(ping(c, storage));
+
+      expect(refused.classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(refused.classified.message).toContain("resource metadata outside the configured resource origin");
+      expect(refused.classified.message).not.toMatch(/private-path|private-query/);
+      expect(server.metadata).toEqual([]);
+      expect(server.counts.refresh).toBe(0);
+      expect(server.counts.token).toBe(0);
+      expect(server.calls()).toHaveLength(1);
+    },
+  );
 
   it("refuses per-tool metadata naming another resource before any token request", async () => {
     const server = openListing({ refreshTokens: ["refresh-0"], toolResource: "https://other.example/mcp" });

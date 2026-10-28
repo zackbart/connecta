@@ -112,7 +112,9 @@ async function consent(c: Connector, storage: KVStorage, url: string | undefined
  * `forget`, the way a provider purges a registration. A known client's
  * code or refresh token always redeems.
  */
-function authorizationServer() {
+function authorizationServer(options: { url?: string; metadataUrl?: string } = {}) {
+  const resource = options.url ?? mcpUrl;
+  const metadata = options.metadataUrl ?? resourceMetadataUrl;
   const counts = { register: 0, fetches: 0, token: 0, mcp: 0 };
   let selectedIssuer = issuer;
   let urlClients = false;
@@ -121,8 +123,8 @@ function authorizationServer() {
   const fetchStub: FetchLike = async (input, init = {}) => {
     counts.fetches++;
     const url = new URL(input);
-    if (url.href === resourceMetadataUrl) {
-      return Response.json({ resource: mcpUrl, authorization_servers: [selectedIssuer] });
+    if (url.href === new URL(metadata).href) {
+      return Response.json({ resource, authorization_servers: [selectedIssuer] });
     }
     if (url.href === `${selectedIssuer}/.well-known/oauth-authorization-server`) {
       return Response.json({
@@ -154,7 +156,7 @@ function authorizationServer() {
         refresh_token: `refresh-${counts.token}`,
       });
     }
-    if (url.href === mcpUrl) {
+    if (url.href === resource) {
       counts.mcp++;
       if (stall) {
         // Never answers; only the connection's own abort ends it.
@@ -167,7 +169,7 @@ function authorizationServer() {
       }
       return new Response(null, {
         status: 401,
-        headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` },
+        headers: { "www-authenticate": `Bearer resource_metadata="${metadata}"` },
       });
     }
     throw new Error(`Unexpected OAuth test request: ${url.href}`);
@@ -201,6 +203,82 @@ async function withServer(run: (server: ReturnType<typeof authorizationServer>) 
     vi.unstubAllGlobals();
   }
 }
+
+describe("remoteMcp() challenged resource metadata origin (#1115)", () => {
+  const foreignMetadata = [
+    "https://foreign.example/private-path?private-query=value",
+    "https://downstream.example:8443/private-path?private-query=value",
+    "http://downstream.example/private-path?private-query=value",
+  ];
+
+  describe.each(["status", "startAuth", "listTools"] as const)("%s", (operation) => {
+    it.each(foreignMetadata)("refuses %s before any metadata request", async (metadataUrl) => {
+      const server = authorizationServer({ metadataUrl });
+      const requests = vi.fn(server.fetchStub);
+      vi.stubGlobal("fetch", requests);
+      const storage = memoryStorage();
+      // Status must reach the downstream rather than stop at a missing grant.
+      await seedGrant(storage, { issuer, tokens: { access_token: "access-old", token_type: "Bearer" } });
+      const c = connector();
+      const context = scope(storage);
+      onTestFinished(() => c.closeScope?.(context));
+
+      let message: string | undefined;
+      if (operation === "listTools") {
+        const error = await c.listTools(context).then(
+          () => {
+            throw new Error("expected metadata origin refusal");
+          },
+          (error: unknown) => error,
+        );
+        const classified = classifyCallError(error);
+        expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+        message = classified.message;
+      } else {
+        const status = await c[operation]!(context);
+        expect(status.state).toBe("error");
+        expect(status.authorizationUrl).toBeUndefined();
+        message = status.message;
+      }
+      if (operation === "status") {
+        // Passive status keeps only typed failure facts, as for other URL refusals.
+        expect(message).toContain("RemoteMcpDestinationError, connector_call_failed");
+      } else {
+        expect(message).toContain("resource metadata outside the configured resource origin");
+      }
+      expect(message).not.toMatch(/private-path|private-query/);
+      expect(requests.mock.calls.filter(([url]) => new URL(url).href === metadataUrl)).toHaveLength(0);
+      expect(server.counts.mcp).toBeGreaterThan(0);
+      expect(server.counts.register).toBe(0);
+      expect(server.counts.token).toBe(0);
+      expect(requests.mock.calls.every(([url]) => new URL(url).href === mcpUrl)).toBe(true);
+    });
+  });
+
+  it.each([
+    [mcpUrl, "https://downstream.example/oauth/resources/tickets"],
+    [mcpUrl, "https://DOWNSTREAM.example:443/oauth/resources/tickets"],
+    [
+      "https://bigquery.googleapis.com/mcp",
+      "https://bigquery.googleapis.com/.well-known/oauth-protected-resource/query",
+    ],
+  ])("accepts same-origin metadata for %s at %s", async (url, metadataUrl) => {
+    const server = authorizationServer({ url, metadataUrl });
+    const requests = vi.fn(server.fetchStub);
+    vi.stubGlobal("fetch", requests);
+    const c = remoteMcp("svc", { url, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+    const context = scope(memoryStorage());
+    onTestFinished(() => c.closeScope?.(context));
+
+    const started = await c.startAuth!(context);
+    expect(started).toMatchObject({
+      state: "auth_required",
+      authorizationUrl: expect.stringContaining(`${issuer}/authorize?`),
+    });
+    expect(requests.mock.calls.filter(([url]) => new URL(url).href === new URL(metadataUrl).href)).toHaveLength(1);
+    expect(server.counts.register).toBe(1);
+  });
+});
 
 describe("remoteMcp() oauth status via _transportFactory", () => {
   it("UnauthorizedError → auth_required, with no consent URL for a passive status", async () => {

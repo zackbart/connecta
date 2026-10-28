@@ -37,6 +37,7 @@ import {
   fromJsonSchema,
   isJSONRPCErrorResponse,
   isJSONRPCNotification,
+  extractWWWAuthenticateParams,
   specTypeSchemas,
   StreamableHTTPClientTransport,
   UnauthorizedError,
@@ -2104,13 +2105,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     adapted.onUnauthorized = authMethod(
       (ctx: FlowContext) =>
         authCall(flow, [
-          authMethod(
-            (trace: (fetchFn: FetchLike) => FetchLike) =>
-              authInvoke(Reflect, "apply", [
+          authMethod((trace: (fetchFn: FetchLike) => FetchLike) =>
+            authFlow<void>(function* () {
+              // This seam receives every 401, during status, starts, and live
+              // calls. Use the SDK's parser so the check covers exactly the
+              // metadata URL it would honor, before discovery or cached grants.
+              const { resourceMetadataUrl } = extractWWWAuthenticateParams(ctx.response);
+              if (resourceMetadataUrl && resourceMetadataUrl.origin !== destination.origin) {
+                throw new RemoteMcpDestinationError(
+                  id,
+                  `${resourceMetadataUrl.host || "the target"} names resource metadata outside the configured resource origin`,
+                );
+              }
+              yield authInvoke(Reflect, "apply", [
                 onUnauthorized,
                 adapted,
                 [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }],
-              ]) as Effect.Effect<void, unknown>,
+              ]);
+            }),
           ),
           renewalSignal(ctx.response),
         ]) as Effect.Effect<void, unknown>,

@@ -1353,8 +1353,9 @@ A start without a challenge runs the same SDK flow as a 401 without
 the CIMD, registration, and static-client order are unchanged, and nothing is
 sent to the MCP endpoint. A call never starts consent. A call's 401 that names
 per-tool metadata, such as `/.well-known/oauth-protected-resource/<tool>`,
-renews through it when the grant holds no discovery. That metadata must name
-the configured resource, as any other must. When renewal is refused, the grant
+renews through it when the grant holds no discovery. The challenged metadata
+URL must share the configured connector URL's origin, and its metadata must
+name the configured resource, as any other must. When renewal is refused, the grant
 loses its tokens and the next start hands out consent. Restart (`force: true`)
 removes the tokens first, so it starts consent unless the downstream or
 discovery fails.
@@ -1857,7 +1858,18 @@ structured value, and before result paging, emits, and program outputs/errors/lo
 
 `remoteMcp()` learns server-side fetch URLs from a 401's `resource_metadata`,
 its `authorization_servers`, and advertised token and registration endpoints.
-To prevent a downstream from targeting the host's private network:
+A challenged `resource_metadata` URL must have the same origin as the
+configured connector `url`: scheme, host, and port after normal URL parsing.
+This applies during status, authorization starts, and tool calls, even with
+cached discovery. A different origin is refused before any metadata fetch,
+with non-retryable `connector_call_failed`; there is no allowlist. Paths may
+differ: a resource at `https://crm.example.com/mcp` may challenge with
+`https://crm.example.com/oauth/resources/tickets`. Google's per-tool shape,
+`https://bigquery.googleapis.com/.well-known/oauth-protected-resource/<tool>`,
+is likewise accepted for a resource on `https://bigquery.googleapis.com`.
+
+Other advertised OAuth URLs follow these rules to prevent a downstream from
+targeting the host's private network:
 
 - A URL on the connector's configured origin is trusted; the operator wrote it.
 - Any other URL must be `https` and must not name a private host: `localhost`
