@@ -9,7 +9,7 @@ The [JSON summary](./google-forms-step2.json) retains source,
 protocol and CLI metadata, every trial's outcome and metrics, attempted tools,
 discovery sizes, failed checks, and exact write destinations/bodies. Original
 JSON, complete transcripts and saved grading inputs remain under
-`/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/`.
+`/home/operator/.t3/scratch/connecta-orchestrator/step2/forms/`.
 
 ## Frozen protocol and provenance
 

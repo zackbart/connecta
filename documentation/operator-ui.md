@@ -699,10 +699,9 @@ the page's styles.
 
 `src/operator-ui/config-summary.ts` maps the snapshot and its provenance to
 those tiles: one table of limit labels, the formatters, and the walk that turns
-an unmapped key into an Other tile. `app/config-tiles.tsx` draws them, and
-`test/operator-config-summary.test.ts` checks formatting, provenance, unknown
-keys, an empty deployment, and that a real deployment's snapshot leaves no key
-unmapped.
+an unmapped key into an Other tile. `app/config-tiles.tsx` draws them.
+`test/browser/operator-flows.spec.ts` checks Settings provenance through the
+production UI and real routes.
 
 The contract type is [contract.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/contract.ts).
 [UI routes](https://github.com/zackbart/connecta/blob/main/src/routes/ui.ts) and

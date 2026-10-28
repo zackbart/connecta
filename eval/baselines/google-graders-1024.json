@@ -22,7 +22,7 @@
     {
       "arm": "before",
       "runner": "codex",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/sheets/before-luna.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/sheets/before-luna.json",
       "rawSha256": "e4888e0e6f1077c375e7483bf4fc983f9ffdabf434026077b5e08a2cdb777b26",
       "meta": {
         "createdAt": "2026-10-24T17:41:20.343Z",
@@ -70,7 +70,7 @@
     {
       "arm": "before",
       "runner": "claude",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/sheets/before-sonnet.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/sheets/before-sonnet.json",
       "rawSha256": "daf722457eeea3ff526f6ad525fe332ab1f9aad0beb322b7660bc54184c2f945",
       "meta": {
         "createdAt": "2026-10-24T17:41:20.080Z",
@@ -118,7 +118,7 @@
     {
       "arm": "after",
       "runner": "codex",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/sheets/after-luna.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/sheets/after-luna.json",
       "rawSha256": "f308114cd34749d8242f3481f417385547a1019eed8b8fae2cd73f9e6df5326e",
       "meta": {
         "createdAt": "2026-10-24T17:46:36.238Z",
@@ -166,7 +166,7 @@
     {
       "arm": "after",
       "runner": "claude",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/sheets/after-sonnet.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/sheets/after-sonnet.json",
       "rawSha256": "80e3b398bc433306c13e523fb6e5fc1ccf7c034de6367fe04dd63e36c5745d6b",
       "meta": {
         "createdAt": "2026-10-24T17:45:54.755Z",
@@ -214,7 +214,7 @@
     {
       "arm": "before",
       "runner": "codex",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/before-codex.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/before-codex.json",
       "rawSha256": "fee715b1c4c2022e7e6030cb211ac0d934754a444afcbb62fd078c1c69b62f14",
       "meta": {
         "createdAt": "2026-10-24T17:39:14.474Z",
@@ -264,7 +264,7 @@
     {
       "arm": "before",
       "runner": "claude",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/before-claude.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/before-claude.json",
       "rawSha256": "da498db3fdc53c4d177dfc5e0aa993c8c1b30d3c38fcb53851558d66e7526906",
       "meta": {
         "createdAt": "2026-10-24T17:39:15.548Z",
@@ -314,7 +314,7 @@
     {
       "arm": "after",
       "runner": "codex",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/after-codex.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/after-codex.json",
       "rawSha256": "20ba2feaa0b432b47f35d17c658c283b9edbf429de60559a52d525ac37a1283d",
       "meta": {
         "createdAt": "2026-10-24T17:44:20.466Z",
@@ -364,7 +364,7 @@
     {
       "arm": "after",
       "runner": "claude",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/after-claude.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/after-claude.json",
       "rawSha256": "8b220d0bf16e2c9830ab25589f1afbf924b7c505a0755d3b867e4045000a8055",
       "meta": {
         "createdAt": "2026-10-24T17:42:46.136Z",
@@ -414,7 +414,7 @@
     {
       "arm": "after-post-fix",
       "runner": "codex",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-codex.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-codex.json",
       "rawSha256": "1597d9ac675911c51c2f7fb0333c3a2fcc68fe0f3f5b06ba76a82218ca273f27",
       "meta": {
         "createdAt": "2026-10-24T18:30:45.812Z",
@@ -457,7 +457,7 @@
     {
       "arm": "after-post-fix",
       "runner": "claude",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-claude.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-claude.json",
       "rawSha256": "1db1ad624a703f31671469853644495828ad2c6cc0bc7496539048f1dff9c81b",
       "meta": {
         "createdAt": "2026-10-24T18:30:45.302Z",

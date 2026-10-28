@@ -682,9 +682,10 @@ representative failed task shows that it would help. No warning was added.
 
 The obsolete 0.24/0.25 main cluster and the removed `p2-refresh-weekly` task's
 batches are archived in Git history. No current runner or selftest loads these
-paths; documentation links to history. The retained 0.29 files, current task definitions and
-step-2/failure evidence remain local. The [REST notes](baselines/notes-rest-801.md)
-separately preserve the redundant regrades and invalid initial diagnostic batches.
+paths; documentation links to history. The 0.29 files used by selftests and
+referenced step-2/failure evidence remain tracked. Unreferenced step-2 summaries
+and notes are removed. The [REST notes](baselines/notes-rest-801.md) link to
+commit `eae53ce` for the original batches, redundant regrades and invalid diagnostics.
 Historical scores below retain their original graders; they are not comparable
 to current outcomes or evidence of current product behavior.
 

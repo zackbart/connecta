@@ -5,7 +5,7 @@
   {
    "arm": "before",
    "runner": "codex",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/before-luna.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/vercel/before-luna.json",
    "rawSha256": "4e3b71b338cee3f66534df6225a71f7ee82c0bf2a90229aef253a5f2e87dbecc",
    "meta": {
     "createdAt": "2026-10-24T10:59:24.683Z",
@@ -50,7 +50,7 @@
   {
    "arm": "before",
    "runner": "claude",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/before-sonnet.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/vercel/before-sonnet.json",
    "rawSha256": "03216288470b1dac58f5a964b901aca188d787a94147e1f94c0d4be37f026275",
    "meta": {
     "createdAt": "2026-10-24T10:59:24.875Z",
@@ -95,7 +95,7 @@
   {
    "arm": "after-initial",
    "runner": "codex",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after-luna.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/vercel/after-luna.json",
    "rawSha256": "1385ce0f0d09a04a85885e9f192eeb1c040d348d55f4b9e5a01de9b468fe6ff7",
    "meta": {
     "createdAt": "2026-10-24T11:18:16.279Z",
@@ -140,7 +140,7 @@
   {
    "arm": "after-initial",
    "runner": "claude",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after-sonnet.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/vercel/after-sonnet.json",
    "rawSha256": "16ed24fd2ca2a22bfd27e15200b360884ddc149c583eab7688f9fac5a0a0acfc",
    "meta": {
     "createdAt": "2026-10-24T11:18:16.307Z",
@@ -185,7 +185,7 @@
   {
    "arm": "after-final",
    "runner": "codex",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after2-luna.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/vercel/after2-luna.json",
    "rawSha256": "6a487329d0f6b98fdacc9a4c70a4bc5645f49409a4d5e67cbe2ece5b3715c508",
    "meta": {
     "createdAt": "2026-10-24T11:27:41.134Z",
@@ -230,7 +230,7 @@
   {
    "arm": "after-final",
    "runner": "claude",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after2-sonnet.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/vercel/after2-sonnet.json",
    "rawSha256": "5655aed03241ca2e046c12acf7d9b472ec89b5201d82e25202f41db1bed228ec",
    "meta": {
     "createdAt": "2026-10-24T11:27:40.807Z",

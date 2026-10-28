@@ -115,8 +115,8 @@ unbounded data.
 
 With meta-tools, one discovered read can use a direct call. Finding an unfamiliar
 action, combining several calls, or reducing a large answer belongs in a program.
-On a writable endpoint, a program may also change data. The AI app decides
-whether to ask for approval before running it.
+On a writable endpoint, a program may also change data; see
+[approval boundaries](./safety-and-trust.md#read-only-blocks-actions-that-change-data).
 
 The [endpoint workflow](../documentation/operating.md) and
 [code reference](../documentation/code-mode.md) explain the mechanics.

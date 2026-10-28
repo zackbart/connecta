@@ -36,21 +36,6 @@ The separate `@zackbart/connecta-eve` helper is available from 0.35.0. Its
 [package guide](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
 owns installation, supported Node/Eve versions, and token-source setup.
 
-## Audience rule
-
-`documentation/`, `templates/`, and `examples/worker/` are written first for an
-agent operating a deployment from the installed package. The root `README.md`
-and `guides/` explain the product for people and also ship in the package;
-they own no operator contracts. Operator conventions must be self-contained rules plus a
-neutral example. Decision records and issues explain why; no operator task
-requires them, `spec/`, `.claude/`, or the Connecta source checkout. Those
-three directories do not ship. Contributor source maps, INV citations, and
-implementation/test evidence belong under clearly labeled contributor
-headings and are optional for operators. Use `assistant`, `alice`, `bob`,
-`crm`, `tickets`, `notes_alice`, and `alice@example.com` in examples; never
-real deployment, client, person, or organization names. Maintained provider
-product names stay.
-
 ## Contract reference
 
 | Guide                                                            | Owns                                                                                                          |
@@ -72,34 +57,9 @@ implementation evidence.
 
 ## Contributor reference
 
-### Documentation ownership
-
-The root [README](../README.md) explains the product for people. It owns what
-Connecta offers and the setup handoff. The human guides explain
-[how it works](../guides/how-it-works.md), [connecting agents](../guides/connecting-agents.md),
-and [safety and trust](../guides/safety-and-trust.md). Keep their examples small
-and consistent with these contracts. Configuration references, complete setup
-procedures, migrations, and internal module maps belong here in agent documentation.
-
-[AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md) is the
-canonical repository policy, with `CLAUDE.md` as its symlink. Do not copy its
-verification, review, or release rules into another policy document.
-
-Deployment-local READMEs and agent instructions own runnable platform setup:
-[Node and Docker](../templates/node/README.md), [Workers](../examples/worker/README.md).
-Keep those aligned with their configuration and with this task router.
-Repository [skills](https://github.com/zackbart/connecta/tree/main/.claude/skills)
-own scoped change procedures. Each [provider folder](https://github.com/zackbart/connecta/tree/main/src/providers)
-owns its maintained `SKILL.md`, options, tests, fixtures, and review data.
-Use those details instead of copying provider catalogs into general guides.
-The provider list in the human README is generated; preserve its marker pair
-and run `pnpm run check:providers-generated` after edits.
-
-When changing behavior, update its owning contract and task guide in the same
-change. Check examples against current source and point to the tests that
-defend the contract. Published Markdown links to repo-only files must use
-canonical `https://github.com/zackbart/connecta/blob/main/…` or `tree/main/…`
-links. Keep `documentation/` flat, with Markdown files only.
+For source changes, follow [AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md).
+Contributor references describe implementation and test evidence; deployment
+operators can use the task procedures above without a source checkout.
 
 The [changelog](../CHANGELOG.md) records shipped releases.
 [Decisions](https://github.com/zackbart/connecta/tree/main/decisions) explain

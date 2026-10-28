@@ -936,8 +936,13 @@ function sandboxProvider(
     skill: (name, _options, utilitySignal) =>
       Effect.tryPromise({
         try: async () => {
-          if (typeof name !== "string")
-            throw guestFailure("invalid_args", "Use connecta.skill(name) with an exact skill name.");
+          // Accept the top-level skills tool's { name } shape too: models copy it into programs.
+          const skillName = name && typeof name === "object" ? (name as { name?: unknown }).name : name;
+          if (typeof skillName !== "string")
+            throw guestFailure(
+              "invalid_args",
+              'Use connecta.skill("usage") or connecta.skill("connector:<id>") with an exact skill name; the skills tool lists names.',
+            );
           const skills = new SkillsRegistry(registry, baseUrl, {
             requestScope,
             requestSignal: (utilitySignal as AbortSignal | undefined) ?? hostAccessSignal,
@@ -950,7 +955,7 @@ function sandboxProvider(
             probeTimeoutMs: limits.probeTimeoutMs,
             defer: limits.defer,
           });
-          return { name, format: "text", text: await skills.text(name) };
+          return { name: skillName, format: "text", text: await skills.text(skillName) };
         },
         catch: (err) =>
           err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
@@ -1822,7 +1827,7 @@ ${GUEST_API_DECLARATION}
 \`\`\`
 Search: {tools}, catalogErrors. JSON schemas default; compact text. Calls: {data, format:"json"|"text"}; >1 MiB: paged handle. Oversized returns: resultId/nextAction. connecta.result pages; UTF-8 byte offsets. allSettled keeps typed errors; host budget_exceeded ends the run.
 
-Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks. Authored: text/base64 image/audio; no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
+Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks. Authored: text/base64 image/audio; no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}; connecta.skill("investigate"): workflow.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and

@@ -5,11 +5,9 @@ description: Cut a connecta release - assemble .changes/ fragments into CHANGELO
 
 # Release connecta
 
-Publishing requires the owner's explicit authorization for the selected release.
-Authorization already given in the session remains valid; do not request it
-again. The completed [#703 rework](https://github.com/zackbart/connecta/issues/703)
-is historical, not a current phase gate. Keep release, deployment and advisory
-publication within the scope the owner authorized.
+Follow [AGENTS.md's agent policy](../../../AGENTS.md#agent-policy) for release
+authorization and review, and its [verification policy](../../../AGENTS.md#verification)
+for release checks and Node versions.
 
 Publishing a GitHub Release runs [publish.yml](../../../.github/workflows/publish.yml),
 which publishes both `@zackbart/connecta-eve` and `@zackbart/connecta` to npm.
@@ -17,9 +15,8 @@ They are already published packages and share every release version and tag.
 
 ## Inputs
 
-- Every merged PR left a fragment in `.changes/<pr-or-slug>.md`:
-  `type: added|changed|fixed|removed|security`, optional `breaking: true`.
-  `pnpm run check:changes` validates them.
+- Merged PR fragments under `.changes/`, using the format in
+  [AGENTS.md](../../../AGENTS.md#conventions); `pnpm run check:changes` validates them.
 - A hand-written narrative for the upcoming release: paragraphs, no headings.
   Say what changes, what breaks, and what deployments can ignore. Write it to
   a temporary file outside the repository and pass its path to `--narrative`.
@@ -46,9 +43,6 @@ version or bump either package to work around a failed publish.
    Set `templates/node/package.json`'s exact `@zackbart/connecta` dependency to
    that version too. Run `node scripts/generate-version.mjs` and commit both
    generated version files with the manifests.
-   Validate core with `release:check:core` on Node 22 and the helper with
-   `release:check:eve` on Node 24, matching publish.yml. `release:check` composes
-   both for a deliberate single-runtime local run and requires Node 24.
    When updating Eve, change its devDependency pin, supported peer range and
    `pnpm-workspace.yaml`'s exact `minimumReleaseAgeExclude` entry together.
 2. Review release-status wording in `README.md`, `guides/`, `documentation/`,
@@ -65,12 +59,8 @@ version or bump either package to work around a failed publish.
    marks breaking entries, and deletes the consumed fragments. Released
    sections stay untouched.
 5. On failure or interruption: `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
-6. Review the assembled section, commit it with the deletions, then run
-   `pnpm run release:check:core` on Node 22 (full `check`, browser/example/
-   security checks and core package smoke), then `pnpm run release:check:eve`
-   on Node 24 (helper typecheck/test/build, packed-consumer runtime/type smoke
-   and its complete dependency audit).
-   Open the PR and merge it like any other.
+6. Review the assembled section, commit it with the deletions, and complete
+   the release checks and PR review required by [AGENTS.md](../../../AGENTS.md#verification).
 7. After merge, tag the merge commit `v<version>` (must equal `package.json`;
    publish.yml verifies) and publish a GitHub Release with the narrative from
    that version's `CHANGELOG.md` section.
