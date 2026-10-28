@@ -102,6 +102,3 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
 export function fixPrompt(kind: FixPromptKind, connectorId?: string): string {
   return renderFixPrompt(CATALOGUE[kind], connectorId);
 }
-
-/** Every kind, so a test can walk the whole catalogue. */
-export const FIX_PROMPT_KINDS = Object.keys(CATALOGUE) as FixPromptKind[];

@@ -138,7 +138,7 @@ export interface ProviderGuideBlocks<O> {
 }
 
 /**
- * Facts the provider kit (decision 0010) declares for `providers:generate`:
+ * Facts the provider kit declares for `providers:generate`:
  * `drift.json`'s `generated.operations` and the guide's Conventions. Plain
  * data, never read at runtime. The kit's `defineApiProvider` sets them.
  */

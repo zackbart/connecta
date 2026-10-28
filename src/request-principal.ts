@@ -1,4 +1,4 @@
-// The admitted principal a request-auth resolver may receive (#1103).
+// The admitted principal a request-auth resolver may receive.
 //
 // Only the caller core attached from the admitting authorization counts
 // (`callerOf`, see connector-caller.ts). No argument, program or header can

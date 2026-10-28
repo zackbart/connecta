@@ -5,7 +5,7 @@ import { authCall, authFlow, authInvoke, authProgram, registerAuth } from "./nat
 // The token endpoint's answers as downstream OAuth classifies them and the SDK
 // gets to parse them: a refresh's re-consent verdict, and every failure
 // rebuilt from its OAuth `error` code alone, so nothing else a token endpoint
-// wrote reaches the SDK's console output (#695).
+// wrote reaches the SDK's console output.
 
 /** The `grant_type` of a token request, or undefined for any other request. */
 export function tokenGrantType(init: RequestInit | undefined): string | undefined {

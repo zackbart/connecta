@@ -1,3 +1,4 @@
+import { asRecord, asArray, compact } from "../_shared/json.js";
 // Google Sheets named projections, bounded cell reads and guarded writes.
 import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -45,18 +46,6 @@ const MAX_WRITE_CELLS = 50_000;
 const MAX_NAMED_RANGES = 200;
 
 type JsonRecord = Record<string, any>;
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;

@@ -213,7 +213,7 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
       authz,
       registry,
     );
-    // Only maintainers reach here (#837); setup commands are offered for every
+    // Only maintainers reach here; setup commands are offered for every
     // declared pool, since they administer them all.
     const pools = [...opts.pools.keys()];
     return privateJson({

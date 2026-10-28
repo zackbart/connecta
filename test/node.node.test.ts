@@ -231,7 +231,8 @@ async function viWaitForAbort(predicate: () => boolean | Promise<boolean>): Prom
 
 it("INV-7: a body-held permit hands native I/O to its queued workerd request", async () => {
   const requireWrangler = createRequire(import.meta.resolve("wrangler"));
-  const { Miniflare, Log, LogLevel } = requireWrangler("miniflare");
+  // Wrangler's Miniflare 5 takes these v4-shaped options through its converter.
+  const { Miniflare, Log, LogLevel, convertV4MiniflareOptions } = requireWrangler("miniflare");
   const bundle = await build({
     entryPoints: [fileURLToPath(new URL("./fixtures/router-queue-worker.ts", import.meta.url))],
     bundle: true,
@@ -242,19 +243,21 @@ it("INV-7: a body-held permit hands native I/O to its queued workerd request", a
     write: false,
     logLevel: "silent",
   });
-  const worker = new Miniflare({
-    modules: true,
-    script: bundle.outputFiles[0]!.text,
-    compatibilityDate: "2025-01-01",
-    compatibilityFlags: [
-      "nodejs_compat",
-      "enable_request_signal",
-      "enable_weak_ref",
-      "unhandled_rejection_after_microtask_checkpoint",
-    ],
-    log: new Log(LogLevel.NONE),
-    outboundService: (request: Request) => new Response("native:" + new URL(request.url).pathname),
-  });
+  const worker = new Miniflare(
+    convertV4MiniflareOptions({
+      modules: true,
+      script: bundle.outputFiles[0]!.text,
+      compatibilityDate: "2025-01-01",
+      compatibilityFlags: [
+        "nodejs_compat",
+        "enable_request_signal",
+        "enable_weak_ref",
+        "unhandled_rejection_after_microtask_checkpoint",
+      ],
+      log: new Log(LogLevel.NONE),
+      outboundService: (request: Request) => new Response("native:" + new URL(request.url).pathname),
+    }),
+  );
   try {
     const held = await worker.dispatchFetch("https://connecta.test/mcp");
     let settled = false;

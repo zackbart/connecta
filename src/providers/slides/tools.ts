@@ -1,3 +1,5 @@
+import { asRecord, asArray, compact } from "../_shared/json.js";
+import { decodeBase64url } from "../../bytes.js";
 // Google Slides named workflows on real kit schemas, with bound content continuation.
 import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -59,7 +61,7 @@ const MAX_ECHO_CHARS = 100;
 /**
  * The comment kinds of Slides' Request. A batch carrying any of them has
  * comment changes Slides saves apart from the deck's, and only `ALL_SAVED`
- * says they all landed (#696).
+ * says they all landed.
  */
 
 /** The comment save states that say every comment change in a batch landed, or none was asked for. */
@@ -139,18 +141,6 @@ const COMMENT_DECK_FIELDS =
 const COMMENT_PAGE_FIELDS = "objectId,revisionId,commentsViewMode,comments,commentAnchors";
 
 type JsonRecord = Record<string, any>;
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
@@ -295,9 +285,7 @@ function decodeCursor(value: unknown, expected: { k: Cursor["k"]; p: string; g?:
     new ConnectorCallError("invalid_args", `${why} Omit cursor to start from the beginning.`);
   let cursor: Cursor;
   try {
-    const base64 = String(value).replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
-    cursor = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0))));
+    cursor = JSON.parse(new TextDecoder().decode(decodeBase64url(String(value), true)));
   } catch {
     throw refuse("cursor is not one this connection issued; pass page.nextCursor back unchanged.");
   }

@@ -82,7 +82,7 @@ every PR, main push, nightly and manual run:
   example typechecks, and packed-consumer/generated-deployment/Docker smoke.
   Docker is required; an unavailable engine fails the job.
 - `node` runs all `test:node` suites through `vitest.config.node.ts`;
-  `workers` runs the runtime-sensitive `WORKERS_SUITES` in `vitest.config.ts`.
+  `workers` runs the binding-backed `WORKERS_SUITES` in `vitest.config.ts`.
   Each uses four Vitest workers on the four-core CI runner.
 - `behavior` runs `eval:outcomes` and `eval:smoke`, retaining `eval/results/`
   on failure.
@@ -190,12 +190,14 @@ run against real Eve on Node 24 through
 `pnpm --filter @zackbart/connecta-eve run check`. Run that check and
 `pnpm run check:eve-package` on Node 24 when changing the helper or the
 agent-endpoint contract. The helper's suites run separately. workerd runs only the suites listed in `WORKERS_SUITES` in `vitest.config.ts`:
-those that need Workers bindings or the Worker executor, or exercise behaviour
-that can differ under workerd (fetch, streams, unhandled rejections, Web
-Crypto, provider request bytes). List a new suite there only for such
-behaviour; pure logic runs once, on Node. A suite that needs Node APIs is named
+those that need real Workers bindings or isolates (D1, KV, the Worker Loader
+executor, service-bound Workers). Each workerd file costs a fresh Miniflare and
+a cold module graph, so do not enroll a suite for fetch, stream, timer or Web
+Crypto parity; everything else runs once, on Node. A suite that needs Node APIs is named
 `*.node.test.ts` and starts with `// Node-only: <reason>`. Test titles may cite
-`INV-n` IDs; assertions must check the contract. Record protocol evidence by
+`INV-n` IDs; assertions must check the contract. Add cases to the existing
+suite for the subsystem rather than a new file, and do not add standalone
+review-round regression, lifetime/race, parity or bundle-shape suites. Record protocol evidence by
 executable file in `spec/coverage.json`.
 
 ## Conventions

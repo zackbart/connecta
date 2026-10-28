@@ -1,6 +1,6 @@
 import { confinementBase, REDIRECT_STATUSES, BODILESS_STATUSES } from "../http-policy.js";
 import { guardedTransport, sendGuarded } from "../guarded-transport.js";
-// Guarded HTTP transport (decision 0010, B.2). Unreachable from src/index.ts.
+// Guarded HTTP transport. Unreachable from src/index.ts.
 //
 // The guarded transport as an Effect `HttpClient`, with the behaviour of
 // src/connectors/guarded-fetch.ts: requests confined beneath one base URL,

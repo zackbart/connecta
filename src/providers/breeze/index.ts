@@ -1,3 +1,5 @@
+import { readOnlyNotice } from "../_shared/guide.js";
+import { asRecord } from "../_shared/json.js";
 import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
@@ -6,7 +8,6 @@ import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   accountSummary,
   admit,
-  asRecord,
   authenticate,
   BreezeApi,
   breezeSafety,
@@ -122,7 +123,7 @@ export const breeze = defineApiProvider<BreezeOptions>({
       `Church database: ${normalizeSubdomain(options.subdomain)}${BREEZE_HOST_SUFFIX}.`,
       `Church purpose: ${options.purpose}`,
       "Calendar feed addresses and embed keys are always removed; profile details follow the requested vendor detail level.",
-      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+      ...readOnlyNotice(options.readOnly),
       ...(options.defaultPageSize !== undefined
         ? [`Paged lists return ${options.defaultPageSize} items by default on this connection.`]
         : []),

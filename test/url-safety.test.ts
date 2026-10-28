@@ -6,7 +6,7 @@ import { classifyCallError } from "../src/errors.js";
 import { oauthRefreshSpentKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
-import { classifyHost, isPrivateHost, learnedUrlRefusal } from "../src/url-safety.js";
+import { classifyHost, learnedUrlRefusal } from "../src/url-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { required } from "./helpers.js";
@@ -28,7 +28,7 @@ describe("classifyHost", () => {
     "http://2130706433/",
   ])("%s is loopback", (href) => {
     expect(classifyHost(hostOf(href))).toBe("loopback");
-    expect(isPrivateHost(hostOf(href))).toBe(true);
+    expect(classifyHost(hostOf(href)) !== "public").toBe(true);
   });
 
   it.each([
@@ -44,7 +44,7 @@ describe("classifyHost", () => {
     "http://[::ffff:a9fe:a9fe]/",
   ])("%s is private", (href) => {
     expect(classifyHost(hostOf(href))).toBe("private");
-    expect(isPrivateHost(hostOf(href))).toBe(true);
+    expect(classifyHost(hostOf(href)) !== "public").toBe(true);
   });
 
   it.each([
@@ -57,7 +57,7 @@ describe("classifyHost", () => {
     "https://[::ffff:8.8.8.8]/",
   ])("%s is public", (href) => {
     expect(classifyHost(hostOf(href))).toBe("public");
-    expect(isPrivateHost(hostOf(href))).toBe(false);
+    expect(classifyHost(hostOf(href)) !== "public").toBe(false);
   });
 
   it("fails closed on a host it cannot parse", () => {

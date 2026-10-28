@@ -756,7 +756,7 @@ export class CatalogService {
   // timeout, whichever asker starts it. Each asker waits under its own signal
   // and deadline, so a short-deadline call that starts the read and a search
   // that joins it each end on their own terms, and the read is cancelled only
-  // once every asker has gone (#571).
+  // once every asker has gone.
   private catalog(id: string, callOptions: ConnectorOperationOptions): Effect.Effect<ToolDef[], unknown> {
     return Effect.suspend(() => {
       // Authored static definitions never depend on a downstream cache or

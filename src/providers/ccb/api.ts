@@ -1,3 +1,4 @@
+import { asRecord, asArray } from "../_shared/json.js";
 import {
   CCB_MEDIA_TYPE,
   CCB_ENVIRONMENTS,
@@ -73,14 +74,6 @@ export const CCB_ADMISSION: ConnectorCallAdmissionPolicy = {
 };
 
 type JsonRecord = Record<string, any>;
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
 
 // ---------------------------------------------------------------------------
 // Admission partitions

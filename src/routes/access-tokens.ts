@@ -78,7 +78,7 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
     opts.config.logger,
   );
   if (!admin.ok) return admin.response;
-  // Interactive maintainers alone manage agent tokens (#837); anyone else
+  // Interactive maintainers alone manage agent tokens; anyone else
   // gets the same private 404 every operator route gives them.
   if (!managesAgentTokens(opts, admin) || !admin.identity.principal) {
     return privateJson({ error: "not found" }, { status: 404 });

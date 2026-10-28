@@ -10,7 +10,7 @@ import { checked } from "../../_shared/rest/kit.js";
 import type { VercelTokenOptions, VercelTeamPin } from "../index.js";
 export type { VercelTeamPin } from "../index.js";
 
-export const MAX_PIN_LOOKUPS = 8;
+const MAX_PIN_LOOKUPS = 8;
 export const PIN_WRITE_STEPS = Object.freeze({
   write: "once",
   lookup1: "once",

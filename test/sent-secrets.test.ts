@@ -1,3 +1,4 @@
+import { wrapViewCredentials } from "../src/runtime/call.js";
 import { beforeEach as beforeTransportTest } from "vitest";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 
@@ -14,7 +15,7 @@ import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { EXECUTE_OUTPUT } from "../src/meta-output.js";
 import { InvocationService } from "../src/invocation.js";
-import { SentSecrets, sentSecretsFor, trackCredentialReads } from "../src/sent-secrets.js";
+import { SentSecrets, sentSecretsFor } from "../src/sent-secrets.js";
 import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes } from "../src/storage/keys.js";
@@ -211,7 +212,7 @@ describe("call-scoped sent credentials", () => {
     await vault.setAll("bench", values, "test-user");
     const ctx = connectorContext();
     ctx.credential = { get: async (field) => values[field ?? "key0"] ?? null, getAll: () => vault.getAll("bench") };
-    trackCredentialReads(ctx);
+    wrapViewCredentials(ctx);
     await ctx.credential.getAll();
     const secrets = sentSecretsFor(ctx);
     const rows = Array.from({ length: 10_000 }, (_, i) => ({

@@ -5,7 +5,7 @@ import type { KVStorage } from "../types.js";
 import { runEdge } from "../runtime/run.js";
 import { registerNativeStorage, registerNativeActivity } from "../runtime/native-storage.js";
 import { nativeSqlDriver } from "./sql-driver.js";
-import { nativeSqlStorage, nativeSqlActivityStore, copyIntoSqlEffect } from "./sql-native.js";
+import { nativeSqlStorage, nativeSqlActivityStore } from "./sql-native.js";
 /** The 0.28-compatible key-value table and expiry index. */
 export { KV_SCHEMA } from "./sql-schema.js";
 
@@ -86,18 +86,4 @@ export function sqlActivityStore(driver: SqlDriver, kind: SqlKind, options: SqlA
     },
     native,
   );
-}
-
-/**
- * Copy entries into the key-value table, verbatim: same key, same value,
- * same absolute expiry. A live row holding a different value is kept unless
- * `overwrite` is set, so a second copy of the same entries writes nothing.
- * Writes go out in bounded transactions; the outcomes follow `entries`.
- */
-export function copyIntoSql(
-  driver: SqlDriver,
-  entries: readonly SqlCopyEntry[],
-  options: { overwrite: boolean; now: number },
-): Promise<SqlCopyOutcome[]> {
-  return runEdge(copyIntoSqlEffect(nativeSqlDriver(driver), entries, options));
 }

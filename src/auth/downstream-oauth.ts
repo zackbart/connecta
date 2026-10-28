@@ -1,3 +1,4 @@
+import { bytesToHex, sha256Hex } from "../bytes.js";
 import type {
   FetchLike,
   OAuthClientInformationContext,
@@ -162,13 +163,12 @@ export class OAuthRequestNotSentError extends ConnectorCallError {}
 function randomState(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return bytesToHex(bytes);
 }
 
 /** Lowercase hex SHA-256 of a consent's `state`: the name of its flow record. */
 export async function oauthStateDigest(state: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(state));
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  return sha256Hex(state);
 }
 
 type RefreshFlightOutcome =

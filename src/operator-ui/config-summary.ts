@@ -470,7 +470,8 @@ export function configSummary(config: ConnectaConfigDescription, sources: Source
       short: undefined,
     });
   }
-  const strip = ({ headline: _, group: __, short: ___, ...tile }: (typeof all)[number]): StatTile => tile;
+  const strip = ({ headline: _headline, group: _group, short: _short, ...tile }: (typeof all)[number]): StatTile =>
+    tile;
   // Headline limits in a fixed order, then any other limit code set.
   const limits = [
     ...all.filter((tile) => tile.headline).sort((a, b) => a.headline - b.headline),

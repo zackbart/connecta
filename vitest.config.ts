@@ -1,86 +1,28 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { build, buildSync, type Plugin } from "esbuild";
 
 const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"];
 
-// Enroll suites that need Workers bindings/the Worker executor or exercise
-// workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
-// Pure logic runs only on Node; never list a *.node.test.ts suite.
+// workerd runs only suites that need real Workers bindings or isolates: D1,
+// KV, the Worker Loader executor, and service-bound Workers. Every other
+// suite runs once, on Node. Never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
-  // Granola bearer confinement, redirects, response bytes and signed continuation behavior.
-  "src/providers/granola/provider.test.ts",
-  // Native UTF-8/Web Crypto content identity across physical index formats.
-  "test/compact-index.test.ts",
   "test/storage-sql-d1.test.ts",
-  // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
-  // service-bound Workers. These skip or fail outside workerd.
-  "test/auth-admission-binding.test.ts",
-  "test/auth-admission-live.test.ts",
-  "test/auth-admission-workerd.test.ts",
+  "test/kv-to-d1.test.ts",
   "test/catalog-cache.test.ts",
-  "test/clerk-organization-workerd.test.ts",
-  "test/codemode-compat.test.ts",
+  "test/usage-guide.test.ts",
   "test/executor-native.test.ts",
   "test/executor-requests.test.ts",
   "test/guest-api-contract.test.ts",
-  "test/kv-to-d1.test.ts",
-  "test/usage-guide.test.ts",
-  // workerd's own fetch, stream, timer and unhandled-rejection behaviour,
-  // through real sockets and the MCP SDK edges.
-  "test/call-services.test.ts",
-  "test/guarded-transport-parity.test.ts",
-  "test/oauth-grant-parity.test.ts",
-  "test/auth-native.test.ts",
-  "test/auth-metadata-challenge.test.ts",
-  "test/call-revocation.test.ts",
-  "test/call-auxiliary-lifetime.test.ts",
-  "test/call-renewal-lifetime.test.ts",
-  "test/oauth-preparation-lifetime.test.ts",
-  "test/cancellation-faults.test.ts",
-  "test/operation-cancellation.test.ts",
-  "test/remote-mcp-renewal-lifetime.test.ts",
-  "test/direct-write-finalizer.test.ts",
-  "test/mcp-core.test.ts",
-  "test/upward-native.test.ts",
-  "test/skills-extension.test.ts",
-  "test/oauth-refresh-http.test.ts",
-  "test/oauth-authorization-params.test.ts",
-  "test/write-unauthorized-oauth.test.ts",
-  "test/remote-mcp.test.ts",
-  "test/remote-mcp-native.test.ts",
-  "test/remote-mcp-skills.test.ts",
-  "test/remote-mcp-headers.test.ts",
-  // A custom transport over a real service binding, and native fetch confinement.
+  "test/codemode-compat.test.ts",
+  "test/auth-admission-binding.test.ts",
+  "test/auth-admission-live.test.ts",
+  "test/auth-admission-workerd.test.ts",
+  "test/clerk-organization-workerd.test.ts",
   "test/remote-mcp-principal-forwarding.test.ts",
-  "test/server.test.ts",
-  "test/native-tools.test.ts",
   "test/unhandled-rejections.test.ts",
-  // Native response reads can print sensitive downstream text below JS sinks.
-  // workerd-native-output.node.test.ts also invokes these three by filename.
-  "test/operator-sinks.test.ts",
-  // Browser store fetch/body ordering and recovery deadlines on native timers.
-  "test/operator-store.test.ts",
-  "test/operator-agent-state.test.ts",
-  "test/clerk-operator-output.test.ts",
-  "test/byte-read-response.test.ts",
-  "test/write-evidence.test.ts",
-  "test/write-provenance.test.ts",
-  // Web Crypto: access tokens, the credential vault, Clerk and Access JWTs.
-  "test/google-service-account-token.test.ts",
-  "test/access-tokens.test.ts",
-  "test/vercel-agent.test.ts",
-  "test/clerk.test.ts",
-  "test/cloudflare-access-auth.test.ts",
-  "test/credentials.test.ts",
-  // Provider pin policy crosses native fetch, request budgets and Web Crypto cursors.
-  "src/providers/vercel/provider.pin.test.ts",
-  "src/providers/planning-center/provider.pagination.test.ts",
-  // Mixed suites use Vitest tags: only their native boundary cases rerun here.
-  // Brace globs tolerate deleted files without enrolling other suites.
-  "test/{http-kit,http-hatch,http-provider}.test.ts",
-  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,auth-elicitation,downstream-input}.test.ts",
 ];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
@@ -112,15 +54,31 @@ function executorBundles() {
   };
 }
 
+// The pool runs Miniflare 5, which cannot take an `external` socket as a
+// Worker's `outboundService` (only as a service binding). Route the Worker's
+// outbound fetches to a forwarding Worker whose binding is that TCP socket, so
+// every request still leaves workerd over TCP to `address`, after the calling
+// Worker's own Request validation and with workerd's own cancellation.
+function externalOutbound(name: string, address: string) {
+  return {
+    name,
+    modules: true,
+    script: "export default { fetch: (request, env) => env.EXTERNAL.fetch(request) };",
+    compatibilityDate: "2025-01-01",
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
+    serviceBindings: { EXTERNAL: { external: { address, http: {} } } },
+  };
+}
+
 // An organization-mode clerkAuth in a Worker of its own, with the Worker
 // example's compatibility settings, so its Backend API fetches meet workerd's
 // own Request validation and each request to it is a separate Worker request
 // (test/clerk-organization-workerd.test.ts). Every outbound fetch it makes
-// goes over TCP to the Clerk Backend API stand-in at `backend`. Built once
+// goes over TCP, through its outbound Worker, to the Clerk Backend API stand-in. Built once
 // per config load; restart watch mode after editing this fixture or any
 // bundled dependency (including src/auth/clerk.ts).
 let clerkOrganizationScript: Promise<string> | undefined;
-async function clerkOrganizationWorker(backend: string) {
+async function clerkOrganizationWorker() {
   const transport: Plugin = {
     name: "clerk-organization-transport",
     setup(bundle) {
@@ -145,7 +103,7 @@ async function clerkOrganizationWorker(backend: string) {
     script: await clerkOrganizationScript,
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
-    outboundService: { external: { address: backend, http: {} } },
+    outboundService: "clerk-organization-outbound",
   };
 }
 
@@ -178,7 +136,7 @@ function fixtureBundle(entry: string, external?: string[]): Promise<string> {
 async function authAdmissionWorker(backend?: string) {
   return {
     name: backend ? "auth-admission-sdk" : "auth-admission",
-    ...(backend ? { outboundService: { external: { address: backend, http: {} } } } : {}),
+    ...(backend ? { outboundService: "auth-admission-sdk-outbound" } : {}),
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal", "enable_weak_ref"],
     modules: true,
@@ -226,6 +184,10 @@ async function executorRequestsWorker(origin: string) {
 
 export default defineConfig({
   test: {
+    // Vitest 5 enables the persistent module cache by default. Under a full
+    // run, @cloudflare/vitest-plugin's workerd runtime exits mid-file when its
+    // modules come from that cache, so every run transforms afresh, as Vitest 4 did.
+    fsModuleCache: false,
     projects: [
       {
         // The deployment shapes are consumer projects: they import the package
@@ -262,7 +224,6 @@ export default defineConfig({
           allowOnly: false,
           tags: [{ name: "node" }, { name: "workers" }],
           globalSetup: [
-            "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/remote-mcp-attempt-server.ts",
             "./test/fixtures/auth-admission-server.ts",
@@ -333,9 +294,11 @@ export default defineConfig({
                   compatibilityFlags: ["nodejs_compat"],
                   d1Databases: { DB: "sql-lifetimes" },
                 },
-                clerkOrganizationWorker(inject("clerkBackendServer")),
+                clerkOrganizationWorker(),
+                externalOutbound("clerk-organization-outbound", inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
+                externalOutbound("auth-admission-sdk-outbound", new URL(inject("authAdmissionServer")).host),
                 executorRequestsWorker(inject("authAdmissionServer")),
                 ...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) =>
                   authAdmissionEntryWorker(`auth-admission-entry-${key}`, inject("authAdmissionServer")),
@@ -348,13 +311,7 @@ export default defineConfig({
           name: "workers",
           allowOnly: false,
           tags: [{ name: "node", skip: true }, { name: "workers" }],
-          globalSetup: [
-            "./test/fixtures/oauth-http-server.ts",
-            "./test/fixtures/clerk-backend-server.ts",
-            "./test/fixtures/transport-evidence-server.ts",
-            "./test/fixtures/remote-mcp-attempt-server.ts",
-            "./test/fixtures/auth-admission-server.ts",
-          ],
+          globalSetup: ["./test/fixtures/clerk-backend-server.ts", "./test/fixtures/auth-admission-server.ts"],
           include: WORKERS_SUITES,
           exclude: EXCLUDE,
         },

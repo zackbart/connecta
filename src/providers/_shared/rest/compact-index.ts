@@ -36,7 +36,7 @@ function rowText(packed: CompactIndex, row: 0 | readonly [readonly number[], str
 }
 
 /** Recreate the exact old JSON string, for semantic identity/cursor binding. */
-export function expandIndexDetails(packed: CompactIndex): string {
+function expandIndexDetails(packed: CompactIndex): string {
   limit(packed.length);
   let length = packed.definitions.length + 13; // {"d":defs,"o":[]}
   limit(length);

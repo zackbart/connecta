@@ -1,3 +1,4 @@
+import { decodeBase64 } from "../../bytes.js";
 // Cloudflare's pinned REST contracts, confinement, framing and failure semantics.
 import { responseMedia } from "../_shared/rest/response-media.js";
 import { EXCLUSIVE_PATH_IDS } from "./lib/path-bounds.js";
@@ -444,8 +445,7 @@ export class RawUpload {
 
 export function bytesFromBase64(value: string, field: string): Uint8Array<ArrayBuffer> {
   try {
-    const binary = atob(value);
-    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return decodeBase64(value);
   } catch {
     return invalid(`${field} must be valid base64.`);
   }

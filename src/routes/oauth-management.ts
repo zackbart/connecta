@@ -25,7 +25,7 @@ function oauthManagementRequest(context: RouteContext, connectorId: string): Eff
 
     const connector = registry.getConnector(connectorId);
     const disconnectAuth = connector?.disconnectAuth?.bind(connector);
-    // Each verb needs only its own hooks (#837): connecting needs the whole
+    // Each verb needs only its own hooks: connecting needs the whole
     // flow, through the callback's state check; disconnecting needs only
     // disconnectAuth, so a grant provisioned out of band can still be dropped.
     const connects = Boolean(connector?.startAuth && connector.finishAuth && connector.verifyState);

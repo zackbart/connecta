@@ -65,7 +65,7 @@ const deadlineResponses = new WeakSet<Response>();
 /**
  * The most a `subscriptions/listen` classification reads. A listen is a small
  * JSON-RPC request; this read happens before request admission, so it is
- * bounded by this fixed cap rather than by the host's body limit (#857).
+ * bounded by this fixed cap rather than by the host's body limit.
  */
 export const MAX_LISTEN_CLASSIFICATION_BYTES = 64 * 1024;
 
@@ -345,7 +345,7 @@ function admitted(
 }
 
 /**
- * 404 for any `?toolkit=` value, kept after the feature's retirement (#178).
+ * 404 for any `?toolkit=` value, kept after the feature's retirement.
  *
  * Toolkits are gone, but the URLs that named them are not: clients were handed
  * MCP endpoint URLs with `?toolkit=` baked in, and nothing about upgrading the
@@ -641,7 +641,7 @@ function serveMcp(
 /**
  * What an MCP path names. Plain `/mcp` and `/mcp/<pool>` are human
  * endpoints; `/agent/<pool>` is an agent endpoint, and every other path in
- * the agent namespace is refused before auth (#837).
+ * the agent namespace is refused before auth.
  */
 type McpEndpoint =
   | { kind: "default" }
@@ -779,7 +779,7 @@ export function createMcpRoute(opts: ServerOptions): {
         );
         // A request naming `subscriptions/listen` defers its permit: nothing of
         // its body is read until auth and endpoint admission pass, and then at
-        // most MAX_LISTEN_CLASSIFICATION_BYTES (#857). Only a body-confirmed
+        // most MAX_LISTEN_CLASSIFICATION_BYTES. Only a body-confirmed
         // modern listen goes without a permit; trusting the header alone would
         // let a legacy tools/call bypass the pool, so anything else takes one
         // after classification. Every other request takes its permit here,

@@ -1,3 +1,4 @@
+import { toolError } from "./tool-error.js";
 // Budget and outcome accounting for writes dispatched by programs on writable endpoints.
 // Await each dispatched write once; never conceal an unknown outcome.
 
@@ -5,7 +6,7 @@ import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Effect } from "effect";
 import type { CallErrorDetails } from "./errors.js";
 import type { InvocationOutcome } from "./invocation.js";
-import { jsonResult, type ToolResult } from "./meta-tools.js";
+import { type ToolResult } from "./meta-tools.js";
 import { classifyWriteOutcome, type WriteState } from "./write-outcome.js";
 
 /** Writes one program may send (`execute.maxWrites`), unless configured. */
@@ -146,7 +147,7 @@ export class ProgramWrites {
       // the result, as a direct call reports it: its code and handoff, never
       // retryable, with the write's outcome unknown.
       const handoff = this.handoff;
-      return errorEnvelope({
+      return toolError({
         code: handoff?.code ?? "write_outcome_unknown",
         message: handoff
           ? "A write this program sent failed authorization after it left, so whether it took effect is unknown, and that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it, and give nextAction to the operator to recover the connector. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call."
@@ -175,7 +176,7 @@ export class ProgramWrites {
 function withWrites(result: ToolResult, writes: WriteCounts): ToolResult {
   const structured = result.structuredContent;
   const error = structured?.error;
-  const annotated = errorEnvelope({
+  const annotated = toolError({
     ...(error !== null && typeof error === "object"
       ? (error as Record<string, unknown>)
       : {
@@ -192,10 +193,4 @@ function withWrites(result: ToolResult, writes: WriteCounts): ToolResult {
     annotated.content = [{ type: "text", text: JSON.stringify(annotated.structuredContent) }];
   }
   return annotated;
-}
-
-function errorEnvelope(error: Record<string, unknown>): ToolResult {
-  const result = jsonResult({ error });
-  result.isError = true;
-  return result;
 }

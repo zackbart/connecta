@@ -1,3 +1,4 @@
+import { isRecord } from "../json.js";
 import { canonicalJson } from "../../../canonical-json.js";
 import { parseIndexDetails } from "./compact-index.js";
 // The pinned operation index a REST connector validates against before it
@@ -129,10 +130,6 @@ function words(text: string): string[] {
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function invalid(message: string, issues?: ArgumentValidationIssue[], repair?: ArgumentRepairDetails): never {

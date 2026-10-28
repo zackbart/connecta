@@ -190,7 +190,7 @@ export interface CallInputs {
 }
 
 /** Build one call's services. Invocation calls this in the scoped attempt that owns the permit (B.1). */
-export function openCall(inputs: CallInputs): CallLease {
+function openCall(inputs: CallInputs): CallLease {
   let open = true;
   const parentSignal = inputs.parent ? Context.get(inputs.parent.services, Signal) : undefined;
   const parents = [inputs.signal, parentSignal, inputs.requestSignal].filter(

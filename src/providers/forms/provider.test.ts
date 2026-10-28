@@ -1,5 +1,5 @@
-// The Google Forms connection. Shared failure coverage lives in
-// test/provider-failure-sweep.test.ts; delegation, subjects, and tokens in
+import { PRIVATE_KEY } from "../../../test/fixtures/rsa.js";
+// The Google Forms connection. Delegation, subjects, and tokens live in
 // test/google-workspace-delegation.test.ts. This suite covers additional
 // behavior: refusals, cuts, declared keys, result bounds, and cursors.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,14 +13,6 @@ import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-
-const keys = (await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-  true,
-  ["sign", "verify"],
-)) as CryptoKeyPair;
-const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
-const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
 
 interface ApiCall {
   url: URL;

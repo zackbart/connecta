@@ -476,8 +476,8 @@ vendors"). The steps:
   provider declaration into a source-scanned exemption list. Without such a page, leave it out.
 - A provider that renews its credential after a 401 (a login, a refresh, a
   minted token) records it with `renewedAfterUnauthorized(request, sent,
-  fresh)`: the one request that 401 answered (`answeredRequest(response)` in
-  a guarded mapper), the credential it sent, and the renewed one. Never mark
+  fresh)`: the one request that 401 answered (`refusalRequest(error)` after
+  a guarded mapper throws an authorization refusal), the credential it sent, and the renewed one. Never mark
   any other request, and a renewal that hands back the sent credential
   renewed nothing. A provider only records these facts; it never decides a
   write's 401 itself. `settleWrite` does, once per call.

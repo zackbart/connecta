@@ -13,7 +13,7 @@ function activityToolVisible(access: ConnectorAccess, event: ActivityPage["event
 
 /**
  * One disclosure rule for the timeline and the UI's last-call overlay. Only
- * maintainers read activity (#837), and only after the optional
+ * maintainers read activity, and only after the optional
  * read gate. They may see other principals' shared-connector history,
  * including request IDs, client name/version, and actor kind/id/namespace, on
  * plain /mcp and in every declared pool, within the tools that pool declares.

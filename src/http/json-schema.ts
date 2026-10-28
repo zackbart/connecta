@@ -1,4 +1,4 @@
-// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
+// Provider kit. Unreachable from src/index.ts.
 //
 // One Schema is a tool's type, its argument decoder, and its catalog JSON
 // Schema. Effect's generator is correct but spells some things differently
