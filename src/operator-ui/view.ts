@@ -615,6 +615,7 @@ export function withPage(state: OperatorState, page: OperatorPage): OperatorStat
 export function connectorStatusLabel(status: string, problem?: UiProblem): string {
   if (status === "loading") return "Loading details";
   if (status === "ok") return "Connected";
+  if (status === "per_caller") return "Per caller";
   if (status === "credential_required") return "Credential needed";
   if (status === "auth_required") {
     return problem === "credential_required" ? "Credential needed" : "Authorization needed";
@@ -628,7 +629,7 @@ export type Tone = "ok" | "warn" | "danger" | "neutral" | "accent";
 export function connectorStatusTone(status: string): Tone {
   if (status === "ok") return "ok";
   if (status === "auth_required" || status === "credential_required") return "warn";
-  if (status === "loading") return "neutral";
+  if (status === "loading" || status === "per_caller") return "neutral";
   return "danger";
 }
 
@@ -647,6 +648,8 @@ const PROBLEM_COPY: Readonly<Record<UiProblem, string>> = {
   oauth_required: "Needs OAuth authorization. No grant is stored, or it expired or was revoked.",
   credential_required: "Needs a credential. Nothing usable is stored.",
   auth_required: "Needs authorization. Its secret is set in deployment config, not here.",
+  caller_refused:
+    "This connector could not authenticate as you. It accepts only configured callers and authenticates on their behalf.",
   credential_mismatch: "The stored credential doesn't match this connector's fields.",
   catalog_failed: "Connected, but its catalog failed to load, so no tools are served.",
 };
@@ -661,7 +664,10 @@ export function problemCopy(problem: UiProblem | undefined): string | null {
  * error. The two used to share the red box, so the row contradicted itself.
  */
 export function problemTone(problem: UiProblem): "warn" | "danger" {
-  return problem === "oauth_required" || problem === "credential_required" || problem === "auth_required"
+  return problem === "oauth_required" ||
+    problem === "credential_required" ||
+    problem === "auth_required" ||
+    problem === "caller_refused"
     ? "warn"
     : "danger";
 }
@@ -684,11 +690,13 @@ const PROBLEM_LABEL: Readonly<Record<UiProblem, string>> = {
   oauth_required: "Authorization needed",
   credential_required: "Credential needed",
   auth_required: "Authorization needed",
+  caller_refused: "Caller refused",
   credential_mismatch: "Credential mismatch",
   catalog_failed: "Catalog failed",
 };
 
 function problemAction(problem: UiProblem): NonNullable<ConnectorVerdict["action"]> {
+  if (problem === "caller_refused") return "Inspect";
   if (problem === "credential_mismatch") return "Replace key";
   return problemTone(problem) === "warn" ? "Connect" : "Inspect";
 }
@@ -711,6 +719,7 @@ export function connectorVerdict(
   }
   if (signals.failed) return { tone: "warn", label: "Couldn't load", action: "Inspect" };
   if (live.status === "loading") return { tone: "neutral", label: connectorStatusLabel(live.status), action: null };
+  if (live.status === "per_caller") return { tone: "neutral", label: connectorStatusLabel(live.status), action: null };
   if (live.status !== "ok") {
     const tone = connectorStatusTone(live.status) === "warn" ? "warn" : "danger";
     return { tone, label: connectorStatusLabel(live.status), action: tone === "warn" ? "Connect" : "Inspect" };

@@ -113,6 +113,20 @@ export const resultKeys = {
 
 // --- root families --------------------------------------------------------
 
+/** Random key for opaque operator viewer partitions; never leaves storage. */
+export const operatorViewerKeys = {
+  family: {
+    name: "operator-viewer-key",
+    scope: "root",
+    prefixes: ["operator-viewer:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "durable" },
+    durable: false,
+  },
+  signingKey: "operator-viewer:v1:signing",
+} as const satisfies Keyed;
+
 /** A deployment's random HMAC key for bound continuation cursors; never expires or leaves storage. */
 export const continuationKeys = {
   family: {
@@ -498,6 +512,7 @@ export const inputRetryKeys = {
  */
 export const KEY_FAMILIES: readonly KeyFamily[] = [
   continuationKeys.family,
+  operatorViewerKeys.family,
   resultKeys.family,
   stashLedgerKeys.family,
   stashExpiryKeys.family,

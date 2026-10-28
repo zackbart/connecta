@@ -154,12 +154,14 @@ function richFixture(base: OperatorVisualFixture): OperatorVisualFixture {
   const config = contract.config!;
   const data: UiData = {
     ...structuredClone(base.data),
+    viewerKey: contract.you.viewerKey,
     serverInfo: { name: config.server.name, version: config.server.version },
     pools: contract.pools.map((pool) => pool.name),
     connectors: contract.live.connectors.map((live) => {
       const described = config.connectors.find((c) => c.id === live.id)!;
       const shared = described.authScope === "shared";
       return {
+        viewerKey: contract.you.viewerKey,
         id: live.id, title: described.title ?? live.id, authScope: described.authScope, status: live.status,
         ...(live.problem ? { problem: live.problem } : {}),
         toolCount: live.tools.length,

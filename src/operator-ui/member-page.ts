@@ -65,6 +65,7 @@ function credentialStored(manage: Extract<OperatorMemberManage, { kind: "credent
 }
 
 function controlsFor(manage: OperatorMemberManage, connection: Connection): AccountControl[] {
+  if (connection.state === "per_caller") return [];
   const can = (action: string) => (manage.kind === "none" ? false : (manage.actions as string[]).includes(action));
   if (manage.kind === "oauth") {
     const connected = connection.state === "ok";
@@ -98,6 +99,7 @@ function controlsFor(manage: OperatorMemberManage, connection: Connection): Acco
  * but not working.
  */
 function summaryFor(manage: OperatorMemberManage, connection: Connection): string | null {
+  if (connection.state === "per_caller") return "Authenticates as each caller; verified on use.";
   if (manage.kind !== "credential" || !credentialStored(manage)) return null;
   if (connection.problem === "credential_mismatch") return "Saved credential no longer fits";
   return connection.state === "ok" ? null : "Saved, but not working";

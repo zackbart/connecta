@@ -62,7 +62,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
      * connecta described the failure itself, that failure's typed facts. The
      * message is never logged, whatever it looks like: a connector's own
      * `status()` can quote a downstream error body, which can quote the
-     * secret it just rejected (INV-6). An `ok` status is simply dropped.
+     * secret it just rejected (INV-6). Non-error `ok` and `per_caller` states are dropped.
      */
     const logStatus = (
       id: string,
@@ -70,7 +70,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
       failure: unknown,
       requestScope: object,
     ) => {
-      if (state === "ok") return;
+      if (state === "ok" || state === "per_caller") return;
       const logger = registry.contextFor(id, baseUrl, requestScope).logger;
       logFailure(
         logger,

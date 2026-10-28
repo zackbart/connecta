@@ -13,6 +13,8 @@ import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { remoteMcp, type RemoteMcpOptions } from "../src/connectors/remote-mcp.js";
 import { closeConnectorScope } from "../src/connector-scope.js";
 import type { ConnectorCaller } from "../src/connector-caller.js";
+import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
+import type { UiConnector } from "../src/operator-ui/model.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { accessTokens } from "../src/access-tokens.js";
 import type { PrincipalRequestToken, RequestPrincipal, RequestToken } from "../src/request-token.js";
@@ -140,6 +142,7 @@ async function deployment(
   connector: ReturnType<typeof remoteMcp>,
   options: {
     executor?: Parameters<typeof createTestConnecta>[0]["executor"];
+    auth?: InboundAuth;
     logger?: Logger;
     storage?: KVStorage;
   } = {},
@@ -147,7 +150,7 @@ async function deployment(
   const storage = options.storage ?? memoryStorage();
   const connecta = createTestConnecta({
     connectors: [connector],
-    auth: people(),
+    auth: options.auth ?? people(),
     maintainers: ["alice", "bob"],
     agents: ["assistant"],
     accessTokens: accessTokens(storage),
@@ -292,16 +295,19 @@ it("INV-3 INV-10: fails closed before the resolver when no admitted person is pr
         message: expect.stringContaining("acts as the admitted caller"),
       });
       await expect(connector.callTool("whoami", {}, ctx)).rejects.toMatchObject({ code: "auth_required" });
+      if (caller?.authenticated) expect((await connector.status!(ctx)).state).toBe("auth_required");
     } finally {
       await connector.closeScope?.(ctx);
     }
   }
-  // An operator check carries no caller: status reports, never connects.
+  // A background check has no admitted caller: it reports a non-error state.
   const probe = scoped(connector, undefined);
   const status = await connector.status!(probe);
   await connector.closeScope?.(probe);
-  expect(status.state).toBe("auth_required");
-  expect(status.message).toContain("this operation has none");
+  expect(status).toMatchObject({
+    state: "per_caller",
+    message: "Authenticates as each caller; verified on use.",
+  });
   expect(token).not.toHaveBeenCalled();
   expect(downstream.wire).toEqual([]);
 });
@@ -699,3 +705,280 @@ it.skipIf(!bindings?.NOTES_RPC)(
     }
   },
 );
+
+it.each(["human", "human-or-agent"] as const)(
+  "operator status verifies the real downstream as the admitted human (%s)",
+  NODE,
+  async (accept) => {
+    forbidGlobalFetch();
+    const downstream = notes();
+    const token = resolver();
+    const connector = remoteMcp("notes", {
+      url: URL_,
+      fetch: downstream.fetch,
+      versionNegotiation: "legacy",
+      auth: { type: "request", principal: { accept, token } },
+    });
+    const { connecta } = await deployment(connector);
+    try {
+      for (const id of ["alice", "bob"]) {
+        const headers = { Authorization: `Bearer ${id}`, "X-Connecta-Principal": id === "alice" ? "bob" : "alice" };
+        const response = await connecta.fetch(new Request(`${BASE}/ui/api/config`, { headers }));
+        expect(response.status).toBe(200);
+        const contract = (await response.json()) as OperatorUiContractV2;
+        expect(contract.live.connectors[0]).toMatchObject({ status: "ok" });
+        expect(contract.live.connectors[0]!.problem).toBeUndefined();
+        const detail = (await (
+          await connecta.fetch(new Request(`${BASE}/ui/connectors/notes`, { headers }))
+        ).json()) as UiConnector;
+        expect(detail).toMatchObject({ status: "ok", toolCount: 2 });
+        expect(detail.problem).toBeUndefined();
+        expect(detail.tools.map((t) => t.name)).toContain("whoami");
+      }
+      expect(
+        token.mock.calls.map(([, input]) =>
+          input.principal.kind === "human" ? input.principal.id : input.principal.name,
+        ),
+      ).toEqual(expect.arrayContaining(["alice", "bob"]));
+      for (const id of ["alice", "bob"]) {
+        const wire = downstream.wire.filter(
+          (e) => e.authorization === `Bearer ${tokenFor({ kind: "human", namespace: NAMESPACE, id })}`,
+        );
+        expect(wire.map((e) => e.rpc)).toEqual(expect.arrayContaining(["initialize", "tools/list"]));
+      }
+    } finally {
+      await connecta.close();
+    }
+  },
+);
+
+it("operator status preserves downstream failures instead of diagnosing a missing secret", NODE, async () => {
+  forbidGlobalFetch();
+  for (const status of [401, 503]) {
+    const downstream = notes(() => new Response(null, { status }));
+    const token = resolver();
+    const connector = remoteMcp("notes", {
+      url: URL_,
+      fetch: downstream.fetch,
+      auth: { type: "request", principal: { accept: "human", token } },
+    });
+    const { connecta } = await deployment(connector);
+    try {
+      const detail = (await (
+        await connecta.fetch(
+          new Request(`${BASE}/ui/connectors/notes`, {
+            headers: { Authorization: "Bearer alice" },
+          }),
+        )
+      ).json()) as UiConnector;
+      expect(detail).toMatchObject(
+        status === 401
+          ? { status: "auth_required", problem: "caller_refused" }
+          : { status: "error", problem: "connector_unavailable" },
+      );
+      expect(token).toHaveBeenCalled();
+      expect(downstream.wire.length).toBeGreaterThan(0);
+    } finally {
+      await connecta.close();
+    }
+  }
+});
+
+it(
+  "status enforces the call's accept policy and never shares a client's principal, even with the same token",
+  NODE,
+  async () => {
+    forbidGlobalFetch();
+    const downstream = notes();
+    const token = resolver(() => TOKEN_SENTINEL);
+    const connector = remoteMcp("notes", {
+      url: URL_,
+      fetch: downstream.fetch,
+      versionNegotiation: "legacy",
+      auth: { type: "request", principal: { accept: "human", token } },
+    });
+    const requestScope = {};
+    const ctx = (caller: ConnectorCaller) => scoped(connector, caller, requestScope);
+    const alice = ctx({ identity: person("alice"), authenticated: true });
+    const bob = ctx({ identity: person("bob"), authenticated: true });
+    try {
+      for (const context of [alice, alice, bob, alice]) expect((await connector.status!(context)).state).toBe("ok");
+      expect(downstream.wire.filter((e) => e.rpc === "initialize")).toHaveLength(3);
+      const before = downstream.wire.length;
+      const agent = ctx({
+        identity: { actor: { kind: "access_token", id: "assistant" }, agent: "assistant", interactive: false },
+        authenticated: true,
+        pool: "team",
+      });
+      expect(await connector.status!(agent)).toMatchObject({
+        state: "auth_required",
+        message: expect.stringContaining("refuses agents"),
+      });
+      await expect(connector.callTool("whoami", {}, agent)).rejects.toMatchObject({
+        code: "auth_required",
+        message: expect.stringContaining("refuses agents"),
+      });
+      expect(downstream.wire).toHaveLength(before);
+    } finally {
+      await connector.closeScope?.(alice);
+    }
+  },
+);
+
+it("an operator API with no person reports per_caller without downstream work or warning logs", NODE, async () => {
+  forbidGlobalFetch();
+  const downstream = notes();
+  const token = resolver();
+  const connector = remoteMcp("notes", {
+    url: URL_,
+    fetch: downstream.fetch,
+    auth: { type: "request", principal: { accept: "human", token } },
+  });
+  const warn = vi.fn();
+  const connecta = createTestConnecta({ connectors: [connector], logger: { ...silentLogger, warn } });
+  try {
+    warn.mockClear();
+    const detail = (await (await connecta.fetch(new Request(`${BASE}/ui/connectors/notes`))).json()) as UiConnector;
+    expect(detail).toMatchObject({ status: "per_caller", toolCount: 0, overlay: { status: "per_caller" } });
+    expect(detail.problem).toBeUndefined();
+    const registryStatus = await makeRegistry([connector]).statusFor("notes", BASE);
+    expect(registryStatus).toMatchObject({
+      state: "per_caller",
+      message: "Authenticates as each caller; verified on use.",
+    });
+    expect(token).not.toHaveBeenCalled();
+    expect(downstream.wire).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  } finally {
+    await connecta.close();
+  }
+});
+
+it.each(["request", "credential", "headers", "oauth"] as const)(
+  "operator and background status keep existing %s auth behavior",
+  NODE,
+  async (mode) => {
+    const downstream = notes();
+    if (mode === "oauth") vi.stubGlobal("fetch", downstream.fetch);
+    else forbidGlobalFetch();
+    const auth: RemoteMcpOptions["auth"] =
+      mode === "request"
+        ? { type: "request", token: async () => TOKEN_SENTINEL }
+        : mode === "credential"
+          ? { type: "credential" }
+          : mode === "headers"
+            ? { type: "headers", headers: { Authorization: `Bearer ${TOKEN_SENTINEL}` } }
+            : { type: "oauth" };
+    const connector = remoteMcp("notes", {
+      url: URL_,
+      versionNegotiation: "legacy",
+      auth,
+      ...(mode === "oauth" ? {} : { fetch: downstream.fetch }),
+    });
+    const expected = mode === "credential" || mode === "oauth" ? "auth_required" : "ok";
+    const context = connectorContext();
+    try {
+      expect((await connector.status!(context)).state).toBe(expected);
+      const { connecta } = await deployment(connector);
+      try {
+        const response = await connecta.fetch(
+          new Request(`${BASE}/ui/connectors/notes`, { headers: { Authorization: "Bearer alice" } }),
+        );
+        const detail = (await response.json()) as UiConnector;
+        expect(detail.status).toBe(mode === "credential" ? "credential_required" : expected);
+        if (mode === "credential") expect(detail.problem).toBe("credential_required");
+        if (mode === "oauth") expect(detail.problem).toBe("oauth_required");
+      } finally {
+        await connecta.close();
+      }
+    } finally {
+      await connector.closeScope?.(context);
+    }
+  },
+);
+
+it("operator authentication is the admission fact, independent of the provider's kind label", NODE, async () => {
+  forbidGlobalFetch();
+  const downstream = notes();
+  const token = resolver();
+  const connector = remoteMcp("notes", {
+    url: URL_,
+    fetch: downstream.fetch,
+    auth: { type: "request", principal: { accept: "human", token } },
+  });
+  const { connecta } = await deployment(connector, { auth: { ...people(), kind: "anonymous" } });
+  try {
+    const response = await connecta.fetch(
+      new Request(`${BASE}/ui/connectors/notes`, { headers: { Authorization: "Bearer alice" } }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "ok", toolCount: 2 });
+    expect(token.mock.calls[0]![1].principal).toEqual({ kind: "human", namespace: NAMESPACE, id: "alice" });
+  } finally {
+    await connecta.close();
+  }
+});
+
+it("operator observations and opaque viewer keys never cross admitted principals (#1150)", NODE, async () => {
+  forbidGlobalFetch();
+  const downstream = notes((exchange) =>
+    exchange.authorization?.endsWith("-bob") ? new Response(null, { status: 401 }) : undefined,
+  );
+  const storage = memoryStorage();
+  const make = () =>
+    remoteMcp("notes", {
+      url: URL_,
+      fetch: downstream.fetch,
+      versionNegotiation: "legacy",
+      auth: { type: "request", principal: { accept: "human", token: resolver() } },
+    });
+  let aliceKey: string | undefined;
+  // Reconstructing the deployment with the same storage also keeps the opaque
+  // key stable: Workers may serve adjacent requests from different isolates.
+  for (let instance = 0; instance < 2; instance++) {
+    const { connecta } = await deployment(make(), { storage: { ...storage } });
+    const read = async <T = OperatorUiContractV2>(id: string, path: string): Promise<T> => {
+      const response = await connecta.fetch(
+        new Request(`${BASE}${path}`, { headers: { Authorization: `Bearer ${id}`, "X-Connecta-Viewer": "forged" } }),
+      );
+      expect(response.status).toBe(200);
+      return response.json() as Promise<T>;
+    };
+    try {
+      const alice = await read("alice", "/ui/api/config");
+      const key = alice.you.viewerKey;
+      expect(key).toEqual(expect.any(String));
+      expect(key.length).toBeGreaterThanOrEqual(32);
+      for (const identity of ["alice", "bob", NAMESPACE, "forged"]) expect(key).not.toContain(identity);
+      if (aliceKey) expect(key).toBe(aliceKey);
+      aliceKey = key;
+      expect(alice.live.connectors[0]).toMatchObject({ status: "ok" });
+      const aliceDetail = await read<UiConnector>("alice", "/ui/connectors/notes");
+      expect(aliceDetail).toMatchObject({ viewerKey: key, status: "ok", toolCount: 2 });
+      const bob = await read("bob", "/ui/api/config?live=cached");
+      expect(bob.you.viewerKey).toEqual(expect.any(String));
+      expect(bob.you.viewerKey).not.toBe(key);
+      expect(bob.live.connectors).toEqual([]);
+      expect(await read("bob", "/ui/data")).toMatchObject({
+        viewerKey: bob.you.viewerKey,
+        connectors: [{ status: "loading", tools: [] }],
+      });
+      const bobDetail = await read<UiConnector>("bob", "/ui/connectors/notes");
+      expect(bobDetail.catalogAccess).toBeUndefined();
+      expect(bobDetail.overlay?.catalogAgeMs).toBeNull();
+      expect(bobDetail).toMatchObject({
+        viewerKey: bob.you.viewerKey,
+        status: "auth_required",
+        problem: "caller_refused",
+        tools: [],
+        overlay: { status: "auth_required", tools: [] },
+      });
+      const bobLive = await read("bob", "/ui/api/config");
+      expect(bobLive.you.viewerKey).toBe(bob.you.viewerKey);
+      expect(bobLive.live.connectors[0]).toMatchObject({ status: "auth_required", tools: [] });
+      expect(downstream.wire.some((exchange) => exchange.authorization?.endsWith("-bob"))).toBe(true);
+    } finally {
+      await connecta.close();
+    }
+  }
+});

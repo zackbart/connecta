@@ -147,7 +147,14 @@ async function loadStore(
   vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
     paths.push(path);
     if (path.startsWith("/ui/api/config")) return configMock(path, init);
-    const response = (await fetchMock(path, init)) as Response | undefined;
+    let response = (await fetchMock(path, init)) as Response | undefined;
+    if (response?.ok && (path === "/ui/data" || path.startsWith("/ui/connectors/"))) {
+      try {
+        response = Response.json({ viewerKey: "opaque-viewer", ...((await response.clone().json()) as object) });
+      } catch {
+        /* Preserve malformed responses. */
+      }
+    }
     if (path === "/ui/data" && response?.ok) {
       try {
         summary = (await response.clone().json()) as UiData;
@@ -326,6 +333,104 @@ describe("operator store identity wiring", () => {
     expect(store.getState().data).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(paths).toEqual([]);
+  });
+
+  it.each(["loadOperatorContract", "retryLoad"] as const)(
+    "partitions pending observations when Access changes between maintainers via %s (#1150)",
+    async (reload) => {
+      const { store, fetchMock, configMock } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      let viewer = "opaque-alice";
+      const admission = () => ({ ...v2([{ id: "notes" }]), you: { interactive: true, viewerKey: viewer } });
+      const detail = (viewerKey: string, status: string) => ({
+        id: "notes",
+        viewerKey,
+        status,
+        toolCount: status === "ok" ? 1 : 0,
+        tools: status === "ok" ? [{ name: "alice_only", address: "notes.alice_only", safety: "runs_in_programs" }] : [],
+        overlay: { id: "notes", status, tools: [], catalogAgeMs: null, lastCall: null },
+      });
+      configMock.mockImplementation(async () => Response.json(admission()));
+      const alice = deferred<Response>();
+      let pending = false;
+      let aliceSignal: AbortSignal | undefined;
+      const probes: string[] = [];
+      fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
+        if (path === "/ui/data")
+          return Response.json({
+            ...uiData(viewer),
+            viewerKey: viewer,
+            connectors: [{ id: "notes", status: "loading", tools: [], toolCount: 0 }],
+          });
+        probes.push(viewer);
+        if (viewer === "opaque-alice" && pending) {
+          aliceSignal = init.signal as AbortSignal;
+          return alice.promise; // Deliberately settles even after cancellation.
+        }
+        return Response.json(detail(viewer, viewer === "opaque-alice" ? "ok" : "auth_required"));
+      });
+      await store.boot();
+      await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("ok"));
+      const generation = store.getState().generation;
+      pending = true;
+      const oldRead = store.refreshConnector("notes");
+      await vi.waitFor(() => expect(probes).toHaveLength(2));
+      viewer = "opaque-bob";
+      const retained: string[] = [];
+      const unsubscribe = store.subscribe(() => {
+        if (store.getState().contract?.you.viewerKey === "opaque-bob")
+          retained.push(JSON.stringify(store.getState().data));
+      });
+      const refresh = store[reload]();
+      await vi.waitFor(() => expect(store.getState().contract?.you).toMatchObject({ viewerKey: viewer }));
+      alice.resolve(Response.json(detail("opaque-alice", "ok")));
+      await Promise.all([oldRead, refresh]);
+      await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("auth_required"));
+      unsubscribe();
+      expect(retained.every((value) => !value.includes("alice_only"))).toBe(true);
+      expect(aliceSignal?.aborted).toBe(true);
+      expect(store.getState().generation).toBeGreaterThan(generation);
+      expect(probes).toEqual(["opaque-alice", "opaque-alice", "opaque-bob"]);
+      expect(JSON.stringify(store.getState())).not.toContain("alice_only");
+      expect(store.getState().contract?.live.connectors[0]?.status).toBe("auth_required");
+    },
+  );
+
+  it("readmits Access when a detail belongs to a different viewer than admission", async () => {
+    const { store, configMock, fetchMock } = await loadStore(
+      { id: "unused", getToken: async () => "unused" },
+      { kind: "cloudflare-access" },
+    );
+    let viewerKey = "opaque-alice";
+    configMock.mockImplementation(async () =>
+      Response.json({
+        ...v2([{ id: "notes" }]),
+        you: { interactive: true, viewerKey },
+      }),
+    );
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(
+        path === "/ui/data"
+          ? {
+              ...uiData(viewerKey),
+              viewerKey,
+              connectors: [{ id: "notes", status: "loading", toolCount: 0, tools: [] }],
+            }
+          : { viewerKey, id: "notes", status: "ok", toolCount: 0, tools: [] },
+      ),
+    );
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("ok"));
+    const generation = store.getState().generation;
+    // The Access cookie changed after admission and before the next detail.
+    viewerKey = "opaque-bob";
+    await store.refreshConnector("notes");
+    await vi.waitFor(() => expect(store.getState().contract?.you.viewerKey).toBe(viewerKey));
+    expect(store.getState().generation).toBeGreaterThan(generation);
+    expect(configMock).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.viewerKey).toBe(viewerKey));
   });
 
   it("uses the same-origin Access session without a browser-readable token", async () => {

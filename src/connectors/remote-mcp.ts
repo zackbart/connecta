@@ -130,7 +130,7 @@ import {
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf, strings } from "../config-schema.js";
 import type { PrincipalForwarding, RequestPrincipal, RequestToken } from "../request-token.js";
-import { requestPrincipalFor } from "../request-principal.js";
+import { requestPrincipalFor, tagPrincipalForwarding } from "../request-principal.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
@@ -4193,6 +4193,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     status: authMethod((ctx: ConnectorContext) =>
       authFlow<ConnectorStatus>(function* () {
+        if (principalPolicy && !callerOf(ctx)?.authenticated)
+          return ownStatus({ state: "per_caller", message: "Authenticates as each caller; verified on use." });
         const state = stateFor(ctx);
         const report = authMethod((status: ConnectorStatus) =>
           authFlow<ConnectorStatus>(function* () {
@@ -4631,5 +4633,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ),
     );
   if (isOauth) withStoredAuth(connector, (ctx) => newProvider(ctx).storedAuthorization());
+  if (principalPolicy) tagPrincipalForwarding(connector);
   return connector;
 }

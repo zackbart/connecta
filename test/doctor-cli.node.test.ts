@@ -218,36 +218,40 @@ describe("connecta doctor --config", () => {
     return `http://127.0.0.1:${address.port}`;
   }
 
-  it("INV-5 INV-6: prints only the allowlisted snapshot with the full #724 sentinel set absent", async () => {
-    const { config, storage, vault } = secretBearingDeployment();
-    await vault.set("vaulted_mcp", SECRETS.storedCredential, "operator");
-    await storage.set("access-token:sentinel", SECRETS.storedAccessToken);
-    for (const connector of config.connectors)
-      connector.status = async () => ({ state: "error", message: SECRETS.headerValue });
-    config.publicUrl = `http://localhost/?token=${SECRETS.publicUrlQuery}`;
-    const app = createConnecta(config);
-    const url = await deploymentUrl(app);
-    for (const args of [
-      ["--config", "--url", url],
-      ["--url", url, "--config"],
-    ]) {
-      const { stdout, stderr } = await run(process.execPath, [CLI, "doctor", ...args], {
-        env: {
-          ...process.env,
-          CONNECTA_TOKEN: SECRETS.machineToken,
-          CF_ACCESS_CLIENT_ID: "",
-          CF_ACCESS_CLIENT_SECRET: "",
-        },
-      });
-      // Doctor prints the maintainer contract's config: describeConfig() verbatim.
-      expect(JSON.parse(stdout)).toEqual(app.describeConfig());
-      expect(stderr).toBe("");
-      for (const [position, secret] of Object.entries(SECRETS)) expect(stdout + stderr, position).not.toContain(secret);
-      expect(stdout).not.toContain(VAULT_KEY);
-      expect(stdout).not.toContain('"you"');
-      expect(stdout).not.toContain('"live"');
-    }
-  });
+  it.each(["error", "per_caller"] as const)(
+    "INV-5 INV-6: prints only the snapshot when status is %s, with all sentinels absent",
+    async (state) => {
+      const { config, storage, vault } = secretBearingDeployment();
+      await vault.set("vaulted_mcp", SECRETS.storedCredential, "operator");
+      await storage.set("access-token:sentinel", SECRETS.storedAccessToken);
+      for (const connector of config.connectors)
+        connector.status = async () => ({ state, message: SECRETS.headerValue });
+      config.publicUrl = `http://localhost/?token=${SECRETS.publicUrlQuery}`;
+      const app = createConnecta(config);
+      const url = await deploymentUrl(app);
+      for (const args of [
+        ["--config", "--url", url],
+        ["--url", url, "--config"],
+      ]) {
+        const { stdout, stderr } = await run(process.execPath, [CLI, "doctor", ...args], {
+          env: {
+            ...process.env,
+            CONNECTA_TOKEN: SECRETS.machineToken,
+            CF_ACCESS_CLIENT_ID: "",
+            CF_ACCESS_CLIENT_SECRET: "",
+          },
+        });
+        // Doctor prints the maintainer contract's config: describeConfig() verbatim.
+        expect(JSON.parse(stdout)).toEqual(app.describeConfig());
+        expect(stderr).toBe("");
+        for (const [position, secret] of Object.entries(SECRETS))
+          expect(stdout + stderr, position).not.toContain(secret);
+        expect(stdout).not.toContain(VAULT_KEY);
+        expect(stdout).not.toContain('"you"');
+        expect(stdout).not.toContain('"live"');
+      }
+    },
+  );
 
   it("INV-4: prints the snapshot only for a maintainer and does not execute a diagnostic program", async () => {
     // A maintainer reads every connector. A pool member gets their own view,

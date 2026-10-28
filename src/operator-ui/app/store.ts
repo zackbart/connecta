@@ -43,6 +43,7 @@ const listeners = new Set<() => void>();
 // Superseded refreshes may finish behind their revision fence, but reads
 // belong to one identity and must physically stop when that identity leaves.
 let identityReads = new AbortController();
+let viewerKey: string | null = null;
 
 export function getState(): OperatorState {
   return state;
@@ -131,6 +132,7 @@ export function navHint(): { activity: boolean } {
 
 function gate(notice: Notice | null = null, session: OperatorState["session"] = "gated"): void {
   cancelRecoveryRead();
+  viewerKey = null;
   identityReads.abort();
   identityReads = new AbortController();
   connectorPublications.clear();
@@ -349,7 +351,8 @@ let dataRevision = 0;
 function isContractV2(value: OperatorUiContractV2 | null): value is OperatorUiContractV2 {
   if (!value || value.schemaVersion !== 2) return false;
   if (value.role !== "maintainer" && value.role !== "member") return false;
-  if (!value.you || !Array.isArray(value.live?.connectors) || !Array.isArray(value.pools)) return false;
+  if (!value.you?.viewerKey || typeof value.you.viewerKey !== "string") return false;
+  if (!Array.isArray(value.live?.connectors) || !Array.isArray(value.pools)) return false;
   if (!Array.isArray(value.matrix) || !Array.isArray(value.agents) || !Array.isArray(value.connectors)) return false;
   return value.role === "member" || (Boolean(value.config) && Boolean(value.root));
 }
@@ -396,13 +399,19 @@ function maintainerNow(): boolean {
 }
 
 /**
- * A role other than the last confirmed one is a different viewer, even when a
- * failed refresh cleared `contract` in between: drop everything read for the
- * old role, cancel its reads, and admit the viewer again from the top.
+ * A new opaque viewer key or role clears retained data and pending reads,
+ * even when Access changes between two maintainers or a failed refresh
+ * cleared the contract. Admit the new viewer again from the top.
  * Returns true when it did.
  */
-function resetOnRoleChange(contract: OperatorUiContractV2): boolean {
-  if (state.role === null || state.role === contract.role) return false;
+function resetOnViewerChange(contract: OperatorUiContractV2): boolean {
+  if (
+    (state.role === null || state.role === contract.role) &&
+    (viewerKey === null || viewerKey === contract.you.viewerKey)
+  ) {
+    viewerKey = contract.you.viewerKey;
+    return false;
+  }
   resetRecovery();
   gate(null, "loading");
   void loadCurrent();
@@ -485,7 +494,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
   if (outcome.kind === "denied") return gate(null, "denied");
   if (outcome.kind !== "contract") return contractUnavailable(outcome.kind);
   const { contract } = outcome;
-  if (resetOnRoleChange(contract)) return;
+  if (resetOnViewerChange(contract)) return;
   if (contract.role === "member") {
     set({
       ...memberRefreshed(contract),
@@ -531,12 +540,17 @@ async function loadData(signal: AbortSignal): Promise<void> {
   }
   if (!current()) return;
   if (!data || !Array.isArray(data.connectors)) return unreachable("server");
+  if (data.viewerKey !== viewerKey) {
+    gate(null, "loading");
+    void loadCurrent();
+    return;
+  }
   rememberNav(data);
   set({
     data: {
       ...data,
       connectors: data.connectors.map((row) =>
-        (connectorPublications.get(row.id)?.revision ?? 0) > publication
+        (connectorPublications.get(observationKey(row.id))?.revision ?? 0) > publication
           ? (state.data?.connectors.find((previous) => previous.id === row.id) ?? row)
           : row,
       ),
@@ -684,6 +698,7 @@ let snapshotRevision = 0;
 // publication, including a summary or detail that was already in flight.
 let snapshotReadRevision = 0;
 const connectorPublications = new Map<string, { revision: number }>();
+const observationKey = (id: string, viewer = viewerKey) => JSON.stringify([viewer, id]);
 
 function preserveDetailRows(contract: OperatorUiContractV2): OperatorUiContractV2 {
   const ids = new Set(contract.config?.connectors.map((c) => c.id));
@@ -743,7 +758,7 @@ async function refreshSnapshot(
     if (outcome.kind === "session") return refuseSession(outcome.status);
     if (outcome.kind === "denied") return gate(null, "denied");
     if (outcome.kind !== "contract") return contractUnavailable(outcome.kind);
-    if (resetOnRoleChange(outcome.contract)) return;
+    if (resetOnViewerChange(outcome.contract)) return;
     set({
       ...contractSlotsRefreshed(outcome.contract),
       contract: preserveDetailRows(outcome.contract),
@@ -755,6 +770,7 @@ async function refreshSnapshot(
     resetRecovery(false);
   }
   if (!maintainerNow()) return;
+  const viewer = viewerKey!;
   const connectors = state.data.connectors.filter(
     (c) =>
       (!connectorId || c.id === connectorId) &&
@@ -762,16 +778,22 @@ async function refreshSnapshot(
   );
   await Promise.all(
     connectors.map(async (connector) => {
-      const outcome = await coalescedConnector(connector.id, token, signal);
+      const outcome = await coalescedConnector(connector.id, viewer, token, signal);
       if (
         !current() ||
+        viewerKey !== viewer ||
         signal.aborted ||
         state.role !== "maintainer" ||
         state.contract?.role !== "maintainer" ||
-        (connectorPublications.get(connector.id)?.revision ?? 0) > publication
+        (connectorPublications.get(observationKey(connector.id))?.revision ?? 0) > publication
       )
         return;
       if (outcome.kind === "stale") return;
+      if (outcome.kind === "detail" && outcome.detail.viewerKey !== viewer) {
+        gate(null, "loading");
+        void loadCurrent();
+        return;
+      }
       if (outcome.kind === "session") return refuseSession(outcome.status);
       const outcomes = new Map([[connector.id, outcome]]);
       let contract = state.contract;
@@ -796,7 +818,7 @@ async function refreshSnapshot(
           },
         };
       }
-      connectorPublications.set(connector.id, { revision: publication });
+      connectorPublications.set(observationKey(connector.id), { revision: publication });
       set({ ...detailsPatch(outcomes, contract), contract });
       const unhealthy =
         outcome.kind !== "detail" ||
@@ -839,10 +861,12 @@ let activeConnectorReads = 0;
 const connectorWaiters: Array<() => void> = [];
 async function coalescedConnector(
   id: string,
+  viewer: string,
   token: string | null | undefined,
   signal: AbortSignal,
 ): Promise<DetailOutcome> {
-  const existing = connectorReads.get(id);
+  const key = observationKey(id, viewer);
+  const existing = connectorReads.get(key);
   if (existing && !existing.signal.aborted) return existing.promise;
   const controller = new AbortController();
   const combined = AbortSignal.any([signal, controller.signal]);
@@ -859,17 +883,17 @@ async function coalescedConnector(
     }
   })();
   const read = { controller, signal: combined, promise };
-  connectorReads.set(id, read);
+  connectorReads.set(key, read);
   try {
     return await promise;
   } finally {
-    if (connectorReads.get(id) === read) connectorReads.delete(id);
+    if (connectorReads.get(key) === read) connectorReads.delete(key);
   }
 }
 
 function invalidateConnector(id: string): void {
-  connectorReads.get(id)?.controller.abort();
-  connectorPublications.set(id, { revision: ++snapshotReadRevision });
+  connectorReads.get(observationKey(id))?.controller.abort();
+  connectorPublications.set(observationKey(id), { revision: ++snapshotReadRevision });
 }
 
 /**
@@ -1063,7 +1087,7 @@ function stopOAuthPolling(connector?: string): void {
 
 /** Connector-page unmount cancels any read still owned by that view. */
 export function stopConnectorReads(id: string): void {
-  connectorReads.get(id)?.controller.abort();
+  connectorReads.get(observationKey(id))?.controller.abort();
   cancelRecoveryRead();
   stopOAuthPolling(id);
 }

@@ -21,13 +21,15 @@ export interface UiTool extends Pick<OperatorTool, "name" | "address" | "descrip
  * (`oauth_required`, which also covers an expired or revoked grant — the
  * status seam cannot tell those apart), an operator-managed credential slot
  * (`credential_required`), or a secret that lives in deployment configuration
- * (`auth_required`).
+ * (`auth_required`). Principal forwarding instead reports `caller_refused`,
+ * which has no secret-repair prompt.
  */
 export type UiProblem =
   | "connector_unavailable"
   | "oauth_required"
   | "credential_required"
   | "auth_required"
+  | "caller_refused"
   | "credential_mismatch"
   | "catalog_failed";
 
@@ -70,6 +72,8 @@ interface UiCredential {
 }
 
 export interface UiConnector {
+  /** Opaque admitted viewer partition, present on HTTP detail responses. */
+  viewerKey?: string;
   /** Complete catalog and status from this detail request, when supported. */
   overlay?: OperatorConnectorOverlay;
   id: string;
@@ -110,6 +114,8 @@ export interface UiConnector {
 export type CredentialManagementCapability = "available" | "requires_operator" | "vault_not_configured" | "no_slots";
 
 export interface UiData {
+  /** Opaque admitted viewer partition, present on HTTP summaries. */
+  viewerKey?: string;
   accessTokenManagement?: "available" | "requires_operator";
   serverInfo: Pick<ConnectaConfigDescription["server"], "name" | "version">;
   /** Version of the installed @zackbart/connecta package. */

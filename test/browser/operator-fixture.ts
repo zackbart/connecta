@@ -45,7 +45,7 @@ export async function fixtureContract(data: UiData): Promise<OperatorUiContractV
           tools: c.tools.map((t) => ({ ...t, classification: t.safety === "runs_in_programs" ? "read" : "write" })),
         })),
       },
-      you: { interactive: true },
+      you: { interactive: true, viewerKey: "opaque-viewer" },
     };
   } finally {
     await app.close();

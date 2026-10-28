@@ -4,7 +4,8 @@ import { shownHealth, steadyHealth, type SteadyHealth } from "../src/operator-ui
 import type { UiData } from "../src/operator-ui/model.js";
 import { attentionItems } from "../src/operator-ui/overview.js";
 import { connectorVerdict, type OperatorState } from "../src/operator-ui/view.js";
-import { OPERATOR_V2_MAINTAINER } from "./fixtures/operator-contract-v2.js";
+import { memberPage } from "../src/operator-ui/member-page.js";
+import { OPERATOR_V2_MEMBER, OPERATOR_V2_MAINTAINER } from "./fixtures/operator-contract-v2.js";
 
 const maintainer = () => structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
 
@@ -76,4 +77,32 @@ describe("steady connector health", () => {
     removed.live.connectors = [];
     expect(Object.keys(steadyHealth(page(removed), held).rows)).toEqual([]);
   });
+});
+
+it("per-caller authentication is neutral and needs no attention", () => {
+  const contract = maintainer();
+  contract.agents = [];
+  for (const row of contract.live.connectors) {
+    row.status = "per_caller";
+    delete row.problem;
+    row.tools = [];
+  }
+  for (const live of contract.live.connectors) {
+    expect(connectorVerdict(live)).toEqual({ tone: "neutral", label: "Per caller", action: null });
+  }
+  expect(attentionItems(contract)).toEqual([]);
+});
+
+it("member status never treats per-caller auth as a broken saved credential or offers auth controls", () => {
+  const contract = structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2;
+  for (const connector of contract.connectors) {
+    if (connector.authScope === "personal") connector.connection = { state: "per_caller" };
+  }
+  const accounts = memberPage(contract).accounts;
+  expect(accounts.length).toBeGreaterThan(0);
+  for (const account of accounts) {
+    expect(account.badge).toEqual({ label: "Per caller", tone: "neutral" });
+    expect(account.controls).toEqual([]);
+    expect(account.summary).toBe("Authenticates as each caller; verified on use.");
+  }
 });

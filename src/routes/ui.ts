@@ -13,6 +13,7 @@ import type { Connector } from "../types.js";
 import { CONNECTA_FAVICON_SVG, operatorPageForPath, renderUiHtml } from "../ui.js";
 import {
   authorized,
+  operatorViewerKey,
   refuse,
   scopeFor,
   serveOperator,
@@ -165,23 +166,27 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
     const { mayManage, permissions, activityEnabled, credentialManagement } = operatorView(context, authz, registry);
     const connector = registry.getConnector(id);
     if (!connector) return yield* refuse("unknown connector", 404);
-    const data = yield* uiData(opts.registry.scoped(scopeFor(authz, [connector.id])), baseUrl, {
-      serverInfo: opts.config.serverInfo,
-      activityContext: operatorActivityContext(context, authz),
-      credentialVault: opts.config.vault,
-      activityEnabled,
-      credentialManagement,
-      defer,
-      oauthManagement: false,
-      ...(!oauthConnectUnavailable(opts)
-        ? { oauthConnectUrl: (id: string) => oauthConnectUrl(opts, baseUrl, id, authz.principalKey) }
-        : {}),
-      discoveryConcurrency: 1,
-      personalCredentialOwner: authz.principalKey,
-      mayManage,
-      timeoutMs: opts.config.discovery.probeTimeoutMs,
-      signal: request.signal,
-    });
+    const data = yield* uiData(
+      opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [connector.id])),
+      baseUrl,
+      {
+        serverInfo: opts.config.serverInfo,
+        activityContext: operatorActivityContext(context, authz),
+        credentialVault: opts.config.vault,
+        activityEnabled,
+        credentialManagement,
+        defer,
+        oauthManagement: false,
+        ...(!oauthConnectUnavailable(opts)
+          ? { oauthConnectUrl: (id: string) => oauthConnectUrl(opts, baseUrl, id, authz.principalKey) }
+          : {}),
+        discoveryConcurrency: 1,
+        personalCredentialOwner: authz.principalKey,
+        mayManage,
+        timeoutMs: opts.config.discovery.probeTimeoutMs,
+        signal: request.signal,
+      },
+    );
     const detail = data.connectors[0]!;
     if (detail.overlay)
       yield* withDeadlineEffect(() => scanOperatorActivity(context, authz, registry, [detail.overlay!], []), {
@@ -189,7 +194,11 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
         signal: request.signal,
         timeoutError: new Error("Activity observation timed out."),
       }).pipe(Effect.catch(() => Effect.succeed("unavailable" as const)));
-    return privateJson({ ...detail, permissions: permissions(connector) });
+    return privateJson({
+      ...detail,
+      viewerKey: yield* operatorViewerKey(context, authz),
+      permissions: permissions(connector),
+    });
   });
 }
 
@@ -208,6 +217,7 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
     // declared pool, since they administer them all.
     const pools = [...opts.pools.keys()];
     return privateJson({
+      viewerKey: yield* operatorViewerKey(context, authz),
       ...(pools.length ? { pools } : {}),
       serverInfo: opts.config.serverInfo,
       connectaVersion: CONNECTA_VERSION,

@@ -1,3 +1,4 @@
+import type { OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import { expect, test, type Page } from "@playwright/test";
 import { accessTokens } from "../../src/access-tokens.js";
 import { activityHistory } from "../../src/activity.js";
@@ -64,9 +65,17 @@ async function install(page: Page, contract: unknown, data: UiData | Answer, clo
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith("/ui/") && !path.startsWith("/ui/assets/")) requested.push(path);
     if (path === "/ui/api/config") return route.fulfill(answered(contract) ? contract : { json: contract });
-    if (path === "/ui/data") return route.fulfill(answered(data) ? data : { json: data });
+    if (path === "/ui/data")
+      return route.fulfill(
+        answered(data) ? data : { json: { ...data, viewerKey: (contract as OperatorUiContractV2).you.viewerKey } },
+      );
     if (path.startsWith("/ui/connectors/") && !answered(data))
-      return route.fulfill({ json: data.connectors.find((c) => c.id === path.split("/").pop()) });
+      return route.fulfill({
+        json: {
+          ...data.connectors.find((c) => c.id === path.split("/").pop()),
+          viewerKey: (contract as OperatorUiContractV2).you.viewerKey,
+        },
+      });
     if (path === "/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/ui/api/activity") return route.fulfill({ json: { events: [] } });
     if (path === "/ui/access-tokens") return route.fulfill({ json: { agents: [] } });

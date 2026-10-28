@@ -24,15 +24,19 @@ import type { UiProblem } from "../../src/operator-ui/model.js";
 import type { ConnectorStatus } from "../../src/types.js";
 
 // Records keyed by the union keep these lists exhaustive and closed.
-const STATES = Object.keys({ ok: 1, auth_required: 1, credential_required: 1, error: 1 } satisfies Record<
-  ConnectorStatus["state"],
-  1
->);
+const STATES = Object.keys({
+  ok: 1,
+  per_caller: 1,
+  auth_required: 1,
+  credential_required: 1,
+  error: 1,
+} satisfies Record<ConnectorStatus["state"], 1>);
 const PROBLEMS = Object.keys({
   connector_unavailable: 1,
   oauth_required: 1,
   credential_required: 1,
   auth_required: 1,
+  caller_refused: 1,
   credential_mismatch: 1,
   catalog_failed: 1,
 } satisfies Record<UiProblem, 1>);
@@ -282,7 +286,9 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
   expect(live.activity, "live.activity").toBe("forbidden");
   expect(body.agents, "agents").toEqual([]);
   expect(body.matrix, "matrix").toEqual([]);
-  oneOf(exact(body.you, "you", ["interactive"]).interactive, [true, false], "you.interactive");
+  const you = exact(body.you, "you", ["interactive", "viewerKey"]);
+  oneOf(you.interactive, [true, false], "you.interactive");
+  text(you.viewerKey, "you.viewerKey");
 
   const pools = list(body.pools, "pools");
   unique(

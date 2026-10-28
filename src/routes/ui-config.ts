@@ -39,7 +39,15 @@ import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector, ConnectorStatus, IdentityReference, ToolDef } from "../types.js";
 import { uiProblemFor } from "../ui.js";
 import { workspaceSubjectOf } from "../workspace-subject.js";
-import { authorized, refuse, scopeFor, serveOperator, type Answer, type Authorized } from "./operator.js";
+import {
+  authorized,
+  operatorViewerKey,
+  refuse,
+  scopeFor,
+  serveOperator,
+  type Answer,
+  type Authorized,
+} from "./operator.js";
 import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
 import { admitsMaintainer, mayManageConnector, privateJson, readsActivity, type RouteContext } from "./shared.js";
 
@@ -493,7 +501,7 @@ function matrixFor(
 function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect<Response, Answer> {
   const { opts } = context;
   return Effect.gen(function* () {
-    const registry = opts.registry.scoped(scopeFor(authz));
+    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0));
     const selected = context.url.searchParams.get("connector");
     const visible = registry.listConnectors().filter((connector) => selected === null || connector.id === selected);
     if (selected !== null && visible.length === 0) return yield* refuse("unknown connector", 404);
@@ -631,7 +639,7 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
       agents,
       matrix,
       connectors: [],
-      you: { interactive: authz.identity.interactive },
+      you: { interactive: authz.identity.interactive, viewerKey: yield* operatorViewerKey(context, authz) },
     };
     return privateJson(contract);
   });
@@ -781,7 +789,7 @@ function memberRead(
   return Effect.gen(function* () {
     const allIds = opts.registry.listConnectors().map((c) => c.id);
     const ids = new Set(allIds.filter((id) => pools.some(([, pool]) => servesConnector(pool, id))));
-    const registry = opts.registry.scoped(scopeFor(authz, [...ids]));
+    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [...ids]));
     const selected = context.url.searchParams.get("connector");
     const visible = registry
       .listConnectors()
@@ -814,7 +822,7 @@ function memberRead(
       agents: [],
       matrix: [],
       connectors,
-      you: { interactive: authz.identity.interactive },
+      you: { interactive: authz.identity.interactive, viewerKey: yield* operatorViewerKey(context, authz) },
     };
     return privateJson(contract);
   });

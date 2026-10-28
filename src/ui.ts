@@ -1,6 +1,7 @@
 import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import type { OperatorSurface } from "./module-contracts.js";
 import { routeUi } from "./routes/ui.js";
+import { forwardsPrincipal } from "./request-principal.js";
 import { routeCredentials } from "./routes/credentials.js";
 import { routeOAuthManagement } from "./routes/oauth-management.js";
 import { uiData } from "./routes/ui-data.js";
@@ -80,6 +81,7 @@ export function uiProblemFor(
   if (status === "credential_required") return "credential_required";
   if (status === "error") return "connector_unavailable";
   if (status === "auth_required") {
+    if (forwardsPrincipal(connector)) return "caller_refused";
     if (connector.startAuth) return "oauth_required";
     return connector.credential ? "credential_required" : "auth_required";
   }

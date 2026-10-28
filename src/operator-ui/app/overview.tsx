@@ -197,8 +197,11 @@ function Attention({ items }: { items: AttentionItem[] }) {
 }
 
 /** The page's status in a word: the cards below carry the numbers. */
-function Status({ items }: { items: AttentionItem[] }) {
-  if (!items.length) return <Pill status="healthy">All healthy</Pill>;
+function Status({ items, unverified }: { items: AttentionItem[]; unverified: boolean }) {
+  if (!items.length)
+    return (
+      <Pill status={unverified ? "neutral" : "healthy"}>{unverified ? "No attention needed" : "All healthy"}</Pill>
+    );
   const failing = items.some((item) => item.tone === "danger");
   return (
     <Pill status={failing ? "error" : "attention"}>
@@ -222,7 +225,9 @@ export function OverviewPage({ state }: { state: OperatorState }) {
           <h1 id="overviewHeading" tabIndex={-1}>
             Overview
           </h1>
-          {headline?.connectors ? <Status items={items} /> : null}
+          {headline?.connectors ? (
+            <Status items={items} unverified={headline.bar.some((entry) => entry.tone === "neutral")} />
+          ) : null}
         </div>
       </div>
       {!contract || !map || !headline ? (
