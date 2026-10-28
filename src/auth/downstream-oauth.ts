@@ -1384,9 +1384,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * Begin a flow — a connect, whose 401 may refresh or start consent, or an
    * `api()` call or start — in the live epoch, and return it. Nothing about
    * the grant is decided here: a grant belongs to one server by construction.
+   * An expected epoch continues an existing attempt; a replacement fails it.
    */
-  beginFlow(): Promise<string> {
-    return runEdge(authOwnMethod<string>(KvOAuthProvider.prototype, this, "beginFlow", []));
+  beginFlow(expectedEpoch?: string): Promise<string> {
+    return runEdge(authOwnMethod<string>(KvOAuthProvider.prototype, this, "beginFlow", [expectedEpoch]));
   }
 
   /** The epoch this flow is bound to, or the live one. */
@@ -2515,10 +2516,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     registerAuthMethod(
       KvOAuthProvider.prototype,
       "beginFlow",
-      function (this: KvOAuthProvider) {
+      function (this: KvOAuthProvider, expectedEpoch?: string) {
         return authFlow<string>(
           function* (this: KvOAuthProvider) {
             const epoch = (yield authInvoke(this, "liveEpoch", [])) as string;
+            if (expectedEpoch !== undefined && epoch !== expectedEpoch) throw this.flowSuperseded();
             this.epoch = epoch;
             this.bound = true;
             return epoch;
