@@ -4183,7 +4183,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (err instanceof OperatorDisconnectedError) {
             return (yield authCall(report, [{ state: "auth_required", message: err.message }])) as ConnectorStatus;
           }
-          if (state.authRequired) {
+          if (state.authRequired || (err instanceof ConnectorCallError && err.code === "auth_required")) {
             return (yield authCall(report, [
               {
                 state: "auth_required",
