@@ -1,4 +1,4 @@
-// Internal HTTP failure contract (decision 0010, B.3). Unreachable from src/index.ts.
+// Internal HTTP failure contract. Unreachable from src/index.ts.
 //
 // Every way a kit request can fail, as a tagged error, and the one mapping
 // from those to the wire `ConnectorCallError`. A provider supplies meaning
@@ -26,7 +26,7 @@
 // refusing status counts only for the request that received it. Advice to
 // send a call again is a segment of its own (`resendAdvice`), never part of
 // the message, so output composes it only where the outcome allows.
-// Q8 policy is decided once by the core's `settleWrite` (#917), from the
+// Q8 policy is decided once by the core's `settleWrite`, from the
 // ledger entries this kit forwards its matched proof and renewals to. A
 // write answered 401 stays unknown; only renewal removes its handoff, and
 // only a reviewed authentication-before-execution declaration proves refusal.
@@ -267,7 +267,7 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly authBeforeExecution?: AuthBeforeExecution<F>;
   /**
    * What this vendor's failures mean for an agent, declared by review for the
-   * generated Conventions (decision 0011): the code an unknown id fails with,
+   * generated Conventions: the code an unknown id fails with,
    * whether that code proves absence (only the vendor's documentation can
    * say so), and each documented source of `conflict`, one line each, such
    * as "HTTP 409 when the record changed since it was read". Never inferred

@@ -1,4 +1,4 @@
-// Cloudflare's reviewed value-safety table (#801), on the shared mechanism in
+// Cloudflare's reviewed value-safety table, on the shared mechanism in
 // `../_shared/rest/value-safety.ts`: every operation the detector flags in
 // the pinned spec (`value-safety.candidates.json`) has one verdict here, and
 // `value-safety.node.test.ts` runs the shared harness over it.
@@ -16,7 +16,7 @@
 // Paths are dot paths into the data a tool returns (Cloudflare's `result`,
 // or the whole body when it is not an envelope); lists are traversed
 // implicitly and `*` matches every key of an object.
-// Embedded URL verdict (#812): reviewed paths + global signing parameters.
+// Embedded URL verdict: reviewed paths + global signing parameters.
 // Evidence: digest-verified schema revision 843eae2fbf4fe774ef9c91021dd34017ac9c970a:
 // builds_BuildLogsResponse.lines (timestamp/log-message tuples),
 // pages_deployment_log.data.line and workers-observability_query_results
@@ -1101,7 +1101,7 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       safe(DESCRIBED_ONLY, "geo_restrictions", "policy_restrictions", "certificates.geo_restrictions"),
     ]),
   ),
-  // Round 3 (#801): candidates the consolidated detector surfaced (the union
+  // Round 3: candidates the consolidated detector surfaced (the union
   // of the two former detectors, with transfer, claim, invite, key, signing,
   // and webhook families).
   [`GET ${A}/abuse-reports/submitted/{report_id}`]: safe(

@@ -1,3 +1,4 @@
+import { compact, isRecord } from "../_shared/json.js";
 // Curated Vercel metadata and bounded logs through kit-owned call services.
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -16,9 +17,7 @@ import { rowStop, type LogLimits } from "./lib/logs.js";
 import { checked } from "../_shared/rest/kit.js";
 import {
   admit,
-  compact,
   defaultTeam,
-  isRecord,
   invalid,
   named,
   queryOf,

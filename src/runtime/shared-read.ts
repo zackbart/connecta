@@ -1,18 +1,5 @@
-// One read that several readers in one request wait on, each on its own terms.
-//
-// Discovery and the registry both coalesce a connector's catalog read inside
-// one request, so a search, a describe, and the call after them cost one
-// downstream listing. The read used to run under whichever reader asked
-// first: its signal was the read's signal, so a short-deadline call that
-// happened to start the read failed a search that joined it with the call's
-// timeout, and a cancelled search cancelled a read others were still waiting
-// on (#571).
-//
-// So the read owns its signal. Each reader waits under its own cancellation,
-// and the read is cancelled only when no reader is left to want it. Nothing
-// here is shared across requests: a SharedRead lives in one request's map and
-// is waited on only by that request's fibers, which is why a plain count of
-// readers is enough and no edge is needed between them.
+// Request-local catalog reads own their signal. Each reader waits under its own
+// cancellation; the read is cancelled only when no reader remains (INV-7).
 
 import { Deferred, Effect, Exit } from "effect";
 import { forkRequest } from "./run.js";

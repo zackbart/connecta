@@ -1,3 +1,4 @@
+import { decodeBase64url } from "../bytes.js";
 import { runEdge } from "../runtime/run.js";
 import {
   authCall,
@@ -27,7 +28,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 function bytes(value: string): Uint8Array<ArrayBuffer> {
   if (!/^[A-Za-z0-9_-]+(?![\s\S])/.test(value)) throw new Error("Invalid JWT encoding");
-  return Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
+  return decodeBase64url(value);
 }
 
 function record(value: unknown): value is Record<string, unknown> {

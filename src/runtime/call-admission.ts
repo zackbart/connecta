@@ -7,7 +7,7 @@
 // block: the one place outside its instance methods that may read its private
 // bookkeeping, and one that emits nothing into the `.d.ts`.
 //
-// The two controllers stay separate on purpose (#453): request admission
+// The two controllers stay separate on purpose: request admission
 // bounds executor work, this bounds calls to one downstream connector, and a
 // shared queue between them was refused.
 

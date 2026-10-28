@@ -3389,9 +3389,8 @@ compiling and configuring the real thing.
   Remote MCP captures
   each physical read's entry before awaiting its response; a later send
   cannot overwrite it. The kit's response identity and Google's init identity
-  identify the request whose credential was renewed. The legacy guarded-fetch
-  `answeredRequest` helper has no production caller; tests retain it to exercise
-  renewal provenance outside the kit.
+  identify the request whose credential was renewed. Guarded mappers that throw
+  an authorization refusal identify its request through `refusalRequest(error)`.
   The decider normalizes every failure it settles,
   typed or not (a raw network error, an `AbortError`, a thrown string). Its
   verdict is final (`settledWrite`, which follows copies and redaction): the

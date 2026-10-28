@@ -110,7 +110,7 @@ async function connect(context: RouteContext): Promise<Response> {
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
     // The sign-in page returns to this link, which then sends a maintainer on
-    // to the operator UI. Pool members cannot use that UI yet (#837), so
+    // to the operator UI. Pool members cannot use that UI yet, so
     // signing in there would strand them.
     if (
       authz.response.status === 401 &&
@@ -129,7 +129,7 @@ async function connect(context: RouteContext): Promise<Response> {
   if (authz.principalKey !== handoff.principal || !mayManageConnector(opts, authz, connector)) {
     return refuse("Sign in as the user who requested this connection and has permission to manage it.");
   }
-  // The operator UI serves maintainers only until member views ship (#837).
+  // The operator UI serves maintainers only until member views ship.
   // A member's OAuth link starts here directly, as it does without a UI.
   const viaUi = Boolean(opts.config.ui) && admitsMaintainer(opts, authz);
   if (!connector.startAuth) {

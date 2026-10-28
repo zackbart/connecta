@@ -1,3 +1,4 @@
+import { PRIVATE_KEY } from "../../../test/fixtures/rsa.js";
 // Google Slides fixture regressions cover paging, cursor binding, result bounds,
 // translation, refusals and write outcomes. Delegation, subjects and tokens
 // are covered by test/google-workspace-delegation.test.ts.
@@ -9,14 +10,6 @@ import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-
-const keys = (await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-  true,
-  ["sign", "verify"],
-)) as CryptoKeyPair;
-const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
-const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
 
 interface ApiCall {
   url: URL;

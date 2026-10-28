@@ -1,3 +1,4 @@
+import { bytesToHex } from "../bytes.js";
 // The Effect plumbing the operator and activity data routes share.
 //
 // Each JSON route under /ui/* is one Effect program, run at its Promise edge
@@ -121,7 +122,7 @@ export function operatorViewerKey(context: RouteContext, authz: Authorized): Eff
         );
         const signingKey = key;
         const digest = yield* attempt(() => crypto.subtle.sign("HMAC", signingKey, identity));
-        return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        return bytesToHex(new Uint8Array(digest));
       }),
     {
       timeoutMs: 500,
@@ -146,7 +147,7 @@ export function scopeFor(
 }
 
 /**
- * The whole registry, for a maintainer only (#837). Everyone else gets the
+ * The whole registry, for a maintainer only. Everyone else gets the
  * private 404 plain `/mcp` gives them.
  */
 export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
@@ -156,7 +157,7 @@ export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effe
 }
 
 /**
- * The connectors a connector-auth route may resolve (#837): every connector
+ * The connectors a connector-auth route may resolve: every connector
  * for a maintainer, the connectors of their pools for a pool member, and the
  * private 404 for anyone else. mayManageConnector still decides each action.
  */

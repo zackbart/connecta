@@ -7,7 +7,7 @@ import { testMaintainerOf } from "./helpers/machine-auth.js";
 import type { CredentialVault } from "../src/credentials.js";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import type { Connector, Executor, KVStorage, Logger } from "../src/types.js";
-import { snapshotCatalog } from "../src/catalog-fingerprint.js";
+import { fingerprintSerializedCatalog } from "../src/catalog-fingerprint.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
 import type { RegistryView } from "../src/registry.js";
@@ -102,8 +102,9 @@ export async function invokeTestCall(
 
 export async function seedCatalog(storage: KVStorage, id: string, toolName: string): Promise<void> {
   const now = Date.now();
-  const snapshot = await snapshotCatalog([{ name: toolName, annotations: { readOnlyHint: true } }]);
-  const serialized = new TextDecoder().decode(snapshot.serializedBytes);
+  const tools = [{ name: toolName, annotations: { readOnlyHint: true } }];
+  const snapshot = await fingerprintSerializedCatalog(JSON.stringify(tools));
+  const serialized = JSON.stringify(tools);
   await storage.set(`catalog:${id}:chunk:${snapshot.fingerprint}:0`, serialized);
   await storage.set(
     `catalog:${id}`,
@@ -111,7 +112,7 @@ export async function seedCatalog(storage: KVStorage, id: string, toolName: stri
       version: 3,
       revision: snapshot.fingerprint,
       toolCount: 1,
-      byteCount: snapshot.serializedBytes.byteLength,
+      byteCount: snapshot.byteLength,
       chunkCount: 1,
       fetchedAt: now,
       expiresAt: now + 600_000,

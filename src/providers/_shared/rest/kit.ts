@@ -1,3 +1,4 @@
+import { isRecord } from "../json.js";
 // Shared REST call shapes, pinned-schema conversion and indexed vendor declarations.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../../errors.js";
@@ -66,9 +67,6 @@ export interface RestResult {
 export type RestReadPost = readonly [method: RestMethod, path: string, reason: string];
 
 type Json = Record<string, unknown>;
-function isRecord(value: unknown): value is Json {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 function invalid(message: string): never {
   throw new ConnectorCallError("invalid_args", message);
 }

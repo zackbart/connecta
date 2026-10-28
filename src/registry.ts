@@ -1,3 +1,5 @@
+import { wrapViewCredentials } from "./runtime/call.js";
+import { sha256Hex } from "./bytes.js";
 import { catalogRevision } from "./catalog-revision.js";
 import { authCall, authInvoke } from "./auth/native.js";
 import { Clock, Duration, Effect, Random } from "effect";
@@ -54,7 +56,7 @@ import {
   storageSet,
   storageList,
 } from "./runtime/storage.js";
-import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
+import { redactCatalog, sentSecretsFor, sentSecretsForRequest } from "./sent-secrets.js";
 import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import {
   jsonCodec,
@@ -435,11 +437,6 @@ function swapStashLedger<A>(
   });
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 /**
  * Holds the connector set, resolves addresses, and coalesces tool listings
  * within one request. Remote MCP clients own persisted response caching. Connector failures are isolated: a broken
@@ -787,7 +784,7 @@ export class Registry implements RegistryView {
         : {}),
     });
     sentSecretsFor(context);
-    trackCredentialReads(context);
+    wrapViewCredentials(context);
     attachOAuthPartition(context, this.oauthPartition);
     // Downstream OAuth state is sealed under the vault key, bound to this
     // connector and owner. The sealer rides beside the context, not on it.
@@ -864,7 +861,7 @@ export class Registry implements RegistryView {
    *
    * `chunks[n]` lands on `resultKeys.chunk(id, n)` inside `partition` — the
    * layout connecta.result reads back, so a page fetches only the chunks it covers
-   * instead of the whole stored result (issue #540). Chunking is a read-cost
+   * instead of the whole stored result. Chunking is a read-cost
    * decision, not a capacity one: however many keys an envelope occupies, it
    * is one stash entry charged its total ASCII length.
    *

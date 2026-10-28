@@ -1,3 +1,4 @@
+import { classes } from "./primitives.js";
 import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   mapHighlight,
@@ -17,10 +18,6 @@ import { followLink, MemberChip, StateBlock } from "./parts.js";
  * one tab stop: arrow keys move between nodes. Narrow screens get the same
  * facts as a stacked list instead of a shrunken drawing.
  */
-
-function classes(...values: Array<string | false | null | undefined>): string {
-  return values.filter(Boolean).join(" ");
-}
 
 function edgeClass(edge: MapEdge, lit: boolean): string {
   return classes(

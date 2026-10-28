@@ -1,3 +1,4 @@
+import { wrapViewCredentials } from "../runtime/call.js";
 import { storedAuthObservation, withStoredAuth } from "../auth/stored-observation.js";
 import { Effect, Exit } from "effect";
 import { registerConnectorVocabulary } from "../operation-vocabulary.js";
@@ -13,7 +14,7 @@ import { describedEndpoint, describedOrigin, describedTools } from "../described
 import { READ_ONLY, CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
-import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
+import { redactCatalog, redactSentSecrets, sentSecretsFetch } from "../sent-secrets.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
 import {
@@ -216,7 +217,7 @@ export interface ApiOptions {
 
 /**
  * Three things a hand-written surface is refused for at construction rather
- * than in production (#340): no description (discovery has nothing to route on
+ * than in production: no description (discovery has nothing to route on
  * and a guess costs a call), no explicit `readOnlyHint` (connecta never infers
  * the safety class, so an unclassified tool is a deployment bug), and an
  * `inputSchema` the validator cannot compile (declaring one is optional;
@@ -414,7 +415,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   };
   const core: NativeCall = (name, args, ctx) =>
     Effect.gen(function* () {
-      trackCredentialReads(ctx);
+      wrapViewCredentials(ctx);
       enterProviderBoundary(ctx, connector);
       const tool = byName.get(name);
       // Refusals before the handler runs are known failures: nothing was sent.

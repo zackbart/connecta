@@ -51,11 +51,6 @@ export function resourceUriMatchesTemplates(
   return matched ? { matched } : { matched, ...(refusal ? { refusal } : {}) };
 }
 
-export function resourceUriMatchesTemplate(uri: string, template: string): boolean {
-  const parsed = parse(template);
-  return typeof parsed === "object" && matches(uri, parsed);
-}
-
 function parse(template: string): ParsedTemplate | "resource_template_ambiguous" | undefined {
   if (template.length > MAX_URI_LENGTH) return;
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:/.exec(template)?.[0];

@@ -523,7 +523,7 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
     );
     // A pool owner is a Workspace mailbox address. Only an authenticated
     // maintainer reads it; an open deployment's anonymous caller, which this
-    // route admits, gets null, the same as an unset owner (#837).
+    // route admits, gets null, the same as an unset owner.
     const ownersVisible = opts.config.auth.length > 0 && isMaintainer(opts.maintainers, authz.identity);
     config.pools = config.pools.map((pool) => ({
       ...pool,

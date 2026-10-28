@@ -1,3 +1,4 @@
+import { asRecord } from "../_shared/json.js";
 // Overflow v3: reviewed vendor declarations, derived operation index and paging contracts.
 // Public input: staging OpenAPI 3.0; exact retrieval and known upstream drift are in evidence/review.md.
 import { Effect, Schema } from "effect";
@@ -1513,6 +1514,3 @@ export const probe = {
     return `Overflow ${options.environment} accepted the client id and API key.${where}`;
   },
 };
-function asRecord(value: unknown): Record<string, any> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
-}

@@ -1,3 +1,4 @@
+import { refusalRequest } from "../src/provider-call-facts.js";
 // A write answered HTTP 401 is an unknown outcome by default: a server may act
 // on a request before it rejects the credential. It keeps its authorization
 // code and handoff, is never retryable, and is a refusal only where the
@@ -6,7 +7,7 @@
 // the status the ledger recorded, before any key or untracked exception.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { answeredRequest, guardedFetch } from "../src/connectors/guarded-fetch.js";
+import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice, type CallErrorDetails } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -185,10 +186,10 @@ function ticketsAround(kind: "sole" | "composite" | "later" | "renewed" | "reuse
           if (kind === "renewed" || kind === "reused" || kind === "unrelated") {
             if (kind === "unrelated")
               await send({ method: "POST", path: "/tickets" }, ctx, retryingRefusal).catch(() => undefined);
-            const rejected = await send({ method: "GET", path: "/tickets/t-1" }, ctx, (response) =>
-              answeredRequest(response),
-            );
-            renewedAfterUnauthorized(rejected, "token-1", kind === "reused" ? "token-1" : "token-2");
+            const rejected = await send({ method: "GET", path: "/tickets/t-1" }, ctx, () => {
+              throw new ConnectorCallError("connector_call_failed", "Read request failed.");
+            }).catch((error: unknown) => error);
+            renewedAfterUnauthorized(refusalRequest(rejected), "token-1", kind === "reused" ? "token-1" : "token-2");
             await send({ method: "GET", path: "/tickets/t-1" }, ctx, (response) => response.json());
             return send({ method: "POST", path: "/failing" }, ctx, () => {
               throw new ConnectorCallError("unavailable", "Tickets is unavailable.", { retryAfterMs: 30_000 });

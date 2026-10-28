@@ -3,7 +3,7 @@ export { retryAfterMs } from "../http-policy.js";
 import { callerSignal, duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
 /**
  * The safety machinery every hand-written HTTP surface needs, extracted once
- * (#341): path confinement, encoded query and framed bodies, per-request
+ *: path confinement, encoded query and framed bodies, per-request
  * credential headers applied last, a refused redirect, a bounded read, and
  * network-failure normalization. It owns no vendor-specific meaning and never
  * invents an auth scheme, because the same 403 means an ungranted
@@ -27,7 +27,6 @@ import {
   providerRequest,
   responseProviderRequest,
   vendorRefusal,
-  type ProviderRequest,
 } from "../provider-call.js";
 import { providerCallFailure, providerCallResult } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
@@ -497,17 +496,6 @@ async function jsonResult(read: () => Promise<unknown>): Promise<{ value: unknow
   }
 }
 
-// Each response a mapper reads, and the ledger entry of the request it answered.
-const answeredRequests = new WeakMap<object, ProviderRequest>();
-
-/**
- * Test-only legacy response lookup for renewal-provenance fixtures outside
- * the kit. Production renewal uses the kit ledger. Undefined for other objects.
- */
-export function answeredRequest(response: object): ProviderRequest | undefined {
-  return answeredRequests.get(response);
-}
-
 /**
  * Build the transport a connector sends every request through. `maxResponseBytes`
  * is required rather than defaulted: what counts as an absurd response is a fact
@@ -698,7 +686,6 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         throw oversized(provider, limit, `a declared ${declared} bytes`);
       }
       const answer = boundedResponse(provider, response, limit, signal);
-      answeredRequests.set(answer, dispatch);
       const abort = () => {
         void response?.body?.cancel().catch(() => {});
       };

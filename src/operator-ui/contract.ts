@@ -31,14 +31,14 @@ export interface OperatorConnectorOverlay {
   lastCall: OperatorLastCall | null;
 }
 
-/** Whole connector access, or exact tool grants. `requireReadOnly` is always false since guarded grants were removed (#837). */
+/** Whole connector access, or exact tool grants. `requireReadOnly` is always false since guarded grants were removed. */
 export interface OperatorGrant {
   connectorId: string;
   tools: "all" | Array<{ name: string; requireReadOnly: boolean }>;
 }
 
 // Contract v2, frozen by decisions/0006-pools-are-the-access-model.md and
-// served by `GET /ui/api/config` for both roles (#837). Maintainer-only fields
+// served by `GET /ui/api/config` for both roles. Maintainer-only fields
 // are null or empty in the member view, never omitted.
 
 export type OperatorRole = "maintainer" | "member";
@@ -185,5 +185,5 @@ export interface OperatorUiContractV2 {
   };
 }
 
-/** The operator contract `GET /ui/api/config` serves; schema version 1 was removed (#837). */
+/** The operator contract `GET /ui/api/config` serves; schema version 1 was removed. */
 export type OperatorUiContract = OperatorUiContractV2;
