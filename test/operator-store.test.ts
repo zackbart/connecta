@@ -398,6 +398,69 @@ describe("operator store identity wiring", () => {
     },
   );
 
+  it("never lets a connector refresh join a read that began for a previous Access viewer (#1150)", async () => {
+    const { store, fetchMock, configMock } = await loadStore(
+      { id: "unused", getToken: async () => "unused" },
+      { kind: "cloudflare-access" },
+    );
+    let viewer = "opaque-alice";
+    configMock.mockImplementation(async () =>
+      Response.json({ ...v2([{ id: "notes" }]), you: { interactive: true, viewerKey: viewer } }),
+    );
+    const detail = (viewerKey: string, status: string, tool: string) => ({
+      id: "notes",
+      viewerKey,
+      status,
+      toolCount: status === "ok" ? 1 : 0,
+      tools: status === "ok" ? [{ name: tool, address: `notes.${tool}`, safety: "runs_in_programs" }] : [],
+      overlay: { id: "notes", status, tools: [], catalogAgeMs: null, lastCall: null },
+    });
+    const alice = deferred<Response>();
+    let pending = false;
+    let aliceSignal: AbortSignal | undefined;
+    const probes: string[] = [];
+    fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
+      if (path === "/ui/data")
+        return Response.json({
+          ...uiData(viewer),
+          viewerKey: viewer,
+          connectors: [{ id: "notes", status: "loading", tools: [], toolCount: 0 }],
+        });
+      probes.push(viewer);
+      if (viewer === "opaque-alice" && pending) {
+        aliceSignal = init.signal as AbortSignal;
+        return alice.promise; // Deliberately settles even after cancellation.
+      }
+      return Response.json(
+        detail(
+          viewer,
+          viewer === "opaque-alice" ? "ok" : "auth_required",
+          viewer === "opaque-alice" ? "alice_first" : "bob",
+        ),
+      );
+    });
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("ok"));
+    pending = true;
+    // A quiet poll leaves Alice's read in flight.
+    const oldRead = store.refreshConnector("notes", true);
+    await vi.waitFor(() => expect(probes).toHaveLength(2));
+    // Access switches to Bob, who refreshes the connector without readmission.
+    viewer = "opaque-bob";
+    const seen: string[] = [];
+    const unsubscribe = store.subscribe(() => seen.push(JSON.stringify(store.getState())));
+    const refresh = store.refreshConnector("notes");
+    alice.resolve(Response.json(detail("opaque-alice", "ok", "alice_fresh")));
+    await Promise.all([oldRead, refresh]);
+    await vi.waitFor(() => expect(store.getState().contract?.you.viewerKey).toBe("opaque-bob"));
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("auth_required"));
+    unsubscribe();
+    expect(aliceSignal?.aborted).toBe(true);
+    expect(probes.slice(0, 3)).toEqual(["opaque-alice", "opaque-alice", "opaque-bob"]);
+    expect(seen.some((value) => value.includes("alice_fresh"))).toBe(false);
+    expect(JSON.stringify(store.getState())).not.toContain("alice_");
+  });
+
   it("readmits Access when a detail belongs to a different viewer than admission", async () => {
     const { store, configMock, fetchMock } = await loadStore(
       { id: "unused", getToken: async () => "unused" },
@@ -1286,6 +1349,8 @@ describe("cached admission and scoped observations (#1113)", () => {
     paths.length = 0;
     const pending = deferred<Response>();
     fetchMock.mockImplementation(() => pending.promise);
+    // An explicit refresh supersedes one in flight rather than joining it (#1150):
+    // the Access viewer may have changed in between, so only the newest read lands.
     const pairs: string[] = [];
     const unsubscribe = store.subscribe(() => {
       const state = store.getState();
@@ -1296,11 +1361,12 @@ describe("cached admission and scoped observations (#1113)", () => {
     });
     const first = store.refreshConnector("crm");
     const second = store.refreshConnector("crm");
-    await vi.waitFor(() => expect(paths).toEqual(["/ui/connectors/crm"]));
+    await vi.waitFor(() => expect(paths).toEqual(["/ui/connectors/crm", "/ui/connectors/crm"]));
     pending.resolve(Response.json(row("crm", "auth_required")));
     await Promise.all([first, second]);
     unsubscribe();
-    expect(pairs).toEqual(["auth_required/auth_required", "auth_required/auth_required"]);
+    expect(pairs.length).toBeGreaterThan(0);
+    expect(new Set(pairs)).toEqual(new Set(["auth_required/auth_required"]));
     expect(store.getState()).toMatchObject({ admissionValid: true, contractPhase: "ready" });
   });
 

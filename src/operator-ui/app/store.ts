@@ -731,6 +731,7 @@ async function refreshSnapshot(
   pollSignal?: AbortSignal,
   preloaded?: OperatorUiContractV2,
   publication = ++snapshotReadRevision,
+  fresh = false,
 ): Promise<void> {
   if (signedOut || state.role !== "maintainer") return;
   if (!connectorId && !preloaded) {
@@ -778,7 +779,7 @@ async function refreshSnapshot(
   );
   await Promise.all(
     connectors.map(async (connector) => {
-      const outcome = await coalescedConnector(connector.id, viewer, token, signal);
+      const outcome = await coalescedConnector(connector.id, viewer, token, signal, fresh);
       if (
         !current() ||
         viewerKey !== viewer ||
@@ -864,10 +865,15 @@ async function coalescedConnector(
   viewer: string,
   token: string | null | undefined,
   signal: AbortSignal,
+  fresh = false,
 ): Promise<DetailOutcome> {
   const key = observationKey(id, viewer);
   const existing = connectorReads.get(key);
-  if (existing && !existing.signal.aborted) return existing.promise;
+  // An explicit refresh never joins a read already in flight: the Access
+  // session may have changed since it began, and its answer could belong to
+  // the previous viewer. The older read is withdrawn and lands as stale.
+  if (existing && fresh) existing.controller.abort();
+  else if (existing && !existing.signal.aborted) return existing.promise;
   const controller = new AbortController();
   const combined = AbortSignal.any([signal, controller.signal]);
   const promise = (async () => {
@@ -875,7 +881,8 @@ async function coalescedConnector(
     else activeConnectorReads++;
     try {
       if (combined.aborted) return { kind: "stale" } as const;
-      return await fetchConnector(id, token, combined);
+      const outcome = await fetchConnector(id, token, combined);
+      return combined.aborted ? ({ kind: "stale" } as const) : outcome;
     } finally {
       const next = connectorWaiters.shift();
       if (next) next();
@@ -1781,7 +1788,7 @@ export function refreshConnector(id: string, quiet = false): Promise<void> {
       },
       connectorFailures: withoutKey(state.connectorFailures, id),
     });
-  return refreshSnapshot(id);
+  return refreshSnapshot(id, undefined, undefined, undefined, !quiet);
 }
 
 /* Access tokens ----------------------------------------------------------- */
