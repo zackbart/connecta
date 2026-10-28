@@ -421,7 +421,7 @@ describe("authenticated MCP body limits", () => {
               "MCP-Protocol-Version": "2025-06-18",
             },
             body,
-          }),
+          } as RequestInit),
         );
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ jsonrpc: "2.0", id: 1, result: { tools: expect.any(Array) } });

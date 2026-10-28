@@ -826,7 +826,7 @@ export function createMcpRoute(opts: ServerOptions): {
           // This is an inbound SDK view, not an outgoing keepalive or no-cors
           // fetch; Node rejects an explicit stream with either.
           ...(request.body ? { body: request.body, duplex: "half", keepalive: false } : {}),
-          ...(request.body && request.mode === "no-cors" ? { mode: "cors" as const } : {}),
+          ...(request.body && (request as { mode?: string }).mode === "no-cors" ? { mode: "cors" as const } : {}),
         });
         if (admission.success && admission.success.waitMs > 0) {
           opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {
