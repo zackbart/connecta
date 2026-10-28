@@ -2,6 +2,37 @@
 
 All notable changes to this package are documented here.
 
+## 0.38.0 — 2026-10-28
+
+0.38.0 is a minor release that retires the old storage and OAuth layout migrations, adds a configurable program return cap, makes in-program skill calls more forgiving, and moves the Eve helper to Eve 0.86.
+
+Breaking: the pre-layout-3 OAuth grant converter, the Workers KV → D1 copy APIs and script, and the Node JSON-state import API and `connecta migrate-state` command are removed. A deployment still holding old state must first upgrade through 0.37.1, run `copyKvToD1` or `migrate-state` as needed, and open every OAuth grant once on that version before moving to 0.38.0; otherwise old OAuth grants need fresh consent and old KV or JSON state is not imported. Retired pause, identity, grant and trust options still fail construction, now as ordinary unknown options without migration hints. `documentation/migration-retired-layouts.md` covers verification and recovery. Deployments that already run on 0.37.x layouts need no change.
+
+`execute.maxResultChars` sets how many serialized characters an `execute_code` program may return before Connecta pages it. The default stays 24,000, and paging notices now ask for pages sized to the configured cap. Programs can call `connecta.skill({ name })` and `connecta.skills(...)` as well as `connecta.skill(name)`, and the `execute_code` description states each host-call deadline truthfully when call and host-call timeouts differ.
+
+Also breaking: `@zackbart/connecta-eve` now requires Eve `>=0.86.0 <0.87.0`, so Eve 0.84 apps upgrade Eve to 0.86.0 together with the helper. Eve 0.86.0 still pins undici 8.10.2, so pnpm apps rekey their override to `"eve@0.86.0>undici": "8.12.3"`; npm apps keep the same override. The rest of the release is contributor-facing: refreshed development dependencies, a slimmer test suite, consolidated internals and trimmed documentation, with no runtime behavior change.
+
+### Added
+
+- Add `execute.maxResultChars`, the serialized characters an `execute_code` program may return before Connecta stashes the return behind a paging notice. The default stays 24,000; values from 4,000 to 1,000,000 are accepted, and anything else fails at construction. Emitted text shares the configured cap, and the paging notices that `execute_code` and direct calls return ask for pages sized to it instead of a fixed 3,829 bytes, never more than the stashed call's `maxResultBytes` or the 32 KiB bridge ceiling. A connector whose cap is below 3,829 bytes now gets a notice asking for the page size it actually serves. `describeConfig()` and the operator settings report it. Stash pages still obey each call's `maxResultBytes`. Connecta has no response-size limit, so keep the cap below what every client accepts: Claude Code passes at most 50,000 characters of text.
+
+### Changed
+
+- Accept the shapes models copy from the top-level `skills` tool into programs. `connecta.skill({ name })` now works like `connecta.skill(name)`, and `connecta.skills` is an undeclared alias of `connecta.skill` with the same host-call accounting, so neither costs a failed run. Any other argument fails `invalid_args` naming `connecta.skill("usage")`. The `execute_code` description, the server instructions, the usage guide and the program-error hint now show the in-program form `connecta.skill("usage")` and call the top-level one the skills tool, instead of giving `skills({ name: "usage" })` beside the guest API.
+- Consolidate internal helpers and remove unused code without changing runtime behavior.
+- Trim historical narration and duplicate procedures from documentation, correct contributor evidence references, and remove unreferenced eval baselines.
+- Refresh development dependencies: TypeScript 6.0, Vitest 5 with Vite 8.3, `@cloudflare/vitest-plugin` 1.4 (renamed from `@cloudflare/vitest-pool-workers`) with Wrangler 4.151, Playwright 1.64, and current oxlint, oxfmt, knip, esbuild, tsx, React and Radix releases, in core and the Eve helper. Published dependency and peer ranges are unchanged, and deployments need no change.
+- **Breaking:** `@zackbart/connecta-eve` now requires Eve 0.86 (`>=0.86.0 <0.87.0`) and is tested against Eve 0.86.0; Eve 0.84 apps must upgrade Eve to 0.86.0 together with the helper. Eve 0.86.0 still pins undici 8.10.2, so pnpm apps rekey their override to `"eve@0.86.0>undici": "8.12.3"`; npm apps keep the same override.
+- Contributor test suite slimmed: about 100 regression, lifetime, parity and meta-guard suites are removed, and workerd now runs only the suites that need real Workers bindings or isolates. No runtime behavior changes.
+
+### Fixed
+
+- The `execute_code` description no longer overstates the deadline of `connecta.result`, `connecta.skill` and `connecta.read`. When `calls.defaultTimeoutMs` differs from `execute.hostCallTimeoutMs`, it states both, for example `Limits: 20 host calls, 10 writes, 25s/call (15s result/skill/read).`, instead of advertising the call default for every host call. Enforcement is unchanged; deployments without `calls.defaultTimeoutMs` see the same `15s/host call` text as before.
+
+### Removed
+
+- **Breaking:** Remove the pre-layout-3 OAuth grant converter and cleanup, Workers KV → D1 copy APIs/types/script, and Node JSON-state import API and `connecta migrate-state` command. Retired pause, identity, grant, and trust options still fail construction as ordinary unknown options, without migration hints. Before upgrading, deployments with old state must upgrade through 0.37.1, run `copyKvToD1` or `migrate-state` as needed, and open every OAuth grant once on that version. Old OAuth grants otherwise require fresh consent; old KV/JSON state is not imported. Follow `documentation/migration-retired-layouts.md` for verification and recovery.
+
 ## 0.37.1 — 2026-10-28
 
 0.37.1 is a patch release of fixes and request-path performance work. It needs no configuration change, and deployments on 0.37.0 can upgrade in place. One type change is additive: connector status gains a `per_caller` state, so code that switches exhaustively over status states must handle it.
