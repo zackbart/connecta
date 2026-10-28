@@ -1785,8 +1785,9 @@ Every other value becomes the data JSON shows for it, checked, or is withheld:
 Typed binary is withheld as `[redacted]` when its bytes hold a match, checked as
 decoded binary content is, or when one of the numbers JSON shows for it does:
 its elements and, for the `Uint8Array` returned, its bytes, each checked as a
-JSON number and joined with its neighbours. A one-to-three-character numeric
-private value, such as `7`, therefore withholds a typed array holding that
+JSON number and joined with its neighbours. Byte views are checked on their own,
+so they do not separate those numbers from neighbouring leaves. A one-to-three-character
+numeric private value, such as `7`, therefore withholds a typed array holding that
 element, as it withholds an equal JSON number. Each of those numbers is an entry
 of the walk's 1,048,576-entry budget, so binary past it is withheld whole.
 Connecta returns downstream binary as base64 text, which none of this limits;
