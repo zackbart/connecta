@@ -9,7 +9,7 @@ export const REDACTED = "[redacted]";
  * secrets from every value of a vendor body before result safety reads it, so a rule that decides
  * on a value (a type discriminator, a record's label or type, a URL's scheme or parameter names,
  * a Content-Type) can find the placeholder where the vendor wrote what the rule matches.
- * Such a decision takes its most protective outcome (#703).
+ * Such a decision takes its most protective outcome.
  */
 export function redactionAltered(value: unknown): boolean {
   return typeof value === "string" && value.includes(REDACTED);
@@ -98,7 +98,7 @@ function credentialUnit(code: number): boolean {
 
 /**
  * The text right after the placeholder at `at` that may be the rest of a credential whose public
- * prefix redaction took (#703): up to the first unit `ends` accepts, reading later placeholders
+ * prefix redaction took: up to the first unit `ends` accepts, reading later placeholders
  * whole so none is split. Redaction can take `sk_live_`, `whsec_`, `Bearer `, or a signing
  * parameter's name and `=`, leaving what follows; with that prefix known, any remainder rebuilds
  * the credential, however short or encoded, so `readable` holds whenever it carries any base64 or

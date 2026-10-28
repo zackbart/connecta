@@ -31,6 +31,7 @@ What changes for deployments, and what evidence would make us reconsider?
 
 `status` is `proposed`, `accepted`, or `superseded`. `date` is the decision date;
 `issues` lists GitHub issue numbers; `supersedes` lists earlier record filenames.
+Optional `amends` lists records changed in part without replacing them.
 A superseded record points to its replacement issue, PR, or record in its prose.
 
 [0001](./0001-ethos-verdict-table.md) preserves the old verdict table.

@@ -1,3 +1,4 @@
+import { readOnlyNotice } from "../_shared/guide.js";
 import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
@@ -142,7 +143,7 @@ export const overflow = defineApiProvider<OverflowOptions>({
         : "Overflow staging: a sandbox with separate credentials and data.",
       `Nonprofit purpose: ${options.purpose}`,
       "Named reads minimize contact data; get_donor is the full-contact lookup. Webhook signing secrets are always removed.",
-      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+      ...readOnlyNotice(options.readOnly),
       ...(options.defaultPageSize !== undefined
         ? [`Paged lists return ${options.defaultPageSize} items by default on this connection.`]
         : []),

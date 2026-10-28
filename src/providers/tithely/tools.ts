@@ -1,8 +1,10 @@
-// Tithe.ly's curated tools on the provider kit (decision 0010) and their
+import { compact as compactDefined } from "../_shared/json.js";
+import { asArray, asRecord } from "../_shared/json.js";
+// Tithe.ly's curated tools on the provider kit and their
 // projections. Decision 0011's step 2: standard lists ({ items, page } with
 // limit, cursor and fields), fields on every named read, and no `raw`: what a
 // projection drops stays reachable through the standard hatch, which the kit
-// builds from `api.ts`'s index and verdicts (decision 0014). Each named read
+// builds from `api.ts`'s index and verdicts. Each named read
 // earns its place against the hatch with paging Tithe.ly cannot report
 // (lookahead), units (cents, ISO dates), joins (donor, organization and
 // payment method inline) or reconciliation of a known id after a write.
@@ -16,8 +18,6 @@ import { lookahead } from "../../http/paging.js";
 import { get as getTool, list } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
 import {
-  asArray,
-  asRecord,
   entity,
   getCharge,
   getRecurring,
@@ -375,7 +375,7 @@ type Compact<T> = {
 };
 
 function compact<T extends object>(value: T): Compact<T> {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Compact<T>;
+  return compactDefined(value) as Compact<T>;
 }
 
 /** Integer cents from Tithe.ly's string-or-number amounts. */
@@ -436,7 +436,7 @@ function projectOrganization(value: unknown): typeof Organization.Type {
   return compact({
     organizationId: text(organization["organization_id"]),
     name: text(organization["name"]),
-    // The giving widget id embeds Tithe.ly's giving form; the step-2 eval showed agents need it (decision 0014).
+    // The giving widget id embeds Tithe.ly's giving form; the step-2 eval showed agents need it.
     widgetId: text(organization["widget_id"]),
     ownerAccountId: text(organization["account_id"]),
     website: text(organization["website"]),

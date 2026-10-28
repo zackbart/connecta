@@ -3,7 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { Icon } from "./icons.js";
 
-function classes(...values: (string | undefined)[]) {
+export function classes(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
 export function Button({

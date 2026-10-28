@@ -71,7 +71,10 @@ or contradictory read hints count as writes, but a service can mislabel an
 action and an operator can override its label. Use restricted service
 credentials as another boundary where possible.
 
-The AI app owns approvals. It may ask based on an earlier tool label. If a
+The Eve helper defaults to unattended authorized writes. For interactive use,
+`gateWrites: true` asks before tools not marked read-only; an explicit Eve
+approval policy takes precedence. The AI app owns approvals. It may ask based
+on an earlier tool label. If a
 read becomes a write, a writable pool can execute it without a fresh
 approval; a read-only pool refuses it. Connecta does not pause a program to
 ask a person partway through.

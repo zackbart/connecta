@@ -1,3 +1,4 @@
+import { utf8Length } from "../bytes.js";
 import type { CallErrorDetails } from "../errors.js";
 // QuickJS-in-WebAssembly runtime used inside the disposable child process.
 //
@@ -52,29 +53,6 @@ function logTransportBytes(entry: string): number {
   // The log is encoded into ExecutionPayload, then that payloadJson string is
   // encoded into ChildToParentMessage. Measure the units the IPC cap sees.
   return serializedBytes(JSON.stringify(JSON.stringify(entry)));
-}
-
-function exceedsUtf8ByteLimit(value: string, limit: number): boolean {
-  let bytes = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x7f) bytes += 1;
-    else if (code <= 0x7ff) bytes += 2;
-    else if (
-      code >= 0xd800 &&
-      code <= 0xdbff &&
-      index + 1 < value.length &&
-      value.charCodeAt(index + 1) >= 0xdc00 &&
-      value.charCodeAt(index + 1) <= 0xdfff
-    ) {
-      bytes += 4;
-      index += 1;
-    } else {
-      bytes += 3;
-    }
-    if (bytes > limit) return true;
-  }
-  return false;
 }
 
 /** Normalize model output into an async-arrow expression: strip markdown fences, wrap bare bodies. */
@@ -248,7 +226,7 @@ function installBridge(
       } catch (err) {
         throw new Error(`Host result from ${label} could not be serialized: ${msg(err)}`);
       }
-      if (exceedsUtf8ByteLimit(json, MAX_HOST_RESULT_BYTES)) {
+      if (utf8Length(json, MAX_HOST_RESULT_BYTES) > MAX_HOST_RESULT_BYTES) {
         throw new Error(`Host result from ${label} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`);
       }
       return { json };

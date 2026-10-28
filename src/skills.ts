@@ -1,3 +1,4 @@
+import { bytesToHex, utf8Length } from "./bytes.js";
 import { duringViewEffect } from "./runtime/call.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { upwardStep } from "./upward.js";
@@ -23,7 +24,7 @@ import type { Connector, ConnectorContext, ConnectorSkill, ConnectorSkillResourc
 const ROUTE =
   "Choose a route before discovery. One known-address read uses call_tool; one known-address write uses call_destructive_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
 const RECOVERY =
-  'When an auth error includes a handoff, give it to the user or operator. Use authorize_connector for a fresh link. Page resultId notices and format:"paged" handles with connecta.result(handleOrId, { page? }). Fetch skills({ name: "usage" }) only for missing guidance or program repair.';
+  'When an auth error includes a handoff, give it to the user or operator. Use authorize_connector for a fresh link. Page resultId notices and format:"paged" handles with connecta.result(handleOrId, { page? }). Missing guidance/repair only: skills tool "usage" or connecta.skill("usage").';
 
 /**
  * The always-loaded MCP `instructions` string. An endpoint is writable or
@@ -359,22 +360,6 @@ const MAX_SKILLS = 1_024;
 const encoder = new TextEncoder();
 const PRIVATE = { resultType: "complete" as const, ttlMs: 0, cacheScope: "private" as const };
 
-/** Bound metadata before cloning it, without another payload-sized byte array. */
-function jsonBytes(value: unknown): number {
-  const json = JSON.stringify(value);
-  let bytes = 0;
-  for (let i = 0; i < json.length; i++) {
-    const code = json.charCodeAt(i);
-    if (code < 0x80) bytes++;
-    else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff && json.charCodeAt(i + 1) >= 0xdc00 && json.charCodeAt(i + 1) <= 0xdfff) {
-      bytes += 4;
-      i++;
-    } else bytes += 3;
-  }
-  return bytes;
-}
-
 interface SkillRecord {
   entry: ConnectorSkill;
   aliases: string[];
@@ -422,16 +407,13 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (
           }>(function* () {
             const name = validSkillName(connector.id)
               ? connector.id
-              : `connector-${[
-                  ...new Uint8Array(
+              : `connector-${bytesToHex(
+                  new Uint8Array(
                     yield* upwardStep(
                       authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", encoder.encode(connector.id)]),
                     ),
                   ),
-                ]
-                  .map((byte) => byte.toString(16).padStart(2, "0"))
-                  .join("")
-                  .slice(0, 48)}`;
+                ).slice(0, 48)}`;
             const description = connectorGuideSummary(connector)!;
             const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
             const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${connectorGuide(connector)!}`;
@@ -541,11 +523,9 @@ const withManifestNative = /* @__PURE__ */ registerAuth(withManifest, function (
     const bytes = encoder.encode(record.content!);
     if (bytes.length > MAX_SKILL_BYTES)
       throw new ConnectorCallError("unavailable", "Local skill exceeds the byte bound.");
-    const digest = [
-      ...new Uint8Array(yield* upwardStep(authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", bytes]))),
-    ]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
+    const digest = bytesToHex(
+      new Uint8Array(yield* upwardStep(authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", bytes]))),
+    );
     return {
       ...record,
       entry: {
@@ -969,7 +949,7 @@ export class SkillsRegistry {
                   },
                 ),
               );
-              let catalogBytes = jsonBytes(records.map((record) => record.entry));
+              let catalogBytes = utf8Length(JSON.stringify(records.map((record) => record.entry)));
               // Bounded sequential connector reads avoid unbounded fan-out and finish
               // cleanup before a later connector's failure can end the whole listing.
               for (const connector of self.registry.listConnectors()) {
@@ -985,7 +965,7 @@ export class SkillsRegistry {
                 if (!Array.isArray(entries) || records.length + entries.length > MAX_SKILLS)
                   throw new ConnectorCallError("unavailable", "Downstream skills listing exceeds its bound.");
                 for (const original of entries) {
-                  if (catalogBytes + jsonBytes(original) + 1 > MAX_SKILL_CATALOG_BYTES)
+                  if (catalogBytes + utf8Length(JSON.stringify(original)) + 1 > MAX_SKILL_CATALOG_BYTES)
                     throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte bound.");
                   const entry = structuredClone(original);
                   validateEntry(entry);
@@ -1014,7 +994,7 @@ export class SkillsRegistry {
                       "Downstream skills listing contains duplicate entries.",
                     );
                   const mapped: ConnectorSkill = { ...entry, uri, resources };
-                  catalogBytes += jsonBytes(mapped) + 1;
+                  catalogBytes += utf8Length(JSON.stringify(mapped)) + 1;
                   if (catalogBytes > MAX_SKILL_CATALOG_BYTES)
                     throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte bound.");
                   records.push({ entry: mapped, aliases: [], connector, files });
@@ -1022,7 +1002,7 @@ export class SkillsRegistry {
               }
               if (
                 records.length > MAX_SKILLS ||
-                jsonBytes(records.map((record) => record.entry)) > MAX_SKILL_CATALOG_BYTES
+                utf8Length(JSON.stringify(records.map((record) => record.entry))) > MAX_SKILL_CATALOG_BYTES
               ) {
                 throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte or entry bound.");
               }

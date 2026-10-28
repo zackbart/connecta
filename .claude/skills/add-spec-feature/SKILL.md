@@ -18,14 +18,9 @@ The revision's feature inventory remains in
 Change that inventory with a spec revision.
 
 Read [PRINCIPLES.md](../../../PRINCIPLES.md) and the owning contract first.
-Defend new behavior through the existing real deployment journeys, independent
-state, physical sends and request lifetimes. Keep compact fault probes for
-failures those journeys cannot reproduce. Use Node for pure logic; enroll
-workerd cases in `vitest.config.ts` when native bindings, fetch, streams,
-Web Crypto or runtime scheduling matter. Optional INV citations help identify
-the contract a probe defends.
+Follow [AGENTS.md's test policy](../../../AGENTS.md#tests) for outcome journeys,
+focused fault probes and runtime selection.
 
 Update the feature's status, notes, evidence paths and gap links together.
-Run `pnpm run check` and the applicable behavioral checks from AGENTS.md.
-Add a unique `.changes/<slug>.md` fragment. Effect stays inside; published
-declarations retain Promise APIs.
+Follow [AGENTS.md](../../../AGENTS.md#verification) for checks and its
+[conventions](../../../AGENTS.md#conventions) for the change fragment and API boundaries.

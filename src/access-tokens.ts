@@ -1,3 +1,4 @@
+import { sha256Hex } from "./bytes.js";
 import { withAuthenticationDeadline } from "./auth-admission.js";
 import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
 import type { AuthResult, IdentityReference, InboundAuth, KVStorage } from "./types.js";
@@ -245,12 +246,8 @@ function bytesToBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
-function bytesToHex(bytes: Uint8Array): string {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function hashToken(token: string): Promise<string> {
-  return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(token))));
+  return sha256Hex(token);
 }
 
 const REVISION_RE = /^[A-Za-z0-9_-]{22}$/u;

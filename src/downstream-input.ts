@@ -1,3 +1,4 @@
+import { toolError } from "./tool-error.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { Effect } from "effect";
 import { upwardStep } from "./upward.js";
@@ -226,8 +227,7 @@ function failure(code: string, message: string, write = false): ToolResult {
         writeOutcome: "unknown",
       }
     : { code, message, retryable: false };
-  const structuredContent = { ok: false, error };
-  return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent, isError: true };
+  return toolError(error, { ok: false });
 }
 
 /** MCP-only continuation coordination. No downstream prompt enters operator records. */

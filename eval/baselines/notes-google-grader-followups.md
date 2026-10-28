@@ -55,4 +55,4 @@ To replay an individual raw artifact with the corrected grader, use the existing
 from an installed checkout. Output must differ from input. The raw-artifact paths
 and hashes in the companion JSON identify all ten source files. The complete
 batch/hash/baseline-verification script and logs are retained under
-`/home/zackbart/.t3/scratch/connecta-effect-core-20261025/evidence/eval-graders/`.
+`/home/operator/.t3/scratch/connecta-effect-core-20261025/evidence/eval-graders/`.

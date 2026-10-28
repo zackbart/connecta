@@ -5,7 +5,7 @@ import type { AgentTrace } from "../agent/trace.js";
 import { HEAD_SHA } from "../fakes/github.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { check } from "./baseline.js";
-export const GITHUB_TASK_IDS = [
+const GITHUB_TASK_IDS = [
   "github-filtered-issues",
   "github-repository-pr-join",
   "github-repository-paging",

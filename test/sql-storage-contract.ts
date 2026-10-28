@@ -1,3 +1,5 @@
+import { runEdge } from "../src/runtime/run.js";
+import { copyIntoSqlEffect } from "../src/storage/sql-native.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
 import { INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
 import { activityFixtureTime } from "./fixtures/activity-time.js";
@@ -73,11 +75,17 @@ export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "s
       { key: "copy:last", value: "last", expiresAtMs: null },
     ];
     const options = { overwrite: true, now: Date.now() };
-    await expect(sqlStores.copyIntoSql(driver, entries, options)).rejects.toThrow(/injected copy failure/);
+    await expect(runEdge(copyIntoSqlEffect(nativeSqlDriver(driver), entries, options))).rejects.toThrow(
+      /injected copy failure/,
+    );
     expect(await rows()).toEqual(before);
 
     await db.exec("DROP TRIGGER fail_copy");
-    await expect(sqlStores.copyIntoSql(driver, entries, options)).resolves.toEqual(["copied", "overwritten", "copied"]);
+    await expect(runEdge(copyIntoSqlEffect(nativeSqlDriver(driver), entries, options))).resolves.toEqual([
+      "copied",
+      "overwritten",
+      "copied",
+    ]);
     for (const entry of entries) expect(await storage.get(entry.key)).toBe(entry.value);
     expect(await storage.get("remove")).toBe("keep");
   });

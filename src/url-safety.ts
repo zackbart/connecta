@@ -119,11 +119,6 @@ export function classifyHost(hostname: string): HostClass {
   return "public";
 }
 
-/** True for loopback and private hosts alike. */
-export function isPrivateHost(hostname: string): boolean {
-  return classifyHost(hostname) !== "public";
-}
-
 /**
  * Why connecta must not fetch `target`, a URL the downstream advertised, for a
  * connector configured at `configured` — or undefined when it may.

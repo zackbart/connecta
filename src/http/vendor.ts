@@ -1,4 +1,4 @@
-// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
+// Provider kit. Unreachable from src/index.ts.
 //
 // A vendor is an `HttpApi`: endpoints with Schemas for path params, query,
 // and payload, from which requests are encoded and the endpoint manifest is
@@ -13,13 +13,13 @@
 // empty 200. Every answer, from a declared operation or a hatch's path, takes
 // one route: bounded read, JSON, closed public classifier facts captured,
 // the request's sent secrets redacted from
-// every value of the whole body before anything can cut or extract from it
-// (#911), its keys kept for value safety to match by name, status (with
+// every value of the whole body before anything can cut or extract from it,
+// its keys kept for value safety to match by name, status (with
 // its operation, so value safety decides what a failure may quote), the
 // vendor's `result` hook, then the connection's ResultSafety. A provider
 // cannot reach a body earlier. A Content-Type redaction altered selects the
 // format the vendor reads as JSON, so no altered type routes a body around
-// ResultSafety as text or bytes (#703).
+// ResultSafety as text or bytes.
 
 import { Context, Effect, type Schema } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -439,12 +439,12 @@ export function connect<R>(
             );
         });
         // Header-derived format decisions see only redacted Content-Type. Names are protocol
-        // constants `Headers` must accept, so only the values are redacted, together (#703).
+        // constants `Headers` must accept, so only the values are redacted, together.
         const entries = [...reply.headers];
         const values = secrets.redact(entries.map(([, value]) => value));
         const headers = new Headers(entries.map(([name], index) => [name, values[index]!]));
         // Whole, before a detail line trims it or a projection extracts from it. Values only:
-        // result safety and projections match fields by their vendor names (#703).
+        // result safety and projections match fields by their vendor names.
         let classifierFacts: ReturnType<typeof captureClassifierFacts> | undefined;
         const parsed =
           reply.bytes !== undefined
@@ -674,7 +674,7 @@ export function connect<R>(
 /**
  * The Content-Type a format decision reads. One redaction altered reads as
  * `application/json`: a vendor's text or binary choice for it would hand
- * result safety a body it cannot read field by field (#703).
+ * result safety a body it cannot read field by field.
  */
 function formatType(redacted: string): string {
   return redactionAltered(redacted) ? "application/json" : redacted.toLowerCase();

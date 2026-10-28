@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-08
 issues: [705]
 supersedes: []

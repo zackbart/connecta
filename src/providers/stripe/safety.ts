@@ -1,4 +1,4 @@
-// Stripe's reviewed value-safety table (#801), on the shared mechanism in
+// Stripe's reviewed value-safety table, on the shared mechanism in
 // `../_shared/rest/value-safety.ts`: every operation the detector flags in the
 // pinned spec (`evidence/value-safety.json`) has one verdict here, and
 // `provider.safety.node.test.ts` runs the shared harness over it.
@@ -48,7 +48,7 @@
 // - Issuing card numbers and CVCs come back only as expansions, which the
 //   connector refuses on every Issuing path (`api.ts`); the card operations
 //   also redact both fields.
-// Embedded URL verdict (#812): reviewed paths + global signing parameters.
+// Embedded URL verdict: reviewed paths + global signing parameters.
 // Evidence: digest-verified Stripe v2555, components/schemas/charge's
 // failure_message ("Message to user further explaining reason for charge
 // failure") and charge_outcome.seller_message (Stripe's human-readable

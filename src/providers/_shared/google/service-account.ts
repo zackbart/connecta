@@ -1,3 +1,4 @@
+import { asRecord } from "../json.js";
 /**
  * A Google service account acting as itself or for Workspace users through
  * domain-wide delegation: the key, signed JWT-bearer assertions and short-lived
@@ -337,10 +338,6 @@ const tokenTransport: GuardedTransport = guardedFetch({
   // The assertion in the body is the authentication; there is no header.
   authenticate: () => ({}),
 });
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
 
 /** The token endpoint's OAuth `error` codes this module names back. */
 const TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([

@@ -1,3 +1,4 @@
+import { bytesToHex } from "../bytes.js";
 // Native copy orchestration. Only Workers KV and Web Crypto are Promise leaves.
 import { Effect } from "effect";
 import { errorLabel } from "../operator-record.js";
@@ -56,7 +57,7 @@ function errorClass(error: unknown): string {
 const valueHash = (value: string) =>
   Effect.gen(function* () {
     const hash = yield* leaf(() => crypto.subtle.digest("SHA-256", encoder.encode(value)));
-    return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return bytesToHex(new Uint8Array(hash));
   });
 /** Mark cutover before reopening traffic. The marker stays in D1 permanently. */
 export function markKvToD1LiveEffect(db: D1DatabaseBinding, source: string): Effect.Effect<void, unknown> {
@@ -192,9 +193,7 @@ export function copyKvToD1Effect(
                 });
                 const bytes = row ? Uint8Array.from(row.value_bytes) : undefined;
                 const hash = bytes ? yield* leaf(() => crypto.subtle.digest("SHA-256", bytes)) : undefined;
-                const hex = hash
-                  ? Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")
-                  : undefined;
+                const hex = hash ? bytesToHex(new Uint8Array(hash)) : undefined;
                 count(
                   entry.key,
                   row && row.expires_at_ms === entry.expiresAtMs && hex === (yield* valueHash(entry.value))

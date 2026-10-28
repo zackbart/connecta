@@ -1,3 +1,4 @@
+import { isRecord } from "../_shared/json.js";
 // Vercel's pinned contract, authentication, failures and value-safety boundary.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
@@ -36,10 +37,6 @@ const READ_POSTS: readonly RestReadPost[] = [
 
 export type JsonRecord = Record<string, unknown>;
 
-export function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function record(value: unknown): JsonRecord {
   return isRecord(value) ? value : {};
 }
@@ -50,10 +47,6 @@ export function text(value: unknown): string | undefined {
 
 export function invalid(message: string): never {
   throw new ConnectorCallError("invalid_args", message);
-}
-
-export function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function truthy(value: unknown): boolean {

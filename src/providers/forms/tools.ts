@@ -1,3 +1,4 @@
+import { asRecord, asArray, compact } from "../_shared/json.js";
 // Forms projections and revision-checked workflows on the standard provider kit.
 import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -46,18 +47,6 @@ const MAX_REQUESTS = 100;
 const PAGE_RESERVE_BYTES = 4 * 1024;
 
 type JsonRecord = Record<string, any>;
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;

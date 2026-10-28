@@ -56,7 +56,7 @@ interface WorkerExecutorOptions {
 export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecutor {
   // One pool per executor, so per isolate. A queued run may wait out one
   // default guest deadline: programs spend it awaiting host calls, and a
-  // five-second wait refused nearly every run queued behind one (#1106).
+  // five-second wait refused nearly every run queued behind one.
   const admission = new AdmissionController(
     options.admission ?? {
       concurrency: 2,

@@ -10,7 +10,7 @@
 // it was created.") when the Worker's compatibility date is 2025-06-16 or
 // later, in releases since September 2026. The refusal throws out of the call
 // that completed the Deferred, failing the request that released a slot, and
-// the waiter never resumes (#1106). Awaiting a Promise around that wait is no
+// the waiter never resumes. Awaiting a Promise around that wait is no
 // help: the fiber waiting on the Deferred inside the Promise is resumed in the
 // completing request just the same.
 //

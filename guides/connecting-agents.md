@@ -68,14 +68,11 @@ sequenceDiagram
     C-->>H: Serve the pool's permitted tools
 ```
 
-Anyone who obtains either token can act as the agent. Trust the Vercel
-project code and build steps that can obtain its tokens, and enable only
-environments that should have the pool's access.
-
-The [token management guide](../documentation/auth.md#issue-rotate-or-revoke-an-agent-token)
+[Safety and trust](./safety-and-trust.md#a-credential-proves-an-agent-not-a-person)
+explains who can act with these credentials. The
+[token management guide](../documentation/auth.md#issue-rotate-or-revoke-an-agent-token)
 and [Vercel identity guide](../documentation/auth.md#vercel-workload-credentials)
-own availability, setup, rotation, and revocation. If both methods are
-enabled, stopping one does not stop the other.
+own setup, rotation, and revocation.
 
 ## An optional integration for Eve
 
@@ -114,29 +111,9 @@ identity. Instructions help the model use tools; they grant no permissions.
 
 ## Decide whether writes need a person
 
-The helper defaults to unattended execution of authorized writes. Connecting
-an agent does not automatically add an approval step.
-
-```mermaid
-flowchart TB
-    Call["Agent requests a change"] --> Ask{"App asks for approval?"}
-    Ask -->|Yes| Approved{"Person approves?"}
-    Approved -->|No| Stop["Stop"]
-    Approved -->|Yes| Pool{"Connecta allows this write?"}
-    Ask -->|No| Pool
-    Pool -->|No| Refuse["Refuse before sending"]
-    Pool -->|Yes| Send["Send the change"]
-```
-
-For an interactive Eve agent, `gateWrites: true` asks before tools not marked
-read-only. An explicit Eve approval policy takes precedence. If the agent
-must never update data, use a read-only pool.
-
-Approval may rely on an earlier tool label. A writable pool can execute a
-newly classified write without a fresh approval; a read-only pool refuses it.
-[Safety and trust](./safety-and-trust.md) explains the boundary, and the
-[helper guide](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md#approval-and-writes)
-explains the policy mechanics.
+Agree on an approval policy before enabling writes. See
+[approval boundaries](./safety-and-trust.md#read-only-blocks-actions-that-change-data)
+and the [Eve helper's approval setup](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md#approval-and-writes).
 
 ## When accounts or audiences differ
 

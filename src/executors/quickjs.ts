@@ -232,7 +232,7 @@ function terminate(child: Child): Effect.Effect<void> {
 let providePoolProgram: (pool: QuickJsChildPool) => void;
 
 class QuickJsChildPool implements AdmittingExecutor {
-  /** What `/health` and `connecta doctor` call this sandbox (#368). */
+  /** What `/health` and `connecta doctor` call this sandbox. */
   readonly name = "QuickJS";
   private readonly admission: AdmissionController;
   private readonly slots: ChildSlot[];

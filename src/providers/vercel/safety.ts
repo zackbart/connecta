@@ -216,7 +216,7 @@ const absent = {
 // Residual risk: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 
-// Embedded URL verdict (#812): reviewed paths + global signing parameters.
+// Embedded URL verdict: reviewed paths + global signing parameters.
 // Evidence: pinned index/candidates sha256:5a702fd2dc76 identify deployment
 // reads/creation/listing, build events and runtime logs; the operation/path
 // list below scans errorMessage, deployments.errorMessage, payload.text/text

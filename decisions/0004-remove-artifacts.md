@@ -1,6 +1,11 @@
-# Remove built-in artifacts in 0.29
+---
+status: accepted
+date: 2026-10-08
+issues: [709]
+supersedes: [0001-ethos-verdict-table.md]
+---
 
-Date: 2026-10-08
+# Remove built-in artifacts in 0.29
 
 The owner decided to remove built-in artifacts in 0.29.0. Connecta stays focused
 on aggregating MCP servers and HTTP APIs; publishing belongs in dedicated

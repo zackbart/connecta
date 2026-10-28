@@ -49,7 +49,7 @@ export function createFetchHandler(
       // Which sandbox, not how it is tuned: `connecta doctor` reports the
       // executor it just exercised rather than assuming one, and a
       // deployment whose executor identifies as nothing omits the key
-      // instead of inviting a guess (#368).
+      // instead of inviting a guess.
       ...(opts.executorName !== undefined ? { executor: { name: opts.executorName } } : {}),
       admission: {
         policy: "global-fifo",
@@ -85,7 +85,7 @@ export function createFetchHandler(
 
       const originRefusal = routeMcp.rejectOrigin(request);
       if (originRefusal) {
-        return Effect.succeed(withSecurityHeaders(originRefusal, url, path));
+        return Effect.succeed(withSecurityHeaders(originRefusal, url));
       }
 
       // Container and orchestrator probes reach /health over plain HTTP on
@@ -113,7 +113,6 @@ export function createFetchHandler(
               headers: { Location: target.toString() },
             }),
             url,
-            path,
           ),
         );
       }
@@ -127,7 +126,7 @@ export function createFetchHandler(
         defer,
         runtimeContext,
       };
-      return Effect.map(route(context), (response) => withSecurityHeaders(response, url, path));
+      return Effect.map(route(context), (response) => withSecurityHeaders(response, url));
     });
 
   return function fetch(request: Request, runtimeContext?: RuntimeExecutionContext): Promise<Response> {

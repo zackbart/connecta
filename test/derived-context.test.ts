@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { authorizingContext } from "../src/auth/downstream-oauth.js";
-import { attachCallAdmission, chargeConnectorCall } from "../src/call-admission-context.js";
+import { chargeConnectorCall } from "../src/call-admission-context.js";
+import { attachCallAdmission } from "./helpers/call-admission.js";
 import { attachCallClassification, callClassification } from "../src/call-classification.js";
-import { recordRecovery, recoveryFor } from "../src/call-recovery.js";
+import { recordRecovery } from "../src/call-recovery.js";
+import { serviceFor, Recovery } from "../src/runtime/call.js";
 import {
   attachCatalogCache,
   catalogClientOptions,
@@ -70,7 +72,7 @@ describe("derived connector contexts", () => {
 
     // Facts recorded through a copy, after it was made, reach the invocation's context.
     recordRecovery(twice, { idempotencyKey: "key-1" });
-    expect(recoveryFor(origin)).toEqual({ idempotencyKey: "key-1" });
+    expect(serviceFor(origin, Recovery)).toBe(serviceFor(twice, Recovery));
 
     // A credential a copy sent is redacted wherever the origin's output is.
     sentSecretsFor(derived).add(SECRET);
@@ -90,6 +92,7 @@ describe("derived connector contexts", () => {
         // The second charge spends the enclosing call's permit, so a third is refused.
         await chargeConnectorCall(copy);
         recordRecovery(copy, { idempotencyKey: "key-2" });
+        recordRecovery(deriveContext(ctx, {}), { requestId: "request-2" });
         sentSecretsFor(copy).add(SECRET);
         throw new ConnectorCallError("timeout", `Lost the reply that quoted ${SECRET}.`);
       }),
@@ -100,7 +103,7 @@ describe("derived connector contexts", () => {
     expect(text).not.toContain(SECRET);
     const failed = JSON.parse(text) as { error: { code: string; uncertainCall?: { recovery?: unknown } } };
     expect(failed.error.code).toBe("write_outcome_unknown");
-    expect(failed.error.uncertainCall?.recovery).toEqual({ idempotencyKey: "key-2" });
+    expect(failed.error.uncertainCall?.recovery).toEqual({ idempotencyKey: "key-2", requestId: "request-2" });
     expect(registry.callAdmissionSnapshot()["crm"]).toMatchObject({ totals: { admitted: 2 } });
     expect("fetch" in required(seen)).toBe(true);
   });
@@ -113,7 +116,7 @@ describe("derived connector contexts", () => {
     expect("fetch" in handed).toBe(true);
     expect("fetch" in origin).toBe(false);
     recordRecovery(handed, { idempotencyKey: "key-3" });
-    expect(recoveryFor(origin)).toBeUndefined();
+    expect(serviceFor(origin, Recovery)).toBeUndefined();
   });
 
   /** A caller as a pool view hands one to the registry. */
@@ -169,10 +172,10 @@ describe("derived connector contexts", () => {
       table: "recovery facts",
       check: async (origin, writer, reader) => {
         recordRecovery(writer, { idempotencyKey: "table-key" });
-        expect(recoveryFor(reader)).toEqual({ idempotencyKey: "table-key" });
+        expect(serviceFor(reader, Recovery)).toBe(serviceFor(writer, Recovery));
         // A later fact recorded through another copy merges with the first.
         recordRecovery(reader, { requestId: "table-request" });
-        expect(recoveryFor(origin)).toEqual({ idempotencyKey: "table-key", requestId: "table-request" });
+        expect(serviceFor(origin, Recovery)).toBe(serviceFor(reader, Recovery));
       },
     },
     {
@@ -363,7 +366,7 @@ describe("derived connector contexts", () => {
     sentSecretsFor(aliceCopy).add(SECRET);
 
     expect(callerOf(bobCopy)).toBe(bob);
-    expect(recoveryFor(bobCopy)).toBeUndefined();
+    expect(serviceFor(bobCopy, Recovery)).toBeUndefined();
     expect(callClassification(bobCopy)).toBeUndefined();
     expect(oauthSealerFor(bobCopy)).toBe(bobSealer);
     expect(oauthPartitionFor(bobCopy)).toBe(bobPartition);

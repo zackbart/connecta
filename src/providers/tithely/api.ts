@@ -1,4 +1,5 @@
-// Tithe.ly's giving API (v1) as a kit vendor (decision 0010): the operations,
+import { asRecord, asArray } from "../_shared/json.js";
+// Tithe.ly's giving API (v1) as a kit vendor: the operations,
 // what its statuses mean, its credential, its in-band refusal, the probe, and
 // the value-safety review. Facts from the per-operation reference at
 // https://docs.tithe.ly/reference/introduction, each marked where it is
@@ -593,14 +594,6 @@ export function tithelySafety(sensitiveFields: SafetyOptions["sensitiveFields"])
 const failed = (error: ConnectorCallError) => Effect.fail(new Refusal({ error }));
 
 export type JsonRecord = Record<string, any>;
-
-export function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-export function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
 
 export function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
