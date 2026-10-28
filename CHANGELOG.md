@@ -2,6 +2,48 @@
 
 All notable changes to this package are documented here.
 
+## 0.37.1 — 2026-10-28
+
+0.37.1 is a patch release of fixes and request-path performance work. It has no breaking changes and needs no configuration change. Deployments on 0.37.0 can upgrade in place.
+
+The headline fix is #1118: `execute_code` could return `hostCalls.failed` (and other numbers beside a redacted string) as `"[redacted]"`, which broke the tool's own output schema, so MCP clients that validate structured content rejected the whole result. Redaction now keeps a number unless it still holds part of a registered form after the strings around it are replaced, and Connecta's own counters are attached after redaction. Redaction also now rechecks a lane after every placeholder replacement until nothing changes, and typed arrays no longer hide a run split across them and their neighbours, so the documented guarantee holds in those corners too.
+
+If a remote MCP connector forwards the admitted principal (`auth.principal`), its resolver's token is registered as a credential, and every eight-unit run of it is withheld from agent output for that request. Return an opaque reference, such as the principal id or a signed assertion, never an email or anything containing the deployment's own domain or names.
+
+Security: a remote MCP OAuth challenge naming protected-resource metadata on a different origin from the connector URL, whether in the challenge or cached from an earlier grant, is now refused before any fetch.
+
+Reliability: OAuth refresh commits are bounded when storage stalls; a connect that straddles an OAuth Restart can no longer act in the newer epoch; executor permits are released when result stashing stalls; timed-out listen candidates and expired connector waiters no longer hold or receive admission; SQLite and D1 reclaim expired rows written by compare-and-set; request-token resolver failures show as `auth_required` in status; the MCP body bound holds on Node 24 and later; and a search in the same request sees catalog changes Connecta itself made.
+
+Performance: each `execute_code` response is scanned for secrets once instead of twice, repeated searches in a request reuse one lexical index, and responses with no registered secrets skip JSON re-serialization at the MCP route. The root bundle cap rises to 407,000 B gzip to cover these fixes.
+
+### Changed
+
+- Run one envelope redaction scan per execute_code response at the operation boundary, after write accounting and before attaching Connecta’s host-call counters.
+- Reuse private lexical search snapshots within a request and safety view, cloning only selected definitions before returning discovery results.
+- Return MCP response body text untouched when the request has no registered secrets or unregistered private values after the body is fully read, avoiding unnecessary JSON parsing and serialization.
+- Raise the root bundle gzip cap from 404,500 to 407,000 B for the 0.37.1 fix set.
+
+### Fixed
+
+- Keep numbers when replacing an adjacent string breaks their credential match, while still withholding numeric credential runs. Recheck retained numbers after each whole-number replacement so new marker seams cannot expose credential fragments; an incomplete check withholds every originally touched number. Attach execute_code host-call counters after its final redaction so the counters remain integers. Document opaque principal-forwarding tokens and their request-wide redaction.
+- Bound downstream OAuth refresh commit and cleanup so stalled storage settles the flight, releases the owner partition, and reports an unknown outcome while preserving spent-token fencing.
+- Keep remote MCP authorization starts and status checks bound to the successful connection's OAuth epoch, so a concurrent Restart supersedes the older attempt instead of letting it read the replacement grant or publish consent there.
+  
+  Explicit starts after a passive status check or call in the same request scope can still initiate consent without widening the cached connection's authorization permissions.
+- Reclaim expired SQLite and D1 rows during mutating `compareAndSet()` calls with the same bounded sweep as `set()`, preserving atomic comparisons and their results.
+- Report request-token and principal resolver authentication failures as `auth_required` in remote MCP status without exposing resolver error messages.
+- Keep MCP listen-candidate body reads within their existing bound on Node 24 and later by avoiding an extra buffering pipe when attaching the request-local signal.
+- Release executor permits when result-stash storage stalls. Bound reservation and result processing by their deadlines and request cancellation, including final program-return paging after executor release, while preserving successful write accounting and refusing to replay completed writes.
+- Withdraw fallback admission waiters when a header-named subscriptions/listen candidate reaches its request deadline, preventing ended requests from being admitted later.
+- Refuse expired connector call admission waiters before granting a permit, even when the event loop delays their timeout callback.
+- Revalidate request-retained catalogs using in-process catalog invalidation and credential mutation fences, without storage reads on unchanged repeat searches, replacing derived search indexes when a fence changes.
+- Keep typed-array, DataView, and ArrayBuffer numbers adjacent to neighbouring leaves during redaction, while checking their byte views separately and withholding binary whose bytes or numbers hold a match.
+
+### Security
+
+- Refuse remote MCP OAuth challenges whose protected-resource metadata URL is outside the configured resource origin before fetching metadata. Discard foreign cached resource metadata before SDK discovery, including callbacks and flows without challenges, and keep challenged hosts out of refusal messages. Same-origin paths, including Google's per-tool metadata, remain accepted.
+- Recheck redaction lanes until replacements stop creating credential runs beside placeholders, withholding every unchecked seam participant when the shared work budget cannot finish. Include omitted error numbers, whole error names, whole JSON strings and walk-time scalar placeholders in the returned projection. Check typed arrays' returned byte numbers and original element numbers in separate projections with the same neighbours.
+
 ## 0.37.0 — 2026-10-27
 
 Connecta 0.37.0 lets a `remoteMcp()` connection reach a trusted first-party downstream as the caller Connecta admitted, with no per-person OAuth. Request auth's new `principal` option gives the token resolver that caller's reference: people by default, and declared agents only with `accept: "human-or-agent"`. The new optional `fetch` carries all of the connector's MCP traffic, for example through a Workers service binding to a sibling Worker. The downstream must accept a forwarded identity only on its binding entrypoint or behind a verified signature. Operator status checks carry no caller, so a principal-forwarding connector reports `auth_required` on the operator pages even when calls succeed.
