@@ -819,7 +819,14 @@ export function createMcpRoute(opts: ServerOptions): {
             localAbort.abort(new Error("MCP request lifetime exceeded."));
           }, remainingMs);
         }
-        const localRequest = new Request(request, { signal: localAbort.signal });
+        // Pass the body explicitly: inheriting it makes Node add an identity
+        // TransformStream whose pull-ahead can exceed the inspection bound.
+        const localRequest = new Request(request, {
+          signal: localAbort.signal,
+          // This is an inbound SDK view, not an outgoing keepalive fetch;
+          // Node rejects an explicit stream with the latter flag enabled.
+          ...(request.body ? { body: request.body, duplex: "half", keepalive: false } : {}),
+        });
         if (admission.success && admission.success.waitMs > 0) {
           opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {
             waitMs: admission.success.waitMs,

@@ -36,9 +36,10 @@ const encoder = new TextEncoder();
 /** The JSON prefix every counted body starts with, pulled as its own first chunk. */
 const HEAD = encoder.encode('{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"pad":"');
 
-function countedBody(total: number): { body: ReadableStream<Uint8Array>; pulled: () => number } {
+function countedBody(total: number) {
   const head = HEAD;
   let pulled = 0;
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>(
     {
       pull(controller) {
@@ -51,10 +52,13 @@ function countedBody(total: number): { body: ReadableStream<Uint8Array>; pulled:
         pulled += chunk.byteLength;
         controller.enqueue(chunk);
       },
+      cancel() {
+        cancelled = true;
+      },
     },
     { highWaterMark: 0 },
   );
-  return { body, pulled: () => pulled };
+  return { body, pulled: () => pulled, cancelled: () => cancelled };
 }
 
 function listenRequest(path: string, body: ReadableStream<Uint8Array>, token?: string): Request {
@@ -343,18 +347,23 @@ describe("authenticated MCP body limits", () => {
     }
   });
 
-  it(
-    "INV-7: keeps a lower deployment cap on listen candidates before their fixed classification ceiling",
+  it.each([
+    ["/mcp", "alice"],
+    ["/mcp/team", "bob"],
+    ["/agent/team", "bot"],
+  ] as const)(
+    "INV-7: keeps a lower deployment cap on listen candidates at %s before their fixed classification ceiling",
     WORKERS,
-    async () => {
+    async (path, who) => {
       const limit = 8 * 1024;
-      const { c } = await deployment(limit);
+      const { c, bot } = await deployment(limit);
       try {
         const large = countedBody(LARGE);
-        const response = await c.fetch(listenRequest("/mcp", large.body, "alice"));
+        const response = await c.fetch(listenRequest(path, large.body, who === "bot" ? bot : who));
         expect(response.status).toBe(413);
         await response.text();
         expect(large.pulled()).toBeLessThanOrEqual(limit + 2 * CHUNK + HEAD.length);
+        expect(large.cancelled()).toBe(true);
         expect(await admittedTotal(c)).toBe(0);
       } finally {
         await c.close();
@@ -390,6 +399,31 @@ describe("authenticated MCP body limits", () => {
       } finally {
         await c.close();
       }
+    }
+  });
+
+  it("INV-7: accepts a buffered keepalive body through the request-local signal wrapper", WORKERS, async () => {
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const { c } = await deployment(encoder.encode(body).length);
+    try {
+      const response = await c.fetch(
+        new Request(`${BASE}/mcp`, {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer alice",
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2025-06-18",
+          },
+          body,
+          keepalive: true,
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", id: 1, result: { tools: expect.any(Array) } });
+      expect(await admittedTotal(c)).toBe(1);
+    } finally {
+      await c.close();
     }
   });
 
