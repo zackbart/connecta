@@ -155,8 +155,9 @@ const execute = {
   /** Host calls one program may make. Default 20. */
   maxHostCalls: whole({ min: 1, default: D.execute.maxHostCalls }),
   /**
-   * Deadline for each host call a program makes, in milliseconds. Default
-   * 15_000. `connecta.call` and the direct call tools use it only when
+   * Deadline for a program's `connecta.result`, `connecta.skill` and
+   * `connecta.read`, in milliseconds. Default 15_000. Discovery uses
+   * `discovery.probeTimeoutMs`. `connecta.call` and the direct call tools use it only when
    * `calls.defaultTimeoutMs` is unset, and an explicit per-call `timeoutMs`
    * always wins. Raise it for providers whose legitimate calls run longer,
    * such as analytics queries.
