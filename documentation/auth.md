@@ -2511,6 +2511,15 @@ need `consumeAuthError` to accept error callbacks, sharing `finishAuth`'s atomic
 consent claim. Reissue
 pending consent links after upgrading; callbacks without a saved initiating user cannot complete.
 
+A connector declares code-exchange support by implementing `finishAuth`. Omit
+that hook when the connector cannot exchange a code; `remoteMcp()` exposes it
+only for `auth: { type: "oauth" }`. A code-exchange connector without
+`verifyState` logs a construction warning naming the missing hook, and its
+browser callback refuses every request before exchanging a code. Implement
+`verifyState` to enable completion; credential, request-token (including Google
+service-account tokens), principal-forwarding, and header auth need no callback
+or state hook.
+
 Custom connectors may implement `verifyCallbackParameters(params, ctx)` for
 provider-specific callback assertions. The route calls it after successful
 state verification and before issuer validation, handoff consumption, error
@@ -2864,9 +2873,11 @@ could name any person. A signature verified with a deployment-held key is also
 safe on a public route.
 
 `fetch` carries every MCP request, including handshakes, catalog reads, calls,
-writes and session close. Global fetch is never used for that connector. The
-configured `url` stays the logical origin: its HTTPS rule, cleartext refusal,
-redirect policy and same-origin redirect checks apply unchanged. A request for
+writes and session close. Global fetch is never used for that connector. RPC
+responses returned by this fetch are disposed when the owning request ends,
+including responses that arrive after cancellation; their bodies remain
+available during that request. The configured `url` stays the logical origin:
+its HTTPS rule, cleartext refusal, redirect policy and same-origin redirect checks apply unchanged. A request for
 any other origin is refused before it reaches `fetch`. Each request, writes
 included, is handed to `fetch` once with `redirect: "manual"`, and a dispatched
 write is never sent again, so `fetch` must not retry or follow redirects. On

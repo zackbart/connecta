@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 // test inside the Worker can spy on: calling `.text()` on a body whose
 // Content-Type is not text prints that Content-Type, so a downstream could
 // write into the deployment's log (#695). This runs the sink suite in workerd
-// and reads what workerd itself printed.
+// and reads what workerd itself printed. RPC disposal warnings likewise
+// bypass console spies; include the real service-binding operator probes.
 describe("workerd's native output", () => {
   it("INV-6: carries no planted downstream text while the sink and Clerk auth suites run in workerd", async () => {
     const root = fileURLToPath(new URL("..", import.meta.url));
@@ -26,6 +27,7 @@ describe("workerd's native output", () => {
         "test/operator-sinks.test.ts",
         "test/clerk-operator-output.test.ts",
         "test/byte-read-response.test.ts",
+        "test/remote-mcp-principal-forwarding.test.ts",
       ],
       { cwd: root, timeout: 120_000, maxBuffer: 16 * 1024 * 1024, env },
     );
@@ -33,5 +35,6 @@ describe("workerd's native output", () => {
     expect(output).toMatch(/Tests\s+\d+ passed/);
     expect(output).not.toMatch(/planted-[a-z0-9-]+-7f3a9c/);
     expect(output).not.toContain("does not appear to be text");
+    expect(output).not.toMatch(/An RPC (?:result|stub) was not disposed properly/);
   }, 150_000);
 });

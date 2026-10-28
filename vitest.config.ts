@@ -305,6 +305,7 @@ export default defineConfig({
                 // A first-party MCP downstream whose identity entrypoint only a binding reaches.
                 NOTES_MCP: { name: "notes-mcp", entrypoint: "connecta" },
                 NOTES_PUBLIC: "notes-mcp",
+                NOTES_RPC: { name: "notes-mcp", entrypoint: "NotesRpc" },
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
                 EXECUTOR_REQUESTS: "executor-requests",
@@ -320,7 +321,7 @@ export default defineConfig({
                 {
                   name: "notes-mcp",
                   modules: true,
-                  script: await fixtureBundle("./test/fixtures/notes-binding-worker.ts"),
+                  script: await fixtureBundle("./test/fixtures/notes-binding-worker.ts", ["cloudflare:workers"]),
                   compatibilityDate: "2025-01-01",
                   compatibilityFlags: ["nodejs_compat"],
                 },

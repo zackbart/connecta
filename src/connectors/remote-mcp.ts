@@ -2699,6 +2699,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
       return { ...init, headers };
     };
+    const responseOwner = Context.get(viewServices(ctx), RequestScope);
     const initiatingSignal = ctx.signal;
     ctx = deriveContext(operationContext(ctx), signal ? { signal } : {});
     if (opts._transportFactory) return opts._transportFactory(ctx);
@@ -2793,6 +2794,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   return writeContinuation ? send(input, { ...init, redirect: "manual" }) : send(input, init);
                 })();
           return pending.then((response) => {
+            // RPC fetch adapters can return a disposable Response. Own it at
+            // the physical Promise leaf, including a late answer after close,
+            // and keep its body live until the existing request boundary.
+            const dispose = (response as Response & Partial<Disposable>)[Symbol.dispose];
+            if (dispose) responseOwner.own(() => dispose.call(response));
             if (entry) recordProviderResponse(entry, response.status);
             if (flight?.write) {
               if (response.status === 401) flight.unauthorized = true;
@@ -4239,8 +4245,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
       }),
     ),
+  };
 
-    finishAuth: authMethod(
+  if (isOauth) {
+    connector.finishAuth = authMethod(
       (code: string, ctx: ConnectorContext, callbackParams: URLSearchParams) =>
         authView(
           ctx,
@@ -4287,10 +4295,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ),
           true,
         ) as Effect.Effect<void, unknown>,
-    ),
-  };
+    );
 
-  if (opts.auth?.type === "oauth") {
     connector.verifyState = authMethod((oauthState: string | null, ctx: ConnectorContext) =>
       authFlow<boolean>(function* () {
         const state = stateFor(ctx);

@@ -449,8 +449,8 @@ export interface Connector {
   consumeAuthError?(ctx: ConnectorContext): Promise<void>;
   /**
    * Optional: complete a downstream OAuth flow (called by
-   * /oauth/callback/<id>). `callbackParams` preserves the authorization
-   * server's RFC 9207 `iss` response parameter for validation. Built-in
+   * /oauth/callback/<id>). Declare only when the connector can exchange a code.
+   * `callbackParams` preserves the authorization server's RFC 9207 `iss` response parameter for validation. Built-in
    * OAuth adapters require a nonempty `state` in this parameter, including
    * programmatic calls and `api()` flows with PKCE disabled. Missing state
    * is refused before any downstream request.

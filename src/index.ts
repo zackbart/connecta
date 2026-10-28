@@ -251,8 +251,7 @@ function warnInsecureConfig(config: ResolvedConfig): void {
         `[connecta] connector "${connector.id}" has an OAuth callback with no ` +
           `state/CSRF check: /oauth/callback/${connector.id} refuses every ` +
           "callback rather than exchange an unverified code. Implement " +
-          "`verifyState` to complete authorization (the shipped remoteMcp " +
-          "connector already does).",
+          "`verifyState` to complete authorization.",
       );
     }
   }
