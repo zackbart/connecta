@@ -289,12 +289,7 @@ export default defineConfig({
           name: "workers",
           allowOnly: false,
           tags: [{ name: "node", skip: true }, { name: "workers" }],
-          globalSetup: [
-            "./test/fixtures/clerk-backend-server.ts",
-            "./test/fixtures/transport-evidence-server.ts",
-            "./test/fixtures/remote-mcp-attempt-server.ts",
-            "./test/fixtures/auth-admission-server.ts",
-          ],
+          globalSetup: ["./test/fixtures/clerk-backend-server.ts", "./test/fixtures/auth-admission-server.ts"],
           include: WORKERS_SUITES,
           exclude: EXCLUDE,
         },

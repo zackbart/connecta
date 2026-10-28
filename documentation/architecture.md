@@ -1841,9 +1841,8 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   `test/request-context.node.test.ts` pins the same wake order and async context
   on Node for executor and call admission and QuickJS host calls, and gives back
   grants that shutdown overtook.
-- The request, catalog, auxiliary-call and renewal lifetime
-  suites, plus `test/auth-admission-binding.test.ts`, exercise cancellation,
-  held native work and garbage collection. These test actual request ownership;
+- `test/request-context.node.test.ts` and `test/auth-admission-binding.test.ts`
+  exercise cancellation, held native work and garbage collection. These test actual request ownership;
   the retired capture scheduler's source guards were only harness constraints.
 
 The remaining probes defend distinct reachable failures: auth admission and
@@ -3321,7 +3320,7 @@ compiling and configuring the real thing.
   thrown or mapped error, a custom connector's, a program's call, and its
   own deadline or the caller's cancellation, when no connector failure
   arrives at all. It reads the logical call's requests
-  (`logicalCallRequests`), which hold every resource request dispatched
+  (`LogicalLedger`'s `sent`), which hold every resource request dispatched
   under the call from any ledger: nested `api()` calls, remote MCP, guarded
   transports, `ctx.fetch` and the kit. Without an invocation (a direct call,
   or a context no invocation opened), only the outermost boundary calls it,
