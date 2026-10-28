@@ -501,7 +501,7 @@ compatibility date `2025-01-01`:
   triggers collections, but the most recent unreachable object often survives
   them; V8 in this build scans the native stack conservatively. The inspector's
   precise `HeapProfiler.collectGarbage` freed it.
-- In the vitest-pool-workers harness, an isolate that had already collected
+- In the Workers Vitest harness (`@cloudflare/vitest-plugin`, formerly `vitest-pool-workers`), an isolate that had already collected
   one scenario's cancelled work sometimes kept a later scenario's cancelled
   work reachable through 400 rounds of pressure; standalone Miniflare never
   did. `test/auth-admission-binding.test.ts` gives each collection scenario a

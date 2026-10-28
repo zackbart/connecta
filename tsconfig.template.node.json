@@ -7,7 +7,6 @@
     // can. Point the consumer specifiers at the built declarations —
     // typechecking the shipped template against the shipped types is the
     // whole point of running it here.
-    "baseUrl": ".",
     "paths": {
       "@zackbart/connecta": ["./dist/index.d.ts"],
       "@zackbart/connecta/*": ["./dist/*"],
