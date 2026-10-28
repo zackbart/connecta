@@ -132,7 +132,13 @@ export type AuthDenialReason =
   | "authentication_abandoned_saturated"
   | "authentication_busy"
   | "authentication_failed"
+  | "authentication_provider_missing"
   | "authentication_unreachable"
+  | "access_context_missing"
+  | "access_context_unavailable"
+  | "access_audience_invalid"
+  | "access_identity_unavailable"
+  | "access_authorization_header_rejected"
   | "authorization_header_invalid"
   | "token_type_mismatch"
   | "oauth_verification_failed"
@@ -157,7 +163,13 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "authentication_abandoned_saturated",
   "authentication_busy",
   "authentication_failed",
+  "authentication_provider_missing",
   "authentication_unreachable",
+  "access_context_missing",
+  "access_context_unavailable",
+  "access_audience_invalid",
+  "access_identity_unavailable",
+  "access_authorization_header_rejected",
   "authorization_header_invalid",
   "token_type_mismatch",
   "oauth_verification_failed",
@@ -178,6 +190,8 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "pool_not_declared",
   "not_pool_member",
 ]);
+
+const AUTHORIZATION_HEADER_KINDS: ReadonlySet<string> = new Set(["absent", "bearer", "invalid"]);
 
 /** The registry's connector id grammar (src/registry.ts). */
 const CONNECTOR_ID_RE = /^[a-z0-9_-]{1,64}$/;
@@ -265,6 +279,8 @@ export function errorLabel(failure: unknown): string | undefined {
 
 /** Facts connecta derived about a failure where it saw it. */
 export interface FailureFacts {
+  /** Inbound refusal classification attached to its Response, never its body. */
+  reason?: AuthDenialReason;
   step?: FailureStep;
   /** Scheme, host, and port of the request that failed. */
   origin?: string;
@@ -302,6 +318,7 @@ function member(value: unknown, table: ReadonlySet<string>): string | undefined 
 function checkedFacts(facts: CarriedFacts | undefined): CarriedFacts {
   if (!facts) return {};
   return {
+    ...defined("reason", member(facts.reason, AUTH_DENIAL_REASONS) as AuthDenialReason | undefined),
     ...defined("step", member(facts.step, STEPS) as FailureStep | undefined),
     ...defined("origin", origin(facts.origin)),
     ...defined("httpStatus", httpStatus(facts.httpStatus)),
@@ -346,6 +363,8 @@ export function carryFailureFacts<T>(from: unknown, to: T): T {
 /** What a failure record may be about. Only these fields are read. */
 export interface FailureSubject {
   reason?: AuthDenialReason;
+  accessContext?: boolean;
+  authorizationHeader?: "absent" | "bearer" | "invalid";
   /** A registered connector's id. */
   connector?: string;
   /**
@@ -368,6 +387,8 @@ declare const recordBrand: unique symbol;
 export interface FailureRecord {
   readonly [recordBrand]: true;
   readonly reason?: AuthDenialReason;
+  readonly accessContext?: boolean;
+  readonly authorizationHeader?: "absent" | "bearer" | "invalid";
   readonly connector?: string;
   readonly tool?: string;
   readonly source?: string;
@@ -414,6 +435,8 @@ function checkedSubject(subject: FailureSubject): object {
   const tool = subject.tool;
   return {
     ...defined("reason", member(subject.reason, AUTH_DENIAL_REASONS)),
+    ...defined("accessContext", typeof subject.accessContext === "boolean" ? subject.accessContext : undefined),
+    ...defined("authorizationHeader", member(subject.authorizationHeader, AUTHORIZATION_HEADER_KINDS)),
     ...defined("connector", connectorId(subject.connector)),
     ...("tool" in subject
       ? { tool: tool === null || typeof tool !== "object" ? UNLISTED_TOOL : recordedToolName(tool) }
@@ -487,6 +510,8 @@ export function failureRecord(subject: FailureSubject, failure?: unknown): Failu
  */
 export type FailureEvent =
   | "Authentication admission refused"
+  | "Cloudflare Access verification unavailable"
+  | "operator_refused"
   | "Authentication released after its pending work became unreachable"
   | "negotiation cache read failed"
   | "negotiation cache write failed"

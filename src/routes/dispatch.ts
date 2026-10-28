@@ -4,6 +4,8 @@ import * as HttpServerError from "effect/http/HttpServerError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { notFoundResponse } from "../branding.js";
+import { authorizationCredential } from "../inbound-credential.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import { isAgentPath } from "./agent-path.js";
 import { MCP_CORS_HEADERS } from "./mcp.js";
 import { routeConnect } from "./connect.js";
@@ -49,6 +51,21 @@ export function createRouteDispatcher(
       Effect.gen(function* () {
         const ui = context.opts.config.ui;
         const response = ui ? yield* Effect.promise(() => ui.handle(context)) : null;
+        if (response?.status === 401) {
+          const authorizationHeader = authorizationCredential(context.request).kind;
+          logFailure(
+            context.opts.config.logger,
+            "operator_refused",
+            failureRecord(
+              {
+                reason: authorizationHeader === "invalid" ? "authorization_header_invalid" : "authentication_failed",
+                accessContext: Boolean(context.runtimeContext?.access),
+                authorizationHeader,
+              },
+              response,
+            ),
+          );
+        }
         return response ?? (yield* program(context));
       });
   const optional =
