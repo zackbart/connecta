@@ -124,8 +124,7 @@ describe("shared admission queues hand a permit across requests", () => {
 
 describe("a permit granted before its waiter hears of it", () => {
   // The grant is recorded in the releasing request and heard a turn later.
-  // A shutdown in that gap must win. (A grant that beats the waiter's abort
-  // stays the waiter's: test/cancellation-faults.test.ts.)
+  // A shutdown in that gap must win.
   it("INV-7: is given back when execution admission closes first", async () => {
     const admission = new AdmissionController({ concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 1_000 });
     const held = await runEdge(admit(admission));

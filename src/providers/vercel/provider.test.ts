@@ -7,7 +7,7 @@ import { CredentialVault } from "../../credentials.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { makeRegistry } from "../../../test/helpers.js";
-import { vercel } from "./index.js";
+import { vercel, type VercelTokenOptions } from "./index.js";
 import { REDACTED } from "../_shared/rest/value-safety.js";
 
 const TOKEN = { purpose: "Production web applications", auth: { type: "token" }, teamId: "team_default" } as const;
@@ -733,5 +733,83 @@ describe("vercel() over an access token", () => {
     });
     expect(JSON.stringify(quota)).not.toContain("stored-quota-secret");
     expect(quota.data.quota).toEqual({ limitAmount: 10 });
+  });
+});
+
+describe("vercel() with a deployment team pin", () => {
+  const realFetch = globalThis.fetch;
+  let sent: Array<{ url: URL; method: string }>;
+  let answer: () => Response;
+  const call = (name: string, args: Record<string, unknown>) =>
+    vercel("hosting", { ...TOKEN, teamId: "team_alice", pin: { teamId: "team_alice" } } as VercelTokenOptions).callTool(
+      name,
+      args,
+      {
+        ...connectorContext(),
+        storage: memoryStorage(),
+        credential: { get: async () => "vercel-test-token", getAll: async () => ({ value: "vercel-test-token" }) },
+      },
+    );
+
+  beforeEach(() => {
+    installOwnedTransport();
+    sent = [];
+    answer = () => Response.json({ ok: true });
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({ url: new URL(String(input)), method: init?.method ?? "GET" });
+      return answer();
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("INV-2 INV-5: refuses foreign, null, conflicting and encoded selectors before IO on each dispatch branch", async () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["vercel_api_read", { path: "/v3/teams/team_bob/members" }],
+      ["vercel_api_read", { path: "/v10/projects", query: { teamId: null } }],
+      ["vercel_api_read", { path: "/v10/projects", query: { teamId: ["team_alice", "team_bob"] } }],
+      ["vercel_api_read", { path: "/v10/projects", query: { teamId: "team_alice", "%74eamId": "team_bob" } }],
+      ["vercel_api_read", { path: "/v2/teams/team_%62ob" }],
+      ["list_project_env_vars", { projectId: "web", teamId: "team_bob" }],
+      ["get_deployment_build_logs", { deploymentId: "dpl_web", teamId: null }],
+      ["get_runtime_logs", { projectId: "web", deploymentId: "dpl_web", teamId: "team_bob" }],
+      ["vercel_api_upload", { method: "POST", path: "/v2/files", query: { teamId: "team_bob" }, textBody: "hello" }],
+      ["vercel_api_write", { method: "PUT", path: "/v1/bulk-redirects", body: { teamId: "team_bob", redirects: [] } }],
+    ];
+    for (const [name, args] of cases) {
+      await expect(call(name, args)).rejects.toMatchObject({
+        code: expect.stringMatching(/invalid_args|provider_permission_denied/),
+      });
+      expect(sent, name).toEqual([]);
+    }
+  });
+
+  it("INV-2: refuses global/account escapes and unprovable ownership before an affected write", async () => {
+    for (const [method, path] of [
+      ["GET", "/v2/user"],
+      ["POST", "/v1/teams"],
+      ["GET", "/storage/stores/blob"],
+      ["POST", "/v2/observability/query"],
+    ]) {
+      await expect(
+        call(method === "GET" || path === "/v2/observability/query" ? "vercel_api_read" : "vercel_api_write", {
+          method,
+          path,
+          body: method === "POST" ? {} : undefined,
+        }),
+      ).rejects.toBeDefined();
+    }
+    expect(sent).toEqual([]);
+    // A well-formed foreign project and one with no provable identity.
+    for (const project of [{ id: "prj_bob", accountId: "team_bob" }, { accountId: "team_bob" }]) {
+      sent = [];
+      answer = () => Response.json(project);
+      await expect(call("vercel_api_write", { method: "DELETE", path: "/v9/projects/prj_bob" })).rejects.toMatchObject({
+        code: "provider_permission_denied",
+      });
+      expect(sent.map(({ method }) => method)).toEqual(["GET"]);
+    }
   });
 });

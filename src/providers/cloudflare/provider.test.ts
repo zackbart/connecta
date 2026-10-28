@@ -1060,7 +1060,7 @@ describe("cloudflare() over a key", () => {
             id: "flow_1",
             steps: [
               {
-                form_fields: form_fields.map(({ default_value: _, ...field }) => ({
+                form_fields: form_fields.map(({ default_value: _defaultValue, ...field }) => ({
                   ...field,
                   default_value: "[redacted]",
                 })),

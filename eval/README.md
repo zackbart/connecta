@@ -601,7 +601,6 @@ surface/grading repeats. The default still runs both surfaces and both modes.
 pnpm run eval:selftest
 pnpm run eval:outcomes
 pnpm run eval:smoke
-VITEST_MAX_WORKERS=2 pnpm exec vitest run --project node test/claude-eval.node.test.ts test/codex-eval.node.test.ts test/agent-eval-trace.node.test.ts
 VITEST_MAX_WORKERS=2 pnpm run release:check
 ```
 

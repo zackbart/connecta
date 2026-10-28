@@ -364,14 +364,6 @@ export function inLogicalCall(ctx: object): boolean {
   return recordedService(ctx, LogicalLedger) !== undefined;
 }
 
-/**
- * Every resource request dispatched under `ctx`'s logical call, from any
- * ledger, nested ones included; undefined outside one.
- */
-export function logicalCallRequests(ctx: object | undefined): readonly ProviderRequest[] | undefined {
-  return ctx ? recordedService(ctx, LogicalLedger)?.sent : undefined;
-}
-
 export {
   recordProviderResponse,
   tracksEveryRequest,

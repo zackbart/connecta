@@ -492,8 +492,7 @@ describe("status UI", () => {
         { id: "slow", status: "ok" },
       ],
     });
-    // The rejection's text is classified, not shipped (see the status-message
-    // tests in operator-ui-model.test.ts).
+    // The rejection's text is classified, not shipped.
     expect(JSON.stringify(settled)).not.toContain("future unguarded rejection");
     expect(slowFinished).toBe(true);
     expect(closedMidProbe).toBe(false);

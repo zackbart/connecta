@@ -1380,8 +1380,6 @@ listing, and call translation live in
 [search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),
 [call tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-call.test.ts),
 [skills tests](https://github.com/zackbart/connecta/blob/main/test/skills-extension.test.ts),
-[native surface tests](https://github.com/zackbart/connecta/blob/main/test/native-tools.test.ts),
-[surface tests](https://github.com/zackbart/connecta/blob/main/test/code-first-surface.test.ts),
-and [pool description tests](https://github.com/zackbart/connecta/blob/main/test/pool-description.test.ts)
+and [native surface tests](https://github.com/zackbart/connecta/blob/main/test/native-tools.test.ts)
 check the published contract. Guest parity and clause evidence are in
 [code-mode verification](./code-mode.md#verification).
