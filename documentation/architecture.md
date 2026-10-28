@@ -766,6 +766,11 @@ read-then-write fallback: agent-token slot swaps and
 adoption, OAuth handoff ownership, single-use connect links, every downstream
 OAuth grant write and consent claim, the result stash, and initialization of the cursor signing key.
 
+`set()` and mutating `compareAndSet()` statements first reclaim at most 16
+expired SQL rows per call. The CAS sweep runs as a separate statement; its
+affected-row count cannot change the comparison's boolean result. A
+`compareAndSet(key, null, null)` only checks absence and does not sweep.
+
 Every key is built in `src/storage/keys.ts`, which lists each family with its
 scope, version, codec, and TTL policy. Deployed-consumer persistence journeys
 check actual owner isolation in the physical database; key probes retain NUL
