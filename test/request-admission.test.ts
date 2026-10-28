@@ -287,6 +287,78 @@ describe("request admission", () => {
     });
   });
 
+  it("withdraws a timed-out listen candidate's fallback waiter before a slot is released", WORKERS, async () => {
+    let releaseCandidate!: () => void;
+    const candidateAuth = new Promise<void>((resolve) => {
+      releaseCandidate = resolve;
+    });
+    let authCalls = 0;
+    const connecta = createTestConnecta({
+      connectors: [],
+      auth: registerTestMaintainer(
+        {
+          kind: "listen-candidate",
+          async authorize() {
+            if (++authCalls === 1) {
+              await candidateAuth;
+              return { ok: true, principal: PRINCIPAL };
+            }
+            return { ok: false, response: new Response(new ReadableStream(), { status: 401 }) };
+          },
+        },
+        PRINCIPAL,
+      ),
+      logger: silentLogger,
+      admission: {
+        requests: { concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 500, maxDurationMs: 100 },
+      },
+    });
+    const request = mcpRpc("tools/list", {}, { id: 1 });
+    request.headers.set("Mcp-Method", "subscriptions/listen");
+    const candidate = connecta.fetch(request);
+    let held: Response | undefined;
+    const snapshot = async () => {
+      const health = await connecta.fetch(new Request(`${BASE}/health`));
+      return health.json();
+    };
+    try {
+      await waitFor(() => authCalls === 1);
+      // Give the held slot a later deadline than the listen candidate, so its
+      // release can expose an abandoned fallback waiter after the 504.
+      await vi.advanceTimersByTimeAsync(50);
+      held = await connecta.fetch(mcpRpc("tools/list", {}, { id: 2 }));
+      expect(held.status).toBe(401);
+      releaseCandidate();
+      await waitFor(async () => {
+        const health = (await snapshot()) as any;
+        return health.admission.requests.queued === 1;
+      });
+      expect(await snapshot()).toMatchObject({
+        admission: { requests: { active: 1, queued: 1, totals: { admitted: 1, cancelled: 0 } } },
+      });
+
+      await vi.advanceTimersByTimeAsync(50);
+      const response = await candidate;
+      expect(response.status).toBe(504);
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -33003 } });
+      expect(await snapshot()).toMatchObject({
+        admission: { requests: { active: 1, queued: 0, totals: { admitted: 1, cancelled: 1 } } },
+      });
+
+      await held.body?.cancel();
+      await settle();
+      expect(await snapshot()).toMatchObject({
+        admission: { requests: { active: 0, queued: 0, totals: { admitted: 1, cancelled: 1 } } },
+      });
+      expect(authCalls).toBe(2);
+    } finally {
+      releaseCandidate();
+      await held?.body?.cancel();
+      await connecta.close();
+      await candidate.catch(() => undefined);
+    }
+  });
+
   it("removes a cancelled queued request without consuming a permit", WORKERS, async () => {
     const gate = blockingAuth();
     const connecta = createTestConnecta({

@@ -227,6 +227,7 @@ interface StoredRefreshLease {
 }
 
 const REFRESH_REQUEST_DEADLINE_MS = 20_000;
+const REFRESH_COMMIT_DEADLINE_MS = 20_000;
 const REFRESH_WAIT_DEADLINE_MS = 35_000;
 
 /** Caller-owned reads become coordinator-owned at the first submitted durable write. */
@@ -239,9 +240,9 @@ interface RefreshWait {
   close(): void;
 }
 
-function refreshWait(signal?: AbortSignal): RefreshWait {
+function refreshWait(signal?: AbortSignal, timeoutMs = REFRESH_WAIT_DEADLINE_MS): RefreshWait {
   const deadline = new AbortController();
-  let timer = setTimeout(() => deadline.abort(), REFRESH_WAIT_DEADLINE_MS);
+  let timer = setTimeout(() => deadline.abort(), timeoutMs);
   let closed = false;
   let transferred = false;
   let requestStarted = false;
@@ -638,9 +639,12 @@ export class OAuthRefreshCoordinator {
           function* (this: OAuthRefreshCoordinator) {
             const flight: RefreshFlight = { outcome: new Settlement() };
             this.flights.set(epoch, flight);
-            // Pin the owner partition until the flight settles, whoever is waiting.
+            // Pin the owner partition until this coordinator exits, whoever is waiting.
             const release = this.retainPartition();
+            let settled = false;
             const settle = (outcome: RefreshFlightOutcome) => {
+              if (settled) return;
+              settled = true;
               if (this.flights.get(epoch) === flight) this.flights.delete(epoch);
               release();
               // Last: joined waiters wake in their own requests, after this.
@@ -650,177 +654,215 @@ export class OAuthRefreshCoordinator {
               if (verdict) provider.recordRefreshFailure(verdict);
               settle({ status: "failed", error, ...(verdict ? { verdict } : {}) });
             };
-            // The authorization server this redemption answers to, fixed now.
-            const issuer = provider.refreshIssuer(epoch);
-            let lease: RefreshLease;
+            let dispatched = false;
+            const unknownOutcome = () =>
+              new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
+            // One budget for the entire commit/cleanup phase, including retries
+            // and lease release. Interrupt native continuations, never detach a
+            // Promise whose late read could still start a credential write.
+            const complete = authMethod(<A>(operation: () => Promise<A>) => {
+              const completion = refreshWait(undefined, REFRESH_COMMIT_DEADLINE_MS);
+              return authInvoke<A>(completion, "run", [operation]).pipe(
+                Effect.catch((error) => Effect.fail(completion.signal.aborted ? unknownOutcome() : error)),
+                Effect.ensuring(Effect.sync(() => completion.close())),
+              );
+            });
             try {
-              const claim = (yield authInvoke(provider, "claimRefresh", [epoch, requested, undefined, waiting])) as
-                | Response
-                | RefreshLease;
-              if (claim instanceof Response) {
-                const tokens = (yield authInvoke(waiting, "run", [
-                  authMethod(() => {
-                    return authInvoke(provider, "storedTokens", [waiting.signal]) as Effect.Effect<
-                      | {
-                          access_token: string;
-                          token_type: string;
-                          id_token?: string | undefined;
-                          expires_in?: number | undefined;
-                          scope?: string | undefined;
-                          refresh_token?: string | undefined;
-                          issuer?: string | undefined;
-                        }
-                      | undefined,
-                      unknown
-                    >;
-                  }),
-                ])) as
-                  | {
-                      access_token: string;
-                      token_type: string;
-                      id_token?: string | undefined;
-                      expires_in?: number | undefined;
-                      scope?: string | undefined;
-                      refresh_token?: string | undefined;
-                      issuer?: string | undefined;
-                    }
-                  | undefined;
-                if (tokens) settle({ status: "refreshed", tokens });
-                else settle({ status: "retired" });
-                return claim;
+              // The authorization server this redemption answers to, fixed now.
+              const issuer = provider.refreshIssuer(epoch);
+              let lease: RefreshLease;
+              try {
+                const claim = (yield authInvoke(provider, "claimRefresh", [epoch, requested, undefined, waiting])) as
+                  | Response
+                  | RefreshLease;
+                if (claim instanceof Response) {
+                  const tokens = (yield authInvoke(waiting, "run", [
+                    authMethod(() => {
+                      return authInvoke(provider, "storedTokens", [waiting.signal]) as Effect.Effect<
+                        | {
+                            access_token: string;
+                            token_type: string;
+                            id_token?: string | undefined;
+                            expires_in?: number | undefined;
+                            scope?: string | undefined;
+                            refresh_token?: string | undefined;
+                            issuer?: string | undefined;
+                          }
+                        | undefined,
+                        unknown
+                      >;
+                    }),
+                  ])) as
+                    | {
+                        access_token: string;
+                        token_type: string;
+                        id_token?: string | undefined;
+                        expires_in?: number | undefined;
+                        scope?: string | undefined;
+                        refresh_token?: string | undefined;
+                        issuer?: string | undefined;
+                      }
+                    | undefined;
+                  if (tokens) settle({ status: "refreshed", tokens });
+                  else settle({ status: "retired" });
+                  return claim;
+                }
+                lease = claim;
+              } catch (error) {
+                fail(error, provider.refreshVerdict());
+                throw error;
               }
-              lease = claim;
-            } catch (error) {
-              fail(error, provider.refreshVerdict());
-              throw error;
-            }
-            const releaseLease = authMethod(
-              (verdict?: RefreshFailure, resolution: "resolved" | "ambiguous" = "ambiguous") => {
-                return authFlow<void>(
+              const releaseLease = authMethod(
+                (verdict?: RefreshFailure, resolution: "resolved" | "ambiguous" = "ambiguous") => {
+                  return authFlow<void>(
+                    function* (this: OAuthRefreshCoordinator) {
+                      (yield authInvoke(provider, "releaseRefresh", [lease, verdict, undefined, resolution])) as void;
+                    }.bind(this),
+                  );
+                },
+              );
+              let outcome: RefreshResponseOutcome;
+              const deadline = waiting.signal;
+              try {
+                const read = authFlow<RefreshResponseOutcome>(
                   function* (this: OAuthRefreshCoordinator) {
-                    (yield authInvoke(provider, "releaseRefresh", [lease, verdict, undefined, resolution])) as void;
+                    const response = (yield authInvoke(provider, "dispatchRefresh", [
+                      lease,
+                      authMethod(() =>
+                        authFlow<Response>(
+                          function* (this: OAuthRefreshCoordinator) {
+                            waiting.beginRequest();
+                            dispatched = true;
+                            return (yield authCall(baseFetch, [
+                              input,
+                              { ...init, redirect: "manual", signal: deadline },
+                            ])) as Response;
+                          }.bind(this),
+                        ),
+                      ),
+                      waiting,
+                    ])) as Response;
+                    if (deadline.aborted) {
+                      void response.body?.cancel().catch(() => {});
+                      throw aborted(deadline);
+                    }
+                    return (yield authCall(refreshResponseOutcome, [response, deadline])) as RefreshResponseOutcome;
                   }.bind(this),
                 );
-              },
-            );
-            let outcome: RefreshResponseOutcome;
-            const deadline = waiting.signal;
-            let dispatched = false;
-            try {
-              const read = authFlow<RefreshResponseOutcome>(
-                function* (this: OAuthRefreshCoordinator) {
-                  const response = (yield authInvoke(provider, "dispatchRefresh", [
-                    lease,
-                    authMethod(() =>
-                      authFlow<Response>(
-                        function* (this: OAuthRefreshCoordinator) {
-                          waiting.beginRequest();
-                          dispatched = true;
-                          return (yield authCall(baseFetch, [
-                            input,
-                            { ...init, redirect: "manual", signal: deadline },
-                          ])) as Response;
-                        }.bind(this),
-                      ),
-                    ),
-                    waiting,
-                  ])) as Response;
-                  if (deadline.aborted) {
-                    void response.body?.cancel().catch(() => {});
-                    throw aborted(deadline);
-                  }
-                  return (yield authCall(refreshResponseOutcome, [response, deadline])) as RefreshResponseOutcome;
-                }.bind(this),
-              );
-              outcome = (yield Effect.raceFirst(read, fromSignal(deadline))) as RefreshResponseOutcome;
-              if (deadline.aborted) throw aborted(deadline);
-            } catch (error) {
-              if (!dispatched) {
-                // Only the coordinator's own preparation deadline can interrupt a
-                // submitted claim. Caller cancellation no longer reaches this work.
-                if (!waiting.signal.aborted) {
-                  (yield authCatch(
-                    authInvoke(waiting, "run", [
-                      authMethod(() => {
-                        return authCall(releaseLease, []) as Effect.Effect<void, unknown>;
-                      }),
-                    ]),
-                    () => {},
-                  )) as void;
-                  if (provider.refreshVerdict()?.kind === "dead") {
+                outcome = (yield Effect.raceFirst(read, fromSignal(deadline))) as RefreshResponseOutcome;
+                if (deadline.aborted) throw aborted(deadline);
+              } catch (error) {
+                if (!dispatched) {
+                  // Only the coordinator's own preparation deadline can interrupt a
+                  // submitted claim. Caller cancellation no longer reaches this work.
+                  if (!waiting.signal.aborted) {
                     (yield authCatch(
                       authInvoke(waiting, "run", [
                         authMethod(() => {
-                          return authInvoke(provider, "discardRefusedGrant", [requested, epoch]) as Effect.Effect<
-                            void,
-                            unknown
-                          >;
+                          return authCall(releaseLease, []) as Effect.Effect<void, unknown>;
                         }),
                       ]),
                       () => {},
                     )) as void;
+                    if (provider.refreshVerdict()?.kind === "dead") {
+                      (yield authCatch(
+                        authInvoke(waiting, "run", [
+                          authMethod(() => {
+                            return authInvoke(provider, "discardRefusedGrant", [requested, epoch]) as Effect.Effect<
+                              void,
+                              unknown
+                            >;
+                          }),
+                        ]),
+                        () => {},
+                      )) as void;
+                    }
                   }
+                  const failure = waiting.signal.aborted ? provider.refreshContended() : error;
+                  fail(failure, provider.refreshVerdict());
+                  throw failure;
                 }
-                const failure = waiting.signal.aborted ? provider.refreshContended() : error;
-                fail(failure, provider.refreshVerdict());
+                // A sent request without a definitive answer may have rotated the token.
+                // Persist the refusal before dropping tokens, so interrupted cleanup or a
+                // later write of the same fingerprint cannot make it redeemable again.
+                const failure = new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
+                (yield authCall(complete, [
+                  authMethod(() =>
+                    authFlow<void>(function* () {
+                      (yield authCall(releaseLease, [{ kind: "dead" }])) as void;
+                      (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
+                    }),
+                  ),
+                ])) as void;
+                fail(failure, { kind: "dead" });
                 throw failure;
+              } finally {
+                waiting.close();
               }
-              // A sent request without a definitive answer may have rotated the token.
-              // Persist the refusal before dropping tokens, so interrupted cleanup or a
-              // later write of the same fingerprint cannot make it redeemable again.
-              const failure = new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
-              (yield authCall(releaseLease, [{ kind: "dead" }])) as void;
-              (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
-              fail(failure, { kind: "dead" });
-              throw failure;
+              return (yield authCall(complete, [
+                authMethod(() =>
+                  authFlow<Response>(function* () {
+                    // An answer exists from here on, and is committed whatever the owner does.
+                    if (outcome.failure) {
+                      // Drop a refused grant while the flight still stands: a caller arriving
+                      // meanwhile joins it instead of redeeming the dead token again.
+                      (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
+                      (yield authCall(releaseLease, [outcome.verdict, "resolved"])) as void;
+                      fail(outcome.failure, outcome.verdict);
+                      return outcome.forSdk;
+                    }
+                    // The server consumed the old refresh token; the SDK merges it back the
+                    // same way when a rotation omits one.
+                    const accepted: OAuthTokens = {
+                      ...outcome.tokens,
+                      ...(outcome.tokens.refresh_token === undefined && requested !== null
+                        ? { refresh_token: requested }
+                        : {}),
+                    };
+                    let committed: OAuthTokens | undefined;
+                    try {
+                      committed = (yield authInvoke(provider, "storeRefresh", [epoch, requested, accepted, issuer])) as
+                        | {
+                            access_token: string;
+                            token_type: string;
+                            id_token?: string | undefined;
+                            expires_in?: number | undefined;
+                            scope?: string | undefined;
+                            refresh_token?: string | undefined;
+                            issuer?: string | undefined;
+                          }
+                        | undefined;
+                    } catch {
+                      const failure = new UnauthorizedError(
+                        "OAuth refresh could not be committed; authorization required.",
+                      );
+                      (yield authCall(releaseLease, [{ kind: "dead" }, "resolved"])) as void;
+                      (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
+                      fail(failure, { kind: "dead" });
+                      throw failure;
+                    }
+                    if (!committed) {
+                      // Restart, Disconnect, or another consent decides the newer grant.
+                      (yield authCall(releaseLease, [{ kind: "dead" }, "resolved"])) as void;
+                      const failure = new UnauthorizedError("OAuth refresh grant is no longer active.");
+                      fail(failure, { kind: "dead" });
+                      throw failure;
+                    }
+                    (yield authInvoke(provider, "releaseRefresh", [lease, undefined, committed, "resolved"])) as void;
+                    settle({ status: "refreshed", tokens: committed });
+                    return provider.adoptRefresh(committed);
+                  }),
+                ),
+              ])) as Response;
+            } catch (error) {
+              fail(error, dispatched ? { kind: "dead" } : provider.refreshVerdict());
+              throw error;
             } finally {
               waiting.close();
+              // No storage in this finalizer: even interruption or a failed
+              // cleanup must drop the local flight and its owner retention.
+              if (!settled) fail(unknownOutcome(), dispatched ? { kind: "dead" } : provider.refreshVerdict());
             }
-            // An answer exists from here on, and is committed whatever the owner does.
-            if (outcome.failure) {
-              // Drop a refused grant while the flight still stands: a caller arriving
-              // meanwhile joins it instead of redeeming the dead token again.
-              (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
-              (yield authCall(releaseLease, [outcome.verdict, "resolved"])) as void;
-              fail(outcome.failure, outcome.verdict);
-              return outcome.forSdk;
-            }
-            // The server consumed the old refresh token; the SDK merges it back the
-            // same way when a rotation omits one.
-            const accepted: OAuthTokens = {
-              ...outcome.tokens,
-              ...(outcome.tokens.refresh_token === undefined && requested !== null ? { refresh_token: requested } : {}),
-            };
-            let committed: OAuthTokens | undefined;
-            try {
-              committed = (yield authInvoke(provider, "storeRefresh", [epoch, requested, accepted, issuer])) as
-                | {
-                    access_token: string;
-                    token_type: string;
-                    id_token?: string | undefined;
-                    expires_in?: number | undefined;
-                    scope?: string | undefined;
-                    refresh_token?: string | undefined;
-                    issuer?: string | undefined;
-                  }
-                | undefined;
-            } catch {
-              const failure = new UnauthorizedError("OAuth refresh could not be committed; authorization required.");
-              (yield authCall(releaseLease, [{ kind: "dead" }, "resolved"])) as void;
-              (yield authInvoke(provider, "discardRefusedGrant", [requested, epoch])) as void;
-              fail(failure, { kind: "dead" });
-              throw failure;
-            }
-            if (!committed) {
-              // Restart, Disconnect, or another consent decides the newer grant.
-              (yield authCall(releaseLease, [{ kind: "dead" }, "resolved"])) as void;
-              const failure = new UnauthorizedError("OAuth refresh grant is no longer active.");
-              fail(failure, { kind: "dead" });
-              throw failure;
-            }
-            (yield authInvoke(provider, "releaseRefresh", [lease, undefined, committed, "resolved"])) as void;
-            settle({ status: "refreshed", tokens: committed });
-            return provider.adoptRefresh(committed);
           }.bind(this),
         );
       },

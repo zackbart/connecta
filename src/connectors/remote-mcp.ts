@@ -2161,6 +2161,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   }
 
   /**
+   * A request resolver threw something untyped. Calls still fail with
+   * `auth_required`, but status reports an error: the resolver's own outage
+   * is not an authorization the operator can grant.
+   */
+  class UnresolvedTokenError extends ConnectorCallError {
+    constructor() {
+      super("auth_required", "The request token could not be resolved.");
+    }
+  }
+
+  /**
    * Read this request's credential. Called before every connect and before
    * trusting any cached client, so an operator's replacement is picked up
    * without a redeploy. The value stays in the caller's local scope.
@@ -2178,7 +2189,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           )) as string;
         } catch (error) {
           if (error instanceof ConnectorCallError) throw error;
-          throw new ConnectorCallError("auth_required", "The request token could not be resolved.");
+          throw new UnresolvedTokenError();
         }
         ctx.signal?.throwIfAborted();
         if (
@@ -4189,7 +4200,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (err instanceof OperatorDisconnectedError) {
             return (yield authCall(report, [{ state: "auth_required", message: err.message }])) as ConnectorStatus;
           }
-          if (state.authRequired) {
+          if (
+            state.authRequired ||
+            (err instanceof ConnectorCallError &&
+              err.code === "auth_required" &&
+              !(err instanceof UnresolvedTokenError))
+          ) {
             return (yield authCall(report, [
               {
                 state: "auth_required",
