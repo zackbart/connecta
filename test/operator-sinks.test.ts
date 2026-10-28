@@ -17,6 +17,8 @@ import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import {
+  attachFailureFacts,
+  carryFailureFacts,
   describeFailure,
   failureRecord,
   logFailure,
@@ -504,6 +506,28 @@ describe("the operator record", () => {
     expect(lines).toEqual([
       '[connecta] call failed {"connector":"svc","tool":"read","attempts":2,"errorClass":"TypeError"}',
     ]);
+  });
+
+  it("INV-6: checks inbound diagnostic facts at the sink and preserves refusal reasons across response wrapping", () => {
+    const response = attachFailureFacts(new Response(null, { status: 401 }), { reason: "access_context_missing" });
+    const wrapped = carryFailureFacts(response, new Response(response.body, { status: response.status }));
+    expect({
+      ...failureRecord(
+        { reason: "authentication_failed", accessContext: false, authorizationHeader: "absent" },
+        wrapped,
+      ),
+    }).toEqual({
+      reason: "access_context_missing",
+      accessContext: false,
+      authorizationHeader: "absent",
+    });
+    const malicious = {
+      reason: planted("reason"),
+      accessContext: planted("identity"),
+      authorizationHeader: planted("token"),
+    } as unknown as FailureSubject;
+    expect({ ...failureRecord(malicious) }).toEqual({});
+    expect({ ...failureRecord({}, attachFailureFacts({}, malicious)) }).toEqual({});
   });
 
   it("INV-6: logFailure writes a fixed rejection for a record failureRecord did not build", () => {

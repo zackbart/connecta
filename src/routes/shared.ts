@@ -16,6 +16,7 @@ import type {
 import { identityStorageKey, validIdentityReference } from "../identity.js";
 import { assertsAgents, isAgentName } from "../agent-identity.js";
 import { authenticate } from "../auth-admission.js";
+import { attachFailureFacts, carryFailureFacts, failureRecord, logFailure } from "../operator-record.js";
 import type { Logger } from "../types.js";
 import type { ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
@@ -162,16 +163,22 @@ const providerChallengeNative = /* @__PURE__ */ registerAuth(
     return authFlow<Response>(function* () {
       const privateHeaders = new Headers(response.headers);
       privateHeaders.set("Cache-Control", "no-store");
-      response = new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: privateHeaders,
-      });
+      response = carryFailureFacts(
+        response,
+        new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: privateHeaders,
+        }),
+      );
       if (response.status !== 401) return response;
       if (!response.headers.has("WWW-Authenticate")) {
         const headers = new Headers(response.headers);
         headers.set("WWW-Authenticate", refusingProvider?.challenge?.(request, baseUrl) ?? "Bearer");
-        response = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        response = carryFailureFacts(
+          response,
+          new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
+        );
       }
       const path = new URL(request.url).pathname;
       const pool = /^\/mcp\/([a-z0-9_-]+)$/.exec(path)?.[1];
@@ -190,7 +197,10 @@ const providerChallengeNative = /* @__PURE__ */ registerAuth(
       if (!challenge) return response;
       const headers = new Headers(response.headers);
       headers.set("WWW-Authenticate", challenge);
-      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      return carryFailureFacts(
+        response,
+        new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
+      );
     });
   },
 );
@@ -369,6 +379,19 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
             };
         if (!admission.admitted) return { ok: false, response: admission.response };
         const result = admission.result;
+        if (!result.ok && result.response.status === 503 && provider.kind === "cloudflare-access") {
+          logFailure(
+            logger,
+            "Cloudflare Access verification unavailable",
+            failureRecord(
+              {
+                accessContext: Boolean(runtimeContext?.access),
+                authorizationHeader: credential.kind,
+              },
+              result.response,
+            ),
+          );
+        }
         // Only built-in agent credential adapters assert an agent, and they never
         // answer here. Any `agent` claim refuses like an unknown token.
         const agent = result.ok ? result.agent : undefined;
@@ -431,12 +454,15 @@ const authorizeNative = /* @__PURE__ */ registerAuth(
         ok: false,
         response: (yield authCall(providerChallenge, [
           lastResponse ??
-            privateJson(
-              { error: "unauthorized" },
-              {
-                status: 401,
-                headers: { "WWW-Authenticate": "Bearer" },
-              },
+            attachFailureFacts(
+              privateJson(
+                { error: "unauthorized" },
+                {
+                  status: 401,
+                  headers: { "WWW-Authenticate": "Bearer" },
+                },
+              ),
+              { reason: "authentication_provider_missing" },
             ),
           request,
           baseUrl,

@@ -2071,15 +2071,34 @@ identity, or unusable user ids refuse. Access service credentials can admit the
 request at the edge, but connecta requires a `cta_` token at `/agent/<pool>`
 for machine identity.
 
-It never reads `Cf-Access-Jwt-Assertion`, fetches signing keys, or accepts a
-caller's JWT. Missing or malformed trusted context returns 401. A rejected
-human identity, including a service identity or an unusable user id, returns 403. A thrown identity lookup or its five-second deadline returns retryable
+It never parses or verifies `Cf-Access-Jwt-Assertion`, fetches signing keys, or
+accepts a caller's JWT. The assertion header's presence is only an untrusted
+hint that Access context was expected: without `ctx.access`, that request
+returns retryable 503 with `problem: "access_context_unavailable"`, including
+the first request on a fresh instance. It grants no identity and never falls
+back to another provider. Missing context without an assertion still returns 401. An unusable trusted AUD returns retryable 503 with
+`problem: "access_audience_invalid"`; it never proceeds to identity lookup.
+A rejected human identity, including a service identity or an unusable user
+id, returns 403. A thrown identity lookup or its five-second deadline returns retryable
 503 with `problem: "identity_unavailable"` and `Retry-After: 1`. Every refusal
-carries `Cache-Control: no-store`. None of these failures admits an identity,
+carries `Cache-Control: no-store`; every unavailable-verification 503 carries
+`Retry-After: 1` and no `WWW-Authenticate` challenge. None of these failures admits an identity,
 and an unavailable lookup never falls back to another provider. The operator
 UI can re-request admission after a failure without a browser reload. It does not support Node, a `cloudflared` origin, or a Service Binding
 hop.
 Connecta configuration still decides connector access and management: `maintainers` and pool `members`.
+
+Every operator-surface 401 emits `[connecta] operator_refused` through the
+deployment logger. Its checked record contains `accessContext` (a boolean),
+`authorizationHeader` (`absent`, `bearer`, or `invalid`), and a closed `reason`
+code. Access codes distinguish `access_context_missing` from
+`access_authorization_header_rejected`; `authentication_provider_missing`
+identifies the generic route fallthrough, `authorization_header_invalid` a
+malformed header, and `authentication_failed` an unclassified provider refusal.
+Access verification 503s emit `[connecta] Cloudflare Access verification unavailable`
+with the same facts and `access_context_unavailable`, `access_audience_invalid`,
+or `access_identity_unavailable`. These records contain no header values,
+assertions, cookies, identities, URLs, response bodies, or exception text.
 
 Protect the Worker with a Worker-level Access application whose destination is
 `{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
