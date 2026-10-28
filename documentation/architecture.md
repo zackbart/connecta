@@ -578,12 +578,10 @@ Keys and list prefixes must not contain U+0000 (NUL). D1, SQLite, and memory
 storage reject them with `TypeError` before accessing storage: Node 22's
 `node:sqlite` truncates TEXT results at NUL. Builders reject NUL in unencoded
 components.
-State-file import validates all keys before writing. The `connecta_kv` table
-keeps its existing TEXT keys, including compatibility with the 0.28 schema.
-Storage writes no log lines. A refused import names the file and an entry's
-position, never a key, a value, or the JSON parser's account, which quotes
-the file (INV-6). Database failures report only a fixed import step and an
-entry's position, including errors raised by target-database triggers.
+The `connecta_kv` table keeps its existing TEXT keys, including compatibility
+with the 0.28 schema. Storage writes no log lines. JSON state-file import is
+retired; deployments needing it must use the 0.37.1 bridge release before
+upgrading. See [Retired layout migrations](./migration-retired-layouts.md).
 
 Remote MCP catalogs use the SDK `ResponseCacheStore` over this same SQL KV.
 The `response-cache:v1:` family binds connector id, a hash of its configured

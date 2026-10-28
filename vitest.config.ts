@@ -259,6 +259,7 @@ export default defineConfig({
               d1Databases: ["STORAGE_DB"],
               serviceBindings: {
                 CLERK_ORGANIZATION: "clerk-organization",
+                SQL_LIFETIMES: "sql-lifetimes",
                 // A first-party MCP downstream whose identity entrypoint only a binding reaches.
                 NOTES_MCP: { name: "notes-mcp", entrypoint: "connecta" },
                 NOTES_PUBLIC: "notes-mcp",
@@ -281,6 +282,14 @@ export default defineConfig({
                   script: await fixtureBundle("./test/fixtures/notes-binding-worker.ts", ["cloudflare:workers"]),
                   compatibilityDate: "2025-01-01",
                   compatibilityFlags: ["nodejs_compat"],
+                },
+                {
+                  name: "sql-lifetimes",
+                  modules: true,
+                  script: await fixtureBundle("./test/fixtures/d1-native-worker.ts"),
+                  compatibilityDate: "2025-01-01",
+                  compatibilityFlags: ["nodejs_compat"],
+                  d1Databases: { DB: "sql-lifetimes" },
                 },
                 clerkOrganizationWorker(),
                 externalOutbound("clerk-organization-outbound", inject("clerkBackendServer")),
