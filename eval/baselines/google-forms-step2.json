@@ -10,7 +10,7 @@
  "runs": [
   {
    "arm": "before",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/before-luna.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/forms/before-luna.json",
    "rawSha256": "6e1d5dba50fa81e5349f91eae3ea18e2c7410340ce4de382b215daa219cb9711",
    "meta": {
     "createdAt": "2026-10-24T16:41:59.023Z",
@@ -55,7 +55,7 @@
   },
   {
    "arm": "before",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/before-sonnet.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/forms/before-sonnet.json",
    "rawSha256": "ff2f03866c95ebb068d84bae8f94b069fad922a9c19dbf7706512f7f56d342f9",
    "meta": {
     "createdAt": "2026-10-24T16:41:59.065Z",
@@ -100,7 +100,7 @@
   },
   {
    "arm": "after",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/after-luna.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/forms/after-luna.json",
    "rawSha256": "e3c9fd0c9eb2d64b8aae2fc40027176befee2ab2e0026fe7ef73791905fd84fd",
    "meta": {
     "createdAt": "2026-10-24T16:46:19.084Z",
@@ -145,7 +145,7 @@
   },
   {
    "arm": "after",
-   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/after-sonnet.json",
+   "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/forms/after-sonnet.json",
    "rawSha256": "dd4bf3d1000e58db506a91658cc6b17d49c008a4abb29d9f93dedc084dbcfb50",
    "meta": {
     "createdAt": "2026-10-24T16:45:32.416Z",
@@ -9669,7 +9669,7 @@
   ]
  },
  "referenceOnlyAdapter": {
-  "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/forms-reference-adapter.mjs",
+  "path": "/home/operator/.t3/scratch/connecta-orchestrator/step2/forms/forms-reference-adapter.mjs",
   "sha256": "ddbc36bba8eee60e688c2c5f941a1bb303f424396ccede4d89ba8332318066ac",
   "paidTrialsLoaded": false,
   "removedDuringRound1": true,
@@ -10265,7 +10265,7 @@
   "summary": "Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.",
   "summaryCharacters": 115,
   "queryProbe": {
-   "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/reviews/1014-r2/probes/search-compare.txt",
+   "path": "/home/operator/.t3/scratch/connecta-orchestrator/reviews/1014-r2/probes/search-compare.txt",
    "sha256": "946c934310bc5cbc2ee3e94aa317405799c21d20947470832b726a0c79cfe1a1",
    "comparison": "Current rank is no worse than the best rank among round 1, reviewed head and reviewer candidate. An operation absent in every reference may remain absent.",
    "queries": 59,

@@ -1,20 +1,9 @@
 # Notion, Vercel and Cloudflare migration for 0.29
 
-Hosted selections described in this historical migration are now removed.
-For Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub hosted connections,
-use the [current hosted MCP migration guide](./hosted-mcp-migration.md).
-The API migrations below remain applicable.
-
-Use this upgrade guide for an existing deployment.
-[Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
-version changes; [integrating services](./integrating.md) covers new connectors.
-[The agent index](./README.md) routes package maintenance separately.
-
-This was the Phase 1 item 5d migration input for [Phase 5 release #709](https://github.com/zackbart/connecta/issues/709),
-which shipped as 0.29.0.
-Deployments that use Notion or Cloudflare must check their actual grants and
-connector ids in deployment configuration before that release.
-The provider audit establishes available auth modes, not production OAuth grants.
+This guide records the 0.29 Notion, Vercel and Cloudflare option changes.
+For upgrades to current versions, use [deployment upgrades](./deploying.md#upgrade-an-existing-deployment)
+and [hosted MCP migration](./hosted-mcp-migration.md); the hosted selectors below
+are historical and cannot be used in current configuration.
 
 Cloudflare's part of this guide is superseded: `cloudflare()` now selects its
 implementation by `auth` and its key connector is complete on its own. Follow

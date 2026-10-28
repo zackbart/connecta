@@ -47,7 +47,7 @@ The [JSON summary](./planning-center-step2.json) preserves every scored trial's
 checks, answer, metrics, tool addresses, HTTP ledger and model evidence. It also
 records run configuration, clean git provenance, protocol hashes and SHA-256
 of each full unmodified result file. Full traces remain under
-`/home/zackbart/.t3/scratch/connecta-orchestrator/step2/planning-center/`.
+`/home/operator/.t3/scratch/connecta-orchestrator/step2/planning-center/`.
 
 - Original BEFORE: clean `eee4b8555721`, source tree `f1122bdcb2cc`, based on
   main `8e92eed9` (#989). Luna 10/14 and Sonnet 14/14. It ran before the provider

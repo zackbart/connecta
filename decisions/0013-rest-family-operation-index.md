@@ -1,7 +1,8 @@
 ---
 status: accepted
 date: 2026-10-23
-supersedes: none
+issues: [703]
+supersedes: []
 ---
 
 # Keep the REST family's pinned operation index

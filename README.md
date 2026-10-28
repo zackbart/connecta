@@ -91,8 +91,6 @@ on Node, in Docker, or on Cloudflare Workers. The
 | [Safety and trust](./guides/safety-and-trust.md)    | Uncertain changes, secrets, read-only access, and your responsibilities. |
 | [Operator documentation](./documentation/README.md) | Setup, feature availability, upgrades, and exact contracts.              |
 
-<a id="existing-client-tokens"></a>
-
 Upgrading? Follow the [upgrade guide](./documentation/deploying.md#upgrade-an-existing-deployment).
 Breaking changes are expected before 1.0. See the [changelog](./CHANGELOG.md)
 and [security policy](./SECURITY.md).

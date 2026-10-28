@@ -1,6 +1,6 @@
 ---
 name: add-provider
-description: Add or change a maintained connecta provider under decision 0011's provider standard (API layout, fixed evidence, generated drift and guide sections, one agent-facing shape), with classification, value safety, fixtures, bundle baselines, and vendor-contract drift evidence.
+description: Add or change a maintained connecta provider under the provider standard (API layout, fixed evidence, generated drift and guide sections, one agent-facing shape), with classification, value safety, fixtures, bundle baselines, and vendor-contract drift evidence.
 ---
 
 # Add or change a maintained provider
@@ -35,13 +35,12 @@ The generator refuses D or G violations before writing any output.
    Do not add characterization goldens or migration exemptions.
 4. Generate indexes, evidence and guides, run the verification below, and
    record changed outcomes for each affected provider. For breaking tool,
-   argument, envelope or guide changes, add a `breaking: true` change fragment
-   mapping the changes and update the installed migration instructions.
+   argument, envelope or guide changes, map the changes in a fragment following
+   [AGENTS.md](../../../AGENTS.md#conventions) and update installed migration instructions.
 
 ## API providers only
 
-[Decision 0012](../../../decisions/0012-hosted-mcp-runtime-discovery.md)
-supersedes 0011's hosted-provider rules. Maintained providers vendor APIs only,
+Maintained providers vendor APIs only,
 with `kind: "api"`. Hosted MCP servers use generic `remoteMcp()` deployment
 entries; never add provider presets, review maps, schema pins, hosted captures,
 hosted drift checks, or hosted guide blocks. The installed operator procedure
@@ -522,23 +521,14 @@ Run provider-local tests, `test/provider-standard.node.test.ts`, conventions,
 registry, purity and package-boundary suites on Node. Reuse the existing
 stateful fake vendors, deployment adapters and outcome tasks for affected
 behavior; `pnpm run eval:outcomes` checks representative real workflows.
-`vitest.config.ts` selects native boundaries; ordinary portable filenames do
-not enroll suites in workerd. Mixed suites tag native cases `workers` and broad
-logic cases `node`; Node runs both. Add native coverage when behavior depends
-on platform-specific fetch, streams, Web Crypto, request lifetimes or bytes.
-Use relevant `INV-n` citations to explain the contract a focused probe defends.
+Follow [AGENTS.md](../../../AGENTS.md#tests) for Node/workerd selection and
+focused-probe conventions.
 
 `pnpm run providers:check` reads public API contracts only. Parser failures are
 provider-local findings; report them alongside API drift and standing manual
 reviews. Never fetch credentials, call operational tools, file issues, or
 silently accept a new baseline. Recording endpoint evidence is explicit.
 
-The Provider drift workflow runs weekly and on manual dispatch, scanning every
-public provider. It does not run on PRs. Its summary lists new or changed findings
-apart from standing manual reviews. Summary and artifacts are advisory; it is
-not a dependency of the aggregate `check` gate.
-
-Add a unique `.changes/<slug>.md` fragment. Run `pnpm run check:fast` while
-iterating, then `VITEST_MAX_WORKERS=2 pnpm run release:check` for provider
-registration, packaging, or export changes. An independent review is required
-before merge.
+Follow [AGENTS.md](../../../AGENTS.md#verification) for local, release and
+advisory workflow checks, and its [conventions](../../../AGENTS.md#conventions)
+and [agent policy](../../../AGENTS.md#agent-policy) for fragments and review.

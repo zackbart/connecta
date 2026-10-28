@@ -1,8 +1,7 @@
 # Migration to 0.33
 
-Use this upgrade guide for an existing deployment moving to 0.33.
-[Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover the
-general procedure; [the agent index](./README.md) routes other work.
+Apply the [general upgrade procedure](./deploying.md#upgrade-an-existing-deployment)
+when moving from 0.32 to 0.33.
 
 0.33 makes pools the access model.
 Every deployment with inbound auth changes its configuration. Each removed

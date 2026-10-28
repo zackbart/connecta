@@ -1,9 +1,7 @@
 # Migration to 0.34
 
-Use this guide when upgrading an existing deployment from 0.33 to 0.34.
-[Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover the
-general procedure; [the agent index](./README.md) routes other work. Upgrades
-from earlier versions must also apply the intervening migrations.
+Apply the [general upgrade procedure](./deploying.md#upgrade-an-existing-deployment)
+when moving from 0.33 to 0.34, including intervening migrations for older versions.
 
 No storage migration, token rotation or required configuration field is added.
 Review the following changes before updating the package pin.

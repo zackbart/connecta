@@ -64,12 +64,9 @@ platform, proxy or adapter cap still wins. See
 A Node host serving `connecta.fetch` without `listen()` has no owned sender:
 every maintained-provider write, every reviewed POST read and every remote MCP
 write is refused before sending. Downstream OAuth credential POSTs also require
-that sender; discovery GETs retain native fetch. Resource writes worked in 0.34.1;
-credential POSTs used native fetch through 0.34.1. For example, an `assistant` using
+that sender. For example, an `assistant` using
 `vercel_api_read` to POST `/v1/registrar/domains/availability` needs that
-transport even on a read-only endpoint. A Node deployment using only the root
-entry refuses those requests before sending them. Workers use their native
-fetch transport.
+transport even on a read-only endpoint. Workers use their native fetch transport.
 
 By default, Node's `listen()` handles SIGTERM and SIGINT: it stops accepting
 connections, closes idle connections and accepted sockets without a first HTTP
@@ -81,9 +78,8 @@ keepalive before shutdown is unchanged. Its shutdown deadline defaults to ten se
 (`shutdownTimeoutMs`). For example, retain the template's `listen(connecta, port)` when running it under
 Docker Compose so `docker compose stop` uses this cleanup.
 
-The owned Node sender connects directly by default. To send maintained-provider
-requests (including reads), remote MCP writes and OAuth credential POSTs through an HTTP(S) CONNECT
-proxy, set `proxy` explicitly on `listen`:
+The owned Node sender connects directly by default. For HTTP(S) CONNECT proxy
+egress, set `proxy` explicitly on `listen`:
 
 ```ts
 listen(connecta, { port: 3000, proxy: "http://proxy.example.com:8080" });
@@ -108,9 +104,7 @@ replayed by the sender, including after HTTP 421, a reset or a 503. An uncertain
 refresh requires authorization again; Connecta blocks the spent refresh
 fingerprint rather than redeeming it twice. Once a refresh claim has been
 submitted, that protection remains conservative even if proxy setup later fails.
-Use a fresh authorization flow to reconcile. OAuth discovery remains on native
-fetch and needs its own host proxy policy. These credential POST requirements
-change the native-fetch behavior of 0.34.1.
+Use a fresh authorization flow to reconcile.
 
 ## Start on Workers
 
@@ -136,10 +130,8 @@ verified ingress behavior and the cases that still require verification.
 Agents use `/agent/<pool>`, which connecta authenticates with the `cta_` token
 alone and which ignores Access context entirely
 ([agent endpoints](./auth.md#agent-endpoints)). Behind Access, the edge must
-let those requests through without an Access login or service token. The P0
-probe ([observations](./architecture.md#production-access-bypass-for-agent-endpoints))
-verified this shape on 2026-10-15. The Worker example's `alchemy.run.ts`
-declares both applications:
+let those requests through without an Access login or service token.
+The Worker example's `alchemy.run.ts` declares both applications:
 
 1. Keep the Worker-level application, whose destination is
    `{ "type": "worker", "worker_id": "<the Worker script tag>" }`, exactly as
@@ -170,12 +162,9 @@ declares both applications:
 3. Point each agent at `https://<host>/agent/<pool>` with
    `Authorization: Bearer cta_…` and drop its `CF-Access-Client-Id` and
    `CF-Access-Client-Secret` headers. The pool must list `"agent:<name>"`.
-4. Verify after the change has settled. Access changes took 15–19 seconds to
-   settle in the probe, and while they propagate the edge can answer with
-   transient 500 (`error code: 1104`) or 404 (`error code: 1042` or `1043`)
-   responses, and in one round a 403 on a bypassed path after more than 30
-   seconds. Do not rely on a fixed wait: repeat these checks until they agree
-   for several consecutive rounds. Without credentials, `/agent/<pool>`
+4. Verify after the change has settled. Do not rely on a fixed wait: repeat
+   these checks until they agree for several consecutive rounds. Without
+   credentials, `/agent/<pool>`
    reaches connecta (its 401 carries `WWW-Authenticate: Bearer`, not Access's
    403 page), while `/mcp` and `/` still get Access's refusal. Then run
    `connecta doctor --pool <pool>` with the agent's token.
@@ -185,11 +174,8 @@ Connecta answers there only an issued token of an agent listed in the pool,
 and gives every other spelling of the agent namespace a 404 before auth,
 because Access matches `/agent/*` after resolving dot segments, folding case,
 decoding unreserved escapes, and collapsing a leading `//`, while the Worker
-sees the raw path. Two cases were not tested: a human's `CF_Authorization`
-cookie on a bypassed path, whose `ctx.access` identity is unknown (connecta
-never reads it at `/agent/*`), and Custom Domains, which use the same
-documented hostname-and-path form but were not observed; only `workers.dev`
-was probed. Pinning the Worker-level application's AUD on human routes is
+sees the raw path. Connecta never reads `ctx.access` at `/agent/*`.
+Pinning the Worker-level application's AUD on human routes is
 recommended hardening that connecta does not yet do.
 
 ## Compose capabilities and access
@@ -318,18 +304,8 @@ For an existing Node deployment, add the Node entry's pinned optional peer
 before starting the upgraded package: `npm install --save-exact undici@6.29.1`.
 The current Node template already declares this dependency.
 
-For 0.35.0, serve Node with `listen` from `@zackbart/connecta/node`, as the
-current template does. Without `listen()`, a host serving `connecta.fetch` has
-no owned sender: every maintained-provider write, every reviewed POST read and
-every remote MCP write is refused before sending, although each worked in 0.34.1.
-Downstream OAuth token, registration and revocation POSTs also require that
-sender. With `listen()`, every maintained-provider request, reads included,
-remote MCP writes and those credential POSTs use the owned sender. Configure
-`listen(..., { proxy })` explicitly for HTTP(S) CONNECT proxy egress; ambient
-`NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY` and host proxy dispatchers do
-not configure it. Remote MCP reads and OAuth discovery GETs retain native fetch
-and need their own host proxy policy. An uncertain refresh requires fresh
-authorization rather than replaying the spent token. See [Start on Node](#start-on-node).
+For Node upgrades, retain the template's `listen` entrypoint and apply the
+[Node transport and proxy requirements](#start-on-node).
 
 Authenticated MCP bodies now default to 4 MiB through
 `admission.requests.maxBodyBytes`; Node's separate pre-auth buffer also defaults

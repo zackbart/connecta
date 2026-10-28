@@ -147,8 +147,8 @@ replacement above is a third live batch, saved separately.
   newly exported result files; the grader source is committed. Original live
   provenance is preserved, including its clean checkout flags.
 
-The historical second-batch raw files are [Luna](gpt-6-luna-rest-801-live.json) and
-[Sonnet](sonnet-5-5-rest-801-live.json). Their original scores are 5/10 and 7/10.
+The original second-batch raw files are recoverable from commit `eae53ce`
+using the immutable links below. Their original scores are 5/10 and 7/10.
 The historical full-file regrades are archived in Git history. They were computed
 from full saved inputs with `regradeTrial`, using route grading, without
 executing programs or contacting a model. The historical grader commit is
@@ -168,9 +168,9 @@ filenames name the corresponding raw `*-rest-801-live.json` files.
 These are alternate grades of the same paid interactions, not additional runs.
 A current-grader regrade need not reproduce these historical grades.
 
-The raw live files remain local. The following immutable copies and exact-byte
-hashes preserve recovery and verification of both the retained sources and the
-removed full-file regrades:
+The original batches and full-file regrades are archived in commit `eae53ce`,
+rather than tracked in the current checkout. The immutable copies and exact-byte
+hashes below preserve recovery and verification:
 
 | File (immutable historical copy) | SHA-256 of exact file bytes |
 | --- | --- |

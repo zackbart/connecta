@@ -5,7 +5,7 @@
     {
       "arm": "after-post-fix",
       "runner": "codex",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-codex.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-codex.json",
       "rawSha256": "1597d9ac675911c51c2f7fb0333c3a2fcc68fe0f3f5b06ba76a82218ca273f27",
       "meta": {
         "createdAt": "2026-10-24T18:30:45.812Z",
@@ -46,7 +46,7 @@
     {
       "arm": "after-post-fix",
       "runner": "claude",
-      "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-claude.json",
+      "rawArtifact": "/home/operator/.t3/scratch/connecta-orchestrator/step2/gmail/r1-refresh-claude.json",
       "rawSha256": "1db1ad624a703f31671469853644495828ad2c6cc0bc7496539048f1dff9c81b",
       "meta": {
         "createdAt": "2026-10-24T18:30:45.302Z",

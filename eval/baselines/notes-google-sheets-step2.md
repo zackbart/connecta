@@ -9,7 +9,7 @@ workflows plus four `sheets_api_*` tools. The [JSON summary](./google-sheets-ste
 retains all 56 trials, checks, final answers, requested/served models, CLI metadata,
 per-tool attempts (including Drive), discovery bytes, writes and source/protocol
 hashes. Original unmodified result JSON, saved worlds, logs and measurements remain
-in `/home/zackbart/.t3/scratch/connecta-orchestrator/step2/sheets/`.
+in `/home/operator/.t3/scratch/connecta-orchestrator/step2/sheets/`.
 No trial was dropped, rerun or rescored.
 
 ## Frozen protocol and sources
