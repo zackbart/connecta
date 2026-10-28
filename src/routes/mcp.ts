@@ -797,13 +797,20 @@ export function createMcpRoute(opts: ServerOptions): {
         const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
         const refuseAdmission = (error: unknown): Effect.Effect<Response, unknown> => {
           if (!(error instanceof ExecutorAdmissionError)) return Effect.fail(error);
-          if (error.code === "executor_cancelled") return Effect.fail(request.signal.reason ?? error);
+          if (error.code === "executor_cancelled") {
+            // The lifetime timer can withdraw a fallback waiter before the
+            // enclosing timeout settles. Keep its public deadline response.
+            if (localAbort.signal.aborted && !request.signal.aborted) {
+              return Effect.succeed(cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded.")));
+            }
+            return Effect.fail(request.signal.reason ?? error);
+          }
           if (error.code === "executor_overloaded") warnAdmissionRejected(error);
           return Effect.succeed(cors(requestAdmissionFailure(sentSecrets, error)));
         };
         const admission = listenHeader
           ? Result.succeed(undefined)
-          : yield* Effect.result(admitted(opts.requestAdmission, request.signal));
+          : yield* Effect.result(admitted(opts.requestAdmission, localAbort.signal));
         if (Result.isFailure(admission)) return yield* refuseAdmission(admission.failure);
         const remainingMs = admission.success
           ? admission.success.remainingMs()
@@ -958,7 +965,7 @@ export function createMcpRoute(opts: ServerOptions): {
               return cors(mcpRefusal(sentSecrets, 413, -33006, "MCP request body too large."));
             }
             if (listenHeader && verdict === "other") {
-              const late = yield* Effect.result(admitted(opts.requestAdmission, request.signal));
+              const late = yield* Effect.result(admitted(opts.requestAdmission, localAbort.signal));
               if (Result.isFailure(late)) return yield* refuseAdmission(late.failure);
             }
           }

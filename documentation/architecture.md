@@ -336,8 +336,12 @@ capacity boundary, not tenant fairness, and one deployment serves one tenant.
 `admission.requests.maxDurationMs` defaults to 300,000 ms and may be set to a
 positive whole number up to 2,147,483,647 ms. Its clock starts when admission
 grants a permit and covers authorization, tool execution, and response delivery.
-The owning request aborts its derived signal at that deadline, including signals
-passed to connector calls, and closes a live response. If workerd ends the
+A header-named `subscriptions/listen` candidate starts this clock before auth;
+if classification requires a fallback permit, that queue wait shares the same
+deadline. The owning request aborts its derived signal at that deadline, including
+signals passed to admission waiters and connector calls, and closes a live
+response. A timed-out candidate withdraws its fallback waiter before returning
+504, so a later slot release cannot admit the ended request. If workerd ends the
 request without running that timer or cancellation, the controller reclaims
 only the expired permit's scalar record on the next request (or a queued
 request's own timer). It never reads the old request's signal or touches its
