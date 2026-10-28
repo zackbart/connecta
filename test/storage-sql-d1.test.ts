@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
+import { sqlCasExpiryContract } from "./sql-storage-contract.js";
 
 const bindings = await (async () => {
   try {
@@ -23,6 +24,29 @@ async function fresh(): Promise<D1Database> {
   await db.prepare("DROP TABLE IF EXISTS tool_call_activity").run();
   return db;
 }
+
+describe.skipIf(!bindings)("CAS expiry reclamation over native Workers D1", () => {
+  sqlCasExpiryContract(async () => {
+    const db = await fresh();
+    return {
+      storage: () => d1Storage(db),
+      async exec(sql, ...params) {
+        await db
+          .prepare(sql)
+          .bind(...params)
+          .run();
+      },
+      async rows<Row>(sql: string, ...params: (string | number | null)[]) {
+        return (
+          await db
+            .prepare(sql)
+            .bind(...params)
+            .all<Row>()
+        ).results;
+      },
+    };
+  });
+});
 
 /** Only the structural members connecta declares; nothing else is reachable. */
 function structural(db: D1Database, hooks: { onBatch?: () => void; onRun?: (sql: string) => void; calls: string[] }) {
@@ -73,24 +97,23 @@ describe.skipIf(!bindings)("review r1: D1 interruption after physical dispatch",
     expect(await storage.get("dispatched")).toBe("v");
   });
 
-  it("INV-7 INV-9: abort right after CAS run dispatch: original reason, claim committed, a second claim is refused", async () => {
+  it("INV-7 INV-9: abort right after CAS dispatch: original reason, claim committed, a second claim is refused", async () => {
     const db = await fresh();
     const controller = new AbortController();
     const reason = new Error("caller gone after CAS dispatch");
-    const hooks: { calls: string[]; onRun?: (sql: string) => void } = { calls: [] };
+    const hooks: { calls: string[]; onBatch?: () => void } = { calls: [] };
     const storage = d1Storage(structural(db, hooks));
     await storage.get("warm");
     hooks.calls.length = 0;
-    hooks.onRun = (sql) => {
-      if (sql.startsWith("INSERT")) controller.abort(reason);
-    };
+    hooks.onBatch = () => controller.abort(reason);
     const native = getNativeStorage(storage)!;
     await expect(
       runEdge(native.compareAndSet("cas", null, "holder", { ttlSeconds: 60 }), { signal: controller.signal }),
     ).rejects.toBe(reason);
-    delete hooks.onRun;
+    delete hooks.onBatch;
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 10));
-    expect(hooks.calls.filter((c) => c.startsWith("run:INSERT"))).toHaveLength(1);
+    // The expiry sweep rides in the claim's batch: one D1 round trip.
+    expect(hooks.calls).toEqual(["batch:2"]);
     expect(await storage.get("cas")).toBe("holder");
     expect(await storage.compareAndSet("cas", null, "replay")).toBe(false);
   });

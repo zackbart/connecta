@@ -3,7 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { OAUTH_REFRESH_LEASE_SECONDS, oauthRefreshActiveKeys, oauthRefreshKeys } from "../src/storage/keys.js";
+import {
+  OAUTH_REFRESH_LEASE_SECONDS,
+  oauthGrantKeys,
+  oauthRefreshActiveKeys,
+  oauthRefreshKeys,
+  oauthRefreshSpentKeys,
+} from "../src/storage/keys.js";
+import { oauthPartitionIdle, retainOAuthPartition } from "../src/oauth-partition.js";
 import type { KVStorage } from "../src/types.js";
 import { deferred } from "./fixtures/misc.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
@@ -69,9 +76,194 @@ function deadline(ms: number) {
   }) as typeof setTimeout);
   return entered.promise;
 }
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("refresh dispatch leases on delayed storage", () => {
+  it.each([
+    "grant read",
+    "grant CAS",
+    "lost grant CAS answer",
+    "refusal cleanup",
+    "network cleanup",
+    "exhausted commit cleanup",
+    "spent CAS",
+    "lease CAS",
+    "holder delete",
+  ])(
+    "bounds a stalled post-answer %s, settles joiners and releases the owner partition (INV-5 INV-7)",
+    async (phase) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const storage = memoryStorage();
+      await seedGrant(storage, { issuer: ISSUER, tokens });
+      const key = await leaseKey(storage);
+      const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
+      const entered = deferred<void>();
+      const gate = deferred<void>();
+      let answered = false;
+      let held = false;
+      let commitAttempts = 0;
+      const hold = async () => {
+        held = true;
+        entered.resolve();
+        await gate.promise;
+      };
+      const slow: KVStorage = {
+        ...storage,
+        async get(readKey) {
+          if (!held && answered && phase === "grant read" && readKey === oauthGrantKeys.grant) await hold();
+          return storage.get(readKey);
+        },
+        async compareAndSet(casKey, expected, value, options) {
+          if (
+            phase === "exhausted commit cleanup" &&
+            casKey === oauthGrantKeys.grant &&
+            value?.includes(next.refresh_token)
+          ) {
+            commitAttempts++;
+            return false;
+          }
+          if (
+            !held &&
+            answered &&
+            ((casKey === oauthGrantKeys.grant &&
+              ["grant CAS", "lost grant CAS answer", "refusal cleanup", "exhausted commit cleanup"].includes(phase)) ||
+              (casKey === spentKey && ["spent CAS", "network cleanup"].includes(phase)) ||
+              (casKey === key && phase === "lease CAS"))
+          ) {
+            if (phase === "lost grant CAS answer") {
+              const result = await storage.compareAndSet(casKey, expected, value, options);
+              await hold();
+              return result;
+            }
+            await hold();
+          }
+          return storage.compareAndSet(casKey, expected, value, options);
+        },
+        async delete(deleteKey) {
+          if (!held && answered && phase === "holder delete" && deleteKey.startsWith(oauthRefreshActiveKeys.prefix))
+            await hold();
+          return storage.delete(deleteKey);
+        },
+      };
+      const partition = {};
+      const coordinator = new OAuthRefreshCoordinator(() => retainOAuthPartition(partition));
+      const owner = await isolate(slow, Date.now, coordinator);
+      const joiner = await isolate(storage, Date.now, coordinator);
+      const send = vi.fn(async () => {
+        answered = true;
+        if (phase === "network cleanup") throw new Error("Token response lost");
+        return phase === "refusal cleanup"
+          ? Response.json({ error: "invalid_grant" }, { status: 400 })
+          : Response.json(next);
+      });
+      const first = owner
+        .fetch(send)(`${ISSUER}/token`, init)
+        .catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(held).toBe(true));
+        await entered.promise;
+        expect(oauthPartitionIdle(partition)).toBe(false);
+        const joined = joiner
+          .fetch(send)(`${ISSUER}/token`, init)
+          .catch((error: unknown) => error);
+        let settled = false;
+        void first.then(() => {
+          settled = true;
+        });
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(settled).toBe(true);
+        expect(await first).toMatchObject({
+          name: "UnauthorizedError",
+          message: "OAuth refresh outcome is unknown; authorization required.",
+        });
+        expect(await joined).toMatchObject({
+          name: "UnauthorizedError",
+          message: "OAuth refresh outcome is unknown; authorization required.",
+        });
+        expect(oauthPartitionIdle(partition)).toBe(true);
+        if (phase === "exhausted commit cleanup") expect(commitAttempts).toBe(32);
+
+        // The original grant may still be present. Expiry must recover through
+        // durable lease/spent records instead of joining the abandoned flight.
+        await vi.advanceTimersByTimeAsync(121_000);
+        const later = await isolate(storage, Date.now, coordinator);
+        let recovery: unknown;
+        void later
+          .fetch(send)(`${ISSUER}/token`, init)
+          .catch((error: unknown) => error)
+          .then((result) => {
+            recovery = result;
+          });
+        await vi.waitFor(() => expect(recovery).toBeDefined());
+        if (recovery instanceof Response) expect(recovery.status).toBe(200);
+        else expect(recovery).toBeInstanceOf(UnauthorizedError);
+        expect(oauthPartitionIdle(partition)).toBe(true);
+        expect(send).toHaveBeenCalledTimes(1);
+
+        // A late physical CAS may land, but its continuation cannot complete
+        // the expired flight or make the consumed token redeemable again.
+        gate.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(oauthPartitionIdle(partition)).toBe(true);
+        await seedGrant(storage, { issuer: ISSUER, tokens }, "v3:restored");
+        const restored = await isolate(storage);
+        await expect(restored.fetch(send)(`${ISSUER}/token`, init)).rejects.toBeInstanceOf(UnauthorizedError);
+        expect(await storage.get(spentKey)).not.toBeNull();
+        expect(send).toHaveBeenCalledTimes(1);
+      } finally {
+        gate.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+    },
+  );
+
+  it("releases a stalled commit's partition after reset has already retired its flight (INV-5 INV-7)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const storage = memoryStorage();
+    await seedGrant(storage, { issuer: ISSUER, tokens });
+    const partition = {};
+    const coordinator = new OAuthRefreshCoordinator(() => retainOAuthPartition(partition));
+    const gate = deferred<void>();
+    let held = false;
+    const slow: KVStorage = {
+      ...storage,
+      async compareAndSet(key, expected, value, options) {
+        if (!held && key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
+          held = true;
+          await gate.promise;
+        }
+        return storage.compareAndSet(key, expected, value, options);
+      },
+    };
+    const owner = await isolate(slow, Date.now, coordinator);
+    const send = vi.fn(async () => Response.json(next));
+    const first = owner
+      .fetch(send)(`${ISSUER}/token`, init)
+      .catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(held).toBe(true));
+      await owner.provider.resetAuthorization(true);
+      // Retiring wakes waiters; it does not release the still-running owner.
+      expect(oauthPartitionIdle(partition)).toBe(false);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await first).toMatchObject({
+        name: "UnauthorizedError",
+        message: "OAuth refresh outcome is unknown; authorization required.",
+      });
+      expect(oauthPartitionIdle(partition)).toBe(true);
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await storedGrant(storage))!.body?.tokens).toBeUndefined();
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+  });
+
   it.each([31_000, 121_000])(
     "never resends a live holder's token after %i ms, including shared-storage expiry (INV-5)",
     async (elapsed) => {
