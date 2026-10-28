@@ -45,6 +45,7 @@ describe("connector status messages", () => {
         }),
         withStatus("locked", async () => ({ state: "auth_required", message: LEAK })),
         withStatus("fine", async () => ({ state: "ok", message: `Connected with ${SECRET}` })),
+        withStatus("percaller", async () => ({ state: "per_caller", message: LEAK })),
       ],
       auth: machineAuth(TOKEN),
       storage: memoryStorage(),
@@ -59,7 +60,7 @@ describe("connector status messages", () => {
     const summary = await connecta.fetch(new Request(`${BASE}/ui/data`, { headers }));
     bodies.push(await summary.text());
     const details: Record<string, UiConnector> = {};
-    for (const id of ["down", "thrown", "locked", "fine"]) {
+    for (const id of ["down", "thrown", "locked", "fine", "percaller"]) {
       const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/${id}`, { headers }));
       expect(res.status).toBe(200);
       const text = await res.text();
@@ -77,6 +78,8 @@ describe("connector status messages", () => {
     expect(details.thrown).toMatchObject({ status: "error", problem: "connector_unavailable" });
     expect(details.locked).toMatchObject({ status: "auth_required", problem: "auth_required" });
     expect(details.fine!.problem).toBeUndefined();
+    expect(details.percaller).toMatchObject({ status: "per_caller" });
+    expect(details.percaller!.problem).toBeUndefined();
 
     // What the page renders for each is the fixed copy for its kind.
     for (const id of ["down", "thrown", "locked"]) {

@@ -165,23 +165,27 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
     const { mayManage, permissions, activityEnabled, credentialManagement } = operatorView(context, authz, registry);
     const connector = registry.getConnector(id);
     if (!connector) return yield* refuse("unknown connector", 404);
-    const data = yield* uiData(opts.registry.scoped(scopeFor(authz, [connector.id])), baseUrl, {
-      serverInfo: opts.config.serverInfo,
-      activityContext: operatorActivityContext(context, authz),
-      credentialVault: opts.config.vault,
-      activityEnabled,
-      credentialManagement,
-      defer,
-      oauthManagement: false,
-      ...(!oauthConnectUnavailable(opts)
-        ? { oauthConnectUrl: (id: string) => oauthConnectUrl(opts, baseUrl, id, authz.principalKey) }
-        : {}),
-      discoveryConcurrency: 1,
-      personalCredentialOwner: authz.principalKey,
-      mayManage,
-      timeoutMs: opts.config.discovery.probeTimeoutMs,
-      signal: request.signal,
-    });
+    const data = yield* uiData(
+      opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [connector.id])),
+      baseUrl,
+      {
+        serverInfo: opts.config.serverInfo,
+        activityContext: operatorActivityContext(context, authz),
+        credentialVault: opts.config.vault,
+        activityEnabled,
+        credentialManagement,
+        defer,
+        oauthManagement: false,
+        ...(!oauthConnectUnavailable(opts)
+          ? { oauthConnectUrl: (id: string) => oauthConnectUrl(opts, baseUrl, id, authz.principalKey) }
+          : {}),
+        discoveryConcurrency: 1,
+        personalCredentialOwner: authz.principalKey,
+        mayManage,
+        timeoutMs: opts.config.discovery.probeTimeoutMs,
+        signal: request.signal,
+      },
+    );
     const detail = data.connectors[0]!;
     if (detail.overlay)
       yield* withDeadlineEffect(() => scanOperatorActivity(context, authz, registry, [detail.overlay!], []), {

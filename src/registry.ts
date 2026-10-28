@@ -24,6 +24,7 @@ import { carryCatalogFreshness, markCatalogFreshness } from "./catalog-freshness
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
+import { forwardsPrincipal } from "./request-principal.js";
 import { canonicalJson } from "./canonical-json.js";
 import type { CredentialVault } from "./credential-contract.js";
 import { storedCredentialShape } from "./credential-rules.js";
@@ -302,6 +303,8 @@ export interface RegistryScope {
   currentResultAccess?: RegistryView["recheckResultAccess"];
   /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
   caller?: ConnectorCaller;
+  /** Operator admission, forwarded only to principal-forwarding remote MCP connectors. */
+  operatorCaller?: ConnectorCaller;
 }
 
 const MAX_PERSONAL_REGISTRIES = 1_024;
@@ -713,6 +716,9 @@ export class Registry implements RegistryView {
     scope?: RegistryScope,
   ): ConnectorContext {
     const connector = this.connectors.get(id);
+    if (!scope?.caller && scope?.operatorCaller && connector && forwardsPrincipal(connector)) {
+      scope = { ...scope, caller: scope.operatorCaller };
+    }
     const credentialConfig = connector?.credential;
     let credentialAccess: ConnectorContext["credential"];
     let credentialProgram: Effect.Effect<import("./types.js").ConnectorCredentialValues | null, unknown> | undefined;
@@ -818,12 +824,13 @@ export class Registry implements RegistryView {
 
   /** The admitted identity fields used by both catalog caching and reporting. */
   private catalogPartition(scope?: RegistryScope): string {
+    const caller = scope?.caller ?? scope?.operatorCaller;
     return JSON.stringify([
       scope?.principalKey ?? this.opts.credentialOwner ?? null,
       scope?.subjectKey ?? null,
-      scope?.caller?.identity ?? null,
-      scope?.caller?.authenticated ?? false,
-      scope?.caller?.pool ?? null,
+      caller?.identity ?? null,
+      caller?.authenticated ?? false,
+      caller?.pool ?? null,
     ]);
   }
 

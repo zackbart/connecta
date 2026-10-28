@@ -50,6 +50,7 @@ const PROBLEM_TITLE: Readonly<Record<UiProblem, string>> = {
   oauth_required: "needs authorization",
   credential_required: "needs a credential",
   auth_required: "needs a secret in the deployment",
+  caller_refused: "couldn't authenticate as you",
   credential_mismatch: "can't use its saved credential",
   catalog_failed: "couldn't load its tools",
 };
@@ -98,7 +99,7 @@ export function attentionItems(
         ...base,
         problem: PROBLEM_TITLE[problem],
         body: signals.failed ? `Details didn't load · ${affects(paths)}` : affects(paths),
-        fix: { kind: problem, connectorId: config.id },
+        fix: problem === "caller_refused" ? null : { kind: problem, connectorId: config.id },
       });
     } else if (signals.failed) {
       connectors.push({

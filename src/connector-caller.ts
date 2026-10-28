@@ -17,7 +17,7 @@
 // registry view that request receives, and `api()` hands handlers that same
 // context object; no argument or program can name it, and a header only
 // through an inbound-auth provider configured to read one (a bearer's asserted
-// principal). A context no request admitted, such as an operator probe, has no caller, and a delegated provider fails closed on it,
+// principal). A context no request admitted has no caller, and a delegated provider fails closed on it,
 // as it does on the anonymous caller an open deployment admits.
 
 import { Caller, serviceFor, setViewService } from "./runtime/call.js";

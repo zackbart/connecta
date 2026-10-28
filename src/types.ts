@@ -247,7 +247,7 @@ export interface ConnectorContext {
   timeoutMs?: number;
 }
 
-type ConnectorStatusState = "ok" | "auth_required" | "credential_required" | "error";
+type ConnectorStatusState = "ok" | "per_caller" | "auth_required" | "credential_required" | "error";
 
 /** The last agent-facing catalog read this runtime served for one connector. */
 export interface CatalogAccessObservation {
@@ -261,6 +261,7 @@ export type ResourceTemplateRefusalCode = "resource_template_ambiguous" | "resou
 export interface ConnectorStatus {
   /** Distinct host-observed refusal codes, without URI or template text. */
   resourceTemplateRefusals?: ResourceTemplateRefusalCode[];
+  /** `per_caller` is non-error: caller-bound auth has no admitted caller to check. */
   state: ConnectorStatusState;
   /** When state === "auth_required", the URL the operator should open. */
   authorizationUrl?: string;

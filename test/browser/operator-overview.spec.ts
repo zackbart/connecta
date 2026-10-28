@@ -96,3 +96,56 @@ test("the overview is the maintainer's landing page, with health, attention and 
   await expect(mapNode(page, "connector:notes")).toHaveClass(/problem-warn/);
   await checks(page);
 });
+
+test("per-caller status stays neutral in the map and offers no auth fix", async ({ page }) => {
+  const contract = maintainer();
+  contract.agents = [];
+  for (const row of contract.live.connectors) {
+    row.status = "per_caller";
+    delete row.problem;
+    row.tools = [];
+  }
+  const served = structuredClone(data);
+  for (const row of served.connectors) {
+    row.status = "per_caller";
+    delete row.problem;
+    delete row.credential;
+    delete row.authorizationUrl;
+    row.oauth = false;
+    row.tools = [];
+    row.toolCount = 0;
+    if (row.overlay) {
+      row.overlay.status = "per_caller";
+      delete row.overlay.problem;
+      row.overlay.tools = [];
+    }
+  }
+  await install(page, contract, served);
+  await page.goto(VISUAL_ORIGIN + "/");
+  await expect(page.locator(".overview-title .badge")).toHaveText("No attention needed");
+  await expect(mapNode(page, "connector:notes")).toContainText("Per caller");
+  await expect(mapNode(page, "connector:notes")).not.toHaveClass(/problem-(warn|danger)/);
+  await page.goto(VISUAL_ORIGIN + "/connectors/github#connection");
+  await expect(page.getByText("Authenticates as each caller; verified on use.")).toBeVisible();
+  await expect(page.getByText("Its secret is set in deployment config", { exact: false })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
+});
+
+test("a principal refusal has caller-specific copy and no secret fix prompt", async ({ page }) => {
+  const contract = maintainer();
+  const served = structuredClone(data);
+  const connector = served.connectors.find((row) => row.id === "github")!;
+  connector.status = "auth_required";
+  connector.problem = "caller_refused";
+  connector.oauth = false;
+  delete connector.credential;
+  delete connector.authorizationUrl;
+  if (connector.overlay) Object.assign(connector.overlay, { status: "auth_required", problem: "caller_refused" });
+  const live = contract.live.connectors.find((row) => row.id === "github")!;
+  Object.assign(live, { status: "auth_required", problem: "caller_refused" });
+  await install(page, contract, served);
+  await page.goto(VISUAL_ORIGIN + "/connectors/github#connection");
+  await expect(page.getByText("This connector could not authenticate as you.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
+  await expect(page.getByText("Its secret is set in deployment config", { exact: false })).toHaveCount(0);
+});

@@ -77,11 +77,16 @@ export function authorizedPerson(
 }
 
 /** The partition an identity carries into a registry view of the given connectors. */
-export function scopeFor(authz: Authorized, connectorIds: RegistryScope["connectorIds"] = "all"): RegistryScope {
+export function scopeFor(
+  authz: Authorized,
+  authenticated: boolean,
+  connectorIds: RegistryScope["connectorIds"] = "all",
+): RegistryScope {
   return {
     connectorIds,
     ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
     ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+    operatorCaller: { identity: authz.identity, authenticated },
   };
 }
 
@@ -92,7 +97,7 @@ export function scopeFor(authz: Authorized, connectorIds: RegistryScope["connect
 export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
   // Operator catalogs describe the default endpoint's view, never a pool view.
   if (!admitsMaintainer(opts, authz)) return refuse("not found", 404);
-  return Effect.succeed(opts.registry.scoped(scopeFor(authz)));
+  return Effect.succeed(opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0)));
 }
 
 /**
@@ -101,10 +106,13 @@ export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effe
  * private 404 for anyone else. mayManageConnector still decides each action.
  */
 export function managementRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
-  if (isMaintainer(opts.maintainers, authz.identity)) return Effect.succeed(opts.registry.scoped(scopeFor(authz)));
+  if (isMaintainer(opts.maintainers, authz.identity))
+    return Effect.succeed(opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0)));
   const ids = memberConnectors(opts, authz.identity);
   if (ids !== "all" && ids.size === 0) return refuse("not found", 404);
-  return Effect.succeed(opts.registry.scoped(scopeFor(authz, ids === "all" ? "all" : [...ids])));
+  return Effect.succeed(
+    opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, ids === "all" ? "all" : [...ids])),
+  );
 }
 
 /**

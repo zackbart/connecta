@@ -493,7 +493,7 @@ function matrixFor(
 function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect<Response, Answer> {
   const { opts } = context;
   return Effect.gen(function* () {
-    const registry = opts.registry.scoped(scopeFor(authz));
+    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0));
     const selected = context.url.searchParams.get("connector");
     const visible = registry.listConnectors().filter((connector) => selected === null || connector.id === selected);
     if (selected !== null && visible.length === 0) return yield* refuse("unknown connector", 404);
@@ -781,7 +781,7 @@ function memberRead(
   return Effect.gen(function* () {
     const allIds = opts.registry.listConnectors().map((c) => c.id);
     const ids = new Set(allIds.filter((id) => pools.some(([, pool]) => servesConnector(pool, id))));
-    const registry = opts.registry.scoped(scopeFor(authz, [...ids]));
+    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [...ids]));
     const selected = context.url.searchParams.get("connector");
     const visible = registry
       .listConnectors()

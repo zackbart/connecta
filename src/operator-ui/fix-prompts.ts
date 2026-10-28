@@ -13,7 +13,11 @@ import type { UiCredentialProblem, UiProblem } from "./model.js";
  * `refusedNotice` in view.ts); what remains are the page's own sentences and a
  * credential form's field checks.
  */
-export type FixPromptKind = UiProblem | UiCredentialProblem | "credential_test_failed" | "oauth_action_failed";
+export type FixPromptKind =
+  | Exclude<UiProblem, "caller_refused">
+  | UiCredentialProblem
+  | "credential_test_failed"
+  | "oauth_action_failed";
 
 const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
   connector_unavailable: {

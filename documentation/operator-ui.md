@@ -522,6 +522,26 @@ exception: clearing a stored value that cannot be read is accepted although
 `manage` lists only `save` in that state. Public HTML shells and static assets carry no catalog data.
 Access-token management also requires an interactive session.
 
+Principal-forwarding `remoteMcp()` connectors check status and catalog as the
+operator admitted on that request, under their configured `accept` policy.
+The resolver and configured transport reach the real downstream; success is
+`ok`, and a failure keeps its actual status classification. Another principal
+never reuses that operator's client, even if their tokens match. Other request
+auth, credential, OAuth and headers auth keep their existing status behavior.
+
+When no admitted caller is available, these connectors return `per_caller`:
+"Authenticates as each caller; verified on use." The page shows a neutral
+"Per caller" badge, no attention item and no fix prompt. This is an additive
+member of the public `ConnectorStatus["state"]` union, including live overlays
+and member connections; exhaustive consumers must handle it. It reports no
+connection verification and does not run a resolver or downstream request.
+An admitted caller's auth refusal uses `problem: "caller_refused"`, with fixed
+caller-specific copy and no secret-repair prompt. Principal-forwarding
+connectors never receive the deployment-secret diagnosis. For example, `notes`
+with `accept: "human"` is checked as `alice` when she opens the page; a background
+check reports `per_caller`. `connecta doctor --config` continues to print only
+the config snapshot, and never treats a `per_caller` overlay as an error.
+
 `GET /ui/connectors/:id` returns the existing auth controls plus an optional typed
 `overlay`, all from the same status/catalog observation. The overlay contains
 complete classified tools with input/output schemas, registration path, catalog

@@ -35,7 +35,7 @@ function AuthActions({
   const id = connector.id;
   const authorization = safeHttpHref(connector.authorizationUrl);
   const busy = state.oauthBusy === id;
-  if (connector.status === "loading") return null;
+  if (connector.status === "loading" || connector.status === "per_caller") return null;
   if (handoff && manage && connector.oauth) {
     const target = new URL(`/connect/${encodeURIComponent(id)}`, window.location.origin);
     target.searchParams.set("h", handoff);
@@ -126,10 +126,11 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
     !local && connector.status !== "loading" && connector.problem !== credentialFix
       ? problemCopy(connector.problem)
       : null;
-  const fixKind = problem ? connector.problem : undefined;
+  const fixKind = problem && connector.problem !== "caller_refused" ? connector.problem : undefined;
   return (
     <div className="collection connector-auth" data-connector={id}>
       {connector.status === "loading" ? <StateBlock busy>Loading authentication details…</StateBlock> : null}
+      {connector.status === "per_caller" ? <p>Authenticates as each caller; verified on use.</p> : null}
       {problem && connector.problem ? (
         <div className={problemTone(connector.problem) === "warn" ? "problem-block warn" : "problem-block"}>
           <Callout

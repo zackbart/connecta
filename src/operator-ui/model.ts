@@ -21,13 +21,15 @@ export interface UiTool extends Pick<OperatorTool, "name" | "address" | "descrip
  * (`oauth_required`, which also covers an expired or revoked grant — the
  * status seam cannot tell those apart), an operator-managed credential slot
  * (`credential_required`), or a secret that lives in deployment configuration
- * (`auth_required`).
+ * (`auth_required`). Principal forwarding instead reports `caller_refused`,
+ * which has no secret-repair prompt.
  */
 export type UiProblem =
   | "connector_unavailable"
   | "oauth_required"
   | "credential_required"
   | "auth_required"
+  | "caller_refused"
   | "credential_mismatch"
   | "catalog_failed";
 

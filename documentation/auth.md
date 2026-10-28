@@ -2846,8 +2846,18 @@ auth: {
   returns the same token. `token.invalidate(rejected, ctx, { principal })`
   receives the principal the rejected token was minted for.
 - Catalog listing needs an admitted caller like any call, and its cache stays
-  partitioned per caller. Operator status and catalog checks carry no caller,
-  so they report `auth_required` without connecting.
+  partitioned per caller. An operator status/catalog check forwards that
+  request's admitted caller under the same `accept` policy and refusal rules
+  as a call. It checks the resolver, custom `fetch` and downstream connection
+  and catalog as that operator; it never substitutes another identity.
+- Without an admitted caller, status returns the non-error `per_caller` state
+  with "Authenticates as each caller; verified on use." It does not resolve a
+  token or contact the downstream. Calls and catalog reads still refuse a
+  missing caller with `auth_required`. An admitted caller who fails `accept`
+  receives the same refusal from status as from a call. The operator page
+  offers no secret-configuration diagnosis or fix prompt for this refusal.
+  `per_caller` is an additive member of the public `ConnectorStatus["state"]`
+  union; consumers with exhaustive state handling must account for it.
 - The connector stays shared. Connecta keeps no per-principal credential state
   and never stores, logs or describes the principal or the token. `describe()`
   reports `mode: "request"` as for any request resolver.

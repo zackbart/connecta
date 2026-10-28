@@ -13,6 +13,21 @@ import { validIdentityReference } from "./identity.js";
 import type { RequestPrincipal, RequestPrincipalPolicy } from "./request-token.js";
 import type { ConnectorContext } from "./types.js";
 
+const forwardingConnectors = new WeakSet<object>();
+
+/** Internal construction tag; never inferred from request data or descriptions. */
+export function tagPrincipalForwarding<C extends object>(connector: C): C {
+  forwardingConnectors.add(connector);
+  return connector;
+}
+
+export function forwardsPrincipal(connector: object): boolean {
+  for (let current: object | null = connector; current; current = Object.getPrototypeOf(current) as object | null) {
+    if (forwardingConnectors.has(current)) return true;
+  }
+  return false;
+}
+
 /**
  * The principal this operation's admitted caller is. Anything else is refused
  * through `refuse`, the connector's own `auth_required` error.
@@ -23,7 +38,7 @@ export function requestPrincipalFor(
   refuse: (reason: string) => Error,
 ): RequestPrincipal {
   const caller = callerOf(ctx);
-  // An operator check, a context no request admitted, or an open deployment's anonymous caller.
+  // A context no request admitted, or an open deployment's anonymous caller.
   if (!caller?.authenticated) throw refuse("acts as the admitted caller, and this operation has none");
   const { identity } = caller;
   if (identity.agent !== undefined) {
