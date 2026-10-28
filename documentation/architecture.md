@@ -1077,7 +1077,12 @@ result and errors, the invocation's raw reply, executor outcomes and logs,
 emits, and resource and skill reads. The agent boundary (`redactAgentOutput`,
 every meta-tool exit and the MCP route) repeats every check except short
 private values, which would rewrite Connecta's own ids, counts and addresses;
-payload passes already removed them. Identifiers sent beside a credential — a
+payload passes already removed them. Each `execute_code` response crosses one
+operation-boundary envelope pass after write accounting, including success,
+failure, budget refusal, cancellation and oversized-code intake refusal. The
+pass includes emits and diagnostics. Connecta attaches its own integer
+`hostCalls` counters afterward. The MCP route still checks the serialized HTTP
+response separately. Identifiers sent beside a credential — a
 confidential client's ID, a Basic username beside a password of at least eight
 characters, and credential-slot fields named as identifiers (`…Id`, `user`,
 `username`, `login`, `email`, `public…`) — are matched whole only: consent URLs
