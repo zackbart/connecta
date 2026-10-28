@@ -224,6 +224,8 @@ describe, when the exact constraints matter.
 Repeated searches in one request reuse a private lexical index for the same
 visible catalog and safety filter. Returned schemas and annotations are independent
 copies: changing a result cannot change later discovery or tool classification.
+Registry invalidation or a stored credential or OAuth grant change replaces the
+retained catalog and its index before the next discovery read in that request.
 The index never crosses request or caller/pool boundaries.
 
 ### TypeScript signatures

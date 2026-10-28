@@ -35,7 +35,7 @@ import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
 import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { responseCacheKeys } from "./storage/keys.js";
+import { oauthGrantKeys, responseCacheKeys } from "./storage/keys.js";
 import type { ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } from "./types.js";
 
 interface CatalogCacheSettings {
@@ -412,6 +412,33 @@ class CatalogPolicy extends Context.Service<CatalogPolicy, CatalogCacheSettings>
 ) {}
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void {
   setViewService(ctx, CatalogPolicy, value);
+}
+
+/** Read the existing cache partition and fences without creating cache state. */
+export function retainedCatalogIdentity(ctx: ConnectorContext, connectorId: string): Effect.Effect<string, unknown> {
+  return Effect.gen(function* () {
+    const policy = serviceFor(ctx, CatalogPolicy);
+    const generation = yield* authStorage<string | null>(policy?.storage ?? ctx.storage, "get", [
+      responseCacheKeys.generation(connectorId),
+    ]);
+    const credential = yield* authValue(() => ctx.credential?.getAll());
+    const grant = yield* authStorage<string | null>(ctx.storage, "get", [oauthGrantKeys.grant]);
+    // Only a digest of auth material is retained; vault values and sealed
+    // OAuth state never become part of a request cache key or definition.
+    const auth =
+      credential || grant
+        ? (yield* authCall<{ fingerprint: string }>(fingerprintSerializedCatalog, [
+            JSON.stringify([credential ?? null, grant]),
+          ])).fingerprint
+        : null;
+    return JSON.stringify([
+      policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
+      ctx.baseUrl,
+      ctx.publicUrl,
+      generation,
+      auth,
+    ]);
+  });
 }
 interface CacheScope {
   closed: boolean;

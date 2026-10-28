@@ -1,6 +1,7 @@
 import { registerAuthMethod } from "./auth/native.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
+import { retainedCatalogIdentity } from "./catalog-cache.js";
 import { cloneTool } from "./tool-safety.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { Effect, Result } from "effect";
@@ -659,9 +660,9 @@ export class CatalogService {
   private readonly readOnly: boolean;
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
-  // success stays for the rest of the request, so a search and the call after
-  // it see one catalog. The cache owns a deep copy and each asker receives
-  // another at public boundaries; search keeps private, stable safety views
+  // success stays while its generation and credentials match, so a search
+  // and the call after it see one current catalog. The cache owns a deep copy;
+  // each asker receives another at public boundaries. Search keeps private, stable safety views
   // so its lexical index can be reused without exposing cached definitions.
   // A failure, or a read cancelled because every asker
   // left it, is dropped so the next ask reads again. The service lives and
@@ -672,7 +673,7 @@ export class CatalogService {
   // reads still in flight and is kept for what the registry's cannot do: hold
   // the success for the rest of the request, recorded by the read itself
   // rather than by an asker, whose probe deadline may have ended its wait.
-  private readonly catalogs = new Map<string, SharedRead<ToolDef[]>>();
+  private readonly catalogs = new Map<string, { identity: string; read: SharedRead<ToolDef[]> }>();
   // Key by the private source array, never connector id: a replacement read
   // gets new views and indexes. Each service belongs to one request and one
   // registry visibility view (caller/pool, hidden tools and classification).
@@ -757,9 +758,17 @@ export class CatalogService {
   // that joins it each end on their own terms, and the read is cancelled only
   // once every asker has gone (#571).
   private catalog(id: string, callOptions: ConnectorOperationOptions): Effect.Effect<ToolDef[], unknown> {
-    return Effect.suspend(() => {
-      let read = this.catalogs.get(id);
-      if (!read) {
+    return Effect.gen({ self: this }, function* () {
+      // Authored static definitions never depend on a downstream cache or
+      // credentials. Keep their discovery independent of credential reads.
+      const identity = this.registry.getConnector(id)?.staticTools
+        ? "static"
+        : yield* retainedCatalogIdentity(
+            this.registry.contextFor(id, this.baseUrl, this.requestScope, callOptions),
+            id,
+          );
+      let retained = this.catalogs.get(id);
+      if (!retained || retained.identity !== identity) {
         const started: SharedRead<ToolDef[]> = new SharedRead(
           (signal) =>
             registryProgram(this.registry, "getTools", id, this.baseUrl, this.requestScope, {
@@ -770,16 +779,16 @@ export class CatalogService {
           (succeeded) => {
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.
-            if (!succeeded && this.catalogs.get(id) === started) {
+            if (!succeeded && this.catalogs.get(id)?.read === started) {
               this.catalogs.delete(id);
             }
           },
           this.requestScope,
         );
-        this.catalogs.set(id, started);
-        read = started;
+        retained = { identity, read: started };
+        this.catalogs.set(id, retained);
       }
-      return read.join(callOptions.signal);
+      return yield* retained.read.join(callOptions.signal);
     });
   }
 

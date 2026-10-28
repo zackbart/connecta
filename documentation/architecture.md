@@ -320,6 +320,12 @@ safety view, so repeated searches reuse the lexical index. Endpoint and connecto
 read-only policy, hidden tools, classification and caller/pool grants still
 bound the visible corpus. Views are keyed by their source catalog array, so a
 replacement read cannot inherit an older index; failed reads remain evicted.
+Before reusing a dynamic catalog, the request checks the existing cache generation, admitted auth
+partition, stored credentials and OAuth grant identity. A change replaces the
+retained read and its derived search views without adding cross-request state.
+Registry flights use the same identity, so a replacement cannot join a listing
+started before invalidation or credential rotation.
+Authored static catalogs remain independent of credential reads.
 No snapshot or index is shared across requests. Search and describe clone only
 selected definitions before returning schemas or annotations; `loadConnector()`
 and native catalog listings still return independent copies. Observed output
