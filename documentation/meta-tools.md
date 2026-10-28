@@ -221,6 +221,11 @@ act on is the flag: any cap sets `inputSchemaTruncated` or
 `outputSchemaTruncated`, and that means repeat with `includeSchemas: "json"`, or
 describe, when the exact constraints matter.
 
+Repeated searches in one request reuse a private lexical index for the same
+visible catalog and safety filter. Returned schemas and annotations are independent
+copies: changing a result cannot change later discovery or tool classification.
+The index never crosses request or caller/pool boundaries.
+
 ### TypeScript signatures
 
 `includeSchemas: "typescript"` replaces both schema fields with one

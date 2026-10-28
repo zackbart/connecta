@@ -625,19 +625,10 @@ function serveMcp(
         // JSON-RPC errors and allowed HTTP 4xx text, outside tool result shaping.
         if (!response.body) return response;
         const body = yield* upwardStep(authInvoke<string>(response, "text", []));
-        let text: string | undefined;
-        if (response.headers.get("Content-Type")?.includes("application/json")) {
-          // Structured redaction also joins text blocks before a secret split
-          // across them can cross the serialization boundary.
-          try {
-            text = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body)));
-          } catch {
-            /* Non-JSON diagnostics still pass through the text boundary. */
-          }
-        }
-        // Parsed JSON already passes every string through the boundary. A second
-        // serialized pass would mistake a blob's encoding for credential bytes.
-        text ??= redactAgentOutput(sentSecrets, body);
+        const text = sentSecrets.serializedAgentOutput(
+          body,
+          response.headers.get("Content-Type")?.includes("application/json") ?? false,
+        );
         const headers = new Headers(response.headers);
         headers.delete("Content-Length");
         return new Response(text, { status: response.status, statusText: response.statusText, headers });
@@ -797,13 +788,20 @@ export function createMcpRoute(opts: ServerOptions): {
         const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
         const refuseAdmission = (error: unknown): Effect.Effect<Response, unknown> => {
           if (!(error instanceof ExecutorAdmissionError)) return Effect.fail(error);
-          if (error.code === "executor_cancelled") return Effect.fail(request.signal.reason ?? error);
+          if (error.code === "executor_cancelled") {
+            // The lifetime timer can withdraw a fallback waiter before the
+            // enclosing timeout settles. Keep its public deadline response.
+            if (localAbort.signal.aborted && !request.signal.aborted) {
+              return Effect.succeed(cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded.")));
+            }
+            return Effect.fail(request.signal.reason ?? error);
+          }
           if (error.code === "executor_overloaded") warnAdmissionRejected(error);
           return Effect.succeed(cors(requestAdmissionFailure(sentSecrets, error)));
         };
         const admission = listenHeader
           ? Result.succeed(undefined)
-          : yield* Effect.result(admitted(opts.requestAdmission, request.signal));
+          : yield* Effect.result(admitted(opts.requestAdmission, localAbort.signal));
         if (Result.isFailure(admission)) return yield* refuseAdmission(admission.failure);
         const remainingMs = admission.success
           ? admission.success.remainingMs()
@@ -958,7 +956,7 @@ export function createMcpRoute(opts: ServerOptions): {
               return cors(mcpRefusal(sentSecrets, 413, -33006, "MCP request body too large."));
             }
             if (listenHeader && verdict === "other") {
-              const late = yield* Effect.result(admitted(opts.requestAdmission, request.signal));
+              const late = yield* Effect.result(admitted(opts.requestAdmission, localAbort.signal));
               if (Result.isFailure(late)) return yield* refuseAdmission(late.failure);
             }
           }

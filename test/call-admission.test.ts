@@ -80,6 +80,43 @@ describe("connector call admission controller", () => {
     expect(admission.snapshot()).toMatchObject({ active: 0, queued: 0 });
   });
 
+  it("refuses an expired waiter when the event loop delays its timeout", async () => {
+    const admission = new ConnectorCallAdmissionController(
+      "limited",
+      policy({ maxConcurrency: 1, queueTimeoutMs: 10, retryAfterMs: 123 }),
+    );
+    const held = await admission.acquire({ toolName: "read", args: {} });
+    const queued = admission.acquire({ toolName: "read", args: {} });
+    const refusal = expect(queued).rejects.toMatchObject({
+      admissionKind: "concurrency",
+      code: "rate_limited",
+      message: 'Connector "limited" call concurrency queue wait exceeded 10ms.',
+      retryAfterMs: 123,
+    });
+    expect(admission.snapshot().queued).toBe(1);
+
+    // Keep the timeout callback pending until after the synchronous release.
+    const blockedAt = Date.now();
+    while (Date.now() - blockedAt < 40) {
+      // Deliberately block timer delivery.
+    }
+    held.release();
+    await refusal;
+
+    const snapshot = admission.snapshot();
+    expect(snapshot).toMatchObject({
+      active: 0,
+      queued: 0,
+      totals: { admitted: 1, queued: 1, rejected: 1, rateLimited: 0, cancelled: 0 },
+      queueWaitMs: { count: 0, total: 0, max: 0 },
+    });
+    // Let the waiter's delayed timer run without changing its outcome or counters.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(admission.snapshot()).toEqual(snapshot);
+    (await admission.acquire({ toolName: "read", args: {} })).release();
+    expect(admission.snapshot()).toMatchObject({ active: 0, totals: { admitted: 2, rejected: 1 } });
+  });
+
   it("returns the exact rolling-window reset and admits at the boundary", async () => {
     vi.useFakeTimers();
     try {

@@ -661,7 +661,8 @@ export class CatalogService {
   // about, started by the first asker and joined by every later one. A
   // success stays for the rest of the request, so a search and the call after
   // it see one catalog. The cache owns a deep copy and each asker receives
-  // another, so discovery, invocation, and guest code never hold its objects.
+  // another at public boundaries; search keeps private, stable safety views
+  // so its lexical index can be reused without exposing cached definitions.
   // A failure, or a read cancelled because every asker
   // left it, is dropped so the next ask reads again. The service lives and
   // dies with one request, so no read here is ever awaited from another.
@@ -672,6 +673,10 @@ export class CatalogService {
   // the success for the rest of the request, recorded by the read itself
   // rather than by an asker, whose probe deadline may have ended its wait.
   private readonly catalogs = new Map<string, SharedRead<ToolDef[]>>();
+  // Key by the private source array, never connector id: a replacement read
+  // gets new views and indexes. Each service belongs to one request and one
+  // registry visibility view (caller/pool, hidden tools and classification).
+  private readonly searchViews = new WeakMap<ToolDef[], Map<string, ToolDef[]>>();
 
   constructor(
     private readonly registry: RegistryView,
@@ -736,7 +741,10 @@ export class CatalogService {
     return Effect.suspend(() =>
       duringViewEffect(
         { requestScope: this.requestScope, signal: callOptions.signal ?? this.requestSignal },
-        (signal) => this.catalog(id, { ...callOptions, signal }),
+        (signal) =>
+          Effect.map(this.catalog(id, { ...callOptions, signal }), (tools) =>
+            carryCatalogFreshness(tools, tools.map(cloneTool)),
+          ),
       ),
     ).pipe(Effect.catchDefect((error) => Effect.fail(error)));
   }
@@ -771,8 +779,29 @@ export class CatalogService {
         this.catalogs.set(id, started);
         read = started;
       }
-      return Effect.map(read.join(callOptions.signal), (tools) => carryCatalogFreshness(tools, tools.map(cloneTool)));
+      return read.join(callOptions.signal);
     });
+  }
+
+  private searchView(
+    id: string,
+    tools: ToolDef[],
+    includeWrites: boolean,
+    safety: CatalogSearchArgs["safety"],
+  ): ToolDef[] {
+    const readOnly = !includeWrites && (this.readOnly || this.registry.getConnector(id)?.readOnly === true);
+    const key = `${readOnly}:${safety ?? "all"}`;
+    let views = this.searchViews.get(tools);
+    if (!views) {
+      views = new Map();
+      this.searchViews.set(tools, views);
+    }
+    let view = views.get(key);
+    if (!view) {
+      view = toolsForSafety(readOnly ? tools.filter((tool) => tool.classification === "read") : tools, safety ?? "all");
+      views.set(key, view);
+    }
+    return view;
   }
 
   // Every named catalog under its own probe deadline, `concurrency` at a time,
@@ -792,11 +821,7 @@ export class CatalogService {
         Effect.result(
           withDeadlineEffect(
             (signal) =>
-              !includeWrites && (this.readOnly || this.registry.getConnector(id)?.readOnly === true)
-                ? Effect.map(this.catalog(id, { signal }), (tools) =>
-                    tools.filter((tool) => tool.classification === "read"),
-                  )
-                : this.catalog(id, { signal }),
+              Effect.map(this.catalog(id, { signal }), (tools) => this.searchView(id, tools, includeWrites, "all")),
             {
               ...(this.requestSignal ? { signal: this.requestSignal } : {}),
               timeoutMs: this.probeTimeoutMs,
@@ -838,7 +863,7 @@ export class CatalogService {
             results.map((result, index) => {
               const connector = visible[index]!;
               return Result.isSuccess(result)
-                ? { connector, tools: result.success }
+                ? { connector, tools: carryCatalogFreshness(result.success, result.success.map(cloneTool)) }
                 : { connector, error: result.failure };
             }),
         );
@@ -933,7 +958,12 @@ export class CatalogService {
           }
           return {
             ok: true,
-            resolved: { connector, toolName, definition, classificationFresh: catalogIsFresh(tools) },
+            resolved: {
+              connector,
+              toolName,
+              definition: cloneTool(definition),
+              classificationFresh: catalogIsFresh(tools),
+            },
             catalogMs: Date.now() - started,
           };
         },
@@ -1053,8 +1083,8 @@ export class CatalogService {
         connectors.map((connector) => connector.id),
         this.searchRoute,
       );
-      const searchableCatalogs = catalogs.map((catalog) =>
-        Result.map(catalog, (tools) => toolsForSafety(tools, safety)),
+      const searchableCatalogs = catalogs.map((catalog, index) =>
+        Result.map(catalog, (tools) => this.searchView(connectors[index]!.id, tools, true, safety)),
       );
       const matches: Array<{
         connector: Connector;
@@ -1200,7 +1230,8 @@ export class CatalogService {
       });
       const pageMatches = matches.slice(offset, offset + limit);
       const withSchemas = args.includeSchemas;
-      const entries = pageMatches.map((match) => {
+      const entries = pageMatches.map((selected) => {
+        const match = { ...selected, tool: cloneTool(selected.tool) };
         const output = withSchemas ? this.outputSchema(match.connector.id, match.tool) : {};
         const input = match.tool.inputSchema ?? { type: "object" };
         const signature =
@@ -1601,8 +1632,8 @@ export class CatalogService {
           };
         }
         const tools = catalog?.success ?? [];
-        const tool = tools.find((item) => item.name === addressResolution.toolName);
-        if (!tool) {
+        const selected = tools.find((item) => item.name === addressResolution.toolName);
+        if (!selected) {
           const message = `Unknown tool "${boundedEchoText(addressResolution.toolName)}" on connector "${addressResolution.connector.id}"`;
           const suggestions = describeSuggestions(addressResolution.connector.id, addressResolution.toolName, tools);
           return {
@@ -1621,6 +1652,7 @@ export class CatalogService {
             },
           };
         }
+        const tool = cloneTool(selected);
         const input = tool.inputSchema ?? { type: "object" };
         const output = this.outputSchema(addressResolution.connector.id, tool);
         const description = summarizeDescription(tool.description, args.fullDescriptions === true);

@@ -1,9 +1,10 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { apiFixture, context, SENTINEL } from "./fixtures/github-api.js";
 import { deferred } from "./fixtures/misc.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
+import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 
 beforeEach(() => {
   installOwnedTransport();
@@ -95,6 +96,68 @@ it("INV-5: malformed request tokens and resolver errors are refused without rend
   }
   expect(fixture.fetchStub).not.toHaveBeenCalled();
 });
+
+for (const mode of ["request", "principal"] as const) {
+  it.each([
+    { failure: "empty token", token: async () => "", state: "auth_required" },
+    {
+      failure: "typed auth failure",
+      token: async () => {
+        throw new ConnectorCallError("auth_required", SENTINEL);
+      },
+      state: "auth_required",
+    },
+    ...(["unavailable", "provider_permission_denied"] as const).map((code) => ({
+      failure: code,
+      token: async () => {
+        throw new ConnectorCallError(code, SENTINEL);
+      },
+      state: "error",
+    })),
+    {
+      failure: "untyped resolver failure",
+      token: async () => {
+        throw new Error(SENTINEL);
+      },
+      state: "error",
+    },
+  ])(
+    `INV-6 INV-10: ${mode} resolver status classifies $failure without dispatch or resolver text`,
+    async ({ token, state }) => {
+      const fixture = apiFixture();
+      const resolve = vi.fn(token);
+      const connector = remoteMcp("github", {
+        url: "https://api.githubcopilot.com/mcp/",
+        auth:
+          mode === "request"
+            ? { type: "request", token: resolve }
+            : { type: "request", principal: { accept: "human", token: resolve } },
+      });
+      const principal = { namespace: "test-users", id: "alice" };
+      const ctx = makeRegistry([connector])
+        .scoped({
+          connectorIds: "all",
+          caller: {
+            authenticated: true,
+            identity: { actor: { kind: "test-users", ...principal }, principal, interactive: true },
+          },
+        })
+        .contextFor(connector.id, "https://connecta.test", {});
+      try {
+        const status = await connector.status!(ctx);
+        expect(resolve).toHaveBeenCalledOnce();
+        expect(fixture.fetchStub).not.toHaveBeenCalled();
+        expect(status.state).toBe(state);
+        if (state === "auth_required") {
+          expect(status.message).toBe("Authorization required — open the URL to connect.");
+        }
+        expect(JSON.stringify(status)).not.toContain(SENTINEL);
+      } finally {
+        await connector.closeScope?.(ctx);
+      }
+    },
+  );
+}
 
 it("INV-11: request auth rejects personal ownership, callback/header mistakes and cleartext origins", () => {
   const options = {

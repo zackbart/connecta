@@ -272,6 +272,11 @@ export class ConnectorCallAdmissionController {
       // The waiter's own clock: the fiber's Clock for an Effect caller, the
       // live `Date.now` for a Promise one.
       const now = waiter.now();
+      if (now - waiter.queuedAt >= this.queueTimeoutMs) {
+        this.rejectedTotal++;
+        waiter.outcome.settle(Exit.fail(this.concurrencyLimited(`queue wait exceeded ${this.queueTimeoutMs}ms`)));
+        continue;
+      }
       this.pruneBudget(state, now);
       const retryAfterMs = this.budgetRetryAfterMs(state, now);
       if (retryAfterMs !== undefined) {

@@ -1066,6 +1066,41 @@ describe("review round 5", () => {
     expect(leakedRun(JSON.stringify(value), TOKEN)).toBeUndefined();
   });
 
+  it.each([
+    ["typed array", new Uint8Array([10])],
+    ["DataView", new DataView(new Uint8Array([10]).buffer)],
+    ["ArrayBuffer", new Uint8Array([10]).buffer],
+  ])("INV-5: %s byte views do not interrupt the numeric seam with neighbouring text", (_, n) => {
+    const secrets = new SentSecrets();
+    secrets.add("alice@example.com");
+    const plain = secrets.redact({ n: [10], text: "example-connecta" });
+    expect(plain.text).toBe(`${MARK}-connecta`);
+    // Typed binary follows the same number rule as the plain projection: withhold it whole
+    // when the seam touches its number, or keep its bytes if string replacement makes it safe.
+    expect(secrets.redact({ n, text: "example-connecta" })).toEqual({
+      n: plain.n[0] === 10 ? new Uint8Array([10]) : MARK,
+      text: plain.text,
+    });
+  });
+
+  it.each([
+    ["raw bytes", TOKEN, `x${TOKEN}z`],
+    ["UTF-8", "🌈日本語ひみつ🌈", "x🌈日本語ひみつ🌈z"],
+    ["nested base64", TOKEN, encoded(encoded(`x${TOKEN}z`))],
+    ["nested base64url", TOKEN, encoded(encoded(`x${TOKEN}z`, true), true)],
+  ])("INV-5: a typed byte view holding a match through %s is still withheld whole", (_, secret, text) => {
+    const secrets = new SentSecrets();
+    secrets.add(secret);
+    const bytes = new TextEncoder().encode(text);
+    for (const value of [bytes, new DataView(bytes.buffer), bytes.buffer]) {
+      expect(secrets.redact({ before: "public", value, after: "suffix" })).toEqual({
+        before: "public",
+        value: MARK,
+        after: "suffix",
+      });
+    }
+  });
+
   it("INV-5: typed binary leaves only as a fresh Uint8Array of its checked bytes, with no subclass or serializer", async () => {
     const secrets = new SentSecrets();
     secrets.add(TOKEN);

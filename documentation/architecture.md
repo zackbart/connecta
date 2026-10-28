@@ -315,6 +315,17 @@ surface, and the endpoint's `readOnly`.
 `test/execute.test.ts` asserts the parity directly, because a sandbox path that
 quietly diverges is how generated code would mint a capability.
 
+Catalog search retains private, stable arrays for each request's registry and
+safety view, so repeated searches reuse the lexical index. Endpoint and connector
+read-only policy, hidden tools, classification and caller/pool grants still
+bound the visible corpus. Views are keyed by their source catalog array, so a
+replacement read cannot inherit an older index; failed reads remain evicted.
+No snapshot or index is shared across requests. Search and describe clone only
+selected definitions before returning schemas or annotations; `loadConnector()`
+and native catalog listings still return independent copies. Observed output
+schemas are resolved when rendering each page rather than retained in the index.
+`test/catalog-service.test.ts` guards reuse and mutation isolation.
+
 Program result paging shares `meta-tools.ts`'s direct-call stash envelope and
 reader. `program-result.ts` owns executor-independent byte limits;
 `execute.ts` issues bounded transfer cursors, and `guest-runtime.ts` reconstructs
@@ -336,8 +347,12 @@ capacity boundary, not tenant fairness, and one deployment serves one tenant.
 `admission.requests.maxDurationMs` defaults to 300,000 ms and may be set to a
 positive whole number up to 2,147,483,647 ms. Its clock starts when admission
 grants a permit and covers authorization, tool execution, and response delivery.
-The owning request aborts its derived signal at that deadline, including signals
-passed to connector calls, and closes a live response. If workerd ends the
+A header-named `subscriptions/listen` candidate starts this clock before auth;
+if classification requires a fallback permit, that queue wait shares the same
+deadline. The owning request aborts its derived signal at that deadline, including
+signals passed to admission waiters and connector calls, and closes a live
+response. A timed-out candidate withdraws its fallback waiter before returning
+504, so a later slot release cannot admit the ended request. If workerd ends the
 request without running that timer or cancellation, the controller reclaims
 only the expired permit's scalar record on the next request (or a queued
 request's own timer). It never reads the old request's signal or touches its
@@ -762,6 +777,11 @@ read-then-write fallback: agent-token slot swaps and
 adoption, OAuth handoff ownership, single-use connect links, every downstream
 OAuth grant write and consent claim, the result stash, and initialization of the cursor signing key.
 
+`set()` and mutating `compareAndSet()` statements first reclaim at most 16
+expired SQL rows per call. The CAS sweep runs as a separate statement; its
+affected-row count cannot change the comparison's boolean result. A
+`compareAndSet(key, null, null)` only checks absence and does not sweep.
+
 Every key is built in `src/storage/keys.ts`, which lists each family with its
 scope, version, codec, and TTL policy. Deployed-consumer persistence journeys
 check actual owner isolation in the physical database; key probes retain NUL
@@ -979,8 +999,9 @@ as plain data; an array that is not plain as a plain array of its indices; a
 `String`, `Number` or `Boolean` wrapper as its primitive; a `toJSON` result,
 called once and checked; a function or symbol as the placeholder; a typed array,
 `DataView` or `ArrayBuffer` as a fresh `Uint8Array` of its bytes, which are
-checked as bytes and, with the elements it held, as the numbers JSON shows for
-them. The type table is in [auth.md](./auth.md). An own accessor is
+checked as bytes on their own and, with the elements it held, as the numbers
+JSON shows for them, joined with neighbouring leaves without an intervening
+byte view. The type table is in [auth.md](./auth.md). An own accessor is
 never invoked: an object's copy leaves it out, an array index holds the
 placeholder. A change copies the containers on its path on first write, so a
 caller's value is never mutated. An array's non-index fields are never read:
@@ -1158,6 +1179,14 @@ The matcher is cached until its set changes; the empty set has a fast path.
 including errors, and every host-to-guest value or rejection passes through
 it. Both MCP transports also pass their serialized response through it, covering
 JSON-RPC errors, HTTP diagnostics, structured content, and paging responses.
+After fully reading an SDK response body, an idle request set (no registered
+forms or unregistered values) returns the original text without parsing or
+reserializing it, so clients receive exactly the bytes the SDK serialized. Only
+an active set reparses the body, which also canonicalizes numbers a handler
+emitted through `JSON.rawJSON` (an out-of-range value becomes `null`, digits past
+double precision are rounded); clients must not rely on either behaviour. A set
+activated before the read completes still applies structured redaction, with
+the text fallback for non-JSON diagnostics.
 Per-call redaction remains before diagnostic truncation, paging, and emits. Paging stores only request-redacted text before encoding
 chunks, so a later request needs no original credentials. Programs retain the
 request set only for the run so later outputs cannot reconstruct an echo.
