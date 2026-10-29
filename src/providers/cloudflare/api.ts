@@ -594,7 +594,10 @@ export const safety = (): SafetyOptions => {
       // The table applies to the envelope and again to its result, as redact does.
       withholds: (operation) => {
         const hint = reviewed.withholds!(operation);
-        return (path) => hint(path) || (path[0]?.replace(/\[\]$/, "") === "result" && hint(path.slice(1)));
+        return (path) =>
+          hint(path) ||
+          (path[0] === "result" && hint(path.slice(1))) ||
+          (path[0] === "result[]" && hint(["[]", ...path.slice(1)]));
       },
     },
     sensitiveFields: { names: [], choice: "drop" },

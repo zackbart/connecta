@@ -64,7 +64,8 @@ describe("stripe() over an API key", () => {
     // Every declared path is selectable; the hint names the subset value safety always withholds.
     expect(intent.fields).toEqual(expect.arrayContaining(["id", "amount", "status", "client_secret"]));
     const hooks = await details("/v1/webhook_endpoints");
-    expect(hooks.withheld).toEqual(expect.arrayContaining(["data", "data[].secret"]));
+    expect(hooks.withheld).toEqual(expect.arrayContaining(["data[].secret"]));
+    expect(hooks.withheld).not.toContain("data");
     expect(hooks.fields).toEqual(expect.arrayContaining(["has_more", "data", "data[].id", "data[].secret"]));
     expect(sent).toEqual([]);
     respond = () =>

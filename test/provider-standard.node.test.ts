@@ -348,7 +348,7 @@ describe("the hatch details response contract (S5)", () => {
     const text = readFileSync(documentationPath, "utf8").replace(/\s+/g, " ");
     expect(text).toContain("**`response` promises no readability.**");
     expect(text).toContain("may still be withheld or redacted at read time");
-    expect(text).toContain("`withheld` is a best-effort hint");
+    expect(text).toContain("`withheld` is a best-effort, incomplete hint");
     expect(text).toContain("never treat it as safe");
   });
 });

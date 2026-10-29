@@ -427,10 +427,14 @@ Write `fields` filters and reductions from it without a sampling read:
 - `fields` lists the declared paths a read can select, in the read and write
   tools' `fields` coordinates; pass them unchanged, such as
   `fields: ["data[].id"]`.
-- `withheld` is a best-effort hint: the listed paths that value safety always
-  withholds or redacts, by a reviewed path, a credential name, the
-  deployment's sensitive-field choice or a closed projection. A container
-  above one is hinted too. Every hinted path also appears in `fields`.
+- `withheld` is a best-effort, incomplete hint: the listed paths whose
+  non-null values value safety always withholds or redacts, by a reviewed
+  redaction path, a credential name, the deployment's sensitive-field choice
+  or a closed projection. A rule that can leave some value unchanged is never
+  a hint. Examples are URL sanitizing, reduction to an origin, which returns a
+  bare origin unchanged, redaction by a key, type or label, and a credential
+  suffix rule that scrubs only strings. A container above a hinted path is
+  not hinted either. Every hinted path also appears in `fields`.
 - `omitted` counts declared paths not listed.
 
 **`response` promises no readability.** Value safety runs on every read. A

@@ -1491,18 +1491,31 @@ function acceptsCredential(schema: JsonSchema | undefined, depth: number): boole
   );
 }
 
-/** Whether value safety always withholds or redacts the value at a declared response path (list markers dropped). */
+/** Whether value safety always withholds or redacts a non-null value at a declared response path (`data[]`, `id`). */
 export type PathWithholds = (path: readonly string[]) => boolean;
 
 const ENV_VALUE_NAMES = ENV_VALUE_FIELDS.map(normalizedName);
 
+/** `data[].id` segments as tokens, a list's items as `[]`: `["data", "[]", "id"]`. */
+function tokensOf(segments: readonly string[]): string[] {
+  return segments.flatMap((segment) =>
+    segment === "[]"
+      ? ["[]"]
+      : segment.endsWith("[]")
+        ? [normalizedName(segment.slice(0, -2)), "[]"]
+        : [normalizedName(segment)],
+  );
+}
+
 /**
- * A best-effort hint for discovery over rules that change whatever value they
- * reach: a path is withheld when it sits at or inside a reviewed path (matched
- * from the body's root, or at any depth with `anyDepth`), or any of its names
- * satisfies the name rule, which also sees the parent's name. Rules that
- * depend on a value (`url:`, `[?…]`, `@keys`) are not hints. Names compare
- * normalized, and `{}` or `*` matches any name.
+ * A best-effort hint for discovery over rules that change every non-null value
+ * they reach: a path is withheld when it sits at or inside a reviewed redaction
+ * path (matched from the body's root, or at any depth with `anyDepth`), or any
+ * of its names satisfies the name rule, which also sees the parent's name.
+ * Paths carry their list markers: a reviewed `[]` needs a declared list there,
+ * while a named segment also reaches every item of a list. Rules that can leave
+ * a value unchanged (`url:`, `origin:` or `#url` sanitizing, `[?…]`, `@keys`)
+ * are not hints. Names compare normalized, and `{}` or `*` matches any name.
  */
 export function pathWithholds(rules: {
   readonly paths?: readonly string[];
@@ -1511,23 +1524,25 @@ export function pathWithholds(rules: {
 }): PathWithholds {
   const patterns = (rules.paths ?? []).flatMap((raw) => {
     const { mode, segments } = parsePath(raw);
-    if (mode === "url" || segments.some((segment) => segment.startsWith("[?") || segment === "@keys")) return [];
-    return [
-      segments
-        .filter((segment) => segment !== "[]")
-        .map((segment) => (segment === "{}" ? "*" : normalizedName(segment))),
-    ];
+    if (mode !== "redact" || segments.some((segment) => segment.startsWith("[?") || segment === "@keys")) return [];
+    return [segments.map((segment) => (segment === "[]" ? "[]" : segment === "{}" ? "*" : normalizedName(segment)))];
   });
+  const reaches = (pattern: readonly string[], tokens: readonly string[], from: number) => {
+    let at = from;
+    for (const part of pattern) {
+      if (part !== "[]") while (tokens[at] === "[]") at += 1;
+      if (at >= tokens.length || (part === "[]" ? tokens[at] !== "[]" : part !== "*" && part !== tokens[at]))
+        return false;
+      at += 1;
+    }
+    return true;
+  };
   return (path) => {
-    const names = path.map((segment) => normalizedName(segment.replace(/\[\]$/, "")));
+    const tokens = tokensOf(path);
+    const names = tokens.filter((token) => token !== "[]");
     if (rules.names && names.some((name, at) => rules.names!(name, names[at - 1] ?? ""))) return true;
-    return patterns.some((pattern) =>
-      (rules.anyDepth ? names.map((_, at) => at) : [0]).some(
-        (at) =>
-          pattern.length <= names.length - at &&
-          pattern.every((part, index) => part === "*" || part === names[at + index]),
-      ),
-    );
+    const starts = rules.anyDepth ? tokens.flatMap((token, at) => (token === "[]" ? [] : [at])) : [0];
+    return patterns.some((pattern) => starts.some((at) => reaches(pattern, tokens, at)));
   };
 }
 
@@ -1596,9 +1611,8 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
                   redactedNames.includes(name) ||
                   (env && ENV_VALUE_NAMES.includes(name)) ||
                   (parent === "deployhooks" && name === "url") ||
-                  (!kept.has(name) &&
-                    !scopeParents.includes(parent) &&
-                    (containsCredential(name) || CREDENTIAL_SUFFIX.test(name))),
+                  // The suffix rule scrubs only strings, so only the whole-value credential rule hints.
+                  (!kept.has(name) && !scopeParents.includes(parent) && containsCredential(name)),
               });
         hints.set(key, hint);
       }

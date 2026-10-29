@@ -63,12 +63,13 @@ function hatchLine(name, hatch) {
   return (
     `- **Hatch:** ${tool("search")} finds this API's operations and reads no account data, ` +
     `${tool("details")} shows one operation's contract, and ${tool("read")} calls a reviewed read.` +
+    " Details' `response.fields` promises selection only; `withheld` hints are incomplete, and absence never means safe or readable." +
     (entries.some(([, verdict]) => verdict === "write" || verdict === "destructive")
       ? ` ${tool("write")} calls a reviewed write; the host may ask the user to confirm it.`
       : "") +
     " An operation without a reviewed verdict is refused." +
     (refused
-      ? ` ${refused} ${refused === 1 ? "operation is" : "operations are"} refused by design; use ${tool("details")} with the method and path to inspect the original operation summary and its separate refusal. Use details for refused methods outside the read/write call schemas; those methods remain unavailable.`
+      ? ` ${refused} ${refused === 1 ? "operation is" : "operations are"} refused by design; use ${tool("details")} with the method and path to see each summary and refusal, even for methods outside the read/write schemas.`
       : "")
   );
 }

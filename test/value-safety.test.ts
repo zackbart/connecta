@@ -231,46 +231,52 @@ describe("value-safety engine", () => {
     });
     const hint = safety.withholds("GET", "/v1/things");
     const split = (path: string) => path.split(".");
-    const known = [
-      "hook_uuid",
-      "data[].hook_uuid",
-      "callback",
-      "card_number",
-      "x.card_number",
-      "items[].private_token",
-    ];
-    // Value-dependent rules (a URL's parameters, a map's keys or values, a typed record, a resource
-    // type) and reviewed paths placed elsewhere are not hints; neither is a reviewed keep.
+    const known = ["hook_uuid", "data[].hook_uuid", "card_number", "x.card_number", "items[].private_token"];
+    // Rules that can leave some value unchanged are not hints: a URL's parameters or a bare
+    // origin, a map's keys, a typed record, a resource type, a suffix rule that scrubs only
+    // strings (`input_tokens`). Nor are reviewed paths placed elsewhere, a `[]` path where no
+    // list is declared, a container above a withheld path, or a reviewed keep.
     const unknown = [
       "id",
       "result[].hook_uuid",
+      "data.hook_uuid",
+      "data",
       "drains[].headers",
       "aliases",
       "dest_conf",
+      "callback",
       "items[].value",
       "payer_page",
       "token_hint",
+      "usage.input_tokens",
     ];
     expect(known.filter((path) => !hint(split(path)))).toEqual([]);
     expect(unknown.filter((path) => hint(split(path)))).toEqual([]);
-    // Each hinted path really is withheld from a body that carries it.
-    const body = {
-      hook_uuid: "h-1",
-      data: [{ hook_uuid: "h-2" }],
-      callback: "not-a-url",
-      card_number: "4242",
-      x: { card_number: "4242" },
-      items: [{ private_token: "t-1" }],
-    };
-    const out = safety.redact(structuredClone(body), "GET", "/v1/things") as any;
-    expect([
-      out.hook_uuid,
-      out.data[0].hook_uuid,
-      out.callback,
-      out.card_number,
-      out.x.card_number,
-      out.items[0].private_token,
-    ]).toEqual(Array(6).fill(REDACTED));
+    // Each hinted path is withheld from a body carrying it, whatever non-null shape its value has.
+    for (const value of ["h-1", "https://hooks.example", 7, true, { nested: "v" }, ["v"]]) {
+      const body = {
+        hook_uuid: value,
+        data: [{ hook_uuid: value }],
+        card_number: value,
+        x: { card_number: value },
+        items: [{ private_token: value }],
+      };
+      const out = safety.redact(structuredClone(body), "GET", "/v1/things") as any;
+      expect([
+        out.hook_uuid,
+        out.data[0].hook_uuid,
+        out.card_number,
+        out.x.card_number,
+        out.items[0].private_token,
+      ]).toEqual(Array(5).fill(REDACTED));
+    }
+    // The excluded shapes really pass some value through: a bare origin and a number under a suffix name.
+    const passed = safety.redact(
+      { callback: "https://hooks.example", usage: { input_tokens: 7 } },
+      "GET",
+      "/v1/things",
+    ) as any;
+    expect(passed).toEqual({ callback: "https://hooks.example", usage: { input_tokens: 7 } });
     expect(safety.withholds("POST", "/v1/keys")(["id"])).toBe(true);
     expect(safety.withholds("POST", "/v1/things")(["hook_uuid"])).toBe(false);
   });

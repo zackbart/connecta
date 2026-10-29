@@ -444,6 +444,8 @@ describe("hatch details list selectable response fields, hint withheld ones, and
         if (op.tool === `${prefix}_read`) operations.set(`${op.method} ${op.path}`, op);
     }
     let tested = 0;
+    let hinted = 0;
+    let shapeReads = 0;
     const problems: string[] = [];
     // A bounded, deterministic sample: the first eight read operations the searches find.
     for (const { method, path } of [...operations.values()].slice(0, 8)) {
@@ -511,9 +513,28 @@ describe("hatch details list selectable response fields, hint withheld ones, and
             problems.push(`${label} ${field}: hinted withheld, read whole`);
         }
       }
+      // A hint holds for any non-null value, including shapes a value-dependent rule passes
+      // through untouched: a bare origin URL, a number and a boolean.
+      for (const shape of ["https://hooks.example", 7, true]) {
+        if (!withheld.length) break;
+        const shaped = populated(response, () => shape, fixed[name]);
+        world.serve(shaped);
+        for (let at = 0; at < withheld.length; at += 50) {
+          const chunk = withheld.slice(at, at + 50);
+          const read = await outcome({ fields: chunk });
+          if (!read.result) continue;
+          shapeReads += 1;
+          for (const field of chunk)
+            if (canonicalJson(valuesAt(read.result.data, field)) === canonicalJson(valuesAt(shaped, field)))
+              problems.push(`${label} ${field}: hinted withheld, read ${JSON.stringify(shape)} whole`);
+        }
+      }
+      if (withheld.length) hinted += 1;
     }
     expect(tested).toBeGreaterThan(0);
     expect(problems).toEqual([]);
+    // Every provider whose sample carries a hint confirms it under the pass-through shapes too.
+    if (hinted) expect(shapeReads, name).toBeGreaterThan(0);
   });
 
   // Values the contract never promised, from actual vendor shapes: an expandable, polymorphic or
@@ -524,6 +545,47 @@ describe("hatch details list selectable response fields, hint withheld ones, and
     return value?.structuredContent ?? value;
   };
   const intent = { id: "pi_1", object: "payment_intent", amount: 500, client_secret: "pi_1_secret_stored" };
+  it("stripe /v1/webhook_endpoints/{webhook_endpoint}: an origin-reduced URL is no hint, and a bare origin reads unchanged", async () => {
+    const world = await readWorld("stripe");
+    const body = {
+      id: "we_1",
+      object: "webhook_endpoint",
+      url: "https://hooks.example",
+      secret: "whsec_stored_signing_secret",
+      status: "enabled",
+    };
+    world.serve(body);
+    const details = await unwrap(
+      world.connector.callTool(
+        "stripe_api_details",
+        { method: "GET", path: "/v1/webhook_endpoints/{webhook_endpoint}" },
+        world.context(),
+      ),
+    );
+    expect(details.response.fields).toEqual(expect.arrayContaining(["url", "secret"]));
+    expect(details.response.withheld).toContain("secret");
+    expect(details.response.withheld).not.toContain("url");
+    const read = await unwrap(
+      world.connector.callTool(
+        "stripe_api_read",
+        { path: "/v1/webhook_endpoints/we_1", fields: ["url", "secret"] },
+        world.context(),
+      ),
+    );
+    expect(read.data.url).toBe("https://hooks.example");
+    expect(JSON.stringify(read)).not.toContain("whsec_stored_signing_secret");
+    // A URL with a path is still reduced to its origin at read time.
+    world.serve({ ...body, url: "https://hooks.example/stripe/private-route" });
+    const reduced = await unwrap(
+      world.connector.callTool(
+        "stripe_api_read",
+        { path: "/v1/webhook_endpoints/we_1", fields: ["url"] },
+        world.context(),
+      ),
+    );
+    expect(reduced.data.url).not.toContain("private-route");
+  });
+
   it.each([
     {
       name: "cloudflare",
@@ -544,7 +606,7 @@ describe("hatch details list selectable response fields, hint withheld ones, and
         result_info: { page: 1, per_page: 20, count: 1, total_count: 1 },
       },
       paths: ["result[].deploy_hook_uuid"],
-      hinted: ["result[].deploy_hook_uuid", "result"],
+      hinted: ["result[].deploy_hook_uuid"],
       secrets: ["8c3e1b0a-1d2f-4a5b-9c6d-7e8f9a0b1c2d"],
     },
     {
@@ -566,8 +628,8 @@ describe("hatch details list selectable response fields, hint withheld ones, and
           },
         ],
       },
+      // Reduced to its origin, so not a hint: a bare origin would read unchanged.
       paths: ["result[].destination_conf"],
-      hinted: ["result[].destination_conf"],
       secrets: ["logpush-stored-secret", "AKIAFIXTURE"],
     },
     {

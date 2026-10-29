@@ -2252,8 +2252,10 @@ cursor. `src/http/hatch-response.ts` builds details' capped `response` section
 from the index's declared response paths in `fields` coordinates. It lists
 selectable paths and promises no readability. Its `withheld` hint comes from
 `ResultSafety.withholds`: `ValueSafety.withholds` reads the rules `redact`
-applies that change any value they reach, and custom redactions may declare
-their own hint. Value-dependent rules are never hints. Standard hatch search removes conversational framing; framing-only
+applies that change every non-null value they reach, matched with list
+markers. Custom redactions may declare their own hint. Rules that can pass a
+value through (`url:`, `origin:`, `[?…]`, `@keys`, string-only scrubbing) are
+never hints. Standard hatch search removes conversational framing; framing-only
 queries return no matches. It admits partial lexical matches alongside full
 matches. Action/read queries require all content nouns in the operation text,
 or any noun in the path/id with at least half the nouns in the text. Their

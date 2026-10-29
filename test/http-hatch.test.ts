@@ -401,12 +401,12 @@ it(
     const { call, authenticate, sendPath } = setup();
     const details = (await call("details", { method: "GET", path: "/items" })) as any;
     // Every declared path is selectable. The hint names the subset the rules always withhold:
-    // email is the deployment's sensitive field and token a credential name, at any depth, and
-    // a container holding one is never read whole either.
+    // email is the deployment's sensitive field and token a credential name, at any depth. A
+    // container is never hinted: without its withheld child it reads unchanged.
     expect(details.response).toEqual({
       anchor: "data",
       fields: ["id", "email", "token", "label", "nested", "nested.id", "nested.email"],
-      withheld: ["email", "token", "nested", "nested.email"],
+      withheld: ["email", "token", "nested.email"],
     });
     expect(await call("details", { method: "GET", path: "/items" })).toEqual(details);
     // A reviewed redaction that declares no hint names nothing; the hint is never a promise.

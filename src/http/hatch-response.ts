@@ -10,9 +10,9 @@
 // every read, and what it withholds or redacts can depend on the values a
 // vendor returns (a resource type, a record's label, an expanded object, a
 // URL), which no index can know in advance. `withheld` is only a hint: the
-// listed paths the connection's own rules always withhold or redact
-// (`ResultSafety.withholds`), plus any container above one. An unlisted path
-// may still be withheld or redacted.
+// listed paths whose non-null values the connection's own rules always
+// withhold or redact (`ResultSafety.withholds`). An unlisted path may still be
+// withheld or redacted.
 import type { Operation, OperationIndex } from "../providers/_shared/rest/operation-index.js";
 import type { ResultSafety } from "./safety.js";
 
@@ -60,16 +60,18 @@ export function responseContract(
     const key = names(path).join(".");
     if (!spelled.has(key)) spelled.set(key, path);
   }
-  const keys = [...spelled.keys()];
   let withholds: (path: readonly string[]) => boolean;
   try {
     withholds = safety.withholds({ method: op.method, template: op.path });
   } catch {
     withholds = () => false;
   }
-  // A container holds what is withheld beneath it, so a read of it is never whole either.
-  const known = new Set(keys.filter((key) => withholds(key.split("."))));
-  for (const key of keys) if ([...known].some((inner) => inner.startsWith(`${key}.`))) known.add(key);
+  // The hint reads paths with their list markers, a list body's items included.
+  const known = new Set(
+    [...spelled]
+      .filter(([, path]) => withholds([...(anchor === "data[]" ? ["[]"] : []), ...path.split(".")]))
+      .map(([key]) => key),
+  );
   const depth = (path: string) => path.split(".").length;
   const ordered = [...spelled.values()]
     .map((path, at) => ({ path, at }))
