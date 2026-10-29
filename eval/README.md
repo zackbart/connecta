@@ -264,18 +264,34 @@ because the Worker imports the package by name from `dist/`.
   request goes to a Node-side vendor gateway, which dispatches it through the
   fake vendor transport below, with `redirect: "manual"`. Credential routing and
   every fail-closed refusal therefore apply unchanged, and a refusal reaches
-  the provider as a rejected fetch, as on Node. A followed redirect sends each
-  hop back through the gateway, so workerd never follows a `Location` around
-  the transport.
+  the provider as a rejected fetch, as on Node.
+  - The gateway admits only requests carrying the trial's random gateway
+    credential. It strips that credential before forwarding. It refuses
+    loopback and non-HTTP(S) targets, so it is never a path to a local service.
+  - The Worker follows redirects under the transport's rules
+    ([deploy/gateway-fetch.ts](deploy/gateway-fetch.ts)). Each hop is
+    classified again and sent `redirect: "manual"`, so workerd never follows a
+    `Location` around the gateway. A cross-origin hop drops Authorization,
+    Cookie and Proxy-Authorization for the rest of the chain.
+    `redirect: "error"` rejects, and so do more than 20 hops.
 - **Observed programs.** The program observer wraps the Dynamic Worker
   executor exactly as it wraps QuickJS on Node. Graders read the same
   `world.programs`, fetched from the Worker after the conversation.
 - **Process lifecycle.** Every `wrangler dev` runs in its own process group on
   a port below the kernel's ephemeral range, with its own devtools port, so
-  concurrent trials never share a port with each other or with a fake. A trial
-  stops its group when it ends. The first SIGINT/SIGTERM stops the batch in
-  order; a second kills every group at once. Process exit also kills any group
-  still running.
+  concurrent trials never share a port with each other or with a fake.
+  - A group stays tracked until no live member remains, even if wrangler's
+    launcher exits or crashes first. Stopping a group sends SIGTERM, then
+    SIGKILL after 5 s.
+  - A trial stops its group when it ends. The first SIGINT/SIGTERM stops the
+    batch in order; a second kills every group at once. Process exit also kills
+    any group still tracked.
+- **No egress from wrangler.** Wrangler's Node processes run with
+  `WRANGLER_SEND_METRICS=false` and `WRANGLER_HIDE_BANNER=true`; the banner is
+  the unconditional trigger of its npm update check. They also preload
+  [support/egress-guard.cjs](support/egress-guard.cjs), which fails every
+  non-loopback TCP or TLS connect, so any other update check or telemetry
+  fails closed. Loopback and Unix-socket connections pass.
 - **Eligibility.** The worker target serves every active task except:
   - `p5-auth-url-capable` and `p5-auth-connect-incapable`: the fake OAuth
     inbound auth, connector and URL-elicitation host are in-process Node
@@ -292,10 +308,21 @@ Result files record `config.target`, and every trial records its `target`;
 older files without the field ran on node. The six/code comparator refuses to
 pair results from different targets, even with `--allow-mismatch`.
 `eval:compare --cross-target --a <node.json> --b <worker.json>` is the only
-pairing. It needs the same surface, runner, CLI version, tasks, models,
-repeats, deadline, task definitions, harness and source tree. For each target
-it prints the efficiency summary from `eval/report/efficiency.ts`, then each
-task's passing medians on both targets side by side, and reaches no decision.
+pairing.
+
+- Each file must pass the comparator's measured-provenance checks: a fresh,
+  unregraded batch on the current protocol, with a known, clean source and
+  runtime.
+- Every trial's target, arm, runner, grading, deadline and task definitions
+  must match its batch.
+- The two files must share the pair ID, source commit and tree, runtime,
+  surface, runner, CLI version, tasks, models, repeats, deadline, task
+  definitions and harness.
+
+It prints each target's efficiency summary from `eval/report/efficiency.ts`,
+then each task's passing medians on both targets side by side, and reaches no
+decision. Either comparison refuses a trial whose target contradicts its batch,
+even with `--allow-mismatch`.
 
 Fakes answer only for the `127.0.0.1:<port>` address they publish. A request
 naming any other host, such as another process on a shared machine sweeping
