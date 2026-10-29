@@ -12,8 +12,9 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { operatorUi } from "@zackbart/connecta/ui";
 import { d1Storage } from "@zackbart/connecta/d1";
 import { withAccess } from "./access-shim.js";
+import { injectedConnectors, injectedD1, presetInjected, withInjectedPools, type InjectedEnv } from "./injected.js";
 
-interface Env {
+interface Env extends InjectedEnv {
   CONNECTA_DB: D1Database;
   CREDENTIAL_ENCRYPTION_KEY: string;
   PUBLIC_URL: string;
@@ -24,8 +25,9 @@ interface Env {
 }
 
 function build(env: Env) {
-  const storage = d1Storage(env.CONNECTA_DB);
-  return createConnecta({
+  const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
+  const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
+  const connecta = createConnecta({
     readOnly: false,
     publicUrl: env.PUBLIC_URL,
     storage,
@@ -34,8 +36,11 @@ function build(env: Env) {
     // The Access stand-in's user, the one maintainer plain /mcp admits and
     // the one who manages connector auth (#837).
     maintainers: ["eval-operator"],
-    pools: { personal: { tools: ["billing"], members: ["eval-operator", "eval-member"], readOnly: true } },
-    vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
+    pools: withInjectedPools(
+      { personal: { tools: ["billing"], members: ["eval-operator", "eval-member"], readOnly: true } },
+      env,
+    ),
+    vault,
     ui: operatorUi(),
     connectors: [
       remoteMcp("billing", {
@@ -46,8 +51,10 @@ function build(env: Env) {
       }),
       remoteMcp("tracker", { url: env.TRACKER_URL, title: "Issue tracker", description: "Issues" }),
       remoteMcp("chat", { url: env.CHAT_URL, title: "Team chat", description: "Channels and messages" }),
+      ...injectedConnectors(env),
     ],
   });
+  return { connecta, ready: presetInjected(vault, env) };
 }
 
 let connecta: ReturnType<typeof build> | undefined;
@@ -55,6 +62,7 @@ let connecta: ReturnType<typeof build> | undefined;
 export default withAccess({
   async fetch(request: Request, env: never, ctx: ExecutionContext): Promise<Response> {
     connecta ??= build(env as unknown as Env);
-    return connecta.fetch(request, env, ctx);
+    await connecta.ready;
+    return connecta.connecta.fetch(request, env, ctx);
   },
 });

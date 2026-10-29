@@ -29,6 +29,8 @@ export interface AgentResultFile {
     runner?: "codex" | "claude";
     /** Absent in results written before the worker target existed: node. */
     target?: import("../deploy/targets.js").Target;
+    /** Absent in results written before injection existed: none. */
+    injection?: import("../fakes/injection.js").Injection;
   };
   tasks: { id: string; title: string; measures: string; introducedIn: string }[];
   planned: PlannedTask[];
@@ -80,6 +82,8 @@ export interface SmokeResultFile {
   kind: "connecta-eval/smoke";
   version: 1;
   meta: RunMeta;
+  /** Absent in results written before injection existed: none. */
+  injection?: import("../fakes/injection.js").Injection;
   targets: SmokeTarget[];
 }
 

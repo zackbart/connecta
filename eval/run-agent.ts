@@ -5,6 +5,10 @@
  *   --target       node (default) or worker: the deployment shape each trial
  *                  boots; worker runs workerd under wrangler dev
  *   --no-build     skip `pnpm run build` before a worker batch
+ *   --latency-ms   delay every downstream fake response by this many ms
+ *   --hung-connector          add connector `stalled`, which never answers
+ *   --unauthorized-connector  add connector `revoked`, which answers 401
+ *   --d1-latency-ms           delay each D1 round trip (worker target only)
  *   --models       comma-separated model ids; see eval/README.md for defaults
  *   --repeats      trials per task × model (default 1)
  *   --tasks        comma-separated task ids (default every active task)
@@ -22,6 +26,7 @@
  */
 import { parseSurface } from "./agent/surface.js";
 import { parseTarget, workerRefusal } from "./deploy/targets.js";
+import { describeInjection, parseInjection } from "./fakes/injection.js";
 import { killAllProcesses } from "./support/workerd.js";
 import { spawnSync } from "node:child_process";
 import { parseGrading } from "./tasks/grading.js";
@@ -41,6 +46,8 @@ const args = flags(process.argv.slice(2));
 const surface = parseSurface(args.get("surface"));
 const grading = parseGrading(args.get("grading"));
 const target = parseTarget(args.get("target"));
+const injection = parseInjection(args);
+if (injection.d1LatencyMs && target !== "worker") throw new Error("--d1-latency-ms needs --target worker");
 const runner = args.get("runner") ?? "codex";
 if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be codex or claude");
 if (
@@ -112,6 +119,8 @@ const file: AgentResultFile = {
   config: {
     runner,
     target,
+    // Always recorded, zeros included, so a comparison can prove it matched.
+    injection,
     surface,
     grading,
     models,
@@ -143,7 +152,7 @@ const save = async () => {
 };
 await save();
 console.error(
-  `[eval] ${tasks.length} task(s) × ${models.length} model(s) × ${repeats} repeat(s) on ${target}, concurrency ${concurrency}, ${version}`,
+  `[eval] ${tasks.length} task(s) × ${models.length} model(s) × ${repeats} repeat(s) on ${target}, ${describeInjection(injection)}, concurrency ${concurrency}, ${version}`,
 );
 const interrupted = new AbortController();
 // The first signal stops the batch in order; a second kills workerd and exits.
@@ -157,6 +166,7 @@ let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
   runner,
   target,
+  injection,
   surface,
   grading,
   concurrency,

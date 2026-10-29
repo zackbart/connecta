@@ -19,6 +19,12 @@ import { GRANOLA_TASK } from "./tasks/granola.js";
  * operator UI loading in headless Chromium with a screenshot. The Worker
  * targets run workerd with the example's own compatibility date and flags.
  *
+ * Injection (eval/fakes/injection.ts), off by default: `--latency-ms`,
+ * `--hung-connector`, `--unauthorized-connector`, and `--d1-latency-ms` for
+ * the workerd targets. A target that cannot take the requested injection is
+ * reported skipped with the reason: node-template and worker-example serve no
+ * fake vendor, and node targets have no D1.
+ *
  * `pnpm run build` runs first: the template and the Worker import the package
  * by name, which resolves to dist/. No LLM; needs no network. Every step is
  * time-bounded and every child process group is stopped on exit or signal.
@@ -32,6 +38,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { startNodeDeployment } from "./deploy/node.js";
 import { World } from "./fakes/world.js";
+import { describeInjection, isInjected, parseInjection } from "./fakes/injection.js";
 import type { SmokeCheck, SmokeResultFile, SmokeTarget } from "./report/summary.js";
 import { connectMcp, parseJson, type McpSession } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
@@ -55,6 +62,24 @@ const selected = (
   args.get("targets") ??
   "node-template,node-fakes,worker-example,worker-fakes,node-quickbooks,worker-quickbooks,node-granola,worker-granola"
 ).split(",");
+
+const injection = parseInjection(args);
+
+/** Why this target cannot take the requested injection, if it cannot. */
+function injectionSkip(target: string): string | undefined {
+  if (isInjected(injection) && (target === "node-template" || target === "worker-example"))
+    return "serves no fake vendor to inject latency or faults into";
+  if (injection.d1LatencyMs && target.startsWith("node-")) return "D1 latency applies only to workerd targets";
+  return undefined;
+}
+
+/** Injected connectors and D1 latency for a Worker composition's vars. */
+function injectedVars(world: World): Record<string, string> {
+  return {
+    ...(world.injected.ids().length ? { EVAL_INJECTED: JSON.stringify(world.injected.specs()) } : {}),
+    ...(injection.d1LatencyMs ? { EVAL_D1_LATENCY_MS: String(injection.d1LatencyMs) } : {}),
+  };
+}
 
 const STEP_MS = 120_000;
 
@@ -325,9 +350,9 @@ async function nodeFakes(): Promise<SmokeTarget> {
     status: "fail",
     checks,
   };
-  const world = new World();
+  const world = new World({}, injection);
   await world.start();
-  const deployment = await startNodeDeployment(world.connectorSpecs());
+  const deployment = await startNodeDeployment(world.connectorSpecs(), {}, undefined, "six", world.injected.ids());
   try {
     const headers = { Authorization: `Bearer ${deployment.token}` };
     await mcpBattery(checks, {
@@ -372,7 +397,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
     status: "fail",
     checks,
   };
-  const world = kind === "worker-fakes" ? new World() : undefined;
+  const world = kind === "worker-fakes" ? new World({}, injection) : undefined;
   await world?.start();
   const vars = [
     // The Access stand-in's user is the example's maintainer (#837).
@@ -395,6 +420,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
         name: `connecta-smoke-${kind}`,
         main: join(ROOT, "eval", "deploy", `${kind}.ts`),
         cliVars: vars,
+        ...(world ? { vars: injectedVars(world) } : {}),
         secrets: { CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64") },
         publicUrlVar: true,
       });
@@ -583,12 +609,14 @@ async function providerJourney(
         task,
         {
           mode: "reference",
+          injection,
           ...(kind.startsWith("worker-")
             ? {
                 deploy: async (world: World) => {
                   const dev = await wranglerDev({
                     name: notes ? "connecta-granola-smoke" : "connecta-qb-smoke",
                     main: join(ROOT, notes ? "eval/deploy/worker-granola.ts" : "eval/deploy/worker-quickbooks.ts"),
+                    vars: injectedVars(world),
                     cliVars: notes
                       ? [`GRANOLA_URL:${world.granola.url}`, `GRANOLA_KEY:${world.granola.key}`]
                       : [
@@ -646,6 +674,7 @@ async function providerJourney(
 
 // ---------------------------------------------------------------------- run
 
+if (isInjected(injection)) console.error(`[smoke] injection: ${describeInjection(injection)}`);
 if (!args.has("no-build")) {
   console.error("[smoke] pnpm run build");
   const built = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"] });
@@ -665,16 +694,27 @@ const targets: SmokeTarget[] = [];
 for (const name of selected) {
   const run = runners[name];
   if (!run) throw new Error(`unknown target ${name}; known: ${Object.keys(runners).join(", ")}`);
-  const result = await run();
+  const skip = injectionSkip(name);
+  const result: SmokeTarget = skip
+    ? {
+        target: name,
+        description: `not run: ${describeInjection(injection)}`,
+        status: "skipped",
+        reason: skip,
+        checks: [],
+      }
+    : await run();
   targets.push(result);
-  console.error(`[smoke] ${result.status.toUpperCase().padEnd(5)} ${result.target}`);
+  console.error(
+    `[smoke] ${result.status.toUpperCase().padEnd(5)} ${result.target}${result.reason ? ` — ${result.reason}` : ""}`,
+  );
   for (const item of result.checks) {
     console.error(
       `[smoke]   ${item.pass ? "ok  " : "FAIL"} ${item.name} (${item.ms}ms)${item.detail ? ` — ${item.detail.slice(0, 200)}` : ""}`,
     );
   }
 }
-const file: SmokeResultFile = { kind: "connecta-eval/smoke", version: 1, meta: runMeta(), targets };
+const file: SmokeResultFile = { kind: "connecta-eval/smoke", version: 1, meta: runMeta(), injection, targets };
 await mkdir(dirname(out), { recursive: true });
 await writeFile(out, `${JSON.stringify(file, null, 1)}\n`);
 console.error(`[smoke] results: ${out}`);

@@ -11,6 +11,7 @@ import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
 import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
+import { describeInjection, injectionOf, sameInjection } from "./fakes/injection.js";
 import {
   efficiencyLines,
   fmtSize,
@@ -272,6 +273,7 @@ const SETTINGS: Record<string, { label: string; value?: (file: AgentResultFile) 
   models: { label: "model set", value: (f) => [...f.config.models].sort() },
   mcpOutputTokens: { label: "MCP output limit", value: (f) => f.config.mcpOutputTokens ?? "host default" },
   target: { label: "deployment target", value: targetOf },
+  injection: { label: "latency and fault injection", value: (f) => injectionOf(f.config.injection) },
 };
 
 /**
@@ -320,6 +322,11 @@ function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
 }
 
 export function compare(a: AgentResultFile, b: AgentResultFile, options: { allowMismatch?: boolean } = {}): string {
+  // Injected latency or faults change what is measured: no override pairs them.
+  if (!sameInjection(a.config.injection, b.config.injection))
+    throw new Error(
+      `Comparison refused: arms ran with different injection (${describeInjection(injectionOf(a.config.injection))}; ${describeInjection(injectionOf(b.config.injection))})`,
+    );
   // Node and workerd are different deployments: no override pairs them here.
   if (targetOf(a) !== targetOf(b))
     throw new Error(
@@ -455,7 +462,7 @@ export function crossTarget(node: AgentResultFile, worker: AgentResultFile): str
   const left = validate(node, surface),
     right = validate(worker, surface);
   const lines = [
-    `CROSS-TARGET DIAGNOSTIC (no decision): node vs worker, ${surface} surface, ${runner}; source tree ${node.meta.git.srcTree}`,
+    `CROSS-TARGET DIAGNOSTIC (no decision): node vs worker, ${surface} surface, ${runner}, ${describeInjection(injectionOf(node.config.injection))}; source tree ${node.meta.git.srcTree}`,
   ];
   // The same efficiency aggregates as eval:agent and the report: medians over
   // passing trials, pass@k/pass^k over graded trials (N/A and infrastructure

@@ -18,7 +18,11 @@ import { startVendorGateway } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { fakeTransportState, routeFakeVendor } from "../fakes/transport.js";
 import type { AgentResultFile } from "../report/summary.js";
-import { ROOT, runProtocol } from "../support/meta.js";
+import { flags, ROOT, runProtocol } from "../support/meta.js";
+import { evalConfig } from "../deploy/compose.js";
+import { withD1Latency } from "../deploy/d1-latency.js";
+import { isInjected, NO_INJECTION, parseInjection, type Injection } from "../fakes/injection.js";
+import { World, type WorldOptions } from "../fakes/world.js";
 import { serveFetch } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
 import { ACTIVE_TASKS } from "./index.js";
@@ -459,4 +463,129 @@ export async function comparatorTargetControls() {
     if (inconsistent.has(label))
       refused(() => compare(six, code, { allowMismatch: true }), `Diagnostic comparison accepted ${label}`);
   }
+}
+
+/**
+ * Opt-in injection (#1173 item 0.4): latency reaches the fakes, injected
+ * connectors join every pool, a hung server cannot hold a world open, a D1
+ * batch is one delayed round trip, and differing injection never pairs.
+ */
+export async function injectionControls() {
+  // Latency is delivered on the fake's side and released with the world.
+  const timed = async (injection: Injection) => {
+    const world = new World({}, injection);
+    await world.start();
+    try {
+      const started = performance.now();
+      await (await fetch(world.service("tracker").url)).body?.cancel();
+      return performance.now() - started;
+    } finally {
+      await world.stop();
+    }
+  };
+  const [plain, delayed] = [await timed(NO_INJECTION), await timed({ ...NO_INJECTION, latencyMs: 300 })];
+  if (delayed < 300 || plain >= 300) throw new Error(`Latency not delivered: ${plain} ms plain, ${delayed} ms at 300`);
+
+  // Injected connectors join every pool, the task's own and QuickBooks' included.
+  const faults = { ...NO_INJECTION, hungConnector: true, unauthorizedConnector: true };
+  for (const options of [{}, { quickbooks: true }] as WorldOptions[]) {
+    const world = new World(options, faults);
+    await world.start();
+    try {
+      const ids = world.injected.ids();
+      if (JSON.stringify(ids) !== JSON.stringify(["stalled", "revoked"]))
+        throw new Error(`Unexpected injected connectors ${ids.join(", ")}`);
+      const revoked = world.connectorSpecs().find((spec) => spec.id === "revoked");
+      if (!revoked?.credential?.value) throw new Error("The 401 connector has no saved credential to reject");
+      const config = evalConfig(
+        {
+          connectors: world.connectorSpecs(),
+          extra: { pools: { programs: { tools: ["tracker"], members: ["agent:eval-machine"] } } },
+          fixtures: { alice: "alice@example.com", accountA: "a", shopZone: "z" },
+          readOnly: false,
+          everyPool: ids,
+        },
+        { storage: undefined as never, executor: undefined as never, publicUrl: "http://127.0.0.1:1" },
+      );
+      const pools = Object.entries(config.pools ?? {});
+      if (!pools.length || pools.some(([, pool]) => !ids.every((id) => pool.tools.includes(id))))
+        throw new Error(`An injected connector is missing from a pool: ${JSON.stringify(config.pools)}`);
+      if (!ids.every((id) => config.connectors.some((connector) => connector.id === id)))
+        throw new Error("An injected connector is missing from the configuration");
+      const status = await fetch(revoked.url, { method: "POST" }).then((r) => r.status);
+      if (status !== 401) throw new Error(`The 401 connector answered ${status}`);
+    } finally {
+      await world.stop();
+    }
+  }
+
+  // A request held open by the hung server cannot keep its world from stopping.
+  const hung = new World({}, { ...NO_INJECTION, hungConnector: true });
+  await hung.start();
+  const pending = fetch(hung.connectorSpecs().find((spec) => spec.id === "stalled")!.url, { method: "POST" }).then(
+    () => "answered",
+    () => "closed",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const stopped = await Promise.race([
+    hung.stop().then(() => "stopped"),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 5_000)),
+  ]);
+  if (stopped !== "stopped" || (await pending) !== "closed")
+    throw new Error("The hung connector's server outlived its world");
+
+  // One D1 batch is one delayed round trip carrying the original statements.
+  const delay = 50;
+  const inner = { bind: (...values: unknown[]) => ({ ...inner, values }), all: async () => ({ results: [] }) };
+  let batched: unknown[] = [];
+  const db = {
+    prepare: () => ({ ...inner }),
+    batch: async (statements: unknown[]) => ((batched = statements), []),
+    exec: async () => ({}),
+  } as unknown as D1Database;
+  const wrapped = withD1Latency(db, delay);
+  const statements = [1, 2, 3].map((n) => wrapped.prepare(`SELECT ${n}`).bind(n));
+  let started = performance.now();
+  await wrapped.batch(statements);
+  const batchMs = performance.now() - started;
+  if (batchMs < delay || batchMs >= delay * 2)
+    throw new Error(`A 3-statement batch took ${batchMs} ms, not one round trip`);
+  if (batched.length !== 3 || batched.some((statement) => (statement as { values?: unknown[] }).values === undefined))
+    throw new Error("The batch did not receive the bound inner statements");
+  started = performance.now();
+  await wrapped.prepare("SELECT 1").bind(1).all();
+  if (performance.now() - started < delay) throw new Error("A statement round trip was not delayed");
+
+  // Differing injection never pairs, in either comparison; equal injection does.
+  const injected = async (target: "node" | "worker", surface: "six" | "code", injection: Partial<Injection>) => {
+    const file = await fixture(target, surface);
+    file.config.injection = { ...NO_INJECTION, ...injection };
+    return file;
+  };
+  if (!compare(await injected("node", "six", {}), await fixture("node", "code")).includes("Paired batch"))
+    throw new Error("Recorded zero injection did not pair with a file that predates injection");
+  for (const injection of [
+    { latencyMs: 500 },
+    { hungConnector: true },
+    { unauthorizedConnector: true },
+    { d1LatencyMs: 20 },
+  ] as Partial<Injection>[]) {
+    const six = await fixture("node", "six"),
+      code = await injected("node", "code", injection);
+    for (const allowMismatch of [false, true])
+      refused(
+        () => compare(six, code, { allowMismatch }),
+        `Comparison paired different injection ${JSON.stringify(injection)}`,
+      );
+    if (!compare(await injected("node", "six", injection), code).includes("Paired batch"))
+      throw new Error(`Equal injection ${JSON.stringify(injection)} did not pair`);
+    const node = await fixture("node", "six"),
+      worker = await injected("worker", "six", injection);
+    refused(() => crossTarget(node, worker), `Cross-target paired different injection ${JSON.stringify(injection)}`);
+    if (!injection.d1LatencyMs && !crossTarget(await injected("node", "six", injection), worker).startsWith("CROSS"))
+      throw new Error(`Cross-target refused equal injection ${JSON.stringify(injection)}`);
+  }
+  refused(() => parseInjection(flags(["--latency-ms", "-1"])), "Negative latency accepted");
+  refused(() => parseInjection(flags(["--hung-connector", "stalled"])), "A toggle accepted a value");
+  if (isInjected(parseInjection(flags([])))) throw new Error("Injection is not off by default");
 }
