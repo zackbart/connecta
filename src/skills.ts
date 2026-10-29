@@ -66,26 +66,29 @@ function usageSkill(): string {
   return USAGE_SKILL;
 }
 
+const INVESTIGATE_DESCRIPTION =
+  "Plan an investigation that spans several services; resolve scope, identities, and capability limits before querying, then return the answer with its evidence.";
+
 const INVESTIGATE_SKILL = `---
 name: investigate
-description: Plan purchase verification, experiment checks, and customer or deployment investigations across services; resolve scope and capability limits before querying.
+description: ${INVESTIGATE_DESCRIPTION}
 ---
 
 # Investigate across services
 
 ## Plan the investigation
 
-Start from the user's question and the evidence that would answer it. Select the app, account, and environment from connector titles, purposes, and relevant guides before looking up records. Reuse verified ids within the task; never carry an id across connectors just because its name matches.
+Start from the user's question and the evidence that would answer it. Select the account, environment, and time window from connector titles, purposes, and relevant guides before looking up records. Reuse verified ids within the task; never carry an id across connectors just because its name matches.
 
-- Purchase verification: resolve the same customer and environment across payment, subscription access, and analytics. Check each separately; a recorded payment does not prove access, and a missing analytics event does not prove payment failure.
-- Experiment checks: confirm the project, experiment, time window, and exposure population before comparing outcomes. Return the requested comparison and any missing evidence; do not expand into an unrelated analytics audit.
-- Customer or deployment investigations: locate the exact customer or deployment first, then follow only the records needed to explain the reported symptom. Use provider links or ids so the answer can be checked.
+- Resolve the same subject in each service separately. A record in one service does not prove the matching state in another, and a missing record in one does not prove failure elsewhere.
+- Confirm the scope a comparison needs (which records, which window, which population) before comparing. Return the requested comparison and any missing evidence; do not expand into an unrelated audit.
+- Locate the exact record first, then follow only the records needed to explain the reported symptom. Use provider links or ids so the answer can be checked.
 
 Establish capability limits early. A partial search is not proof that a tool is absent, and an unavailable catalog is not an empty dataset. Try a scoped search for the missing operation, inspect its guide when relevant, and distinguish unsupported work from missing data or authorization. If the required evidence is unavailable, return what was verified and the specific gap instead of approximating a different question through repeated calls.
 
 A host transport error that requires reconnecting this MCP server cannot be repaired by a downstream tool. Reconnect in the host; do not repeatedly call \`authorize_connector\` through the failed connection.
 
-Return the answer first, then the evidence and any unresolved gap. Include the app/environment, time window, and source ids or links needed to check it. Separate observed facts from inferences. Stop when the requested evidence is sufficient.
+Return the answer first, then the evidence and any unresolved gap. Include the account or environment, time window, and source ids or links needed to check it. Separate observed facts from inferences. Stop when the requested evidence is sufficient.
 `;
 
 const AVAILABLE_SKILLS = [
@@ -97,8 +100,7 @@ const AVAILABLE_SKILLS = [
   },
   {
     name: "investigate",
-    description:
-      "Plan purchase verification, experiment checks, and customer or deployment investigations across services; resolve scope and capability limits before querying.",
+    description: INVESTIGATE_DESCRIPTION,
     content: () => INVESTIGATE_SKILL,
   },
 ] as const;

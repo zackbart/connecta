@@ -49,7 +49,12 @@ write tools from `search_tools` results and describe, and refuses every write
 call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
 `resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
-advertise `outputSchema`. The two direct-call tools omit it because their default
+advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
+including every authorization-handoff field, once under `$defs.failure`;
+`catalogErrors[]` references it through `allOf` with `connector` required, and
+`queryAnalysis.catalogError` references it directly. The schema declares no
+`$schema`, and validators for drafts 4, 7, 2019-09 and 2020-12 accept the same
+pages. The two direct-call tools omit it because their default
 mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
 `data` and declares `format` in its complete result envelope.
@@ -307,12 +312,29 @@ disappearing with the zero-tool page.
 
 Two built-in skills are byte-identical across deployments. `usage` is fetched
 only for missing guidance or program repair, and owns program selection detail, examples, runtime
-differences, and repair guidance; `investigate` is on-demand guidance for
-purchase verification, experiment checks, and customer or deployment
-investigations — shared guidance, not a saved workflow and not a source of
-deployment-specific ids. The always-loaded instructions and tool definitions keep
+differences, and repair guidance; `investigate` is domain-neutral on-demand
+guidance for an investigation that spans several services — shared guidance,
+not a saved workflow and not a source of deployment-specific ids. `skills`
+lists it; the `execute_code` description does not advertise it. The always-loaded instructions and tool definitions keep
 route selection, the fail-closed boundary, and the minimum guest syntax, so a
 client that never fetches a skill can still write a valid first program.
+
+The server instructions state the complete routing rule once. Some clients
+drop server instructions, so each tool description stays sufficient for its own
+correct use without restating that rule: `call_tool` names its scope (one
+known-address read) and points other read work to `execute_code`;
+`search_tools` names its scope (catalog inspection, or finding a write) and
+points read work into a program; `execute_code` opens with the terse
+three-route lead (`One known read: call_tool. One known write:
+call_destructive_tool. Everything else: execute_code.`, or the read-only
+two-route form). The `usage` skill points to those two sources instead of
+repeating them.
+
+Tool descriptions and output schemas carry deployment configuration only: the
+connector inventory, budgets, the endpoint's read-only setting, and whether any
+visible connector has a guide. No catalog outcome, call, authorization state,
+or other live status reaches `tools/list` or the instructions, so the
+always-loaded surface stays byte-stable for a client's prompt cache.
 The instructions are the same on every endpoint except one addition: at
 `/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
 [`description`](./auth.md#pools) has it appended after `This endpoint: `, so
