@@ -7,8 +7,8 @@
  * Loopback fakes are fetched directly. Every other outbound request goes to
  * the Node harness's vendor gateway (eval/deploy/worker.ts), which dispatches
  * it through the credential-routed fake transport and its fail-closed rules.
- * Each hop of a followed redirect goes back through this wrapper, so workerd
- * never follows a Location around the gateway.
+ * Each hop of a followed redirect goes back through the wrapper
+ * (gateway-fetch.ts), so workerd never follows a Location around the gateway.
  *
  * `/__eval/*` are local process controls, never product routes.
  */
@@ -22,6 +22,7 @@ import { d1Storage } from "@zackbart/connecta/d1";
 import { withAccess } from "./access-shim.js";
 import { connectCcb, evalConfig, presetCredentials, type EvalComposition } from "./compose.js";
 import { observePrograms, type ProgramObservation } from "./observe.js";
+import { viaGateway } from "./gateway-fetch.js";
 
 interface Env {
   CONNECTA_DB: D1Database;
@@ -31,47 +32,8 @@ interface Env {
   /** JSON EvalComposition. */
   EVAL_COMPOSITION: string;
   EVAL_GATEWAY: string;
-}
-
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
-const REDIRECTS = new Set([301, 302, 303, 307, 308]);
-
-function viaGateway(native: typeof fetch, gateway: string): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const original = new Request(input, init);
-    const follow = original.redirect === "follow";
-    const body = original.method === "GET" || original.method === "HEAD" ? null : await original.arrayBuffer();
-    let url = new URL(original.url);
-    let method = original.method;
-    let payload: ArrayBuffer | null = body;
-    for (let hop = 0; hop <= 20; hop++) {
-      const headers = new Headers(original.headers);
-      let response: Response;
-      if (LOOPBACK.has(url.hostname)) {
-        response = await native(url, { method, headers, body: payload, redirect: "manual", signal: original.signal });
-      } else {
-        headers.set("x-eval-vendor-url", url.href);
-        response = await native(gateway, {
-          method,
-          headers,
-          body: payload,
-          redirect: "manual",
-          signal: original.signal,
-        });
-        // The routed transport rejected the request, as fetch would on Node.
-        if (response.headers.get("x-eval-gateway-error")) throw new TypeError(await response.text());
-      }
-      const location = response.headers.get("location");
-      if (!follow || !REDIRECTS.has(response.status) || !location) return response;
-      await response.body?.cancel();
-      url = new URL(location, url);
-      if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
-        method = "GET";
-        payload = null;
-      }
-    }
-    throw new TypeError("Eval worker followed more than 20 redirects.");
-  }) as typeof fetch;
+  /** This trial's gateway credential; the gateway refuses requests without it. */
+  EVAL_GATEWAY_TOKEN: string;
 }
 
 interface Live {
@@ -87,7 +49,7 @@ interface Live {
 let live: Promise<Live> | undefined;
 
 async function setup(env: Env): Promise<Live> {
-  globalThis.fetch = viaGateway(globalThis.fetch.bind(globalThis), env.EVAL_GATEWAY);
+  globalThis.fetch = viaGateway(globalThis.fetch.bind(globalThis), env.EVAL_GATEWAY, env.EVAL_GATEWAY_TOKEN);
   const composition = JSON.parse(env.EVAL_COMPOSITION) as EvalComposition;
   const storage = d1Storage(env.CONNECTA_DB);
   const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
