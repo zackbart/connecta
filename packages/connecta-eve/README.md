@@ -4,15 +4,15 @@ Connect an Eve agent to a Connecta agent pool and load its endpoint instructions
 once per turn. The helper runs in the Eve app; the Connecta server
 runs separately. No `@zackbart/connecta` dependency is installed by this package.
 
-Requires **Node 24+** and **Eve >=0.86.0 <0.87.0**. Development and consumer
-checks use real Eve 0.86.0. The range covers its patch line; newer minor releases
+Requires **Node 24+** and **Eve >=0.90.0 <0.91.0**. Development and consumer
+checks use real Eve 0.90.0. The range covers its patch line; newer minor releases
 need a compatibility check. Helper releases share Connecta's version and tag;
 choose the helper version matching your server release.
 
 ## Install and add two files
 
 ```sh
-npm install @zackbart/connecta-eve eve@0.86.0
+npm install @zackbart/connecta-eve eve@0.90.0
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -89,22 +89,19 @@ Each selected name must match `[a-z0-9_-]+`. A throwing selector or an invalid
 name fails the turn, even when guidance is cached. Handle lookup failures in
 your selector if it should fall back to a least-privileged pool.
 
-## Eve 0.86.0 dependency override
+## Upgrading from Eve 0.86
 
-Eve 0.86.0 pins undici 8.10.2. Connecta's development/test override does not ship
-with this helper, so the Eve app must apply its own override to 8.12.3 before
-installing. For an npm app, add this to its `package.json`, then reinstall and
-commit the lockfile:
+Eve 0.88.1 and later pin undici 8.12.3, so the app no longer needs its own undici
+override. Remove `"eve": { "undici": "8.12.3" }` from an npm app's `overrides`, or
+`"eve@0.86.0>undici": "8.12.3"` from a pnpm app's `pnpm-workspace.yaml`, then
+reinstall, commit the lockfile and audit the app. The server's optional undici
+6.29.1 peer is a separate dependency and keeps its exact pin.
 
-```json
-{ "overrides": { "eve": { "undici": "8.12.3" } } }
-```
-
-For a pnpm app, add `overrides: { "eve@0.86.0>undici": "8.12.3" }` to its
-`pnpm-workspace.yaml`. Check the resolved dependency graph and audit the app.
-Remove this override after upgrading to an Eve release that pins a fixed version
-and validating compatibility. The server's optional undici 6.29.1 peer is a
-separate dependency and keeps its exact pin.
+Eve 0.87 also changed app code the helper does not own: builds reject connection
+definitions not made by Eve's own factories, `defineDynamic()` values are opaque,
+and several client, workflow and channel APIs moved. Follow Eve's changelog for
+those; `connectaConnection()` and `connectaInstructions()` already return values
+made by Eve's factories.
 
 ## Approval and writes
 
@@ -176,7 +173,7 @@ custom audience, even when Vercel signed them.
 
 In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
-on Node 24. This boots real Eve 0.86.0 with a packed, installed helper against
+on Node 24. This boots real Eve 0.90.0 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
 meta, native, and native-plus-code surfaces. Native listings include two
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must

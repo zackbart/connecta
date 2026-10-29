@@ -63,7 +63,9 @@ try {
     options.getToken = () => "cta_replaced_provider";
     assert.equal((await connection.auth.getToken()).token, "cta_replaced_provider");
     const dynamic = connectaConnection({ url: "https://connecta.example.com", pool: async () => "notes_alice", description: "Notes", getToken: () => token });
-    const selected = await dynamic.evaluate({});
+    // Eve keys a defineDynamic() function by this registered symbol; read it as Eve's runtime does.
+    const evaluate = (sentinel, ctx) => sentinel[Symbol.for("eve.dynamic")](ctx);
+    const selected = await evaluate(dynamic, {});
     assert.equal(selected.url, "https://connecta.example.com/agent/notes_alice");
     assert.equal(selected.instanceKey, "notes_alice");
     assert.equal((await selected.auth.getToken()).token, token);
@@ -71,7 +73,7 @@ try {
     assert.equal(gateConnectaWrites({ toolName: "write" }), "user-approval");
     const instructions = connectaInstructions({ url: connection.url, getToken: () => token, fetch: async () => Response.json({ result: { instructions: "CRM guidance" } }) });
     const memo = async (_key, fn) => fn({ idempotencyKey: "turn_1", abortSignal: new AbortController().signal });
-    assert.equal((await instructions.evaluate({ memo, turn: { id: "turn_1" } })).content, "Connecta guidance:\\nCRM guidance");
+    assert.equal((await evaluate(instructions, { memo, turn: { id: "turn_1" } })).content, "Connecta guidance:\\nCRM guidance");
   `,
   );
   run(process.execPath, ["smoke.mjs"], work);

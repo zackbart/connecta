@@ -331,7 +331,7 @@ check shared behavior. Provider-specific tests remain beside each provider.
 
 Use [`@zackbart/connecta-eve`](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
 in the Eve app for an app-owned connection and endpoint instructions refreshed
-once per turn. It requires Node 24 and Eve 0.86.x, and installs separately from
+once per turn. It requires Node 24 and Eve 0.90.x, and installs separately from
 Connecta. Follow its README for the two agent files, token environment variables,
 optional write approval and Vercel OIDC token source. Configure the server's
 [agent and pool membership](./auth.md#issue-rotate-or-revoke-an-agent-token)

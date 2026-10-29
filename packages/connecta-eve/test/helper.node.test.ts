@@ -12,6 +12,8 @@ import {
   type Memo,
   defineDynamic,
 } from "eve/instructions";
+// Eve keeps a defineDynamic() function behind a private symbol; read it as its runtime does.
+import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition.js";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { api } from "../../../src/connectors/api.js";
@@ -46,7 +48,7 @@ function session(instructions: DynamicSentinel<DynamicInstructionsResult>) {
     };
     // The resolver reads only the turn and memo; the rest of the frame is irrelevant.
     const frame = { memo, turn: id === null ? null : { id, status: "running", input: [] } };
-    const result = await instructions.evaluate(frame as unknown as DynamicContext);
+    const result = await dynamicEvaluate(instructions)(frame as unknown as DynamicContext);
     kept = used;
     return result;
   };
