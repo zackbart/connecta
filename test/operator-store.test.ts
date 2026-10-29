@@ -1390,7 +1390,7 @@ describe("cached admission and scoped observations (#1113)", () => {
   });
 
   it("discards queued recovery reads after admission expires without clearing the snapshot or showing sign-in", async () => {
-    const connectorIds = ["crm", "tickets", "notes", "calendar", "files", "tasks"];
+    const connectorIds = ["crm", "tickets", "notes", "calendar", "files", "tasks", "wiki", "chat", "billing", "docs"];
     const { store, fetchMock, configMock, paths } = await ready(connectorIds);
     vi.useFakeTimers();
     fetchMock.mockImplementation(async () => new Response(null, { status: 503 }));
@@ -1407,9 +1407,9 @@ describe("cached admission and scoped observations (#1113)", () => {
     paths.length = 0;
     const full = store.loadOperatorContract();
     await vi.advanceTimersByTimeAsync(2000);
-    // Normal recovery timers fill all four slots, leaving two details queued.
-    expect(details).toHaveLength(4);
-    expect(paths).toEqual([CONFIG, ...connectorIds.slice(0, 4).map((id) => `/ui/connectors/${id}`)]);
+    // Normal recovery timers fill all eight slots, leaving two details queued.
+    expect(details).toHaveLength(8);
+    expect(paths).toEqual([CONFIG, ...connectorIds.slice(0, 8).map((id) => `/ui/connectors/${id}`)]);
     await vi.advanceTimersByTimeAsync(13_000);
     await full;
     expect(store.getState()).toMatchObject({ contract: snapshot, admissionValid: false, contractPhase: "error" });
@@ -1424,10 +1424,10 @@ describe("cached admission and scoped observations (#1113)", () => {
       contractPhase: "error",
       data: { serverInfo: { name: "operator" } },
     });
-    expect(store.getState().contract?.live.connectors).toHaveLength(6);
-    expect(store.getState().data?.connectors).toHaveLength(6);
+    expect(store.getState().contract?.live.connectors).toHaveLength(10);
+    expect(store.getState().data?.connectors).toHaveLength(10);
     expect(paths).toEqual(requests);
-    expect(details).toHaveLength(4);
+    expect(details).toHaveLength(8);
   });
 
   it.each([401, 403])("clears the snapshot on a real connector HTTP %s session refusal", async (status) => {
@@ -1565,7 +1565,7 @@ describe("cached admission and scoped observations (#1113)", () => {
 
 it("bounds detail concurrency across the page and cancels queued work on identity exit", async () => {
   const loaded = await loadStore({ id: "a", getToken: async () => "token" });
-  const ids = Array.from({ length: 8 }, (_, i) => `crm${i}`);
+  const ids = Array.from({ length: 12 }, (_, i) => `crm${i}`);
   loaded.declare(ids);
   const pending: Array<ReturnType<typeof deferred<Response>>> = [];
   const signals: AbortSignal[] = [];
@@ -1586,14 +1586,52 @@ it("bounds detail concurrency across the page and cancels queued work on identit
     return read.promise;
   });
   await loaded.store.boot();
-  await vi.waitFor(() => expect(pending).toHaveLength(4));
+  await vi.waitFor(() => expect(pending).toHaveLength(8));
   pending[0]!.resolve(Response.json({ id: "crm0", status: "ok", toolCount: 0, tools: [] }));
-  await vi.waitFor(() => expect(pending).toHaveLength(5));
+  await vi.waitFor(() => expect(pending).toHaveLength(9));
   loaded.store.signOut();
   expect(signals.every((signal) => signal.aborted)).toBe(true);
   for (const read of pending.slice(1)) read.resolve(Response.json({ status: "ok", tools: [] }));
   await vi.waitFor(() => expect(loaded.store.getState().contract).toBeNull());
-  expect(pending).toHaveLength(5);
+  expect(pending).toHaveLength(9);
+});
+
+it("a hung connector holds one detail slot once while its siblings settle", async () => {
+  const loaded = await loadStore({ id: "a", getToken: async () => "token" });
+  const ids = Array.from({ length: 10 }, (_, i) => `crm${i}`);
+  loaded.declare(ids);
+  const hung = deferred<Response>();
+  loaded.fetchMock.mockImplementation(async (path: string) => {
+    if (path === "/ui/data")
+      return Response.json({
+        ...uiData("operator"),
+        connectors: ids.map((id) => ({ id, status: "loading", toolCount: 0, tools: [] })),
+      });
+    const id = path.split("/").at(-1)!;
+    return id === "crm0" ? hung.promise : Response.json({ id, status: "ok", toolCount: 0, tools: [] });
+  });
+  await loaded.store.boot();
+  const reads = () => loaded.paths.filter((path) => path.startsWith("/ui/connectors/"));
+  await vi.waitFor(() =>
+    expect(loaded.store.getState().data?.connectors.filter((c) => c.status === "ok")).toHaveLength(9),
+  );
+  expect(reads()).toHaveLength(10);
+  vi.useFakeTimers();
+  hung.resolve(
+    Response.json({
+      id: "crm0",
+      status: "error",
+      problem: "connector_timeout",
+      toolCount: 0,
+      tools: [],
+      overlay: { problem: "connector_timeout" },
+    }),
+  );
+  await vi.advanceTimersByTimeAsync(60_000);
+  loaded.windowListeners.get("focus")?.();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(loaded.store.getState().data?.connectors.find((c) => c.id === "crm0")?.problem).toBe("connector_timeout");
+  expect(reads()).toHaveLength(10);
 });
 
 it("a newer scoped poll cannot be rolled back by a full admission already in flight", async () => {
