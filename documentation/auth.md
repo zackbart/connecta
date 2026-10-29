@@ -984,9 +984,10 @@ activity. Anyone else gets the same 404, and an agent token the machine-only
 shell carries no catalog data.
 
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
-plain `/mcp` endpoint and is required: a deployment that omits it fails at
+plain `/mcp` endpoint for maintainers and is required: a deployment that omits it fails at
 construction and must choose `true` or `false`. A pool inherits it unless the
-pool sets its own `readOnly`, in either direction. A writable endpoint lets
+pool sets its own `readOnly`, in either direction. A person routed to their
+pool at plain `/mcp` gets that pool's effective `readOnly`. A writable endpoint lets
 `call_destructive_tool` and programs write, and the MCP client decides what to
 approve. On a read-only endpoint, write tools are absent from `search_tools`
 results, `connecta.search`, and `connecta.describe`, and `call_tool`,

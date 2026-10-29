@@ -111,7 +111,9 @@ describe("maintainers and plain /mcp", () => {
   it("routes a person's single pool at /mcp, preserving maintainer precedence and private refusals", async () => {
     const warnings: unknown[][] = [];
     const events: ToolCallActivityEvent[] = [];
+    let deletes = 0;
     const c = deployment({
+      connectors: teamConnectors(() => deletes++),
       activity: (await import("../src/activity.js")).activityHistory({
         store: {
           record: async (event) => {
@@ -121,7 +123,7 @@ describe("maintainers and plain /mcp", () => {
       }),
       pools: {
         team: {
-          tools: ["notes.search"],
+          tools: ["notes.search", "notes.delete"],
           members: [{ namespace: NAMESPACE, id: "bob" }, "alice"],
           readOnly: true,
           description: "Team tools",
@@ -155,9 +157,12 @@ describe("maintainers and plain /mcp", () => {
       );
     for (const method of ["tools/list", "initialize"])
       expect(await send("/mcp", "bob", method)).toEqual(await send("/mcp/team", "bob", method));
-    expect(
-      (await rpc(c, "/mcp", "bob", "call_destructive_tool", { address: "notes.delete", args: {} })).result.isError,
-    ).toBe(true);
+    // The pool grants the write; its readOnly refuses it before dispatch.
+    const refused = (await rpc(c, "/mcp", "bob", "call_destructive_tool", { address: "notes.delete", args: {} }))
+      .result;
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused)).toContain("read_only_endpoint");
+    expect(deletes).toBe(0);
     // Activity records the routed pool exactly as the explicit path does.
     events.length = 0;
     for (const path of ["/mcp", "/mcp/team"])
