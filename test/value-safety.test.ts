@@ -209,6 +209,48 @@ describe("value-safety engine", () => {
     expect(safety.redact({ url: checkout }, "GET", "/")).toEqual({ url: "https://checkout.example.com/c/pay/cs_1" });
   });
 
+  it("INV-5 INV-10: classifies every path a rule may change, at any depth, its containers and its maps", () => {
+    const safety = engine({
+      operations: {
+        "GET /v1/things": redact("Hooks carry secrets.", [
+          "hook_uuid",
+          "drains[].headers{}",
+          "bypass@keys",
+          "url:dest_conf",
+        ]),
+        "POST /v1/keys": refuse("It mints a key."),
+      },
+      fields: { card_number: { verdict: "redact", reason: "A PAN." } },
+      resources: { key: "object", rules: { session: { reason: "A payer page.", paths: ["client_secret"] } } },
+    });
+    const reads = safety.transforms("GET", "/v1/things");
+    const split = (path: string) => path.split(".");
+    // A reviewed path applies inside an envelope too, and its container and map hold what it
+    // changes. (A container the index declares above a changed path is the hatch's to withhold.)
+    for (const path of [
+      "hook_uuid",
+      "result[].hook_uuid",
+      "drains",
+      "drains[].headers",
+      "bypass",
+      "result[].dest_conf",
+      "data[].client_secret",
+      "card_number",
+      "items[].private_token",
+      "env",
+      "rules[].value",
+      "routes[].headers",
+    ])
+      expect(reads(split(path)), path).toBe(true);
+    for (const path of ["id", "drains[].name", "result[].created_on", "object", "data[].amount"])
+      expect(reads(split(path)), path).toBe(false);
+    expect(safety.transforms("POST", "/v1/keys")(["id"])).toBe(true);
+    // Another operation has none of these reviewed paths, but resource rules and names hold everywhere.
+    const other = safety.transforms("POST", "/v1/things");
+    expect(other(["hook_uuid"])).toBe(false);
+    expect(other(["data", "client_secret"])).toBe(true);
+  });
+
   it("INV-5: withholds error text for reviewed operations and credential inputs unless the review says vendor", () => {
     const safety = engine({
       operations: {

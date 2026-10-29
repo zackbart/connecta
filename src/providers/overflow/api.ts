@@ -1,3 +1,4 @@
+import { pathTransforms } from "../_shared/rest/value-safety.js";
 import { asRecord } from "../_shared/json.js";
 // Overflow v3: reviewed vendor declarations, derived operation index and paging contracts.
 // Public input: staging OpenAPI 3.0; exact retrieval and known upstream drift are in evidence/review.md.
@@ -1496,6 +1497,10 @@ export const safety: SafetyOptions = {
   reviewed: {
     resolve: (method, path) => ({ method, template: OVERFLOW_INDEX.resolve(method, path).op.path }),
     redact: (body, operation) => (operation.template.startsWith("/webhooks") ? withoutWebhookSecrets(body) : body),
+    transforms: (operation) =>
+      operation.template.startsWith("/webhooks")
+        ? pathTransforms({ names: (name) => WEBHOOK_SECRETS.test(name) })
+        : () => false,
     withholdsErrors: (operation) => operation.template.startsWith("/webhooks"),
   },
 };

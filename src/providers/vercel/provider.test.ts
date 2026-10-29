@@ -1,4 +1,5 @@
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
+import { expectContractHolds } from "../../../test/fixtures/provider-reads.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
@@ -69,6 +70,72 @@ describe("vercel() over an access token", () => {
 
   const call = (connector: Connector, name: string, args: Record<string, unknown> = {}) =>
     connector.callTool(name, args, keyed()) as Promise<any>;
+
+  it("INV-5 INV-10: details withholds drain headers, deployment env and bypass secrets that real reads redact", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const cases = [
+      {
+        template: "/v2/integrations/log-drains",
+        path: "/v2/integrations/log-drains",
+        body: [
+          {
+            id: "ld_1",
+            name: "drain",
+            url: "https://drain.example/ingest",
+            headers: { "X-Custom": "stored-drain-secret" },
+            deliveryFormat: "json",
+            sources: ["lambda"],
+            createdAt: 1767225600000,
+            projectId: "prj_1",
+          },
+        ],
+        withheld: ["headers"],
+        secrets: ["stored-drain-secret"],
+      },
+      {
+        template: "/v13/deployments/{idOrUrl}",
+        path: "/v13/deployments/dpl_1",
+        body: {
+          id: "dpl_1",
+          name: "web",
+          url: "web-abc.vercel.app",
+          readyState: "READY",
+          env: ["API_TOKEN=stored-env-secret"],
+          routes: [{ src: "/(.*)", env: ["ROUTE_TOKEN=stored-route-secret"] }],
+          createdAt: 1767225600000,
+        },
+        // routes[].env falls past the path cap; its container is withheld whole.
+        withheld: ["env", "routes"],
+        secrets: ["stored-env-secret", "stored-route-secret"],
+      },
+      {
+        template: "/v9/projects/{idOrName}",
+        path: "/v9/projects/web",
+        body: {
+          id: "prj_1",
+          name: "web",
+          framework: "nextjs",
+          protectionBypass: {
+            "bypass-secret-abc123": { createdAt: 1767225600000, createdBy: "usr_1", scope: "automation-bypass" },
+          },
+          passwordProtection: null,
+          createdAt: 1767225600000,
+        },
+        withheld: ["protectionBypass"],
+        secrets: ["bypass-secret-abc123"],
+      },
+    ];
+    for (const { template, path, body, withheld, secrets } of cases) {
+      respond = () => Response.json(body);
+      await expectContractHolds({
+        details: () => call(connector, "vercel_api_details", { method: "GET", path: template }),
+        read: (fields) => call(connector, "vercel_api_read", { path, ...(fields ? { fields } : {}) }),
+        body,
+        withheld,
+        secrets,
+      });
+    }
+  });
 
   it("INV-5: sanitizes embedded URLs in named build/runtime log streams before clamping (#812)", async () => {
     const connector = vercel("hosting", TOKEN);

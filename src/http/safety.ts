@@ -14,7 +14,7 @@
 import { Effect } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import type { OperationIndex } from "../providers/_shared/rest/operation-index.js";
-import type { ValueSafety } from "../providers/_shared/rest/value-safety.js";
+import type { PathTransforms, ValueSafety } from "../providers/_shared/rest/value-safety.js";
 import { Refusal, type OperationRef } from "./errors.js";
 
 export interface ResultSafety {
@@ -26,6 +26,12 @@ export interface ResultSafety {
   readonly redact: (data: unknown, operation: OperationRef) => unknown;
   /** Whether a failure of this operation withholds the vendor's text; codes and statuses still route. */
   readonly withholdsErrors: (operation: OperationRef) => boolean;
+  /**
+   * Whether `redact` may change the value at a declared response path or beneath it: the
+   * reviewed table's own rules, then the sensitive-field choice. A reviewed redaction that
+   * declares no classifier transforms every path.
+   */
+  readonly transforms: (operation: OperationRef) => PathTransforms;
 }
 
 export interface SafetyOptions {
@@ -40,6 +46,11 @@ export interface SafetyOptions {
     readonly resolve?: (method: string, path: string) => OperationRef;
     readonly redact: (data: unknown, operation: OperationRef) => unknown;
     readonly withholdsErrors: (operation: OperationRef) => boolean;
+    /**
+     * The paths `redact` may change, for discovery to state what a read returns. It must
+     * cover every rule `redact` applies; absent, discovery treats every path as transformed.
+     */
+    readonly transforms?: (operation: OperationRef) => PathTransforms;
   };
   /** A global review permitting unindexed paths only when there is no reviewed table. */
   readonly review?: string;
@@ -90,6 +101,10 @@ export function resultSafety(options: SafetyOptions): ResultSafety {
       return dropped.size > 0 ? strip(safe) : safe;
     },
     withholdsErrors: (operation) => reviewed?.withholdsErrors(operation) === true,
+    transforms: (operation) => {
+      const declared = reviewed ? (reviewed.transforms?.(operation) ?? (() => true)) : () => false;
+      return (path) => path.some((segment) => dropped.has(segment.replace(/\[\]$/, ""))) || declared(path);
+    },
   };
 }
 
@@ -117,6 +132,10 @@ export function restSafety(reviewed: ValueSafety, index: OperationIndex): NonNul
     withholdsErrors: (operation) => {
       const op = indexed(operation);
       return op ? reviewed.withholdsErrors(op) : true;
+    },
+    transforms: (operation) => {
+      const op = indexed(operation);
+      return op ? reviewed.transforms(op.method, op.path) : () => true;
     },
   };
 }

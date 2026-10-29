@@ -304,6 +304,8 @@ export function googleSafety(provider: string, operations: readonly VendorOperat
         return { method: found.method, template: found.template };
       },
       redact: (data) => data,
+      // The redaction is the identity, so it transforms no path.
+      transforms: () => () => false,
       withholdsErrors: () => false,
     },
     sensitiveFields: { names: [], choice: "drop" },

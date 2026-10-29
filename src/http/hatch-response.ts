@@ -6,14 +6,26 @@
 // or reduce a result without a sampling call. The pinned index carries names
 // only, never types or example values, so nothing here can echo vendor data.
 //
-// Value safety decides what is advertised as readable. Each operation's paths
-// are built into two skeleton bodies, one of neutral strings and one whose
-// every value carries the redaction placeholder (so each value-dependent rule,
-// such as a type discriminator or a record's label, takes its most protective
-// outcome), and both pass through the connection's own result-safety
-// boundary: reviewed paths, resource rules, the key-name heuristic, closed
-// projections and the deployment's sensitive-field choice. A path that does
-// not come back unchanged from both is listed as withheld, never as a field.
+// A path is listed as readable only when two independent checks agree, and
+// withheld otherwise; anything inconclusive withholds.
+//
+// 1. The connection's own rules, read as a classifier (`ResultSafety.transforms`):
+//    the same reviewed table its redaction applies, every reviewed path tried
+//    at every depth, every resource rule for every type, every key-name rule
+//    without exemptions, and the sensitive-field choice. A reviewed redaction
+//    that declares no classifier transforms every path.
+// 2. Probes through the connection's own redaction: one skeleton body per
+//    value shape (strings, a placeholder-carrying string, numbers, booleans, a
+//    populated map, a list of strings, a list of records), each shape placed at
+//    every declared leaf at once. A leaf must come back exactly as it went in
+//    for every scalar shape; a container shape may only be dropped by its own
+//    key, never changed. A container is readable only if every declared path
+//    beneath it is, and its whole subtree survives each scalar shape.
+//
+// Content rules still apply inside any value read: a URL carrying credentials,
+// a sent secret echoed back, or a credential-named key nested in an undeclared
+// structure is redacted wherever it appears.
+import { canonicalJson } from "../canonical-json.js";
 import { REDACTED } from "../redaction-marker.js";
 import type { Operation, OperationIndex } from "../providers/_shared/rest/operation-index.js";
 import type { ResultSafety } from "./safety.js";
@@ -38,51 +50,50 @@ interface Node {
   readonly children: Map<string, Node>;
 }
 
-const NEUTRAL = "connecta-probe";
-const ALTERED = `connecta-probe${REDACTED}`;
+const TEXT = "connecta-probe";
+const SCALARS: readonly unknown[] = [TEXT, `${TEXT}${REDACTED}`, 7, true];
+const CONTAINERS: readonly unknown[] = [
+  { probe_key: TEXT, probe_list: [TEXT], probe_map: { probe_key: TEXT } },
+  [TEXT],
+  [{ probe_key: TEXT }],
+];
 
-/** `a[].b` → `[["a", true], ["b", false]]`. */
-function segments(path: string): [string, boolean][] {
-  return path.split(".").map((part) => (part.endsWith("[]") ? [part.slice(0, -2), true] : [part, false]));
+/** `a[].b` → `["a", "b"]`; the tree says where lists are. */
+function names(path: string): string[] {
+  return path.split(".").map((part) => part.replace(/\[\]$/, ""));
 }
 
-function skeleton(node: Node, leaf: string): unknown {
+function skeleton(node: Node, leaf: unknown): unknown {
   const value =
     node.children.size === 0
-      ? leaf
+      ? structuredClone(leaf)
       : Object.fromEntries([...node.children].map(([name, child]) => [name, skeleton(child, leaf)]));
   return node.array ? [value] : value;
 }
 
-/** The value at `path`, if present; the tree, not the path's spelling, says where lists are. */
-function valueAt(root: unknown, tree: Node, path: string): { readonly value: unknown } | undefined {
+const plainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * What came back at `path`: `present` with its value, `dropped` when only its
+ * own key is missing from an intact parent record, or `lost` otherwise.
+ */
+function at(root: unknown, tree: Node, path: string) {
   let value = root;
   let node = tree;
-  for (const [name] of segments(path)) {
-    if (value === null || typeof value !== "object" || Array.isArray(value) || !Object.hasOwn(value, name))
-      return undefined;
-    value = (value as Record<string, unknown>)[name];
+  const parts = names(path);
+  for (const [index, name] of parts.entries()) {
+    if (!plainObject(value)) return { state: "lost" as const };
+    if (!Object.hasOwn(value, name)) return { state: index === parts.length - 1 ? "dropped" : "lost" } as const;
+    value = value[name];
     node = node.children.get(name)!;
     if (node.array) {
-      if (!Array.isArray(value) || value.length !== 1) return undefined;
+      if (!Array.isArray(value) || value.length !== 1) return { state: "lost" as const };
       value = value[0];
     }
   }
-  return { value };
+  return { state: "present" as const, value };
 }
-
-function place(root: unknown, tree: Node, path: string, value: unknown): void {
-  let at = root as Record<string, unknown>;
-  let node = tree;
-  const parts = segments(path);
-  for (const [index, [name]] of parts.entries()) {
-    node = node.children.get(name)!;
-    if (index === parts.length - 1) at[name] = node.array ? [value] : value;
-    else at = (node.array ? (at[name] as unknown[])[0] : at[name]) as Record<string, unknown>;
-  }
-}
-
-const plainObject = (value: unknown) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 /**
  * The capped response contract for one operation, or undefined when it
@@ -104,55 +115,69 @@ export function responseContract(
   const tree: Node = { array: false, children: new Map() };
   for (const path of paths) {
     let node = tree;
-    for (const [name, array] of segments(path)) {
+    for (const part of path.split(".")) {
+      const name = part.replace(/\[\]$/, "");
       let child = node.children.get(name);
-      if (!child) node.children.set(name, (child = { array, children: new Map() }));
-      child.array ||= array;
+      if (!child) node.children.set(name, (child = { array: false, children: new Map() }));
+      child.array ||= part.endsWith("[]");
       node = child;
     }
   }
   // Every root `fields` accepts is listed, including one the index names only beneath it.
   const spelled = new Map<string, string>();
   for (const path of [...tree.children.keys(), ...paths]) {
-    const key = path.replace(/\[\](?=\.|$)/g, "");
+    const key = names(path).join(".");
     if (!spelled.has(key)) spelled.set(key, path);
   }
   const all = [...spelled.values()];
   const depth = (path: string) => path.split(".").length;
   const ordered = all.map((path, at) => ({ path, at })).sort((a, b) => depth(a.path) - depth(b.path) || a.at - b.at);
+
   const operation = { method: op.method, template: op.path };
-  const run = (leaf: string, override?: { readonly path: string; readonly value: unknown }) => {
+  let transforms: (path: readonly string[]) => boolean;
+  try {
+    transforms = safety.transforms(operation);
+  } catch {
+    transforms = () => true;
+  }
+  const probe = (leaf: unknown) => {
     const item = skeleton(tree, leaf);
-    if (override) place(item, tree, override.path, override.value);
     try {
-      const out = safety.redact(anchor === "data[]" ? [item] : item, operation);
-      return anchor === "data[]" ? (Array.isArray(out) && out.length === 1 ? out[0] : undefined) : out;
+      const out = safety.redact(anchor === "data[]" ? [structuredClone(item)] : structuredClone(item), operation);
+      return { item, out: anchor === "data[]" ? (Array.isArray(out) && out.length === 1 ? out[0] : undefined) : out };
     } catch {
       return undefined;
     }
   };
-  const wholes = new Map([NEUTRAL, ALTERED].map((leaf) => [leaf, run(leaf)] as const));
-  // Readable only if it survives both probes. The altered probe re-checks a value alone in its
-  // neutral spelling, so a rule that withholds only an altered value of its own (a URL whose
-  // scheme redaction may have taken) is not mistaken for a field rule; a sibling's altered
-  // discriminator, label or type still selects every rule. A value a closed projection keeps
-  // only as a record or a list of records is re-checked as one, unless a rule wrote over it.
-  const readable = (path: string) => {
-    const leaf = [...segments(path)].reduce((node, [name]) => node.children.get(name)!, tree).children.size === 0;
-    return [NEUTRAL, ALTERED].every((base) => {
-      let found = valueAt(wholes.get(base), tree, path);
-      if (!leaf) return found !== undefined && plainObject(found.value);
-      if (found?.value === base) return true;
-      if (base === ALTERED) {
-        found = valueAt(run(base, { path, value: NEUTRAL }), tree, path);
-        if (found?.value === NEUTRAL) return true;
-      }
-      if (typeof found?.value === "string") return false;
-      return [{}, [{}]].some((value) => {
-        const shaped = valueAt(run(base, { path, value }), tree, path);
-        return shaped !== undefined && (Array.isArray(value) ? Array.isArray(shaped.value) : plainObject(shaped.value));
-      });
-    });
+  const scalars = SCALARS.map((leaf) => ({ leaf, run: probe(leaf) }));
+  const containers = CONTAINERS.map((leaf) => ({ leaf, run: probe(leaf) }));
+  const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+  const verdicts = new Map<string, boolean>();
+  const readable = (path: string): boolean => {
+    const key = names(path).join(".");
+    const known = verdicts.get(key);
+    if (known !== undefined) return known;
+    const node = names(path).reduce((parent, name) => parent.children.get(name)!, tree);
+    const verdict =
+      !transforms(names(path)) &&
+      (node.children.size === 0
+        ? scalars.every(({ leaf, run }) => {
+            const found = run && at(run.out, tree, path);
+            return found?.state === "present" && same(found.value, leaf);
+          }) &&
+          containers.every(({ leaf, run }) => {
+            const found = run && at(run.out, tree, path);
+            return found?.state === "dropped" || (found?.state === "present" && same(found.value, leaf));
+          })
+        : [...node.children].every(([child, below]) => readable(`${key}.${child}${below.array ? "[]" : ""}`)) &&
+          scalars.every(({ run }) => {
+            if (!run) return false;
+            const found = at(run.out, tree, path);
+            const sent = at(run.item, tree, path);
+            return found.state === "present" && sent.state === "present" && same(found.value, sent.value);
+          }));
+    verdicts.set(key, verdict);
+    return verdict;
   };
   const fields: string[] = [];
   const withheld: string[] = [];

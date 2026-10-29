@@ -163,9 +163,11 @@
 // privacy as deployment config), defined in `test/provider-standard.ts`. A
 // provider meets these rules, and the Node-only
 // `provider-standard.node.test.ts` enforces the folder rules.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, compactDiscoverySchema } from "../src/catalog.js";
 import { RESPONSE_BUDGET } from "../src/http/hatch-response.js";
+import { canonicalJson } from "../src/canonical-json.js";
+import { populated, readWorld, valuesAt } from "./fixtures/provider-reads.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
@@ -384,17 +386,56 @@ describe("standard api() surfaces share one agent-facing shape (decision 0011, S
   });
 });
 
-describe("hatch details state response fields that read accepts unchanged (S5)", () => {
-  // Path values the fixtures admit: GitHub's scope names the acme organization.
-  const filled: Readonly<Record<string, string>> = { owner: "acme", repo: "widget" };
-  it.each(providerFixtures.map((fixture) => fixture.name))("%s", { timeout: 60_000 }, async (name) => {
-    const connector = providerFixtures.find((fixture) => fixture.name === name)!.create();
-    const tools = await connector.listTools(CONTEXT);
+describe("hatch details state response fields that real reads return unchanged (S5)", () => {
+  // Valid path and query values for the fixtures: GitHub's App scope names acme/one, Granola
+  // ids are not_ plus 14 characters, and QuickBooks company info names the configured realm.
+  const filled = (name: string, path: string, param: string, schema: any): string => {
+    if (name === "github" && param === "owner") return "acme";
+    if (name === "github" && param === "repo") return "one";
+    if (name === "granola") return "not_abcdefghij1234";
+    if (name === "breeze") return "1";
+    if (name === "quickbooks") return path.startsWith("/companyinfo/") ? "123456789" : "42";
+    return sample(schema, "fixture1");
+  };
+  const sample = (schema: any, text: string): any => {
+    const type = Array.isArray(schema?.type) ? schema.type[0] : schema?.type;
+    if (schema?.enum?.length) return schema.enum[0];
+    if (schema?.anyOf?.length) return sample(schema.anyOf[0], text);
+    if (type === "integer" || type === "number") return schema.minimum ?? 1;
+    if (type === "boolean") return true;
+    if (type === "array") return [sample(schema.items, text)];
+    if (type === "object")
+      return Object.fromEntries(
+        (schema.required ?? []).map((key: string) => [key, sample(schema.properties?.[key], text)]),
+      );
+    if (schema?.format === "date-time") return "2026-01-01T00:00:00Z";
+    if (schema?.format === "date") return "2026-01-01";
+    return text;
+  };
+  // Vendors that check an envelope in-band before answering need its real values.
+  const fixed: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+    breeze: { success: true, errors: null },
+    cloudflare: { success: true },
+    granola: { hasMore: false, cursor: null, id: "not_abcdefghij1234" },
+    overflow: { totalCount: 1 },
+    stripe: { has_more: false },
+    tithely: { status: "success" },
+  };
+  const variants = [
+    // Secret-shaped, and sharing no text with the harness credentials, which sent-secret
+    // redaction would rightly take out of any value.
+    (index: number) => `sk_live_51Hq${index}Zx9eR4tY7uI0pA3sD6fGhJ`,
+    (index: number) => 40 + index,
+    () => true,
+  ];
+  it.each(providerFixtures.map((fixture) => fixture.name))("%s", { timeout: 120_000 }, async (name) => {
+    const world = await readWorld(name);
+    const tools = await world.connector.listTools(world.context());
     const details = tools.find((tool) => tool.name.endsWith("_api_details"));
     if (!details) return;
     const prefix = details.name.replace(/_details$/, "");
     const call = async (tool: string, args: Record<string, unknown>) => {
-      const result = (await connector.callTool(`${prefix}_${tool}`, args, CONTEXT)) as any;
+      const result = (await world.connector.callTool(`${prefix}_${tool}`, args, world.context())) as any;
       return result?.structuredContent ?? result;
     };
     const operations = new Map<string, { method: string; path: string }>();
@@ -403,37 +444,77 @@ describe("hatch details state response fields that read accepts unchanged (S5)",
       for (const op of found.operations)
         if (op.tool === `${prefix}_read`) operations.set(`${op.method} ${op.path}`, op);
     }
-    vi.stubGlobal("fetch", async () => Response.json({}));
-    let described = 0;
-    let validated = 0;
-    try {
-      for (const { method, path } of operations.values()) {
-        const contract = await call("details", { method, path });
-        const response = contract.response;
-        if (!response) continue;
-        described += 1;
-        expect(await call("details", { method, path }), `${method} ${path}`).toEqual(contract);
-        const advertised: string[] = [...response.fields, ...(response.withheld ?? [])];
-        expect(new Set(advertised).size, `${method} ${path}`).toBe(advertised.length);
-        expect(advertised.length).toBeLessThanOrEqual(RESPONSE_BUDGET.paths);
-        expect(advertised.every((field) => field.length <= RESPONSE_BUDGET.pathChars)).toBe(true);
-        // Every advertised path, withheld ones included, must leave a read's outcome exactly as it
-        // is without fields; an undeclared path shows the comparison reaches the fields check.
-        const concrete = path.replace(/\{([^}]+)\}/g, (_, param: string) => filled[param] ?? "fixture1");
-        const outcome = (args: Record<string, unknown>) =>
-          call("read", { ...(method === "GET" ? {} : { method }), path: concrete, ...args }).then(
-            () => "sent",
-            (error: any) => `${error?.code}: ${error?.message}`,
-          );
-        const bare = await outcome({});
-        if ((await outcome({ fields: ["connecta_undeclared"] })) !== bare) validated += 1;
-        for (let at = 0; at < advertised.length; at += 50)
-          expect(await outcome({ fields: advertised.slice(at, at + 50) }), `${method} ${path}`).toBe(bare);
+    let tested = 0;
+    const unreached: string[] = [];
+    for (const { method, path } of operations.values()) {
+      const contract = await call("details", { method, path });
+      const response = contract.response;
+      if (!response) continue;
+      tested += 1;
+      const label = `${method} ${path}`;
+      expect(await call("details", { method, path }), label).toEqual(contract);
+      const advertised: string[] = [...response.fields, ...(response.withheld ?? [])];
+      expect(new Set(advertised).size, label).toBe(advertised.length);
+      expect(advertised.length).toBeLessThanOrEqual(RESPONSE_BUDGET.paths);
+      expect(advertised.every((field) => field.length <= RESPONSE_BUDGET.pathChars)).toBe(true);
+      const args: Record<string, unknown> = {
+        ...(method === "GET" ? {} : { method }),
+        path: path.replace(/\{([^}]+)\}/g, (_: string, param: string) =>
+          filled(name, path, param, contract.parameters.find((entry: any) => entry.name === param)?.schema),
+        ),
+      };
+      const query = Object.fromEntries(
+        contract.parameters
+          .filter((entry: any) => entry.in === "query" && entry.required)
+          .map((entry: any) => [entry.name, sample(entry.schema, "fixture1")]),
+      );
+      if (Object.keys(query).length) args["query"] = query;
+      if (contract.body?.required) {
+        const schema = contract.body.schema;
+        args["body"] = Object.fromEntries(
+          (schema.required ?? []).map((key: string) => [key, sample(schema.properties?.[key], "fixture1")]),
+        );
       }
-    } finally {
-      vi.unstubAllGlobals();
+      // An undeclared path must be refused while the same read without fields is not, so each
+      // operation's comparison provably reaches the fields check.
+      world.serve(populated(response, variants[0]!, fixed[name]));
+      const outcome = (extra: Record<string, unknown>): Promise<{ result?: any; error?: string }> =>
+        call("read", { ...args, ...extra }).then(
+          (result) => ({ result }),
+          (error: any) => ({ error: `${error?.code}: ${error?.message}` }),
+        );
+      const bare = await outcome({});
+      const control = await outcome({ fields: ["connecta_undeclared"] });
+      expect(control.error, label).toMatch(/fields path connecta_undeclared/);
+      expect(bare.error ?? "", label).not.toMatch(/fields path|declares no response properties/);
+      for (const field of advertised)
+        expect(field.replace(/\[\](?=\.|$)/g, "").split(".")[0], label).not.toBe("connecta_undeclared");
+      // Each advertised readable path, served populated through the real read path in each
+      // value shape, comes back exactly as sent: never redacted, dropped, or moved.
+      // A vendor that rejects one shape (a malformed total, a string where it decodes a number)
+      // must accept another: every operation is read and compared in at least one.
+      let compared = false;
+      const errors: string[] = [];
+      for (const leaf of variants) {
+        const body = populated(response, leaf, fixed[name]);
+        world.serve(body);
+        for (let at = 0; at < response.fields.length; at += 50) {
+          const chunk = response.fields.slice(at, at + 50);
+          const read = await outcome({ fields: chunk });
+          if (!read.result) {
+            errors.push(read.error!);
+            continue;
+          }
+          compared = true;
+          for (const field of chunk)
+            expect(canonicalJson(valuesAt(read.result.data, field)), `${label} ${field}`).toBe(
+              canonicalJson(valuesAt(body, field)),
+            );
+        }
+      }
+      if (!compared && response.fields.length) unreached.push(`${label}: ${errors[0]}`);
     }
-    expect(described).toBeGreaterThan(0);
-    expect(validated).toBeGreaterThan(0);
+    expect(tested).toBeGreaterThan(0);
+    expect(unreached).toEqual([]);
   });
 });

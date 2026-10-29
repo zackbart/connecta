@@ -400,13 +400,26 @@ it(
   async () => {
     const { call, authenticate, sendPath } = setup();
     const details = (await call("details", { method: "GET", path: "/items" })) as any;
-    // email is the deployment's sensitive field and token a credential name, at any depth.
+    // email is the deployment's sensitive field and token a credential name, at any depth; a
+    // container holding a withheld path is withheld itself, since reading it returns that path.
     expect(details.response).toEqual({
       anchor: "data",
-      fields: ["id", "label", "nested", "nested.id"],
-      withheld: ["email", "token", "nested.email"],
+      fields: ["id", "label", "nested.id"],
+      withheld: ["email", "token", "nested", "nested.email"],
     });
     expect(await call("details", { method: "GET", path: "/items" })).toEqual(details);
+    // A reviewed redaction that declares no classifier cannot claim any path readable.
+    const undeclared = resultSafety({
+      reviewed: { redact: (data) => data, withholdsErrors: () => false },
+      sensitiveFields: { names: [], choice: "drop" },
+    });
+    expect(undeclared.transforms({ method: "GET", template: "/items" })(["id"])).toBe(true);
+    expect(
+      resultSafety({
+        review: "Fixture without a table.",
+        sensitiveFields: { names: ["email"], choice: "drop" },
+      }).transforms({ method: "GET", template: "/items" }),
+    ).toSatisfy((transforms: (path: string[]) => boolean) => !transforms(["id"]) && transforms(["nested", "email"]));
     for (const omitted of [
       { method: "POST", path: "/query" },
       { method: "GET", path: "/blocked" },

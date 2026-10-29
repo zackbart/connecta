@@ -1,3 +1,4 @@
+import { pathTransforms } from "../_shared/rest/value-safety.js";
 import { asRecord } from "../_shared/json.js";
 // Breeze's reviewed GET-only vendor. HTTP methods do not establish safety: see tools.ts.
 import { type Context, Effect, Schema } from "effect";
@@ -618,6 +619,10 @@ export const breezeSafety: SafetyOptions = {
       })(),
     }),
     redact: (body, op) => withoutCalendarFeeds(op.template, body),
+    transforms: (op) =>
+      op.template === "/events/calendars/list"
+        ? pathTransforms({ names: (name) => name === "address" || name === "embedkey" })
+        : () => false,
     withholdsErrors: () => false,
   },
   sensitiveFields: { names: [], choice: "drop" },

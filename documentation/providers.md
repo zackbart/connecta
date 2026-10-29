@@ -426,10 +426,21 @@ Write `fields` filters and reductions from it without a sampling read:
   when the body is a list and each path applies to every item.
 - `fields` lists declared paths in the read and write tools' `fields`
   coordinates; pass them unchanged, such as `fields: ["data[].id"]`.
-- `withheld` lists declared paths that value safety or the deployment's
-  sensitive-field choice removes or may redact, by name or by value. Reading
-  one returns nothing usable; it never appears in `fields`.
+- `withheld` lists every other declared path. A path is withheld when any
+  value-safety rule or the deployment's sensitive-field choice may remove or
+  change it, anything beneath it, or the container it sits in. Rules count
+  whatever the value: a reviewed path applies at any depth and every resource
+  or labelled-record rule applies to every operation. A container is withheld
+  when any declared path beneath it is. Withholding is deliberately broad, and
+  a withheld path may still read as sent; never rely on one.
 - `omitted` counts declared paths not listed.
+
+A path is listed in `fields` only when the connection's reviewed rules
+classify it as untouched and a probe through its value-safety boundary
+returns it unchanged as a string, number, boolean, populated map and list. A
+redaction without a classifier withholds every path. Content rules still apply
+inside any value read: a URL carrying credentials is sanitized, and a value
+echoing a secret the request sent is redacted.
 
 Paths list shallowest first, in index order, up to 100 paths and 4,096
 characters of path JSON; a path over 200 characters is never listed. The

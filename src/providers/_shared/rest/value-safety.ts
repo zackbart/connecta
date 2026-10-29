@@ -1491,6 +1491,58 @@ function acceptsCredential(schema: JsonSchema | undefined, depth: number): boole
   );
 }
 
+/** Whether value safety may change the value at a declared path (segments, list markers dropped) or beneath it. */
+export type PathTransforms = (path: readonly string[]) => boolean;
+
+const ENV_VALUE_NAMES = ENV_VALUE_FIELDS.map(normalizedName);
+const VALUE_DEPENDENT_NAMES = [...LABELLED_VALUE_FIELDS, ...HEADER_RULE_VALUES, ...DESTINATION_KEYS, "headers"].map(
+  normalizedName,
+);
+
+/**
+ * The heuristic's key-name rules, ignoring every exemption: a credential
+ * name, an environment container, and each field a value-dependent rule
+ * (a labelled or typed secret record, a header rule, a destination, route or
+ * delivery headers) may withhold whatever the record says.
+ */
+function heuristicName(name: string): boolean {
+  return (
+    containsCredential(name) ||
+    CREDENTIAL_SUFFIX.test(name) ||
+    ENV_CONTAINERS.includes(name) ||
+    VALUE_DEPENDENT_NAMES.includes(name)
+  );
+}
+
+/**
+ * A conservative classifier over reviewed paths in the path language and a
+ * name rule. A path is transformed when a rule may reach it, anything beneath
+ * it, or a container it sits in: every reviewed path is tried at every depth
+ * (a vendor may apply it inside an envelope), list markers match nothing, and
+ * maps and secret-keyed maps match any name. Names compare normalized.
+ */
+export function pathTransforms(rules: {
+  readonly paths?: readonly string[];
+  readonly names?: (normalized: string) => boolean;
+}): PathTransforms {
+  const patterns = (rules.paths ?? []).map((raw) =>
+    parsePath(raw)
+      .segments.filter((segment) => !segment.startsWith("["))
+      .map((segment) => (segment === "{}" || segment === "@keys" ? "*" : normalizedName(segment))),
+  );
+  return (path) => {
+    const names = path.map((segment) => normalizedName(segment.replace(/\[\]$/, "")));
+    if (rules.names && names.some(rules.names)) return true;
+    return patterns.some(
+      (pattern) =>
+        pattern.length === 0 ||
+        names.some((_, at) =>
+          pattern.every((part, index) => at + index >= names.length || part === "*" || part === names[at + index]),
+        ),
+    );
+  };
+}
+
 /** What a vendor's tools ask of its reviewed table. */
 export interface ValueSafety {
   readonly table: ValueSafetyTable;
@@ -1500,6 +1552,12 @@ export interface ValueSafety {
   refusal(method: string, template: string): string | undefined;
   /** One success body made value-safe: reviewed paths, environment bodies, resource rules, then the heuristic. */
   redact(data: unknown, method: string, template: string): unknown;
+  /**
+   * The same rules `redact` applies, read as a conservative path classifier
+   * for discovery: true when any rule may change the value at a declared
+   * response path or anything beneath it.
+   */
+  transforms(method: string, template: string): PathTransforms;
   /**
    * Whether a failure's vendor text is withheld: any reviewed operation
    * unless its verdict says `errors: "vendor"`, or an unreviewed one whose
@@ -1518,9 +1576,44 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
     const key = `${method} ${template}`;
     return Object.hasOwn(table.operations, key) ? table.operations[key] : undefined;
   };
+  const classifiers = new Map<string, PathTransforms>();
+  // Which resource a discriminated object is remains unknown before the vendor answers, so
+  // every resource rule applies to every operation, at any depth. Embedded-URL paths are not
+  // field rules: like URL sanitizing everywhere, they change only text that carries a URL.
+  const everywhere = Object.values(table.resources?.rules ?? {}).flatMap((rule) => [
+    ...(rule.paths ?? []),
+    ...(rule.withheld ?? []),
+    ...(rule.verbatim ?? []),
+  ]);
+  const redactedNames = Object.entries(fields)
+    .filter(([, review]) => review.verdict === "redact")
+    .map(([name]) => normalizedName(name));
   return {
     table,
     verdict,
+    transforms(method, template) {
+      const key = `${method} ${template}`;
+      let classifier = classifiers.get(key);
+      if (!classifier) {
+        const reviewed = verdict(method, template);
+        const env = table.envBodies?.test(template) === true;
+        classifier =
+          reviewed?.verdict === "refuse"
+            ? () => true
+            : pathTransforms({
+                paths: [
+                  ...(reviewed?.verdict === "redact" ? reviewed.paths : []),
+                  ...everywhere,
+                  // The heuristic's deploy hook rule names a parent and its child.
+                  "deployhooks.url",
+                ],
+                names: (name) =>
+                  heuristicName(name) || redactedNames.includes(name) || (env && ENV_VALUE_NAMES.includes(name)),
+              });
+        classifiers.set(key, classifier);
+      }
+      return classifier;
+    },
     refusal(method, template) {
       const reviewed = verdict(method, template);
       return reviewed?.verdict === "refuse" ? `Connecta refuses ${method} ${template}. ${reviewed.reason}` : undefined;

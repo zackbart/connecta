@@ -149,43 +149,77 @@ function safeRecord(value: unknown): Record<string, unknown> {
     out["LinkedTxn"] = source["LinkedTxn"].map((row) => pick(row, ["TxnId", "TxnType", "TxnLineId"]));
   return out;
 }
+const REPORT_KEYS = new Set([
+  "Header",
+  "Columns",
+  "Column",
+  "Rows",
+  "Row",
+  "Summary",
+  "ColData",
+  "ColTitle",
+  "ColType",
+  "MetaData",
+  "Name",
+  "Value",
+  "Option",
+  "Time",
+  "ReportName",
+  "DateMacro",
+  "ReportBasis",
+  "StartPeriod",
+  "EndPeriod",
+  "SummarizeColumnsBy",
+  "Currency",
+  "value",
+  "id",
+  "type",
+  "group",
+]);
+const ENTITIES = ["Customer", "Vendor", "Account", "Item", "Invoice", "Bill", "Payment", "BillPayment"];
+const COMPANY_KEYS = [
+  "Id",
+  "SyncToken",
+  "CompanyName",
+  "LegalName",
+  "Country",
+  "FiscalYearStartMonth",
+  "SupportedLanguages",
+];
 // Report trees retain vendor hierarchy, column metadata and empty strings. No index has a fixed metric meaning.
 function reportTree(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(reportTree);
   if (typeof value !== "object" || value === null) return scalar(value);
-  const keys = new Set([
-    "Header",
-    "Columns",
-    "Column",
-    "Rows",
-    "Row",
-    "Summary",
-    "ColData",
-    "ColTitle",
-    "ColType",
-    "MetaData",
-    "Name",
-    "Value",
-    "Option",
-    "Time",
-    "ReportName",
-    "DateMacro",
-    "ReportBasis",
-    "StartPeriod",
-    "EndPeriod",
-    "SummarizeColumnsBy",
-    "Currency",
-    "value",
-    "id",
-    "type",
-    "group",
-  ]);
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => keys.has(key))
+      .filter(([key]) => REPORT_KEYS.has(key))
       .map(([key, entry]) => [key, reportTree(entry)]),
   );
 }
+/** Whether `safeRecord` returns this path within a record unchanged: only the scalars and fields it picks. */
+function recordKeeps(path: readonly string[]): boolean {
+  const [head, ...rest] = path;
+  if (head === undefined) return false;
+  if (rest.length === 0) return (scalars as readonly string[]).includes(head);
+  if ((details as readonly string[]).includes(head) || head === "Line") return recordKeeps(rest);
+  const [leaf, ...beyond] = rest;
+  if (beyond.length) return false;
+  if ((references as readonly string[]).includes(head)) return ["value", "name", "type"].includes(leaf!);
+  if (head === "MetaData") return ["CreateTime", "LastUpdatedTime"].includes(leaf!);
+  return head === "LinkedTxn" && ["TxnId", "TxnType", "TxnLineId"].includes(leaf!);
+}
+/** The closed projection read as a path classifier: anything it does not pick whole is transformed. */
+function quickbooksTransforms(template: string) {
+  return (path: readonly string[]) => {
+    const names = path.map((segment) => segment.replace(/\[\]$/, ""));
+    if (template.startsWith("/reports/")) return !names.every((name) => REPORT_KEYS.has(name));
+    if (template.startsWith("/companyinfo/"))
+      return !(names.length === 2 && names[0] === "CompanyInfo" && COMPANY_KEYS.includes(names[1]!));
+    const record = template === "/query" ? (names[0] === "QueryResponse" ? names.slice(1) : []) : names;
+    return !(record.length > 1 && ENTITIES.includes(record[0]!) && recordKeeps(record.slice(1)));
+  };
+}
+
 export function quickbooksSafety(options: Readonly<QuickBooksOptions>): SafetyOptions {
   return {
     reviewed: {
@@ -198,41 +232,27 @@ export function quickbooksSafety(options: Readonly<QuickBooksOptions>): SafetyOp
         return { method: op.method, template: op.path };
       },
       withholdsErrors: () => true,
+      transforms: (operation) => quickbooksTransforms(operation.template),
       redact: (body, operation) => {
         const root = object(body);
         if (operation.template.startsWith("/reports/")) return reportTree(root);
         if (operation.template.startsWith("/companyinfo/"))
           return {
-            CompanyInfo: pick(root["CompanyInfo"], [
-              "Id",
-              "SyncToken",
-              "CompanyName",
-              "LegalName",
-              "Country",
-              "FiscalYearStartMonth",
-              "SupportedLanguages",
-            ]),
+            CompanyInfo: pick(root["CompanyInfo"], COMPANY_KEYS),
           };
         if (operation.template === "/query") {
           const query = object(root["QueryResponse"]);
           return {
             QueryResponse: Object.fromEntries(
               Object.entries(query)
-                .filter(
-                  ([key]) =>
-                    ["Customer", "Vendor", "Account", "Item", "Invoice", "Bill", "Payment", "BillPayment"].includes(
-                      key,
-                    ) && Array.isArray(query[key]),
-                )
+                .filter(([key]) => ENTITIES.includes(key) && Array.isArray(query[key]))
                 .map(([key, rows]) => [key, (rows as unknown[]).map(safeRecord)]),
             ),
           };
         }
         return Object.fromEntries(
           Object.entries(root)
-            .filter(([key]) =>
-              ["Customer", "Vendor", "Account", "Item", "Invoice", "Bill", "Payment", "BillPayment"].includes(key),
-            )
+            .filter(([key]) => ENTITIES.includes(key))
             .map(([key, record]) => [key, safeRecord(record)]),
         );
       },

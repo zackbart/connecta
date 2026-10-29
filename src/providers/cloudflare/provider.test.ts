@@ -5,6 +5,7 @@ import { attachCallClassification } from "../../call-classification.js";
 import { CredentialVault } from "../../credentials.js";
 import { ConnectorCallError } from "../../errors.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
+import { expectContractHolds } from "../../../test/fixtures/provider-reads.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
@@ -89,6 +90,67 @@ describe("cloudflare() over a key", () => {
     expect(error).toBeInstanceOf(ConnectorCallError);
     return error as ConnectorCallError;
   }
+
+  it("INV-5 INV-10: details withholds deploy hook ids and Logpush destinations that real reads redact", async () => {
+    const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
+    const cases = [
+      {
+        template: "/accounts/{account_id}/builds/workers/{script_name}/deploy_hooks",
+        path: `/accounts/${ACCOUNT}/builds/workers/edge-worker/deploy_hooks`,
+        result: [
+          {
+            deploy_hook_uuid: "8c3e1b0a-1d2f-4a5b-9c6d-7e8f9a0b1c2d",
+            deploy_hook_name: "main deploys",
+            branch: "main",
+            external_script_id: "edge-worker",
+            created_on: "2026-01-01T00:00:00Z",
+            modified_on: "2026-01-02T00:00:00Z",
+            latest_build: { build_uuid: "b1", status: "success" },
+          },
+        ],
+        withheld: ["result[].deploy_hook_uuid", "result"],
+        secrets: ["8c3e1b0a-1d2f-4a5b-9c6d-7e8f9a0b1c2d"],
+      },
+      {
+        template: "/accounts/{account_id}/logpush/jobs",
+        path: `/accounts/${ACCOUNT}/logpush/jobs`,
+        result: [
+          {
+            id: 7,
+            name: "worker traces",
+            dataset: "workers_trace_events",
+            enabled: true,
+            destination_conf:
+              "s3://logs-bucket/workers?region=us-east-1&access-key-id=AKIAFIXTURE&secret-access-key=logpush-stored-secret",
+            frequency: "high",
+            kind: "",
+            max_upload_bytes: 5000000,
+            output_options: { field_names: ["Event"], output_type: "ndjson" },
+          },
+        ],
+        withheld: ["result[].destination_conf", "result"],
+        secrets: ["logpush-stored-secret", "AKIAFIXTURE"],
+      },
+    ];
+    for (const { template, path, result, withheld, secrets } of cases) {
+      const body = {
+        success: true,
+        errors: [],
+        messages: [],
+        result,
+        result_info: { page: 1, per_page: 20, count: 1, total_count: 1 },
+      };
+      respond = () => Response.json(body);
+      await expectContractHolds({
+        details: () => connector.callTool("cloudflare_api_details", { method: "GET", path: template }, token()) as any,
+        read: (fields) =>
+          connector.callTool("cloudflare_api_read", { path, ...(fields ? { fields } : {}) }, token()) as any,
+        body,
+        withheld,
+        secrets,
+      });
+    }
+  });
 
   it("INV-4 INV-9: a zone ownership preflight cannot perform the resource write or widen the pin", async () => {
     for (const status of [503, 429]) {
