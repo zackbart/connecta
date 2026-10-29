@@ -127,7 +127,9 @@ Setup button.
 - Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
   elsewhere, as an avatar stack named on hover and to screen readers (label,
   raw id when the label is null, or agent name). Four show, then a "+N"
-  button. A pool with agent members labels its two URLs People and Agents.
+  button. A pool lists only people or only agents. An agent pool's row
+  still shows two URLs labeled People and Agents; the People URL
+  (`/mcp/<pool>`) admits no one, because the pool has no people.
 - Expanding a row lists everyone by name, then each connector with what it
   runs as and its tools, write tools amber with a pencil. Runs-as comes from
   the endpoint's matrix cell: "Shared · saved <date>", "Shared · connected

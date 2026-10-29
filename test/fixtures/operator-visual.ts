@@ -91,9 +91,9 @@ export async function createOperatorVisualFixture(): Promise<OperatorVisualFixtu
     serverInfo: { name: "Production", version: "1" }, auth: labelledMaintainer(),
     maintainers: [ALICE],
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
-    // Alice, the fake Clerk operator, is the maintainer. Lin and the triage
-    // agent use support; alice uses automation.
-    pools: { support: { tools: ["github.read"], readOnly: true, members: ["user_lin", "agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice", "agent:claude-desktop"] } },
+    // Alice is the maintainer. People and agents use separate support and
+    // automation pools with matching tools.
+    pools: { support: { tools: ["github.read"], readOnly: true, members: ["user_lin"] }, "support-agents": { tools: ["github.read"], readOnly: true, members: ["agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] }, "automation-agents": { tools: ["github"], readOnly: false, members: ["agent:claude-desktop"] } },
     agents: AGENTS,
     activity: activityHistory({ store: { record() {}, list: async () => ({ events: events }), describe: () => ({ kind: "sqlite", retentionDays: 30, optionSources: { retentionDays: "config" } }) } }),
     accessTokens: accessTokens(storage),

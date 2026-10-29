@@ -57,6 +57,7 @@ const crm = remoteMcp("crm", {
 });
 const base = ["crm", "tickets"]; // the agent's lowest tier
 // connectors: [crm, tickets], agents: ["assistant"],
+// Agent tiers list only agents; people use a separate pool sharing base.
 // pools: { assistant: { tools: base, members: ["agent:assistant"] } }
 ```
 

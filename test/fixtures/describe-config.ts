@@ -135,7 +135,12 @@ export function secretBearingDeployment() {
       pools: {
         support: {
           tools: ["static_api"],
-          members: ["agent:release-bot", "user_support"],
+          members: ["user_support"],
+          owner: " support@workspace.example ",
+          description: " Support tier: tickets only. ",
+        }, "support-agents": {
+          tools: ["static_api"],
+          members: ["agent:release-bot"],
           owner: " support@workspace.example ",
           description: " Support tier: tickets only. ",
         },

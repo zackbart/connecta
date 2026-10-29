@@ -90,7 +90,8 @@ function deployment(options: Partial<Parameters<typeof createTestConnecta>[0]> =
     maintainers: ["alice"],
     agents: ["bot", "other"],
     pools: {
-      team: { tools: ["wiki"], members: ["bob", "agent:bot"] },
+      "team-people": { tools: ["wiki"], members: ["bob"] },
+      team: { tools: ["wiki"], members: ["agent:bot"] },
       x: { tools: ["wiki"], members: ["agent:bot"] },
       "assistant-alice": { tools: ["wiki"], members: ["agent:bot"] },
       humans: { tools: ["wiki"], members: ["bob"] },
@@ -238,8 +239,8 @@ describe("agent endpoint admission", () => {
       await wire(await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/agent/missing`))),
     ).toEqual(metadata);
     // Human pools keep Clerk's discovery.
-    const human = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/team`));
-    expect(await human.json()).toMatchObject({ resource: `${BASE}/mcp/team` });
+    const human = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/team-people`));
+    expect(await human.json()).toMatchObject({ resource: `${BASE}/mcp/team-people` });
     await c.close();
   });
 
@@ -253,7 +254,10 @@ describe("agent endpoint admission", () => {
       storage,
       auth: clerk,
       maintainers: [{ namespace: "https://clerk.example.com", id: "user_1" }],
-      pools: { team: { tools: ["wiki"], members: ["agent:bot", { namespace: "https://clerk.example.com", id: "u" }] } },
+      pools: {
+        "team-people": { tools: ["wiki"], members: [{ namespace: "https://clerk.example.com", id: "u" }] },
+        team: { tools: ["wiki"], members: ["agent:bot"] },
+      },
     });
     const bot = await issueAgentToken(storage, "bot");
     for (const [path, token, headers] of [
@@ -273,7 +277,7 @@ describe("agent endpoint admission", () => {
     expect((await listTools(c, "/agent/team?__clerk_db_jwt=dvb_x", bot, { Cookie: "__session=x" })).status).toBe(200);
     expect(authorize).not.toHaveBeenCalled();
     // The same Clerk token at a human pool is Clerk's to judge.
-    expect((await listTools(c, "/mcp/team", "eyJhbGciOiJSUzI1NiJ9.e30.sig")).status).toBe(401);
+    expect((await listTools(c, "/mcp/team-people", "eyJhbGciOiJSUzI1NiJ9.e30.sig")).status).toBe(401);
     expect(authorize).toHaveBeenCalled();
     await c.close();
   });
@@ -286,11 +290,14 @@ describe("agent endpoint admission", () => {
       storage,
       auth: cloudflareAccessAuth(),
       maintainers: [{ namespace: "cloudflare-access", id: "human" }],
-      pools: { team: { tools: ["wiki"], members: ["agent:bot", { namespace: "cloudflare-access", id: "human" }] } },
+      pools: {
+        "team-people": { tools: ["wiki"], members: [{ namespace: "cloudflare-access", id: "human" }] },
+        team: { tools: ["wiki"], members: ["agent:bot"] },
+      },
     });
     const bot = await issueAgentToken(storage, "bot");
     // The same context admits the person at the human pool.
-    expect((await listTools(c, "/mcp/team", undefined, {}, ctx)).status).toBe(200);
+    expect((await listTools(c, "/mcp/team-people", undefined, {}, ctx)).status).toBe(200);
     getIdentity.mockClear();
     for (const headers of [
       {},
@@ -337,7 +344,8 @@ describe("agent endpoint admission", () => {
       calls: { maxResultBytes: 100 },
       executor: scriptedExecutor(async (fns) => fns.result!(resultId, { maxBytes: 100 })),
       pools: {
-        team: { tools: ["docs"], members: ["bob", "agent:bot"] },
+        "team-people": { tools: ["docs"], members: ["bob"] },
+        team: { tools: ["docs"], members: ["agent:bot"] },
         second: { tools: ["docs"], members: ["agent:bot"] },
       },
     });
@@ -352,9 +360,9 @@ describe("agent endpoint admission", () => {
     await mint("/agent/team", bot);
     expect((await page("/agent/team", bot)).isError).toBeFalsy();
     expect((await page("/agent/second", bot)).isError).toBe(true);
-    expect((await page("/mcp/team", "bob")).isError).toBe(true);
-    await mint("/mcp/team", "bob");
-    expect((await page("/mcp/team", "bob")).isError).toBeFalsy();
+    expect((await page("/mcp/team-people", "bob")).isError).toBe(true);
+    await mint("/mcp/team-people", "bob");
+    expect((await page("/mcp/team-people", "bob")).isError).toBeFalsy();
     expect((await page("/agent/team", bot)).isError).toBe(true);
     await c.close();
   });
@@ -367,7 +375,7 @@ describe("human endpoints refuse agent tokens", () => {
     const c = deployment({ storage, auth: human });
     const bot = await issueAgentToken(storage, "bot");
     const before = storage.tokenReads();
-    for (const path of ["/mcp", "/mcp/team", "/mcp/x", "/mcp/missing"]) {
+    for (const path of ["/mcp", "/mcp/team-people", "/mcp/x", "/mcp/missing"]) {
       const response = await listTools(c, path, bot);
       expect(response.status, path).toBe(401);
       expect(await response.text()).not.toContain('"result"');

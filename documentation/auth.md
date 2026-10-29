@@ -68,9 +68,11 @@ In the Node template and Worker example, `CONNECTA_MAINTAINERS` is a
 comma-separated list of these ids; update that environment variable when
 using their roster wiring. Pool membership remains code. To remove a person,
 remove their memberships and maintainer entry, restart/redeploy, and remove
-their sign-in admission as appropriate. Never add another person to an
-agent's `<agent>-<user>` pool, and add a person to an agent's tier only if
-they are cleared for it; follow [the pool layout](#organizing-an-agents-pools).
+their sign-in admission as appropriate. Never add a person to an agent's
+pool: a pool lists only people or only agents, and mixing them throws at
+construction. Give people who share an agent tier's reach their own people-only
+pool that reuses the tier's tool-list constant, and keep each `<agent>-<user>`
+pool agent-only; follow [the pool layout](#organizing-an-agents-pools).
 
 ## Connect a shared credential
 
@@ -789,7 +791,9 @@ replacement. A guarded read grant becomes a pool with `readOnly: true`.
 
 Every person in exactly one pool can configure plain `/mcp`; their sign-in
 selects that pool, so one client configuration serves every team. A person in
-several pools uses each pool's `/mcp/<pool>`.
+several pools uses each pool's `/mcp/<pool>`. Only people pools count: a pool
+lists only people or only agents, so an agent's pools never change where a
+person's plain `/mcp` routes.
 
 Keep membership in deployment code; static lists can be built with ordinary
 code at construction:
@@ -815,9 +819,9 @@ Marketing's every `campaigns` tool and only `issues.search`. Neither pool
 serves `billing`; only the owner's plain `/mcp` does. A person in both pools
 uses two endpoints, never a union.
 
-A team pool can also be one of an agent's tiers: the same pool lists the
-cleared people and the agent, and each reaches it at their own address
-([people in a tier](#organizing-an-agents-pools)).
+A human team pool and an agent tier are separate pools. Share a tool-list
+constant between them, with people in `team` and only agent references in
+`assistant-team` ([pool layout](#organizing-an-agents-pools)).
 
 | Catalog change          | Exact `connector.tool` in a pool                                        |
 | ----------------------- | ----------------------------------------------------------------------- |
@@ -906,16 +910,16 @@ warning says, every pool path answers the 404 because nobody can be a member,
 and every agent endpoint answers the machine-only 401 because no agent can be
 admitted.
 
-| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers and the unique member pool to other people. Neither intersects with or widens anything.                                                                    |
-| Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                |
-| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                |
-| Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                 |
-| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; a maintainer at plain `/mcp` and a pool without one serve the shared instructions unchanged. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.  |
-| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 characters of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
-| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                     |
-| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                        |
+| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers and the unique member pool to other people. Neither intersects with or widens anything.                                                                                                                                         |
+| Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                     |
+| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                                                                                     |
+| Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                                                                                      |
+| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; a maintainer at plain `/mcp` and a pool without one serve the shared instructions unchanged. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                       |
+| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, mixed people and agent membership (a `ConfigError` naming the pool), unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 characters of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                                                                                          |
+| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                                                                                             |
 
 Pool descriptions are trimmed before validation. The remaining text must be
 1 to 500 characters and contain no C0 or C1 control characters (including tabs,
@@ -1018,9 +1022,9 @@ for agents, just as an `authScope: "personal"` connector is: `search_tools`,
 `connecta.search`, `connecta.describe`, `skills`, and connector discovery omit
 it, `authorize_connector` answers "Unknown connector", and a call by address
 fails `unknown_address`, the same as for a connector that does not exist.
-People in the same pool still see it and act as themselves. This is what lets
-one pool be a team pool for people, each acting as themselves on Workspace, and
-also list an agent that reaches only the pool's shared connectors.
+People use a separate people-only pool, where they see the connector and
+act as themselves. Share the same tool-list constant between the people pool
+and an agent-only pool when both need the same tools.
 
 `owner` is a Workspace email address, checked at construction and listed in
 `describeConfig()` (`null` when unset). Over HTTP, `/ui/api/config` serves it
@@ -1046,7 +1050,7 @@ createConnecta({
   pools: Object.fromEntries(
     team.map((person) => [
       `assistant-${person.handle}`,
-      { tools: ["gmail", "drive"], owner: person.email, members: [person.id, "agent:assistant"] },
+      { tools: ["gmail", "drive"], owner: person.email, members: ["agent:assistant"] },
     ]),
   ),
   connectors: [
@@ -1058,12 +1062,11 @@ createConnecta({
 ```
 
 The agent harness, not the model, picks the pool for each turn, which is what
-keeps one person's mailbox from another's. Adding a person to someone else's
-pool opens nothing of the owner's Workspace account to them, since people act
-as themselves through the mapping. That holds only for Workspace mappings:
-every other connector in the pool, including a shared-auth connector holding
-the owner's own account, runs the same for every member
-([members of a personal pool](#organizing-an-agents-pools)).
+keeps one person's mailbox from another's. Personal agent pools list only
+the agent, whether or not they set an `owner`. People use separate pools;
+their Workspace calls use the mapping and always act as themselves. A shared-auth
+connector holding a user's own account runs as that account for every admitted
+agent ([personal pools](#organizing-an-agents-pools)).
 
 A fixed `subject` address is the explicit shared-account exception: every
 caller, person or agent, acts as it in every pool that lists the connector,
@@ -1088,10 +1091,10 @@ section holds the complete rules.
 2. **Tiers.** An agent's tiers are named pools ordered from least to most
    capable. Recommended names are `<agent>` for the lowest tier and
    `<agent>-<tier>` for higher tiers (`assistant-team`, `assistant-leads`).
-   A tier may be any named pool, including an existing team pool such as
-   `team` or `leadership`, as long as its human members are all cleared for
-   it (rule 10). An agent with one tier uses it as the lowest. Tiers never
-   hold per-user connectors and never set an `owner`.
+   Every tier is agent-only. A human team with the same reach uses a separate
+   pool sharing the same tool-list constant (rule 10). An agent with one tier
+   uses it as the lowest. Tiers never hold per-user connectors and never set
+   an `owner`.
 3. **Personal pool `<agent>-<user>`.** `/agent/<agent>-<user>` serves pool
    `<agent>-<user>`: the highest tier that user is cleared for, plus that
    user's own connectors. Use it only in a one-on-one with that user.
@@ -1124,26 +1127,24 @@ section holds the complete rules.
    reaches every tier above. For example, billing restricted to leads goes
    in the leads tier. Per-user connectors (`notes_alice`) go only in personal
    pools, and so do the Workspace connectors with a mapping `subject` that
-   the agent uses; rule 10 covers listing them in a tier for its people.
+   the agent uses. People use a separate pool for their own accounts.
 8. **Changes stay in config.** Adding an account for a user adds its
    connector and lists it in that user's pool `tools`. Adding a user adds one
    `<agent>-<user>` pool. Adding a tier adds one pool and one constant, and
    the tier's place in the harness's tier list.
-9. **No other person in a personal pool.** The only human member an
-   `<agent>-<user>` pool may have is that same user, and usually it has none.
-   Never add another person: its per-user connectors (`notes_alice`) use that
-   user's account for everyone the pool admits, so another member would read
-   and write the user's account as their own. A person's own use normally
-   goes through their own pools or plain `/mcp`.
-10. **People in a tier are cleared for it.** A tier can also be a human team
-    pool: list the people cleared for that tier in its `members` beside the
-    agent. They use it at `/mcp/<pool>`, the agent at `/agent/<pool>`.
-    List no one else: a member reaches
-    every shared connector the tier holds, on the deployment's account. Such a
-    pool may also list Workspace mapping connectors or `authScope: "personal"`
-    connectors for its people, who act as themselves on them; those connectors
-    are absent for the agent, since a tier has no owner and an agent has no
-    principal.
+9. **Personal pools list only the agent.** An `<agent>-<user>` pool lists
+   only `"agent:<agent>"`, with or without an `owner`. No person belongs
+   there: mixed membership throws `ConfigError` at construction. A person's
+   own use goes through a separate people-only pool or plain `/mcp`.
+10. **People use separate team pools.** A tier is never a human team pool.
+    Define `teamTools` once, then use it for `team` with people in
+    `members` and `assistant-team` with only the agent. People open
+    `/mcp/team`; the agent opens `/agent/assistant-team`. Every person
+    listed must be cleared for every shared connector in their pool.
+    The human pool may also list Workspace mapping connectors and
+    `authScope: "personal"` connectors, on which each person acts as
+    themselves. Keep them out of the tier: they are absent for agents,
+    since an agent has no principal and a tier has no owner.
 
 **Choosing the pool each turn**
 
@@ -1197,8 +1198,9 @@ createConnecta({
   pools: {
     // Lowest tier and fallback: reads guests may use.
     assistant: { tools: guestTools, readOnly: true, members: [agent] },
-    // Also the team's own pool at /mcp/assistant-team.
-    "assistant-team": { tools: teamTools, members: [agent, "user_alice", "user_bob"] },
+    // Same reach, separate membership: people and the agent each have a pool.
+    team: { tools: teamTools, members: ["user_alice", "user_bob"] },
+    "assistant-team": { tools: teamTools, members: [agent] },
     "assistant-leads": { tools: leadsTools, members: [agent] },
     // Each personal pool spreads its user's highest tier.
     "assistant-alice": {
@@ -1256,8 +1258,8 @@ gets `assistant`, even if the platform marks the chat as direct. Rule 9 is
 why each personal pool lists only the agent: people act as themselves only
 through a Workspace mapping, and a shared-auth connector such as
 `notes_alice` acts as Alice for whoever the pool admits.
-Rule 10 is why `assistant-team` may list Alice and Bob: it holds only
-connectors that every member may use on the deployment's account.
+Rule 10 gives Alice and Bob a separate `team` pool sharing `teamTools`;
+`poolFor` selects only agent pools and its tier selection stays the same.
 
 ## Shared and personal auth
 

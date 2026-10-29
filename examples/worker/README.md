@@ -380,9 +380,10 @@ declared agent, is available to signed-in maintainers.
 ## Select optional modules
 
 `cloudflareAccessAuth()` reads trusted identity after Access admits the Worker
-request. Maintainers use plain `/mcp` and the operator pages; people in a pool
-use `/mcp/<pool>`, and agents in it `/agent/<pool>`, which serve exactly that
-pool's tools. Agents authenticate with `accessTokens(storage)` over the same D1
+request. Maintainers use plain `/mcp` and the operator pages; people in a
+people pool use `/mcp/<pool>` (or plain `/mcp` when it is their only pool), and
+agents in an agent pool use `/agent/<pool>`; each serves exactly that pool's
+tools. Agents authenticate with `accessTokens(storage)` over the same D1
 database; human endpoints refuse their tokens, and Access service headers alone
 never grant MCP access or interactive authority.
 Keep users, groups, and admission in Access. Connector visibility and management

@@ -26,6 +26,7 @@ export interface ResolvedPool {
   readOnly: boolean;
   /** Exactly the pool's `tools`; nothing intersects or widens it. */
   access: ConnectorAccess;
+  /** Non-empty and homogeneous: all people or all agents. */
   members: readonly Member[];
   /** Trimmed `owner`: the Workspace address agents in this pool act as. */
   owner?: string;
@@ -119,7 +120,7 @@ const memberKey = (member: Member): string =>
  * Resolve one list of references, throwing on any that is malformed,
  * ambiguous, unknown, or repeated (INV-11).
  */
-export function resolveMembers(value: unknown, path: string, context: MemberContext): Member[] {
+function resolveMembers(value: unknown, path: string, context: MemberContext): Member[] {
   if (!Array.isArray(value)) {
     throw new ConfigError(`${path} must be an array of principal ids, { namespace, id }, or "agent:<name>".`);
   }
@@ -131,6 +132,15 @@ export function resolveMembers(value: unknown, path: string, context: MemberCont
     seen.add(key);
     return Object.freeze(member);
   });
+}
+
+/** Resolve a pool's members, which are all people or all agents (INV-11). */
+export function resolvePoolMembers(value: unknown, path: string, context: MemberContext): Member[] {
+  const members = resolveMembers(value, path, context);
+  if (!members.every((member) => member.kind === members[0]!.kind)) {
+    throw new ConfigError(`${path} mixes people and agents; list only one kind.`);
+  }
+  return members;
 }
 
 /**

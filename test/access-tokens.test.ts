@@ -167,7 +167,10 @@ describe("agent token slots", () => {
       maintainers: [owner, { namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
       agents: ["simon"],
       accessTokens: accessTokens(storage),
-      pools: { team: { tools: ["calc"], members: [{ ...owner, id: "member" }, "agent:simon"] } },
+      pools: {
+        team: { tools: ["calc"], members: [{ ...owner, id: "member" }] },
+        "team-agents": { tools: ["calc"], members: ["agent:simon"] },
+      },
     });
     try {
       // An agent (never a maintainer) and a machine maintainer are refused as
@@ -416,8 +419,11 @@ describe("agent identity", () => {
       maintainers,
       agents: ["simon"],
       accessTokens: accessTokens(storage),
-      // The agent and the person share one pool that declares the personal connector.
-      pools: { shared: { tools: ["calc", "mine"], members: ["agent:simon", "owner"] } },
+      // The person's pool and the agent's pool declare the same personal connector.
+      pools: {
+        shared: { tools: ["calc", "mine"], members: ["owner"] },
+        "shared-agents": { tools: ["calc", "mine"], members: ["agent:simon"] },
+      },
     });
     try {
       const call = (address: string, credential: string) =>
@@ -425,7 +431,7 @@ describe("agent identity", () => {
           app,
           "tools/call",
           { name: "call_tool", arguments: { address, args: {} } },
-          { token: credential, ...(credential === token ? { agentPool: "shared" } : { pool: "shared" }) },
+          { token: credential, ...(credential === token ? { agentPool: "shared-agents" } : { pool: "shared" }) },
         );
       const denied = await readJsonRpc(await call("mine.read", token));
       expect(denied.result.isError).toBe(true);
@@ -435,7 +441,7 @@ describe("agent identity", () => {
           app,
           "tools/call",
           { name: "search_tools", arguments: { query: "read" } },
-          { token, agentPool: "shared" },
+          { token, agentPool: "shared-agents" },
         ),
       );
       expect(JSON.stringify(search)).not.toContain("mine");

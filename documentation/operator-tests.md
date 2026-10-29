@@ -24,7 +24,7 @@ committed through the deployment's own store, so the contract's `agents` and
 last seen are fixed. The restricted state is the member fixture from
 `test/fixtures/operator-contract-v2.ts`, and the endpoint and matrix variants
 use its maintainer fixture, which covers every runs-as kind and agent pools,
-with `test/fixtures/operator-console.ts` crowding the team pool so its avatar
+with `test/fixtures/operator-console.ts` crowding the people-only team pool so its avatar
 stack collapses to "+3".
 Collections use their corresponding browser types. Real contract serialization,
 member projection and secret withholding are exercised through

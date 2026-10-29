@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ConfigError } from "../src/config-schema.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
@@ -643,8 +644,44 @@ describe("member references at construction", () => {
       readOnly: false,
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       logger: silentLogger,
+      storage: memoryStorage(),
+      accessTokens: accessTokens(memoryStorage()),
       ...config,
     } as ConnectaConfig);
+
+  it.each([undefined, "alice@example.com"])("INV-11: refuses mixed pool membership with owner %s", (owner) => {
+    for (const members of [
+      ["bob", "agent:assistant"],
+      ["agent:assistant", { namespace: NAMESPACE, id: "bob" }],
+    ]) {
+      const attempt = build({
+        auth: users(),
+        maintainers: ["alice"],
+        agents: ["assistant"],
+        pools: { personal: { tools: ["wiki"], members, ...(owner ? { owner } : {}) } },
+      });
+      expect(attempt).toThrow(ConfigError);
+      expect(attempt).toThrow("ConnectaConfig.pools.personal.members mixes people and agents; list only one kind.");
+    }
+  });
+
+  it("INV-11: accepts people-only and agent-only pools regardless of names, tools, and owner", async () => {
+    const c = build({
+      auth: users(),
+      maintainers: ["alice"],
+      agents: ["assistant", "other"],
+      pools: {
+        assistant: {
+          tools: ["wiki"],
+          members: ["bob", { namespace: NAMESPACE, id: "carol" }],
+          owner: "alice@example.com",
+        },
+        team: { tools: ["wiki"], members: ["agent:assistant", "agent:other"] },
+        personal: { tools: ["wiki"], members: ["agent:assistant"], owner: "alice@example.com" },
+      },
+    })();
+    await c.close();
+  });
 
   it.each([
     [
