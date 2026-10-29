@@ -33,6 +33,7 @@ const STATES = Object.keys({
 } satisfies Record<ConnectorStatus["state"], 1>);
 const PROBLEMS = Object.keys({
   connector_unavailable: 1,
+  connector_timeout: 1,
   oauth_required: 1,
   credential_required: 1,
   auth_required: 1,

@@ -157,6 +157,17 @@ function operatorView({ opts }: RouteContext, authz: Authorized, registry: Regis
   return { visible, mayManage, permissions, activityEnabled, credentialManagement };
 }
 
+/**
+ * How long a detail read waits on the downstream before its row reports
+ * `connector_timeout`. A cold remote MCP handshake with an OAuth refresh is
+ * about five sequential round trips, so 8 s allows ~1.5 s each; anything
+ * slower is shown as slow or unreachable rather than holding one of the
+ * page's few detail slots for the full discovery deadline. A deployment that
+ * set a shorter `discovery.probeTimeoutMs` keeps that one deadline, which also
+ * ends in `connector_timeout`.
+ */
+const DETAIL_OBSERVE_TIMEOUT_MS = 8000;
+
 /** One connector's probed row, the page's second request per card. */
 function connectorDetail(context: RouteContext, id: string): Effect.Effect<Response, Answer> {
   const { request, baseUrl, opts, defer } = context;
@@ -184,6 +195,9 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
         personalCredentialOwner: authz.principalKey,
         mayManage,
         timeoutMs: opts.config.discovery.probeTimeoutMs,
+        ...(opts.config.discovery.probeTimeoutMs > DETAIL_OBSERVE_TIMEOUT_MS
+          ? { observeTimeoutMs: DETAIL_OBSERVE_TIMEOUT_MS }
+          : {}),
         signal: request.signal,
       },
     );

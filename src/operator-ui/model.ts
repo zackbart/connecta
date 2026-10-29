@@ -23,9 +23,14 @@ export interface UiTool extends Pick<OperatorTool, "name" | "address" | "descrip
  * (`credential_required`), or a secret that lives in deployment configuration
  * (`auth_required`). Principal forwarding instead reports `caller_refused`,
  * which has no secret-repair prompt.
+ *
+ * `connector_timeout` is a downstream that did not answer before the operator
+ * page's deadline: slow or unreachable, not known to be broken. The page
+ * stops retrying it on its own until someone asks with Refresh.
  */
 export type UiProblem =
   | "connector_unavailable"
+  | "connector_timeout"
   | "oauth_required"
   | "credential_required"
   | "auth_required"

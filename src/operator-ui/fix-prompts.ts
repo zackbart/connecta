@@ -29,6 +29,15 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
       "If the downstream is slow rather than down, review the connector's timeouts and the deployment's discovery.probeTimeoutMs.",
     ],
   },
+  connector_timeout: {
+    problem:
+      "A connector did not answer its status check or catalog load before the operator page's deadline, so it is slow or unreachable from the deployment.",
+    steps: [
+      "Confirm the connector's downstream URL or API base in the deployment config, and that the deployment can reach it from where it runs; an address that drops packets hangs rather than failing.",
+      "Check whether the downstream is down or degraded on its own status page, and retry with Refresh once it recovers.",
+      "If the downstream is reachable but routinely slower than the page's deadline, agents still use it within discovery.probeTimeoutMs; the operator page's own deadline is fixed and shorter.",
+    ],
+  },
   oauth_required: {
     problem:
       "A downstream OAuth connector needs authorization: no grant is stored, or the stored grant expired or was revoked and could not be refreshed.",
