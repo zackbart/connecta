@@ -7,11 +7,11 @@ import { ConnectorCallError } from "../../errors.js";
 import { toConnectorCallError, type HttpFailure } from "../../http/errors.js";
 import { Classification, Dispatches, Signal, type CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
-import type { ConnectorContext } from "../../types.js";
+import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { googleOutcomeOf, googleFailureMessage } from "../_shared/google/kit.js";
 import { read, write } from "../../http/tools.js";
-import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { fieldsContract, selectFields } from "../../http/fields.js";
 import { catalogSchema } from "../../http/json-schema.js";
 import { Refusal } from "../../http/errors.js";
 import { Operation } from "../../runtime/call.js";
@@ -1457,20 +1457,10 @@ function buildTool(connection: Connection, tool: DriveTool): ApiTool {
   const isList = ["search_files", "list_folder_items", "list_permissions", "list_shared_drives"].includes(tool.name);
   const output = asRecord(catalogSchema(tool.contract.output, "output"));
   const row = isList ? asRecord(asRecord(asRecord(output["properties"])["items"])["items"]) : output;
-  const roots = new Set(Object.keys(asRecord(row["properties"])));
+  const fields = isRead ? fieldsContract(isList ? "item" : "result", row as JsonSchema) : undefined;
   const input = Schema.Struct({
     ...tool.contract.input.fields,
-    ...(isRead
-      ? {
-          fields: Schema.optionalKey(
-            fieldsInput(
-              isList
-                ? "Dot paths to keep in each item; only narrows the result."
-                : "Dot paths to keep in the result; only narrows the result.",
-            ),
-          ),
-        }
-      : {}),
+    ...(fields ? { fields: Schema.optionalKey(fields.input) } : {}),
   }) as typeof tool.contract.input;
   const spec = {
     name: tool.name,
@@ -1480,8 +1470,8 @@ function buildTool(connection: Connection, tool: DriveTool): ApiTool {
     ...(tool.writeSteps ? { writeSteps: tool.writeSteps } : {}),
     run: (args: JsonRecord) =>
       Effect.gen(function* () {
-        const fields = args["fields"] as string[] | undefined;
-        const problem = isRead ? fieldsProblem(fields, roots, isList ? "an item" : "the result") : undefined;
+        const selected = args["fields"] as string[] | undefined;
+        const problem = fields?.problem(selected);
         if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
         const active = yield* Effect.serviceOption(Operation);
         const ctx = Option.isSome(active) ? active.value : undefined;
@@ -1504,9 +1494,9 @@ function buildTool(connection: Connection, tool: DriveTool): ApiTool {
           ? isList
             ? {
                 ...result,
-                items: asArray(result["items"]).map((item) => retainTruncated(item, selectFields(item, fields))),
+                items: asArray(result["items"]).map((item) => retainTruncated(item, selectFields(item, selected))),
               }
-            : retainTruncated(result, selectFields(result, fields))
+            : retainTruncated(result, selectFields(result, selected))
           : result;
       }).pipe(
         Effect.catchDefect((error) =>

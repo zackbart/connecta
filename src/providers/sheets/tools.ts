@@ -12,7 +12,7 @@ import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/res
 import { encodeForAgent, redactBeforeCut } from "../../sent-secrets.js";
 import { read, write } from "../../http/tools.js";
 import { boundCursor } from "../../http/paging.js";
-import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { fieldsContract, selectFields } from "../../http/fields.js";
 import { Operation } from "../../runtime/call.js";
 import { sheetsIndex } from "./lib/hatch.js";
 import { SHEETS_ADMITTED_KINDS, SHEETS_REFUSED_KINDS, sheetsExternalDataProblem } from "./lib/requests.js";
@@ -818,18 +818,18 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
     };
     if (!declaration.annotations.readOnlyHint)
       return write(connection, { ...spec, destructive: declaration.annotations.destructiveHint });
+    const contract = fieldsContract(
+      "result",
+      declaration.output,
+      "Truncation and content continuation metadata remain available.",
+    );
     return read(connection, {
       ...spec,
-      input: Schema.Struct({
-        ...declaration.input.fields,
-        fields: Schema.optionalKey(
-          fieldsInput("Dot paths to keep; truncation and content continuation metadata remain available."),
-        ),
-      }),
+      input: Schema.Struct({ ...declaration.input.fields, fields: Schema.optionalKey(contract.input) }),
       run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const { fields, ...rest } = args;
-          const problem = fieldsProblem(fields, new Set(Object.keys(declaration.output.fields)), "the Sheets result");
+          const problem = contract.problem(fields);
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const result: JsonRecord = yield* spec.run(rest);
           return {

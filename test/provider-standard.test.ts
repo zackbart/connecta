@@ -9,6 +9,10 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
   required,
 });
 const strings = { type: "array", items: { type: "string" } };
+const fieldsAt = (anchor: string, example: string) => ({
+  ...strings,
+  description: `Dot paths to keep. Paths start at ${anchor}, e.g. ["${example}"]. It only narrows the result.`,
+});
 const page = () =>
   object({ hasMore: { type: "boolean" }, nextCursor: { type: "string" }, total: { type: "integer" } }, ["hasMore"]);
 const READ = { readOnlyHint: true };
@@ -30,7 +34,12 @@ function standard(): ToolFacts[] {
     ...["read", "write", "upload"].map((part) => ({
       name: `acme_api_${part}`,
       annotations: part === "read" ? READ : DESTRUCTIVE,
-      inputSchema: object({ path: { type: "string" }, ...(part !== "upload" ? { fields: strings } : {}) }),
+      inputSchema: object({
+        path: { type: "string" },
+        ...(part !== "upload"
+          ? { fields: fieldsAt("the response body in data, each item when the body is a list", "id") }
+          : {}),
+      }),
       outputSchema: object(
         {
           status: { type: "integer" },
@@ -49,14 +58,24 @@ function standard(): ToolFacts[] {
       inputSchema: object({
         limit: { type: "integer", default: 25, maximum: 100 },
         cursor: { type: "string" },
-        fields: strings,
+        fields: fieldsAt("each item in items", "amount.currency"),
       }),
-      outputSchema: object({ items: { type: "array" }, page: page(), truncated: strings }, ["items", "page"]),
+      outputSchema: object(
+        {
+          items: {
+            type: "array",
+            items: object({ id: { type: "string" }, amount: object({ currency: { type: "string" } }) }),
+          },
+          page: page(),
+          truncated: strings,
+        },
+        ["items", "page"],
+      ),
     },
     {
       name: "get_charge",
       annotations: READ,
-      inputSchema: object({ chargeId: { type: "string" }, fields: strings }),
+      inputSchema: object({ chargeId: { type: "string" }, fields: fieldsAt("the result", "id") }),
       outputSchema: object({ id: { type: "string" } }, ["id"]),
     },
   ];
@@ -94,7 +113,7 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
       const fixture = {
         name: "inspect_document",
         annotations: read ? READ : DESTRUCTIVE,
-        inputSchema: object(fields ? { fields: strings } : {}),
+        inputSchema: object(fields ? { fields: fieldsAt("the result", "page.hasMore") } : {}),
         outputSchema: object({ page: object(page().properties) }),
       };
       const findings = surfaceViolations([fixture]);
@@ -173,6 +192,41 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
     expect(surfaceViolations(changed("acme_api_read", update))).toContain(
       "S3: acme_api_read returns { status: integer, data, page? }, with status and data required",
     );
+  });
+
+  it.each([
+    [
+      "list_charges",
+      "names no anchor",
+      (tool: any) => (tool.inputSchema.properties.fields = strings),
+      "description names its anchor and one example path",
+    ],
+    [
+      "get_charge",
+      "names the wrong anchor",
+      (tool: any) => (tool.inputSchema.properties.fields = fieldsAt("each item in items", "id")),
+      "paths start at result, not item",
+    ],
+    [
+      "acme_api_read",
+      "names a result anchor",
+      (tool: any) => (tool.inputSchema.properties.fields = fieldsAt("the result", "id")),
+      "paths start at data, not result",
+    ],
+    [
+      "list_charges",
+      "gives an undeclared example",
+      (tool: any) => (tool.inputSchema.properties.fields = fieldsAt("each item in items", "amount.value")),
+      "example amount.value is not a declared path at its anchor",
+    ],
+    [
+      "get_charge",
+      "gives a nested leaf example",
+      (tool: any) => (tool.inputSchema.properties.fields = fieldsAt("the result", "id.value")),
+      "example id.value is not a declared path at its anchor",
+    ],
+  ])("rejects a %s fields description that %s (S5)", (name, _label, update, finding) => {
+    expect(surfaceViolations(changed(name, update))).toEqual([`S5: ${name} fields ${finding}`]);
   });
 
   it("requires typed operation-search results and hatch page routing", () => {

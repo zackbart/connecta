@@ -5,7 +5,7 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal } from "../../http/errors.js";
 import { read, write, list } from "../../http/tools.js";
-import { fieldsProblem, selectFields } from "../../http/fields.js";
+import { fieldsContract, selectFields } from "../../http/fields.js";
 import { vercelPage } from "../../http/hatch-paging.js";
 import type { Connection } from "../../http/vendor.js";
 import type { JsonSchema } from "../../types.js";
@@ -96,6 +96,7 @@ const ENV_SCHEMA: JsonSchema = {
   },
   required: ["id", "key", "type"],
 };
+const ENV_FIELDS = fieldsContract("item", ENV_SCHEMA, "Values cannot be restored.");
 
 /** Deliberately omits `value`, even though redaction already removed it. */
 function envMetadata(value: unknown): JsonRecord {
@@ -222,7 +223,7 @@ export function vercelTools({
             type: "array",
             maxItems: 50,
             items: { type: "string", minLength: 1, maxLength: 200 },
-            description: "Dot paths to keep in each metadata item; values cannot be restored.",
+            description: ENV_FIELDS.description,
           },
         },
         ["projectId"],
@@ -238,11 +239,7 @@ export function vercelTools({
       run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const fields = args["fields"] as string[] | undefined;
-          const problem = fieldsProblem(
-            fields,
-            new Set(Object.keys(ENV_SCHEMA.properties!)),
-            "an environment metadata item",
-          );
+          const problem = ENV_FIELDS.problem(fields);
           if (problem) throw problem;
           const { data } = yield* send("GET", `/v10/projects/${segment(args["projectId"])}/env`, {
             query: compact({

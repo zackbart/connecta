@@ -668,6 +668,83 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
   });
 });
 
+describe("fields (decision 0011 S5)", () => {
+  it("states each anchor and refuses only paths outside the declared contract, never a declared absent one", async () => {
+    const Shape = Schema.Struct({
+      id: Schema.String,
+      owner: Schema.optionalKey(Schema.Struct({ name: Schema.String, email: Schema.optionalKey(Schema.String) })),
+      tags: Schema.optionalKey(Schema.Array(Schema.Struct({ label: Schema.String }))),
+      extra: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    });
+    let sent = 0;
+    const record = { id: "r1", owner: { name: "Alice" }, tags: [], extra: { color: "blue" } };
+    const one = read(acme(), {
+      name: "get_record",
+      description: "One record.",
+      input: Schema.Struct({}),
+      output: Shape,
+      fields: true,
+      run: () => Effect.sync(() => (sent++, record)),
+    });
+    const many = list(acme(), {
+      name: "list_records",
+      description: "Records.",
+      filters: {},
+      row: Shape,
+      limit: { default: 10, max: 10, description: "Most records." },
+      page: () => Effect.sync(() => (sent++, { rows: [record], page: { hasMore: false, nextCursor: null } })),
+    });
+    const fieldsOf = (tool: ApiTool) =>
+      (tool.inputSchema!.properties as Record<string, { description: string }>)["fields"]!.description;
+    expect(fieldsOf(one)).toBe(
+      'Dot paths to keep. Paths start at the result, e.g. ["id"]. It only narrows the result.',
+    );
+    expect(fieldsOf(many)).toBe(
+      'Dot paths to keep. Paths start at each item in items, e.g. ["id"]. It only narrows the result.',
+    );
+    const connector = apiConnector("acme", { tools: [one, many] });
+    // Declared paths the data lacks (an absent optional, an empty list's items) and paths
+    // below an open record are selections, not refusals.
+    const declared = ["owner.email", "tags.label", "tags[].label", "extra.color", "extra.anything.deeper"];
+    await expect(connector.callTool("get_record", { fields: declared }, context())).resolves.toEqual({
+      owner: {},
+      tags: [],
+      extra: { color: "blue" },
+    });
+    await expect(connector.callTool("list_records", { fields: ["owner.email"] }, context())).resolves.toMatchObject({
+      items: [{ owner: {} }],
+    });
+    expect(sent).toBe(2);
+    for (const name of ["get_record", "list_records"]) {
+      const of = name === "get_record" ? "the result" : "an item";
+      const failure = await connector
+        .callTool(name, { fields: ["id", "owner.zz_secret", "tags.zz_label", "id.zz_value", "zz_root"] }, context())
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ConnectorCallError);
+      expect((failure as ConnectorCallError).validation?.issues).toEqual([
+        {
+          path: "/fields/1",
+          expected: `a declared path of ${of}; segment 2 names a property declared at that level: one of name, email`,
+        },
+        {
+          path: "/fields/2",
+          expected: `a declared path of ${of}; segment 2 names a property declared at that level: one of label`,
+        },
+        {
+          path: "/fields/3",
+          expected: `a declared path of ${of}; the value at segment 1 has no properties, so end the path there`,
+        },
+        { path: "/fields/4", expected: `a path beginning with a property of ${of}: one of id, owner, tags, extra` },
+      ]);
+      // A refusal names positions and declared properties, never what was submitted.
+      expect(JSON.stringify([(failure as Error).message, (failure as ConnectorCallError).validation])).not.toMatch(
+        /zz_/,
+      );
+    }
+    expect(sent).toBe(2);
+  });
+});
+
 describe("paging (decision 0010, B.4)", () => {
   it(
     "INV-5: binds an optional deployment policy separately from list filters without changing undefined cursors",

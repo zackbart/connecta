@@ -16,7 +16,7 @@ import { SLIDES_INDEX } from "./api.js";
 import * as contracts from "./lib/schemas.js";
 import { read, write } from "../../http/tools.js";
 import { Operation } from "../../runtime/call.js";
-import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { fieldsContract, selectFields } from "../../http/fields.js";
 import { Refusal } from "../../http/errors.js";
 import { boundCursor } from "../../http/paging.js";
 
@@ -2299,34 +2299,29 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
   return declarations.map((declaration) => {
     const isRead = declaration.annotations.readOnlyHint === true;
     const isList = declaration.name.startsWith("list_");
-    const rowNames = new Set(
-      Object.keys(declaration.name === "list_layouts" ? contracts.LayoutRow.fields : contracts.CommentRow.fields),
-    );
-    const names = isList
-      ? rowNames
-      : new Set(Object.keys((declaration.output as Schema.Struct<Schema.Struct.Fields>).fields));
+    const fields = isRead
+      ? isList
+        ? fieldsContract(
+            "item",
+            declaration.name === "list_layouts" ? contracts.LayoutRow : contracts.CommentRow,
+            "Truncation metadata is preserved.",
+          )
+        : fieldsContract("result", declaration.output, "Page and truncation metadata are preserved.")
+      : undefined;
     const spec = {
       name: declaration.name,
       description: declaration.description,
-      input: isRead
+      input: fields
         ? (Schema.Struct({
             ...declaration.input.fields,
-            fields: Schema.optionalKey(
-              fieldsInput(
-                isList
-                  ? "Dot paths to keep in each item; truncation metadata is preserved."
-                  : "Dot paths to keep in the result; page and truncation metadata are preserved.",
-              ),
-            ),
+            fields: Schema.optionalKey(fields.input),
           }) as typeof declaration.input)
         : declaration.input,
       output: declaration.output,
       ...(declaration.writeSteps ? { writeSteps: declaration.writeSteps } : {}),
       run: (args: Record<string, any>) =>
         Effect.gen(function* () {
-          const problem = isRead
-            ? fieldsProblem(args["fields"], names, isList ? "a Slides list item" : "the result")
-            : undefined;
+          const problem = fields?.problem(args["fields"]);
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const current = yield* Effect.serviceOption(Operation);
           if (Option.isNone(current) || !current.value)

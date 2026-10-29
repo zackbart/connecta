@@ -1735,9 +1735,41 @@ it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and o
       data: [{ id: "i1", email: "private", label: "credential-123456789", token: "stored-secret" }],
       expected: [{ id: "i1", label: "[redacted]", token: "[redacted]" }],
     },
-    // A declared field the privacy projection dropped narrows to nothing; an empty list accepts valid fields.
-    { args: { path: "/items", fields: ["email", "id"] }, data: { id: "i1", email: "private" }, expected: { id: "i1" } },
+    // A declared field the privacy projection dropped narrows to nothing and is reported, never refused;
+    // an empty list accepts valid fields without a report.
+    {
+      args: { path: "/items", fields: ["email", "id"] },
+      data: { id: "i1", email: "private" },
+      expected: { id: "i1" },
+      warnings: [
+        "fields/0 matched nothing in this response after value safety and privacy filtering; the body has id.",
+      ],
+    },
     { args: { path: "/items", fields: ["id"] }, data: [], expected: [] },
+    // The pinned index declares roots only, so a nested miss is reported with the safe keys
+    // where matching stopped, never refused. A path past a scalar keeps it whole, and a path
+    // any listed item matched is no miss.
+    {
+      args: { path: "/items", fields: ["id.zz_deeper", "nested.zz_nope"] },
+      data: { id: "i1", nested: { id: "i2", email: "private" } },
+      expected: { id: "i1", nested: {} },
+      warnings: [
+        "fields/1 matched nothing in this response after value safety and privacy filtering; the values at segment 1 have id.",
+      ],
+    },
+    {
+      args: { path: "/items", fields: ["nested.zz_nope"] },
+      data: { id: "i1", nested: {} },
+      expected: { nested: {} },
+      warnings: [
+        "fields/0 matched nothing in this response after value safety and privacy filtering; the values at segment 1 have no properties.",
+      ],
+    },
+    {
+      args: { path: "/items", fields: ["nested.id"] },
+      data: [{ id: "a", nested: { id: "n1" } }, { id: "b" }],
+      expected: [{ nested: { id: "n1" } }, {}],
+    },
     { args: { path: "/items", fields: ["nope"] }, message: "property of data", sends: 0, auth: 0 },
     { args: { path: "/items" }, status: 403, data: { error: "stored-secret" }, message: "Vendor text withheld" },
     { args: { method: "GET", path: "/touch" }, kind: "write", status: 503, message: "", sends: 1 },
@@ -1752,7 +1784,13 @@ it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and o
       expect((failure as Error).message).not.toContain("stored-secret");
       if (entry.status === 503) expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     } else {
-      expect(await call("read", entry.args)).toEqual({ status: 200, data: entry.expected });
+      const result = await call("read", entry.args);
+      expect(result).toEqual({
+        status: 200,
+        data: entry.expected,
+        ...(entry.warnings ? { warnings: entry.warnings } : {}),
+      });
+      expect(JSON.stringify(result)).not.toMatch(/zz_|private|stored-secret/);
     }
     expect(sent).toHaveLength(entry.sends ?? 1);
     expect(authenticate).toHaveBeenCalledTimes(entry.auth ?? 1);

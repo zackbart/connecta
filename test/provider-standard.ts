@@ -415,6 +415,55 @@ function required(schema: unknown, ...names: string[]): boolean {
   return Array.isArray(fields) && names.every((name) => fields.includes(name));
 }
 
+/** Whether every segment of a dot path is a declared property, arrays and unions included. */
+function declares(schema: unknown, path: string): boolean {
+  const at = (node: unknown, name: string): unknown[] => {
+    if (!record(node)) return [];
+    const branches = [node["anyOf"], node["oneOf"]].flatMap((value) => (Array.isArray(value) ? value : []));
+    return [
+      ...branches.flatMap((branch) => at(branch, name)),
+      ...(node["items"] !== undefined ? at(node["items"], name) : []),
+      ...(Object.hasOwn(properties(node), name) ? [properties(node)[name]] : []),
+    ];
+  };
+  let nodes = [schema];
+  for (const name of path.replace(/\[\](?=\.|$)/g, "").split(".")) nodes = nodes.flatMap((node) => at(node, name));
+  return nodes.length > 0;
+}
+
+const FIELDS_ANCHOR =
+  /Paths start at (the result|each item in items|the response body in data)\b[^.]*, e\.g\. (\[[^\]]*\])\./;
+
+/**
+ * S5: a `fields` description names where its paths start and one example
+ * path valid there. A named read anchors at its result, a list at each item
+ * of `items`, and a hatch call at the vendor body in `data`; the hatch derives
+ * its example from a root its own operations declare.
+ */
+function fieldsAnchorViolations(tool: ToolFacts, hatchCall: boolean): string[] {
+  const fields = properties(tool.inputSchema)["fields"];
+  if (!record(fields)) return [];
+  const match = FIELDS_ANCHOR.exec(typeof fields["description"] === "string" ? fields["description"] : "");
+  let example: unknown;
+  try {
+    example = match ? (JSON.parse(match[2]!) as unknown[])[0] : undefined;
+  } catch {
+    example = undefined;
+  }
+  if (!match || typeof example !== "string" || !example)
+    return [`S5: ${tool.name} fields description names its anchor and one example path`];
+  const output = properties(tool.outputSchema);
+  const list = /^(?:list|search)_/.test(tool.name) && hasType(output["items"], "array");
+  const anchor = hatchCall ? "data" : list ? "item" : "result";
+  const named = { "the result": "result", "each item in items": "item", "the response body in data": "data" }[
+    match[1] as "the result"
+  ];
+  if (named !== anchor) return [`S5: ${tool.name} fields paths start at ${anchor}, not ${named}`];
+  if (anchor !== "data" && !declares(anchor === "item" ? output["items"] : tool.outputSchema, example))
+    return [`S5: ${tool.name} fields example ${example} is not a declared path at its anchor`];
+  return [];
+}
+
 /** S: one agent-facing shape across api() surfaces. */
 export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
   const found: string[] = [];
@@ -558,6 +607,7 @@ export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
     } else if ("fields" in input && !stringArray(input["fields"])) {
       found.push(`S5: ${tool.name} fields is a string array of dot paths`);
     }
+    found.push(...fieldsAnchorViolations(tool, isHatch && /_api_(?:read|write)$/.test(tool.name)));
   }
   return found;
 }

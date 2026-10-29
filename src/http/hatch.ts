@@ -27,7 +27,7 @@ import {
 import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
 import type { RestCall } from "../providers/_shared/rest/kit.js";
 import { Refusal, toConnectorCallError, type HttpFailure } from "./errors.js";
-import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
+import { fieldsDescription, fieldsInput, fieldsMisses, fieldsProblem, selectFields } from "./fields.js";
 import type { HatchPageAdapter } from "./hatch-paging.js";
 import { RESPONSE_BUDGET, responseContract, type ResponseContract } from "./hatch-response.js";
 import { Integer, isMaxChars, isMinChars } from "./json-schema.js";
@@ -154,9 +154,6 @@ const Envelope = Schema.Struct({
     Schema.annotateKey({ description: "Response body after value safety and the connection's privacy filtering." }),
   ),
 });
-const HATCH_FIELDS = fieldsInput(
-  "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
-);
 
 function invalid(message: string): never {
   throw new ConnectorCallError("invalid_args", message);
@@ -309,11 +306,6 @@ export function hatch(
     }),
   );
   const Headers = Object.keys(headerFields).length ? Schema.Struct(headerFields) : undefined;
-  const Fields = options.fieldsRoot
-    ? fieldsInput(
-        `Dot paths to keep in data. Envelope fields begin with ${options.fieldsRoot}, e.g. ["${options.fieldsRoot}.id"] or ["${options.fieldsRoot}[].id"], where declared.`,
-      )
-    : HATCH_FIELDS;
   const Body = options.textBodies
     ? Schema.Union([ObjectValue, Schema.Array(Schema.Unknown), Schema.String])
     : undefined;
@@ -338,6 +330,25 @@ export function hatch(
   for (const [key, tool] of named) {
     if (!known(key) || !tool.trim()) throw new Error(`Hatch named tool for ${key} needs an indexed operation.`);
   }
+  // Paths start at the vendor body. The example is a root some operation the
+  // tool calls declares: the envelope root, else `id`, else the first declared.
+  const fieldsFor = (writes: boolean) => {
+    const preferred = options.fieldsRoot ?? "id";
+    let first: string | undefined;
+    for (const [key, verdict] of verdicts) {
+      if (verdict === "refuse" || (verdict === "read") === writes) continue;
+      const roots = index.responseRoots(operations.get(key)!);
+      if (roots?.has(preferred)) return fieldsInput(fieldsNote(preferred));
+      first ??= roots && [...roots][0];
+    }
+    return fieldsInput(fieldsNote(first ?? preferred));
+  };
+  const fieldsNote = (example: string) =>
+    fieldsDescription(
+      "data",
+      example,
+      `Copy declared paths from ${name}_api_details response.fields. Applied after value safety and privacy filtering.`,
+    );
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
   const refusalOf = (op: Operation) =>
     connection.safety.refusal?.({ method: op.method, template: op.path }) ?? options.binding?.refusal?.(op);
@@ -399,15 +410,11 @@ export function hatch(
           ),
         }
       : {}),
-    ...(options.binding?.warnings
-      ? {
-          warnings: Schema.optionalKey(
-            Schema.Array(Schema.String).annotate({
-              description: "Reviewed warnings preserved after fields selection.",
-            }),
-          ),
-        }
-      : {}),
+    warnings: Schema.optionalKey(
+      Schema.Array(Schema.String).annotate({
+        description: `${options.binding?.warnings ? "Reviewed warnings preserved after fields selection, and " : ""}fields entries that matched nothing in this nonempty response, with the keys present where matching stopped.`,
+      }),
+    ),
   });
   const hasTotals = [...pages.values()].some((adapters) => adapters.some((adapter) => adapter.total !== undefined));
   const envelope = pages.size
@@ -1505,16 +1512,21 @@ export function hatch(
           in: adapter.in,
         };
       }
+      const answered = answer.data === undefined ? null : answer.data;
+      // Roots were checked before dispatch; the pinned index cannot say whether a
+      // deeper level is closed, so a nested miss is reported, never refused.
+      const warnings = [
+        ...(options.binding?.warnings && "warnings" in answer ? (answer.warnings ?? []) : []),
+        ...fieldsMisses(answered, args.fields),
+      ];
       return {
         status: answer.status,
-        data: selectFields(answer.data === undefined ? null : answer.data, args.fields),
+        data: selectFields(answered, args.fields),
         ...(page ? { page } : {}),
         ...(options.binding?.truncated && "truncated" in answer && answer.truncated?.length
           ? { truncated: answer.truncated }
           : {}),
-        ...(options.binding?.warnings && "warnings" in answer && answer.warnings?.length
-          ? { warnings: answer.warnings }
-          : {}),
+        ...(warnings.length ? { warnings } : {}),
         ...(key ? { idempotencyKey: key } : {}),
       };
     });
@@ -1541,7 +1553,7 @@ export function hatch(
       (Body ?? ObjectValue).annotate({ description: "Body for a reviewed read-only POST." }),
     );
   readFields["query"] = Schema.optionalKey(Query);
-  readFields["fields"] = Schema.optionalKey(Fields);
+  readFields["fields"] = Schema.optionalKey(fieldsFor(false));
   if (Headers) readFields["headers"] = Schema.optionalKey(Headers);
   if (options.pageCursor === "argument")
     readFields["cursor"] = Schema.optionalKey(
@@ -1571,7 +1583,7 @@ export function hatch(
           description: "Request body as JSON fields, named as details lists them; form operations are encoded for you.",
         }),
       ),
-      fields: Schema.optionalKey(Fields),
+      fields: Schema.optionalKey(fieldsFor(true)),
     };
     if (Headers) writeFields["headers"] = Schema.optionalKey(Headers);
     if (idempotency)
