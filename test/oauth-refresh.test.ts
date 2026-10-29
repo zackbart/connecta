@@ -9,12 +9,12 @@ beforeTransportTest(() => {
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, OAuthTokens } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
-import { KvOAuthProvider, OAuthRefreshCoordinator } from "../src/auth/downstream-oauth.js";
+import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { invalidateCatalogCache } from "../src/catalog-cache.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { identityStorageKey } from "../src/identity.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthGrantKeys, oauthRefreshKeys, scopes as keyScopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, oauthRefreshKeys, oauthRefreshSpentKeys, scopes as keyScopes } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { makeRegistry } from "./helpers.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -773,4 +773,50 @@ describe("OAuthRefreshCoordinator", () => {
       }
     },
   );
+});
+
+describe("waiting on another isolate's refresh", () => {
+  it("INV-7: polls one batch of lease, grant and spent record, backing off until the caller's deadline", async () => {
+    const backing = await grantStore();
+    const digest = await oauthStateDigest("refresh-old");
+    const lease = oauthRefreshKeys.lease("v3:seeded", digest);
+    // Another isolate claimed this refresh token and has not answered yet.
+    await backing.set(
+      lease,
+      JSON.stringify({
+        connectaOAuthRefresh: 1,
+        holder: "elsewhere",
+        state: "claimed",
+        expiresAt: Date.now() + 120_000,
+      }),
+    );
+    const reads: { key: string; at: number }[] = [];
+    const storage: KVStorage = {
+      ...backing,
+      get: async (key) => {
+        reads.push({ key, at: Date.now() });
+        return backing.get(key);
+      },
+    };
+    const provider = await flow(storage, new OAuthRefreshCoordinator());
+    reads.length = 0;
+    const started = Date.now();
+    await expect(provider.claimRefresh("v3:seeded", "refresh-old", AbortSignal.timeout(1_600))).rejects.toMatchObject({
+      code: "unavailable",
+    });
+    // The caller's deadline ends the wait, not the next poll.
+    expect(Date.now() - started).toBeLessThan(1_900);
+    // Each poll reads the lease first, then the grant and the spent record with
+    // it: one statement on a store that batches.
+    const polls = reads.filter(({ key }) => key === lease);
+    expect(reads.map(({ key }) => key)).toEqual(
+      polls.flatMap(() => [lease, GRANT, oauthRefreshSpentKeys.spent(digest)]),
+    );
+    // 0, 50, 150, 350, 750 and 1550 ms: six polls, where 10 ms doubling to
+    // 250 ms made eleven in the same 1.6 s.
+    expect(polls.length).toBeGreaterThanOrEqual(4);
+    expect(polls.length).toBeLessThanOrEqual(6);
+    // A timer may fire late under load, never meaningfully early.
+    polls.slice(1).forEach((poll, i) => expect(poll.at - polls[i]!.at).toBeGreaterThanOrEqual(50 * 2 ** i - 5));
+  });
 });

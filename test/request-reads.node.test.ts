@@ -102,7 +102,7 @@ function counted() {
 /** A stateful downstream with one read tool, behind optional OAuth. */
 function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: () => Promise<void> } = {}) {
   const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
-  const state = { token: "access-1", issued: 1, pageTwo: [] as (string | null)[] };
+  const state = { token: "access-1", issued: 1, rejected: 0, pageTwo: [] as (string | null)[] };
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -128,13 +128,15 @@ function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: 
           refresh_token: `refresh-${state.issued}`,
         });
       }
-      if (request.headers.get("authorization") !== `Bearer ${state.token}`)
+      if (request.headers.get("authorization") !== `Bearer ${state.token}`) {
+        state.rejected++;
         return new Response("{}", {
           status: 401,
           headers: {
             "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
           },
         });
+      }
     }
     const sid = request.headers.get("mcp-session-id");
     if (options.beforePageTwo && sid && request.method === "POST") {
@@ -570,7 +572,7 @@ describe("credential reads honor vault overrides", () => {
 });
 
 describe("D1 query budgets", () => {
-  it("a warm OAuth call and an expired-token refresh stay within their D1 budgets", async () => {
+  it("a warm OAuth call, an expired-token refresh and an early refresh stay within their D1 budgets", async () => {
     installOwnedTransport();
     const origin = "https://oauth-budget.example";
     const remote = downstream(origin, { oauth: true });
@@ -612,6 +614,25 @@ describe("D1 query budgets", () => {
     expect(remote.state.issued).toBe(2);
     expect(refresh.statements, refresh.log.join("\n")).toBeLessThanOrEqual(OAUTH_REFRESH.statements);
     expect(refresh.roundTrips, refresh.log.join("\n")).toBeLessThanOrEqual(OAUTH_REFRESH.roundTrips);
+
+    // The rotation stored its expiry. Within a minute of it, the call renews
+    // first and the downstream never sees the old token answer 401. The catalog
+    // is keyed by token, so one call on the rotated token lists it first.
+    await callTool(app, "svc.echo");
+    const key = `${scopes.connector("svc")}${oauthGrantKeys.grant}`;
+    const stored = JSON.parse((await storage.get(key))!) as { body: { expiresAt?: number } };
+    expect(stored.body.expiresAt).toBeGreaterThan(Date.now() + 3_500_000);
+    stored.body.expiresAt = Date.now() + 30_000;
+    await storage.set(key, JSON.stringify(stored));
+    d1.reset();
+    const rejected = remote.state.rejected;
+    await callTool(app, "svc.echo");
+    const early = { ...d1.count, log: [...d1.count.log] };
+    report("early refresh", early);
+    expect(remote.state.issued).toBe(3);
+    expect(remote.state.rejected).toBe(rejected);
+    expect(early.statements, early.log.join("\n")).toBeLessThanOrEqual(EARLY_REFRESH.statements);
+    expect(early.roundTrips, early.log.join("\n")).toBeLessThanOrEqual(EARLY_REFRESH.roundTrips);
   });
 
   it("a cold isolate loads a stored catalog within its D1 budget", async () => {
@@ -678,5 +699,6 @@ describe("D1 query budgets", () => {
 // reads.
 const WARM_OAUTH = { roundTrips: 18, statements: 18 };
 const OAUTH_REFRESH = { roundTrips: 40, statements: 48 };
+const EARLY_REFRESH = { roundTrips: 34, statements: 41 };
 const COLD_CATALOG = { roundTrips: 5, statements: 5 };
 const UI_DETAIL = { vaultReads: 3, roundTrips: 8, statements: 8 };

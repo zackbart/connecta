@@ -19,7 +19,7 @@ import { identityStorageKey } from "../src/identity.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
-import { oauthFlowKeys, scopes } from "../src/storage/keys.js";
+import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { deferred, scriptedExecutor } from "./fixtures/misc.js";
@@ -1077,6 +1077,129 @@ describe("api() oauth refresh", () => {
     expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     expect(sentToNew).toEqual([]);
     expect(provider.apiAuthorizations).not.toContain("Bearer access-alice-2");
+  });
+});
+
+describe("api() oauth early renewal", () => {
+  const tools: ApiOptions["tools"] = [
+    {
+      name: "post_note",
+      description: "Write a note",
+      annotations: { readOnlyHint: false },
+      async handler(_args, ctx) {
+        return (await ctx.oauth!.fetch(`${API}/notes`, { method: "POST", body: "{}" })).json();
+      },
+    },
+  ];
+  const grantKey = `${scopes.connector("ccb")}${oauthGrantKeys.grant}`;
+  const refreshes = (provider: Provider) =>
+    provider.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token").length;
+  /** Rewrite the stored expiry, as the passing of time would bring it closer. */
+  async function expiring(storage: KVStorage, expiresAt: number | undefined) {
+    const record = JSON.parse((await storage.get(grantKey))!) as { body: { expiresAt?: number } };
+    if (expiresAt === undefined) delete record.body.expiresAt;
+    else record.body.expiresAt = expiresAt;
+    await storage.set(grantKey, JSON.stringify(record));
+  }
+
+  it("INV-9: renews a token about to expire before a write is sent, once across two isolates", async () => {
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    // Two isolates: separate connector instances, and so separate coordinators.
+    const isolates = [ccb({ tools }), ccb({ tools })];
+    const registries = isolates.map((connector) => makeRegistry([connector], { storage }));
+    await authorize(isolates[0]!, () => registries[0]!.contextFor("ccb", BASE), provider);
+    // The code exchange stored when its token expires.
+    const expiresAt = (await storedGrant(storage, scopes.connector("ccb")))?.body?.expiresAt;
+    expect(expiresAt).toBeGreaterThan(Date.now() + 3_500_000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 3_600_000);
+    await expiring(storage, Date.now() + 30_000);
+    const gate = deferred<void>();
+    provider.control.refreshGate = gate.promise;
+
+    const writes = isolates.map((connector, i) =>
+      connector.callTool("post_note", {}, registries[i]!.contextFor("ccb", BASE, {})),
+    );
+    await vi.waitFor(() => expect(refreshes(provider)).toBe(1));
+    // Long enough for the other isolate to find the claimed lease and poll it.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    gate.resolve();
+    expect(await Promise.all(writes)).toEqual([{ owner: "alice" }, { owner: "alice" }]);
+    expect(refreshes(provider)).toBe(1);
+    // Each write went once, on the renewed token; the old one was never sent.
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-2", "Bearer access-alice-2"]);
+    expect((await storedGrant(storage, scopes.connector("ccb")))?.body?.expiresAt).toBeGreaterThan(
+      Date.now() + 3_500_000,
+    );
+  });
+
+  it.each(["dead", "outage"] as const)(
+    "INV-9: a failed early renewal (%s) fails the write before its handler runs",
+    async (refresh) => {
+      const storage = memoryStorage();
+      const provider = fakeProvider();
+      install(provider);
+      const connector = ccb({ tools });
+      const registry = makeRegistry([connector], { storage });
+      await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+      await expiring(storage, Date.now() + 30_000);
+      provider.control.refresh = refresh;
+
+      const mt = createMetaTools(registry, BASE);
+      const { error } = JSON.parse((await mt.callDestructiveTool({ address: "ccb.post_note" })).content[0]!.text) as {
+        error: Record<string, unknown>;
+      };
+      // An authorization verdict before the handler ran: nothing to reconcile.
+      expect(error).toMatchObject({
+        code: "downstream_oauth_required",
+        retryable: false,
+        nextAction: { tool: "authorize_connector" },
+        retry: "Retry ccb.post_note after the operator completes recovery.",
+      });
+      expect(error).not.toHaveProperty("writeOutcome");
+      expect(error).not.toHaveProperty("reconciliationRequired");
+      expect(refreshes(provider)).toBe(1);
+      expect(provider.apiAuthorizations).toEqual([]);
+    },
+  );
+
+  it("keeps renewal on a 401 for a grant stored without an expiry", async () => {
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb();
+    const registry = makeRegistry([connector], { storage });
+    const ctx = () => registry.contextFor("ccb", BASE);
+    await authorize(connector, ctx, provider);
+    // As an earlier release stored it: `expires_in` beside the tokens, no expiry.
+    await expiring(storage, undefined);
+    const stored = await storage.get(grantKey);
+
+    await connector.callTool("whoami", {}, ctx());
+    expect(refreshes(provider)).toBe(0);
+    expect(await storage.get(grantKey)).toBe(stored);
+    provider.expireAccess();
+    expect(await connector.callTool("whoami", {}, ctx())).toEqual({ status: 200, body: { owner: "alice" } });
+    expect(refreshes(provider)).toBe(1);
+    expect(provider.apiAuthorizations).toEqual([
+      "Bearer access-alice-1",
+      "Bearer access-alice-1",
+      "Bearer access-alice-2",
+    ]);
+  });
+
+  it("INV-10: status never renews a token about to expire", async () => {
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb();
+    const registry = makeRegistry([connector], { storage });
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    await expiring(storage, Date.now() + 30_000);
+    expect((await connector.status!(registry.contextFor("ccb", BASE))).state).toBe("ok");
+    expect(refreshes(provider)).toBe(0);
+    expect(provider.apiAuthorizations).toEqual([]);
   });
 });
 

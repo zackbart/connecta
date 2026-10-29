@@ -9,12 +9,13 @@ import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError } from "../src/errors.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "../src/oauth-sealing.js";
 import { providerCallContext, providerRequests } from "../src/provider-call.js";
 import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
-import { createTestConnecta, fetchTestUiDetails, required, silentLogger } from "./helpers.js";
+import { createTestConnecta, fetchTestUiDetails, makeRegistry, required, silentLogger } from "./helpers.js";
 import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
 import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
 import { bindCallback, callbackAuth, consentKey, oauthVault, seedGrant, storedGrant } from "./fixtures/oauth.js";
@@ -1838,5 +1839,285 @@ describe("remoteMcp() dispatched refresh grants", () => {
     expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
     expect(await reader(storage).tokens()).toBeUndefined();
     await c.closeScope?.(passive);
+  });
+});
+
+describe("remoteMcp() early renewal before dispatch", () => {
+  type Sealer = ReturnType<typeof vaultOAuthSealer>;
+  const layouts = ["plaintext", "sealed"] as const;
+  const sealerFor = (layout: (typeof layouts)[number]): Sealer | undefined =>
+    layout === "sealed"
+      ? vaultOAuthSealer(new CredentialVault(memoryStorage(), CREDENTIAL_KEY), "svc", undefined, silentLogger)
+      : undefined;
+  const client = { client_id: "connecta-client", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" };
+  const tokens = (expiresIn?: number) => ({
+    access_token: "access-old",
+    token_type: "Bearer",
+    refresh_token: "refresh-old",
+    ...(expiresIn !== undefined ? { expires_in: expiresIn } : {}),
+  });
+
+  /** A grant saved now whose access token lives `expiresIn` more seconds. */
+  async function savedGrant(expiresIn: number, seal?: Sealer) {
+    const storage = memoryStorage();
+    const seeder = new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, seal);
+    await seeder.saveClientInformation(client, { issuer });
+    await seeder.saveTokens(tokens(expiresIn), { issuer });
+    return storage;
+  }
+
+  /** A grant as an earlier release stored it: `expires_in` beside the tokens, no expiry. */
+  async function earlierGrant(seal?: Sealer) {
+    const storage = memoryStorage();
+    const body = { issuer, client: { value: client }, tokens: tokens(30) };
+    if (!seal) await seedGrant(storage, body);
+    else
+      await storage.set(
+        GRANT,
+        JSON.stringify({
+          connectaOAuth: 3,
+          epoch: "v3:seeded",
+          sealed: await seal.seal(`${GRANT}:v3:seeded`, JSON.stringify(body)),
+        }),
+      );
+    return storage;
+  }
+
+  /**
+   * A downstream accepting each access token its authorization server issued,
+   * `access-old` included, and recording what reached it in order.
+   */
+  function downstream() {
+    const valid = new Set(["access-old"]);
+    const sent: string[] = [];
+    const counts = { token: 0, rejected: 0, initialize: 0 };
+    const answer = {
+      current: (): Response =>
+        Response.json({
+          access_token: "access-new",
+          token_type: "Bearer",
+          expires_in: 3600,
+          refresh_token: "refresh-new",
+        }),
+    };
+    let gate: Promise<void> = Promise.resolve();
+    let entered = deferred<void>();
+    vi.stubGlobal("fetch", (async (input, init = {}) => {
+      const url = new URL(input);
+      // Without a challenge to name it, discovery asks the path-aware URL first.
+      if (url.href.startsWith(resourceMetadataUrl))
+        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url.href === `${issuer}/token`) {
+        counts.token++;
+        sent.push("token");
+        entered.resolve();
+        await gate;
+        const response = answer.current();
+        if (response.ok) valid.add(((await response.clone().json()) as { access_token: string }).access_token);
+        return response;
+      }
+      if (url.href !== mcpUrl) throw new Error(`Unexpected OAuth test request: ${url.href}`);
+      if (init.method !== "POST") return new Response(null, { status: 405 });
+      const authorization = new Headers(init.headers).get("authorization") ?? "";
+      const message = JSON.parse(String(init.body)) as {
+        id?: string | number;
+        method: string;
+        params?: { protocolVersion?: string };
+      };
+      if (!valid.has(authorization.replace(/^Bearer /, ""))) {
+        counts.rejected++;
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` },
+        });
+      }
+      if (message.method === "initialize") counts.initialize++;
+      if (message.method === "tools/call") sent.push(`tools/call ${authorization}`);
+      if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
+      const result =
+        message.method === "initialize"
+          ? {
+              protocolVersion: message.params?.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "expiring", version: "1.0.0" },
+            }
+          : message.method === "tools/list"
+            ? { tools: [{ name: "write", inputSchema: { type: "object" } }] }
+            : { content: [{ type: "text", text: "done" }] };
+      return Response.json({ jsonrpc: "2.0", id: message.id, result });
+    }) as FetchLike);
+    return {
+      sent,
+      counts,
+      answer,
+      revoke: (token: string) => valid.delete(token),
+      /** Hold the token endpoint; resolves `entered` once a refresh reaches it. */
+      hold() {
+        entered = deferred<void>();
+        const release = deferred<void>();
+        gate = release.promise;
+        return { entered: entered.promise, release: () => release.resolve() };
+      },
+    };
+  }
+
+  async function failureOf(promise: Promise<unknown>) {
+    try {
+      await promise;
+    } catch (error) {
+      return classifyCallError(error);
+    }
+    throw new Error("expected the call to fail");
+  }
+
+  it.each(layouts)(
+    "INV-9: renews a %s grant about to expire before a write, with one refresh across two isolates",
+    async (layout) => {
+      const seal = sealerFor(layout);
+      const storage = await savedGrant(30, seal);
+      const server = downstream();
+      const held = server.hold();
+      // Two isolates: separate connector instances, and so separate coordinators.
+      const isolates = [connector(), connector()];
+      const scopes = isolates.map(() => scope(storage, seal));
+      const writes = isolates.map((c, i) => c.callTool("write", {}, scopes[i]!));
+      await held.entered;
+      // Both connected on the old token, which is still valid; then each
+      // found it due. Give the second isolate time to find the claimed lease.
+      await vi.waitFor(() => expect(server.counts.initialize).toBe(2));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      held.release();
+      await Promise.all(writes);
+      await Promise.all(isolates.map((c, i) => c.closeScope?.(scopes[i]!)));
+      expect(server.counts.token).toBe(1);
+      expect(server.counts.rejected).toBe(0);
+      expect(server.sent).toEqual(["token", "tools/call Bearer access-new", "tools/call Bearer access-new"]);
+      const renewed = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false, seal);
+      expect((await renewed.tokens())?.access_token).toBe("access-new");
+      expect(renewed.renewalDue()).toBeUndefined();
+      expect(renewed.renewalDue(Date.now() + 3_600_000)).toBe("access-new");
+    },
+  );
+
+  it.each([
+    ["refused", () => Response.json({ error: "invalid_grant" }, { status: 400 })],
+    ["unavailable", () => Response.json({ error: "temporarily_unavailable" }, { status: 503 })],
+  ] as const)("INV-9: a %s early renewal fails the write before it is sent", async (_label, refusal) => {
+    const storage = await savedGrant(30);
+    const server = downstream();
+    server.answer.current = refusal;
+    const c = connector();
+    const s = scope(storage);
+    const classified = await failureOf(c.callTool("write", {}, s));
+    await c.closeScope?.(s);
+    // An authorization verdict with nothing sent: no unknown outcome to reconcile.
+    expect(classified).toEqual({
+      code: "downstream_oauth_required",
+      message: expect.stringContaining("authorize_connector"),
+      retryable: false,
+    });
+    expect(server.counts.token).toBe(1);
+    expect(server.sent).toEqual(["token"]);
+  });
+
+  /** A registry whose plaintext grant's token expires in 30 s, and its direct write call. */
+  async function invocation(versionNegotiation: "legacy" | "auto") {
+    const storage = memoryStorage();
+    await seedGrant(
+      storage,
+      { issuer, client: { value: client }, tokens: tokens(3600), expiresAt: Date.now() + 30_000 },
+      "v3:seeded",
+      scopes.connector("svc"),
+    );
+    const registry = makeRegistry([remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation })], {
+      storage,
+    });
+    return async () =>
+      (await createMetaTools(registry, BASE).callDestructiveTool({ address: "svc.write" })).content[0]!.text;
+  }
+
+  it.each(["legacy", "auto"] as const)(
+    "INV-9: the invocation renews before a write enters the connector (%s negotiation)",
+    async (versionNegotiation) => {
+      const write = await invocation(versionNegotiation);
+      const server = downstream();
+      expect(await write()).toContain("done");
+      // Renewed before connecting: even the handshake carries the new token.
+      expect(server.sent).toEqual(["token", "tools/call Bearer access-new"]);
+      expect(server.counts.rejected).toBe(0);
+    },
+  );
+
+  it.each(["legacy", "auto"] as const)(
+    "INV-9: through call_destructive_tool, a failed early renewal (%s negotiation) leaves nothing to reconcile",
+    async (versionNegotiation) => {
+      const write = await invocation(versionNegotiation);
+      const server = downstream();
+      server.answer.current = () => Response.json({ error: "invalid_grant" }, { status: 400 });
+      const { error } = JSON.parse(await write()) as { error: Record<string, unknown> };
+      expect(error).toMatchObject({
+        code: "downstream_oauth_required",
+        retryable: false,
+        nextAction: { tool: "authorize_connector" },
+        retry: "Retry svc.write after the operator completes recovery.",
+      });
+      expect(error).not.toHaveProperty("writeOutcome");
+      expect(error).not.toHaveProperty("reconciliationRequired");
+      expect(server.sent).toEqual(["token"]);
+    },
+  );
+
+  it.each(layouts)("keeps renewal on a 401 for a %s grant stored without an expiry", async (layout) => {
+    const seal = sealerFor(layout);
+    const storage = await earlierGrant(seal);
+    const server = downstream();
+    const c = connector();
+    const s = scope(storage, seal);
+    const stored = await storage.get(GRANT);
+    await c.callTool("write", {}, s);
+    await c.closeScope?.(s);
+    // Its `expires_in` has no issue time to count from, so it is never due.
+    expect(server.counts.token).toBe(0);
+    expect(server.sent).toEqual(["tools/call Bearer access-old"]);
+    // Reading it added no expiry: nothing migrates a grant on read.
+    expect(await storage.get(GRANT)).toBe(stored);
+
+    // Once the token is refused, the 401 renews it as before, and the
+    // rotation stores the expiry from then on.
+    server.revoke("access-old");
+    const later = scope(storage, seal);
+    await c.listTools(later);
+    await c.closeScope?.(later);
+    expect(server.counts.token).toBe(1);
+    const renewed = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false, seal);
+    expect((await renewed.tokens())?.access_token).toBe("access-new");
+    expect(renewed.renewalDue(Date.now() + 3_500_000)).toBeUndefined();
+    expect(renewed.renewalDue(Date.now() + 3_600_000)).toBe("access-new");
+  });
+
+  it("INV-10: status, listing and discovery never renew a token about to expire", async () => {
+    const storage = await savedGrant(30);
+    const server = downstream();
+    const c = connector();
+    for (let i = 0; i < 2; i++) {
+      // The second scope may answer from the stored catalog without connecting.
+      const s = scope(storage);
+      await expect(c.status!(s)).resolves.toMatchObject({ state: "ok" });
+      expect((await c.listTools(s)).map((tool) => tool.name)).toEqual(["write"]);
+      await c.closeScope?.(s);
+    }
+    expect(server.counts.token).toBe(0);
+    expect(server.sent).toEqual([]);
   });
 });

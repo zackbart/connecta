@@ -48,6 +48,7 @@ import {
   authOwnMethod,
   authProgram,
   authStorage,
+  authStorageMany,
   authThen,
   authValue,
   registerAuth,
@@ -62,7 +63,7 @@ import {
   type RefreshFailure,
   type RefreshResponseOutcome,
 } from "./oauth-token-response.js";
-import { discoveryIssuer, type OAuthGrantBody } from "./oauth-grant.js";
+import { discoveryIssuer, OAUTH_REFRESH_SKEW_MS, tokenExpiry, type OAuthGrantBody } from "./oauth-grant.js";
 
 /** @internal Keep the SDK's cloned body reads inside the code exchange's request. */
 export function codeExchangeResponse(response: Response, signal: AbortSignal): Response {
@@ -224,6 +225,31 @@ interface StoredRefreshLease {
 const REFRESH_REQUEST_DEADLINE_MS = 20_000;
 const REFRESH_COMMIT_DEADLINE_MS = 20_000;
 const REFRESH_WAIT_DEADLINE_MS = 35_000;
+/**
+ * Polling for another isolate's refresh. Each poll is one batched storage
+ * read of its lease, the grant, the spent fingerprint and the owner's
+ * liveness key. Doubling from 50 ms to 2 s, a wait that runs to the 35 s
+ * deadline costs at most 22 polls; a typical sub-second refresh, four or five.
+ */
+const REFRESH_POLL_INITIAL_MS = 50;
+const REFRESH_POLL_MAX_MS = 2_000;
+
+/** The access token an early renewal replaces, carried on its token request's init. */
+const EARLY_RENEWAL: unique symbol = Symbol("connecta.oauth.earlyRenewal");
+
+/**
+ * The token endpoint as an early renewal of `due` reaches it: the coordinator
+ * hands back a token another request already rotated in instead of redeeming
+ * the refresh token again (`OAuthRefreshCoordinator.refresh`).
+ */
+export function earlyRenewalFetch(send: FetchLike, due: string): FetchLike {
+  return (input, init) => send(input, { ...init, [EARLY_RENEWAL]: due } as RequestInit);
+}
+
+function earlyRenewalOf(init: RequestInit | undefined): string | undefined {
+  const due: unknown = (init as { [EARLY_RENEWAL]?: unknown } | undefined)?.[EARLY_RENEWAL];
+  return typeof due === "string" ? due : undefined;
+}
 
 /** Caller-owned reads become coordinator-owned at the first submitted durable write. */
 interface RefreshWait {
@@ -389,9 +415,11 @@ export class OAuthRefreshCoordinator {
         function* (this: OAuthRefreshCoordinator) {
           // Freeze the form before any await: classification and the spent digest
           // must describe the exact token sent, even if its caller mutates a form.
+          const early = earlyRenewalOf(init);
           init = init
             ? { ...init, ...(init.body instanceof URLSearchParams ? { body: new URLSearchParams(init.body) } : {}) }
             : undefined;
+          if (early !== undefined) delete (init as { [EARLY_RENEWAL]?: string })[EARLY_RENEWAL];
           // Production adapters resolve the required host policy before a code or
           // refresh claim can consume its single-use credential. Custom SDK leaves
           // may supply their own policy; this hook performs no I/O and owns no data.
@@ -401,7 +429,15 @@ export class OAuthRefreshCoordinator {
               requestSignal && init?.signal
                 ? AbortSignal.any([requestSignal, init.signal])
                 : (requestSignal ?? init?.signal ?? undefined);
-            return (yield authInvoke(this, "refresh", [provider, input, init, baseFetch, signal, defer])) as Response;
+            return (yield authInvoke(this, "refresh", [
+              provider,
+              input,
+              init,
+              baseFetch,
+              signal,
+              defer,
+              early,
+            ])) as Response;
           }
           const grantType = tokenGrantType(init);
           const tokenRequest = isOAuthCredentialRequest(init);
@@ -456,6 +492,7 @@ export class OAuthRefreshCoordinator {
     baseFetch: FetchLike,
     signal: AbortSignal | undefined,
     defer: ConnectorContext["defer"],
+    early?: string,
   ): Promise<Response> {
     return runEdge(
       authOwnMethod<Response>(OAuthRefreshCoordinator.prototype, this, "refresh", [
@@ -465,6 +502,7 @@ export class OAuthRefreshCoordinator {
         baseFetch,
         signal,
         defer,
+        early,
       ]),
     );
   }
@@ -511,6 +549,7 @@ export class OAuthRefreshCoordinator {
         baseFetch: FetchLike,
         signal: AbortSignal | undefined,
         defer: ConnectorContext["defer"],
+        early: string | undefined,
       ) {
         return authFlow<Response>(
           function* (this: OAuthRefreshCoordinator) {
@@ -574,7 +613,11 @@ export class OAuthRefreshCoordinator {
                 if (this.flights.has(epoch)) continue;
                 if (
                   current?.refresh_token &&
-                  (current.refresh_token !== requested || provider.refreshedSinceRead(current, epoch))
+                  (current.refresh_token !== requested ||
+                    provider.refreshedSinceRead(current, epoch) ||
+                    // An early renewal is answered by any token that replaced the
+                    // one it found near expiry, whoever refreshed it.
+                    (early !== undefined && current.access_token !== early))
                 ) {
                   return provider.adoptRefresh(current);
                 }
@@ -650,6 +693,8 @@ export class OAuthRefreshCoordinator {
               settle({ status: "failed", error, ...(verdict ? { verdict } : {}) });
             };
             let dispatched = false;
+            /** When the token request left: the earliest its tokens' lifetime can start. */
+            let issuedAt = 0;
             const unknownOutcome = () =>
               new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
             // One budget for the entire commit/cleanup phase, including retries
@@ -728,6 +773,7 @@ export class OAuthRefreshCoordinator {
                           function* (this: OAuthRefreshCoordinator) {
                             waiting.beginRequest();
                             dispatched = true;
+                            issuedAt = Date.now();
                             return (yield authCall(baseFetch, [
                               input,
                               { ...init, redirect: "manual", signal: deadline },
@@ -816,7 +862,13 @@ export class OAuthRefreshCoordinator {
                     };
                     let committed: OAuthTokens | undefined;
                     try {
-                      committed = (yield authInvoke(provider, "storeRefresh", [epoch, requested, accepted, issuer])) as
+                      committed = (yield authInvoke(provider, "storeRefresh", [
+                        epoch,
+                        requested,
+                        accepted,
+                        issuer,
+                        issuedAt,
+                      ])) as
                         | {
                             access_token: string;
                             token_type: string;
@@ -1019,7 +1071,8 @@ function epochOf(raw: string | null): string {
 /** Nothing here trusts stored bytes: keep only what has the expected shape. */
 function grantBody(value: unknown): GrantBody {
   if (!plainObject(value)) return {};
-  const { issuer, client, tokens, discovery, refreshConsent } = value;
+  const { issuer, client, tokens, expiresAt, discovery, refreshConsent } = value;
+  const hasTokens = plainObject(tokens) && typeof tokens.access_token === "string";
   return {
     ...(typeof issuer === "string" ? { issuer } : {}),
     ...(plainObject(client) && plainObject(client.value) && typeof client.value.client_id === "string"
@@ -1036,9 +1089,9 @@ function grantBody(value: unknown): GrantBody {
           },
         }
       : {}),
-    ...(plainObject(tokens) && typeof tokens.access_token === "string"
-      ? { tokens: tokens as unknown as OAuthTokens }
-      : {}),
+    ...(hasTokens ? { tokens: tokens as unknown as OAuthTokens } : {}),
+    // Meaningful only beside the tokens it describes.
+    ...(hasTokens && typeof expiresAt === "number" && Number.isFinite(expiresAt) ? { expiresAt } : {}),
     ...(discoveryIssuer(discovery) !== undefined ? { discovery: discovery as unknown as OAuthDiscoveryState } : {}),
     ...(plainObject(refreshConsent) &&
     typeof refreshConsent.digest === "string" &&
@@ -1101,6 +1154,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private refreshBasis: { accessToken: string; epoch: string; issuer: string } | undefined;
   /** The access token of a refresh the coordinator already stored. */
   private storedRefresh: string | undefined;
+  /**
+   * The tokens of the grant this provider last opened or wrote, as facts
+   * only: no credential beyond the access token it already handed out.
+   */
+  private observed: { epoch: string; accessToken: string; refreshable: boolean; expiresAt?: number } | undefined;
 
   constructor(
     private readonly connectorId: string,
@@ -1149,6 +1207,32 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return runEdge(
       authOwnMethod<{ epoch: string; tokens?: OAuthTokens }>(KvOAuthProvider.prototype, this, "peekGrant", []),
     );
+  }
+
+  /**
+   * @internal The access token a call should renew before sending it: the
+   * one this provider last read, refreshable and within
+   * OAUTH_REFRESH_SKEW_MS of its stored expiry, in the epoch it is bound to.
+   * Memory only: no storage read, refresh or discovery. A grant without an
+   * expiry is never due; a 401 renews it.
+   */
+  renewalDue(now: number = Date.now()): string | undefined {
+    const seen = this.observed;
+    if (!seen?.refreshable || seen.expiresAt === undefined) return undefined;
+    if (this.bound && seen.epoch !== this.epoch) return undefined;
+    return seen.expiresAt - OAUTH_REFRESH_SKEW_MS <= now ? seen.accessToken : undefined;
+  }
+
+  private observe(grant: Grant): void {
+    const { tokens, expiresAt } = grant.body;
+    this.observed = tokens
+      ? {
+          epoch: grant.epoch,
+          accessToken: tokens.access_token,
+          refreshable: typeof tokens.refresh_token === "string" && tokens.refresh_token !== "",
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
+        }
+      : undefined;
   }
 
   get redirectUrl(): string {
@@ -1756,6 +1840,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     requested: string | null,
     tokens: OAuthTokens,
     issuer: string | undefined,
+    issuedAt: number = Date.now(),
   ): Promise<OAuthTokens | undefined> {
     return runEdge(
       authOwnMethod<
@@ -1769,7 +1854,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
             issuer?: string | undefined;
           }
         | undefined
-      >(KvOAuthProvider.prototype, this, "storeRefresh", [epoch, requested, tokens, issuer]),
+      >(KvOAuthProvider.prototype, this, "storeRefresh", [epoch, requested, tokens, issuer, issuedAt]),
     );
   }
 
@@ -1957,9 +2042,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
         return authFlow<Grant>(
           function* (this: KvOAuthProvider) {
-            if (raw === null) return { epoch: INITIAL_EPOCH, body: {} };
-            const stored = storedGrant(raw);
-            if (!stored) return { epoch: UNREADABLE_EPOCH, body: {} };
+            const stored = raw === null ? undefined : storedGrant(raw);
+            if (!stored) {
+              this.observed = undefined;
+              return { epoch: raw === null ? INITIAL_EPOCH : UNREADABLE_EPOCH, body: {} };
+            }
             let body: unknown = stored.body;
             if (stored.sealed !== undefined) {
               body = undefined;
@@ -1986,11 +2073,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 );
               }
             }
-            return {
+            const grant: Grant = {
               epoch: stored.epoch,
               ...(stored.flow !== undefined ? { flow: stored.flow } : {}),
               body: grantBody(body),
             };
+            this.observe(grant);
+            return grant;
           }.bind(this),
         );
       },
@@ -2166,6 +2255,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
               }
               if (written) {
                 if (next.epoch !== grant.epoch) this.epoch = next.epoch;
+                this.observe(next);
                 return true;
               }
             }
@@ -2187,13 +2277,23 @@ export class KvOAuthProvider implements OAuthClientProvider {
       ) {
         return authFlow<void>(
           function* (this: KvOAuthProvider) {
+            // The SDK saves a code exchange's tokens once its answer is read.
+            const issuedAt = Date.now();
             (yield authInvoke(this, "updateGrant", [
               (grant: Grant) => {
                 const body: GrantBody =
                   issuer !== undefined && grant.body.issuer !== issuer ? { issuer } : { ...grant.body };
                 if (field === "client") body.client = value as NonNullable<GrantBody["client"]>;
                 else {
-                  body.tokens = value as OAuthTokens;
+                  const tokens = value as OAuthTokens;
+                  // The same access token saved again keeps the expiry it was issued with.
+                  const expiresAt =
+                    body.tokens?.access_token === tokens.access_token && body.expiresAt !== undefined
+                      ? body.expiresAt
+                      : tokenExpiry(tokens, issuedAt);
+                  body.tokens = tokens;
+                  delete body.expiresAt;
+                  if (expiresAt !== undefined) body.expiresAt = expiresAt;
                   delete body.refreshConsent;
                   if (refreshConsent) body.refreshConsent = refreshConsent;
                 }
@@ -3128,6 +3228,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                     if (current === undefined) continue;
                     if (field !== "discovery" && fingerprint(current) !== this.seen[field]) continue;
                     delete body[field];
+                    if (field === "tokens") delete body.expiresAt;
                     changed = true;
                   }
                   return changed ? { ...grant, body } : undefined;
@@ -3172,7 +3273,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
               authCall<OAuthTokens | undefined>(wait, [
                 authMethod(() => authInvoke(this, "storedTokens", [waiting.signal])),
               ]);
-            let delay = 10;
+            let delay = REFRESH_POLL_INITIAL_MS;
             try {
               const digest = (yield authCall(wait, [
                 authMethod(() => {
@@ -3181,15 +3282,40 @@ export class KvOAuthProvider implements OAuthClientProvider {
               ])) as string;
               const key = oauthRefreshKeys.lease(epoch, digest);
               const spentKey = oauthRefreshSpentKeys.spent(digest);
+              type Polled = { lease: string | null; grant: Grant; spent: string | null; active: string | null };
+              // One batched read per poll. The lease comes first, so a store that
+              // reads the keys one at a time never pairs a completed lease with the
+              // grant as it was before that lease's commit.
+              const poll = (activeKey: string | undefined) =>
+                authCall<Polled>(wait, [
+                  authMethod(() =>
+                    authFlow<Polled>(
+                      function* (this: KvOAuthProvider) {
+                        const [lease, raw, spent, active] = (yield authStorageMany(this.storage, [
+                          key,
+                          GRANT,
+                          spentKey,
+                          ...(activeKey !== undefined ? [activeKey] : []),
+                        ])) as (string | null)[];
+                        const grant = (yield authInvoke(this, "openGrant", [raw ?? null, waiting.signal])) as Grant;
+                        if (this.bound && grant.epoch !== this.epoch) throw this.flowSuperseded();
+                        return { lease: lease ?? null, grant, spent: spent ?? null, active: active ?? null };
+                      }.bind(this),
+                    ),
+                  ),
+                ]);
+              /** The liveness key the previous poll's lease named, read with the next poll. */
+              let activeKey: string | undefined;
               while (!waiting.signal.aborted) {
-                const current = (yield tokens()) as OAuthTokens | undefined;
+                const polled = (yield poll(activeKey)) as Polled;
+                const current = polled.grant.body.tokens;
                 if (current?.refresh_token !== requested || (current && this.refreshedSinceRead(current, epoch))) {
                   if (!current) this.recordRefreshFailure({ kind: "dead" });
                   return current
                     ? this.adoptRefresh(current)
                     : Response.json({ error: "invalid_grant" }, { status: 400 });
                 }
-                const raw = (yield read(key)) as string | null;
+                const raw = polled.lease;
                 const stored = raw === null ? undefined : parsed(raw);
                 const committed =
                   plainObject(stored) &&
@@ -3211,10 +3337,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 if (plainObject(stored) && stored.state !== "claimed" && !completed) {
                   // Never compare another isolate's clock for a sent request. The
                   // durable record survives expiry of this storage-owned liveness key.
+                  const named = typeof stored.activeKey === "string" ? stored.activeKey : undefined;
                   const active =
-                    typeof stored.activeKey === "string"
-                      ? ((yield read(stored.activeKey as string)) as string | null)
-                      : null;
+                    named === undefined
+                      ? null
+                      : named === activeKey
+                        ? polled.active
+                        : ((yield read(named)) as string | null);
+                  activeKey = named;
                   if (active === null) {
                     const refused = JSON.stringify({ ...stored, verdict: { kind: "dead" } });
                     if (
@@ -3241,16 +3371,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
                     continue;
                   }
                 } else {
-                  const spentExpected = (yield read(spentKey)) as string | null;
+                  const spentExpected = polled.spent;
                   if (spentExpected !== null) {
                     const spent = storedRefreshSpent(spentExpected);
-                    const consent = (
-                      (yield authCall(wait, [
-                        authMethod(() => {
-                          return authInvoke(this, "boundGrant", [waiting.signal]) as Effect.Effect<Grant, unknown>;
-                        }),
-                      ])) as Grant
-                    ).body.refreshConsent;
+                    const consent = polled.grant.body.refreshConsent;
                     if (
                       spent?.state !== "resolved" ||
                       !(
@@ -3356,7 +3480,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                   }
                 }
                 (yield Effect.raceAllFirst([Effect.sleep(delay), fromSignal(waiting.signal)])) as void;
-                delay = Math.min(250, delay * 2);
+                delay = Math.min(REFRESH_POLL_MAX_MS, delay * 2);
               }
             } catch (error) {
               if (!waiting.signal.aborted) throw error;
@@ -3554,6 +3678,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
         requested: string | null,
         tokens: OAuthTokens,
         issuer: string | undefined,
+        issuedAt: number,
       ) {
         return authFlow<
           | {
@@ -3577,12 +3702,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 if (grant.epoch !== epoch || (issuer !== undefined && grant.body.issuer !== issuer)) return undefined;
                 if (grant.body.tokens?.refresh_token !== requested) return grant.body.tokens;
                 const committed = issuer !== undefined ? { ...tokens, issuer } : tokens;
-                const encoded = (yield authInvoke(this, "encodeGrant", [
-                  { ...grant, body: { ...grant.body, tokens: committed } },
-                  null,
-                ])) as string;
-                if ((yield authStorage(this.storage, "compareAndSet", [GRANT, raw, encoded])) as boolean)
+                const { expiresAt: _previous, ...body } = grant.body;
+                const expiresAt = tokenExpiry(committed, issuedAt);
+                const next: Grant = {
+                  ...grant,
+                  body: { ...body, tokens: committed, ...(expiresAt !== undefined ? { expiresAt } : {}) },
+                };
+                const encoded = (yield authInvoke(this, "encodeGrant", [next, null])) as string;
+                if ((yield authStorage(this.storage, "compareAndSet", [GRANT, raw, encoded])) as boolean) {
+                  this.observe(next);
                   return committed;
+                }
               } catch {
                 // A failed or lost CAS answer may still have committed. Re-read the
                 // epoch and retry these in-memory tokens without another HTTP request.
@@ -3610,7 +3740,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
               (yield authInvoke(this, "updateGrant", [
                 (grant: Grant) => {
                   if (grant.body.tokens?.refresh_token !== refreshToken) return undefined;
-                  const { tokens: _refused, ...body } = grant.body;
+                  const { tokens: _refused, expiresAt: _expiry, ...body } = grant.body;
                   return { ...grant, body };
                 },
                 {

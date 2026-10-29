@@ -66,6 +66,7 @@ import {
   assertOAuthScope,
   authorizingContext,
   codeExchangeResponse,
+  earlyRenewalFetch,
   KvOAuthProvider,
   OAuthRequestNotSentError,
   refreshCoordinatorsByPartition,
@@ -1672,6 +1673,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // Post-connect auth checks keep the exact provider that bound this client,
   // even if another attempt has since replaced the request scope's state.
   const connectedProviders = new WeakMap<Client, KvOAuthProvider>();
+  // Each OAuth transport's early renewal: its bound 401 flow, run before a
+  // call sends a token about to expire, owned by that call's signal.
+  const earlyRenewals = new WeakMap<Transport, (due: string, signal: AbortSignal | undefined) => Promise<void>>();
   const cacheOwner = {};
   // Listings that must reach the downstream: a credential test proves the
   // stored value against the server, never against a cached catalog.
@@ -2939,6 +2943,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         ),
       });
       boundOAuthFlows(ctx, transport, url, [signal, ctx.signal], (response) => renewalSignals.get(response));
+      earlyRenewals.set(
+        transport,
+        authMethod((due: string, owner: AbortSignal | undefined) => {
+          // Exactly the flow a 401 starts, through the same refresh coordinator,
+          // with nothing sent to the MCP endpoint. The token request carries
+          // `due`, so a rotation another request finished is adopted instead.
+          const internals = transport as unknown as {
+            _authProvider: {
+              onUnauthorized: (flow: { response: Response; serverUrl: URL; fetchFn: FetchLike }) => Promise<void>;
+            };
+            _fetchWithInit: FetchLike;
+          };
+          const response = new Response(null, { status: 401 });
+          if (owner) renewalSignals.set(response, owner);
+          return authInvoke(internals._authProvider, "onUnauthorized", [
+            { response, serverUrl: url, fetchFn: earlyRenewalFetch(internals._fetchWithInit, due) },
+          ]) as Effect.Effect<void, unknown>;
+        }),
+      );
       return sendingEachWriteOnce(transport, flights, untrackedRead);
     }
     const headers =
@@ -3649,6 +3672,60 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   );
 
   /**
+   * Renew `due`, an access token within a minute of its stored expiry,
+   * through `transport`'s bound 401 flow and the shared refresh coordinator.
+   * Nothing is sent to the MCP endpoint. Only calls come here: status,
+   * listing and discovery never renew (INV-10).
+   */
+  const renewEarly = authMethod((ctx: ConnectorContext, transport: Transport, due: string) =>
+    authFlow<void>(function* () {
+      const renew = earlyRenewals.get(transport);
+      if (!renew) return;
+      try {
+        (yield authCall(renew, [due, ctx.signal])) as void;
+      } catch (err) {
+        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
+        throw err instanceof UnauthorizedError
+          ? carryFailureFacts(err, authRequiredError())
+          : downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
+      }
+    }),
+  );
+
+  /**
+   * The invocation's renewal, before it enters `callTool`: a failure there is
+   * the call's authorization verdict with nothing sent, so a write never
+   * draws the 401 it could not be repeated after (INV-9). The transport is
+   * built for its flow and never started, so it holds nothing to close.
+   */
+  const renewBeforeCall = authMethod((ctx: ConnectorContext, due: string) =>
+    authFlow<void>(function* () {
+      if (opts._transportFactory) return;
+      const provider = newProvider(ctx);
+      (yield authInvoke(provider, "beginFlow", [])) as string;
+      (yield authCall(renewEarly, [ctx, buildTransport(ctx, provider), due])) as void;
+    }),
+  );
+
+  /**
+   * A connection reused later in the request renews again once its token
+   * comes due, before `callTool` sends it. The grant's last read decides
+   * (`KvOAuthProvider.renewalDue`, memory only).
+   */
+  const renewBeforeDispatch = authMethod((ctx: ConnectorContext, state: ConnectionState, client: Client) =>
+    authFlow<void>(function* () {
+      const due = connectedProviders.get(client)?.renewalDue();
+      if (due === undefined || !client.transport) return;
+      try {
+        (yield authCall(renewEarly, [ctx, client.transport, due])) as void;
+      } catch (err) {
+        if (requiresAuthorization(err) && state.client === client) state.authRequired = true;
+        throw err;
+      }
+    }),
+  );
+
+  /**
    * Start consent for a downstream that answered without challenging. The
    * transport's bound 401 seam runs the SDK flow exactly as a challenge
    * without `resource_metadata` would: RFC 9728 discovery at the resource's
@@ -4032,6 +4109,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   const client = (yield authCatch(authCall(ensureConnected, [ctx, state]), (error: unknown) => {
                     throw knownProviderFailure(error);
                   })) as Client;
+                  if (isOauth)
+                    (yield authCatch(authCall(renewBeforeDispatch, [ctx, state, client]), (error: unknown) => {
+                      throw knownProviderFailure(error);
+                    })) as void;
                   const definition = options?.definition;
                   const facts = definition ?? state.toolDefinitions.get(name) ?? { name };
                   const sourceFacts = definition ?? {
@@ -4722,6 +4803,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   | undefined)
               )
                 throw authRequiredError();
+              // That read decides whether the token is about to expire.
+              const due = provider.renewalDue();
+              if (due !== undefined) (yield authCall(renewBeforeCall, [ctx, due])) as void;
             }),
           ),
           0,

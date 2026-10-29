@@ -317,6 +317,11 @@ function describedApiAuth(opts: ApiOptions): ConnectorAuthDescription {
  */
 export interface ApiOAuthHooks {
   status(ctx: ConnectorContext): Promise<ConnectorStatus>;
+  /**
+   * `status` for a call about to enter a handler, which also renews a token
+   * within a minute of its stored expiry. A failed renewal rejects.
+   */
+  prepareCall(ctx: ConnectorContext): Promise<ConnectorStatus>;
   startAuth(ctx: ConnectorContext, opts?: { force?: boolean }): Promise<ConnectorStatus>;
   disconnectAuth(ctx: ConnectorContext): Promise<void>;
   verifyState(state: string | null, ctx: ConnectorContext): Promise<boolean>;
@@ -563,9 +568,9 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   registerCallEntry(connector, core);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
-      // The built-in static OAuth status only reads the stored grant. It never
-      // refreshes, invokes a handler, or sends a downstream request.
-      if ((await settleOnClose(ctx, () => oauth.status(ctx))).state === "auth_required") {
+      // The stored grant, as status reads it. Only a token about to expire is
+      // renewed, before any handler runs; nothing is sent to the API.
+      if ((await settleOnClose(ctx, () => oauth.prepareCall(ctx))).state === "auth_required") {
         throw new ConnectorCallError(
           "downstream_oauth_required",
           `Connector "${id}" requires authorization. Call authorize_connector.`,

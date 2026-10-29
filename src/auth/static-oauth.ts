@@ -41,6 +41,7 @@ import {
   assertOAuthScope,
   authorizingContext,
   codeExchangeResponse,
+  earlyRenewalFetch,
   KvOAuthProvider,
   refreshCoordinatorsByPartition,
 } from "./downstream-oauth.js";
@@ -637,60 +638,63 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         iss?: string;
       },
       requestOwned: boolean = false,
+      /** The access token an early renewal replaces. */
+      early?: string,
     ) => {
       return authFlow<AuthResult>(function* () {
         const secrets = sentSecretsFor(ctx);
+        const coordinated = coordinatorFor(ctx).coordinatedFetch(
+          provider,
+          authMethod((input: string | URL, init: RequestInit | undefined) => {
+            return authFlow<Response>(function* () {
+              if (exchange) {
+                // A code exchange has no submitted refresh claim transferring
+                // ownership. Only explicit scope revocation stops a callback:
+                // the production callback route remains uninterruptible and
+                // does not revoke its own scope while exchanging a code.
+                return (yield authView(
+                  ctx,
+                  authMethod((signal: AbortSignal) => {
+                    return authFlow<Response>(function* () {
+                      assertProviderCallOpen(ctx, id, true);
+                      const response = (yield authCall(tokenEndpointFetch, [
+                        secrets,
+                        input,
+                        {
+                          ...init,
+                          signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+                        },
+                      ])) as Response;
+                      // An override can ignore abort. Never hand its late tokens
+                      // to the SDK, which would otherwise persist both credentials.
+                      if (signal.aborted) {
+                        void response.body?.cancel().catch(() => {});
+                        throw signal.reason;
+                      }
+                      // The SDK clones and reads this body after fetch resolves.
+                      // Revocation must cancel that read even for a custom fetch.
+                      return codeExchangeResponse(response, signal);
+                    });
+                  }),
+                  true,
+                )) as Response;
+              }
+              return (yield authCall(tokenEndpointFetch, [secrets, input, init])) as Response;
+            });
+          }),
+          viewSignal(ctx, requestOwned || exchange !== undefined),
+          ctx.defer,
+          undefined,
+          () => {
+            guardedTransport(true);
+          },
+        );
         return (yield authCall(auth, [
           provider,
           {
             serverUrl: settings.serverUrl,
             ...exchange,
-            fetchFn: coordinatorFor(ctx).coordinatedFetch(
-              provider,
-              authMethod((input: string | URL, init: RequestInit | undefined) => {
-                return authFlow<Response>(function* () {
-                  if (exchange) {
-                    // A code exchange has no submitted refresh claim transferring
-                    // ownership. Only explicit scope revocation stops a callback:
-                    // the production callback route remains uninterruptible and
-                    // does not revoke its own scope while exchanging a code.
-                    return (yield authView(
-                      ctx,
-                      authMethod((signal: AbortSignal) => {
-                        return authFlow<Response>(function* () {
-                          assertProviderCallOpen(ctx, id, true);
-                          const response = (yield authCall(tokenEndpointFetch, [
-                            secrets,
-                            input,
-                            {
-                              ...init,
-                              signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
-                            },
-                          ])) as Response;
-                          // An override can ignore abort. Never hand its late tokens
-                          // to the SDK, which would otherwise persist both credentials.
-                          if (signal.aborted) {
-                            void response.body?.cancel().catch(() => {});
-                            throw signal.reason;
-                          }
-                          // The SDK clones and reads this body after fetch resolves.
-                          // Revocation must cancel that read even for a custom fetch.
-                          return codeExchangeResponse(response, signal);
-                        });
-                      }),
-                      true,
-                    )) as Response;
-                  }
-                  return (yield authCall(tokenEndpointFetch, [secrets, input, init])) as Response;
-                });
-              }),
-              viewSignal(ctx, requestOwned || exchange !== undefined),
-              ctx.defer,
-              undefined,
-              () => {
-                guardedTransport(true);
-              },
-            ),
+            fetchFn: early === undefined ? coordinated : earlyRenewalFetch(coordinated, early),
           },
         ])) as AuthResult;
       });
@@ -707,11 +711,18 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const disconnectedMessage = `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
 
   /**
-   * The token to send after `spent` drew a 401: one another request has
-   * already rotated in, or else one coordinated refresh.
+   * The token to send after `spent` drew a 401, or instead of an `early`
+   * one about to expire: one another request has already rotated in, or else
+   * one coordinated refresh.
    */
   const renewedToken = authMethod(
-    (provider: StaticOAuthProvider, ctx: ConnectorContext, spent: string, requestOwned: boolean = false) => {
+    (
+      provider: StaticOAuthProvider,
+      ctx: ConnectorContext,
+      spent: string,
+      requestOwned: boolean = false,
+      early: boolean = false,
+    ) => {
       return authFlow<string>(function* () {
         // Only renewal whose claim CAS was submitted may survive this call.
         // Race each preparation read too, and never resume SDK work or consume a
@@ -755,7 +766,13 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         if (
           ((yield authCall(live, [
             authMethod(() => {
-              return authCall(runAuth, [provider, ctx, undefined, requestOwned]) as Effect.Effect<AuthResult, unknown>;
+              return authCall(runAuth, [
+                provider,
+                ctx,
+                undefined,
+                requestOwned,
+                early ? spent : undefined,
+              ]) as Effect.Effect<AuthResult, unknown>;
             }),
           ])) as AuthResult) !== "AUTHORIZED"
         )
@@ -844,7 +861,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     return {
       token: authMethod(() => {
         return authCall(use, [
-          authMethod((provider: StaticOAuthProvider) => {
+          authMethod((provider: StaticOAuthProvider, live: ConnectorContext) => {
             return authFlow<string>(function* () {
               const tokens = (yield authInvoke(provider, "tokens", [issuerContext])) as
                 | {
@@ -858,6 +875,17 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                   }
                 | undefined;
               if (!tokens) throw authRequiredError();
+              // A token about to expire is renewed before anything is sent with it,
+              // so a write never meets the 401 it could not be repeated after.
+              if (provider.renewalDue() === tokens.access_token) {
+                return (yield authCall(renewedToken, [
+                  provider,
+                  live,
+                  tokens.access_token,
+                  requestOwned,
+                  true,
+                ])) as string;
+              }
               return tokens.access_token;
             });
           }),
@@ -1065,7 +1093,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     });
   });
 
-  const status = authMethod((ctx: ConnectorContext) => {
+  const statusOf = authMethod((ctx: ConnectorContext, provider: StaticOAuthProvider) => {
     return authFlow<ConnectorStatus>(function* () {
       if (rejectedScopes.has(scopeOf(ctx))) {
         return {
@@ -1077,7 +1105,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // nothing here calls the SDK. A stored grant for the configured token
       // endpoint is healthy until a call says otherwise — the downstream is
       // asked nothing.
-      const provider = providerFor(ctx);
       if ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean) {
         return { state: "auth_required", message: disconnectedMessage };
       }
@@ -1094,6 +1121,25 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         | undefined)
         ? { state: "ok" }
         : { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
+    });
+  });
+  const status = authMethod((ctx: ConnectorContext) => {
+    return authCall(statusOf, [ctx, providerFor(ctx)]) as Effect.Effect<ConnectorStatus, unknown>;
+  });
+
+  /**
+   * The invocation's check before a call enters its handler: the status read,
+   * then, when the token it read is within a minute of its stored expiry, one
+   * coordinated refresh. A failure ends the call before the handler runs, so
+   * no write can draw the 401 it could not be repeated after (INV-9).
+   */
+  const prepareCall = authMethod((ctx: ConnectorContext) => {
+    return authFlow<ConnectorStatus>(function* () {
+      const provider = providerFor(ctx);
+      const state = (yield authCall(statusOf, [ctx, provider])) as ConnectorStatus;
+      if (state.state === "ok" && provider.renewalDue() !== undefined)
+        (yield authInvoke(grantFor(ctx), "token", [])) as string;
+      return state;
     });
   });
 
@@ -1259,6 +1305,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   return withStoredAuth(
     {
       status: retainAuthPartition(status, 0),
+      prepareCall: retainAuthPartition(prepareCall, 0),
       startAuth: retainAuthPartition(startAuth, 0),
       disconnectAuth: retainAuthPartition(disconnectAuth, 0),
       verifyState: retainAuthPartition(verifyState, 1),

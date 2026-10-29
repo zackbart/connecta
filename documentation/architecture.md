@@ -99,6 +99,18 @@ never retried and requires re-consent. Valid rotations retry their grant commit
 up to 32 times without another HTTP request; exhausted commits and all dispatched
 provider failures require re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
 contracts.
+The grant body stores `expiresAt` beside the tokens it describes; reads never
+add it (INV-10). A call renews a token within `OAUTH_REFRESH_SKEW_MS` (60 s)
+of it before sending: the invocation's authorization check (`registerInvocationAuth`
+in `src/connectors/remote-mcp.ts` and `src/connectors/api-connector.ts`) runs
+the 401 flow before entering the connector, so a failed renewal is a
+pre-dispatch authorization failure, never an unknown write (INV-9).
+`KvOAuthProvider.renewalDue` decides from the grant read that check already
+made, in memory. The token request carries the access token it replaces
+(`earlyRenewalFetch`), and the coordinator adopts any stored token that differs
+instead of redeeming again. Status, listing, discovery and the connectionless
+catalog read never renew. [Auth](./auth.md#refreshing-before-expiry) has the
+operator contract.
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
 clients, abort signals, and the connector scope a probe opens all belong to the
@@ -2217,8 +2229,8 @@ Always fresh:
 `test/request-reads.node.test.ts` holds the memo's contract, including a
 disconnect written by another isolate between paginated `tools/list` pages. It
 also holds D1 round-trip and statement ceilings for a warm OAuth call, an
-expired-token refresh, a cold-isolate catalog load and an operator UI detail
-read.
+expired-token refresh, a refresh before expiry, a cold-isolate catalog load and
+an operator UI detail read.
 
 ### Contributor provider kit
 
