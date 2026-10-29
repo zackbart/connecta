@@ -13,7 +13,8 @@ export interface GuestApi {
     options?: { page?: number; offset?: number; maxBytes?: number },
   ): Promise<GuestResultPage>;
   skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
-  emit(block: GuestNativeBlock | GuestResult): PromiseLike<void>;
+  /** Forwards an authored block, a block from result.content, or an inline result; a paged handle is refused. */
+  emit(block: GuestNativeBlock | Exclude<GuestResult, GuestResultHandle>): PromiseLike<void>;
 }
 
 export interface GuestResourceResult {
@@ -76,8 +77,8 @@ interface CatalogSearchArgs {
   includeSchemaKeys?: boolean;
 }
 interface CatalogDescribeArgs {
-  address?: unknown;
-  addresses?: unknown;
+  address?: string;
+  addresses?: string[];
   format?: SchemaFormat;
   fullDescriptions?: boolean;
 }

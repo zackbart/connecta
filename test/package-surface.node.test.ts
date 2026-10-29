@@ -4,11 +4,13 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import * as d1 from "../src/d1.js";
 import * as sqlite from "../src/sqlite.js";
 import type { ConnectaConfig, RemoteMcpOptions } from "../src/index.js";
+import { GUEST_API_DECLARATION } from "../src/usage-guide.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
@@ -342,4 +344,100 @@ describe("Effect behind the published surface", () => {
     expect(effect.resolved, "locked effect differs from the pin").toBe(pin);
     expect(effect.locked, "a second copy of effect is locked").toEqual([pin]);
   });
+});
+
+// The execute_code description shows the model compact guest shapes instead of
+// the published GuestApi names. Compile them against GuestApi so they cannot
+// drift: compact arguments and GuestApi arguments are assignable both ways (a
+// compact argument the host would refuse fails, and so does a returned handle,
+// result or block the compact shape cannot take back), every GuestApi result is
+// assignable to its compact shape, and no compact field is absent from GuestApi.
+// call's object overload is GuestApi-only; the compact form shows the first.
+describe("advertised guest API declaration", () => {
+  const file = join(ROOT, "test", "__advertised-guest-api__.ts");
+  const options: ts.CompilerOptions = {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ES2022,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    lib: ["lib.es2022.d.ts"],
+    types: [],
+    strict: true,
+    exactOptionalPropertyTypes: true,
+    skipLibCheck: true,
+    noEmit: true,
+  };
+  const methods = ["search", "describe", "call", "read", "result", "skill", "emit"];
+  let previous: ts.Program | undefined;
+  const diagnostics = (declaration: string): string[] => {
+    const source = `import type { GuestApi } from "../src/guest-types.js";
+${declaration}
+type Compact = typeof connecta;
+declare const real: GuestApi;
+declare function accepts<A extends unknown[], R>(compact: (...args: A) => R): (real: (...args: A) => R) => void;
+type First<F> = F extends { (...args: infer A): unknown; (...args: infer _B): unknown } ? A : never;
+${methods
+  .map(
+    (method) => `accepts(connecta.${method})(real.${method});
+declare const ${method}Args: First<GuestApi["${method}"]>;
+export const ${method}: Parameters<Compact["${method}"]> = ${method}Args;`,
+  )
+  .join("\n")}
+type Keys<T> = T extends unknown ? keyof T : never;
+type At<T, K> = T extends unknown ? (K extends keyof T ? T[K] : never) : never;
+type Invented<C, R> = C extends readonly (infer CE)[]
+  ? R extends readonly (infer RE)[] ? Invented<CE, RE> : never
+  : C extends object ? { [K in keyof C]-?: K extends Keys<R> ? Invented<C[K], At<R, K>> : K }[keyof C] : never;
+type Drift = {
+  [M in keyof Compact]:
+    | Invented<Parameters<Compact[M]>, Parameters<GuestApi[M]>>
+    | Invented<Awaited<ReturnType<Compact[M]>>, Awaited<ReturnType<GuestApi[M]>>>;
+}[keyof Compact];
+export const invented: [Drift] extends [never] ? true : Drift = true;
+export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ? true : Exclude<keyof GuestApi, keyof Compact> = true;
+`;
+    const host = ts.createCompilerHost(options);
+    const getSourceFile = host.getSourceFile.bind(host);
+    host.getSourceFile = (name, version, ...rest) =>
+      name === file ? ts.createSourceFile(name, source, version) : getSourceFile(name, version, ...rest);
+    const fileExists = host.fileExists.bind(host);
+    host.fileExists = (name) => name === file || fileExists(name);
+    previous = ts.createProgram([file], options, host, previous);
+    const checked = previous.getSourceFile(file)!;
+    return [...previous.getSyntacticDiagnostics(checked), ...previous.getSemanticDiagnostics(checked)].map(
+      (diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+    );
+  };
+
+  it("INV-3: compact shapes match GuestApi", () => {
+    expect(GUEST_API_DECLARATION).toMatch(/^declare const connecta: \{\n/);
+    expect(diagnostics(GUEST_API_DECLARATION)).toEqual([]);
+  }, 60_000);
+
+  it.each([
+    ["an invented result field", "nextOffset?: number }>;", "nextCursor?: number }>;"],
+    ["an invented argument", "query?: string;", "q?: string;"],
+    ["a wrong result type", "hasMore: boolean;", "hasMore: number;"],
+    ["a refused argument", "addresses?: string[];", "addresses?: number[];"],
+    ["a missing method", "\nskill(name: string): Promise<{ text: string }>;", ""],
+    ["an optional authored field", "data: string; mimeType: string }", "data: string; mimeType?: string }"],
+    ["an untyped authored block", '{ type: "text"; text: string }', "{ type: string; text: string }"],
+    ["a native block it cannot take back", '| { type: "resource_link"; uri: string; name: string }', ""],
+    ["a handle it cannot take back", "truncated: true; hint: string }", "truncated: true }"],
+    ["an emit that refuses forwarded blocks", "emit(block: Block | Native |", "emit(block: Block |"],
+    ["a result that refuses its handle", "result(id: string | Paged,", "result(id: string,"],
+  ])(
+    "rejects %s",
+    (_name, from, to) => {
+      expect(GUEST_API_DECLARATION).toContain(from);
+      expect(diagnostics(GUEST_API_DECLARATION.replace(from, to))).not.toEqual([]);
+    },
+    60_000,
+  );
+
+  it("refuses an authored block the host would reject", () => {
+    const program = (block: string) => `${GUEST_API_DECLARATION}\nconnecta.emit(${block});`;
+    expect(diagnostics(program('{ type: "image", data: "aGk=", mimeType: "image/png" }'))).toEqual([]);
+    expect(diagnostics(program('{ type: "image", data: "aGk=" }'))).not.toEqual([]);
+    expect(diagnostics(program('{ type: "video", data: "aGk=", mimeType: "video/mp4" }'))).not.toEqual([]);
+  }, 60_000);
 });
