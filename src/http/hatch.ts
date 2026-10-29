@@ -29,6 +29,7 @@ import type { RestCall } from "../providers/_shared/rest/kit.js";
 import { Refusal, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import type { HatchPageAdapter } from "./hatch-paging.js";
+import { RESPONSE_BUDGET, responseContract, type ResponseContract } from "./hatch-response.js";
 import { Integer, isMaxChars, isMinChars } from "./json-schema.js";
 import { boundCursor, StandardPage } from "./paging.js";
 import { Classification, Dispatches, IdempotencyKey, RequestSecrets, Signal, type CallServices } from "./services.js";
@@ -862,6 +863,37 @@ export function hatch(
   );
   const searchTool = tool("search");
   const detailsTool = tool("details");
+  // The response contract is fixed for a connection, so each operation's is built once.
+  const responses = new Map<number, ResponseContract | undefined>();
+  const responseOf = (op: Operation) => {
+    if (!responses.has(op.row)) responses.set(op.row, responseContract(index, op, connection.safety));
+    return responses.get(op.row);
+  };
+  const Response = Schema.optionalKey(
+    Schema.Struct({
+      anchor: Schema.Literals(["data", "data[]"]).annotate({
+        description: "Paths start at the read result's data; data[] means each item of a list body.",
+      }),
+      fields: Schema.Array(Schema.String).annotate({
+        description:
+          "Selectable declared success-response paths, valid as fields inputs unchanged. Not a readability promise: value safety may still withhold or redact any value at read time.",
+      }),
+      withheld: Schema.optionalKey(
+        Schema.Array(Schema.String).annotate({
+          description:
+            "Best-effort hint: listed paths value safety always withholds or redacts. An unlisted path may still be withheld or redacted.",
+        }),
+      ),
+      omitted: Schema.optionalKey(
+        Integer.annotate({
+          description: `Declared paths not listed: deeper ones past ${RESPONSE_BUDGET.paths} paths or ${RESPONSE_BUDGET.chars} chars, or over ${RESPONSE_BUDGET.pathChars} chars.`,
+        }),
+      ),
+    }).annotate({
+      description:
+        "Where declared response values are, not whether they are readable. Absent when the operation declares no response properties or is refused.",
+    }),
+  );
   const tools = [
     read(connection, {
       name: searchTool,
@@ -1014,7 +1046,7 @@ export function hatch(
     }),
     read(connection, {
       name: detailsTool,
-      description: `Read one ${title} API operation's request contract and refusal, including methods outside the call schemas. Reads no account data.`,
+      description: `Read one ${title} API operation's request contract, response fields and refusal, including methods outside the call schemas. Reads no account data.`,
       input: Schema.Struct({
         method: Method.annotate({ description: "The operation's HTTP method." }),
         path: Path.annotate({ description: "The path template from search, or a concrete path." }),
@@ -1039,6 +1071,7 @@ export function hatch(
               "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them.",
           }),
         ),
+        response: Response,
         verdict: Schema.Literals(["read", "write", "destructive", "refuse"]),
         ...Routing,
         revision: Schema.String,
@@ -1068,8 +1101,13 @@ export function hatch(
             const refusal = discoveryRefusal(op);
             return { op, contract: { ...index.contract(op, args.param), ...(refusal ? { refusal } : {}) } };
           });
-          const tail = { verdict: discoveryVerdictOf(op), ...route(op), revision: index.revision };
-          const whole = { ...contract, ...tail };
+          const verdict = discoveryVerdictOf(op);
+          const tail = { verdict, ...route(op), revision: index.revision };
+          // The first page of a whole-operation answer carries the response contract; param pages do not.
+          const response =
+            args.param === undefined && args.cursor === undefined && verdict !== "refuse" ? responseOf(op) : undefined;
+          const head = response ? { response } : {};
+          const whole = { ...contract, ...head, ...tail };
           if (args.cursor === undefined && bytes(whole) <= DETAILS_BUDGET_BYTES) return whole;
           // Bounded pages: every parameter and body property arrives whole on some page, and a
           // piece too large for one page arrives as consecutive chunks of its JSON. Nothing is dropped.
@@ -1147,6 +1185,7 @@ export function hatch(
                     },
                   },
                 }),
+            ...head,
             ...tail,
             ...(chunk ? { chunk } : {}),
             ...(truncated.length ? { truncated } : {}),

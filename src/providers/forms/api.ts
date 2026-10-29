@@ -62,6 +62,7 @@ export const safety = {
       return { method: op.method, template: op.path };
     },
     redact: (data: unknown, op: { method: string; template: string }) => values.redact(data, op.method, op.template),
+    withholds: (op: { method: string; template: string }) => values.withholds(op.method, op.template),
     withholdsErrors: (op: { method: string; template: string }) =>
       values.withholdsErrors(formsIndex.ops.find((entry) => entry.method === op.method && entry.path === op.template)!),
   },

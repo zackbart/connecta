@@ -418,6 +418,50 @@ then follow `page.nextCursor` to reach operations beyond the leading profile
 results. Responses contain at most eight compact hits within 16 KiB; fetch
 operation details separately and keep the same query when continuing.
 
+Operation details return the request contract and, for an operation that is
+not refused and declares success-response properties, a `response` section.
+Write `fields` filters and reductions from it without a sampling read:
+
+- `anchor` is `data` when paths start at the read result's `data`, or `data[]`
+  when the body is a list and each path applies to every item.
+- `fields` lists the declared paths a read can select, in the read and write
+  tools' `fields` coordinates; pass them unchanged, such as
+  `fields: ["data[].id"]`.
+- `withheld` is a best-effort, incomplete hint: the listed paths whose
+  non-null values value safety always withholds or redacts, by a reviewed
+  redaction path, a credential name, the deployment's sensitive-field choice
+  or a closed projection. A rule that can leave some value unchanged is never
+  a hint. Examples are URL sanitizing, reduction to an origin, which returns a
+  bare origin unchanged, redaction by a key, type or label, and a credential
+  suffix rule that scrubs only strings. A container above a hinted path is
+  not hinted either. Every hinted path also appears in `fields`.
+- `omitted` counts declared paths not listed.
+
+**`response` promises no readability.** Value safety runs on every read. A
+value at any listed path, hinted or not, may still be withheld or redacted at
+read time. An unlisted path may be too, so never treat it as safe. Many rules
+depend on the values a vendor returns, which no index knows in advance:
+
+- An expanded or polymorphic object is redacted by its type: for example, a
+  Stripe event's `data` or a Checkout Session's expanded `payment_intent`
+  loses a payment intent's `client_secret`.
+- An opaque container is redacted by its contents: Google Docs
+  `inlineObjects` loses image `contentUri` capabilities, and Vercel drain
+  `headers`, deployment `env` and `protectionBypass` keys are withheld.
+- A labelled or typed record is redacted by its label or type.
+- URLs carrying credentials are sanitized. QuickBooks replaces every http(s)
+  URL in a returned string, including ordinary text such as a Customer
+  `DisplayName` or `CompanyName`, with `[redacted]`.
+- A value echoing a secret the request sent is redacted.
+
+Paths list shallowest first, in index order, up to 100 paths and 4,096
+characters of path JSON, the hint included; a path over 200 characters is
+never listed. The pinned index carries names only, never response types or
+example values. Only the first page of a whole-operation answer carries
+`response`; `param` answers and continuation pages omit it. An operation
+without declared response properties has no `response`, and its reads refuse
+`fields`.
+
 Maintained REST hatches validate path parameters against their pinned contracts
 before dispatch. Integer ids use canonical ASCII decimal notation within the
 safe-integer range and obey the operation's declared bounds; for example,

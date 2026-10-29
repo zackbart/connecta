@@ -660,3 +660,13 @@ describe("the provider standard's rules", () => {
     ).toContainEqual(expect.stringContaining(message));
   });
 });
+
+describe("the hatch details response contract (S5)", () => {
+  it("documents that listed response fields promise no readability and the withheld hint is best effort", () => {
+    const text = readFileSync(documentationPath, "utf8").replace(/\s+/g, " ");
+    expect(text).toContain("**`response` promises no readability.**");
+    expect(text).toContain("may still be withheld or redacted at read time");
+    expect(text).toContain("`withheld` is a best-effort, incomplete hint");
+    expect(text).toContain("never treat it as safe");
+  });
+});
