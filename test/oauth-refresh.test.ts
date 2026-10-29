@@ -9,7 +9,12 @@ beforeTransportTest(() => {
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, OAuthTokens } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
-import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
+import {
+  earlyRenewalFetch,
+  KvOAuthProvider,
+  OAuthRefreshCoordinator,
+  oauthStateDigest,
+} from "../src/auth/downstream-oauth.js";
 import { invalidateCatalogCache } from "../src/catalog-cache.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { identityStorageKey } from "../src/identity.js";
@@ -818,5 +823,67 @@ describe("waiting on another isolate's refresh", () => {
     expect(polls.length).toBeLessThanOrEqual(6);
     // A timer may fire late under load, never meaningfully early.
     polls.slice(1).forEach((poll, i) => expect(poll.at - polls[i]!.at).toBeGreaterThanOrEqual(50 * 2 ** i - 5));
+  });
+});
+
+describe("early renewal through the coordinator", () => {
+  const near = { access_token: "a0", refresh_token: "r0", token_type: "Bearer", expires_in: 30 };
+  const renewed = { access_token: "a1", refresh_token: "r1", token_type: "Bearer", expires_in: 3600 };
+  async function nearExpiry(): Promise<KVStorage> {
+    const storage = memoryStorage();
+    await seedGrant(storage, { issuer, tokens: near, expiresAt: Date.now() + 30_000 });
+    return storage;
+  }
+  /** An early renewal of `due`, as the SDK's refresh request reaches the coordinator. */
+  const renew = (
+    coordinator: OAuthRefreshCoordinator,
+    provider: KvOAuthProvider,
+    fetch: FetchLike,
+    refreshToken = "r0",
+    due = "a0",
+  ) => earlyRenewalFetch(coordinator.coordinatedFetch(provider, fetch), due)(TOKEN_URL, refreshInit(refreshToken));
+
+  it("eight isolates spend one rotating refresh token, and a later early renewal adopts it", async () => {
+    const storage = await nearExpiry();
+    const coordinators = Array.from({ length: 8 }, () => new OAuthRefreshCoordinator());
+    const flows = await Promise.all(coordinators.map((c) => flow(storage, c, { passive: true })));
+    const held = deferred<void>();
+    const server = tokenServer(async () => {
+      await held.promise;
+      return Response.json(renewed);
+    });
+    const renewals = flows.map((provider, i) => renew(coordinators[i]!, provider, server.fetch));
+    await server.entered;
+    held.resolve();
+    const answers = await Promise.all((await Promise.all(renewals)).map((r) => r.json() as Promise<OAuthTokens>));
+    expect(answers).toEqual(Array.from({ length: 8 }, () => renewed));
+    expect(server.redeemed).toEqual(["r0"]);
+    // A reader whose own token read follows the rotation still renews `a0`:
+    // the refresh basis alone would let it redeem r1 again.
+    const coordinator = new OAuthRefreshCoordinator();
+    const late = await flow(storage, coordinator, { passive: true });
+    expect(await late.tokens(ISSUER)).toMatchObject(renewed);
+    expect(await (await renew(coordinator, late, server.fetch, "r1")).json()).toEqual(renewed);
+    expect(server.redeemed).toEqual(["r0"]);
+    expect((await storedGrant(storage))?.body?.tokens).toMatchObject(renewed);
+  });
+
+  it("a disconnect while an early renewal is in flight fences its commit", async () => {
+    const storage = await nearExpiry();
+    const coordinator = new OAuthRefreshCoordinator();
+    const provider = await flow(storage, coordinator, { passive: true });
+    const held = deferred<void>();
+    const server = tokenServer(async () => {
+      await held.promise;
+      return Response.json(renewed);
+    });
+    const renewal = expect(renew(coordinator, provider, server.fetch)).rejects.toThrow();
+    await server.entered;
+    const operator = new KvOAuthProvider("svc", storage, REDIRECT, new OAuthRefreshCoordinator());
+    await operator.resetAuthorization(true);
+    held.resolve();
+    await renewal;
+    expect(await operator.operatorDisconnected()).toBe(true);
+    expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
   });
 });

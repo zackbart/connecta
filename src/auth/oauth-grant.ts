@@ -12,10 +12,10 @@ export interface OAuthGrantBody {
   tokens?: OAuthTokens;
   /**
    * Epoch milliseconds the access token in `tokens` expires: its `expires_in`
-   * counted from just before the request that issued it was sent. Written
-   * with the tokens it describes and dropped with them. A grant stored
-   * before this field existed, or whose server sent no `expires_in`, has none
-   * and is refreshed only after a 401.
+   * counted from just before the request that issued it was sent, so a zero
+   * lifetime expires at issuance. Written with the tokens it describes and
+   * dropped with them. A grant stored before this field existed, or whose
+   * server sent no `expires_in`, has none and is refreshed only after a 401.
    */
   expiresAt?: number;
   discovery?: OAuthDiscoveryState;
@@ -24,10 +24,14 @@ export interface OAuthGrantBody {
 /** How long before `expiresAt` a call refreshes instead of sending the token. */
 export const OAUTH_REFRESH_SKEW_MS = 60_000;
 
-/** The expiry a token response's `expires_in` gives, counted from `issuedAt`. */
+/**
+ * The expiry a token response's `expires_in` gives, counted from `issuedAt`.
+ * Zero is a token already expired, never a missing expiry: the next call
+ * refreshes before sending it.
+ */
 export function tokenExpiry(tokens: OAuthTokens, issuedAt: number): number | undefined {
   const lifetime = tokens.expires_in;
-  return typeof lifetime === "number" && Number.isFinite(lifetime) && lifetime > 0
+  return typeof lifetime === "number" && Number.isFinite(lifetime) && lifetime >= 0
     ? issuedAt + lifetime * 1000
     : undefined;
 }

@@ -810,8 +810,17 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     },
   );
 
-  /** One call's grant use; submitted refresh work keeps the coordinator's owner. */
-  const grantFor = (ctx: ConnectorContext, requestOwned = false): RenewableGrant => {
+  // Access tokens an early renewal produced, by request scope. A token that
+  // lives under a minute is due again at once: a request renews it at most
+  // once per call, in the invocation's check, never again in the handler.
+  const earlyRenewed = new WeakMap<object, Set<string>>();
+
+  /**
+   * One call's grant use; submitted refresh work keeps the coordinator's owner.
+   * `renewAgain` is the invocation's check, which renews a due token even if
+   * this request's earlier renewal produced it.
+   */
+  const grantFor = (ctx: ConnectorContext, requestOwned = false, renewAgain = false): RenewableGrant => {
     let provider: SharedRead<StaticOAuthProvider> | undefined;
     const use = authMethod(<A>(work: (provider: StaticOAuthProvider, live: ConnectorContext) => Promise<A>) => {
       return authView(
@@ -877,14 +886,22 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               if (!tokens) throw authRequiredError();
               // A token about to expire is renewed before anything is sent with it,
               // so a write never meets the 401 it could not be repeated after.
-              if (provider.renewalDue() === tokens.access_token) {
-                return (yield authCall(renewedToken, [
+              const scope = scopeOf(ctx);
+              if (
+                provider.renewalDue() === tokens.access_token &&
+                (renewAgain || !earlyRenewed.get(scope)?.has(tokens.access_token))
+              ) {
+                const fresh = (yield authCall(renewedToken, [
                   provider,
                   live,
                   tokens.access_token,
                   requestOwned,
                   true,
                 ])) as string;
+                let renewed = earlyRenewed.get(scope);
+                if (!renewed) earlyRenewed.set(scope, (renewed = new Set()));
+                renewed.add(fresh);
+                return fresh;
               }
               return tokens.access_token;
             });
@@ -1138,7 +1155,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       const provider = providerFor(ctx);
       const state = (yield authCall(statusOf, [ctx, provider])) as ConnectorStatus;
       if (state.state === "ok" && provider.renewalDue() !== undefined)
-        (yield authInvoke(grantFor(ctx), "token", [])) as string;
+        (yield authInvoke(grantFor(ctx, false, true), "token", [])) as string;
       return state;
     });
   });

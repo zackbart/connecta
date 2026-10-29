@@ -16,6 +16,7 @@ import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, fetchTestUiDetails, makeRegistry, required, silentLogger } from "./helpers.js";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
 import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
 import { bindCallback, callbackAuth, consentKey, oauthVault, seedGrant, storedGrant } from "./fixtures/oauth.js";
@@ -1890,16 +1891,27 @@ describe("remoteMcp() early renewal before dispatch", () => {
   function downstream() {
     const valid = new Set(["access-old"]);
     const sent: string[] = [];
+    /** Every JSON-RPC method that reached the MCP endpoint, in order. */
+    const methods: string[] = [];
     const counts = { token: 0, rejected: 0, initialize: 0 };
     const answer = {
+      lifetime: 3600,
       current: (): Response =>
         Response.json({
-          access_token: "access-new",
+          access_token: `access-new${counts.token > 1 ? `-${counts.token}` : ""}`,
           token_type: "Bearer",
-          expires_in: 3600,
-          refresh_token: "refresh-new",
+          expires_in: answer.lifetime,
+          refresh_token: `refresh-new${counts.token > 1 ? `-${counts.token}` : ""}`,
         }),
     };
+    // The SDK's own server, answering both the modern and the legacy era.
+    const mcp = createMcpHandler(() => {
+      const server = new McpServer({ name: "expiring", version: "1.0.0" });
+      server.registerTool("write", { description: "Write", inputSchema: z.object({}) }, async () => ({
+        content: [{ type: "text", text: "done" }],
+      }));
+      return server;
+    });
     let gate: Promise<void> = Promise.resolve();
     let entered = deferred<void>();
     vi.stubGlobal("fetch", (async (input, init = {}) => {
@@ -1928,13 +1940,9 @@ describe("remoteMcp() early renewal before dispatch", () => {
         return response;
       }
       if (url.href !== mcpUrl) throw new Error(`Unexpected OAuth test request: ${url.href}`);
-      if (init.method !== "POST") return new Response(null, { status: 405 });
       const authorization = new Headers(init.headers).get("authorization") ?? "";
-      const message = JSON.parse(String(init.body)) as {
-        id?: string | number;
-        method: string;
-        params?: { protocolVersion?: string };
-      };
+      const message =
+        typeof init.body === "string" ? (JSON.parse(init.body) as { method?: string }) : ({} as { method?: string });
       if (!valid.has(authorization.replace(/^Bearer /, ""))) {
         counts.rejected++;
         return new Response(null, {
@@ -1942,23 +1950,14 @@ describe("remoteMcp() early renewal before dispatch", () => {
           headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` },
         });
       }
+      if (message.method) methods.push(message.method);
       if (message.method === "initialize") counts.initialize++;
       if (message.method === "tools/call") sent.push(`tools/call ${authorization}`);
-      if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
-      const result =
-        message.method === "initialize"
-          ? {
-              protocolVersion: message.params?.protocolVersion,
-              capabilities: { tools: {} },
-              serverInfo: { name: "expiring", version: "1.0.0" },
-            }
-          : message.method === "tools/list"
-            ? { tools: [{ name: "write", inputSchema: { type: "object" } }] }
-            : { content: [{ type: "text", text: "done" }] };
-      return Response.json({ jsonrpc: "2.0", id: message.id, result });
+      return mcp.fetch(new Request(input, init));
     }) as FetchLike);
     return {
       sent,
+      methods,
       counts,
       answer,
       revoke: (token: string) => valid.delete(token),
@@ -2031,6 +2030,15 @@ describe("remoteMcp() early renewal before dispatch", () => {
     expect(server.sent).toEqual(["token"]);
   });
 
+  /** "auto" stays on the modern era with this server: it never sends `initialize`. */
+  const expectEra = (methods: string[], versionNegotiation: "legacy" | "auto") => {
+    expect(methods).toContain("tools/call");
+    if (versionNegotiation === "auto") {
+      expect(methods).toContain("server/discover");
+      expect(methods).not.toContain("initialize");
+    } else expect(methods).toContain("initialize");
+  };
+
   /** A registry whose plaintext grant's token expires in 30 s, and its direct write call. */
   async function invocation(versionNegotiation: "legacy" | "auto") {
     const storage = memoryStorage();
@@ -2056,6 +2064,23 @@ describe("remoteMcp() early renewal before dispatch", () => {
       // Renewed before connecting: even the handshake carries the new token.
       expect(server.sent).toEqual(["token", "tools/call Bearer access-new"]);
       expect(server.counts.rejected).toBe(0);
+      expectEra(server.methods, versionNegotiation);
+    },
+  );
+
+  it.each(["legacy", "auto"] as const)(
+    "INV-9: a zero-lifetime renewal is sent once and renewed again by the next call (%s negotiation)",
+    async (versionNegotiation) => {
+      const write = await invocation(versionNegotiation);
+      const server = downstream();
+      server.answer.lifetime = 0;
+      expect(await write()).toContain("done");
+      // `callTool` sends the token its call's check renewed, without a second refresh.
+      expect(server.sent).toEqual(["token", "tools/call Bearer access-new"]);
+      // Expired at issuance: the next call renews before sending.
+      expect(await write()).toContain("done");
+      expect(server.sent).toEqual(["token", "tools/call Bearer access-new", "token", "tools/call Bearer access-new-2"]);
+      expectEra(server.methods, versionNegotiation);
     },
   );
 
@@ -2075,8 +2100,24 @@ describe("remoteMcp() early renewal before dispatch", () => {
       expect(error).not.toHaveProperty("writeOutcome");
       expect(error).not.toHaveProperty("reconciliationRequired");
       expect(server.sent).toEqual(["token"]);
+      // Resolving the address listed the catalog on the old token; nothing called a tool.
+      expect(server.methods).not.toContain("tools/call");
     },
   );
+
+  it("renews a zero-lifetime token once per request on a reused connection", async () => {
+    const storage = await savedGrant(30);
+    const server = downstream();
+    server.answer.lifetime = 0;
+    const c = connector();
+    const s = scope(storage);
+    await c.callTool("write", {}, s);
+    // The connection now reads the renewed token, expired at issuance; this
+    // request already renewed it, so the next call sends it as it is.
+    await c.callTool("write", {}, s);
+    await c.closeScope?.(s);
+    expect(server.sent).toEqual(["token", "tools/call Bearer access-new", "tools/call Bearer access-new"]);
+  });
 
   it.each(layouts)("keeps renewal on a 401 for a %s grant stored without an expiry", async (layout) => {
     const seal = sealerFor(layout);

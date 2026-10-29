@@ -457,6 +457,8 @@ export class OAuthRefreshCoordinator {
                   : init?.signal;
                 // Credential-bearing OAuth requests use the raw send path. A redirect
                 // is a dispatched failure, never authority to send the form again.
+                // Its tokens' lifetime starts no later than this send.
+                if (grantType !== undefined) provider.recordTokenRequestSent(Date.now());
                 return (yield tokenRequest
                   ? authCall(baseFetch, [input, { ...init, redirect: "manual", ...(signal ? { signal } : {}) }])
                   : authCall(resourceFetch, [input, { ...init, ...(signal ? { signal } : {}) }])) as Response;
@@ -1154,6 +1156,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private refreshBasis: { accessToken: string; epoch: string; issuer: string } | undefined;
   /** The access token of a refresh the coordinator already stored. */
   private storedRefresh: string | undefined;
+  /** When this flow's last token request other than a refresh was sent. */
+  private tokenRequestSent: number | undefined;
   /**
    * The tokens of the grant this provider last opened or wrote, as facts
    * only: no credential beyond the access token it already handed out.
@@ -1720,6 +1724,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return runEdge(authOwnMethod<Response>(KvOAuthProvider.prototype, this, "dispatchCodeExchange", [send, endpoint]));
   }
 
+  /**
+   * @internal A code exchange (or other non-refresh token request) is leaving
+   * now. The tokens the SDK saves from its answer expire counted from here,
+   * never from the later save, which a slow answer would push past expiry.
+   */
+  recordTokenRequestSent(at: number): void {
+    this.tokenRequestSent = at;
+  }
+
+  /** @internal The access token of the last refresh this flow adopted. */
+  adoptedRefresh(): string | undefined {
+    return this.storedRefresh;
+  }
+
   /** @internal Keep a refused code's answer for the SDK's retry to read. */
   recordCodeExchangeRefusal(forSdk: Response): void {
     this.exchangeRefusal = forSdk.clone();
@@ -2277,8 +2295,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
       ) {
         return authFlow<void>(
           function* (this: KvOAuthProvider) {
-            // The SDK saves a code exchange's tokens once its answer is read.
-            const issuedAt = Date.now();
+            // The SDK saves a code exchange's tokens once its answer is read;
+            // their lifetime started when its request was sent.
+            const issuedAt = (field === "tokens" ? this.tokenRequestSent : undefined) ?? Date.now();
             (yield authInvoke(this, "updateGrant", [
               (grant: Grant) => {
                 const body: GrantBody =
@@ -2300,6 +2319,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 return this.withIssuer(grant, body);
               },
             ])) as boolean;
+            if (field === "tokens") this.tokenRequestSent = undefined;
             // A flow may invalidate what it wrote itself.
             this.seen[field] = fingerprint(
               field === "client" ? (value as NonNullable<GrantBody["client"]>).value : value,

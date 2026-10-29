@@ -234,6 +234,10 @@ function fakeProvider() {
     apiRejects: false,
     /** Refuse the client itself, as a provider that revoked it would. */
     rejectClient: false,
+    /** The `expires_in` each issued token carries. */
+    lifetime: 3600,
+    /** Runs while a code exchange's answer is on its way back. */
+    onExchange: undefined as (() => void) | undefined,
   };
   const issue = (owner: string) => {
     minted += 1;
@@ -241,7 +245,12 @@ function fakeProvider() {
     const refreshToken = `refresh-${owner}-${minted}`;
     access.set(accessToken, owner);
     refresh.set(refreshToken, owner);
-    return { access_token: accessToken, token_type: "Bearer", expires_in: 3600, refresh_token: refreshToken };
+    return {
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: control.lifetime,
+      refresh_token: refreshToken,
+    };
   };
   const consent = (authorizationUrl: string, owner = "alice"): string => {
     const url = new URL(authorizationUrl);
@@ -267,6 +276,7 @@ function fakeProvider() {
           return Response.json({ error: "invalid_grant" }, { status: 400 });
         }
         codes.delete(params.get("code")!);
+        control.onExchange?.();
         if (code.challenge !== null && code.challenge !== (await s256(params.get("code_verifier") ?? ""))) {
           return Response.json({ error: "invalid_grant" }, { status: 400 });
         }
@@ -1188,6 +1198,77 @@ describe("api() oauth early renewal", () => {
       "Bearer access-alice-2",
     ]);
   });
+
+  /** `Date.now()` from here on, `offset` ahead of the wall clock. */
+  function shiftedClock() {
+    const real = Date.now.bind(Date);
+    const clock = { offset: 0, real };
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real() + clock.offset);
+    onTestFinished(() => spy.mockRestore());
+    return clock;
+  }
+  const writeError = async (registry: ReturnType<typeof makeRegistry>) => {
+    const text = (await createMetaTools(registry, BASE).callDestructiveTool({ address: "ccb.post_note" })).content[0]!
+      .text;
+    return (JSON.parse(text) as { error?: Record<string, unknown> }).error;
+  };
+
+  it("INV-9: a code exchange's token expires counted from its request, not its slow answer", async () => {
+    const clock = shiftedClock();
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ tools });
+    const registry = makeRegistry([connector], { storage });
+    // A 120 s token whose answer takes 80 s to arrive.
+    provider.control.lifetime = 120;
+    provider.control.onExchange = () => {
+      clock.offset += 80_000;
+    };
+    const sent = clock.real();
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    const expiresAt = (await storedGrant(storage, scopes.connector("ccb")))?.body?.expiresAt;
+    expect(expiresAt).toBeGreaterThanOrEqual(sent + 120_000);
+    expect(expiresAt).toBeLessThan(sent + 121_000);
+
+    // At second 130 the token has expired; the write renews before it is sent.
+    provider.control.onExchange = undefined;
+    provider.control.lifetime = 3600;
+    clock.offset = 130_000;
+    provider.expireAccess();
+    expect(await writeError(registry)).toBeUndefined();
+    expect(refreshes(provider)).toBe(1);
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-2"]);
+  });
+
+  it.each(["exchange", "refresh"] as const)(
+    "INV-9: a zero-lifetime token from a %s is refreshed before the next write, once per call",
+    async (issuedBy) => {
+      const storage = memoryStorage();
+      const provider = fakeProvider();
+      install(provider);
+      const connector = ccb({ tools });
+      const registry = makeRegistry([connector], { storage });
+      if (issuedBy === "exchange") provider.control.lifetime = 0;
+      await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+      if (issuedBy === "refresh") {
+        await expiring(storage, Date.now() + 30_000);
+        provider.control.lifetime = 0;
+        expect(await writeError(registry)).toBeUndefined();
+        expect(refreshes(provider)).toBe(1);
+      }
+      // Zero is an expiry at issuance, never a missing expiry.
+      const expiresAt = (await storedGrant(storage, scopes.connector("ccb")))?.body?.expiresAt;
+      expect(expiresAt).toBeLessThanOrEqual(Date.now());
+      const before = refreshes(provider);
+      provider.expireAccess();
+      expect(await writeError(registry)).toBeUndefined();
+      // One refresh for the call: the handler sends the token its check renewed.
+      expect(refreshes(provider)).toBe(before + 1);
+      expect(provider.apiAuthorizations.at(-1)).toBe(`Bearer access-alice-${before + 2}`);
+      expect(provider.apiAuthorizations).toHaveLength(issuedBy === "refresh" ? 2 : 1);
+    },
+  );
 
   it("INV-10: status never renews a token about to expire", async () => {
     const storage = memoryStorage();

@@ -1676,6 +1676,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // Each OAuth transport's early renewal: its bound 401 flow, run before a
   // call sends a token about to expire, owned by that call's signal.
   const earlyRenewals = new WeakMap<Transport, (due: string, signal: AbortSignal | undefined) => Promise<void>>();
+  // Access tokens an early renewal replaced or produced, by request scope. A
+  // connection opened earlier in the request may still hold the replaced one,
+  // and a token that lives under a minute is due again at once: the
+  // invocation's check renews once per call, and `callTool` renews neither.
+  const earlyRenewed = new WeakMap<object, Set<string>>();
   const cacheOwner = {};
   // Listings that must reach the downstream: a credential test proves the
   // stored value against the server, never against a cached catalog.
@@ -3677,12 +3682,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * Nothing is sent to the MCP endpoint. Only calls come here: status,
    * listing and discovery never renew (INV-10).
    */
-  const renewEarly = authMethod((ctx: ConnectorContext, transport: Transport, due: string) =>
+  const renewEarly = authMethod((ctx: ConnectorContext, transport: Transport, provider: KvOAuthProvider, due: string) =>
     authFlow<void>(function* () {
       const renew = earlyRenewals.get(transport);
       if (!renew) return;
       try {
         (yield authCall(renew, [due, ctx.signal])) as void;
+        const scope = ctx.requestScope ?? ctx;
+        let renewed = earlyRenewed.get(scope);
+        if (!renewed) earlyRenewed.set(scope, (renewed = new Set()));
+        renewed.add(due);
+        const fresh = provider.adoptedRefresh();
+        if (fresh !== undefined) renewed.add(fresh);
       } catch (err) {
         if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
         throw err instanceof UnauthorizedError
@@ -3703,7 +3714,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (opts._transportFactory) return;
       const provider = newProvider(ctx);
       (yield authInvoke(provider, "beginFlow", [])) as string;
-      (yield authCall(renewEarly, [ctx, buildTransport(ctx, provider), due])) as void;
+      (yield authCall(renewEarly, [ctx, buildTransport(ctx, provider), provider, due])) as void;
     }),
   );
 
@@ -3714,10 +3725,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    */
   const renewBeforeDispatch = authMethod((ctx: ConnectorContext, state: ConnectionState, client: Client) =>
     authFlow<void>(function* () {
-      const due = connectedProviders.get(client)?.renewalDue();
-      if (due === undefined || !client.transport) return;
+      const provider = connectedProviders.get(client);
+      const due = provider?.renewalDue();
+      if (due === undefined || !provider || !client.transport) return;
+      if (earlyRenewed.get(ctx.requestScope ?? ctx)?.has(due)) return;
       try {
-        (yield authCall(renewEarly, [ctx, client.transport, due])) as void;
+        (yield authCall(renewEarly, [ctx, client.transport, provider, due])) as void;
       } catch (err) {
         if (requiresAuthorization(err) && state.client === client) state.authRequired = true;
         throw err;

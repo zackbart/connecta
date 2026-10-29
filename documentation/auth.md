@@ -1311,7 +1311,9 @@ warning; no vault, plaintext as always.
 
 The body also holds `expiresAt`, the epoch milliseconds the stored access token
 expires: its `expires_in`, counted from just before the request that issued it
-was sent (the code exchange, or the refresh's token request). It is written
+was sent (the code exchange, or the refresh's token request), never from when
+its answer arrived or was saved, so a slow answer cannot push the expiry past
+the token's real one. An `expires_in` of `0` expires at issuance. It is written
 with the tokens it describes, replaced with them and dropped with them, in the
 sealed and plaintext layouts alike. A grant stored before this field existed,
 or one whose token response carried no `expires_in`, has none. Reading a grant
@@ -1458,7 +1460,10 @@ its stored `expiresAt`, so a write never meets the 401 it could not be repeated
 after (INV-9). Sixty seconds covers the refresh's own 20-second token-request
 deadline and the call's send with margin, and matches the early refresh of
 Google service-account tokens; for a typical one-hour token it is under 2% of
-its life. A token that lives under a minute is refreshed before each call.
+its life. A token that lives under a minute, or arrives already expired, is
+refreshed once per call, in the invocation's check; within one request, neither
+`callTool` nor `ctx.oauth.fetch` renews again a token that request's renewal
+replaced or produced.
 
 The renewal is the flow a 401 would start, through the same refresh
 coordinator: one redemption per owner partition and epoch in an isolate, the
