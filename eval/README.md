@@ -482,10 +482,27 @@ keep their fixed public origins and production host checks.
   missing from the vendor list cannot reach the real network. Agent runners
   are child processes with their own network and are unaffected. Loopback
   requests pass through unchanged.
+- **Redirects.** The registry forwards every hop with `redirect: "manual"` and
+  follows redirects itself. Each target must pass the same rules: loopback, or
+  a vendor host whose credential a live world owns. Anything else is refused.
+  A relative `Location` resolves against the vendor URL the caller addressed.
+  Credentials are dropped when a redirect changes origin.
+- **Scope.** The registry covers `globalThis.fetch` and the guarded kit
+  transport only. Raw `undici.fetch`, `node:http` and other sockets bypass it.
+  It is not a process-wide network sandbox.
 
-`eval:selftest` interleaves the start and stop of Google, Stripe, Granola and
-QuickBooks worlds, two worlds per family at once, against a stand-in network
-that records any fall-through.
+`eval:selftest` runs three transport controls against a stand-in network that
+records any fall-through:
+
+- **Interleaving.** Two Google, two QuickBooks, two Stripe and two Granola
+  worlds run at once. The control checks that sibling credentials and
+  destination ledgers are distinct. It then stops one sibling per family and
+  checks that the survivor still routes, and that the stopped world's
+  credentials are refused.
+- **Late start.** A third Google world starts after a sibling has stopped.
+- **Redirects.** Loopback and credential-routed redirects to a listener that
+  the registry classifies as non-loopback must be refused. The control
+  observes this both at the original fetch and at that listener.
 
 The refund fake follows Stripe API v1 idempotency: the same account/mode/key
 and parameters replay the original status and body, including HTTP 500; changed

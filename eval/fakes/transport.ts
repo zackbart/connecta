@@ -13,6 +13,12 @@
  *   owns throws. Eval worlds are hermetic, so this covers every host, not just
  *   the known vendor ones; agent runners are child processes with their own
  *   network and are unaffected. Loopback requests pass through unchanged.
+ * - Redirects: every physical forward uses `redirect: "manual"`, and the
+ *   registry follows each hop itself under the same rules, so a loopback or
+ *   vendor fake cannot redirect a request onto the real network.
+ * - Scope: this covers `globalThis.fetch` and the guarded kit transport only.
+ *   Raw `undici.fetch`, `node:http` and other sockets bypass it; it is not a
+ *   process-wide network sandbox.
  */
 import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
 
@@ -99,14 +105,18 @@ async function credentials(request: Request): Promise<string[]> {
   return [...new Set(found.filter((value): value is string => !!value))];
 }
 
-async function route(forward: typeof fetch, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const url = new URL(input instanceof Request ? input.url : String(input));
-  if (LOOPBACK.has(url.hostname)) return forward(input, init);
+/**
+ * One physical hop under the registry's rules. Every forward uses
+ * `redirect: "manual"`, so the network beneath never follows a hop the
+ * registry has not checked.
+ */
+async function hop(forward: typeof fetch, request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (LOOPBACK.has(url.hostname)) return forward(new Request(request, { redirect: "manual" }));
   if (!vendorHost(url.hostname))
     throw new EvalTransportRefusal(
       `Eval refused non-loopback transport to ${url.hostname}: fake worlds are hermetic and no fake owns this host.`,
     );
-  const request = new Request(input, init);
   if (url.protocol !== "https:" || url.port)
     throw new EvalTransportRefusal(`Eval refused non-fake vendor transport: unexpected origin ${url.origin}.`);
   const presented = await credentials(request);
@@ -121,9 +131,51 @@ async function route(forward: typeof fetch, input: RequestInfo | URL, init?: Req
     );
   const owner = owners[0]!;
   if (typeof owner.target === "function") return owner.target(request);
-  const rewritten = new Request(`${owner.target}${url.pathname}${url.search}`, request);
+  const rewritten = new Request(`${owner.target}${url.pathname}${url.search}`, {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    signal: request.signal,
+    redirect: "manual",
+    duplex: "half",
+  } as RequestInit);
   if (owner.stampVendorOrigin) rewritten.headers.set("x-eval-vendor-origin", url.origin);
   return forward(rewritten);
+}
+
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Follow redirects here, as fetch would, so each target passes the same
+ * loopback, credential and fail-closed checks as the first request. A relative
+ * Location resolves against the URL the caller addressed, not the loopback fake.
+ */
+async function route(forward: typeof fetch, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  let request = new Request(input, init);
+  const mode = request.redirect;
+  for (let hops = 0; ; hops++) {
+    const replay = mode === "follow" && request.body ? request.clone() : undefined;
+    const response = await hop(forward, request);
+    const location = response.headers.get("location");
+    if (!REDIRECTS.has(response.status) || mode === "manual" || location === null) return response;
+    await response.body?.cancel();
+    if (mode === "error") throw new TypeError("fetch failed: redirect mode is error");
+    if (hops >= 20) throw new TypeError("fetch failed: redirect count exceeded");
+    const next = new URL(location, request.url);
+    const headers = new Headers(request.headers);
+    if (next.origin !== new URL(request.url).origin)
+      for (const name of ["authorization", "cookie", "proxy-authorization"]) headers.delete(name);
+    const rewrite =
+      (response.status === 303 && request.method !== "HEAD") ||
+      ([301, 302].includes(response.status) && request.method === "POST");
+    if (rewrite) for (const name of ["content-type", "content-length", "content-encoding"]) headers.delete(name);
+    request = new Request(next, {
+      method: rewrite ? "GET" : request.method,
+      headers,
+      signal: request.signal,
+      ...(rewrite || !replay ? {} : { body: replay.body, duplex: "half" }),
+    } as RequestInit);
+  }
 }
 
 function acquire(): () => void {
