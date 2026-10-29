@@ -155,7 +155,7 @@ import {
 } from "../provider-call.js";
 import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
 import { recordRequestField } from "../provider-call-facts.js";
-import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
+import { forgetNegotiation, readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
@@ -1491,6 +1491,10 @@ function registrationErrorCode(body: string): string | undefined {
  * id. So a write is held to one send by its call, never by any one message
  * (INV-9). Reads keep the SDK's recoveries.
  */
+/** Set while a connection rests on a stored modern verdict; see `eraRefusals`. */
+interface EraRefusal {
+  refused?: (() => Promise<void>) | undefined;
+}
 interface CallDispatch {
   /** At most one request for this call may leave connecta. */
   write: boolean;
@@ -2704,6 +2708,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
     // This transport's calls on the wire, by JSON-RPC id, while each is sent.
     const flights = new Map<string | number, CallDispatch>();
+    const era: EraRefusal = {};
     const trackedFetch: FetchLike = authMethod((input: string | URL, init: RequestInit | undefined) =>
       authFlow<Response>(function* () {
         let rpc: unknown;
@@ -2793,6 +2798,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             return response;
           });
         })) as Response;
+        if (response.status === 400 && era.refused) (yield authCall(era.refused, [])) as void;
         if (response.status === 401 && requestToken?.invalidate && credentialValue !== null) {
           // Invalidate the exact bytes this transport sent, never a newer token.
           // Preserve the original 401 even if an operator hook fails. No replay.
@@ -2967,7 +2973,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ]) as Effect.Effect<void, unknown>;
         }),
       );
-      return sendingEachWriteOnce(transport, flights, untrackedRead);
+      return sendingEachWriteOnce(transport, flights, untrackedRead, era);
     }
     const headers =
       opts.auth?.type === "headers"
@@ -2985,6 +2991,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }),
       flights,
       untrackedRead,
+      era,
     );
   };
 
@@ -2998,7 +3005,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     transport: StreamableHTTPClientTransport,
     flights: Map<string | number, CallDispatch>,
     untrackedRead: (params: unknown) => boolean,
+    era: EraRefusal,
   ): StreamableHTTPClientTransport => {
+    eraRefusals.set(transport, era);
     const send = transport.send.bind(transport);
     transport.send = authMethod(
       (
@@ -3054,6 +3063,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // can pass it to the runtime's deferred channel. Terminating and closing are
   // each bounded, so no close waits more than two seconds in all.
   const closingSessions = new WeakMap<Transport, Deferred.Deferred<void>>();
+  // A modern server answers HTTP 400 only to refuse a request's protocol
+  // envelope, and a legacy server so answers a request without a session. On
+  // a connection adopted from a stored modern verdict, either means the
+  // verdict no longer holds: it is forgotten and the client retired.
+  const eraRefusals = new WeakMap<Transport, EraRefusal>();
+  const eraRefused = new WeakSet<Client>();
   const closeConnection = (client: Client | null, transport: Transport | null, logger: Logger): Effect.Effect<void> =>
     Effect.suspend(() => {
       const previous = transport && closingSessions.get(transport);
@@ -3293,6 +3308,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         viewSignal(ctx).throwIfAborted();
         if (isClosed(state)) throw scopeEndedError();
+        if (state.client && eraRefused.has(state.client)) closeHalf(state);
         if (state.client) return state.client;
         const attempt =
           state.connecting ??
@@ -3431,7 +3447,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               >,
           ),
         );
-        const prior =
+        let prior =
           opts.versionNegotiation === "legacy"
             ? undefined
             : negotiation?.digest === negotiationDigest
@@ -3516,15 +3532,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   { signal: handshakeAbort.signal, ...(prior ? { prior } : {}) },
                 ])) as void;
               } catch (error) {
+                // A server that stopped answering the legacy handshake its
+                // verdict recorded refuses it with a 4xx (a modern-only server
+                // names its versions). Negotiate afresh rather than wait out
+                // the verdict; the handshake is not a write.
+                const refused =
+                  prior?.kind === "legacy" &&
+                  error instanceof SdkHttpError &&
+                  error.status >= 400 &&
+                  error.status < 500 &&
+                  ![401, 403, 429].includes(error.status);
                 if (
-                  prior ||
-                  opts.versionNegotiation === "legacy" ||
-                  !(error instanceof SdkHttpError) ||
-                  error.code !== SdkErrorCode.EraNegotiationFailed ||
-                  error.status < 500 ||
-                  error.status >= 600 ||
                   !owned() ||
-                  handshakeAbort.signal.aborted
+                  handshakeAbort.signal.aborted ||
+                  (!refused &&
+                    (prior ||
+                      opts.versionNegotiation === "legacy" ||
+                      !(error instanceof SdkHttpError) ||
+                      error.code !== SdkErrorCode.EraNegotiationFailed ||
+                      error.status < 500 ||
+                      error.status >= 600))
                 )
                   throw error;
                 c = makeClient();
@@ -3539,9 +3566,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                 );
                 state.transport = held.transport = t;
                 recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
+                if (refused) prior = undefined;
                 (yield authInvoke(c, "connect", [
                   t,
-                  { signal: handshakeAbort.signal, prior: { kind: "legacy" } },
+                  { signal: handshakeAbort.signal, ...(refused ? {} : { prior: { kind: "legacy" } }) },
                 ])) as void;
               }
             }),
@@ -3586,6 +3614,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.connectedGeneration = genAtStart;
         state.authRequired = false;
         const discover = c.getDiscoverResult();
+        const era = prior?.kind === "modern" ? eraRefusals.get(t) : undefined;
+        if (era)
+          era.refused = () => {
+            era.refused = undefined;
+            eraRefused.add(c);
+            return forgetNegotiation(ctx, negotiationDigest);
+          };
         if (!prior)
           yield* promised(
             authMethod(

@@ -645,6 +645,26 @@ status probe connects: a legacy downstream answers a handshake, while a modern
 downstream with a stored verdict connects without a request. A credential test
 always sends a live `tools/list` that bypasses the cache in both directions.
 
+In `"auto"` mode a remote connector stores its negotiation verdict, data only,
+in the `negotiation` key family, partitioned by connector configuration,
+credential and OAuth epoch. A later connect reuses it instead of probing with
+`server/discover`. A modern verdict lasts five minutes. A legacy verdict lasts
+six hours, because a server that adds the modern era still answers the legacy
+handshake. Two signals end a verdict early:
+
+- A legacy-verdict handshake refused with a 4xx other than 401, 403 or 429 (a
+  modern-only server answers 400 with its supported versions) is negotiated
+  again at once in the same connect. The new verdict replaces the old.
+- An HTTP 400 on a connection adopted from a modern verdict deletes the
+  verdict and retires that client. A modern server answers 400 only to refuse
+  a request's protocol envelope, and a legacy server answers 400 to a request
+  without a session. The refused request fails and is never repeated. The next
+  connect, in the same request or a later one, probes again.
+
+An upgrade to a server that still answers the legacy handshake is therefore
+adopted within six hours. Losing the legacy handshake costs one refused
+request, and a downgrade costs the one request that met the refusal.
+
 `discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
 listings without `ttlMs`. Positive hints are bounded by
 `catalogMinTtlSeconds` (0) and `catalogMaxTtlSeconds` (86400, also the SDK
