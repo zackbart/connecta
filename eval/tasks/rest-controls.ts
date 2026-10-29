@@ -11,6 +11,22 @@ import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { overflow } from "@zackbart/connecta/providers/overflow";
 import { connectorGuide } from "../../src/skills.js";
 import { sentSecretsForRequest, redactAgentOutput } from "../../src/sent-secrets.js";
+import { configureGuardedTransport, guardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
+import { FakeGoogle, ALICE } from "../fakes/google.js";
+import { FakeGranola } from "../fakes/granola.js";
+import { FakeQuickBooks } from "../fakes/quickbooks.js";
+import { QB_COMPANIES, QB_SECRET } from "../deploy/quickbooks.js";
+import {
+  fakeTransportState,
+  holdFakeKitTransport,
+  repinFakeKitTransport,
+  routeFakeVendor,
+} from "../fakes/transport.js";
+import { serveFetch } from "../support/serve.js";
+import { randomUUID, sign } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { once } from "node:events";
 
 /** Concurrent trials must never share a credential route or reach a real vendor. */
 export async function restTransportControls() {
@@ -47,7 +63,10 @@ export async function restTransportControls() {
         if (!(await request(s.token)).ok) throw new Error("Fake credential did not route locally");
       }),
     );
-    if (services[0]!.token === services[1]!.token || ledgers.some((l) => l.calls.length !== 1))
+    // Count only routed paths: other processes on a shared host may probe a reused loopback port.
+    const routed = (ledger: Ledger) =>
+      ledger.calls.filter((c) => c.args.path === "/v1/payment_intents/pi_3Pfail0000").length;
+    if (services[0]!.token === services[1]!.token || ledgers.some((l) => routed(l) !== 1))
       throw new Error("Concurrent fake worlds shared a credential route");
     for (const [token, host] of [
       [undefined, "api.stripe.com"],
@@ -72,7 +91,7 @@ export async function restTransportControls() {
     if (!bodyRequest.ok || services[0]!.state.refunds[0]?.charge !== "ch_passthrough")
       throw new Error("Fake transport consumed a passthrough Request body");
     await services[0]!.stop();
-    if (!(await request(services[1]!.token)).ok || ledgers[1]!.calls.length !== 2)
+    if (!(await request(services[1]!.token)).ok || routed(ledgers[1]!) !== 2)
       throw new Error("Stopping one fake world broke another");
     await Promise.all([fault, live, otherKey].map((s) => s.start()));
     const refund = async (service: FakeRestService, amount = 1250, account?: string, key = "same-key") => {
@@ -129,6 +148,281 @@ export async function restTransportControls() {
     await Promise.all([...services, analytics, fault, live, otherKey].map((s) => s.stop()));
   }
   if (globalThis.fetch !== before) throw new Error("Fake vendor transport was not restored");
+}
+
+/**
+ * Families start and stop in overlapping order, with two worlds of one family
+ * live at once. Every routed call must reach its own world, every unowned one
+ * must be refused, and nothing may fall through to the network beneath.
+ */
+export async function fakeTransportInterleaving() {
+  // Count only routed paths: other processes on a shared host may probe a reused loopback port.
+  const routed = (ledger: Ledger, path: string) => ledger.calls.filter((c) => c.args.path === path).length;
+  const before = globalThis.fetch;
+  const leaked: string[] = [];
+  // Stands in for the real network: anything the registry forwards for a
+  // non-loopback URL lands here and is recorded instead of leaving the host.
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return before(input, init);
+    leaked.push(url.href);
+    throw new Error(`Real network reached: ${url.href}`);
+  }) as typeof fetch;
+  const nodeSender: GuardedTransport = {
+    send: async (url) => {
+      leaked.push(`guarded:${url.href}`);
+      throw new Error("Node sender reached");
+    },
+  };
+  const priorTransport = configureGuardedTransport(nodeSender);
+  const refused = async (call: () => Promise<unknown>, why: string) => {
+    try {
+      await call();
+    } catch (error) {
+      if (String(error).includes("Eval refused")) return;
+      throw new Error(`${why}: ${String(error)}`);
+    }
+    throw new Error(`${why}: the request was answered`);
+  };
+  const stripe = (service: FakeRestService) =>
+    fetch("https://api.stripe.com/v1/account", { headers: { Authorization: `Bearer ${service.token}` } });
+  const granola = (world: FakeGranola) =>
+    fetch("https://public-api.granola.ai/v1/spaces", { headers: { Authorization: `Bearer ${world.key}` } });
+  const google = async (world: FakeGoogle) => {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const unsigned = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({
+      iss: world.serviceAccount.clientEmail,
+      sub: ALICE,
+      aud: "https://oauth2.googleapis.com/token",
+      scope: ["forms.body", "forms.responses.readonly"].map((s) => `https://www.googleapis.com/auth/${s}`).join(" "),
+      iat: now,
+      exp: now + 600,
+    })}`;
+    const assertion = `${unsigned}.${sign("RSA-SHA256", Buffer.from(unsigned), world.serviceAccount.privateKey).toString("base64url")}`;
+    const minted = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+    });
+    const { access_token } = (await minted.json()) as { access_token: string };
+    return fetch("https://forms.googleapis.com/v1/forms/forms1", {
+      headers: { Authorization: `Bearer ${access_token}` },
+    }).then(async (response) => ({ response, token: access_token }));
+  };
+  const companyInfo = (token: string) =>
+    fetch(
+      `https://sandbox-quickbooks.api.intuit.com/v3/company/${QB_COMPANIES.alice}/companyinfo/${QB_COMPANIES.alice}?minorversion=75`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+  const quickbooks = async (world: FakeQuickBooks) => {
+    const exchanged = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${btoa(`${world.clientId}:${QB_SECRET}`)}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ grant_type: "authorization_code", code: QB_COMPANIES.alice }),
+    });
+    const { access_token } = (await exchanged.json()) as { access_token: string };
+    return { response: await companyInfo(access_token), token: access_token };
+  };
+  const reads = (ledger: Ledger, path: string) =>
+    ledger.calls.filter((c) => String(c.args.path).startsWith(path) && c.outcome === "ok").length;
+  const googleLedgers = [new Ledger(), new Ledger()];
+  const googles = googleLedgers.map((ledger) => new FakeGoogle(ledger, { product: "forms", task: 1 }));
+  const laterGoogle = new FakeGoogle(new Ledger(), { product: "forms", task: 1 });
+  const stripeLedgers = [new Ledger(), new Ledger()];
+  const stripes = stripeLedgers.map((ledger) => new FakeRestService("stripe_sandbox", "stripe", ledger, restState()));
+  const granolaLedgers = [new Ledger(), new Ledger()];
+  const granolas = granolaLedgers.map((ledger) => new FakeGranola(ledger));
+  const qbLedgers = [new Ledger(), new Ledger()];
+  const qbs = qbLedgers.map((ledger) => new FakeQuickBooks(ledger));
+  const holds: (() => void)[] = [];
+  let residue: ReturnType<typeof fakeTransportState> | undefined;
+  let restored = false;
+  try {
+    // Two Google worlds live at once, before every other family.
+    await Promise.all(googles.map((world) => world.start()));
+    holds.push(holdFakeKitTransport());
+    await Promise.all([...stripes, ...granolas, ...qbs].map((world) => world.start()));
+    // A deployment that serves no fake vendor reinstalls Node's sender in listen().
+    configureGuardedTransport(nodeSender);
+    repinFakeKitTransport();
+    if (guardedTransport(false) === nodeSender) throw new Error("A plain listen() unpinned the fake kit transport");
+    if (
+      googles[0]!.serviceAccount.clientEmail === googles[1]!.serviceAccount.clientEmail ||
+      qbs[0]!.clientId === qbs[1]!.clientId ||
+      qbs[0]!.state.tag === qbs[1]!.state.tag
+    )
+      throw new Error("Sibling worlds share a credential");
+    const googleReads = await Promise.all(googles.map((world) => google(world)));
+    const qbReads = await Promise.all(qbs.map((world) => quickbooks(world)));
+    if (googleReads[0]!.token === googleReads[1]!.token || qbReads[0]!.token === qbReads[1]!.token)
+      throw new Error("Sibling worlds minted the same token");
+    for (const index of [0, 1]) {
+      if (!googleReads[index]!.response.ok || googleLedgers[index]!.calls.length !== 1)
+        throw new Error("Google siblings did not each route to their own world");
+      if (
+        !qbReads[index]!.response.ok ||
+        reads(qbLedgers[index]!, "/oauth2/v1/tokens/bearer") !== 1 ||
+        reads(qbLedgers[index]!, "/v3/company/") !== 1
+      )
+        throw new Error("QuickBooks siblings did not each route to their own world");
+    }
+    // The first Google and QuickBooks siblings stop first, while every other world stays live.
+    await Promise.all([googles[0]!.stop(), qbs[0]!.stop()]);
+    holds.shift()!();
+    holds.push(holdFakeKitTransport());
+    await refused(
+      () =>
+        fetch("https://forms.googleapis.com/v1/forms/forms1", {
+          headers: { Authorization: `Bearer ${googleReads[0]!.token}` },
+        }),
+      "A stopped Google world kept routing",
+    );
+    await refused(() => companyInfo(qbReads[0]!.token), "A stopped QuickBooks world kept routing");
+    await refused(() => quickbooks(qbs[0]!), "A stopped QuickBooks client kept routing");
+    const googleSibling = await fetch("https://forms.googleapis.com/v1/forms/forms1", {
+      headers: { Authorization: `Bearer ${googleReads[1]!.token}` },
+    });
+    if (!googleSibling.ok || googleLedgers[1]!.calls.length !== 2 || googleLedgers[0]!.calls.length !== 1)
+      throw new Error("Stopping one Google world broke or crossed its sibling");
+    if (
+      !(await companyInfo(qbReads[1]!.token)).ok ||
+      reads(qbLedgers[1]!, "/v3/company/") !== 2 ||
+      reads(qbLedgers[0]!, "/v3/company/") !== 1
+    )
+      throw new Error("Stopping one QuickBooks world broke or crossed its sibling");
+    await laterGoogle.start();
+    for (const [index, service] of stripes.entries())
+      if (!(await stripe(service)).ok || routed(stripeLedgers[index]!, "/v1/account") !== 1)
+        throw new Error("Stripe lost routing after Google stopped, or crossed worlds");
+    for (const [index, world] of granolas.entries())
+      if (!(await granola(world)).ok || routed(granolaLedgers[index]!, "/v1/spaces") !== 1)
+        throw new Error("Granola lost routing after Google stopped, or crossed worlds");
+    // Stop the earliest REST and Granola worlds; the later Google world and the rest keep routing.
+    await Promise.all([stripes[0]!.stop(), granolas[0]!.stop()]);
+    await refused(() => stripe(stripes[0]!), "A stopped Stripe world kept routing");
+    await refused(() => granola(granolas[0]!), "A stopped Granola world kept routing");
+    if (!(await stripe(stripes[1]!)).ok || !(await granola(granolas[1]!)).ok)
+      throw new Error("Stopping one world of a family broke its sibling");
+    if (!(await google(laterGoogle)).response.ok)
+      throw new Error("A Google world started after another stopped is unrouted");
+    const kit = await guardedTransport(false).send(new URL("https://api.stripe.com/v1/account"), {
+      headers: { Authorization: `Bearer ${stripes[1]!.token}` },
+    });
+    if (!kit.ok || routed(stripeLedgers[1]!, "/v1/account") !== 3)
+      throw new Error("The guarded kit transport bypassed routing");
+    for (const [call, why] of [
+      [
+        () => fetch("https://api.stripe.com/v1/account", { headers: { Authorization: "Bearer sk_test_unknown" } }),
+        "unknown Stripe key",
+      ],
+      [
+        () => fetch("https://api.stripe.com/v1/account", { headers: { Authorization: `Bearer ${granolas[1]!.key}` } }),
+        "credential on another family's host",
+      ],
+      [() => fetch("https://example.com/"), "non-vendor host"],
+      [
+        () => fetch("http://api.stripe.com/v1/account", { headers: { Authorization: `Bearer ${stripes[1]!.token}` } }),
+        "plain-http vendor origin",
+      ],
+    ] as const)
+      await refused(call, `Fail-closed transport allowed ${why}`);
+  } finally {
+    await Promise.allSettled([...googles, laterGoogle, ...qbs, ...stripes, ...granolas].map((world) => world.stop()));
+    for (const release of holds) release();
+    residue = fakeTransportState();
+    // The last release leaves the stand-in network and Node sender exactly as found.
+    restored = globalThis.fetch !== before && guardedTransport(false) === nodeSender;
+    configureGuardedTransport(priorTransport);
+    globalThis.fetch = before;
+  }
+  if (residue?.installed || residue?.references || residue?.routes || residue?.holds || !restored)
+    throw new Error(`Fake transport did not uninstall after its last release: ${JSON.stringify(residue)}`);
+  if (leaked.length) throw new Error(`Fake transport fell through to the network: ${leaked.join(", ")}`);
+}
+
+/**
+ * Redirects from loopback and credential-routed fakes are followed only when
+ * the target passes the registry's own rules. Two observation points sit below
+ * the fetch wrapper: the original fetch records every physical hop and its
+ * redirect mode, and a listener reachable only through a non-loopback-classified
+ * address records any request that arrives.
+ */
+export async function fakeTransportRedirects() {
+  const before = globalThis.fetch;
+  const hops: { url: string; redirect: Request["redirect"] }[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    hops.push({ url: request.url, redirect: request.redirect });
+    return before(request);
+  }) as typeof fetch;
+  const arrived: string[] = [];
+  const outside = createServer((request, response) => {
+    arrived.push(request.url ?? "");
+    response.end("outside");
+  });
+  outside.listen(0, "::");
+  await once(outside, "listening");
+  // IPv4-mapped loopback: the registry classifies it as non-loopback, the kernel still delivers it.
+  const away = `http://[::ffff:127.0.0.1]:${(outside.address() as AddressInfo).port}/leak`;
+  const redirector = await serveFetch(async (request) => {
+    const path = new URL(request.url).pathname;
+    const to = (location: string, status = 302) => new Response(null, { status, headers: { location } });
+    if (path === "/away") return to(away);
+    if (path === "/loopback") return to(`${redirector.url}/final`);
+    if (path === "/relative") return to("/final", 307);
+    if (path === "/final")
+      return new Response(`${request.method} ${await request.text()} ${request.headers.get("authorization") ?? "-"}`);
+    return new Response("missing", { status: 404 });
+  });
+  const key = `eval_redirect_${randomUUID()}`;
+  const release = routeFakeVendor({
+    hosts: ["api.stripe.com"],
+    owns: (value) => value === key,
+    target: redirector.url,
+  });
+  const vendor = (path: string, init: RequestInit = {}) =>
+    fetch(`https://api.stripe.com${path}`, { ...init, headers: { Authorization: `Bearer ${key}` } });
+  const refused = async (call: () => Promise<unknown>, why: string) => {
+    try {
+      await call();
+    } catch (error) {
+      if (String(error).includes("Eval refused")) return;
+      throw new Error(`${why}: ${String(error)}`);
+    }
+    throw new Error(`${why}: the request was answered`);
+  };
+  try {
+    await refused(() => fetch(away), "A direct non-loopback request was answered");
+    await refused(() => fetch(`${redirector.url}/away`), "A loopback redirect escaped to a non-loopback host");
+    await refused(() => vendor("/away"), "A credential-routed redirect escaped to a non-loopback host");
+    const local = await fetch(`${redirector.url}/loopback`);
+    if (!local.ok || (await local.text()) !== "GET  -")
+      throw new Error("A loopback-to-loopback redirect was not followed");
+    const same = await vendor("/relative", { method: "POST", body: "payload" });
+    if ((await same.text()) !== `POST payload Bearer ${key}`)
+      throw new Error("A same-origin 307 did not re-route to its fake with method, body and credential");
+    const crossed = await vendor("/loopback");
+    if ((await crossed.text()) !== "GET  -")
+      throw new Error("A vendor redirect to loopback kept its credential or was not followed");
+    const manual = await fetch(`${redirector.url}/away`, { redirect: "manual" });
+    if (manual.status !== 302 || manual.headers.get("location") !== away)
+      throw new Error("A manual-redirect caller did not receive the redirect itself");
+    let errored = false;
+    await fetch(`${redirector.url}/loopback`, { redirect: "error" }).catch(() => (errored = true));
+    if (!errored) throw new Error("An error-redirect caller followed a redirect");
+  } finally {
+    release();
+    await redirector.close();
+    outside.close();
+    globalThis.fetch = before;
+  }
+  if (arrived.length) throw new Error(`A redirect reached the non-loopback listener: ${arrived.join(", ")}`);
+  if (!hops.length || hops.some((h) => h.redirect !== "manual" || new URL(h.url).hostname !== "127.0.0.1"))
+    throw new Error(`The registry forwarded a hop it did not check: ${JSON.stringify(hops)}`);
 }
 
 export function restCounterexamples(task: ActiveTask, world: World, trace: AgentTrace) {

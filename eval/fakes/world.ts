@@ -1,5 +1,5 @@
 import { FakeQuickBooks } from "./quickbooks.js";
-import { FakeGranola, GRANOLA_KEY } from "./granola.js";
+import { FakeGranola } from "./granola.js";
 import { FakeGoogle, type GoogleOptions } from "./google.js";
 /**
  * A world is one trial's downstream universe: six fake services sharing one
@@ -53,7 +53,8 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  quickbooks?: boolean;
+  /** The world's own OAuth client, so concurrent QuickBooks worlds route apart. */
+  quickbooks?: { clientId: string };
   google?: {
     product: import("./google.js").GoogleProduct;
     serviceAccount: { clientEmail: string; privateKey: string };
@@ -215,12 +216,18 @@ export class World {
           description: "Workspace meetings",
           url: this.granola.url,
           granola: true,
-          credential: { label: "Workspace API key", value: GRANOLA_KEY },
+          credential: { label: "Workspace API key", value: this.granola.key },
         },
       ];
     if (this.options.quickbooks)
       return [
-        { id: "qb_alice", title: "QuickBooks", description: "Accounting", url: this.quickbooks.url, quickbooks: true },
+        {
+          id: "qb_alice",
+          title: "QuickBooks",
+          description: "Accounting",
+          url: this.quickbooks.url,
+          quickbooks: { clientId: this.quickbooks.clientId },
+        },
       ];
     if (this.options.google) return this.google.specs();
     if (

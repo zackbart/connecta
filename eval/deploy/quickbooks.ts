@@ -5,14 +5,14 @@ import type { InboundAuth } from "@zackbart/connecta";
 export const QB_COMPANIES = { alice: "111111", bob: "222222" } as const;
 export const QB_CLIENT = "eval-qb-client";
 export const QB_SECRET = "eval-qb-client-secret";
-const QB_HOSTS = [
+export const QB_HOSTS = [
   "sandbox-quickbooks.api.intuit.com",
   "quickbooks.api.intuit.com",
   "oauth.platform.intuit.com",
   "developer.api.intuit.com",
 ];
 
-export function quickbooksConnectors(writes = false) {
+export function quickbooksConnectors(writes = false, clientId = QB_CLIENT) {
   const owners = Object.entries(QB_COMPANIES).map(([owner, realmId]) =>
     quickbooks(`qb_${owner}`, {
       purpose: `${owner}'s accounting`,
@@ -20,7 +20,7 @@ export function quickbooksConnectors(writes = false) {
       ...(writes ? { readOnly: false } : {}),
       ...(owner === "bob" ? { authScope: "personal" as const } : {}),
       environment: owner === "alice" ? "sandbox" : "production",
-      clientId: QB_CLIENT,
+      clientId,
       clientSecret: QB_SECRET,
     }),
   );
@@ -32,7 +32,7 @@ export function quickbooksConnectors(writes = false) {
             purpose: "bounded invoice admission",
             realmId: QB_COMPANIES.alice,
             environment: "sandbox",
-            clientId: QB_CLIENT,
+            clientId,
             clientSecret: QB_SECRET,
             readOnly: false,
             callAdmission: {
@@ -45,7 +45,7 @@ export function quickbooksConnectors(writes = false) {
             purpose: "read-only refusal probe",
             realmId: QB_COMPANIES.alice,
             environment: "sandbox",
-            clientId: QB_CLIENT,
+            clientId,
             clientSecret: QB_SECRET,
             ...(readOnly === undefined ? {} : { readOnly }),
           }),

@@ -284,7 +284,10 @@ export const QUICKBOOKS_TASK: ActiveTask = {
           calls.filter((c) => c.args.grant === "authorization_code").length === 2 &&
           calls.filter((c) => c.args.grant === "refresh_token").length === 5 &&
           calls.filter(
-            (c) => c.args.grant === "refresh_token" && c.args.refresh === `qb-refresh-${QB_COMPANIES.alice}-0`,
+            (c) =>
+              c.args.grant === "refresh_token" &&
+              // Drop the per-world tag; saved results from before it carry none.
+              String(c.args.refresh).replace(/\.[0-9a-f]{12}$/, "") === `qb-refresh-${QB_COMPANIES.alice}-0`,
           ).length === 3,
       ),
       check(

@@ -43,10 +43,10 @@ export class FakeGitHub {
   }
   async start() {
     this.served = await serveFetch((r) => this.handle(r));
-    registerFakeRoute(`jwt:${this.appId}`, this.url, ["api.github.com"]);
+    registerFakeRoute(`iss:${this.appId}`, this.url, ["api.github.com"]);
   }
   async stop() {
-    unregisterFakeRoute(`jwt:${this.appId}`);
+    unregisterFakeRoute(`iss:${this.appId}`);
     for (const token of this.tokens.keys()) unregisterFakeRoute(token);
     await this.served?.close();
   }

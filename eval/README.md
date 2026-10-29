@@ -78,9 +78,10 @@ the meeting facts, an inaccessible private meeting and a bearer photo URL.
 The grader requires actual delivered facts, physical cursor/filter requests,
 the exact final dossier, no mutations and no credential/photo/private-note
 disclosure. No-op, fabricated physical reads and erased delivered-data controls
-fail independently. Test-only transport interception runs after Node's owned
-sender is installed and confines the fixed Granola origin to a local fake;
-native workerd uses the same fixed-origin interception.
+fail independently. Each world mints its own workspace key, and the shared
+fake vendor transport (below) routes only that key from the fixed Granola
+origin to its local fake. Native workerd hosts one world per isolate, so it
+keeps a fixed-origin interception there.
 
 The QuickBooks task (`quickbooks-accounting-journey`) runs through the actual
 published provider on Node; smoke targets `node-quickbooks` and
@@ -456,13 +457,52 @@ regression and complete final rerun; historical #801 artifacts are unchanged.
 The historical #765 paired comparison registered 19 tasks. The current roster
 retains 18 of them after removing the Mixpanel bootstrap; frozen comparison
 baselines keep their original scope.
-An eval-only fetch adapter maps fresh per-world sentinel credentials to
-loopback HTTP, so Stripe keeps its fixed public origins and the
-providers retain their production host checks. The eval sender routes kit
-requests through that same fake-credential adapter after Node installs its
-owned transport. Unregistered credentials and
-cross-vendor hosts fail before any network request. The last world to stop
-restores the original fetch function; concurrent worlds keep separate routes.
+One process-wide fake vendor transport ([fakes/transport.ts](fakes/transport.ts))
+serves every family that answers for a fixed vendor origin: the REST vendors,
+GitHub, Breeze, CCB, Planning Center, Google, QuickBooks and Granola. Providers
+keep their fixed public origins and production host checks.
+
+- **One refcounted patch.** The first registration installs a single
+  `globalThis.fetch` patch, and the last release removes it. Worlds may start
+  and stop in any interleaved order under `--concurrency`; no family captures
+  or restores fetch on its own.
+- **Kit transport pin.** Node deployments serving fake vendors hold the
+  guarded kit transport on the routed fetch. They take the hold in the same
+  tick as `listen()`, which installs Node's owned sender. Other deployments
+  re-pin it after their own `listen()`.
+- **Routing by credential and issuer.** Each route owns the credentials its
+  world minted: bearer tokens, API keys, OAuth client ids, refresh tokens, and
+  `iss:<issuer>` for JWT bearers and assertions. Concurrent worlds of one
+  family therefore stay isolated. QuickBooks worlds each get their own OAuth
+  client id and tagged tokens; Granola worlds each get their own workspace key.
+- **Fail closed.** While the patch is installed, a known vendor host refuses a
+  credential that no live world owns, as well as plain HTTP or a non-default
+  port. Two claimants for one credential are also refused. Every other
+  non-loopback host is refused too: fake worlds are hermetic, so a provider
+  missing from the vendor list cannot reach the real network. Agent runners
+  are child processes with their own network and are unaffected. Loopback
+  requests pass through unchanged.
+- **Redirects.** The registry forwards every hop with `redirect: "manual"` and
+  follows redirects itself. Each target must pass the same rules: loopback, or
+  a vendor host whose credential a live world owns. Anything else is refused.
+  A relative `Location` resolves against the vendor URL the caller addressed.
+  Credentials are dropped when a redirect changes origin.
+- **Scope.** The registry covers `globalThis.fetch` and the guarded kit
+  transport only. Raw `undici.fetch`, `node:http` and other sockets bypass it.
+  It is not a process-wide network sandbox.
+
+`eval:selftest` runs three transport controls against a stand-in network that
+records any fall-through:
+
+- **Interleaving.** Two Google, two QuickBooks, two Stripe and two Granola
+  worlds run at once. The control checks that sibling credentials and
+  destination ledgers are distinct. It then stops one sibling per family and
+  checks that the survivor still routes, and that the stopped world's
+  credentials are refused.
+- **Late start.** A third Google world starts after a sibling has stopped.
+- **Redirects.** Loopback and credential-routed redirects to a listener that
+  the registry classifies as non-loopback must be refused. The control
+  observes this both at the original fetch and at that listener.
 
 The refund fake follows Stripe API v1 idempotency: the same account/mode/key
 and parameters replay the original status and body, including HTTP 500; changed
