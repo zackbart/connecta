@@ -106,9 +106,15 @@ export function startProcess(command: string, argv: string[], options: { cwd: st
   });
   if (child.pid !== undefined) groups.add(child.pid);
   let output = "";
-  child.stdout?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
-  child.stderr?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
-  return { child, output: () => output };
+  // Everything the process printed, up to 4 MB, for leak controls.
+  let transcript = "";
+  const capture = (chunk: unknown) => {
+    output = (output + String(chunk)).slice(-8_000);
+    if (transcript.length < 4_000_000) transcript += String(chunk);
+  };
+  child.stdout?.on("data", capture);
+  child.stderr?.on("data", capture);
+  return { child, output: () => output, transcript: () => transcript };
 }
 
 /** Stop the child's whole process group, including members that outlived it. */
@@ -154,11 +160,18 @@ export async function waitForHealth(origin: string, child: ChildProcess, output:
   throw new Error(`/health not ready within ${timeoutMs}ms:\n${output().slice(-4_000)}`);
 }
 
+/** Where `wranglerDev` points WRANGLER_LOG_PATH for one trial. */
+export function logDir(persist: string): string {
+  return join(persist, "logs");
+}
+
 export interface WranglerDev {
   origin: string;
   /** Local D1 and wrangler's bundle scratch; removed by close(). */
   persist: string;
   process(): ReturnType<typeof startProcess>;
+  /** Everything each wrangler process of this trial printed, restarts included. */
+  transcripts(): string[];
   /** Stop and boot a fresh workerd process over the same persisted state. */
   restart(): Promise<void>;
   /** Stop workerd only; state stays for inspection until close(). */
@@ -175,6 +188,12 @@ export async function wranglerDev(options: {
   name: string;
   main: string;
   vars?: Record<string, string>;
+  /**
+   * Values wrangler must never print or log: written to `.dev.vars` beside the
+   * config (mode 0600), which wrangler binds as secrets shown "(hidden)".
+   * Each value must be a single line.
+   */
+  secrets?: Record<string, string>;
   /** Extra `--var NAME:value` pairs, for values that must stay out of the config file. */
   cliVars?: string[];
   /** Pass `PUBLIC_URL:<origin>` on the command line, as the smoke always has. */
@@ -186,6 +205,13 @@ export async function wranglerDev(options: {
     config: join(ROOT, "examples", "worker", "wrangler.jsonc"),
   });
   const config = join(persist, "wrangler.json");
+  if (options.secrets) {
+    const lines = Object.entries(options.secrets).map(([name, value]) => {
+      if (/[\r\n]/.test(value)) throw new Error(`Secret ${name} must be a single line`);
+      return `${name}=${value}\n`;
+    });
+    await writeFile(join(persist, ".dev.vars"), lines.join(""), { mode: 0o600 });
+  }
   let port = 0;
   let inspector = 0;
   let origin = "";
@@ -227,10 +253,12 @@ export async function wranglerDev(options: {
           (variable) => ["--var", variable],
         ),
       ],
-      { cwd: ROOT, env: WRANGLER_ENV },
+      // wrangler's debug log stays in this trial's directory and is removed with it.
+      { cwd: ROOT, env: { ...WRANGLER_ENV, WRANGLER_LOG_PATH: logDir(persist) } },
     );
   const bootMs = options.bootMs ?? 90_000;
   let proc: ReturnType<typeof startProcess> | undefined;
+  const started: ReturnType<typeof startProcess>[] = [];
   const close = async () => {
     if (proc) await stopProcess(proc.child);
     // wrangler's bundle scratch lands beside the config, inside this directory.
@@ -239,7 +267,7 @@ export async function wranglerDev(options: {
   try {
     for (let attempt = 1; ; attempt++) {
       await choosePorts();
-      proc = boot();
+      started.push((proc = boot()));
       try {
         await waitForHealth(origin, proc.child, proc.output, bootMs);
         break;
@@ -252,14 +280,16 @@ export async function wranglerDev(options: {
     await close();
     throw error;
   }
-  let live = proc;
+  let live = proc!;
   return {
     origin,
     persist,
     process: () => live,
+    transcripts: () => started.map((entry) => entry.transcript()),
     restart: async () => {
       await stopProcess(live.child);
       live = proc = boot();
+      started.push(live);
       await waitForHealth(origin, live.child, live.output, bootMs);
     },
     stop: () => stopProcess(live.child),

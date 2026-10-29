@@ -4,16 +4,21 @@
  * process-group cleanup after a launcher crash, the egress guard on wrangler's
  * own Node processes, and comparator provenance across targets.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createSocket as createDgramSocket } from "node:dgram";
+import { existsSync } from "node:fs";
 import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { connect as connectNet, createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
+import { networkInterfaces, tmpdir } from "node:os";
+import { join, sep } from "node:path";
+import { playReference } from "../agent/reference.js";
+import { gradeTask } from "./grading.js";
 import { crossTarget, compare } from "../compare.js";
 import { startVendorGateway } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
-import { routeFakeVendor } from "../fakes/transport.js";
+import { fakeTransportState, routeFakeVendor } from "../fakes/transport.js";
 import type { AgentResultFile } from "../report/summary.js";
-import { runProtocol } from "../support/meta.js";
+import { ROOT, runProtocol } from "../support/meta.js";
 import { serveFetch } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
 import { ACTIVE_TASKS } from "./index.js";
@@ -173,8 +178,8 @@ export async function gatewayRedirectControls() {
 }
 
 /**
- * A crashed wrangler launcher must not orphan its CLI or workerd, and
- * wrangler's own Node processes cannot reach a non-loopback host.
+ * A crashed wrangler launcher must not orphan its CLI or workerd, and every
+ * wrangler Node process runs with the egress guard and no update banner.
  */
 export async function workerdProcessControls() {
   const dir = await mkdtemp(join(tmpdir(), "connecta-workerd-control-"));
@@ -214,33 +219,135 @@ export async function workerdProcessControls() {
     await stopAllProcesses();
     await rm(dir, { recursive: true, force: true });
   }
+}
 
-  const probe = spawnSync(
-    process.execPath,
-    [
-      "-e",
-      `const net = require("node:net"), tls = require("node:tls");
-const failed = (socket) => new Promise((resolve) => { socket.once("error", (e) => resolve(e.code)); socket.once("connect", () => { socket.destroy(); resolve("connected"); }); socket.once("secureConnect", () => { socket.destroy(); resolve("connected"); }); });
-(async () => {
-  const server = net.createServer((s) => s.end()).listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
-  const out = {
-    net: await failed(net.connect(443, "registry.npmjs.org")),
-    tls: await failed(tls.connect({ host: "1.1.1.1", port: 443 })),
-    fetch: await fetch("https://registry.npmjs.org/wrangler").then(() => "connected", (e) => e.cause?.code ?? String(e)),
-    loopback: await failed(net.connect(server.address().port, "127.0.0.1")),
-  };
-  server.close();
-  console.log(JSON.stringify(out));
-})();`,
-    ],
-    { encoding: "utf8", timeout: 30_000, env: { ...process.env, NODE_OPTIONS: WRANGLER_ENV.NODE_OPTIONS } },
-  );
-  const result = JSON.parse(probe.stdout.trim().split("\n").at(-1) ?? "{}") as Record<string, string>;
-  for (const kind of ["net", "tls", "fetch"])
-    if (result[kind] !== "EVAL_EGRESS_REFUSED")
-      throw new Error(`Egress guard let ${kind} reach the network: ${JSON.stringify(result)} ${probe.stderr}`);
-  if (result.loopback !== "connected") throw new Error(`Egress guard blocked loopback: ${JSON.stringify(result)}`);
+/**
+ * The egress guard on wrangler's Node processes. Every Node network path is
+ * aimed at a sink bound to a non-loopback local interface: the sink must
+ * receive nothing, every DNS path must be refused, and loopback must work.
+ * Without the guard the same sink is reachable, so the control is not vacuous.
+ */
+export async function egressGuardControls() {
+  const address = Object.values(networkInterfaces())
+    .flat()
+    .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address;
+  let connections = 0,
+    datagrams = 0;
+  const sink = createNetServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  const udpSink = createDgramSocket("udp4").on("message", () => (datagrams += 1));
+  const local = createNetServer((socket) => socket.end());
+  const listen = (server: ReturnType<typeof createNetServer>, host: string) =>
+    new Promise<number>((resolve) => server.listen(0, host, () => resolve((server.address() as AddressInfo).port)));
+  try {
+    const localPort = await listen(local, "127.0.0.1");
+    let tcpPort = 0,
+      udpPort = 0;
+    if (address) {
+      tcpPort = await listen(sink, address);
+      udpPort = await new Promise<number>((resolve) => udpSink.bind(0, address, () => resolve(udpSink.address().port)));
+      // Unguarded, the sink is reachable: the guarded run below proves the guard, not the network.
+      await new Promise<void>((resolve, reject) =>
+        connectNet(tcpPort, address)
+          .once("connect", function (this: Socket) {
+            this.destroy();
+            resolve();
+          })
+          .once("error", reject),
+      );
+      await new Promise<void>((resolve) => createDgramSocket("udp4").send("x", udpPort, address, () => resolve()));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      if (connections !== 1 || datagrams !== 1)
+        throw new Error("Probe precondition: the non-loopback sink is unreachable");
+      connections = datagrams = 0;
+    } else console.log("     no non-loopback IPv4 interface: sink receipt not checked, refusals still are");
+    const child = spawn(
+      process.execPath,
+      [
+        join(ROOT, "eval", "support", "egress-probe.cjs"),
+        address ?? "",
+        String(tcpPort),
+        String(udpPort),
+        String(localPort),
+      ],
+      { env: { ...process.env, NODE_OPTIONS: WRANGLER_ENV.NODE_OPTIONS }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += String(chunk)));
+    child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    await new Promise((resolve) => child.once("exit", resolve));
+    clearTimeout(timer);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const result = JSON.parse(stdout.trim().split("\n").at(-1) || "{}") as Record<string, string>;
+    const paths = Object.keys(result).filter((path) => !path.startsWith("loopback"));
+    if (paths.length !== (address ? 23 : 9)) throw new Error(`Egress probe incomplete: ${stdout} ${stderr}`);
+    for (const path of paths)
+      if (result[path] !== "EVAL_EGRESS_REFUSED")
+        throw new Error(`Egress guard let ${path} through: ${result[path]} (${JSON.stringify(result)})`);
+    if (result["loopback tcp"] !== "connected" || result["loopback lookup"] !== "answered")
+      throw new Error(`Egress guard blocked loopback: ${JSON.stringify(result)}`);
+    if (connections || datagrams)
+      throw new Error(`The non-loopback sink received ${connections} connection(s) and ${datagrams} datagram(s)`);
+  } finally {
+    for (const server of [sink, local]) if (server.listening) server.close();
+    try {
+      udpSink.close();
+    } catch {
+      // never bound
+    }
+  }
+}
+
+/**
+ * The Worker code under test (connecta's fetch, provider calls, OAuth) sends
+ * every non-loopback request through the authenticated gateway: each vendor
+ * hop the fake transport handled in a worker trial arrived through the
+ * gateway, none was refused, and the reference still passed against the
+ * fakes. The trial's hidden secrets never surface in wrangler's output or logs.
+ */
+export async function gatewayRoutingControls() {
+  if (!existsSync(join(ROOT, "dist", "worker.js"))) {
+    const built = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"] });
+    if (built.status !== 0) throw new Error("pnpm run build failed");
+  }
+  for (const id of [
+    "stripe-step2-decline-join",
+    "google-sheets-2",
+    "github-release-once",
+    "ccb-update-once",
+    "granola-workspace-journey",
+  ]) {
+    const task = ACTIVE_TASKS.find((candidate) => candidate.id === id)!;
+    const before = fakeTransportState().vendorHops;
+    const played = await playReference(
+      task,
+      { mode: "reference", target: "worker" },
+      async ({ world, trace, deployment }) => ({
+        failed: gradeTask(task, { world, trace }, "six", "outcome")
+          .filter((check) => !check.pass && !check.advisory && check.kind !== "route")
+          .map((check) => check.id),
+        requests: deployment.vendorRequests!(),
+        leaks: await deployment.secretLeaks!(),
+      }),
+    );
+    const hops = fakeTransportState().vendorHops - before;
+    if (played.failed.length) throw new Error(`${id} failed on worker: ${played.failed.join(", ")}`);
+    if (!played.requests.length || hops !== played.requests.length)
+      throw new Error(
+        `${id}: ${hops} vendor hop(s) reached the fake transport, ${played.requests.length} through the gateway`,
+      );
+    const stray = played.requests.filter(
+      (request) => request.status === "rejected" || !request.url.startsWith("https://"),
+    );
+    if (stray.length) throw new Error(`${id}: gateway requests outside the fake vendors: ${JSON.stringify(stray)}`);
+    if (played.leaks.findings.length) throw new Error(`${id}: ${played.leaks.findings.join("; ")}`);
+    if (!played.leaks.sources.some((source) => source.includes(`${sep}logs${sep}`)))
+      throw new Error(`${id}: no wrangler log file was checked for secrets (${played.leaks.sources.join(", ")})`);
+  }
 }
 
 /** A batch from the frozen baseline, relabelled as a measured run on one target. */

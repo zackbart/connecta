@@ -270,8 +270,8 @@ because the Worker imports the package by name from `dist/`.
     loopback and non-HTTP(S) targets, so it is never a path to a local service.
   - The Worker follows redirects under the transport's rules
     ([deploy/gateway-fetch.ts](deploy/gateway-fetch.ts)). Each hop is
-    classified again and sent `redirect: "manual"`, so workerd never follows a
-    `Location` around the gateway. A cross-origin hop drops Authorization,
+    classified again and sent `redirect: "manual"`, so the wrapper never lets
+    workerd follow a `Location` itself. A cross-origin hop drops Authorization,
     Cookie and Proxy-Authorization for the rest of the chain.
     `redirect: "error"` rejects, and so do more than 20 hops.
 - **Observed programs.** The program observer wraps the Dynamic Worker
@@ -286,12 +286,43 @@ because the Worker imports the package by name from `dist/`.
   - A trial stops its group when it ends. The first SIGINT/SIGTERM stops the
     batch in order; a second kills every group at once. Process exit also kills
     any group still tracked.
-- **No egress from wrangler.** Wrangler's Node processes run with
-  `WRANGLER_SEND_METRICS=false` and `WRANGLER_HIDE_BANNER=true`; the banner is
-  the unconditional trigger of its npm update check. They also preload
-  [support/egress-guard.cjs](support/egress-guard.cjs), which fails every
-  non-loopback TCP or TLS connect, so any other update check or telemetry
-  fails closed. Loopback and Unix-socket connections pass.
+- **Network isolation, and its limits.** Isolation differs between wrangler's
+  Node processes and the native workerd process.
+  - **Wrangler's Node processes** run with `WRANGLER_SEND_METRICS=false` and
+    `WRANGLER_HIDE_BANNER=true`. The banner is the unconditional trigger of its
+    npm update check.
+  - They also preload [support/egress-guard.cjs](support/egress-guard.cjs).
+    It refuses, inside the Node process:
+    - every TCP connect to a non-loopback host, through any `net`, `tls`,
+      `http`, `http2` or `fetch` path, an existing Socket's `connect()`
+      included;
+    - every DNS query for a non-loopback name, through `dns`, `dns.promises`
+      or a `Resolver`;
+    - every UDP send or connect to a non-loopback address.
+
+    Loopback and Unix-socket traffic pass. A selftest control aims each path
+    at a listener on a non-loopback local interface and asserts it receives
+    nothing. This is a JavaScript-level guard: it does not stop native addons
+    or raw bindings.
+
+  - **The native workerd process is not network-sandboxed.** A Node preload
+    cannot cover a native binary, and no OS-level isolation (a network
+    namespace or firewall) is applied. The Worker code under test (connecta's
+    fetch, provider calls and OAuth) uses `globalThis.fetch`, which the Worker
+    replaces with the gateway wrapper before any request.
+    - A selftest control runs worker trials for REST, Google, GitHub App, CCB
+      OAuth and Granola providers. It asserts that every vendor request the
+      fake transport handled arrived through the authenticated gateway.
+    - Code inside workerd that bypasses that wrapper, for example a fetch
+      captured before the wrapper is installed or a raw socket, is not
+      blocked at the OS level and could reach the network. OS-level isolation
+      is a tracked follow-up.
+- **Secrets stay hidden.** The gateway credential and the vault key reach the
+  Worker through a `.dev.vars` file (mode 0600) in the trial directory.
+  Wrangler binds them as secrets and prints them only as `(hidden)`. Its debug
+  log goes to that directory through `WRANGLER_LOG_PATH` and is removed with
+  it. A selftest control asserts that no 8-character window of either secret
+  appears in any wrangler output or log file of the trial.
 - **Eligibility.** The worker target serves every active task except:
   - `p5-auth-url-capable` and `p5-auth-connect-incapable`: the fake OAuth
     inbound auth, connector and URL-elicitation host are in-process Node

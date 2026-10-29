@@ -4,12 +4,15 @@
  * that workerd's non-loopback requests reach the fake vendors through.
  *
  * The gateway dispatches through `globalThis.fetch` with the fake transport
- * held installed, so the Worker gets exactly the Node deployment's
- * credential routing and fail-closed refusals, and never the real network.
+ * held installed, so the Worker's fetch gets exactly the Node deployment's
+ * credential routing and fail-closed refusals. The native workerd process is
+ * not network-sandboxed (see eval/README.md).
  * It forwards with `redirect: "manual"`; the Worker sends every followed hop
  * back through the gateway.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { ALICE } from "../fakes/google.js";
 import { ACCOUNT_A, SHOP_ZONE } from "../fakes/rest.js";
@@ -17,7 +20,7 @@ import { holdFakeRouting } from "../fakes/transport.js";
 import type { ConnectorSpec } from "../fakes/world.js";
 import { ROOT } from "../support/meta.js";
 import { serveFetch } from "../support/serve.js";
-import { wranglerDev } from "../support/workerd.js";
+import { logDir, wranglerDev } from "../support/workerd.js";
 import { evalMcpPath, type EvalComposition } from "./compose.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER } from "./gateway-fetch.js";
 import type { Deployment } from "./node.js";
@@ -36,6 +39,8 @@ const LOOPBACK =
  */
 export async function startVendorGateway(token = randomBytes(32).toString("base64url")) {
   const release = holdFakeRouting();
+  /** Every request the gateway dispatched to the fake transport, in order. */
+  const forwarded: { method: string; url: string; status: number | "rejected" }[] = [];
   const expected = Buffer.from(token);
   const refuse = (status: number, message: string) =>
     new Response(message, { status, headers: { [GATEWAY_ERROR_HEADER]: "1" } });
@@ -57,6 +62,8 @@ export async function startVendorGateway(token = randomBytes(32).toString("base6
         return refuse(403, `Eval vendor gateway refused ${url.protocol}//${url.hostname}: not a vendor origin.`);
       const headers = new Headers(request.headers);
       for (const name of [...HOP_BY_HOP, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER]) headers.delete(name);
+      const entry: (typeof forwarded)[number] = { method: request.method, url: url.href, status: "rejected" };
+      forwarded.push(entry);
       try {
         const response = await globalThis.fetch(url, {
           method: request.method,
@@ -64,6 +71,7 @@ export async function startVendorGateway(token = randomBytes(32).toString("base6
           ...(request.method === "GET" || request.method === "HEAD" ? {} : { body: await request.arrayBuffer() }),
           redirect: "manual",
         });
+        entry.status = response.status;
         const out = new Headers(response.headers);
         // Node's fetch already decoded the body.
         for (const name of ["content-encoding", "content-length", "transfer-encoding"]) out.delete(name);
@@ -80,6 +88,7 @@ export async function startVendorGateway(token = randomBytes(32).toString("base6
     return {
       url: served.url,
       token,
+      forwarded,
       close: async () => {
         try {
           await served.close();
@@ -94,12 +103,54 @@ export async function startVendorGateway(token = randomBytes(32).toString("base6
   }
 }
 
+/**
+ * Where any 8-character window of a secret appears in what wrangler printed or
+ * logged since `since`: this trial's transcripts, its WRANGLER_LOG_PATH, and
+ * wrangler's default global log directories.
+ */
+async function secretLeaks(secrets: Record<string, string>, transcripts: string[], logRoot: string, since: number) {
+  const sources: { name: string; text: string }[] = transcripts.map((text, index) => ({
+    name: `wrangler process ${index + 1} output`,
+    text,
+  }));
+  const config = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+  for (const [root, recent] of [
+    [logRoot, false],
+    [join(homedir(), ".wrangler", "logs"), true],
+    [join(config, ".wrangler", "logs"), true],
+  ] as const) {
+    const files = await readdir(root, { recursive: true }).catch(() => [] as string[]);
+    for (const file of files) {
+      const path = join(root, file);
+      const info = await stat(path).catch(() => undefined);
+      if (!info?.isFile() || (recent && info.mtimeMs < since)) continue;
+      sources.push({ name: path, text: await readFile(path, "utf8") });
+    }
+  }
+  const findings: string[] = [];
+  for (const [name, value] of Object.entries(secrets))
+    for (let start = 0; start + 8 <= value.length; start++) {
+      const window = value.slice(start, start + 8);
+      const source = sources.find((candidate) => candidate.text.includes(window));
+      if (source) {
+        findings.push(`${name} characters ${start}-${start + 7} appear in ${source.name}`);
+        break;
+      }
+    }
+  return { findings, sources: sources.map((source) => source.name) };
+}
+
 export async function startWorkerDeployment(
   connectors: ConnectorSpec[],
   extra: Record<string, unknown> = {},
   everyPool: string[] = [],
 ): Promise<Deployment> {
   const gateway = await startVendorGateway();
+  const since = Date.now();
+  const secrets = {
+    CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+    EVAL_GATEWAY_TOKEN: gateway.token,
+  };
   let dev: Awaited<ReturnType<typeof wranglerDev>> | undefined;
   let closed = false;
   const close = async () => {
@@ -123,11 +174,11 @@ export async function startWorkerDeployment(
       name: "connecta-eval-agent",
       main: join(ROOT, "eval", "deploy", "worker-agent.ts"),
       vars: {
-        CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
         EVAL_COMPOSITION: JSON.stringify(composition),
         EVAL_GATEWAY: gateway.url,
-        EVAL_GATEWAY_TOKEN: gateway.token,
       },
+      // Bound as hidden secrets: never echoed in wrangler's output or its log.
+      secrets,
       publicUrlVar: true,
     });
     const origin = dev.origin;
@@ -140,6 +191,8 @@ export async function startWorkerDeployment(
     let programs: ProgramObservation[] = [];
     return {
       kind: "worker-agent",
+      vendorRequests: () => [...gateway.forwarded],
+      secretLeaks: () => secretLeaks(secrets, dev!.transcripts(), logDir(dev!.persist), since),
       origin,
       mcpUrl: `${origin}${evalMcpPath(extra, false)}`,
       token,

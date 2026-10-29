@@ -377,7 +377,6 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
   const vars = [
     // The Access stand-in's user is the example's maintainer (#837).
     "CONNECTA_MAINTAINERS:eval-operator",
-    `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
     ...(kind === "worker-example" ? ["DOWNSTREAM_TOKEN:unused-in-smoke"] : []),
     ...(world
       ? [
@@ -396,6 +395,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
         name: `connecta-smoke-${kind}`,
         main: join(ROOT, "eval", "deploy", `${kind}.ts`),
         cliVars: vars,
+        secrets: { CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64") },
         publicUrlVar: true,
       });
     });
@@ -589,16 +589,14 @@ async function providerJourney(
                   const dev = await wranglerDev({
                     name: notes ? "connecta-granola-smoke" : "connecta-qb-smoke",
                     main: join(ROOT, notes ? "eval/deploy/worker-granola.ts" : "eval/deploy/worker-quickbooks.ts"),
-                    cliVars: [
-                      ...(notes
-                        ? [`GRANOLA_URL:${world.granola.url}`, `GRANOLA_KEY:${world.granola.key}`]
-                        : [
-                            `QUICKBOOKS_URL:${world.quickbooks.url}`,
-                            `QUICKBOOKS_CLIENT:${world.quickbooks.clientId}`,
-                            `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
-                          ]),
-                      `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
-                    ],
+                    cliVars: notes
+                      ? [`GRANOLA_URL:${world.granola.url}`, `GRANOLA_KEY:${world.granola.key}`]
+                      : [
+                          `QUICKBOOKS_URL:${world.quickbooks.url}`,
+                          `QUICKBOOKS_CLIENT:${world.quickbooks.clientId}`,
+                          `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
+                        ],
+                    secrets: { CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64") },
                     publicUrlVar: true,
                   });
                   const origin = dev.origin;

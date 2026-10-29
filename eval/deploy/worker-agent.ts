@@ -8,7 +8,9 @@
  * the Node harness's vendor gateway (eval/deploy/worker.ts), which dispatches
  * it through the credential-routed fake transport and its fail-closed rules.
  * Each hop of a followed redirect goes back through the wrapper
- * (gateway-fetch.ts), so workerd never follows a Location around the gateway.
+ * (gateway-fetch.ts), so the wrapper never lets workerd follow a Location itself.
+ * This covers code that uses globalThis.fetch; workerd itself is not
+ * network-sandboxed (see eval/README.md).
  *
  * `/__eval/*` are local process controls, never product routes.
  */

@@ -36,6 +36,10 @@ export interface Deployment {
   mcpUrl: string;
   token: string;
   programs: ProgramObservation[];
+  /** Worker target only: every vendor request its gateway dispatched. */
+  vendorRequests?(): { method: string; url: string; status: number | "rejected" }[];
+  /** Worker target only: where its hidden secrets surface in wrangler's output or logs. */
+  secretLeaks?(): Promise<{ findings: string[]; sources: string[] }>;
   /** Refresh `programs` from a deployment that observes them out of process. */
   observe?(): Promise<ProgramObservation[]>;
   /** The operator saving a credential in the connection page. */

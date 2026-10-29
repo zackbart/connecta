@@ -68,6 +68,8 @@ let references = 0;
 let original: typeof fetch | undefined;
 let patch: typeof fetch | undefined;
 let holds = 0;
+/** Non-loopback hops the registry has handled, routed or refused. */
+let vendorHops = 0;
 let previousTransport: GuardedTransport | undefined;
 
 const vendorHost = (host: string) =>
@@ -113,6 +115,7 @@ async function credentials(request: Request): Promise<string[]> {
 async function hop(forward: typeof fetch, request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (LOOPBACK.has(url.hostname)) return forward(new Request(request, { redirect: "manual" }));
+  vendorHops += 1;
   if (!vendorHost(url.hostname))
     throw new EvalTransportRefusal(
       `Eval refused non-loopback transport to ${url.hostname}: fake worlds are hermetic and no fake owns this host.`,
@@ -246,5 +249,5 @@ export function holdFakeRouting(): () => void {
 
 /** Live counts, for selftests proving release order does not matter. */
 export function fakeTransportState() {
-  return { routes: routes.size, references, holds, installed: patch !== undefined };
+  return { routes: routes.size, references, holds, installed: patch !== undefined, vendorHops };
 }
