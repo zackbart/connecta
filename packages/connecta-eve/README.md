@@ -97,11 +97,20 @@ override. Remove `"eve": { "undici": "8.12.3" }` from an npm app's `overrides`, 
 reinstall, commit the lockfile and audit the app. The server's optional undici
 6.29.1 peer is a separate dependency and keeps its exact pin.
 
-Eve 0.87 also changed app code the helper does not own: builds reject connection
-definitions not made by Eve's own factories, `defineDynamic()` values are opaque,
-and several client, workflow and channel APIs moved. Follow Eve's changelog for
-those; `connectaConnection()` and `connectaInstructions()` already return values
-made by Eve's factories.
+Eve 0.87 through 0.90 also changed app code the helper does not own. Review every
+intervening release in the
+[Eve 0.90.0 changelog](https://raw.githubusercontent.com/vercel/eve/refs/tags/eve%400.90.0/packages/eve/CHANGELOG.md);
+an app on Eve 0.84 or 0.85 must also review those releases. Notable changes:
+
+- Builds reject connection definitions not made by Eve's own factories, and
+  `defineDynamic()` values are opaque (0.87). `connectaConnection()` and
+  `connectaInstructions()` already return values made by Eve's factories.
+- Several client, workflow and channel APIs moved (0.87).
+- Grant-bearing `vercelOidc` auth becomes `eveVercelOidc`, auth callbacks that
+  returned `allowToolStubs` become `EveAuthFn`, and `/info` access is restricted
+  (0.90). Identity-only `vercelOidc()` calls need no rename.
+
+Build and test the app on the new Eve before deploying it.
 
 ## Approval and writes
 
