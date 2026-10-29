@@ -1,8 +1,8 @@
 # Split mixed pools
 
 Every pool must list only people or only `agent:` references. A mixed pool
-throws `ConfigError` at construction, naming the pool and the positions of
-its first member and the first member of the other kind.
+throws `ConfigError` at construction naming the pool, for example
+`ConnectaConfig.pools.team.members mixes people and agents; list only one kind.`
 This also applies to personal pools with or without `owner`. Pool names and
 connector ids do not decide membership type. People-only pools may retain an
 `owner`; it never changes the account a person uses.
@@ -22,7 +22,13 @@ Keep the original human pool name when possible so people's existing
 `/mcp/team` address stays valid. Point the agent harness at
 `/agent/assistant-team` and update its tier list to that name. Copy the
 original `readOnly`, `surface`, `executeCode` and `description` settings
-as appropriate so each new pool preserves its intended behavior.
+to both new pools as appropriate so each preserves its intended behavior.
+If the mixed pool set `owner`, keep `owner` on the agent pool: it is the
+Workspace address the agent acts as, and without it Workspace connectors with
+a mapping `subject` disappear for the agent. People never use `owner`; they
+always act as themselves, so the people pool does not need it. Agent pools
+never count toward a person's plain `/mcp` routing, so a person who was in
+one mixed pool and no other still reaches the people pool at plain `/mcp`.
 
 For personal `assistant-alice` pools, keep only `"agent:assistant"` in
 `members` and retain the owner's Workspace address and tools. Give people

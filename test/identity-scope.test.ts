@@ -661,9 +661,7 @@ describe("member references at construction", () => {
         pools: { personal: { tools: ["wiki"], members, ...(owner ? { owner } : {}) } },
       });
       expect(attempt).toThrow(ConfigError);
-      expect(attempt).toThrow(
-        "ConnectaConfig.pools.personal.members[0] and [1] mix a person and an agent; list only people or only agents.",
-      );
+      expect(attempt).toThrow("ConnectaConfig.pools.personal.members mixes people and agents; list only one kind.");
     }
   });
 

@@ -419,7 +419,7 @@ describe("agent identity", () => {
       maintainers,
       agents: ["simon"],
       accessTokens: accessTokens(storage),
-      // The agent and the person share one pool that declares the personal connector.
+      // The person's pool and the agent's pool declare the same personal connector.
       pools: {
         shared: { tools: ["calc", "mine"], members: ["owner"] },
         "shared-agents": { tools: ["calc", "mine"], members: ["agent:simon"] },

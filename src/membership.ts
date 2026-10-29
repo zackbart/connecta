@@ -137,9 +137,8 @@ function resolveMembers(value: unknown, path: string, context: MemberContext): M
 /** Resolve a pool's members, which are all people or all agents (INV-11). */
 export function resolvePoolMembers(value: unknown, path: string, context: MemberContext): Member[] {
   const members = resolveMembers(value, path, context);
-  const other = members.findIndex((member) => member.kind !== members[0]!.kind);
-  if (other > 0) {
-    throw new ConfigError(`${path}[0] and [${other}] mix a person and an agent; list only people or only agents.`);
+  if (!members.every((member) => member.kind === members[0]!.kind)) {
+    throw new ConfigError(`${path} mixes people and agents; list only one kind.`);
   }
   return members;
 }
