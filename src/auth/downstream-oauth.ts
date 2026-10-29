@@ -488,7 +488,7 @@ export class OAuthRefreshCoordinator {
                 // Credential-bearing OAuth requests use the raw send path. A redirect
                 // is a dispatched failure, never authority to send the form again.
                 // Its tokens' lifetime starts no later than this send.
-                if (grantType !== undefined) provider.recordTokenRequestSent(Date.now());
+                if (grantType !== undefined) provider.tokenRequestSent = Date.now();
                 return (yield tokenRequest
                   ? authCall(baseFetch, [input, { ...init, redirect: "manual", ...(signal ? { signal } : {}) }])
                   : authCall(resourceFetch, [input, { ...init, ...(signal ? { signal } : {}) }])) as Response;
@@ -1186,8 +1186,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private refreshBasis: { accessToken: string; epoch: string; issuer: string } | undefined;
   /** The access token of a refresh the coordinator already stored. */
   private storedRefresh: string | undefined;
-  /** When this flow's last token request other than a refresh was sent. */
-  private tokenRequestSent: number | undefined;
+  /**
+   * @internal When this flow's last token request other than a refresh was
+   * sent. The tokens the SDK saves from its answer expire counted from here,
+   * never from the later save, which a slow answer would push past expiry.
+   */
+  tokenRequestSent: number | undefined;
   /**
    * The tokens of the grant this provider last opened or wrote, as facts
    * only: no credential beyond the access token it already handed out.
@@ -1752,15 +1756,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   dispatchCodeExchange(send: () => Promise<Response>, endpoint?: string | URL): Promise<Response> {
     return runEdge(authOwnMethod<Response>(KvOAuthProvider.prototype, this, "dispatchCodeExchange", [send, endpoint]));
-  }
-
-  /**
-   * @internal A code exchange (or other non-refresh token request) is leaving
-   * now. The tokens the SDK saves from its answer expire counted from here,
-   * never from the later save, which a slow answer would push past expiry.
-   */
-  recordTokenRequestSent(at: number): void {
-    this.tokenRequestSent = at;
   }
 
   /** @internal The access token of the last refresh this flow adopted. */
