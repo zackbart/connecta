@@ -137,6 +137,21 @@ export function authStorage<A = any>(
   });
 }
 
+/** Several keys in one round trip when the store can, else one `get` at a time. */
+export function authStorageMany(
+  storage: KVStorage,
+  keys: readonly string[],
+): Effect.Effect<(string | null)[], unknown> {
+  return Effect.suspend(() => {
+    const getMany = getNativeStorage(storage)?.getMany;
+    if (!getMany) return Effect.forEach(keys, (key) => authStorage<string | null>(storage, "get", [key]));
+    const operation = authValue(() => getMany(keys));
+    return Effect.flatMap(Effect.serviceOption(AuthenticationWork), (work) =>
+      work._tag === "Some" ? authDetached(operation) : operation,
+    );
+  });
+}
+
 function authSubmission<A>(operation: Effect.Effect<A, unknown>, beforeSubmit: () => void): Effect.Effect<A, unknown> {
   return Effect.flatMap(Scheduler.Scheduler, (parent) => {
     let submitting = false;

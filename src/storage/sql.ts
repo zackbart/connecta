@@ -3,7 +3,8 @@
 import type { ActivityStore } from "../activity.js";
 import type { KVStorage } from "../types.js";
 import { runEdge } from "../runtime/run.js";
-import { registerNativeStorage, registerNativeActivity } from "../runtime/native-storage.js";
+import { registerNativeStorage, registerNativeActivity, type NativeStorage } from "../runtime/native-storage.js";
+import { observedWrite, observeStorageWrites } from "../runtime/request-reads.js";
 import { nativeSqlDriver } from "./sql-driver.js";
 import { nativeSqlStorage, nativeSqlActivityStore } from "./sql-native.js";
 
@@ -40,8 +41,17 @@ export interface SqlActivityOptions {
 
 /** `KVStorage` over one `connecta_kv` table. */
 export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
-  const native = nativeSqlStorage(nativeSqlDriver(driver));
-  return registerNativeStorage(
+  const store = nativeSqlStorage(nativeSqlDriver(driver));
+  // Request read memos see every write begin and settle (request-reads.ts).
+  const root = {};
+  const native: NativeStorage = {
+    ...store,
+    set: (key, value, options) => observedWrite(root, key, store.set(key, value, options)),
+    delete: (key) => observedWrite(root, key, store.delete(key)),
+    compareAndSet: (key, expected, next, options) =>
+      observedWrite(root, key, store.compareAndSet(key, expected, next, options)),
+  };
+  const edge = registerNativeStorage(
     {
       capabilities: { absoluteExpiry: true },
       describe: () => ({ kind }),
@@ -53,6 +63,7 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
     },
     native,
   );
+  return observeStorageWrites(edge, { root });
 }
 
 /**

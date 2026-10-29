@@ -9,6 +9,8 @@ import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 import { stashChargeContract } from "./stash-charge-contract.js";
 import { compareAndSetContract } from "./storage-contract.js";
 import * as sqlStores from "../src/storage/sql.js";
+import { getNativeStorage } from "../src/runtime/native-storage.js";
+import { runEdge } from "../src/runtime/run.js";
 
 /** Failure injection shared by Node SQLite, proxied D1, and native Workers D1. */
 export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "storage" | "exec" | "rows">>): void {
@@ -278,7 +280,42 @@ export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | 
  * SQLite through `node:sqlite` — so one statement set is proven on each. Not a
  * suite: each driver's suite calls it inside its `describe`.
  */
+/** Several keys in one statement read exactly as one `get` each would. */
+export function sqlGetManyContract(open: () => Promise<Pick<SqlFixture, "storage" | "exec" | "rows">>): void {
+  it("reads several keys in one statement, as one get each would", async () => {
+    const db = await open();
+    const storage = db.storage();
+    await storage.set("a", "1");
+    await storage.set("nul", "before\0after");
+    await storage.set("gone", "expired");
+    await db.exec("UPDATE connecta_kv SET expires_at_ms = 1 WHERE key = ?", "gone");
+    const many = (keys: readonly string[]) => runEdge(getNativeStorage(storage)!.getMany!(keys));
+    expect(await many([])).toEqual([]);
+    expect(await many(["nul", "absent", "a", "gone", "a"])).toEqual(["before\0after", null, "1", null, "1"]);
+    // More keys than one statement binds still answer in order.
+    const keys = Array.from({ length: 150 }, (_, i) => `k${i}`);
+    for (const key of keys.filter((_, i) => i % 7 === 0)) await storage.set(key, `v-${key}`);
+    expect(await many(keys)).toEqual(await Promise.all(keys.map((key) => storage.get(key))));
+    await expect(many(["a", "bad\0key"])).rejects.toThrow(TypeError);
+  });
+
+  it("answers getMany through a replaced get, one key at a time", async () => {
+    const storage = (await open()).storage();
+    await storage.set("a", "1");
+    // A program that selected the native path before the replacement.
+    const native = getNativeStorage(storage)!;
+    const original = storage.get;
+    storage.get = async (key) => (key === "a" ? "replaced" : original.call(storage, key));
+    try {
+      expect(await runEdge(native.getMany!(["a", "b"]))).toEqual(["replaced", null]);
+    } finally {
+      storage.get = original;
+    }
+  });
+}
+
 export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
+  sqlGetManyContract(open);
   sqlCasExpiryContract(open);
   sqlBatchRollbackContract(open);
   sqlActivityRollbackContract(open);

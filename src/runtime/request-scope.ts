@@ -5,6 +5,7 @@ import type { AuthorizationHandoff } from "../errors.js";
 import type { SentSecrets } from "../sent-secrets.js";
 import type { ToolDef } from "../types.js";
 import type { CallLease } from "./call.js";
+import { RequestReads } from "./request-reads.js";
 import { detach } from "./run.js";
 
 export interface RequestInvocations {
@@ -32,6 +33,7 @@ export class RequestOwner {
     secrets: undefined as SentSecrets | undefined,
     invocations: { entered: [], authFailures: new Map(), retryReads: new Map() } as RequestInvocations,
     handoffs: undefined as RequestHandoffs | undefined,
+    reads: undefined as RequestReads | undefined,
   };
   constructor(readonly identity: object) {}
   own(finalizer: () => void): void {
@@ -58,6 +60,7 @@ export class RequestOwner {
     }
     this.calls.clear();
     this.entries.clear();
+    this.retained.reads?.close();
     attempt(() => this.controller.abort(new Error("The request ended.")));
     for (const finalizer of this.finalizers.splice(0).reverse()) attempt(finalizer);
     // A synchronous published close revokes first. The runtime scope contains
@@ -66,6 +69,18 @@ export class RequestOwner {
     if (failures.length)
       throw new AggregateError(failures, `Closing the request: ${failures.length} cleanup step(s) failed.`);
   }
+}
+/** This request's read memo; a closed request's memo answers nothing. */
+export function requestReads(identity: object): RequestReads {
+  return ownerReads(requestOwner(identity));
+}
+export function ownerReads(owner: RequestOwner): RequestReads {
+  const retained = owner.retained;
+  if (!retained.reads) {
+    retained.reads = new RequestReads();
+    if (!owner.open) retained.reads.close();
+  }
+  return retained.reads;
 }
 export class RequestScope extends Context.Service<RequestScope, RequestOwner>()("connecta/request/Scope") {}
 const requests = new WeakMap<object, RequestOwner>();

@@ -2004,6 +2004,11 @@ value, matching that fallback. Interruption remains interruption. The lookup
 module imports no SQL or platform implementation and does not change the
 published storage interfaces.
 
+`NativeStorage.getMany` reads several keys in one statement, answering by
+position exactly as one `get` per key would; the SQL drivers share it, a
+replaced `get` answers each key itself, and other stores fall back to one `get`
+at a time. Catalog reads fetch up to eight chunks per round trip with it.
+
 `openSqlite` retains file modes, WAL, busy timeout,
 and database ownership. `test/sql-effect-contract.ts` retains affected-row,
 50-claim, typed-failure, cancellation, and tracing probes on SQLite and native
@@ -2162,6 +2167,58 @@ listing. A transient first-page tool-listing failure may use a complete catalog
 within five minutes of expiry in the same auth partition. Partial walks and
 auth or permission failures refuse fallback; resources require unexpired
 inventories, and stale fallback cannot authorize post-entry auth recovery.
+
+**Repeated reads share one request's memo.** `src/runtime/request-reads.ts`
+gives each request owner a memo of storage reads, emptied when the request
+closes (INV-7). It holds plain strings keyed by the physical key in the
+underlying store, so namespaced views of one partition share an entry and two
+principals' partitions never do. A read consults it only where the call site
+opts in and states why staleness within one request is safe; every other read
+goes to storage.
+
+- Every write through the SQL drivers, `memoryStorage()` or a namespaced view
+  over them drops that key from every open memo in the same isolate, before
+  submission and again on settlement. A read that such a write overlapped is
+  not recorded.
+- Only the latest read of a key that the request started records. An earlier
+  read that settles later never replaces a newer fresh observation.
+- A fresh read records what it saw, so a memoized reader is never older than
+  its request's latest fresh read of the key.
+- A custom store, or a built-in one with a replaced method, is never memoized.
+- A runtime without `WeakRef` and `FinalizationRegistry` memoizes nothing:
+  workerd before compatibility date 2025-05-05 without `enable_weak_ref` reads
+  storage every time.
+
+The memo cannot see another isolate, another process sharing the database, or
+an entry expiring. After the first read, a memoized key can lag such a change
+for the rest of the request. So nothing that gates authority, sends a
+credential, or decides a write is memoized.
+
+Memoized:
+
+- the negotiation verdict, which only orders handshake versions;
+- catalog generation reads that only locate an entry, accepted or refused by a
+  fresh fence;
+- the credential reads behind connector status, drift and the operator UI card,
+  which only label a view. Only the built-in vault with its original `getAll`
+  and `metadata` shares a read; a custom vault, a subclass, or an instance
+  that overrides either method is called itself for every read, dispatch
+  included.
+
+Always fresh:
+
+- every OAuth grant read, including the token and epoch check behind each SDK
+  message (a disconnect need not revoke the vendor token), `peekGrant` and
+  every cache-acceptance identity check, compare-and-set loops, refresh claims
+  and leases, resets and disconnects;
+- the catalog generation fence before a cached entry is served or published;
+- the credential a call sends.
+
+`test/request-reads.node.test.ts` holds the memo's contract, including a
+disconnect written by another isolate between paginated `tools/list` pages. It
+also holds D1 round-trip and statement ceilings for a warm OAuth call, an
+expired-token refresh, a cold-isolate catalog load and an operator UI detail
+read.
 
 ### Contributor provider kit
 
