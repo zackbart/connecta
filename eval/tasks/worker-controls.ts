@@ -8,11 +8,24 @@ import { spawnSync } from "node:child_process";
 import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crossTarget, compare } from "../compare.js";
 import { startVendorGateway } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { routeFakeVendor } from "../fakes/transport.js";
+import type { AgentResultFile } from "../report/summary.js";
+import { runProtocol } from "../support/meta.js";
 import { serveFetch } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
+import { ACTIVE_TASKS } from "./index.js";
+
+function refused(action: () => unknown, message: string): void {
+  try {
+    action();
+  } catch {
+    return;
+  }
+  throw new Error(message);
+}
 
 async function rejects(action: () => Promise<unknown>, pattern: RegExp, message: string): Promise<void> {
   try {
@@ -228,4 +241,71 @@ const failed = (socket) => new Promise((resolve) => { socket.once("error", (e) =
     if (result[kind] !== "EVAL_EGRESS_REFUSED")
       throw new Error(`Egress guard let ${kind} reach the network: ${JSON.stringify(result)} ${probe.stderr}`);
   if (result.loopback !== "connected") throw new Error(`Egress guard blocked loopback: ${JSON.stringify(result)}`);
+}
+
+/** A batch from the frozen baseline, relabelled as a measured run on one target. */
+async function fixture(target: "node" | "worker", surface: "six" | "code"): Promise<AgentResultFile> {
+  const frozen = JSON.parse(
+    await readFile(new URL("../baselines/gpt-6-luna-0.29.json", import.meta.url), "utf8"),
+  ) as AgentResultFile;
+  const id = "p5-known-read-routing";
+  const source = frozen.trials.find((t) => t.task === id && t.repeat === 1)!;
+  const file: AgentResultFile = {
+    ...frozen,
+    protocol: runProtocol("synthetic-selftest-pair"),
+    config: { ...frozen.config, surface, grading: "outcome", tasks: [id], repeats: 1, target },
+    trials: [
+      {
+        ...structuredClone(source),
+        surface,
+        target,
+        runner: "codex",
+        grading: "outcome",
+        taskDefinitionsHash: runProtocol().taskDefinitionsHash,
+        timeoutMs: ACTIVE_TASKS.find((t) => t.id === id)!.limits?.timeoutMs ?? frozen.config.timeoutMs,
+        repeat: 1,
+      },
+    ],
+  };
+  delete file.regrade;
+  return file;
+}
+
+/** Node and worker results pair only as a diagnostic, and only from measured, consistent batches. */
+export async function comparatorTargetControls() {
+  const fresh = fixture;
+  if (!crossTarget(await fresh("node", "six"), await fresh("worker", "six")).startsWith("CROSS-TARGET DIAGNOSTIC"))
+    throw new Error("Measured node and worker batches did not compare as a diagnostic");
+  for (const allowMismatch of [false, true]) {
+    const node = await fresh("node", "six"),
+      worker = await fresh("worker", "code");
+    refused(() => compare(node, worker, { allowMismatch }), "Comparison paired node and worker arms");
+  }
+  if (!compare(await fresh("worker", "six"), await fresh("worker", "code")).includes("target worker"))
+    throw new Error("Two worker arms did not compare as worker");
+  const mutations: [string, (file: AgentResultFile) => void][] = [
+    ["a node trial in a worker batch", (f) => (f.trials[0]!.target = "node")],
+    ["a missing protocol", (f) => delete f.protocol],
+    ["a missing source tree", (f) => (f.meta.git.srcTree = "unknown")],
+    ["a dirty source", (f) => (f.meta.git.dirty = true)],
+    ["an offline regrade", (f) => (f.regrade = { source: "x", meta: f.meta })],
+    ["an unknown target", (f) => ((f.config as { target: string }).target = "edge")],
+  ];
+  // A trial contradicting its batch's target is refused even as a provenance diagnostic.
+  const inconsistent = new Set(["a node trial in a worker batch", "an unknown target"]);
+  for (const [label, mutate] of mutations) {
+    // Both files carry the defect, so no cross-file inequality can be what refuses it.
+    const node = await fresh("node", "six"),
+      worker = await fresh("worker", "six");
+    mutate(worker);
+    if (!inconsistent.has(label)) mutate(node);
+    refused(() => crossTarget(node, worker), `Cross-target diagnostic accepted ${label}`);
+    const six = await fresh("worker", "six"),
+      code = await fresh("worker", "code");
+    mutate(six);
+    if (!inconsistent.has(label)) mutate(code);
+    refused(() => compare(six, code), `Comparison accepted ${label}`);
+    if (inconsistent.has(label))
+      refused(() => compare(six, code, { allowMismatch: true }), `Diagnostic comparison accepted ${label}`);
+  }
 }

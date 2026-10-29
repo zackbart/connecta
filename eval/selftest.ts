@@ -12,7 +12,7 @@ import type { Connecta } from "@zackbart/connecta";
 import { taskForSurface } from "./tasks/surface.js";
 import { gradeTask, passes, CHECK_KINDS, type Grading } from "./tasks/grading.js";
 import type { Surface } from "./agent/surface.js";
-import { compare, crossTarget } from "./compare.js";
+import { compare } from "./compare.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { World } from "./fakes/world.js";
 import { startNodeDeployment } from "./deploy/node.js";
@@ -34,7 +34,12 @@ import type { TrialResult } from "./agent/run.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
-import { gatewayControls, gatewayRedirectControls, workerdProcessControls } from "./tasks/worker-controls.js";
+import {
+  comparatorTargetControls,
+  gatewayControls,
+  gatewayRedirectControls,
+  workerdProcessControls,
+} from "./tasks/worker-controls.js";
 import { fakeTransportInterleaving, fakeTransportRedirects, restTransportControls } from "./tasks/rest-controls.js";
 
 await gatewayControls();
@@ -42,6 +47,8 @@ await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");
 await workerdProcessControls();
 console.log("ok   workerd lifecycle: launcher crash leaves no group member; wrangler egress fails closed");
+await comparatorTargetControls();
+console.log("ok   cross-target comparison: measured provenance and per-trial target consistency");
 await googleTransportControls();
 await googleBoundaryControls();
 console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools, read-only and native reads");
@@ -1137,40 +1144,6 @@ for (const mutate of [
   expectRefusal(
     () => compare(six, badPair),
     "Comparison accepted missing pairs, mismatched settings or an unsupported skip",
-  );
-}
-// Node and workerd results never pair as a decision, even with --allow-mismatch;
-// only the explicit cross-target diagnostic reads them side by side.
-{
-  const onWorker = (file: AgentResultFile) => {
-    file.config.target = "worker";
-    for (const trial of file.trials) trial.target = "worker";
-    return file;
-  };
-  const workerCode = onWorker(comparisonFixture("code", 1));
-  for (const allowMismatch of [false, true])
-    expectRefusal(
-      () => compare(comparisonFixture("six", 1), workerCode, { allowMismatch }),
-      "Comparison paired node and worker arms",
-    );
-  if (!compare(onWorker(comparisonFixture("six", 1)), workerCode).includes("target worker"))
-    throw new Error("Two worker arms did not compare as worker");
-  const contradicting = onWorker(comparisonFixture("code", 1));
-  contradicting.trials[0]!.target = "node";
-  expectRefusal(
-    () => compare(onWorker(comparisonFixture("six", 1)), contradicting),
-    "Comparison accepted a trial whose target contradicts its batch",
-  );
-  const diagnostic = crossTarget(comparisonFixture("six", 1), onWorker(comparisonFixture("six", 1)));
-  if (!diagnostic.startsWith("CROSS-TARGET DIAGNOSTIC (no decision)") || diagnostic.includes("Decision"))
-    throw new Error("Cross-target diagnostic reached a decision");
-  expectRefusal(
-    () => crossTarget(comparisonFixture("six", 1), comparisonFixture("six", 1)),
-    "Cross-target diagnostic accepted two node results",
-  );
-  expectRefusal(
-    () => crossTarget(comparisonFixture("six", 1), workerCode),
-    "Cross-target diagnostic accepted different surfaces",
   );
 }
 // Round 2 reproductions must refuse even when BOTH arms share the same defect.
