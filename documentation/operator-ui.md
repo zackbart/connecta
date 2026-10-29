@@ -638,7 +638,16 @@ bounded at 2, 2, 4 and 8 seconds; a later focus return can try again after backo
 
 Connector Refresh, focus recovery and mutation follow-ups read only affected
 connectors. Focus probes unhealthy rows, never healthy siblings. All detail reads
-share a four-request limit and coalesce per connector. Failures retry only their
+in one tab share an eight-request limit and coalesce per connector, so a page of
+up to eight connectors loads in one round. The limit is fixed, not configured.
+It bounds how many connectors one tab waits on at once; a tab still reads each
+connector once per load, so the limit adds no requests to any one connector.
+Detail reads do not consume `admission.requests` permits, which govern `/mcp`
+only. They still share isolate CPU and memory, D1, and downstream account quotas
+with agent traffic; each tab adds up to eight concurrent downstream reads, and
+several connectors on one vendor account share that vendor's rate limit. Over HTTP/1.1 the browser itself allows about six
+connections per origin.
+Failures retry only their
 connector with the same bounded backoff; recovery never replays a mutation.
 A `connector_timeout` row is parked instead. It spends its automatic retry
 budget, and focus and visibility returns skip it. Only Refresh, a full refresh
