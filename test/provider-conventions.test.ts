@@ -491,7 +491,11 @@ describe("hatch details list selectable response fields, hint withheld ones, and
       // An undeclared path is refused while the same read without fields is not, so each
       // operation's comparison provably reaches the fields check.
       const control = await outcome({ fields: ["connecta_undeclared"] });
-      expect(control.error, label).toMatch(/fields path connecta_undeclared/);
+      expect(control.error, label).toMatch(
+        /^invalid_args: .*\/fields\/0: expected a path beginning with a property of/,
+      );
+      // Refusals name positions and declared properties only, never the submitted path.
+      expect(control.error, label).not.toContain("connecta_undeclared");
       // Every advertised path is accepted by the real read and selects exactly what the same read
       // returns there without fields; a hinted path really comes back withheld or redacted.
       // Nothing promises the other paths' values.
