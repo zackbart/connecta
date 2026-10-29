@@ -212,10 +212,27 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
     product === "gmail" && task === 3
       ? { ...(expected as Row), ids: Array.from({ length: 100 }, (_, i) => `m${i + 1}`) }
       : undefined;
+  // Drive revision timestamps may be keyed by revision id instead of listed in
+  // revision order. The map must name exactly the reported revisions; the
+  // ordered comparison then still rejects a missing, extra or wrong value.
+  const byRevision = answer?.modified;
+  const keyed =
+    product === "drive" &&
+    task === 4 &&
+    Array.isArray(answer?.revisions) &&
+    byRevision &&
+    typeof byRevision === "object" &&
+    !Array.isArray(byRevision) &&
+    Object.keys(byRevision).length === answer.revisions.length &&
+    answer.revisions.every((id: unknown) => typeof id === "string" && Object.hasOwn(byRevision, id))
+      ? { ...answer, modified: answer.revisions.map((id: string) => byRevision[id]) }
+      : undefined;
   add(
     "answer-evidence",
     answer?.source === product &&
-      (subset(answer, expected) || (numericIds !== undefined && subset(answer, numericIds))),
+      (subset(answer, expected) ||
+        (numericIds !== undefined && subset(answer, numericIds)) ||
+        (keyed !== undefined && subset(keyed, expected))),
   );
   const reads = source.filter((c) => c.kind === "read" && c.outcome === "ok");
   // Resource scope is independent of which method returned the facts: list,
@@ -750,10 +767,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
         args: { path: "/files/pdf1/revisions", fields: ["revisions.id", "revisions.modifiedTime"] },
         resultMode: "value",
       });
-      if (r.isError) {
-        ctx.answer('ANSWER: {"source":"drive","unavailable":true}');
-        return;
-      }
+      if (r.isError) throw new Error(`drive.drive_api_read revisions: ${r.text}`);
     }
     if (task === 5) {
       const r = await ctx.call("call_tool", {
@@ -977,5 +991,3 @@ export const GOOGLE_TASKS: ActiveTask[] = GOOGLE_PRODUCTS.flatMap((product) =>
     reference: (ctx) => reference(product, i + 1, ctx),
   })),
 );
-
-export const GOOGLE_COVERAGE_GAPS = ["google-drive-4"] as const;

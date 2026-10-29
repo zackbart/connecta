@@ -185,25 +185,6 @@ export function counterexamples(
           }
         : c,
     );
-    // D4's BEFORE adapter has no read tool. Its sibling control still carries
-    // actual revision facts for the wrong file, rather than an empty ledger.
-    if (task.id === "google-drive-4" && !siblingCalls.some((c) => c.kind === "read" && c.service === "drive"))
-      siblingCalls.push({
-        seq: 1,
-        at: 0,
-        service: "drive",
-        tool: "GET /files/pdf2/revisions",
-        kind: "read",
-        outcome: "ok",
-        resultBytes: 0,
-        args: {
-          method: "GET",
-          path: "/files/pdf2/revisions",
-          subject: ALICE,
-          query: {},
-          returned: { revisions: account.revisions },
-        },
-      });
     cases.push({ name: "Google read a sibling item", check: "correct-destination", world: changedCalls(siblingCalls) });
     if (task.id === "google-gmail-4") {
       for (const [name, path, returned] of [
@@ -315,6 +296,25 @@ export function counterexamples(
       name: "Google wrong delegated subject",
       world: changedCalls(world.ledger.calls.map((c) => ({ ...c, args: { ...c.args, subject: "bob@example.com" } }))),
     });
+    if (task.id === "google-drive-4") {
+      const t1 = "2026-10-01T12:00:00Z",
+        t2 = "2026-10-02T12:00:00Z";
+      for (const [name, revisions, modified] of [
+        ["timestamps out of revision order", ["rv1", "rv2"], [t2, t1]],
+        ["a keyed map missing a revision", ["rv1", "rv2"], { rv1: t1 }],
+        ["a keyed map with an extra revision", ["rv1", "rv2"], { rv1: t1, rv2: t2, rv3: t2 }],
+        ["a keyed map with a wrong timestamp", ["rv1", "rv2"], { rv1: t1, rv2: t1 }],
+        ["a keyed map naming another revision", ["rv1", "rv2"], { rv1: t1, rv3: t2 }],
+        ["a keyed map for revisions out of order", ["rv2", "rv1"], { rv1: t1, rv2: t2 }],
+        ["a keyed map for a missing revision", ["rv1"], { rv1: t1 }],
+        ["a keyed map for a duplicated revision", ["rv1", "rv1"], { rv1: t1, rv2: t2 }],
+      ] as const)
+        cases.push({
+          name: `Google D4 answer: ${name}`,
+          check: "answer-evidence",
+          trace: { ...trace, finalAnswer: `ANSWER: ${JSON.stringify({ source: "drive", revisions, modified })}` },
+        });
+    }
     if (task.id !== "google-drive-5")
       cases.push({
         name: "Google successful reads without returned facts",
@@ -924,6 +924,18 @@ export function positiveVariants(
         calls.filter((call) => !String(call.args.path).startsWith("/drives")),
         "Google shared drive established by file metadata",
       );
+    if (task.id === "google-drive-4")
+      for (const modified of [
+        { rv1: "2026-10-01T12:00:00Z", rv2: "2026-10-02T12:00:00Z" },
+        { rv2: "2026-10-02T12:00:00Z", rv1: "2026-10-01T12:00:00Z" },
+      ])
+        cases.push({
+          name: `Google D4 timestamps keyed by revision id: ${Object.keys(modified).join(",")}`,
+          trace: {
+            ...trace,
+            finalAnswer: `ANSWER: ${JSON.stringify({ source: "drive", revisions: ["rv1", "rv2"], modified })}`,
+          },
+        });
   }
   if (task.id === "801-cloudflare-read-only-analytics")
     for (const answer of [
@@ -971,6 +983,22 @@ export function positiveVariants(
         finalAnswer: `${trace.finalAnswer} An older deployment, dpl_fail0, also failed; I did not read its logs.`,
       },
     });
+  if (task.id === "801-stripe-guessed-parameter-recovery")
+    for (const limit of ["100", "10", undefined])
+      cases.push({
+        name: `a ${limit ?? "default"} customer page reduced to the five newest is complete`,
+        world: Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+          ledger: {
+            ...world.ledger,
+            calls: world.ledger.calls.map((c) =>
+              c.args.path === "/v1/customers"
+                ? { ...c, args: { ...c.args, query: { email: "ada@example.com", ...(limit ? { limit } : {}) } } }
+                : c,
+            ),
+          },
+        }),
+        trace,
+      });
   if (task.id === "801-stripe-guessed-parameter-recovery") {
     const use = trace.toolUses.at(-1)!;
     const code = "async () => await connecta.call('stripe_sandbox.stripe_api_read', {})";

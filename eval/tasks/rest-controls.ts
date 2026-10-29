@@ -268,6 +268,29 @@ export function restCounterexamples(task: ActiveTask, world: World, trace: Agent
       },
       "answer-evidence",
     );
+    const customersRead = (s: SavedGradeInputs, query: Record<string, unknown>) => {
+      const read = s.world.calls.find((c) => c.args.path === "/v1/customers")!;
+      read.args.query = query;
+    };
+    for (const limit of ["4", "0", "five"])
+      mutate(
+        `a page limit of ${limit} cannot reach the five newest customers`,
+        (s) => customersRead(s, { email: "ada@example.com", limit }),
+        "correct-destination",
+      );
+    mutate(
+      "an unfiltered customer list is not the requested email",
+      (s) => customersRead(s, { limit: "100" }),
+      "correct-destination",
+    );
+    mutate(
+      "a larger page must still be reduced to the five newest",
+      (s) => {
+        customersRead(s, { email: "ada@example.com", limit: "100" });
+        s.trace.finalAnswer += " cus_ada_2, cus_ada_1";
+      },
+      "answer-evidence",
+    );
   }
   if (task.id === "801-stripe-idempotent-refund") {
     mutate(
