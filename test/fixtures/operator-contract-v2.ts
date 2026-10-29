@@ -74,6 +74,7 @@ const config: ConnectaConfigDescription = {
     { namespace: CLERK, id: "user_ada" },
     { namespace: CLERK, id: "user_grace" },
   ],
+  peopleInSeveralPools: [],
   classification: {},
   auth: [{ kind: "clerk", interactive: true, ui: "clerk" }],
   agents: ["simon-ada", "triage"],

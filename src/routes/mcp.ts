@@ -47,6 +47,7 @@ import {
   authorizeAgent,
   mayManageConnector,
   memberPool,
+  personPools,
   type RouteContext,
   type RuntimeExecutionContext,
   type ServerOptions,
@@ -858,15 +859,19 @@ export function createMcpRoute(opts: ServerOptions): {
                 opts.config.logger,
               ]),
         );
-        // Plain /mcp admits maintainers and serves the whole catalog; a pool
+        // Plain /mcp serves maintainers the whole catalog and other people their unique pool; a pool
         // admits its members, people at /mcp/<pool> and agents at
         // /agent/<pool>, and serves exactly its tools (INV-4).
         const scopeFor = (
           admitted: Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>,
-        ): { access: ConnectorAccess; readOnly: boolean; poolOwner?: string } | undefined => {
+        ): Readonly<{ pool?: string; access: ConnectorAccess; readOnly: boolean; poolOwner?: string }> | undefined => {
           if (poolName === undefined) {
-            return admitsMaintainer(opts, admitted)
-              ? { access: { connectorIds: "all" }, readOnly: opts.config.readOnly }
+            if (admitsMaintainer(opts, admitted))
+              return { access: { connectorIds: "all" }, readOnly: opts.config.readOnly };
+            // Exactly one membership routes; none or several fail closed.
+            const [match, ...more] = personPools(opts, admitted.identity);
+            return match && !more.length
+              ? { pool: match[0], access: match[1].access, readOnly: match[1].readOnly }
               : undefined;
           }
           const pool = agentEndpoint
@@ -876,6 +881,7 @@ export function createMcpRoute(opts: ServerOptions): {
           // same caller facts (#837 P5: agents act as the pool owner).
           return pool
             ? {
+                pool: poolName,
                 access: pool.access,
                 readOnly: pool.readOnly,
                 ...(pool.owner !== undefined ? { poolOwner: pool.owner } : {}),
@@ -932,7 +938,9 @@ export function createMcpRoute(opts: ServerOptions): {
               failureRecord({
                 reason:
                   poolName === undefined
-                    ? "not_maintainer"
+                    ? personPools(opts, authz.identity).length > 1
+                      ? "ambiguous_pool"
+                      : "not_maintainer"
                     : opts.pools.has(poolName)
                       ? "not_pool_member"
                       : "pool_not_declared",
@@ -940,7 +948,7 @@ export function createMcpRoute(opts: ServerOptions): {
             );
             return notFound();
           }
-          const { access, readOnly, poolOwner } = scope;
+          const { access, readOnly } = scope;
           // Admission, not completed-call activity. This fact carries no live
           // identity or credential and never changes the admission verdict.
           if (agentEndpoint && authz.identity.agent && opts.config.agents.includes(authz.identity.agent)) {
@@ -971,15 +979,18 @@ export function createMcpRoute(opts: ServerOptions): {
           }
           // The caller rides on the view, and the paging recheck builds the
           // same one: an agent's Workspace visibility depends on the owner.
-          const callerFor = (identity: typeof authz.identity, owner: string | undefined): ConnectorCaller => ({
+          const callerFor = (
+            identity: typeof authz.identity,
+            admittedScope: NonNullable<ReturnType<typeof scopeFor>>,
+          ): ConnectorCaller => ({
             identity,
             // `authorize` admits an open deployment's every request as the
             // anonymous actor; only a provider's `ok` is an authentication.
             authenticated: opts.config.auth.length > 0,
             // Both pool endpoints build the caller here from the same
             // admitted scope, so an agent at /agent/<pool> carries the owner.
-            ...(poolName !== undefined ? { pool: poolName } : {}),
-            ...(owner !== undefined ? { poolOwner: owner } : {}),
+            ...(admittedScope.pool !== undefined ? { pool: admittedScope.pool } : {}),
+            ...(admittedScope.poolOwner !== undefined ? { poolOwner: admittedScope.poolOwner } : {}),
           });
           let scopedRegistry: RegistryView;
           try {
@@ -1009,13 +1020,13 @@ export function createMcpRoute(opts: ServerOptions): {
                       return false;
                     // Paging re-admits the caller at this endpoint, as a new request would.
                     const currentScope = scopeFor(current);
-                    if (!currentScope) return false;
-                    const { access: currentAccess, readOnly: currentReadOnly, poolOwner: currentOwner } = currentScope;
+                    if (!currentScope || currentScope.pool !== scope.pool) return false;
+                    const { access: currentAccess, readOnly: currentReadOnly } = currentScope;
                     const view = opts.registry.scoped({
                       ...currentAccess,
                       ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
                       ...(current.principalKey ? { principalKey: current.principalKey } : {}),
-                      caller: callerFor(current.identity, currentOwner),
+                      caller: callerFor(current.identity, currentScope),
                     });
                     if (classification === "write" && currentReadOnly) return false;
                     // Both admission and catalogs belong to this pass only. A second
@@ -1080,7 +1091,7 @@ export function createMcpRoute(opts: ServerOptions): {
                     }
                   }),
               ),
-              caller: callerFor(authz.identity, poolOwner),
+              caller: callerFor(authz.identity, scope),
             });
           } catch {
             return cors(mcpRefusal(sentSecrets, 403, -33005, "MCP access is forbidden."));
@@ -1104,7 +1115,7 @@ export function createMcpRoute(opts: ServerOptions): {
               authz.principalKey,
               runtimeContext,
               readOnly,
-              poolName,
+              scope.pool,
               authz.identity.principal
                 ? {
                     kind: authz.actor.kind,

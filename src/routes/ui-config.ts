@@ -789,7 +789,9 @@ function memberRead(
   return Effect.gen(function* () {
     const allIds = opts.registry.listConnectors().map((c) => c.id);
     const ids = new Set(allIds.filter((id) => pools.some(([, pool]) => servesConnector(pool, id))));
-    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [...ids]));
+    const registry = opts.registry.scoped(
+      scopeFor(authz, opts.config.auth.length > 0, [...ids], pools.length === 1 ? pools[0]![0] : undefined),
+    );
     const selected = context.url.searchParams.get("connector");
     const visible = registry
       .listConnectors()
@@ -810,7 +812,7 @@ function memberRead(
       root: null,
       pools: pools.map(([name, pool]) => ({
         name,
-        humanPath: `/mcp/${name}`,
+        humanPath: pools.length === 1 ? "/mcp" : `/mcp/${name}`,
         agentPath: `/agent/${name}`,
         readOnly: pool.readOnly,
         surface: pool.native ? "native" : "meta",

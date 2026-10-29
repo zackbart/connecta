@@ -305,6 +305,11 @@ literal header credentials with personal scope. Review
 [management permissions](./auth.md#management-permissions) before exposing a
 new integration or its authentication controls.
 
+Plain `/mcp` serves maintainers the whole catalog and every other person their
+single pool, so one URL can serve the meta-tools to `alice` and a native pool's
+tools to `bob`. After changing a pool's `tools`, `readOnly`, `surface` or
+`executeCode`, check it as a member at plain `/mcp` as well as at `/mcp/<pool>`.
+
 After editing configuration, run the deployment's typecheck and doctor, then
 perform a bounded read. Add negative checks for target restrictions and writes
 when authoring a handler or provider. Follow repository verification policy

@@ -137,12 +137,13 @@ export function scopeFor(
   authz: Authorized,
   authenticated: boolean,
   connectorIds: RegistryScope["connectorIds"] = "all",
+  pool?: string,
 ): RegistryScope {
   return {
     connectorIds,
     ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
     ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
-    operatorCaller: { identity: authz.identity, authenticated },
+    operatorCaller: { identity: authz.identity, authenticated, ...(pool !== undefined ? { pool } : {}) },
   };
 }
 

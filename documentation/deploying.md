@@ -207,9 +207,11 @@ existing-record migration.
 
 One deployment serves one tenant and may admit several people. Node uses Clerk
 for human auth; Access is Workers-only. With inbound auth, `maintainers` is
-required: only they reach plain `/mcp` and the operator UI. Everyone else
-reaches a pool that lists them in `members`: people at `/mcp/<pool>`, agents
-at `/agent/<pool>`. Maintainers alone administer shared credentials, manage
+required: they receive the whole catalog at plain `/mcp` and the operator UI.
+Everyone else reaches a pool that lists them in `members`: people at
+`/mcp/<pool>`, agents at `/agent/<pool>`. A person in exactly one pool may also
+use plain `/mcp`, which serves them that pool, so one client URL can be handed
+to every person; a person in several pools must use `/mcp/<pool>`. Maintainers alone administer shared credentials, manage
 agent tokens, and read activity; members connect their own accounts on
 personal connectors in their pools.
 [Auth](./auth.md#principals-visibility-and-operators) owns maintainers and members;

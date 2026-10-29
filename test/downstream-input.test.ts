@@ -60,9 +60,12 @@ function setup(
     skills?: boolean;
     privateArguments?: "top-level" | "nested" | "array";
     catalogSchema?: JsonSchema;
+    /** Bob reaches this sole pool at plain /mcp; alice stays the maintainer. */
+    routed?: string;
+    storage?: ReturnType<typeof memoryStorage>;
   } = {},
 ) {
-  const storage = memoryStorage();
+  const storage = options.storage ?? memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
   const { logger } = spyLogger();
@@ -242,8 +245,9 @@ function setup(
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
     ...(options.authFirst ? { ui: operatorUi() } : {}),
     activity: activityHistory({ store: activity }),
+    ...(options.routed ? { maintainers: [{ namespace: "https://clerk.example.test", id: "alice" }] } : {}),
     pools: {
-      trusted: {
+      [options.routed ?? "trusted"]: {
         tools: ["service"],
         members: ["alice", "bob"].map((id) => ({ namespace: "https://clerk.example.test", id })),
         readOnly: false,
@@ -524,6 +528,29 @@ describe("downstream input relay", { tags: ["node"] }, () => {
       data: { reason: "invalid_request_state" },
     });
     expect(flow.call).toHaveBeenCalledTimes(3);
+  });
+
+  it("INV-4 INV-9: binds routed /mcp continuations to the resolved pool and the requested path", async () => {
+    const storage = memoryStorage();
+    const flow = setup({ routed: "team", storage });
+    const first = (await flow.rpc({ user: "bob" })).result;
+    const responses = { [Object.keys(first.inputRequests)[0]!]: { action: "accept" } };
+    // The same pool through its explicit path is a different endpoint.
+    expect((await flow.rpc({ state: first.requestState, user: "bob", pool: "team", responses })).error).toMatchObject({
+      code: -32602,
+      data: { reason: "invalid_request_state" },
+    });
+    // A redeploy that routes bob to another pool refuses the continuation.
+    const moved = setup({ routed: "other", storage });
+    expect((await moved.rpc({ state: first.requestState, user: "bob", responses })).error).toMatchObject({
+      code: -32602,
+      data: { reason: "invalid_request_state" },
+    });
+    expect(moved.call).not.toHaveBeenCalled();
+    // The refusals consumed nothing: the original endpoint and pool still complete it.
+    const done = (await flow.rpc({ state: first.requestState, user: "bob", responses })).result;
+    expect(done.resultType).toBe("complete");
+    expect(JSON.parse(done.content[0].text)).toMatchObject({ done: true });
   });
 
   it("INV-2 INV-4 INV-9: refuses changed write arguments, address, and meta-tool before continuation dispatch", async () => {

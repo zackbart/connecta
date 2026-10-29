@@ -685,7 +685,7 @@ export function withSecurityHeaders(response: Response, requestUrl: URL): Respon
 type AuthorizedIdentity = Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>;
 
 /**
- * Plain `/mcp` and every operator route admit a maintainer. An open
+ * Every operator route admits a maintainer. An open
  * deployment has no inbound auth and so no maintainers: its one anonymous
  * caller keeps the whole default endpoint, as the startup warning says.
  */
@@ -705,6 +705,15 @@ export function memberPool(
   if (identity.agent !== undefined) return undefined;
   const pool = opts.pools.get(name);
   return pool?.members.some((member) => isMember(member, identity)) ? pool : undefined;
+}
+
+/** Human memberships, matched only against the resolved namespaced principal. */
+export function personPools(
+  opts: ServerOptions,
+  identity: Readonly<AuthenticatedIdentity>,
+): Array<[string, ResolvedPool]> {
+  if (identity.agent !== undefined) return [];
+  return [...opts.pools].filter(([, pool]) => pool.members.some((member) => isMember(member, identity)));
 }
 
 /** The declared pool `/agent/<name>` serves to this agent, or undefined for the same 404. */

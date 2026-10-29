@@ -5,6 +5,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { identityStorageKey } from "../src/identity.js";
 import { createConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
+import type { ToolCallActivityEvent } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import { readJsonRpc } from "./fixtures/http.js";
@@ -107,6 +108,182 @@ function deployment(options: Partial<Parameters<typeof createTestConnecta>[0]> =
 }
 
 describe("maintainers and plain /mcp", () => {
+  it("routes a person's single pool at /mcp, preserving maintainer precedence and private refusals", async () => {
+    const warnings: unknown[][] = [];
+    const events: ToolCallActivityEvent[] = [];
+    let deletes = 0;
+    const c = deployment({
+      connectors: teamConnectors(() => deletes++),
+      activity: (await import("../src/activity.js")).activityHistory({
+        store: {
+          record: async (event) => {
+            events.push(event);
+          },
+        },
+      }),
+      pools: {
+        team: {
+          tools: ["notes.search", "notes.delete"],
+          members: [{ namespace: NAMESPACE, id: "bob" }, "alice"],
+          readOnly: true,
+          description: "Team tools",
+        },
+        other: { tools: ["wiki"], members: ["alice"] },
+      },
+      logger: {
+        ...silentLogger,
+        warn: (...args) => {
+          warnings.push(args);
+        },
+      },
+    });
+    const send = async (path: string, user: string, method: string) =>
+      readJsonRpc(
+        await c.fetch(
+          request(path, user, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method,
+              params:
+                method === "initialize"
+                  ? { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } }
+                  : {},
+            }),
+          }),
+        ),
+      );
+    for (const method of ["tools/list", "initialize"])
+      expect(await send("/mcp", "bob", method)).toEqual(await send("/mcp/team", "bob", method));
+    // The pool grants the write; its readOnly refuses it before dispatch.
+    const refused = (await rpc(c, "/mcp", "bob", "call_destructive_tool", { address: "notes.delete", args: {} }))
+      .result;
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused)).toContain("read_only_endpoint");
+    expect(deletes).toBe(0);
+    // Activity records the routed pool exactly as the explicit path does.
+    events.length = 0;
+    for (const path of ["/mcp", "/mcp/team"])
+      expect(
+        (await rpc(c, path, "bob", "call_tool", { address: "notes.search", args: {} })).result.isError,
+      ).toBeFalsy();
+    expect(events.map((event) => event.pool)).toEqual(["team", "team"]);
+    expect(
+      (await rpc(c, "/mcp", "alice", "call_tool", { address: "billing.invoices", args: {} })).result.isError,
+    ).toBeFalsy();
+    expect(await wire(await c.fetch(request("/mcp", "carol")))).toEqual(
+      await wire(await c.fetch(request("/mcp/missing", "carol"))),
+    );
+    expect(warnings.filter((args) => String(args[0]).includes("several pools"))).toEqual([]);
+    const config = (await (await c.fetch(request("/ui/api/config", "bob"))).json()) as any;
+    expect(config.pools[0]).toMatchObject({ name: "team", humanPath: "/mcp" });
+    await c.close();
+  });
+
+  it("isolates equal person ids in different namespaces when resolving /mcp", async () => {
+    const auth = ["east", "west"].map((namespace): InboundAuth => ({
+      kind: namespace,
+      recognizesCredential: (req) => req.headers.get("Authorization") === `Bearer ${namespace}`,
+      interactiveOperator: true,
+      activityActorNamespace: namespace,
+      authorize: (req) =>
+        req.headers.get("Authorization") === `Bearer ${namespace}`
+          ? { ok: true, userId: "bob" }
+          : { ok: false, response: new Response(null, { status: 401 }) },
+    }));
+    const c = deployment({
+      auth,
+      maintainers: [{ namespace: "east", id: "owner" }],
+      pools: {
+        east: { tools: ["wiki"], members: [{ namespace: "east", id: "bob" }] },
+        west: { tools: ["billing"], members: [{ namespace: "west", id: "bob" }] },
+      },
+    });
+    expect((await rpc(c, "/mcp", "east", "call_tool", { address: "wiki.read", args: {} })).result.isError).toBeFalsy();
+    expect((await rpc(c, "/mcp", "east", "call_tool", { address: "billing.invoices", args: {} })).result.isError).toBe(
+      true,
+    );
+    expect(
+      (await rpc(c, "/mcp", "west", "call_tool", { address: "billing.invoices", args: {} })).result.isError,
+    ).toBeFalsy();
+    expect((await c.fetch(request("/mcp/east", "west"))).status).toBe(404);
+    await c.close();
+  });
+
+  it("warns for ambiguous resolved people and refuses them identically to missing pools", async () => {
+    const warnings: unknown[][] = [];
+    const c = deployment({
+      pools: {
+        one: { tools: ["wiki"], members: ["bob"] },
+        two: { tools: ["wiki"], members: [{ namespace: NAMESPACE, id: "bob" }] },
+      },
+      logger: {
+        ...silentLogger,
+        warn: (...args) => {
+          warnings.push(args);
+        },
+      },
+    });
+    expect(warnings).toContainEqual([expect.any(String), { namespace: NAMESPACE, id: "bob", pools: ["one", "two"] }]);
+    expect(c.describeConfig().peopleInSeveralPools).toEqual([
+      { namespace: NAMESPACE, id: "bob", pools: ["one", "two"] },
+    ]);
+    expect(await wire(await c.fetch(request("/mcp", "bob")))).toEqual(
+      await wire(await c.fetch(request("/mcp/missing", "bob"))),
+    );
+    // The same 404 a non-member gets; only the operator log tells them apart.
+    expect(await wire(await c.fetch(request("/mcp", "carol")))).toEqual(
+      await wire(await c.fetch(request("/mcp", "bob"))),
+    );
+    const reasons = warnings
+      .flat()
+      .flatMap((entry) => ((entry as { reason?: string })?.reason ? [(entry as { reason: string }).reason] : []));
+    expect(reasons).toEqual(expect.arrayContaining(["ambiguous_pool", "not_maintainer"]));
+    await c.close();
+  });
+
+  it("binds routed result handles to both pathname and pool across deployments", async () => {
+    const storage = memoryStorage();
+    let resultId = "";
+    const build = (pool: string) =>
+      deployment({
+        storage,
+        executor: scriptedExecutor(async (fns) => fns.result!(resultId, { maxBytes: 100 })),
+        calls: { maxResultBytes: 100 },
+        connectors: [
+          api("docs", {
+            tools: [{ name: "read", description: "Read docs", ...READ, handler: () => "x".repeat(1000) }],
+          }),
+        ],
+        pools: { [pool]: { tools: ["docs"], members: ["bob"] } },
+      });
+    const c = build("team");
+    const first = (await rpc(c, "/mcp", "bob", "call_tool", { address: "docs.read", args: {} })).result;
+    const id = JSON.parse(first.content[0].text.split("\n")[0]).resultId;
+    expect(id).toBeTypeOf("string");
+    resultId = id;
+    expect(
+      (await rpc(c, "/mcp", "bob", "execute_code", { code: "return await connecta.result(id)" })).result.isError,
+    ).toBeFalsy();
+    expect(
+      (await rpc(c, "/mcp/team", "bob", "execute_code", { code: "return await connecta.result(id)" })).result.isError,
+    ).toBe(true);
+    const named = (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "docs.read", args: {} })).result;
+    resultId = JSON.parse(named.content[0].text.split("\n")[0]).resultId;
+    expect(
+      (await rpc(c, "/mcp", "bob", "execute_code", { code: "return await connecta.result(id)" })).result.isError,
+    ).toBe(true);
+    resultId = id;
+    await c.close();
+    const moved = build("other");
+    expect(
+      (await rpc(moved, "/mcp", "bob", "execute_code", { code: "return await connecta.result(id)" })).result.isError,
+    ).toBe(true);
+    await moved.close();
+  });
+
   it("INV-4: an open deployment keeps anonymous /mcp and answers every pool with the 404", async () => {
     const c = createTestConnecta({
       connectors: teamConnectors(),
