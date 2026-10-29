@@ -471,7 +471,7 @@ it(
     expect(wide.response.omitted).toBe(21);
     await expect(
       shaped([many(150, 3)]).call("read", { path: "/items", fields: wide.response.fields.slice(0, 1) }),
-    ).rejects.toThrow(/fields path f0+ does not begin/);
+    ).rejects.toThrow(/\/fields\/0: expected a path beginning with a property of/);
   },
 );
 
