@@ -114,7 +114,8 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 1. **Expose each provider as a guest global** whose properties are its `fns`,
    called with the program's arguments and awaited. Connecta supplies `search`,
    `describe`, `call`, `read`, `result`, `skill`, and `emit`; the prelude also
-   binds the guest's `skills` alias to `skill`.
+   binds the guest's `skills` alias to `skill`. Connecta also supplies
+   `unawaited`, which only the prelude calls and which spends no host call.
 2. **Evaluate `prelude` after the provider globals exist and before the
    program.** It is trusted host code that installs the immutable namespace
    and waits for emission acknowledgements. Capture runner intrinsics first;
@@ -641,12 +642,17 @@ error name; `details.line` is the source line when the runtime supplies one,
 otherwise null. `message` is `Program <name>: <engine message>`, naming the
 error once even when an executor reports a prefixed message. Fixed hints repair
 imports/require/filesystem access, shadowed `connecta`, invented globals such
-as `callTool`, and a missing `await`: a `TypeError` in a program that reads a
-member straight off a `connecta.*` call (`connecta.call(...).data`,
-`await connecta.search(...).tools`) or off a variable or destructuring bound to
-one without `await` gets `connecta.* returns a Promise; await it`. `then`,
-`catch`, and `finally` are not member reads. Hints are fixed text; no program
-source or value enters them.
+as `callTool`, and a missing `await`. Detection is at runtime, never from
+source: the Promise each `connecta.*` call except `emit` returns has
+non-enumerable getters for result fields (`data`, `format`, `content`, `tools`,
+`catalogErrors`, `total`, `text`, `resultId`, `hasMore`, `nextOffset`). Reading
+one before `await`, as in `connecta.call(...).data` or
+`const { tools } = connecta.search(...)`, returns undefined as before and sets
+a per-run flag. When that program then fails, the prelude reports the flag
+through the uncounted `unawaited` host function before the failure crosses,
+and the hint is `connecta.* returns a Promise; await it`. Awaiting, `then`,
+`Promise.all`, and `Promise.allSettled` never read those fields. Hints are
+fixed text; no program source, field name, or value enters them.
 
 An unchanged uncaught host error retains its classification through Error
 identity. A new error containing its message is a new program error. Copied
