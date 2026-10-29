@@ -577,6 +577,7 @@ function sandboxProvider(
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
   let emitAttempts = 0;
+  let unawaitedNotices = 0;
   const maxEmitAttempts =
     Math.max(EXECUTE_MAX_EMITTED_BLOCKS, limits.emitCollector?.maxBlocks ?? EXECUTE_MAX_EMITTED_BLOCKS) * 4;
   // A rejected bridge promise is catchable in both sandboxes. End the host
@@ -1100,7 +1101,19 @@ function sandboxProvider(
     prelude: guestPrelude(),
     fns: {
       // Uncounted: a failed program read a result field off an unawaited host call.
+      // One notice per run; any further call through the bridge ends the run.
       unawaited: () => {
+        if (budgetFailure) return stopped;
+        if (++unawaitedNotices > 1) {
+          budgetFailure = guestFailure(
+            "budget_exceeded",
+            "execute_code missing-await notice is limited to one per run.",
+          );
+          programWrites?.close();
+          limits.dispatchController?.abort();
+          limits.onHostCallBudgetExceeded?.(budgetFailure);
+          return stopped;
+        }
         if (limits.unawaited) limits.unawaited.read = true;
         return Promise.resolve();
       },

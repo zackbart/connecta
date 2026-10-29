@@ -283,6 +283,24 @@ it("a synchronous unawaited burst cannot return success after exhausting its bud
   expect(out.structuredContent).not.toHaveProperty("result");
 });
 
+it("a bridge may send the uncounted missing-await notice only once per run", async () => {
+  const executor: Executor = {
+    async execute(_code, providers) {
+      const notice = required(connectaProvider(providers).fns.unawaited);
+      await notice();
+      for (let i = 0; i < 100; i++) void Promise.resolve(notice()).catch(() => {});
+      return { result: "must not be returned", logs: [] };
+    },
+  };
+  const out = await createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger)({ code: "" });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "budget_exceeded", retryable: false },
+    hostCalls: { attempted: 0, admitted: 0 },
+  });
+  expect(out.structuredContent).not.toHaveProperty("result");
+});
+
 describe("execute_code executor watchdog", () => {
   // Ported from executor's wedge repro (UsefulSoftwareCo/executor,
   // runtime-dynamic-worker/src/wedge-repro.test.ts): an executor whose own
