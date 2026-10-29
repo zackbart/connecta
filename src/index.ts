@@ -7,6 +7,7 @@ import { assertsAgents } from "./agent-identity.js";
 import { ConfigError } from "./config-schema.js";
 import {
   memberContext,
+  peopleInSeveralPools,
   resolveMaintainers,
   resolveMembers,
   type MemberContext,
@@ -292,6 +293,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     members,
   );
   const pools = resolvePools(resolved.pools, resolved.readOnly, registry, members);
+  for (const person of peopleInSeveralPools(pools, maintainers)) {
+    logger.warn("[connecta] Plain /mcp refuses a person in several pools", person);
+  }
   warnInsecureConfig(resolved);
   const requestAdmission = new AdmissionController(resolved.admission.requests);
   let codeAdmission: AdmissionController | undefined;

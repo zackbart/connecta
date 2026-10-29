@@ -124,7 +124,8 @@ it("INV-4 INV-5: isolates skill disclosure across principals, pools and tool-onl
   expect(JSON.stringify(bob.result)).not.toContain("downstream/remote");
   expect(JSON.stringify(bob.result)).not.toContain("connectors/remote");
   // Bob is neither a maintainer nor a member of the remote pool.
-  for (const path of ["/mcp", "/mcp/remote"]) {
+  expect((await rpc(c, "skills/list", {}, "/mcp", "bob")).result).toEqual(bob.result);
+  for (const path of ["/mcp/remote"]) {
     const refused = await rpc(c, "skills/list", {}, path, "bob");
     expect(refused).toMatchObject({ error: { code: -33004 } });
     expect(JSON.stringify(refused)).not.toContain("remote");

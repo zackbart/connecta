@@ -225,6 +225,7 @@ export type ConnectorOperationOptions = Pick<ConnectorContext, "signal" | "timeo
  */
 /** Host-admitted identity and endpoint bindings for result paging. */
 export interface ResultIdentity {
+  pool: string | null;
   subject: string | null;
   principal: string | null;
   endpoint: string;
@@ -781,7 +782,11 @@ export class Registry implements RegistryView {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),
       credentialRevision: () => catalogRevision(this.opts.credentialVault),
-      sharedPartition: JSON.stringify([baseUrl, this.opts.publicUrl ?? null, scope?.caller?.pool ?? null]),
+      sharedPartition: JSON.stringify([
+        baseUrl,
+        this.opts.publicUrl ?? null,
+        (scope?.caller ?? scope?.operatorCaller)?.pool ?? null,
+      ]),
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
       maxTtlMs: (this.opts.catalogMaxTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMaxTtlSeconds) * 1000,
@@ -906,7 +911,7 @@ export class Registry implements RegistryView {
    * connector's namespace. Backs connecta.result.
    */
   resultIdentity(): ResultIdentity {
-    return { subject: null, principal: null, endpoint: "/mcp", origin: null };
+    return { pool: null, subject: null, principal: null, endpoint: "/mcp", origin: null };
   }
 
   recheckResultAccess(
@@ -1532,6 +1537,7 @@ class ScopedRegistryView implements RegistryView {
     return {
       subject: this.scope.subjectKey ?? null,
       principal: this.scope.principalKey ?? null,
+      pool: this.scope.caller?.pool ?? null,
       endpoint: this.scope.endpoint ?? "/mcp",
       origin: this.scope.origin ?? null,
     };

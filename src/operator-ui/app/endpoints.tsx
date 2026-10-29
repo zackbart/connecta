@@ -356,6 +356,9 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
           </p>
         </div>
       </div>
+      <p className="meta">
+        Maintainers get the whole catalog at /mcp; anyone else in exactly one pool gets that pool there.
+      </p>
       {!contract ? (
         <ContractState state={state} />
       ) : (

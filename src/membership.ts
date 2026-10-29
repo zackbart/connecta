@@ -147,7 +147,7 @@ export function resolveMaintainers(
   if (value === undefined || (Array.isArray(value) && value.length === 0)) {
     if (admitsPeople) {
       throw new ConfigError(
-        `${path} is required with inbound auth: list the people who may use plain /mcp, administer shared ` +
+        `${path} is required with inbound auth: list the people who receive the whole catalog at plain /mcp, administer shared ` +
           "credentials, manage agent tokens, and read activity.",
       );
     }
@@ -182,6 +182,30 @@ export function isMember(member: Member, identity: Readonly<AuthenticatedIdentit
     principal.namespace === member.namespace &&
     principal.id === member.id
   );
+}
+
+/**
+ * Non-maintainer people listed in several pools, in declaration order. Plain
+ * `/mcp` routes a person by their single pool, so it refuses each of these.
+ * An open deployment admits no people, so it has none.
+ */
+export function peopleInSeveralPools(
+  pools: ReadonlyMap<string, ResolvedPool>,
+  maintainers: readonly IdentityReference[],
+): Array<{ namespace: string; id: string; pools: string[] }> {
+  if (maintainers.length === 0) return [];
+  const people = new Map<string, { namespace: string; id: string; pools: string[] }>();
+  for (const [name, pool] of pools) {
+    for (const member of pool.members) {
+      if (member.kind !== "human") continue;
+      if (maintainers.some((m) => m.namespace === member.namespace && m.id === member.id)) continue;
+      const key = JSON.stringify([member.namespace, member.id]);
+      const person = people.get(key) ?? { namespace: member.namespace, id: member.id, pools: [] };
+      if (!person.pools.includes(name)) person.pools.push(name);
+      people.set(key, person);
+    }
+  }
+  return [...people.values()].filter((person) => person.pools.length > 1);
 }
 
 /** Whether an admitted identity is a listed maintainer. */

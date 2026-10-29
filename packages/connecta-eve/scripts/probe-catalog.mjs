@@ -283,7 +283,8 @@ async function cell(consumer, count, surface) {
         memos.set(memoKey, await fn({ idempotencyKey: memoKey, abortSignal: new AbortController().signal }));
       return memos.get(memoKey);
     };
-    const evaluate = (id) => guidance.evaluate({ memo, turn: { id, status: "running", input: [] } });
+    // Eve keys a defineDynamic() function by this registered symbol.
+    const evaluate = (id) => guidance[Symbol.for("eve.dynamic")]({ memo, turn: { id, status: "running", input: [] } });
     const instructions = await evaluate("probe_1");
     assert.match(instructions.content, /Seeded CRM/);
     const guidanceMs = performance.now() - guidanceStart;
@@ -515,17 +516,14 @@ if (option("cell")) {
         private: true,
         type: "module",
         dependencies: {
-          eve: "0.86.0",
+          eve: "0.90.0",
           "@zackbart/connecta-eve": `file:${archive}`,
           "@zackbart/connecta": `file:${coreArchive}`,
           "quickjs-emscripten": "0.32.0",
         },
       }),
     );
-    await writeFile(
-      join(work, "pnpm-workspace.yaml"),
-      'minimumReleaseAgeExclude:\n  - eve@0.86.0\noverrides:\n  "eve@0.86.0>undici": 8.12.3\n',
-    );
+    await writeFile(join(work, "pnpm-workspace.yaml"), "minimumReleaseAgeExclude:\n  - eve@0.90.0\n");
     run("pnpm", ["install", "--prefer-offline", "--ignore-scripts"], work);
     await writeFile(join(output, "consumer-pnpm-lock.yaml"), await readFile(join(work, "pnpm-lock.yaml")));
     await writeFile(join(output, "consumer-package.json"), await readFile(join(work, "package.json")));
@@ -574,7 +572,7 @@ if (option("cell")) {
       dirty: run("git", ["status", "--porcelain"]).trim(),
       node: process.version,
       pnpm: run("pnpm", ["--version"]).trim(),
-      eve: "0.86.0",
+      eve: "0.90.0",
       helper: manifest.version,
       helperArchiveSha256: hash(await readFile(archive)),
       coreArchiveSha256: hash(await readFile(coreArchive)),
