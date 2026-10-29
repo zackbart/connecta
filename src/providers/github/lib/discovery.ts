@@ -42,7 +42,7 @@ class RepositoryIndex extends OperationIndex {
         method === "GET" &&
         error instanceof ConnectorCallError &&
         error.code === "invalid_args" &&
-        error.message.includes(" operation in the pinned API index ") &&
+        error.message.includes(" operation at that path in the pinned API index ") &&
         /^\/repos\/[^/]+\/[^/]+\/(?:commits|compare)\/[^/]+\/.+/.test(path)
       )
         throw new ConnectorCallError("invalid_args", `${error.message} Encode '/' inside refs as %2F.`);

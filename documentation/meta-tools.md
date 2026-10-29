@@ -1049,28 +1049,77 @@ A remote MCP tool's advertised `inputSchema` is checked in the shared invocation
 path before admission and provider dispatch, so a mismatch is the non-retryable
 `invalid_args` identically on `call_tool`, `call_destructive_tool`,
 generated-code failures, and rejected promises. The error names the connector and
-operation and carries `validation.issues`: JSON Pointer `path`, schema-keyword
-`code`, and expected shape, with submitted values never copied into a finding. At
-most three are returned, and `validation.truncated` says when more exist — the
-same three-item bound describe's nearby-address list uses.
+operation and carries one recovery envelope, `validation`:
+
+```json
+{
+  "issues": [
+    { "path": "/limit", "expected": "at least 5", "received": "4" },
+    { "path": "/mode", "expected": "one of \"fast\", \"safe\"", "received": "string" },
+    { "path": "/<key>", "expected": "one of the accepted keys: mode, limit" }
+  ],
+  "acceptedKeys": ["mode", "limit"],
+  "example": { "mode": "fast", "limit": 5 }
+}
+```
+
+Every finding is listed, and the message repeats them, so one corrected call
+fixes them all.
+
+A refusal contains only names and literals the published schema declares at
+non-sensitive positions, numbers allowed by the bound rule below, and fixed
+placeholder text. It never contains a submitted string or object key, in the
+message, a finding, `acceptedKeys` or the example. A position is sensitive when
+it or an ancestor is `writeOnly`; a named tool's input schema marks each request
+secret that way. API hatch findings name only the operation contract's
+properties and enum members, as `*_api_details` publishes them.
+
+- `path` is a JSON Pointer naming declared properties and array indices. The
+  first key the schema does not declare (a misspelled argument, a map key)
+  reads `<key>` and ends the path, e.g. `/headers/<key>`.
+- `expected` states the constraint that failed, then every other constraint
+  the position declares: bounds, property and item counts, `multipleOf`,
+  `pattern`, `format`, `uniqueItems`, enum members, `dependentRequired`
+  (`string (required with tags)`). A sensitive position never renders an enum,
+  `const` or pattern literal. Each position gets one finding.
+- `received` is the submitted JSON type, `missing`, or, for a numeric bound at
+  a non-sensitive position of a named tool, the submitted number.
+
+At most eight findings are returned, each field clipped (path and expected 256
+characters, received 64), and `truncated: true` says something was omitted or
+clipped.
+
+`example` is one valid call synthesized from the published schema and checked
+against the same validator. It never copies a submitted value, and a sensitive
+position never renders a schema literal (`enum`, `const`, `default`,
+`examples`). Complex or unsatisfiable schemas get `exampleUnavailable` instead.
+Synthesis detects recursive references and shares a 128-node work budget.
+Invocation uses only this schema example, never a connector's copy of the
+call, unless the connector states `exampleUnavailable`. API hatches
+(`*_api_read`, `*_api_write`) always do: their generic schema says nothing
+about an operation's arguments, so the reason points to the operation's
+`*_api_details`.
+
+`acceptedKeys` names the tool's top-level arguments. `conditionalRequirements`
+lists known `dependentRequired` and `dependentSchemas` requirements by
+property name; `if`/`then`/`else` conditions are schema subtrees and are not
+rendered. The envelope has a 4 KiB budget:
+optional detail, then the example, then trailing findings are dropped whole,
+with `truncated: true`. A `repair` object a custom connector passes contributes
+its received types and schema facts. A custom connector's own findings must
+follow the same rule. Operator records contain only checked failure facts,
+never findings or examples.
 
 `nextAction` points to discovery scoped to the same connector and tool name when
 the compact schema is needed, routed like any other miss: a program to
 `connecta.search`, a top-level call to `search_tools`. `retry` says to correct
-the listed arguments and reissue the original operation. Which keyword a finding
-names, and what the local validator declines to evaluate, is
-[code mode](./code-mode.md#errors)'s `E8`.
+the listed arguments and reissue the original operation. What the local
+validator declines to evaluate is [code mode](./code-mode.md#errors)'s `E8`.
 
-`repair` adds agent-only detail from that tool's published schema: accepted
-keys, received JSON types, enum values, numeric/length/item bounds, and known
-conditional requirements such as `dependentRequired` and `if`/`then`/`else`.
-Its `example` is synthesized without submitted values and checked against the
-same validator. Complex or unsatisfiable schemas get `exampleUnavailable`
-rather than an invalid example. Synthesis detects recursive references and
-shares a 128-node work budget. Alternative branches do not emit dependency
-advice unless the branch condition is known. Repair detail has a 4 KiB budget; oversized
-detail is withheld whole with `truncated: true`. Operator records still contain
-only checked failure facts, never findings or examples.
+Earlier releases returned `validation.issues[].code` (the schema keyword)
+and a separate `repair` object. Both are gone from responses; a custom
+connector may still pass `code` and `repair` to `ConnectorCallError`, which
+folds `repair` into `validation`.
 
 Unknown-address errors list `configuredConnectors` from the current endpoint's
 scoped registry, including an empty list when none are accessible. They never

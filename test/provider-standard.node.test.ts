@@ -1,14 +1,23 @@
 // Node-only: reads provider folders and documentation/providers.md from disk.
 import { generatedProblems } from "../scripts/drift-validate.mjs";
 // Applies the current provider standard to every maintained provider folder.
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { memoryStorage } from "../src/storage/memory.js";
+import { ConnectorCallError } from "../src/errors.js";
 import type { VendorErrors } from "../src/http/errors.js";
-import type { ConnectorContext } from "../src/types.js";
-import { silentLogger } from "./helpers.js";
+import type { Connector, ConnectorContext, JsonSchema } from "../src/types.js";
+import { schemaExample, validateToolInput } from "../src/validate.js";
+import { api } from "../src/connectors/api.js";
+import { CredentialVault } from "../src/credentials.js";
+import { createExecuteTool } from "../src/execute.js";
+import { quickJsExecutor } from "../src/executors/quickjs.js";
+import { fieldsProblem } from "../src/http/fields.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { connection } from "./fixtures/github-api.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 import {
   authoredTools,
   driftViolations,
@@ -17,6 +26,7 @@ import {
   layoutViolations,
   surfaceViolations,
   type ProviderFacts,
+  type ToolFacts,
 } from "./provider-standard.js";
 import { authoredFixtures } from "./providers.generated.js";
 
@@ -159,6 +169,314 @@ describe("the provider standard (decision 0011)", () => {
     ])
       expect(() => googleBindings.check(options)).toThrow("googleHatchBinding");
   });
+});
+
+const BAD_FIELDS = ["zz_unknown_a", "zz_unknown_b"];
+
+/**
+ * A1: a tool's own argument checks report every problem in one refusal with a
+ * corrected call, so an agent repairs it in one turn. Probed offline through
+ * `fields`, the custom check every projecting read shares: two bad paths on an
+ * otherwise valid call must come back as one `invalid_args` naming both,
+ * before any request, with an example — the connector's own, or the call
+ * without the bad paths, which invocation supplies. Hatch reads resolve their
+ * path first, and a tool whose schema admits no synthesized call is not probed.
+ */
+async function argumentRefusalViolations(
+  connector: Pick<Connector, "callTool">,
+  tools: readonly ToolFacts[],
+  context: ConnectorContext,
+  requests: () => number,
+): Promise<string[]> {
+  const found: string[] = [];
+  for (const tool of tools) {
+    const schema = tool.inputSchema as JsonSchema | undefined;
+    if (!(schema?.properties as Record<string, unknown> | undefined)?.["fields"] || /_api_[a-z]+$/.test(tool.name))
+      continue;
+    const valid = validateToolInput(schema!, { zz_unknown: 1 }, { address: tool.name })?.validation?.example;
+    if (valid === null || typeof valid !== "object" || Array.isArray(valid)) continue;
+    const args = { ...valid, fields: BAD_FIELDS };
+    const before = requests();
+    const error = await connector.callTool(tool.name, args, context).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    const validation = error instanceof ConnectorCallError ? error.validation : undefined;
+    if (requests() !== before) found.push(`A1: ${tool.name} sent a request before refusing its arguments`);
+    if (!(error instanceof ConnectorCallError) || error.code !== "invalid_args" || !validation) {
+      found.push(`A1: ${tool.name} does not refuse bad fields with structured invalid_args findings`);
+      continue;
+    }
+    const paths = validation.issues.map((issue) => issue.path);
+    if (!["/fields/0", "/fields/1"].every((path) => paths.includes(path)))
+      found.push(`A1: ${tool.name} reports ${paths.join(", ") || "no path"}, not every bad fields path`);
+    // Invocation attaches the schema's synthesized example when a connector states neither one nor a reason.
+    const example =
+      validation.example ?? (validation.exampleUnavailable === undefined ? schemaExample(schema!).example : undefined);
+    if (example === undefined) found.push(`A1: ${tool.name} gives no corrected example call`);
+    // No refusal repeats a submitted string, here the refused paths themselves.
+    if (BAD_FIELDS.some((field) => JSON.stringify([error.message, validation]).includes(field)))
+      found.push(`A1: ${tool.name}'s refusal repeats a refused fields path`);
+  }
+  return found;
+}
+
+describe("argument refusals (A1)", () => {
+  it("holds every provider's own argument checks to one complete refusal with an example", async () => {
+    const fetchStub = vi.fn(async () => {
+      throw new Error("A1 probes send nothing.");
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const found: string[] = [];
+      for (const { facts, tools } of folders) {
+        const create = authoredFixtures[facts.name];
+        if (!create || !tools) continue;
+        const connector = create() as unknown as Parameters<typeof argumentRefusalViolations>[0];
+        const findings = await argumentRefusalViolations(connector, tools, CONTEXT, () => fetchStub.mock.calls.length);
+        found.push(...findings.map((finding) => `${facts.name} ${finding}`));
+      }
+      expect(found).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("flags a check that refuses one problem per call without an example", async () => {
+    const tool = {
+      name: "get_note",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" }, fields: { type: "array", items: { type: "string" } } },
+        required: ["id"],
+      },
+    };
+    let sent = 0;
+    const firstOnly = {
+      callTool: async (_name: string, args: { fields?: string[] }) => {
+        const bad = args.fields?.findIndex((field) => !["id", "title"].includes(field)) ?? -1;
+        throw new ConnectorCallError("invalid_args", "Bad fields path.", {
+          validation: { issues: [{ path: `/fields/${bad}`, expected: "id or title" }] },
+        });
+      },
+    };
+    expect(await argumentRefusalViolations(firstOnly as never, [tool], CONTEXT, () => sent)).toEqual([
+      "A1: get_note reports /fields/0, not every bad fields path",
+    ]);
+    const prose = {
+      callTool: async () => {
+        sent++;
+        throw new ConnectorCallError("invalid_args", "fields path zz_unknown_a is not a property.");
+      },
+    };
+    expect(await argumentRefusalViolations(prose as never, [tool], CONTEXT, () => sent)).toEqual([
+      "A1: get_note sent a request before refusing its arguments",
+      "A1: get_note does not refuse bad fields with structured invalid_args findings",
+    ]);
+    const echo = {
+      callTool: async (_name: string, args: { fields?: string[] }) => {
+        throw new ConnectorCallError("invalid_args", `Unknown fields ${args.fields?.join(", ")}.`, {
+          validation: {
+            issues: [0, 1].map((index) => ({ path: `/fields/${index}`, expected: "id or title" })),
+            example: { id: "x" },
+          },
+        });
+      },
+    };
+    expect(await argumentRefusalViolations(echo as never, [tool], CONTEXT, () => sent)).toEqual([
+      "A1: get_note's refusal repeats a refused fields path",
+    ]);
+  });
+});
+
+const SENTINEL = "zq-sentinel-7f3a";
+
+/** Put the sentinel everywhere a schema lets a call carry text: values, keys, map keys and array items. */
+function sentinelCall(schema: JsonSchema | undefined, base: unknown): Record<string, unknown> {
+  const fill = (value: unknown): unknown =>
+    typeof value === "string"
+      ? SENTINEL
+      : Array.isArray(value)
+        ? [...value.map(fill), SENTINEL]
+        : value !== null && typeof value === "object"
+          ? {
+              ...Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fill(item)])),
+              [SENTINEL]: SENTINEL,
+            }
+          : value;
+  const call = fill(base !== null && typeof base === "object" && !Array.isArray(base) ? base : {}) as Record<
+    string,
+    unknown
+  >;
+  for (const [key, node] of Object.entries((schema?.properties ?? {}) as Record<string, { type?: unknown }>)) {
+    if (node?.type === "object" && call[key] === undefined) call[key] = { [SENTINEL]: SENTINEL };
+    if (node?.type === "array" && call[key] === undefined) call[key] = [SENTINEL];
+    if (node?.type === "string" && call[key] === undefined) call[key] = SENTINEL;
+  }
+  return call;
+}
+
+describe("refusal echo sweep (A2)", () => {
+  it("INV-5 INV-6: sentinel sweep: no argument refusal echoes a submitted string or key", async () => {
+    const fetchStub = vi.fn(async () => {
+      throw new Error("The sweep sends nothing.");
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+    const counts = { providers: 0, tools: 0, direct: 0, programs: 0, refusals: 0 };
+    const leaks: string[] = [];
+    const sweep = async (connectors: Connector[], calls: Array<{ address: string; args: unknown; write: boolean }>) => {
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+      for (const connector of connectors)
+        await vault.setAll(connector.id, { value: "token", email: "operator@example.com" }, "fixture");
+      const registry = makeRegistry(connectors, { storage, credentialVault: vault });
+      const meta = createMetaTools(registry, "https://connecta.example");
+      const program = createExecuteTool(registry, "https://connecta.example", executor, silentLogger, undefined, {
+        readOnly: false,
+      });
+      for (const [index, { address, args, write }] of calls.entries()) {
+        const direct = write
+          ? await meta.callDestructiveTool({ address, args: args as Record<string, unknown> })
+          : await meta.callTool({ address, args: args as Record<string, unknown> });
+        counts.direct++;
+        if (JSON.stringify(direct).includes('"invalid_args"')) counts.refusals++;
+        if (JSON.stringify(direct).includes(SENTINEL)) leaks.push(`${address} direct: ${JSON.stringify(direct)}`);
+        // One program per connector and variant keeps the QuickJS cost bounded.
+        if (index % 3 !== 0) continue;
+        const ran = await program({
+          code: `async () => await connecta.call(${JSON.stringify(address)}, ${JSON.stringify(args)})`,
+        });
+        counts.programs++;
+        if (JSON.stringify(ran).includes(SENTINEL)) leaks.push(`${address} program: ${JSON.stringify(ran)}`);
+      }
+    };
+    try {
+      for (const { facts, tools } of folders) {
+        const create = authoredFixtures[facts.name];
+        if (!create || !tools) continue;
+        const connector = create() as unknown as Connector;
+        counts.providers++;
+        const calls = tools.flatMap((tool) => {
+          counts.tools++;
+          const schema = tool.inputSchema as JsonSchema | undefined;
+          const base = schema
+            ? validateToolInput(schema, { zz_unknown: 1 }, { address: tool.name })?.validation?.example
+            : {};
+          const write = tool.annotations?.readOnlyHint !== true;
+          const address = `${connector.id}.${tool.name}`;
+          return [
+            // Schema violations: the sentinel as every value, an unknown key, a map key and an array item.
+            { address, args: sentinelCall(schema, base), write },
+            // Custom checks on an otherwise valid call.
+            ...((schema?.properties as Record<string, unknown> | undefined)?.["fields"]
+              ? [{ address, args: { ...(base as object), fields: [SENTINEL, `item.${SENTINEL}`] }, write }]
+              : []),
+          ];
+        });
+        await sweep([connector], calls);
+      }
+      // Generic validator fixtures and the reviewer's round-2 reproductions.
+      const fixture = api("fixture_generic", {
+        tools: [
+          {
+            name: "read_map",
+            description: "Map keys and a custom fields check",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              type: "object",
+              properties: {
+                headers: { type: "object", additionalProperties: { type: "string" } },
+                fields: { type: "array", items: { type: "string" } },
+              },
+            },
+            handler: (args: { fields?: string[] }) => {
+              const problem = fieldsProblem(args.fields, new Set(["id", "title"]), "the result");
+              if (problem) throw problem;
+              return { id: "1" };
+            },
+          },
+          {
+            name: "sign_in",
+            description: "Sensitive literals",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              type: "object",
+              properties: {
+                password: { type: "string", writeOnly: true, enum: [`credential-${SENTINEL}`] },
+                token: { writeOnly: true, const: `const-${SENTINEL}` },
+                vault: {
+                  type: "object",
+                  writeOnly: true,
+                  properties: { pin: { type: "string", enum: [`inherited-${SENTINEL}`] } },
+                  required: ["pin"],
+                },
+              },
+              required: ["password"],
+            },
+            handler: () => ({ ok: true }),
+          },
+        ],
+      });
+      await sweep(
+        [fixture, connection()],
+        [
+          {
+            address: "fixture_generic.read_map",
+            args: { headers: { [`X-Secret-${SENTINEL}`]: "value" }, fields: ["bad"] },
+            write: false,
+          },
+          {
+            address: "fixture_generic.read_map",
+            args: { headers: { [`X-Secret-${SENTINEL}`]: 1 }, fields: [SENTINEL] },
+            write: false,
+          },
+          { address: "fixture_generic.sign_in", args: { password: "wrong" }, write: false },
+          {
+            address: "fixture_generic.sign_in",
+            args: { password: "wrong", token: "x", vault: { pin: "y" } },
+            write: false,
+          },
+          { address: "fixture_generic.sign_in", args: {}, write: false },
+          {
+            address: "github.search_scoped",
+            args: {
+              terms: "bug",
+              kind: "issues",
+              scopes: [{ org: `org-${SENTINEL}`, repo: `repo-${SENTINEL}` }],
+              fields: [`secret-field-${SENTINEL}`],
+            },
+            write: false,
+          },
+          {
+            address: "github.search_scoped",
+            args: { terms: `${SENTINEL} OR x`, kind: "issues", scopes: [{ repo: `${SENTINEL}/x` }] },
+            write: false,
+          },
+          {
+            address: "github.github_api_write",
+            args: {
+              method: "POST",
+              path: "/repos/acme/one/releases",
+              query: { [SENTINEL]: SENTINEL },
+              body: { name: SENTINEL, [SENTINEL]: 1 },
+            },
+            write: true,
+          },
+        ],
+      );
+    } finally {
+      await executor.close?.();
+      vi.unstubAllGlobals();
+    }
+    if (process.env["A2_LEAKS"]) writeFileSync(process.env["A2_LEAKS"], leaks.join("\n"));
+    expect(leaks).toEqual([]);
+    // Coverage: every maintained provider, every authored tool, and refusals actually produced.
+    expect(counts.providers).toBe(folders.length);
+    expect(counts.refusals).toBeGreaterThan(counts.tools / 2);
+    expect(counts.programs).toBeGreaterThan(counts.providers);
+    console.info(`A2 sentinel sweep coverage: ${JSON.stringify(counts)}`);
+  }, 180_000);
 });
 
 const DIGEST = `sha256:${"0".repeat(64)}`;

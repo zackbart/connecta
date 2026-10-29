@@ -16,6 +16,7 @@ import {
 } from "../../../test/fixtures/github-api.js";
 import { deferred, spyLogger, waitFor } from "../../../test/fixtures/misc.js";
 import { activitySink, invokeTestCall, makeRegistry } from "../../../test/helpers.js";
+import { createMetaTools } from "../../meta-tools.js";
 import { ConnectorCallError } from "../../errors.js";
 import { AppAuth } from "./lib/auth.js";
 import { githubConnection } from "./api.js";
@@ -97,6 +98,77 @@ describe("GitHub App provider", () => {
       expect(fixture.fetchStub).not.toHaveBeenCalled();
     },
   );
+
+  it("INV-4: one search refusal carries every fix the three serial refusals did, with a corrected call", async () => {
+    const fixture = apiFixture();
+    // A live trace needed three calls: the fields path, then the terms, then the selector.
+    const error = await connection()
+      .callTool(
+        "search_scoped",
+        {
+          terms: "bug is:open OR crash",
+          kind: "issues",
+          scopes: [{ org: "other", repo: "one" }],
+          fields: ["number", "repository"],
+        },
+        context(),
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConnectorCallError);
+    expect(fixture.fetchStub).not.toHaveBeenCalled();
+    const { message, validation } = error as ConnectorCallError;
+    expect(validation?.issues).toEqual([
+      { path: "/fields/0", expected: expect.stringMatching(/vendor fields are under item.*scope, repository, item/) },
+      { path: "/terms", expected: expect.stringContaining("without qualifiers") },
+      {
+        path: "/scopes/0",
+        expected: 'exactly one key: {"org": "<org>"} for an org-wide grant or {"repo": "<owner>/<repo>"}',
+        received: "both org and repo",
+      },
+    ]);
+    for (const path of ["/fields/0", "/terms", "/scopes/0"]) expect(message).toContain(path);
+    // The example is the schema's own valid call; nothing the caller sent comes back.
+    expect(validation?.example).toEqual({ terms: "x", kind: "repositories" });
+    expect(JSON.stringify([message, validation])).not.toMatch(/bug|crash|other|"one"|number/);
+  });
+
+  it("INV-4 INV-5: a search refusal never repeats a submitted selector or fields entry", async () => {
+    const fixture = apiFixture();
+    // Reviewer reproductions (round 2, finding 2).
+    for (const args of [
+      { terms: "bug", kind: "issues", scopes: [{ org: "org-SENTINEL", repo: "repo-SENTINEL" }] },
+      { terms: "bug", kind: "issues", scopes: [{ repo: "outside-SENTINEL/x-SENTINEL" }, {}] },
+      { terms: "bug", kind: "issues", scopes: [{ org: "org-SENTINEL" }] },
+      { terms: "bug", kind: "issues", fields: ["secret-field-SENTINEL"] },
+      { terms: "terms-SENTINEL OR x", kind: "issues" },
+    ]) {
+      const refusal = (await connection()
+        .callTool("search_scoped", args, context())
+        .catch((caught: unknown) => caught)) as ConnectorCallError;
+      expect(refusal.code).toBe("invalid_args");
+      expect(JSON.stringify([refusal.message, refusal.validation])).not.toContain("SENTINEL");
+    }
+    const owner = (await connection()
+      .callTool("list_scopes", { owner: "owner-SENTINEL", fields: ["field-SENTINEL"] }, context())
+      .catch((caught: unknown) => caught)) as ConnectorCallError;
+    expect(owner.validation?.issues.map((issue) => issue.path)).toEqual(["/fields/0", "/owner"]);
+    expect(JSON.stringify([owner.message, owner.validation])).not.toContain("SENTINEL");
+    expect(fixture.fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("INV-4: a hatch refusal never offers the same invalid call as its example", async () => {
+    const fixture = apiFixture();
+    const meta = createMetaTools(makeRegistry([connection()]), "https://connecta.example");
+    const refused = await meta.callDestructiveTool({
+      address: "github.github_api_write",
+      args: { method: "POST", path: "/repos/acme/one/releases", body: { name: "release" } },
+    });
+    const error = (refused.structuredContent as any).error;
+    expect(error).toMatchObject({ code: "invalid_args", validation: { issues: [{ path: "/body/tag_name" }] } });
+    expect(error.validation).not.toHaveProperty("example");
+    expect(error.validation.exampleUnavailable).toContain("github_api_details");
+    expect(fixture.requests.filter((request) => request.url.pathname.endsWith("/releases"))).toHaveLength(0);
+  });
 
   it("INV-4: validates all search selectors and cursor partitions before minting", async () => {
     const fixture = apiFixture();

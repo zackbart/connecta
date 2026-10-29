@@ -669,13 +669,14 @@ past the deployment's result cap. A clipped address still identifies the mistake
 by its position; a short one is exact and untagged.
 
 **E8.** A remote MCP tool whose advertised schema rejects the call fails before
-provider dispatch with `invalid_args`, carrying bounded, value-free
-`{ path, code, expected }` findings and the same scoped
-`function: "connecta.search"` recovery every other in-program miss gets. A
-declared property reports the schema keyword that failed, never the validator's
-duplicate `additionalProperties` branch; a truly undeclared property still
-reports `additionalProperties`. Unsupported schemas pass through; unrecognized
-provider prose remains `connector_call_failed`.
+provider dispatch with `invalid_args`, carrying every bounded
+`{ path, expected, received? }` finding, one corrected `example` when it can be
+built, and the same scoped `function: "connecta.search"` recovery every other
+in-program miss gets ([argument recovery](./meta-tools.md#argument-recovery)).
+A declared property reports the constraint that failed, never the validator's
+duplicate `additionalProperties` branch; a truly undeclared property reports
+the accepted keys. Unsupported schemas pass through; unrecognized provider
+prose remains `connector_call_failed`.
 
 ## Results and projection
 

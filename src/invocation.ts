@@ -32,7 +32,7 @@ import {
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
-import { validateCatalogToolInput } from "./validate.js";
+import { schemaExample, validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { recoveryRecord, recordRecoveryFacts } from "./call-recovery.js";
 import { callFromContext, contextView, viewServices, Credentials } from "./runtime/call.js";
@@ -318,6 +318,8 @@ export class InvocationFailure extends Error {
 }
 keepErrorName(InvocationFailure, "InvocationFailure");
 
+const withoutExample = ({ example: _example, ...stated }: NonNullable<CallErrorDetails["validation"]>) => stated;
+
 /**
  * Shared downstream invocation engine. Address/catalog resolution is delegated
  * to the request-local CatalogService; every remaining call semantic lives
@@ -591,6 +593,14 @@ export class InvocationService {
             if (!error.validation || error.writeOutcome === "unknown") return error;
             return {
               ...error,
+              // An example comes only from the published schema, never a connector's copy of the
+              // call, unless the connector states why there is none.
+              validation: {
+                ...withoutExample(error.validation),
+                ...(error.validation.exampleUnavailable === undefined && resolved?.definition.inputSchema
+                  ? schemaExample(resolved.definition.inputSchema)
+                  : {}),
+              },
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
               nextAction: this.catalog.searchRecovery(

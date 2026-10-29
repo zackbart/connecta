@@ -147,7 +147,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       code: "invalid_args" as const,
       message: "host validation",
       retryable: false,
-      validation: { issues: [{ path: "/value", code: "required" as const, expected: "string" }] },
+      validation: { issues: [{ path: "/value", expected: "string (required)", received: "missing" }] },
     };
     let previousId: string | undefined;
     let mode: "known" | "unknown" | "previous" = "known";

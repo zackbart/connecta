@@ -295,6 +295,22 @@ links, plus marker containment in paths and queries.
 - **S6 privacy:** no `raw` or any argument that widens what value safety or
   the privacy projection drops. A sensitive set is controlled only by the
   deployment's `sensitiveFields: "drop" | "return"` option.
+- **A1 argument refusals:** a tool's own argument checks (those its input
+  Schema cannot express) report every problem in one `invalid_args`. Declare
+  them in the tool's `check(args, problems)`, never as throws inside `run`:
+  record each problem with `problems.add(path, expected, received?)`, stating
+  the actual bound, allowed values or selector shape in `expected`. A refusal
+  holds only schema-declared names, fixed text and JSON types: never a
+  submitted string or key, so a path names declared properties and indices
+  (`<key>` for any other key) and a rejected selector or `fields` entry is
+  described by its shape. The kit attaches the schema's synthesized example; a
+  tool whose schema cannot describe its arguments, such as a hatch, passes a
+  withheld reason instead. `fieldsIssues` records every bad `fields` path. The
+  standard probes every tool taking `fields` with two bad paths and requires
+  both findings, no request, an example and no echoed entry; its sentinel
+  sweep (A2) sends a unique string as every value, key, map key, array item
+  and `fields` entry of every authored tool through `call_tool`,
+  `call_destructive_tool` and `execute_code` and requires it never returns.
 
 Names stay snake_case `verb_object`, with the safety class as the verb (H2),
 and H1–H14 otherwise apply. Recover omitted data through a wider projection or

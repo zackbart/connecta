@@ -206,7 +206,7 @@ function parameters(values: Readonly<Record<string, unknown>>): Parameters {
         typeof item !== "boolean" &&
         !(typeof item === "number" && Number.isFinite(item))
       ) {
-        invalid(`Parameter ${name} takes a string, finite number, boolean, or a list of them.`);
+        invalid("Each query parameter takes a string, finite number, boolean, or a list of them.");
       }
       return [name, String(item)];
     });
@@ -1372,7 +1372,12 @@ export function hatch(
         if (args.fields?.length) {
           const roots = index.responseRoots(op);
           if (!roots) invalid(`${method} ${op.path} declares no response properties, so fields cannot narrow it.`);
-          const problem = fieldsProblem(args.fields, roots, "data");
+          const problem = fieldsProblem(
+            args.fields,
+            roots,
+            "data",
+            `Examples are withheld for API operations; read ${tool("details")} for the contract.`,
+          );
           if (problem) {
             if (options.fieldsRoot && roots.has(options.fieldsRoot))
               invalid(

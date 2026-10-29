@@ -672,8 +672,13 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     { kind: "read", args: { path: "/missing" }, message: "Nearest:" },
     { kind: "read", args: { path: "/items/../touch" }, message: "dot segment" },
     { kind: "read", args: { path: "/items?limit=1" }, message: "query" },
-    { kind: "read", args: { path: "/items", query: { limt: 2 } }, message: "limt" },
-    { kind: "read", args: { path: "/items", query: { link: { nested: true } } }, message: "link" },
+    // A misspelled key is caller text: the refusal names its position and the declared name it suggests.
+    { kind: "read", args: { path: "/items", query: { limt: 2 } }, message: "/query/<key>: expected limit?" },
+    {
+      kind: "read",
+      args: { path: "/items", query: { link: { nested: true } } },
+      message: "/query/link: expected string",
+    },
     { kind: "read", args: { path: "/items", body: {} }, message: "takes query" },
     { kind: "write", args: { method: "POST", path: "/items", body: {} }, message: "name" },
     // A write never leaves with a projection its declared response cannot satisfy.
@@ -686,7 +691,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     { kind: "write", args: { method: "POST", path: "/upload", body: {} }, message: "multipart" },
     { kind: "read", args: { path: "/elsewhere" }, message: "different server" },
     { kind: "read", args: { method: "HEAD", path: "/items/i1" }, data: null },
-    { kind: "read", args: { path: "/items", raw: true }, message: "raw" },
+    { kind: "read", args: { path: "/items", raw: true }, message: "/<key>: expected one of the accepted keys" },
     {
       kind: "write",
       args: { method: "POST", path: "/items", body: { name: "alice", link: withheld } },

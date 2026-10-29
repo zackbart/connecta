@@ -339,7 +339,7 @@ describe("native tool surface", () => {
       expect(invalid.result.isError).toBe(true);
       expect(envelope(invalid.result).error).toMatchObject({
         code: "invalid_args",
-        validation: { issues: [{ path: "/id", code: "required" }] },
+        validation: { issues: [{ path: "/id", received: "missing" }] },
       });
       for (const modern of [true, false]) {
         for (const name of ["crm__nope", "crm__wrong__get_person", "crm__export_all", "crm__export.all"]) {

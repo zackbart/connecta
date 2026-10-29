@@ -486,7 +486,7 @@ class CloudflareIndex extends OperationIndex {
           "invalid_args",
           `Not sent: Cloudflare path parameter ${name} must be at least 1. Read cloudflare_api_details for the pinned contract.`,
           {
-            validation: { issues: [{ path: `/path/${name}`, code: "minimum", expected: "at least 1" }] },
+            validation: { issues: [{ path: `/path/${name}`, expected: "at least 1" }] },
           },
         );
       }

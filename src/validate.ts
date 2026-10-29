@@ -1,6 +1,7 @@
 import { Validator } from "@cfworker/json-schema";
-import { boundedEchoText, ConnectorCallError } from "./errors.js";
-import type { ArgumentRepairDetails, ArgumentValidationDetails, ArgumentValidationIssue } from "./errors.js";
+import { redactCallArguments } from "./argument-redaction.js";
+import { boundedEchoText, boundText, ConnectorCallError, issueSummary, listed } from "./errors.js";
+import type { ArgumentConditionalRequirement, ArgumentValidationDetails, ArgumentValidationIssue } from "./errors.js";
 import { MAX_ARGUMENT_VALIDATION_ISSUES } from "./errors.js";
 import { failureRecord, logFailure, type FailureSubject } from "./operator-record.js";
 import type { JsonSchema, Logger } from "./types.js";
@@ -42,6 +43,7 @@ export interface CompileValidatorOptions {
 const validators = new WeakMap<JsonSchema, Validator | null>();
 const evaluationWarnings = new WeakSet<JsonSchema>();
 const REQUIRED_PROPERTY_RE = /^Instance does not have required property "([^"]+)"\.$/;
+const DEPENDENT_PROPERTY_RE = /^Instance has "([^"]+)" but does not have "([^"]+)"\.$/;
 
 function plainContainer(value: unknown): value is object {
   if (value === null || typeof value !== "object") return false;
@@ -95,6 +97,8 @@ interface ValidationUnit {
   keywordLocation: string;
   instanceLocation: string;
   error: string;
+  /** For a false subschema an additionalProperties wrapper applied: the closed object's schema location. */
+  closedBy?: string;
 }
 
 const CONTAINER_VALIDATION_KEYWORDS = new Set([
@@ -126,11 +130,6 @@ function pointerValue(value: unknown, pointer: string): unknown {
     current = (current as Record<string, unknown>)[part];
   }
   return current;
-}
-
-function argumentPath(location: string): string {
-  if (location === "#") return "/";
-  return location.startsWith("#") ? location.slice(1) || "/" : "/";
 }
 
 function validationUnitKey(unit: ValidationUnit): string {
@@ -191,15 +190,22 @@ function isDuplicateAdditionalPropertiesBranch(schema: JsonSchema, units: Valida
 
 function normalizedValidationUnits(schema: JsonSchema, units: ValidationUnit[]): ValidationUnit[] {
   const seen = new Set<string>();
-  return units.filter((unit, index) => {
-    if (CONTAINER_VALIDATION_KEYWORDS.has(unit.keyword)) return false;
+  return units.flatMap((unit, index) => {
+    if (CONTAINER_VALIDATION_KEYWORDS.has(unit.keyword)) return [];
     if (isDuplicateAdditionalPropertiesBranch(schema, units, index)) {
-      return false;
+      return [];
     }
     const key = validationUnitKey(unit);
-    if (seen.has(key)) return false;
+    if (seen.has(key)) return [];
     seen.add(key);
-    return true;
+    // The validator locates a false subschema by instance; its wrapper names the object.
+    const wrapper = units[index - 1];
+    return unit.keyword === "false" &&
+      wrapper?.keyword === "additionalProperties" &&
+      wrapper.keywordLocation.endsWith("/additionalProperties") &&
+      childPropertyName(wrapper.instanceLocation, unit.instanceLocation) !== undefined
+      ? [{ ...unit, closedBy: wrapper.keywordLocation.slice(0, -"/additionalProperties".length) || "#" }]
+      : [unit];
   });
 }
 
@@ -215,59 +221,6 @@ function declaredType(value: unknown): string | undefined {
     : undefined;
 }
 
-function expectedType(schema: JsonSchema, unit: ValidationUnit): string | undefined {
-  if (unit.keyword === "type") {
-    return declaredType(pointerValue(schema, unit.keywordLocation));
-  }
-  if (unit.keyword === "required") {
-    const missing = REQUIRED_PROPERTY_RE.exec(unit.error)?.[1];
-    if (!missing) return undefined;
-    const parentLocation = unit.keywordLocation.replace(/\/required$/, "");
-    return (
-      declaredType(pointerValue(schema, `${parentLocation}/properties/${encodePointerPart(missing)}/type`)) ?? "present"
-    );
-  }
-  const fixed: Record<string, string> = {
-    additionalProperties: "no additional properties",
-    enum: "one of the declared values",
-    const: "the declared constant",
-    minLength: "the declared minimum length",
-    maxLength: "the declared maximum length",
-    minimum: "the declared minimum",
-    maximum: "the declared maximum",
-    pattern: "the declared string pattern",
-  };
-  return fixed[unit.keyword];
-}
-
-function validationDetails(schema: JsonSchema, units: ValidationUnit[]): ArgumentValidationDetails {
-  const issues: ArgumentValidationIssue[] = [];
-  for (const unit of units) {
-    const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : undefined;
-    const path =
-      missing !== undefined
-        ? `${argumentPath(unit.instanceLocation).replace(/\/$/, "")}/${encodePointerPart(missing)}`
-        : argumentPath(unit.instanceLocation);
-    const code = unit.keyword === "false" ? "additionalProperties" : unit.keyword;
-    const expected =
-      expectedType(schema, unit) ??
-      (code === "additionalProperties" ? "no additional properties" : "the declared schema constraint");
-    const issue = { path, code, expected };
-    if (
-      !issues.some(
-        (existing) =>
-          existing.path === issue.path && existing.code === issue.code && existing.expected === issue.expected,
-      )
-    ) {
-      issues.push(issue);
-    }
-  }
-  return {
-    issues: issues.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES),
-    ...(issues.length > MAX_ARGUMENT_VALIDATION_ISSUES ? { truncated: true as const } : {}),
-  };
-}
-
 function schemaObject(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -276,48 +229,39 @@ function receivedType(value: unknown): string {
   return value === undefined ? "missing" : value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
 }
 
-const BOUND_KEYWORDS = [
-  "minimum",
-  "maximum",
-  "exclusiveMinimum",
-  "exclusiveMaximum",
-  "multipleOf",
-  "minLength",
-  "maxLength",
-  "minItems",
-  "maxItems",
-  "minProperties",
-  "maxProperties",
-] as const;
-
-/** No caller values are used to invent an example. A candidate must validate. */
+/**
+ * No caller values are used to invent an example, and a writeOnly position or
+ * anything inside one never renders a schema literal. A candidate must validate.
+ */
 function exampleCandidate(
   schema: unknown,
   root: JsonSchema,
   depth = 0,
   budget = { remaining: 128, active: new Set<object>() },
+  secret = false,
 ): unknown {
   if (--budget.remaining < 0) throw new Error("Example synthesis budget exhausted");
   if (depth > 12 || schema === false) return undefined;
   const node = schemaObject(schema);
   if (budget.active.has(node)) throw new Error("Recursive schema cannot produce a bounded example");
   budget.active.add(node);
+  secret ||= node.writeOnly === true;
   try {
     if (typeof node.$ref === "string") {
-      return exampleCandidate(pointerValue(root, node.$ref), root, depth + 1, budget);
+      return exampleCandidate(pointerValue(root, node.$ref), root, depth + 1, budget, secret);
     }
-    if (Object.hasOwn(node, "const")) return node.const;
-    if (Array.isArray(node.enum)) return node.enum[0];
+    if (!secret && Object.hasOwn(node, "const")) return node.const;
+    if (!secret && Array.isArray(node.enum)) return node.enum[0];
     const type = Array.isArray(node.type) ? node.type[0] : node.type;
     const variants = Array.isArray(node.oneOf) ? node.oneOf : node.anyOf;
     if (Array.isArray(variants) && variants.length) {
       return mergeExample(
-        exampleCandidate({ ...node, oneOf: undefined, anyOf: undefined }, root, depth + 1, budget),
-        exampleCandidate(variants[0], root, depth + 1, budget),
+        exampleCandidate({ ...node, oneOf: undefined, anyOf: undefined }, root, depth + 1, budget, secret),
+        exampleCandidate(variants[0], root, depth + 1, budget, secret),
       );
     }
-    if (Array.isArray(node.examples) && node.examples.length) return node.examples[0];
-    if (Object.hasOwn(node, "default")) return node.default;
+    if (!secret && Array.isArray(node.examples) && node.examples.length) return node.examples[0];
+    if (!secret && Object.hasOwn(node, "default")) return node.default;
     let candidate: unknown;
     if (type === "object" || node.properties || node.required || node.allOf) {
       const properties = schemaObject(node.properties);
@@ -326,11 +270,11 @@ function exampleCandidate(
         required
           .filter((key): key is string => typeof key === "string")
           .slice(0, 30)
-          .map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget)]),
+          .map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget, secret)]),
       );
       if (Array.isArray(node.allOf)) {
         for (const branch of node.allOf.slice(0, 20)) {
-          candidate = mergeExample(candidate, exampleCandidate(branch, root, depth + 1, budget));
+          candidate = mergeExample(candidate, exampleCandidate(branch, root, depth + 1, budget, secret));
         }
       }
       const object = schemaObject(candidate);
@@ -340,7 +284,7 @@ function exampleCandidate(
           for (const need of needs.slice(0, 30)) {
             if (typeof need === "string" && !Object.hasOwn(object, need)) {
               Object.defineProperty(object, need, {
-                value: exampleCandidate(properties[need], root, depth + 1, budget),
+                value: exampleCandidate(properties[need], root, depth + 1, budget, secret),
                 enumerable: true,
                 configurable: true,
                 writable: true,
@@ -354,7 +298,7 @@ function exampleCandidate(
           const matches = new Validator(node.if as never, "2020-12", false).validate(candidate).valid;
           candidate = mergeExample(
             candidate,
-            exampleCandidate(matches ? node.then : node.else, root, depth + 1, budget),
+            exampleCandidate(matches ? node.then : node.else, root, depth + 1, budget, secret),
           );
         } catch {
           // An unevaluable branch cannot establish a valid example.
@@ -363,7 +307,7 @@ function exampleCandidate(
       // Branches may declare required keys while their types live on the parent.
       for (const key of Object.keys(schemaObject(candidate))) {
         if (schemaObject(candidate)[key] === undefined) {
-          schemaObject(candidate)[key] = exampleCandidate(properties[key], root, depth + 1, budget);
+          schemaObject(candidate)[key] = exampleCandidate(properties[key], root, depth + 1, budget, secret);
         }
       }
     } else if (type === "array") {
@@ -374,6 +318,7 @@ function exampleCandidate(
           root,
           depth + 1,
           budget,
+          secret,
         ),
       );
     } else if (type === "number" || type === "integer") {
@@ -456,96 +401,203 @@ function minimizeExample(example: unknown, validator: Validator): void {
   visit(example, 0);
 }
 
-function repairDetails(
-  schema: JsonSchema,
-  args: unknown,
-  units: ValidationUnit[],
-  validator: Validator,
-): ArgumentRepairDetails {
-  const root = schemaObject(schema);
-  const keys = (node: Record<string, unknown>) =>
-    Object.entries(schemaObject(node.properties))
-      .filter(([, value]) => value !== false)
+/** The JSON Pointer of the argument a unit names; a missing property gets its own path. */
+function unitLocation(unit: ValidationUnit): { location: string; missing?: string; with?: string } {
+  const dependent = DEPENDENT_PROPERTY_RE.exec(unit.error);
+  const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : dependent?.[2];
+  return missing === undefined
+    ? { location: unit.instanceLocation }
+    : {
+        location: `${unit.instanceLocation}/${encodePointerPart(missing)}`,
+        missing,
+        ...(dependent ? { with: dependent[1] } : {}),
+      };
+}
+
+/** A schema node with its local references followed. */
+function resolved(root: JsonSchema, value: unknown): Record<string, unknown> {
+  let node = schemaObject(value);
+  for (let hops = 0; typeof node.$ref === "string" && hops < 8; hops++)
+    node = schemaObject(pointerValue(root, node.$ref));
+  return node;
+}
+
+/**
+ * Where a finding may point, and whether that position is sensitive. A path
+ * names only properties the schema declares and array indices; the first
+ * other key reads `<key>` and ends it, since a map key is caller text. A
+ * position is sensitive when it or any ancestor is writeOnly.
+ */
+function publicPosition(root: JsonSchema, location: string): { path: string; sensitive: boolean } {
+  let node = resolved(root, root);
+  let path = "";
+  let sensitive = node.writeOnly === true;
+  for (const part of location === "#" ? [] : location.slice(2).split("/").map(decodePointerPart)) {
+    const branches = [
+      node,
+      ...["allOf", "anyOf", "oneOf"].flatMap((key) => (Array.isArray(node[key]) ? node[key] : [])),
+    ].map((branch) => resolved(root, branch));
+    const owner = branches.find((branch) => Object.hasOwn(schemaObject(branch.properties), part));
+    const list = branches.find((branch) => branch.items !== undefined || Array.isArray(branch.prefixItems));
+    if (owner) node = resolved(root, schemaObject(owner.properties)[part]);
+    else if (list && /^(?:0|[1-9]\d*)$/.test(part))
+      node = resolved(
+        root,
+        Array.isArray(list.prefixItems) ? (list.prefixItems[Number(part)] ?? list.items) : list.items,
+      );
+    else {
+      const values = branches.find((branch) => branch.additionalProperties !== undefined);
+      return {
+        path: `${path}/<key>`,
+        sensitive: sensitive || resolved(root, values?.additionalProperties).writeOnly === true,
+      };
+    }
+    sensitive ||= node.writeOnly === true;
+    path += `/${owner ? encodePointerPart(part) : part}`;
+  }
+  return { path: path || "/", sensitive };
+}
+
+const patternText = (pattern: unknown, sensitive: boolean) =>
+  `matching ${!sensitive && typeof pattern === "string" && pattern.length <= 64 ? pattern : "the inputSchema pattern"}`;
+
+/** Every other constraint a schema node declares, so one finding states them all; no literal of a sensitive one. */
+function constraints(node: Record<string, unknown>, failed: string, sensitive: boolean): unknown[] {
+  return Object.keys(node).flatMap((key) =>
+    key === failed
+      ? []
+      : key === "enum" && Array.isArray(node.enum) && !sensitive
+        ? `one of ${listed(node.enum.map((item) => JSON.stringify(item)))}`
+        : key === "uniqueItems" && node.uniqueItems === true
+          ? "unique items"
+          : key === "pattern"
+            ? patternText(node.pattern, sensitive)
+            : key === "format"
+              ? `${String(node.format)} format`
+              : (boundText(key, node[key]) ?? []),
+  );
+}
+
+/**
+ * One finding per unit, told from the reviewed schema, never the validator's
+ * own sentences or a submitted string or key. A bound violation states the
+ * bound and, unless the position is sensitive, the submitted number. A
+ * sensitive position never renders a schema literal (enum, const, pattern).
+ */
+function issueFor(schema: JsonSchema, args: unknown, safeArgs: unknown, unit: ValidationUnit): ArgumentValidationIssue {
+  const { location, missing, with: present } = unitLocation(unit);
+  const position = publicPosition(schema, location);
+  const keyword = pointerValue(schema, unit.keywordLocation);
+  const parent = unit.keywordLocation.replace(/\/[^/]+$/, "");
+  const node = schemaObject(
+    pointerValue(schema, missing === undefined ? parent : `${parent}/properties/${encodePointerPart(missing)}`),
+  );
+  const path = position.path;
+  // Unresolved sensitivity (no redacted copy) is treated as sensitive.
+  const sensitive = position.sensitive || node.writeOnly === true || safeArgs === undefined;
+  let received = receivedType(pointerValue(args, location));
+  let expected: string;
+  if (missing !== undefined) {
+    expected = `${declaredType(node.type) ?? "a value"} (required${present ? ` with ${present}` : ""})`;
+    received = "missing";
+  } else if (unit.keyword === "false") {
+    // A false subschema under additionalProperties names its object's accepted keys.
+    if (unit.closedBy === undefined) return { path, expected: "absent: the inputSchema forbids this value" };
+    const keys = Object.entries(schemaObject(schemaObject(pointerValue(schema, unit.closedBy)).properties))
+      .filter(([, child]) => child !== false)
       .map(([key]) => key);
-  const issues = units.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES).map((unit) => {
-    const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : undefined;
-    const location =
-      missing === undefined ? unit.instanceLocation : `${unit.instanceLocation}/${encodePointerPart(missing)}`;
-    const parentLocation = unit.keywordLocation.replace(/\/[^/]+$/, "");
-    const parent = schemaObject(pointerValue(schema, parentLocation));
-    const node = missing === undefined ? parent : schemaObject(schemaObject(parent.properties)[missing]);
-    const bounds = Object.fromEntries(
-      BOUND_KEYWORDS.flatMap((key) => (typeof node[key] === "number" ? [[key, node[key]]] : [])),
-    );
-    // A false subschema under additionalProperties names its parent object's keys.
-    const closedParent =
-      unit.keyword === "false" && unit.keywordLocation.endsWith("/additionalProperties")
-        ? schemaObject(pointerValue(schema, unit.keywordLocation.slice(0, -"/additionalProperties".length)))
-        : node;
-    const acceptedKeys = keys(closedParent);
+    return { path, expected: keys.length ? `one of the accepted keys: ${listed(keys)}` : "no additional properties" };
+  } else if (unit.keyword === "const") {
+    const constant = JSON.stringify(keyword);
     return {
-      path: argumentPath(location),
-      receivedType: receivedType(pointerValue(args, location)),
-      ...(acceptedKeys.length ? { acceptedKeys } : {}),
-      ...(Array.isArray(node.enum) ? { enumValues: node.enum } : {}),
-      ...(Object.keys(bounds).length ? { bounds } : {}),
+      path,
+      expected: !sensitive && constant?.length <= 64 ? `the constant ${constant}` : "the declared constant",
     };
+  } else if (unit.keyword === "type") expected = declaredType(keyword) ?? "the declared type";
+  else if (unit.keyword === "enum" && Array.isArray(keyword) && !sensitive)
+    expected = `one of ${listed(keyword.map((value) => JSON.stringify(value)))}`;
+  else if (unit.keyword === "uniqueItems") expected = "unique items";
+  else if (unit.keyword === "pattern") expected = `a string ${patternText(keyword, sensitive)}`;
+  else if (unit.keyword === "format") expected = `a ${String(keyword)} string`;
+  else {
+    const bound = boundText(unit.keyword, keyword);
+    const safe = pointerValue(safeArgs, location);
+    if (bound && typeof safe === "number" && !sensitive) received = String(safe);
+    expected = bound ?? "a value matching the published inputSchema";
+  }
+  return {
+    path,
+    expected: [expected, ...constraints(node, missing === undefined ? unit.keyword : "type", sensitive)].join(", "),
+    received,
+  };
+}
+
+/** Every unit as a merged finding, bounded and without duplicates. */
+function validationIssues(schema: JsonSchema, args: unknown, units: ValidationUnit[]): ArgumentValidationIssue[] {
+  // writeOnly positions are omitted; unresolved sensitivity withholds every value.
+  let safeArgs: unknown;
+  try {
+    safeArgs = redactCallArguments(args, schema).value;
+  } catch {
+    safeArgs = undefined;
+  }
+  // One finding per schema position: each already states every constraint it declares.
+  const seen = new Set<string>();
+  return units.flatMap((unit) => {
+    const issue = issueFor(schema, args, safeArgs, unit);
+    const key = `${issue.path}\n${unit.keywordLocation.replace(/\/[^/]+$/, "")}\n${unit.keyword === "false"}`;
+    return seen.has(key) ? [] : (seen.add(key), [issue]);
   });
-  const conditionalRequirements: NonNullable<ArgumentRepairDetails["conditionalRequirements"]> = [];
+}
+
+/** One example synthesized from the published schema alone, checked by its validator; never caller values. */
+export function schemaExample(schema: JsonSchema): Pick<ArgumentValidationDetails, "example" | "exampleUnavailable"> {
+  try {
+    const validator = validators.get(schema) ?? new Validator(schema as never, "2020-12", false);
+    // Serialization makes the validation cover exactly what the agent receives.
+    const example = JSON.parse(JSON.stringify(exampleCandidate(schema, schema))) as unknown;
+    if (validator.validate(example).valid) {
+      minimizeExample(example, validator);
+      if (validator.validate(example).valid) return { example };
+    }
+  } catch {
+    // Unsatisfiable or complex schemas do not get a made-up valid example.
+  }
+  return { exampleUnavailable: "No valid example could be synthesized. Inspect the published inputSchema." };
+}
+
+/** Names from the published schema and one synthesized example; no caller values and no schema conditions. */
+function schemaFacts(schema: JsonSchema): Omit<ArgumentValidationDetails, "issues"> {
+  const root = schemaObject(schema);
+  const conditionalRequirements: ArgumentConditionalRequirement[] = [];
   const visit = (value: unknown, path: string, depth: number) => {
     if (depth > 12 || conditionalRequirements.length >= 20) return;
     const node = schemaObject(value);
-    for (const [key, required] of Object.entries(schemaObject(node.dependentRequired ?? node.dependencies))) {
-      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
-        conditionalRequirements.push({ path, condition: { required: [key] }, required });
-      }
-    }
-    for (const [key, branch] of Object.entries(schemaObject(node.dependentSchemas))) {
-      const required = schemaObject(branch).required;
-      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
-        conditionalRequirements.push({ path, condition: { required: [key] }, required });
-      }
-    }
-    for (const [branch, condition] of [
-      [node.then, node.if],
-      [node.else, node.if ? { not: node.if } : undefined],
+    for (const [key, required] of [
+      ...Object.entries(schemaObject(node.dependentRequired ?? node.dependencies)),
+      ...Object.entries(schemaObject(node.dependentSchemas)).map(([key, branch]) => [
+        key,
+        schemaObject(branch).required,
+      ]),
     ]) {
-      const required = schemaObject(branch).required;
-      if (condition && Array.isArray(required) && required.every((key) => typeof key === "string")) {
-        conditionalRequirements.push({ path, condition, required });
+      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
+        conditionalRequirements.push({ path, condition: { required: [key] }, required });
       }
     }
     for (const [key, child] of Object.entries(schemaObject(node.properties)))
       visit(child, `${path === "/" ? "" : path}/${encodePointerPart(key)}`, depth + 1);
     // Alternatives can make a dependency branch-specific. Do not state its
     // requirements without proving the complete branch condition.
-    for (const key of ["allOf"]) {
-      if (Array.isArray(node[key])) for (const child of node[key]) visit(child, path, depth + 1);
-    }
+    if (Array.isArray(node.allOf)) for (const child of node.allOf) visit(child, path, depth + 1);
   };
   visit(schema, "/", 0);
-  let example: unknown;
-  let valid = false;
-  try {
-    // Serialization makes the validation cover exactly what the agent receives.
-    example = JSON.parse(JSON.stringify(exampleCandidate(schema, schema)));
-    valid = validator.validate(example).valid;
-    if (valid) {
-      minimizeExample(example, validator);
-      valid = validator.validate(example).valid;
-    }
-  } catch {
-    valid = false;
-    // Unsatisfiable or complex schemas do not get a made-up valid example.
-  }
+  const keys = Object.entries(schemaObject(root.properties))
+    .filter(([, value]) => value !== false)
+    .map(([key]) => key);
   return {
-    ...(root.properties ? { acceptedKeys: keys(root) } : {}),
-    issues,
+    ...(root.properties ? { acceptedKeys: keys } : {}),
     ...(conditionalRequirements.length ? { conditionalRequirements } : {}),
-    ...(valid
-      ? { example }
-      : { exampleUnavailable: "No valid example could be synthesized. Inspect the published inputSchema." }),
-    ...(units.length > MAX_ARGUMENT_VALIDATION_ISSUES ? { truncated: true as const } : {}),
+    ...schemaExample(schema),
   };
 }
 
@@ -651,10 +703,11 @@ export function validateCatalogToolInput(
   }
   if (result && !result.valid) {
     const units = normalizedValidationUnits(schema, result.errors);
-    const nestedUnits = units.filter((unit) => unit.instanceLocation !== "#");
-    // Told from the reviewed findings, never the validator's own sentences,
-    // which quote the schema's types, enums, and patterns.
-    const validation = validationDetails(schema, units);
+    const nested = (unit: ValidationUnit) => unit.instanceLocation !== "#" || unitLocation(unit).missing !== undefined;
+    // A root-level finding often restates a nested one (an alternative that
+    // did not match), so nested findings lead and the message names only them.
+    const issues = validationIssues(schema, args, [...units.filter(nested), ...units.filter((unit) => !nested(unit))]);
+    const named = issues.some((issue) => issue.path !== "/") ? issues.filter((issue) => issue.path !== "/") : issues;
     const limit = (schema as { properties?: { limit?: { enum?: unknown[] } } }).properties?.limit?.enum;
     const supplied = args !== null && typeof args === "object" ? (args as Record<string, unknown>)["limit"] : undefined;
     const discreteLimit =
@@ -664,22 +717,15 @@ export function validateCatalogToolInput(
       limit.length <= 8 &&
       limit.every((size) => Number.isSafeInteger(size) && Number(size) > 0) &&
       !limit.includes(supplied);
-    const otherUnits = units.filter((unit) => unit.instanceLocation !== "#/limit");
-    const otherIssues = otherUnits.length > 0;
-    const shown = discreteLimit
-      ? validationDetails(schema, otherUnits)
-      : nestedUnits.length > 0
-        ? validationDetails(schema, nestedUnits)
-        : validation;
-    const detail = boundedEchoText(
-      shown.issues.map((issue) => `${issue.path}: expected ${issue.expected} (${issue.code})`).join("; "),
-      256,
-    );
+    const shown = discreteLimit ? named.filter((issue) => issue.path !== "/limit") : named;
+    const detail = boundedEchoText(issueSummary(shown.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)), 512);
     const ordinary = `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`;
     return new ConnectorCallError(
       "invalid_args",
-      discreteLimit ? `The limit must be one of ${limit.join(", ")}.${otherIssues ? ` ${ordinary}` : ""}` : ordinary,
-      { validation, repair: repairDetails(schema, args, units, validator) },
+      discreteLimit ? `The limit must be one of ${limit.join(", ")}.${shown.length ? ` ${ordinary}` : ""}` : ordinary,
+      {
+        validation: { issues, ...schemaFacts(schema) },
+      },
     );
   }
   return null;
