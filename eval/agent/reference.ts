@@ -6,6 +6,7 @@
 import type { Deployment } from "../deploy/node.js";
 import { observedPrograms, startDeployment, type Target } from "../deploy/targets.js";
 import { World } from "../fakes/world.js";
+import type { Injection } from "../fakes/injection.js";
 import { connectMcp, type McpSession } from "../support/mcp.js";
 import type { ActiveTask } from "../tasks/types.js";
 import { startAuthHost } from "./auth-host.js";
@@ -49,6 +50,8 @@ interface PlayOptions {
   deploy?(world: World): Promise<Deployment>;
   /** The deployment shape when `deploy` is absent; node by default. */
   target?: Target;
+  /** Opt-in latency and fault injection; none by default. */
+  injection?: Injection;
   surface?: Surface;
   /** Runs after the surface check and before the reference, on the same session. */
   before?(ctx: { session: McpSession; world: World; toolUses: ToolUse[] }): Promise<void>;
@@ -61,7 +64,7 @@ export async function playReference<T>(
   inspect: (played: Played) => T | Promise<T>,
 ): Promise<T> {
   const surface = options.surface ?? "six";
-  const world = new World(task.world);
+  const world = new World(task.world, options.injection);
   let deployment: Deployment | undefined;
   let host: Awaited<ReturnType<typeof startAuthHost>> | undefined;
   let session: McpSession | undefined;

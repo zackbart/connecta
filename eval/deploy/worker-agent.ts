@@ -24,6 +24,7 @@ import { d1Storage } from "@zackbart/connecta/d1";
 import { withAccess } from "./access-shim.js";
 import { connectCcb, evalConfig, presetCredentials, type EvalComposition } from "./compose.js";
 import { observePrograms, type ProgramObservation } from "./observe.js";
+import { injectedD1 } from "./injected.js";
 import { viaGateway } from "./gateway-fetch.js";
 
 interface Env {
@@ -36,6 +37,8 @@ interface Env {
   EVAL_GATEWAY: string;
   /** This trial's gateway credential; the gateway refuses requests without it. */
   EVAL_GATEWAY_TOKEN: string;
+  /** Injected D1 round-trip latency; "0" for none. */
+  EVAL_D1_LATENCY_MS: string;
 }
 
 interface Live {
@@ -53,7 +56,7 @@ let live: Promise<Live> | undefined;
 async function setup(env: Env): Promise<Live> {
   globalThis.fetch = viaGateway(globalThis.fetch.bind(globalThis), env.EVAL_GATEWAY, env.EVAL_GATEWAY_TOKEN);
   const composition = JSON.parse(env.EVAL_COMPOSITION) as EvalComposition;
-  const storage = d1Storage(env.CONNECTA_DB);
+  const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
   const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
   const { token } = await new AccessTokenManager(storage, { agents: ["eval-machine"] }).rotate(
     "eval-machine",

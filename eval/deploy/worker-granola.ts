@@ -6,8 +6,9 @@ import { workerExecutor } from "@zackbart/connecta/worker";
 import { d1Storage } from "@zackbart/connecta/d1";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { interceptGranola } from "./granola.js";
+import { injectedConnectors, injectedD1, presetInjected, withInjectedPools, type InjectedEnv } from "./injected.js";
 
-interface Env {
+interface Env extends InjectedEnv {
   CONNECTA_DB: D1Database;
   LOADER: WorkerLoader;
   PUBLIC_URL: string;
@@ -20,11 +21,12 @@ let token: string | undefined;
 let installed = false;
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const storage = d1Storage(env.CONNECTA_DB);
+    const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
     const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
     if (!installed) {
       interceptGranola(env.GRANOLA_URL);
       await vault.set("granola", env.GRANOLA_KEY, "eval-provisioning");
+      await presetInjected(vault, env);
       installed = true;
     }
     token ??= (
@@ -44,9 +46,9 @@ export default {
       vault,
       agents: ["eval-machine"],
       accessTokens: accessTokens(storage),
-      pools: { eval: { tools: ["granola"], members: ["agent:eval-machine"] } },
+      pools: withInjectedPools({ eval: { tools: ["granola"], members: ["agent:eval-machine"] } }, env),
       executor: workerExecutor({ loader: env.LOADER }),
-      connectors: [granola("granola", { purpose: "Workspace meetings" })],
+      connectors: [granola("granola", { purpose: "Workspace meetings" }), ...injectedConnectors(env)],
     });
     return connecta.fetch(request, env, ctx);
   },

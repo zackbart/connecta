@@ -6,8 +6,9 @@ import { d1Storage } from "@zackbart/connecta/d1";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { operatorUi } from "@zackbart/connecta/ui";
 import { interceptQuickBooks, quickbooksAuth, quickbooksConnectors, quickbooksPools } from "./quickbooks.js";
+import { injectedConnectors, injectedD1, presetInjected, withInjectedPools, type InjectedEnv } from "./injected.js";
 
-interface Env {
+interface Env extends InjectedEnv {
   CONNECTA_DB: D1Database;
   LOADER: WorkerLoader;
   PUBLIC_URL: string;
@@ -22,11 +23,13 @@ let installed = false;
 let endpointReadOnly = false;
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
+    const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
     if (!installed) {
       interceptQuickBooks(env.QUICKBOOKS_URL);
+      await presetInjected(vault, env);
       installed = true;
     }
-    const storage = d1Storage(env.CONNECTA_DB);
     token ??= (
       await new AccessTokenManager(storage, { agents: ["eval-machine"] }).rotate("eval-machine", "eval-provisioning")
     ).token;
@@ -46,11 +49,14 @@ export default {
       accessTokens: accessTokens(storage),
       auth: quickbooksAuth,
       maintainers: ["alice", "bob"],
-      pools: quickbooksPools(env.QUICKBOOKS_WRITES === "true"),
+      pools: withInjectedPools(quickbooksPools(env.QUICKBOOKS_WRITES === "true"), env),
       executor: workerExecutor({ loader: env.LOADER }),
       ui: operatorUi(),
-      vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
-      connectors: quickbooksConnectors(env.QUICKBOOKS_WRITES === "true", env.QUICKBOOKS_CLIENT),
+      vault,
+      connectors: [
+        ...quickbooksConnectors(env.QUICKBOOKS_WRITES === "true", env.QUICKBOOKS_CLIENT),
+        ...injectedConnectors(env),
+      ],
     });
     return connecta.fetch(request, env, ctx);
   },

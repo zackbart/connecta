@@ -565,7 +565,11 @@ export class FakeGoogle {
   }
 
   /** Only this world's issuer and minted tokens reach here; the registry refuses everything else. */
+  /** Injected per-request latency; see eval/fakes/injection.ts. */
+  latencyMs = 0;
+
   private async vendor(request: Request): Promise<Response> {
+    if (this.latencyMs) await new Promise((resolve) => setTimeout(resolve, this.latencyMs));
     const url = new URL(request.url);
     if (url.href === "https://oauth2.googleapis.com/token") {
       const parameters = new URLSearchParams(await request.text());

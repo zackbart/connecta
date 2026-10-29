@@ -5,6 +5,7 @@
  */
 import type { CallRecord } from "../fakes/service.js";
 import { World } from "../fakes/world.js";
+import type { Injection } from "../fakes/injection.js";
 import type { Deployment } from "../deploy/node.js";
 import { observedPrograms, startDeployment, type Target } from "../deploy/targets.js";
 import { connectMcp, type ListedTool } from "../support/mcp.js";
@@ -104,6 +105,8 @@ export interface TrialResult {
 
 interface TrialOptions {
   target?: Target;
+  /** Opt-in latency and fault injection; none by default. */
+  injection?: Injection;
   surface?: Surface;
   grading?: Grading;
   runner?: "codex" | "claude";
@@ -182,7 +185,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       transcript: [],
       ledger: [],
     };
-  const world = new World(task.world);
+  const world = new World(task.world, options.injection);
   let cleanupDeployment: Deployment | undefined;
   let cleanupHost: Awaited<ReturnType<typeof startAuthHost>> | undefined;
   try {

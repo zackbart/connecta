@@ -37,6 +37,7 @@ import { inflateSync } from "node:zlib";
 import {
   comparatorTargetControls,
   egressGuardControls,
+  injectionControls,
   gatewayControls,
   gatewayRedirectControls,
   gatewayRoutingControls,
@@ -55,6 +56,8 @@ await gatewayRoutingControls();
 console.log("ok   worker vendor requests all arrive through the authenticated gateway; secrets stay out of logs");
 await comparatorTargetControls();
 console.log("ok   cross-target comparison: measured provenance and per-trial target consistency");
+await injectionControls();
+console.log("ok   injection: latency delivery, pool membership, hung-server cleanup, D1 batching, mismatch refusal");
 await googleTransportControls();
 await googleBoundaryControls();
 console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools, read-only and native reads");

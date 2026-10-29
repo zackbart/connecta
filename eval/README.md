@@ -359,6 +359,43 @@ Fakes answer only for the `127.0.0.1:<port>` address they publish. A request
 naming any other host, such as another process on a shared machine sweeping
 `localhost` ports, gets `421 Misdirected Request` and never reaches a ledger.
 
+## Latency and fault injection
+
+Both `eval:agent` and `eval:smoke` accept opt-in injection
+([fakes/injection.ts](fakes/injection.ts)). Every default is zero, so a run
+without these flags measures what earlier runs measured.
+
+| Flag                       | Effect                                                                                                                                                                                   | Targets      |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `--latency-ms <n>`         | Every downstream request a fake vendor answers waits `n` ms first. Applied on the fake's side, so both targets see the same delay. Covers loopback fakes and the in-process Google fake. | node, worker |
+| `--hung-connector`         | Adds connector `stalled`, whose server accepts every request and never answers.                                                                                                          | node, worker |
+| `--unauthorized-connector` | Adds connector `revoked`, with a saved credential that its server answers with 401 on every request.                                                                                     | node, worker |
+| `--d1-latency-ms <n>`      | Each D1 round trip waits `n` ms: a statement's `all`/`run`/`first`/`raw`, an `exec`, or one whole `batch`.                                                                               | worker only  |
+
+```sh
+pnpm run eval:agent --runner claude --models claude-haiku-5-5 --grading outcome --target worker \
+  --tasks cross-connector-join --latency-ms 500 --hung-connector --unauthorized-connector --d1-latency-ms 10
+pnpm run eval:smoke --targets worker-fakes,worker-granola --latency-ms 500 --hung-connector --d1-latency-ms 10
+```
+
+- Values are integers from 0 to 60000. The toggles take no value.
+- Injected connectors join every pool, so unscoped discovery reaches them, as
+  it would reach a real failing connector. Their requests never enter the
+  world's ledger, so graders still see only the task's own vendors. Tasks that
+  assert the full connector catalog can fail by design under injection.
+- `eval:agent --d1-latency-ms` needs `--target worker`; the node target stores
+  in SQLite and refuses it.
+- `eval:smoke` reports a target that cannot take the requested injection as
+  `skipped`, with the reason. node-template and worker-example serve no fake
+  vendor; node targets have no D1.
+- Programmatically, pass `injection` to `runBatch`, to `playReference`, or as
+  the second argument of `new World(options, injection)`.
+
+The agent result's `config.injection` and the smoke result's `injection`
+always record the settings, zeros included; older files read as none.
+`eval:compare` refuses to pair runs with different injection, even with
+`--allow-mismatch`, and so does `--cross-target`.
+
 ## A/B arms, grading and decision rule
 
 For #765 and draft decision record #775, run the same 19 tasks on a fresh

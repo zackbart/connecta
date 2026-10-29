@@ -38,14 +38,17 @@ export function workerRefusal(task: ActiveTask, surface: Surface = "six"): strin
   return undefined;
 }
 
+/** Injected fault connectors join every pool; D1 latency exists only on workerd. */
 export async function startDeployment(
   target: Target,
   world: World,
   task: ActiveTask,
   surface: Surface,
-  everyPool: string[] = [],
 ): Promise<Deployment> {
-  if (target === "node")
+  const everyPool = world.injected.ids();
+  if (target === "node") {
+    if (world.injection.d1LatencyMs)
+      throw new Error("D1 latency injection applies only to the worker target; the node target stores in SQLite.");
     return startNodeDeployment(
       world.connectorSpecs(),
       task.deployment,
@@ -53,9 +56,10 @@ export async function startDeployment(
       surface,
       everyPool,
     );
+  }
   const refusal = workerRefusal(task, surface);
   if (refusal) throw new Error(`Task ${task.id} is refused on the worker target: ${refusal}.`);
-  return startWorkerDeployment(world.connectorSpecs(), task.deployment, everyPool);
+  return startWorkerDeployment(world.connectorSpecs(), task.deployment, everyPool, world.injection.d1LatencyMs);
 }
 
 /** Observed programs, refreshed from out-of-process deployments. */

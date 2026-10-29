@@ -17,6 +17,20 @@ export interface Served {
   close(): Promise<void>;
 }
 
+/** Injected per-request latency by served port; see eval/fakes/injection.ts. */
+const latencies = new Map<number, number>();
+
+/** Delay every request the fake at `url` answers by `ms`, until the release runs. */
+export function delayServed(url: string, ms: number): () => void {
+  const port = Number(new URL(url).port);
+  if (ms <= 0) return () => {};
+  if (latencies.has(port)) throw new Error(`Latency already injected for ${url}`);
+  latencies.set(port, ms);
+  return () => {
+    if (latencies.get(port) === ms) latencies.delete(port);
+  };
+}
+
 export async function serveFetch(handler: (request: Request) => Promise<Response>, port = 0): Promise<Served> {
   const server: Server = createServer((req, res) => {
     void (async () => {
@@ -30,6 +44,8 @@ export async function serveFetch(handler: (request: Request) => Promise<Response
         return;
       }
       try {
+        const delay = latencies.get((server.address() as AddressInfo).port);
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const headers = new Headers();

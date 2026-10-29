@@ -144,6 +144,7 @@ export async function startWorkerDeployment(
   connectors: ConnectorSpec[],
   extra: Record<string, unknown> = {},
   everyPool: string[] = [],
+  d1LatencyMs = 0,
 ): Promise<Deployment> {
   const gateway = await startVendorGateway();
   const since = Date.now();
@@ -176,6 +177,7 @@ export async function startWorkerDeployment(
       vars: {
         EVAL_COMPOSITION: JSON.stringify(composition),
         EVAL_GATEWAY: gateway.url,
+        EVAL_D1_LATENCY_MS: String(d1LatencyMs),
       },
       // Bound as hidden secrets: never echoed in wrangler's output or its log.
       secrets,

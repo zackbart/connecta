@@ -15,6 +15,8 @@ import { FakeBreeze, breezeState } from "./breeze.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
 import { FakeOAuth } from "./oauth.js";
+import { InjectedConnectors, NO_INJECTION, type Injection } from "./injection.js";
+import { delayServed } from "../support/serve.js";
 import { assetTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
 import { FakeService, Ledger } from "./service.js";
 import {
@@ -134,7 +136,15 @@ export class World {
   /** Host-observed guest calls, never inferred from model source text. */
   programs: ProgramObservation[] = [];
 
-  constructor(readonly options: WorldOptions = {}) {
+  /** Opt-in latency and fault connectors for this run; none by default. */
+  readonly injected: InjectedConnectors;
+  private releaseLatency: (() => void)[] = [];
+
+  constructor(
+    readonly options: WorldOptions = {},
+    readonly injection: Injection = NO_INJECTION,
+  ) {
+    this.injected = new InjectedConnectors(injection);
     if (options.cloudflareStep2) this.rest.dns.push(...cloudflareStep2Dns());
     if (options.restVendor) {
       const vendor = options.restVendor;
@@ -198,16 +208,34 @@ export class World {
     if (this.options.quickbooks) await this.quickbooks.start();
     if (this.options.google) await this.google.start();
     await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
+    await this.injected.start();
+    if (this.injection.latencyMs) {
+      const served = [
+        ...[...this.services.values(), ...this.restServices].map((service) => service.url),
+        ...(this.options.granola ? [this.granola.url] : []),
+        ...(this.options.quickbooks ? [this.quickbooks.url] : []),
+      ];
+      this.releaseLatency = served.map((url) => delayServed(url, this.injection.latencyMs));
+      // Google answers in process, behind the fake transport.
+      if (this.options.google) this.google.latencyMs = this.injection.latencyMs;
+    }
   }
 
   async stop(): Promise<void> {
+    for (const release of this.releaseLatency.splice(0)) release();
+    await this.injected.stop();
     if (this.options.granola) await this.granola.stop();
     if (this.options.quickbooks) await this.quickbooks.stop();
     if (this.options.google) await this.google.stop();
     await Promise.allSettled([...this.services.values(), ...this.restServices].map((service) => service.stop()));
   }
 
+  /** The task's connectors, then any injected fault connectors. */
   connectorSpecs(): ConnectorSpec[] {
+    return [...this.taskSpecs(), ...this.injected.specs()];
+  }
+
+  private taskSpecs(): ConnectorSpec[] {
     if (this.options.granola)
       return [
         {
