@@ -12,6 +12,7 @@ import {
   type ResultFile,
   type SmokeResultFile,
 } from "./summary.js";
+import { batchEfficiency, expenseReason, trialEfficiency } from "./efficiency.js";
 
 const esc = (value: unknown) =>
   String(value ?? "")
@@ -105,6 +106,40 @@ function matrix(file: AgentResultFile): string {
   <p class="note">Cell: passed/graded trials, then median wall time · median cost · mean meta-tool calls; mean downstream reads and writes. N/A runner skips and errors (API, rate limit, harness) are excluded from the rate and counted separately.</p>`;
 }
 
+function efficiency(file: AgentResultFile): string {
+  const { models, reliability } = batchEfficiency(file.trials, file.config.repeats);
+  const k = reliability.k;
+  const stat = (value: string, n: number, of: number) =>
+    `${value}${n === of ? "" : ` <span class="muted">(n=${n})</span>`}`;
+  const rows = models.map((summary) => {
+    const m = summary.medians;
+    const r = reliability.models.find((entry) => entry.model === summary.model);
+    const tools = Object.entries(summary.responses)
+      .map(
+        ([tool, sizes]) =>
+          `${esc(tool)} ${fmtBytes(Math.round(sizes.medianBytes))} median, ${fmtBytes(sizes.maxBytes)} max (${sizes.calls})`,
+      )
+      .join("<br>");
+    const expensive = summary.expensive
+      .map(
+        (trial) =>
+          `<li><a href="#task-${esc(trial.task)}">${esc(trial.task)}</a> #${trial.repeat} <span class="badge ${trial.status}">${trial.status}</span> ${fmtNum(trial.totalTokens, 0)} tokens · ${fmtMs(trial.wallMs)}${trial.costUsd === undefined ? "" : ` · ${fmtUsd(trial.costUsd)}`}<div class="sub">${esc(expenseReason(trial))}</div></li>`,
+      )
+      .join("");
+    return `<tr><th>${esc(shortModel(summary.model))}<div class="sub">${summary.passing}/${summary.trials} passing</div></th>
+      <td>${fmtPct(r?.passAtK)} / ${fmtPct(r?.passHatK)}<div class="sub">${r?.cells ?? 0} cell(s)${r?.unestimated ? `, ${r.unestimated} short of ${k}` : ""}</div></td>
+      <td>${stat(fmtNum(m.calls.value), m.calls.n, summary.passing)} · ${stat(fmtNum(m.modelTurns.value), m.modelTurns.n, summary.passing)}</td>
+      <td>${stat(fmtNum(m.promptTokens.value, 0), m.promptTokens.n, summary.passing)} / ${fmtNum(m.outputTokens.value, 0)}</td>
+      <td>${fmtMs(m.wallMs.value)}</td>
+      <td>${stat(fmtNum(m.toolErrors.value), m.toolErrors.n, summary.passing)} · ${stat(fmtNum(m.guideFetches.value), m.guideFetches.n, summary.passing)}</td>
+      <td>${m.responseBytes.value === undefined ? "–" : stat(fmtBytes(Math.round(m.responseBytes.value)), m.responseBytes.n, summary.passing)}<div class="sub">${tools}</div></td>
+      <td><ul class="checks">${expensive || `<li class="muted">none</li>`}</ul></td></tr>`;
+  });
+  const missing = models.reduce((total, summary) => total + summary.withoutSizes, 0);
+  return `<table class="compare"><thead><tr><th>model</th><th>pass@${k} / pass^${k}</th><th>calls · model turns</th><th>input incl. cache / output tokens</th><th>wall</th><th>tool errors · guide fetches</th><th>response bytes per trial; per call by tool</th><th>most expensive trials</th></tr></thead><tbody>${rows.join("")}</tbody></table>
+  <p class="note">Medians per trial over passing trials. pass@${k} and pass^${k} are the chances that at least one, or all, of ${k} trials of a task pass, averaged over task cells; N/A and errors are excluded. Response bytes are UTF-8 sizes of the tool results the agent received. Guide fetches count <code>skills</code> calls with a name plus <code>connecta.skill</code> program calls. The most expensive trials rank by total tokens.${missing ? ` ${missing} trial(s) lack saved traces, so their response sizes and guide fetches are unknown.` : ""}</p>`;
+}
+
 function comparison(current: AgentResultFile, base: AgentResultFile): string {
   const now = summarize(current.trials);
   const then = summarize(base.trials);
@@ -161,6 +196,7 @@ function transcriptHtml(entries: TranscriptEntry[]): string {
 
 function trialHtml(trial: TrialResult): string {
   const m = trial.metrics;
+  const e = trialEfficiency(trial);
   const checks = trial.checks
     .map((item) => {
       const ignored = trial.grading === "outcome" && item.kind === "route";
@@ -199,6 +235,11 @@ function trialHtml(trial: TrialResult): string {
             .join(", ") || "none"
         }${Object.keys(m.otherTools).length ? `; other: ${esc(JSON.stringify(m.otherTools))}` : ""}</td></tr>
         <tr><td>tool errors</td><td>${m.toolErrors}</td></tr>
+        <tr><td>responses</td><td>${
+          e.responseBytes === undefined
+            ? "unknown (no saved trace)"
+            : `${fmtBytes(e.responseBytes)} total${e.largestResponse ? `, largest ${fmtBytes(e.largestResponse.bytes)} from ${esc(e.largestResponse.tool)}` : ""}; ${e.guideFetches} guide fetch(es)`
+        }</td></tr>
         <tr><td>confirmation nudges</td><td>${m.confirmationNudges ?? 0}</td></tr>
         <tr><td>downstream</td><td>${m.downstream.reads} reads, ${m.downstream.writes} writes, ${m.downstream.duplicateReads} dup reads, ${m.downstream.duplicateWrites} dup writes, ${m.downstream.errors} errors</td></tr>
         <tr><td>by tool</td><td>${downstream}</td></tr>
@@ -237,6 +278,7 @@ function agentSection(file: AgentResultFile, base: AgentResultFile | undefined):
     ${file.regrade ? `<p class="note">Offline regrade from ${esc(file.regrade.source)} using ${esc(file.regrade.meta.git.commit)}. ${file.trials.some((t) => t.regrade?.unavailable.length) ? "Provisional mixed scores: checks without saved inputs retain original grades. See each trial for missing inputs and required reruns." : "All grading inputs were available."}</p>` : ""}
     <p class="note">${file.trials.length} trials · models ${file.config.models.map(shortModel).join(", ")} · ${file.config.repeats} repeat(s) · concurrency ${file.config.concurrency} · ${esc(file.codexVersion ?? file.claudeVersion ?? "unknown runner")}${file.config.effort ? ` · effort ${esc(file.config.effort)}` : ""}${file.config.runner === "codex" ? "" : ` · MCP output cap ${esc(file.config.mcpOutputTokens ?? "host default")}`}${file.stopped ? ` · <b class="worse">stopped early: ${esc(file.stopped)}</b>` : ""}</p>
     ${matrix(file)}
+    <h2>Efficiency</h2>${efficiency(file)}
     ${base ? `<h2>Baseline vs current</h2>${comparison(file, base)}` : ""}
     <h2>Trials</h2>${tasks}${planned}${file.skipped?.length ? `<h2>Skipped tasks</h2><ul>${file.skipped.map((task) => `<li>${esc(task.id)}: ${esc(task.reason)} Enable with --include-skipped ${esc(task.flag)}.</li>`).join("")}</ul>` : ""}`;
 }

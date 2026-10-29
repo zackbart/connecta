@@ -11,11 +11,32 @@ import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
 import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
+import {
+  fmtSize,
+  median,
+  modelEfficiency,
+  reliability,
+  trialEfficiency,
+  type Reliability,
+} from "./report/efficiency.js";
 
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 const average = (values: (number | undefined)[]) => {
   const known = values.filter((v): v is number => v !== undefined);
   return known.length ? `${(sum(known) / known.length).toFixed(1)} (n=${known.length})` : "N/A";
+};
+const middle = (values: (number | undefined)[]) => {
+  const known = values.filter((v): v is number => v !== undefined);
+  return known.length ? `${median(known)!.toFixed(1)} (n=${known.length})` : "N/A";
+};
+const pct = (value: number | undefined) => (value === undefined ? "N/A" : `${(value * 100).toFixed(1)}%`);
+/** pass@k/pass^k for one task cell, or the model mean without a task. */
+const passes = (six: Reliability, code: Reliability, task?: string) => {
+  const pick = (rel: Reliability) => {
+    const cell = task ? rel.cells.find((c) => c.task === task) : rel.models[0];
+    return `${pct(cell?.passAtK)}/${pct(cell?.passHatK)}`;
+  };
+  return `pass@${six.k}/pass^${six.k} six ${pick(six)}, code ${pick(code)}`;
 };
 const key = (t: TrialResult) => JSON.stringify([t.model, t.task, t.repeat]);
 
@@ -292,6 +313,11 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     lines.push(
       `${model}: outcome six ${passed(left)}/${left.length} (${(rateA * 100).toFixed(1)}%), code ${passed(right)}/${right.length} (${(rateB * 100).toFixed(1)}%); N/A ${pairs.length - eligible.length} per arm`,
     );
+    // Eligible trials exclude only N/A; infrastructure errors count as misses here.
+    const relOf = (ts: TrialResult[]) =>
+      reliability(ts, a.config.repeats, (t) => (trialOutcome(t, runner).pass ? "pass" : "fail"));
+    const relA = relOf(left),
+      relB = relOf(right);
     const drops: string[] = [];
     for (const task of [...new Set(left.map((t) => t.task))].sort()) {
       const taskPairs = eligible.filter(([t]) => t.task === task);
@@ -300,11 +326,15 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
       const losses = taskPairs.filter(([x, y]) => trialOutcome(x, runner).pass && !trialOutcome(y, runner).pass).length;
       const gains = taskPairs.filter(([x, y]) => !trialOutcome(x, runner).pass && trialOutcome(y, runner).pass).length;
       lines.push(
-        `  ${task}: six ${pa}/${taskPairs.length}, code ${pb}/${taskPairs.length}, delta ${pb - pa >= 0 ? "+" : ""}${pb - pa}; paired losses ${losses}, gains ${gains}`,
+        `  ${task}: six ${pa}/${taskPairs.length}, code ${pb}/${taskPairs.length}, delta ${pb - pa >= 0 ? "+" : ""}${pb - pa}; paired losses ${losses}, gains ${gains}; ${passes(relA, relB, task)}`,
       );
       if (pa - pb >= 3) drops.push(`${task} (${pa - pb} of ${taskPairs.length})`);
     }
     lines.push(`  Tasks dropping by >=3 of N trials: ${drops.join(", ") || "none"}`);
+    const short = (rel: Reliability) => rel.models[0]?.unestimated ?? 0;
+    lines.push(
+      `  Reliability, mean over task cells: ${passes(relA, relB)}${short(relA) + short(relB) ? `; cells with fewer than ${relA.k} eligible trials: six ${short(relA)}, code ${short(relB)}` : ""}`,
+    );
     // N/A and infrastructure failures never erase observed safety violations.
     const sa = safety(pairs.map(([t]) => t)),
       sb = safety(pairs.map(([, t]) => t));
@@ -326,7 +356,21 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
         return t.saved ? Number(first?.isError === true) : undefined;
       });
       lines.push(
-        `  ${arm} mean/trial: model turns ${average(ts.map((t) => t.metrics.modelTurns))}; top-level calls ${average(ts.map((t) => sum([...Object.values(t.metrics.metaTools), ...Object.values(t.metrics.otherTools)])))}; input tokens ${average(ts.map((t) => t.metrics.tokens.input))}; output tokens ${average(ts.map((t) => t.metrics.tokens.output))}; wall ms ${average(ts.map((t) => t.metrics.wallMs))}; first-attempt program errors ${sum(firstErrors.filter((v): v is number => v !== undefined))}/${firstErrors.filter((v) => v !== undefined).length} observed`,
+        `  ${arm} mean/trial: model turns ${average(ts.map((t) => t.metrics.modelTurns))}; top-level calls ${average(ts.map((t) => sum([...Object.values(t.metrics.metaTools), ...Object.values(t.metrics.otherTools)])))}; input tokens ${average(ts.map((t) => t.metrics.tokens.input))}; output tokens ${average(ts.map((t) => t.metrics.tokens.output))}; wall ms ${average(ts.map((t) => t.metrics.wallMs))}; tool errors ${average(ts.map((t) => t.metrics.toolErrors))}; first-attempt program errors ${sum(firstErrors.filter((v): v is number => v !== undefined))}/${firstErrors.filter((v) => v !== undefined).length} observed`,
+      );
+      lines.push(
+        `  ${arm} median/trial: model turns ${middle(ts.map((t) => t.metrics.modelTurns))}; top-level calls ${middle(ts.map((t) => sum([...Object.values(t.metrics.metaTools), ...Object.values(t.metrics.otherTools)])))}; input tokens ${middle(ts.map((t) => t.metrics.tokens.input))}; output tokens ${middle(ts.map((t) => t.metrics.tokens.output))}; wall ms ${middle(ts.map((t) => t.metrics.wallMs))}; tool errors ${middle(ts.map((t) => t.metrics.toolErrors))}`,
+      );
+      const efficiency = ts.map(trialEfficiency);
+      const [summary] = modelEfficiency(ts, { include: () => true, pass: () => true });
+      lines.push(
+        `  ${arm} guide fetches mean ${average(efficiency.map((e) => e.guideFetches))}, median ${middle(efficiency.map((e) => e.guideFetches))}; response bytes/trial mean ${average(efficiency.map((e) => e.responseBytes))}, median ${middle(efficiency.map((e) => e.responseBytes))}; per call: ${
+          Object.entries(summary?.responses ?? {})
+            .map(
+              ([tool, r]) => `${tool} median ${fmtSize(r.medianBytes)}, max ${fmtSize(r.maxBytes)} (${r.calls} calls)`,
+            )
+            .join("; ") || "N/A"
+        }${summary?.withoutSizes ? `; ${summary.withoutSizes} trial(s) lack saved traces` : ""}`,
       );
     }
     const reasons = [];

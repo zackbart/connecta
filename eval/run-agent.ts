@@ -27,6 +27,7 @@ import { runBatch } from "./agent/run.js";
 import { batchFailures } from "./agent/verdict.js";
 import { renderReport } from "./report/html.js";
 import { summarize, type AgentResultFile, type ResultFile } from "./report/summary.js";
+import { batchEfficiency, efficiencyLines } from "./report/efficiency.js";
 import { flags, ROOT, runMeta, runProtocol, stamp } from "./support/meta.js";
 import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 
@@ -150,6 +151,10 @@ for (const cell of summarize(trials)) {
     `[eval] ${cell.task.padEnd(28)} ${cell.model.padEnd(28)} ${cell.passed}/${cell.trials - cell.errored - cell.skipped} pass` +
       `${cell.errored ? ` (${cell.errored} error)` : ""}${cell.skipped ? ` (${cell.skipped} N/A)` : ""}`,
   );
+}
+{
+  const efficiency = batchEfficiency(trials, repeats);
+  for (const line of efficiencyLines(efficiency.models, efficiency.reliability)) console.error(`[eval] ${line}`);
 }
 const problems = batchFailures(file);
 for (const problem of problems) console.error(`[eval] FAIL ${problem}`);

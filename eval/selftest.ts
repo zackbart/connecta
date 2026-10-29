@@ -1079,7 +1079,16 @@ const six = comparisonFixture("six", 20),
   if (!compare(extendedA, extendedB).includes("Decision NOT EVALUATED"))
     throw new Error("Adding a REST task changed the retained comparison scope");
 }
-if (!compare(six, code).includes("Decision PASS")) throw new Error("Equal full-batch outcomes failed comparison");
+{
+  const equal = compare(six, code);
+  if (!equal.includes("Decision PASS")) throw new Error("Equal full-batch outcomes failed comparison");
+  for (const needle of [
+    "six median/trial: model turns",
+    "Reliability, mean over task cells: pass@20/pass^20",
+    "code guide fetches mean",
+  ])
+    if (!equal.includes(needle)) throw new Error(`Comparison omitted efficiency line: ${needle}`);
+}
 for (const trial of code.trials.filter((t) => t.task === "p5-known-read-routing").slice(0, 3))
   trial.saved!.trace.finalAnswer = "Completed.";
 if (!compare(six, code).includes("task drops require triage: p5-known-read-routing (3 of 20)"))

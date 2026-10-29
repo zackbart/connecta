@@ -5,6 +5,7 @@
 import type { TrialResult } from "../agent/run.js";
 import type { RunMeta } from "../support/meta.js";
 import type { PlannedTask } from "../tasks/types.js";
+import { mean, median } from "./efficiency.js";
 
 export interface AgentResultFile {
   kind: "connecta-eval/agent";
@@ -101,17 +102,6 @@ export interface CellSummary {
   duplicateWrites: number;
   duplicateReads: number;
   failedChecks: Record<string, number>;
-}
-
-function median(values: number[]): number | undefined {
-  if (!values.length) return undefined;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1]! + sorted[middle]!) / 2;
-}
-
-function mean(values: number[]): number | undefined {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined;
 }
 
 export function summarize(trials: TrialResult[]): CellSummary[] {
