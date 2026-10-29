@@ -909,13 +909,13 @@ describe("OpenAPI operation index generation", () => {
     const open = emptyIndex({ emptyObjectsOpen: true });
     expect(() =>
       closed.check(closed.operation("POST", "/v1/uploads")!, {}, { implicit: { vendor_filter: 1 } }),
-    ).toThrow(/vendor_filter/);
+    ).toThrow("/body/implicit/<key>");
     expect(() =>
       open.check(open.operation("POST", "/v1/uploads")!, {}, { implicit: { vendor_filter: 1 } }),
     ).not.toThrow();
     for (const key of ["closed", "named"])
       expect(() => open.check(open.operation("POST", "/v1/uploads")!, {}, { [key]: { vendor_filter: 1 } })).toThrow(
-        /vendor_filter/,
+        `/body/${key}/<key>`,
       );
     // Bound pathological documents without treating a partial root set as complete.
     withResponses.components.responses.list.content["application/problem+json"].schema = {
@@ -1074,8 +1074,9 @@ describe("OpenAPI operation index generation", () => {
     expect(refusal?.code).toBe("invalid_args");
     expect(refusal.validation.issues).toEqual(
       expect.arrayContaining([
-        { path: "/body/typ", expected: expect.stringMatching(/^type\? one of /), received: "string" },
-        { path: "/body/nmae", expected: expect.stringMatching(/^name\? one of /), received: "string" },
+        // The misspelled key is caller text: the path names its position and the suggestion a declared name.
+        { path: "/body/<key>", expected: expect.stringMatching(/^type\? one of /), received: "string" },
+        { path: "/body/<key>", expected: expect.stringMatching(/^name\? one of /), received: "string" },
       ]),
     );
     expect(() => index.check(create, {}, undefined)).toThrow(

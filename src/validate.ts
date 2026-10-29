@@ -132,11 +132,6 @@ function pointerValue(value: unknown, pointer: string): unknown {
   return current;
 }
 
-function argumentPath(location: string): string {
-  if (location === "#") return "/";
-  return location.startsWith("#") ? location.slice(1) || "/" : "/";
-}
-
 function validationUnitKey(unit: ValidationUnit): string {
   return JSON.stringify([unit.keyword, unit.keywordLocation, unit.instanceLocation, unit.error]);
 }
@@ -234,34 +229,39 @@ function receivedType(value: unknown): string {
   return value === undefined ? "missing" : value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
 }
 
-/** No caller values are used to invent an example. A candidate must validate. */
+/**
+ * No caller values are used to invent an example, and a writeOnly position or
+ * anything inside one never renders a schema literal. A candidate must validate.
+ */
 function exampleCandidate(
   schema: unknown,
   root: JsonSchema,
   depth = 0,
   budget = { remaining: 128, active: new Set<object>() },
+  secret = false,
 ): unknown {
   if (--budget.remaining < 0) throw new Error("Example synthesis budget exhausted");
   if (depth > 12 || schema === false) return undefined;
   const node = schemaObject(schema);
   if (budget.active.has(node)) throw new Error("Recursive schema cannot produce a bounded example");
   budget.active.add(node);
+  secret ||= node.writeOnly === true;
   try {
     if (typeof node.$ref === "string") {
-      return exampleCandidate(pointerValue(root, node.$ref), root, depth + 1, budget);
+      return exampleCandidate(pointerValue(root, node.$ref), root, depth + 1, budget, secret);
     }
-    if (Object.hasOwn(node, "const")) return node.const;
-    if (Array.isArray(node.enum)) return node.enum[0];
+    if (!secret && Object.hasOwn(node, "const")) return node.const;
+    if (!secret && Array.isArray(node.enum)) return node.enum[0];
     const type = Array.isArray(node.type) ? node.type[0] : node.type;
     const variants = Array.isArray(node.oneOf) ? node.oneOf : node.anyOf;
     if (Array.isArray(variants) && variants.length) {
       return mergeExample(
-        exampleCandidate({ ...node, oneOf: undefined, anyOf: undefined }, root, depth + 1, budget),
-        exampleCandidate(variants[0], root, depth + 1, budget),
+        exampleCandidate({ ...node, oneOf: undefined, anyOf: undefined }, root, depth + 1, budget, secret),
+        exampleCandidate(variants[0], root, depth + 1, budget, secret),
       );
     }
-    if (Array.isArray(node.examples) && node.examples.length) return node.examples[0];
-    if (Object.hasOwn(node, "default")) return node.default;
+    if (!secret && Array.isArray(node.examples) && node.examples.length) return node.examples[0];
+    if (!secret && Object.hasOwn(node, "default")) return node.default;
     let candidate: unknown;
     if (type === "object" || node.properties || node.required || node.allOf) {
       const properties = schemaObject(node.properties);
@@ -270,11 +270,11 @@ function exampleCandidate(
         required
           .filter((key): key is string => typeof key === "string")
           .slice(0, 30)
-          .map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget)]),
+          .map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget, secret)]),
       );
       if (Array.isArray(node.allOf)) {
         for (const branch of node.allOf.slice(0, 20)) {
-          candidate = mergeExample(candidate, exampleCandidate(branch, root, depth + 1, budget));
+          candidate = mergeExample(candidate, exampleCandidate(branch, root, depth + 1, budget, secret));
         }
       }
       const object = schemaObject(candidate);
@@ -284,7 +284,7 @@ function exampleCandidate(
           for (const need of needs.slice(0, 30)) {
             if (typeof need === "string" && !Object.hasOwn(object, need)) {
               Object.defineProperty(object, need, {
-                value: exampleCandidate(properties[need], root, depth + 1, budget),
+                value: exampleCandidate(properties[need], root, depth + 1, budget, secret),
                 enumerable: true,
                 configurable: true,
                 writable: true,
@@ -298,7 +298,7 @@ function exampleCandidate(
           const matches = new Validator(node.if as never, "2020-12", false).validate(candidate).valid;
           candidate = mergeExample(
             candidate,
-            exampleCandidate(matches ? node.then : node.else, root, depth + 1, budget),
+            exampleCandidate(matches ? node.then : node.else, root, depth + 1, budget, secret),
           );
         } catch {
           // An unevaluable branch cannot establish a valid example.
@@ -307,7 +307,7 @@ function exampleCandidate(
       // Branches may declare required keys while their types live on the parent.
       for (const key of Object.keys(schemaObject(candidate))) {
         if (schemaObject(candidate)[key] === undefined) {
-          schemaObject(candidate)[key] = exampleCandidate(properties[key], root, depth + 1, budget);
+          schemaObject(candidate)[key] = exampleCandidate(properties[key], root, depth + 1, budget, secret);
         }
       }
     } else if (type === "array") {
@@ -318,6 +318,7 @@ function exampleCandidate(
           root,
           depth + 1,
           budget,
+          secret,
         ),
       );
     } else if (type === "number" || type === "integer") {
@@ -413,36 +414,87 @@ function unitLocation(unit: ValidationUnit): { location: string; missing?: strin
       };
 }
 
-const patternText = (pattern: unknown) =>
-  `matching ${typeof pattern === "string" && pattern.length <= 64 ? pattern : "the inputSchema pattern"}`;
+/** A schema node with its local references followed. */
+function resolved(root: JsonSchema, value: unknown): Record<string, unknown> {
+  let node = schemaObject(value);
+  for (let hops = 0; typeof node.$ref === "string" && hops < 8; hops++)
+    node = schemaObject(pointerValue(root, node.$ref));
+  return node;
+}
 
-/** Every other constraint a schema node declares, so one finding states them all, as repair once did. */
-function constraints(node: Record<string, unknown>, failed: string): unknown[] {
-  return Object.keys(node).flatMap((key) => {
-    const value = node[key];
-    if (key === failed) return [];
-    if (key === "enum" && Array.isArray(value)) return `one of ${listed(value.map((item) => JSON.stringify(item)))}`;
-    if (key === "pattern") return patternText(value);
-    if (key === "format") return `${String(value)} format`;
-    if (key === "uniqueItems") return value === true ? "unique items" : [];
-    return boundText(key, value) ?? [];
-  });
+/**
+ * Where a finding may point, and whether that position is sensitive. A path
+ * names only properties the schema declares and array indices; the first
+ * other key reads `<key>` and ends it, since a map key is caller text. A
+ * position is sensitive when it or any ancestor is writeOnly.
+ */
+function publicPosition(root: JsonSchema, location: string): { path: string; sensitive: boolean } {
+  let node = resolved(root, root);
+  let path = "";
+  let sensitive = node.writeOnly === true;
+  for (const part of location === "#" ? [] : location.slice(2).split("/").map(decodePointerPart)) {
+    const branches = [
+      node,
+      ...["allOf", "anyOf", "oneOf"].flatMap((key) => (Array.isArray(node[key]) ? node[key] : [])),
+    ].map((branch) => resolved(root, branch));
+    const owner = branches.find((branch) => Object.hasOwn(schemaObject(branch.properties), part));
+    const list = branches.find((branch) => branch.items !== undefined || Array.isArray(branch.prefixItems));
+    if (owner) node = resolved(root, schemaObject(owner.properties)[part]);
+    else if (list && /^(?:0|[1-9]\d*)$/.test(part))
+      node = resolved(
+        root,
+        Array.isArray(list.prefixItems) ? (list.prefixItems[Number(part)] ?? list.items) : list.items,
+      );
+    else {
+      const values = branches.find((branch) => branch.additionalProperties !== undefined);
+      return {
+        path: `${path}/<key>`,
+        sensitive: sensitive || resolved(root, values?.additionalProperties).writeOnly === true,
+      };
+    }
+    sensitive ||= node.writeOnly === true;
+    path += `/${owner ? encodePointerPart(part) : part}`;
+  }
+  return { path: path || "/", sensitive };
+}
+
+const patternText = (pattern: unknown, sensitive: boolean) =>
+  `matching ${!sensitive && typeof pattern === "string" && pattern.length <= 64 ? pattern : "the inputSchema pattern"}`;
+
+/** Every other constraint a schema node declares, so one finding states them all; no literal of a sensitive one. */
+function constraints(node: Record<string, unknown>, failed: string, sensitive: boolean): unknown[] {
+  return Object.keys(node).flatMap((key) =>
+    key === failed
+      ? []
+      : key === "enum" && Array.isArray(node.enum) && !sensitive
+        ? `one of ${listed(node.enum.map((item) => JSON.stringify(item)))}`
+        : key === "uniqueItems" && node.uniqueItems === true
+          ? "unique items"
+          : key === "pattern"
+            ? patternText(node.pattern, sensitive)
+            : key === "format"
+              ? `${String(node.format)} format`
+              : (boundText(key, node[key]) ?? []),
+  );
 }
 
 /**
  * One finding per unit, told from the reviewed schema, never the validator's
- * own sentences. A bound violation states the bound and, unless the argument
- * sits under a writeOnly schema, the submitted number or size; strings are
- * never echoed.
+ * own sentences or a submitted string or key. A bound violation states the
+ * bound and, unless the position is sensitive, the submitted number. A
+ * sensitive position never renders a schema literal (enum, const, pattern).
  */
 function issueFor(schema: JsonSchema, args: unknown, safeArgs: unknown, unit: ValidationUnit): ArgumentValidationIssue {
   const { location, missing, with: present } = unitLocation(unit);
-  const path = argumentPath(location);
+  const position = publicPosition(schema, location);
   const keyword = pointerValue(schema, unit.keywordLocation);
   const parent = unit.keywordLocation.replace(/\/[^/]+$/, "");
   const node = schemaObject(
     pointerValue(schema, missing === undefined ? parent : `${parent}/properties/${encodePointerPart(missing)}`),
   );
+  const path = position.path;
+  // Unresolved sensitivity (no redacted copy) is treated as sensitive.
+  const sensitive = position.sensitive || node.writeOnly === true || safeArgs === undefined;
   let received = receivedType(pointerValue(args, location));
   let expected: string;
   if (missing !== undefined) {
@@ -457,22 +509,25 @@ function issueFor(schema: JsonSchema, args: unknown, safeArgs: unknown, unit: Va
     return { path, expected: keys.length ? `one of the accepted keys: ${listed(keys)}` : "no additional properties" };
   } else if (unit.keyword === "const") {
     const constant = JSON.stringify(keyword);
-    return { path, expected: constant?.length <= 64 ? `the constant ${constant}` : "the declared constant" };
+    return {
+      path,
+      expected: !sensitive && constant?.length <= 64 ? `the constant ${constant}` : "the declared constant",
+    };
   } else if (unit.keyword === "type") expected = declaredType(keyword) ?? "the declared type";
-  else if (unit.keyword === "enum" && Array.isArray(keyword))
+  else if (unit.keyword === "enum" && Array.isArray(keyword) && !sensitive)
     expected = `one of ${listed(keyword.map((value) => JSON.stringify(value)))}`;
   else if (unit.keyword === "uniqueItems") expected = "unique items";
-  else if (unit.keyword === "pattern") expected = `a string ${patternText(keyword)}`;
+  else if (unit.keyword === "pattern") expected = `a string ${patternText(keyword, sensitive)}`;
   else if (unit.keyword === "format") expected = `a ${String(keyword)} string`;
   else {
     const bound = boundText(unit.keyword, keyword);
     const safe = pointerValue(safeArgs, location);
-    if (bound && typeof safe === "number") received = String(safe);
+    if (bound && typeof safe === "number" && !sensitive) received = String(safe);
     expected = bound ?? "a value matching the published inputSchema";
   }
   return {
     path,
-    expected: [expected, ...constraints(node, missing === undefined ? unit.keyword : "type")].join(", "),
+    expected: [expected, ...constraints(node, missing === undefined ? unit.keyword : "type", sensitive)].join(", "),
     received,
   };
 }
@@ -495,163 +550,55 @@ function validationIssues(schema: JsonSchema, args: unknown, units: ValidationUn
   });
 }
 
-/** Facts from the published schema and one synthesized example; no caller values. */
-function schemaFacts(schema: JsonSchema, validator: Validator): Omit<ArgumentValidationDetails, "issues"> {
+/** One example synthesized from the published schema alone, checked by its validator; never caller values. */
+export function schemaExample(schema: JsonSchema): Pick<ArgumentValidationDetails, "example" | "exampleUnavailable"> {
+  try {
+    const validator = validators.get(schema) ?? new Validator(schema as never, "2020-12", false);
+    // Serialization makes the validation cover exactly what the agent receives.
+    const example = JSON.parse(JSON.stringify(exampleCandidate(schema, schema))) as unknown;
+    if (validator.validate(example).valid) {
+      minimizeExample(example, validator);
+      if (validator.validate(example).valid) return { example };
+    }
+  } catch {
+    // Unsatisfiable or complex schemas do not get a made-up valid example.
+  }
+  return { exampleUnavailable: "No valid example could be synthesized. Inspect the published inputSchema." };
+}
+
+/** Names from the published schema and one synthesized example; no caller values and no schema conditions. */
+function schemaFacts(schema: JsonSchema): Omit<ArgumentValidationDetails, "issues"> {
   const root = schemaObject(schema);
   const conditionalRequirements: ArgumentConditionalRequirement[] = [];
   const visit = (value: unknown, path: string, depth: number) => {
     if (depth > 12 || conditionalRequirements.length >= 20) return;
     const node = schemaObject(value);
-    for (const [key, required] of Object.entries(schemaObject(node.dependentRequired ?? node.dependencies))) {
-      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
-        conditionalRequirements.push({ path, condition: { required: [key] }, required });
-      }
-    }
-    for (const [key, branch] of Object.entries(schemaObject(node.dependentSchemas))) {
-      const required = schemaObject(branch).required;
-      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
-        conditionalRequirements.push({ path, condition: { required: [key] }, required });
-      }
-    }
-    for (const [branch, condition] of [
-      [node.then, node.if],
-      [node.else, node.if ? { not: node.if } : undefined],
+    for (const [key, required] of [
+      ...Object.entries(schemaObject(node.dependentRequired ?? node.dependencies)),
+      ...Object.entries(schemaObject(node.dependentSchemas)).map(([key, branch]) => [
+        key,
+        schemaObject(branch).required,
+      ]),
     ]) {
-      const required = schemaObject(branch).required;
-      if (condition && Array.isArray(required) && required.every((key) => typeof key === "string")) {
-        conditionalRequirements.push({ path, condition, required });
+      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
+        conditionalRequirements.push({ path, condition: { required: [key] }, required });
       }
     }
     for (const [key, child] of Object.entries(schemaObject(node.properties)))
       visit(child, `${path === "/" ? "" : path}/${encodePointerPart(key)}`, depth + 1);
     // Alternatives can make a dependency branch-specific. Do not state its
     // requirements without proving the complete branch condition.
-    for (const key of ["allOf"]) {
-      if (Array.isArray(node[key])) for (const child of node[key]) visit(child, path, depth + 1);
-    }
+    if (Array.isArray(node.allOf)) for (const child of node.allOf) visit(child, path, depth + 1);
   };
   visit(schema, "/", 0);
-  let example: unknown;
-  let valid = false;
-  try {
-    // Serialization makes the validation cover exactly what the agent receives.
-    example = JSON.parse(JSON.stringify(exampleCandidate(schema, schema)));
-    valid = validator.validate(example).valid;
-    if (valid) {
-      minimizeExample(example, validator);
-      valid = validator.validate(example).valid;
-    }
-  } catch {
-    valid = false;
-    // Unsatisfiable or complex schemas do not get a made-up valid example.
-  }
   const keys = Object.entries(schemaObject(root.properties))
     .filter(([, value]) => value !== false)
     .map(([key]) => key);
   return {
     ...(root.properties ? { acceptedKeys: keys } : {}),
     ...(conditionalRequirements.length ? { conditionalRequirements } : {}),
-    ...(valid
-      ? { example }
-      : { exampleUnavailable: "No valid example could be synthesized. Inspect the published inputSchema." }),
+    ...schemaExample(schema),
   };
-}
-
-/** Replace or remove the value at a finding's path in the example call. */
-export type ArgumentFix = { readonly value: unknown } | "omit";
-const OMITTED = Symbol("omitted");
-
-/**
- * One corrected call: the caller's arguments with each fix applied. It is kept
- * only when every finding has a fix, every omission removes a value that was
- * sent, and the corrected call validates against the published schema. What it
- * returns copies no sent value the schema does not prove safe: a boolean, an
- * enum or const member, or a number, at a declared position that is not
- * writeOnly. Anything else becomes the placeholder `"<as sent at /path>"`. Fix
- * values are the provider's own and appear as given. It must also fit the
- * shared argument echo budget; anything less is omitted, never guessed.
- */
-export function exampleWith(
-  schema: JsonSchema,
-  args: unknown,
-  fixes: ReadonlyArray<readonly [path: string, fix: ArgumentFix | undefined]>,
-): { example: unknown } | undefined {
-  try {
-    const validator = validators.get(schema) ?? new Validator(schema as never, "2020-12", false);
-    const example = JSON.parse(JSON.stringify(normalizeToolInput(args ?? {}))) as unknown;
-    for (const [path, fix] of fixes) {
-      const at = path.lastIndexOf("/");
-      const parent = pointerValue(example, `#${path.slice(0, at)}`);
-      const key = decodePointerPart(path.slice(at + 1));
-      // Removing a value that was never sent repeats the refused call; arrays take only sent indices.
-      if (
-        !fix ||
-        !key ||
-        parent === null ||
-        typeof parent !== "object" ||
-        ((fix === "omit" || Array.isArray(parent)) && !Object.hasOwn(parent, key)) ||
-        (Array.isArray(parent) && !/^(?:0|[1-9]\d*)$/.test(key))
-      )
-        return undefined;
-      // Removal is marked, then pruned, so later fixes keep the caller's array indices.
-      Object.defineProperty(parent, key, {
-        value: fix === "omit" ? OMITTED : (JSON.parse(JSON.stringify(fix.value)) as unknown),
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-    }
-    const fixed = fixes.map(([path]) => path);
-    const walk = (value: unknown, path: string, node: unknown, placeholders: boolean): unknown => {
-      let known = schemaObject(node);
-      for (let hops = 0; typeof known.$ref === "string" && hops < 8; hops++)
-        known = schemaObject(pointerValue(schema, known.$ref));
-      // A reference or alternative that does not resolve proves nothing safe.
-      if (["$ref", "anyOf", "oneOf", "allOf", "if"].some((key) => key in known)) known = {};
-      if (
-        placeholders &&
-        !fixed.some((done) => path === done || path.startsWith(`${done}/`)) &&
-        (known.writeOnly === true ||
-          !(
-            typeof value === "boolean" ||
-            value === null ||
-            typeof value === "object" ||
-            (typeof value === "number" && /number|integer/.test(String(known.type))) ||
-            (Array.isArray(known.enum) && known.enum.includes(value)) ||
-            (Object.hasOwn(known, "const") && known.const === value)
-          ))
-      )
-        return `<as sent at ${path || "/"}>`;
-      if (value === null || typeof value !== "object") return value;
-      const properties = schemaObject(known.properties);
-      const entries = Object.entries(value).flatMap(([key, item]) =>
-        item === OMITTED
-          ? []
-          : [
-              [
-                key,
-                walk(
-                  item,
-                  `${path}/${encodePointerPart(key)}`,
-                  Array.isArray(value)
-                    ? ((Array.isArray(known.prefixItems) ? known.prefixItems[Number(key)] : undefined) ?? known.items)
-                    : Object.hasOwn(properties, key)
-                      ? properties[key]
-                      : known.additionalProperties,
-                  placeholders,
-                ),
-              ] as const,
-            ],
-      );
-      return Array.isArray(value) ? entries.map(([, item]) => item) : Object.fromEntries(entries);
-    };
-    if (!fixes.length || !validator?.validate(walk(example, "", schema, false)).valid) return undefined;
-    // Placeholders already stand in for writeOnly values; the echo budget still bounds the size.
-    const text = JSON.stringify(walk(example, "", schema, true));
-    return boundedEchoText(text) === text ? { example: JSON.parse(text) as unknown } : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function unevaluableSchema(address: string): ConnectorCallError {
@@ -777,7 +724,7 @@ export function validateCatalogToolInput(
       "invalid_args",
       discreteLimit ? `The limit must be one of ${limit.join(", ")}.${shown.length ? ` ${ordinary}` : ""}` : ordinary,
       {
-        validation: { issues, ...schemaFacts(schema, validator) },
+        validation: { issues, ...schemaFacts(schema) },
       },
     );
   }

@@ -385,7 +385,7 @@ export class OperationIndex {
     });
     if (best.rows.length === 0) {
       invalid(
-        `${this.#title} has no ${path} operation in the pinned API index (${this.revision}). ` +
+        `${this.#title} has no operation at that path in the pinned API index (${this.revision}). ` +
           `Nearest: ${this.nearest(method, segments).join("; ")}. Find operations with ${this.#vendorTool("search")}.`,
       );
     }
@@ -603,7 +603,7 @@ export class OperationIndex {
       }
     }
     if (only !== undefined && parameters.length === 0 && body === undefined) {
-      invalid(`${op.method} ${op.path} has no parameter named ${only}.`);
+      invalid(`${op.method} ${op.path} has no parameter by that name.`);
     }
     return {
       method: op.method,
@@ -633,7 +633,7 @@ export class OperationIndex {
       const param = declared.find(([key]) => key === name);
       if (!param) {
         issues.push({
-          path: `/query/${name}`,
+          path: "/query/<key>",
           expected: accepted.length ? oneOf(accepted, name) : "no query parameters",
           received: valueType(value),
         });
@@ -835,10 +835,10 @@ export class OperationIndex {
         if (item === undefined) continue;
         const child = properties[key];
         if (child) this.#check(child, item, `${at}/${key}`, issues);
-        else if (schema.m) this.#check(schema.m, item, `${at}/${key}`, issues);
+        else if (schema.m) this.#check(schema.m, item, `${at}/<key>`, issues);
         else if (schema.p) {
           issues.push({
-            path: `${at}/${key}`,
+            path: `${at}/<key>`,
             expected: accepted.length ? oneOf(accepted, key) : "no properties",
             received: valueType(item),
           });

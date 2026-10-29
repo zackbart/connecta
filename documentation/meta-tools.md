@@ -1034,7 +1034,7 @@ operation and carries one recovery envelope, `validation`:
   "issues": [
     { "path": "/limit", "expected": "at least 5", "received": "4" },
     { "path": "/mode", "expected": "one of \"fast\", \"safe\"", "received": "string" },
-    { "path": "/typo", "expected": "one of the accepted keys: mode, limit" }
+    { "path": "/<key>", "expected": "one of the accepted keys: mode, limit" }
   ],
   "acceptedKeys": ["mode", "limit"],
   "example": { "mode": "fast", "limit": 5 }
@@ -1042,50 +1042,50 @@ operation and carries one recovery envelope, `validation`:
 ```
 
 Every finding is listed, and the message repeats them, so one corrected call
-fixes them all. `path` is a JSON Pointer into the submitted arguments. `expected`
-states the actual bound, allowed values, accepted keys or selector shape.
-`received` is the submitted JSON type, `missing`, or, for a numeric bound of a
-named tool, the submitted number when its schema position is not `writeOnly`; a
-submitted string is never copied. A finding states every constraint its schema
-position declares (bounds, property and item counts, `multipleOf`, `pattern`,
-`format`, `uniqueItems`, enum members, `dependentRequired`), with the failing
-one first, and each position gets one finding. At most eight findings are returned, each field clipped (path and
-expected 256 characters, received 64), and `truncated: true` says something was
-omitted or clipped.
+fixes them all.
 
-`example` is one complete corrected call. For a schema mismatch it is
-synthesized from the published schema without submitted values and checked
-against the same validator; complex or unsatisfiable schemas get
-`exampleUnavailable` instead. Synthesis detects recursive references and shares
-a 128-node work budget. A maintained provider's own checks (selectors, search
-terms, `fields` paths) report every problem in one refusal, and their example is
-the submitted call with each finding's fix applied: a value the provider derives
-from configuration or the result shape (a bare repository joined to its org only
-when that repository is configured, a vendor field moved under `item`), a
-placeholder such as `"<owner>/<repo>"`, or the argument removed. When a
-connector supplies findings with neither an example nor `exampleUnavailable`,
-invocation offers the submitted call without every listed path.
+A refusal contains only names and literals the published schema declares at
+non-sensitive positions, numbers allowed by the bound rule below, and fixed
+placeholder text. It never contains a submitted string or object key, in the
+message, a finding, `acceptedKeys` or the example. A position is sensitive when
+it or an ancestor is `writeOnly`; a named tool's input schema marks each request
+secret that way. API hatch findings name only the operation contract's
+properties and enum members, as `*_api_details` publishes them.
 
-A derived example copies no submitted value the published schema does not prove
-safe: a boolean, an enum or `const` member, or a number at a declared numeric
-position that is not `writeOnly`. Every other submitted value, including every
-string, becomes the placeholder `"<as sent at /path>"`, naming where to reuse
-what was sent. The corrected call is validated with the submitted values before
-they are replaced. No example is offered when a finding has no fix, when a
-removal targets a value that was not sent (that would repeat the refused call),
-when the corrected call fails the schema, when it exceeds the 512-byte argument
-echo budget, or when it would carry a value this request registered as private
-or the `[redacted]` marker. API hatches (`*_api_read`, `*_api_write`) never
-derive one: their generic schema cannot prove an operation's arguments safe to
-echo, so `exampleUnavailable` points to the operation's `*_api_details`.
+- `path` is a JSON Pointer naming declared properties and array indices. The
+  first key the schema does not declare (a misspelled argument, a map key)
+  reads `<key>` and ends the path, e.g. `/headers/<key>`.
+- `expected` states the constraint that failed, then every other constraint
+  the position declares: bounds, property and item counts, `multipleOf`,
+  `pattern`, `format`, `uniqueItems`, enum members, `dependentRequired`
+  (`string (required with tags)`). A sensitive position never renders an enum,
+  `const` or pattern literal. Each position gets one finding.
+- `received` is the submitted JSON type, `missing`, or, for a numeric bound at
+  a non-sensitive position of a named tool, the submitted number.
 
-`acceptedKeys` names the tool's top-level arguments and
-`conditionalRequirements` lists known `dependentRequired` and
-`if`/`then`/`else` requirements; alternative branches do not emit dependency
-advice unless the branch condition is known. The envelope has a 4 KiB budget:
+At most eight findings are returned, each field clipped (path and expected 256
+characters, received 64), and `truncated: true` says something was omitted or
+clipped.
+
+`example` is one valid call synthesized from the published schema and checked
+against the same validator. It never copies a submitted value, and a sensitive
+position never renders a schema literal (`enum`, `const`, `default`,
+`examples`). Complex or unsatisfiable schemas get `exampleUnavailable` instead.
+Synthesis detects recursive references and shares a 128-node work budget.
+Invocation uses only this schema example, never a connector's copy of the
+call, unless the connector states `exampleUnavailable`. API hatches
+(`*_api_read`, `*_api_write`) always do: their generic schema says nothing
+about an operation's arguments, so the reason points to the operation's
+`*_api_details`.
+
+`acceptedKeys` names the tool's top-level arguments. `conditionalRequirements`
+lists known `dependentRequired` and `dependentSchemas` requirements by
+property name; `if`/`then`/`else` conditions are schema subtrees and are not
+rendered. The envelope has a 4 KiB budget:
 optional detail, then the example, then trailing findings are dropped whole,
 with `truncated: true`. A `repair` object a custom connector passes contributes
-its received types and schema facts. Operator records contain only checked failure facts,
+its received types and schema facts. A custom connector's own findings must
+follow the same rule. Operator records contain only checked failure facts,
 never findings or examples.
 
 `nextAction` points to discovery scoped to the same connector and tool name when

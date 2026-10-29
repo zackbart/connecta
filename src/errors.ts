@@ -278,23 +278,21 @@ function plainJson(value: unknown): unknown {
   }
 }
 
-const BOUND_TEXT: Record<string, string> = {
-  minimum: "at least #",
-  maximum: "at most #",
-  exclusiveMinimum: "greater than #",
-  exclusiveMaximum: "less than #",
-  multipleOf: "a multiple of #",
-  minLength: "at least # characters",
-  maxLength: "at most # characters",
-  minItems: "at least # items",
-  maxItems: "at most # items",
-  minProperties: "at least # properties",
-  maxProperties: "at most # properties",
+const BOUND_WORDS: Record<string, string> = {
+  minimum: "at least",
+  maximum: "at most",
+  exclusiveMinimum: "greater than",
+  exclusiveMaximum: "less than",
+  multipleOf: "a multiple of",
 };
 
 /** A JSON Schema bound keyword as an agent-readable constraint with its number. */
 export function boundText(keyword: string, bound: unknown): string | undefined {
-  return typeof bound === "number" ? BOUND_TEXT[keyword]?.replace("#", String(bound)) : undefined;
+  const [, side, unit] = /^(min|max)(Length|Items|Properties)$/.exec(keyword) ?? [];
+  const words = side ? `at ${side === "min" ? "least" : "most"}` : BOUND_WORDS[keyword];
+  return typeof bound === "number" && words
+    ? `${words} ${bound}${unit ? ` ${unit === "Length" ? "characters" : unit.toLowerCase()}` : ""}`
+    : undefined;
 }
 
 /** Up to twelve items, then a count. */
@@ -307,14 +305,6 @@ export function issueSummary(issues: readonly ArgumentValidationIssue[]): string
   return issues
     .map((issue) => `${issue.path}: expected ${issue.expected}${issue.received ? `, received ${issue.received}` : ""}`)
     .join("; ");
-}
-
-/** Envelopes that list every finding; only clipped text or optional detail may be missing. */
-const everyFinding = new WeakSet<ArgumentValidationDetails>();
-
-/** Whether an envelope lists every finding, so removing each listed path can repair the call. */
-export function listsEveryFinding(validation: ArgumentValidationDetails): boolean {
-  return everyFinding.has(validation);
 }
 
 /**
@@ -335,9 +325,7 @@ function boundedValidation(
       typeof issue.expected === "string" &&
       list.findIndex((other) => other.path === issue.path && other.expected === issue.expected) === index,
   );
-  // A clipped path no longer names the argument to repair.
-  let dropped = source.truncated === true || all.length > MAX_ARGUMENT_VALIDATION_ISSUES;
-  let truncated = dropped;
+  let truncated = source.truncated === true || all.length > MAX_ARGUMENT_VALIDATION_ISSUES;
   const clip = (value: string, max: number) => {
     const bounded = boundedIssueText(value, max);
     truncated ||= bounded.truncated;
@@ -345,10 +333,8 @@ function boundedValidation(
   };
   const issues = all.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES).map(({ path, expected, received }) => {
     received ??= repair?.issues?.find((legacy) => legacy?.path === path)?.receivedType;
-    const clipped = clip(path, MAX_ARGUMENT_ISSUE_PATH_CHARS);
-    dropped ||= clipped !== path;
     return {
-      path: clipped,
+      path: clip(path, MAX_ARGUMENT_ISSUE_PATH_CHARS),
       expected: clip(expected, MAX_ARGUMENT_ISSUE_EXPECTED_CHARS),
       ...(typeof received === "string" ? { received: clip(received, MAX_ARGUMENT_ISSUE_RECEIVED_CHARS) } : {}),
     };
@@ -363,20 +349,17 @@ function boundedValidation(
   else if (typeof source.exampleUnavailable === "string")
     result.exampleUnavailable = clip(source.exampleUnavailable, MAX_ARGUMENT_ISSUE_EXPECTED_CHARS);
   const fits = () => echoEncoder.encode(JSON.stringify(result)).length <= MAX_ARGUMENT_VALIDATION_BYTES - 20;
-  for (const key of ["conditionalRequirements", "acceptedKeys", "example"] as const) {
-    if (fits()) break;
-    if (!(key in result)) continue;
-    delete result[key];
+  if (!fits()) {
     truncated = true;
-    if (key === "example")
+    delete result.conditionalRequirements;
+    delete result.acceptedKeys;
+    if (result.example !== undefined && !fits()) {
+      delete result.example;
       result.exampleUnavailable = "The example exceeds the response budget. Inspect the published inputSchema.";
+    }
   }
-  while (!fits() && issues.length > 1) {
-    issues.pop();
-    truncated = dropped = true;
-  }
+  while (!fits() && issues.length > 1) issues.pop();
   if (truncated) result.truncated = true;
-  if (!dropped) everyFinding.add(result);
   return result;
 }
 

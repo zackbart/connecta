@@ -308,18 +308,18 @@ describe("vercel() over an access token", () => {
       args: {
         method: "POST",
         path: "/v10/projects/web/env",
-        query: { bogus: 1 },
+        query: { "bogus-sentinel": "query-sentinel" },
         body: { key: "TOKEN", value: "env-secret-sentinel", type: "encrypted", target: ["preview"] },
       },
     });
     expect(refused.structuredContent).toMatchObject({
       ok: false,
-      error: { code: "invalid_args", validation: { issues: [{ path: "/query/bogus" }] } },
+      error: { code: "invalid_args", validation: { issues: [{ path: "/query/<key>" }] } },
     });
     // The generic hatch schema cannot prove this body safe to echo, so no example is derived.
     expect((refused.structuredContent as any).error.validation).not.toHaveProperty("example");
     expect((refused.structuredContent as any).error.validation.exampleUnavailable).toContain("vercel_api_details");
-    expect(JSON.stringify(refused)).not.toContain("env-secret-sentinel");
+    expect(JSON.stringify(refused)).not.toContain("sentinel");
     expect(sent).toHaveLength(0);
   });
 

@@ -86,66 +86,37 @@ function selectors(input: unknown, policy: ScopePolicy): GitHubScope[] {
 const SEARCH_TERMS = /^[a-z0-9_. -]{1,128}$/i;
 const BOOLEAN_TERMS = /\b(?:OR|NOT|AND)\b/i;
 
-/** The canonical `owner/repo` a configured grant admits, or undefined. */
-function configuredRepo(repo: unknown, policy: ScopePolicy): string | undefined {
-  const parts = typeof repo === "string" ? repo.split("/") : [];
-  try {
-    const t = target(parts[0], parts.length === 2 ? parts[1] : undefined);
-    policy.scope(t);
-    return `${t.owner}/${t.repo}`;
-  } catch (error) {
-    if (error instanceof ConnectorCallError) return undefined;
-    throw error;
-  }
-}
-
 /**
- * Record every selector problem with the selector shape and the configured
- * grants. A correction is offered only when the configured scope admits it,
- * so replaying the example never fails on the same selector; otherwise the
- * fix is an explicit placeholder.
+ * Record every selector problem by shape alone: a refusal never repeats a
+ * submitted org or repository, and list_scopes names the configured grants.
  */
 function selectorIssues(problems: ArgumentProblems, input: readonly unknown[] | undefined, policy: ScopePolicy) {
-  const grants = policy.summary();
-  const placeholder = { value: { repo: "<owner>/<repo>" } } as const;
   input?.forEach((item, index) => {
     const value = row(item),
       at = `/scopes/${index}`;
-    if ((value.org === undefined) === (value.repo === undefined)) {
-      // {org, repo} with a bare repository name means owner/repository.
-      const both = typeof value.org === "string" && typeof value.repo === "string";
-      const named = both ? (value.repo.includes("/") ? value.repo : `${value.org}/${value.repo}`) : undefined;
-      const joined = named === undefined ? undefined : configuredRepo(named, policy);
-      problems.add(
+    if ((value.org === undefined) === (value.repo === undefined))
+      return problems.add(
         at,
-        `exactly one key: {"org": "<org>"} for an org-wide grant or {"repo": "<owner>/<repo>"}` +
-          `${named !== undefined && joined === undefined ? `; ${named} is outside the configured scope` : ""}. Configured: ${grants}`,
-        {
-          received: value.org === undefined ? "neither org nor repo" : "both org and repo",
-          fix: joined ? { value: { repo: joined } } : placeholder,
-        },
+        'exactly one key: {"org": "<org>"} for an org-wide grant or {"repo": "<owner>/<repo>"}',
+        value.org === undefined ? "neither org nor repo" : "both org and repo",
       );
-      return;
-    }
-    let admitted: boolean;
+    let admitted = false;
     try {
-      admitted =
-        value.org !== undefined
-          ? policy.scopes.some((scope) => scope.org === policy.owner(value.org))
-          : configuredRepo(value.repo, policy) !== undefined;
+      if (value.org !== undefined) admitted = policy.scopes.some((scope) => scope.org === policy.owner(value.org));
+      else {
+        const parts = typeof value.repo === "string" ? value.repo.split("/") : [];
+        admitted = !!policy.scope(target(parts[0], parts.length === 2 ? parts[1] : undefined));
+      }
     } catch (error) {
       if (!(error instanceof ConnectorCallError)) throw error;
-      admitted = false;
     }
-    if (admitted) return;
-    const key = value.org !== undefined ? "org" : "repo";
-    problems.add(
-      `${at}/${key}`,
-      key === "org"
-        ? `an organization configured for org-wide access. Configured: ${grants}`
-        : `"<owner>/<repo>" naming a configured repository or one in a configured org. Configured: ${grants}`,
-      { fix: { value: key === "org" ? "<org>" : "<owner>/<repo>" } },
-    );
+    if (!admitted)
+      problems.add(
+        `${at}/${value.org !== undefined ? "org" : "repo"}`,
+        value.org !== undefined
+          ? "an organization configured for org-wide access; list_scopes names them"
+          : '"<owner>/<repo>" of a configured repository or one in a configured org; list_scopes names them',
+      );
   });
 }
 
@@ -359,7 +330,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       } catch (error) {
         if (!(error instanceof ConnectorCallError)) throw error;
         // Without owner, the listing reads the configured grants locally.
-        problems.add("/owner", `a configured owner. Configured: ${policy.summary()}`, { fix: "omit" });
+        problems.add("/owner", "a configured owner; omit owner to list the configured grants");
       }
     },
     run: (args) =>
@@ -462,15 +433,13 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
     }),
     output: Schema.Struct({ items: Schema.Array(SearchRow), page: StandardPage, incomplete_results: Schema.Boolean }),
     check: (args, problems) => {
-      // Rows wrap the vendor's record under item, so a vendor field moves there.
-      fieldsIssues(problems, args.fields, searchNames, "an item", (field) => ({ value: `item.${field}` }));
-      if (!SEARCH_TERMS.test(args.terms) || BOOLEAN_TERMS.test(args.terms)) {
+      // Rows wrap the vendor's record under item, so a vendor field is item.<field>.
+      fieldsIssues(problems, args.fields, searchNames, "an item (vendor fields are under item)");
+      if (!SEARCH_TERMS.test(args.terms) || BOOLEAN_TERMS.test(args.terms))
         problems.add(
           "/terms",
           "literal words of letters, digits, spaces, _ . or -, at most 128 characters, without qualifiers such as is:open or label:x and without OR, AND or NOT; kind and scopes select the rest",
-          { fix: { value: "<literal words>" } },
         );
-      }
       selectorIssues(problems, args.scopes, policy);
     },
     run: (args) =>

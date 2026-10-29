@@ -221,7 +221,7 @@ describe("repairing error envelopes", () => {
     });
   });
 
-  it("INV-6: a connector's findings without an example get the call minus offending optional paths", async () => {
+  it("INV-5 INV-6: a connector refusal's example comes only from the published schema", async () => {
     const schema = {
       type: "object",
       properties: {
@@ -232,18 +232,17 @@ describe("repairing error envelopes", () => {
       required: ["query"],
       additionalProperties: false,
     };
-    const refuse = (paths: string[]) => async () => {
-      throw new ConnectorCallError("invalid_args", "Bad.", {
-        validation: { issues: paths.map((path) => ({ path, expected: "a declared path" })) },
-      });
-    };
-    const invoke = async (paths: string[], args: Record<string, unknown>) => {
+    const invoke = async (validation: Record<string, unknown>, args: Record<string, unknown>) => {
       const registry = makeRegistry([
         connectorWith({
           id: "notes",
           kind: "api",
           tools: [{ name: "find", annotations: { readOnlyHint: true }, inputSchema: schema }],
-          call: refuse(paths),
+          call: async () => {
+            throw new ConnectorCallError("invalid_args", "Bad.", {
+              validation: { issues: [{ path: "/fields/0", expected: "a declared path" }], ...validation },
+            });
+          },
         }),
       ]);
       const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
@@ -254,51 +253,19 @@ describe("repairing error envelopes", () => {
       if (outcome.ok) throw new Error("Expected refusal");
       return outcome.error;
     };
-    const fixed = await invoke(["/fields/0", "/fields/2"], { query: "q", fields: ["bad", "title", "worse"] });
-    // Sent strings the schema cannot prove safe come back as placeholders, never verbatim.
-    expect(fixed.validation).toMatchObject({
-      example: { query: "<as sent at /query>", fields: ["<as sent at /fields/1>"] },
-    });
-    expect(fixed.validation).not.toHaveProperty("exampleUnavailable");
-    expect(fixed.retry).toContain("notes.find");
-    // A required argument cannot be dropped, and removing an absent path would repeat the call.
-    for (const [paths, args] of [
-      [["/query"], { query: "q" }],
-      [["/fields/0"], { query: "q" }],
-    ] as const) {
-      const error = await invoke([...paths], args);
-      expect(error.validation).not.toHaveProperty("example");
-      expect(error.validation?.exampleUnavailable).toContain("without guessing");
+    const args = { query: "query-sentinel", fields: ["field-sentinel"], token: "token-sentinel" };
+    // A connector's own copy of the call is replaced by the schema's synthesized example.
+    for (const supplied of [{}, { example: args }]) {
+      const error = await invoke(supplied, args);
+      expect(error.validation).toMatchObject({ example: { query: "x" } });
+      expect(error.retry).toContain("notes.find");
+      expect(JSON.stringify(error)).not.toMatch(/sentinel/);
     }
-    // A writeOnly value returns only as a placeholder.
-    const secret = await invoke(["/fields/0"], { query: "q", fields: ["bad"], token: "token-sentinel" });
-    expect(secret.validation?.example).toEqual({
-      query: "<as sent at /query>",
-      fields: [],
-      token: "<as sent at /token>",
-    });
-    expect(JSON.stringify(secret)).not.toContain("token-sentinel");
-    // A connector's own example that carries a value this request registered as private is withheld.
-    const registry = makeRegistry([
-      connectorWith({
-        id: "notes",
-        kind: "api",
-        tools: [{ name: "find", annotations: { readOnlyHint: true }, inputSchema: schema }],
-        call: async (_name: string, args: unknown) => {
-          throw new ConnectorCallError("invalid_args", "Bad.", {
-            validation: { issues: [{ path: "/fields/0", expected: "a declared path" }], example: args },
-          });
-        },
-      }),
-    ]);
-    const echoed = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
-      "notes.find",
-      { query: "q", token: "private-token-sentinel" },
-      { source: "call_tool", readOnly: false },
-    );
-    if (echoed.ok) throw new Error("Expected refusal");
-    expect(echoed.error.validation).not.toHaveProperty("example");
-    expect(JSON.stringify(echoed)).not.toContain("private-token-sentinel");
+    // A stated reason stands, and no example rides beside it.
+    const withheld = await invoke({ exampleUnavailable: "Read notes_api_details." }, args);
+    expect(withheld.validation).not.toHaveProperty("example");
+    expect(withheld.validation?.exampleUnavailable).toBe("Read notes_api_details.");
+    expect(JSON.stringify(withheld)).not.toMatch(/sentinel/);
   });
 
   it("INV-6 INV-9: a dispatched write timeout echoes the uncertain call only to the agent and is never repeated", async () => {

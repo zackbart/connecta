@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import type { JsonSchema } from "../src/types.js";
-import { exampleWith, normalizeToolInput, validateToolInput } from "../src/validate.js";
+import { normalizeToolInput, validateToolInput } from "../src/validate.js";
 import { spyLogger } from "./fixtures/misc.js";
 import { silentLogger } from "./helpers.js";
 
@@ -231,7 +231,8 @@ it("INV-6: one envelope states every bound, allowed value and accepted key witho
       { path: "/limit", expected: "at least 5", received: "4" },
       // A writeOnly position states its type, never the submitted number.
       { path: "/pin", expected: "at least 1000", received: "number" },
-      { path: "/typo", expected: "one of the accepted keys: mode, count, limit, pin" },
+      // An undeclared key is caller text, so the path names only its position.
+      { path: "/<key>", expected: "one of the accepted keys: mode, count, limit, pin" },
     ],
     acceptedKeys: ["mode", "count", "limit", "pin"],
     example: { mode: "fast", count: 1 },
@@ -350,61 +351,45 @@ it("INV-6: every constraint the repair envelope carried survives in the findings
   );
 });
 
-it("INV-5 INV-6: a derived example copies no sent value the schema cannot prove safe", () => {
-  const schema: JsonSchema = {
+it("INV-5 INV-6: a refusal names no submitted key and renders no literal at a sensitive position", () => {
+  // Reviewer reproduction (round 2, finding 1): a dynamic map key.
+  const maps: JsonSchema = {
     type: "object",
     properties: {
-      note: { type: "string" },
-      mode: { type: "string", enum: ["fast", "safe"] },
-      count: { type: "integer" },
-      draft: { type: "boolean" },
-      pin: { type: "integer", writeOnly: true },
-      body: { type: "object" },
-      fields: { type: "array", items: { type: "string" } },
+      headers: { type: "object", additionalProperties: { type: "string" } },
+      fields: { type: "array", items: { type: "string", enum: ["id", "title"] } },
     },
-    required: ["note"],
   };
-  const args = {
-    note: "note-sentinel",
-    mode: "fast",
-    count: 3,
-    draft: true,
-    pin: 4242,
-    body: { value: "body-sentinel", n: 5 },
-    fields: ["bad", "ok"],
-  };
-  expect(exampleWith(schema, args, [["/fields/0", "omit"]])).toEqual({
-    example: {
-      note: "<as sent at /note>",
-      mode: "fast",
-      count: 3,
-      draft: true,
-      pin: "<as sent at /pin>",
-      body: { value: "<as sent at /body/value>", n: "<as sent at /body/n>" },
-      fields: ["<as sent at /fields/1>"],
-    },
-  });
-  // Tuple positions resolve through prefixItems; references and alternatives prove nothing.
-  const tuple: JsonSchema = {
+  const mapped = validateToolInput(maps, { headers: { "X-Secret-SENTINEL": 1 }, fields: ["bad"] }, OPTS);
+  expect(mapped?.validation?.issues.map((issue) => issue.path)).toEqual(["/headers/<key>", "/fields/0"]);
+  const typo = validateToolInput(
+    { type: "object", properties: { mode: { type: "string" } }, additionalProperties: false },
+    { "typo-SENTINEL": 1 },
+    OPTS,
+  );
+  expect(typo?.validation?.issues).toEqual([{ path: "/<key>", expected: "one of the accepted keys: mode" }]);
+  // Reviewer reproduction (round 2, finding 3): enum and const at writeOnly positions, also inherited.
+  const secret: JsonSchema = {
     type: "object",
-    $defs: { mode: { enum: ["fast"] } },
     properties: {
-      pair: { type: "array", prefixItems: [{ enum: ["a"] }, { type: "string" }] },
-      ref: { $ref: "#/$defs/mode" },
-      either: { anyOf: [{ enum: ["x"] }, { type: "string" }] },
-      fields: { type: "array" },
+      password: { type: "string", writeOnly: true, enum: ["credential-SENTINEL"] },
+      token: { writeOnly: true, const: "const-SENTINEL" },
+      nested: {
+        type: "object",
+        writeOnly: true,
+        properties: { pin: { type: "string", enum: ["inherited-SENTINEL"], pattern: "^pattern-SENTINEL$" } },
+        required: ["pin"],
+      },
     },
+    required: ["password"],
   };
-  expect(
-    exampleWith(tuple, { pair: ["a", "b"], ref: "fast", either: "x", fields: ["bad"] }, [["/fields/0", "omit"]]),
-  ).toEqual({
-    example: { pair: ["a", "<as sent at /pair/1>"], ref: "fast", either: "<as sent at /either>", fields: [] },
-  });
-  // A provider's own fix value appears as given.
-  expect(exampleWith(schema, { note: "x" }, [["/note", { value: "<note>" }]])).toEqual({ example: { note: "<note>" } });
-  // Removing a value that was never sent would repeat the refused call, so there is no example.
-  expect(exampleWith(schema, { note: "x" }, [["/mode", "omit"]])).toBeUndefined();
-  expect(exampleWith(schema, { note: "x", fields: [] }, [["/fields/0", "omit"]])).toBeUndefined();
-  // A corrected call that still fails the schema gives none either.
-  expect(exampleWith(schema, { note: "x" }, [["/note", "omit"]])).toBeUndefined();
+  for (const args of [{ password: "wrong" }, { password: "wrong", token: "x", nested: { pin: "y" } }, {}]) {
+    const error = validateToolInput(secret, args, OPTS);
+    expect(error?.code).toBe("invalid_args");
+    expect(JSON.stringify([error?.message, error?.validation])).not.toMatch(/SENTINEL|wrong/);
+  }
+  // A non-sensitive literal still renders.
+  expect(validateToolInput(maps, { fields: ["bad"] }, OPTS)?.validation?.issues[0]?.expected).toBe(
+    'one of "id", "title"',
+  );
 });

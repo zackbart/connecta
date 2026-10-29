@@ -83,8 +83,8 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly writeSteps?: WriteSteps<I["Type"]>;
   /**
    * Argument checks the input Schema cannot express. Record every problem
-   * instead of throwing at the first, each with a fix where one is known; the
-   * kit refuses once, before `run`, with all of them and an example call.
+   * instead of throwing at the first; the kit refuses once, before `run`,
+   * with all of them and the schema's synthesized example call.
    */
   readonly check?: (args: I["Type"], problems: ArgumentProblems) => void;
   readonly run: (args: I["Type"]) => Effect.Effect<O["Type"], HttpFailure, CallServices>;
@@ -538,7 +538,7 @@ function build<I extends Input, O extends Schema.Top>(
             try: () => {
               const problems = new ArgumentProblems();
               check(decoded, problems);
-              const refusal = problems.refusal("Invalid arguments", args, tool.inputSchema);
+              const refusal = problems.refusal("Invalid arguments", tool.inputSchema);
               if (refusal) throw refusal;
               return decoded;
             },

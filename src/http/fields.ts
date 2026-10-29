@@ -5,7 +5,7 @@
 // any named projection), so it can only remove. A list narrows each item.
 import { Schema } from "effect";
 import { ConnectorCallError } from "../errors.js";
-import { ArgumentProblems, type ArgumentFix } from "./argument-problems.js";
+import { ArgumentProblems } from "./argument-problems.js";
 import { isMaxChars, isMinChars } from "./json-schema.js";
 
 const MAX_FIELDS = 50;
@@ -25,20 +25,18 @@ function record(value: unknown): value is Record<string, unknown> {
  * Record every `fields` path whose first segment is not a property the result
  * can carry. Named tools pass their output Schema's property names and the
  * hatch its operation's declared response roots, so a bad path fails before
- * anything is sent. Each bad path is dropped from the example call.
+ * anything is sent. A finding names the entry's index, never its text.
  */
 export function fieldsIssues(
   problems: ArgumentProblems,
   fields: readonly string[] | undefined,
   names: ReadonlySet<string>,
   of: string,
-  /** The corrected path when the result's shape determines it; default drops the path. */
-  fix: (field: string) => ArgumentFix = () => "omit",
 ): void {
   const choices = names.size > 0 && names.size <= 40 ? `one of ${[...names].join(", ")}` : "a declared property";
   fields?.forEach((field, index) => {
     if (!names.has(field.replace(/\[\](?=\.|$)/g, "").split(".")[0]!))
-      problems.add(`/fields/${index}`, `a path beginning with a property of ${of}: ${choices}`, { fix: fix(field) });
+      problems.add(`/fields/${index}`, `a path beginning with a property of ${of}: ${choices}`);
   });
 }
 
@@ -51,7 +49,7 @@ export function fieldsProblem(
 ): ConnectorCallError | undefined {
   const problems = new ArgumentProblems();
   fieldsIssues(problems, fields, names, of);
-  return problems.refusal("Invalid fields", fields === undefined ? undefined : { fields }, undefined, withheld);
+  return problems.refusal("Invalid fields", undefined, withheld);
 }
 
 /** Keep only the named dot paths; arrays are narrowed item by item. */

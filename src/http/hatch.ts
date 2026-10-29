@@ -206,7 +206,7 @@ function parameters(values: Readonly<Record<string, unknown>>): Parameters {
         typeof item !== "boolean" &&
         !(typeof item === "number" && Number.isFinite(item))
       ) {
-        invalid(`Parameter ${name} takes a string, finite number, boolean, or a list of them.`);
+        invalid("Each query parameter takes a string, finite number, boolean, or a list of them.");
       }
       return [name, String(item)];
     });
