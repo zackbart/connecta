@@ -15,8 +15,22 @@ import type { DeferredWork } from "../connector-scope.js";
 import type { CredentialVault } from "../credential-contract.js";
 import { credentialReads } from "../credential-reads.js";
 import { credentialTestRule, describeUndeclaredCredentialFields, storedCredentialShape } from "../credential-rules.js";
-import { failureRecord, failureStatus, logFailure, recordedToolName, statusFailure } from "../operator-record.js";
-import type { CredentialManagementCapability, UiConnector, UiData, UiTool } from "../operator-ui/model.js";
+import { readVerification } from "../credential-verification.js";
+import {
+  failureRecord,
+  failureStatus,
+  logFailure,
+  ownStatus,
+  recordedToolName,
+  statusFailure,
+} from "../operator-record.js";
+import type {
+  CredentialManagementCapability,
+  UiConnector,
+  UiData,
+  UiTool,
+  UiVerification,
+} from "../operator-ui/model.js";
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { requestReads } from "../runtime/request-scope.js";
@@ -52,6 +66,7 @@ interface Observed {
   tools: OperatorTool[];
   catalogFailed: boolean;
   timedOut?: boolean;
+  verification?: UiVerification | undefined;
 }
 
 const DETAIL_TIMEOUT_MS = 30_000;
@@ -90,6 +105,27 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
       );
     };
 
+    /**
+     * The stored last verification of a credential or api() OAuth grant
+     * (src/credential-verification.ts). Read only, never probed (INV-10). A
+     * credential's record counts only for the save it observed, whose
+     * metadata the card's memoized vault read already holds.
+     */
+    const verificationFor = (c: Connector, requestScope: object): Effect.Effect<UiVerification | undefined> =>
+      c.credential || (c.kind === "api" && c.startAuth)
+        ? attempt(async () => {
+            const storage = registry.contextFor(c.id, baseUrl, requestScope).storage;
+            if (!c.credential) return readVerification(storage);
+            const metadata = vault
+              ? await credentialReads(vault, requestReads(requestScope)).metadata(
+                  c.id,
+                  c.authScope === "personal" ? owner : undefined,
+                )
+              : null;
+            return metadata ? readVerification(storage, metadata.updatedAt) : undefined;
+          }).pipe(Effect.orElseSucceed(() => undefined))
+        : Effect.succeed(undefined);
+
     // Status first, then the catalog only when status is ok. A failed status
     // read is an error status, not a failed row: the row still reports the
     // connector's credential.
@@ -107,14 +143,21 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         });
       }
       return Effect.gen(function* () {
-        const status = yield* attempt(() =>
+        const reported = yield* attempt(() =>
           registry.statusFor(c.id, baseUrl, requestScope, {
             signal,
             ...(options.defer ? { defer: options.defer } : {}),
           }),
         );
+        const verification = yield* verificationFor(c, requestScope);
+        // An api() OAuth grant the downstream refused, even after renewal,
+        // needs a new consent: one stored grant alone does not make it ok.
+        const status =
+          verification?.outcome === "rejected" && !c.credential && reported.state === "ok"
+            ? ownStatus({ state: "auth_required" as const })
+            : reported;
         if (status.state !== "ok" || signal.aborted) {
-          return { status, tools: [], catalogFailed: false };
+          return { status, tools: [], catalogFailed: false, verification };
         }
         // A catalog is configuration the operator chose to load, and its
         // descriptions are the agent's too, so the page shows them as text.
@@ -135,10 +178,10 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
               classification: t.classification === "read" ? "read" : "write",
             })),
         ).pipe(
-          Effect.map((tools) => ({ status, tools, catalogFailed: false })),
+          Effect.map((tools) => ({ status, tools, catalogFailed: false, verification })),
           // The registry owns the failed catalog observation; the page only
           // needs to know there was one.
-          Effect.catch(() => Effect.succeed({ status, tools: [], catalogFailed: !signal.aborted })),
+          Effect.catch(() => Effect.succeed({ status, tools: [], catalogFailed: !signal.aborted, verification })),
           // Loading the catalog may replace an earlier clean observation.
           // Read this view's current bounded facts without another status probe.
           Effect.map((observed) => ({
@@ -267,7 +310,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         // The operator page's shorter observation deadline, when it has one,
         // bounds only the downstream: the credential card below is local
         // storage and still renders, so a slow vendor's slot stays fixable.
-        const { status, tools, catalogFailed, timedOut } =
+        const { status, tools, catalogFailed, timedOut, verification } =
           options.observeTimeoutMs === undefined
             ? yield* observe(c, drift, signal, requestScope)
             : yield* observeWithin(c, drift, signal, requestScope, options.observeTimeoutMs);
@@ -311,6 +354,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
             : {}),
           oauth: Boolean(c.startAuth && c.disconnectAuth),
           ...(status.registrationPath ? { registrationPath: status.registrationPath } : {}),
+          ...(verification ? { verification } : {}),
           ...(credential ? { credential } : {}),
         } satisfies UiConnector;
       });

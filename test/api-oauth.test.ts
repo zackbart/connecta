@@ -18,8 +18,9 @@ import { createExecuteTool } from "../src/execute.js";
 import { identityStorageKey } from "../src/identity.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { buildUiData } from "../src/ui.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
-import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
+import { oauthFlowKeys, oauthGrantKeys, scopes, verificationKeys } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { deferred, scriptedExecutor } from "./fixtures/misc.js";
@@ -1376,6 +1377,85 @@ describe("api() oauth early renewal", () => {
     expect((await connector.status!(registry.contextFor("ccb", BASE))).state).toBe("ok");
     expect(refreshes(provider)).toBe(0);
     expect(provider.apiAuthorizations).toEqual([]);
+  });
+});
+
+/** The connector's operator detail row: its shown status and last verification. */
+async function detailRow(registry: Parameters<typeof buildUiData>[0], id: string, vault?: CredentialVault) {
+  const data = await buildUiData(registry, BASE, { name: "test", version: "0" }, vault);
+  return data.connectors.find((connector) => connector.id === id)!;
+}
+
+describe("api() oauth last verification", () => {
+  it("INV-10: status reports what real calls observed of the grant, never a probe of its own", async () => {
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb();
+    const registry = makeRegistry([connector], { storage });
+    const ctx = () => registry.contextFor("ccb", BASE, {});
+    const recordKey = scopes.connector("ccb") + verificationKeys.record;
+    const writes = vi.spyOn(storage, "set");
+    const recordWrites = () => writes.mock.calls.filter(([key]) => key === recordKey).length;
+    await authorize(connector, ctx, provider);
+
+    // A stored grant alone is not a verification.
+    expect(await detailRow(registry, "ccb")).toMatchObject({ status: "ok" });
+    expect(await detailRow(registry, "ccb")).not.toHaveProperty("verification");
+
+    // Calls the downstream accepts record `ok`, once per interval rather than per call.
+    await connector.callTool("whoami", {}, ctx());
+    await connector.callTool("whoami", {}, ctx());
+    expect(recordWrites()).toBe(1);
+    expect(await detailRow(registry, "ccb")).toMatchObject({ status: "ok", verification: { outcome: "ok" } });
+
+    // A grant refused even after renewal is recorded, and status stops
+    // claiming ok in later requests, whose in-memory latch is fresh.
+    provider.control.apiRejects = true;
+    expect((await failure(connector.callTool("whoami", {}, ctx()))).classified.code).toBe("downstream_oauth_required");
+    expect((await connector.status!(ctx())).state).toBe("ok");
+    const before = JSON.stringify(await Promise.all((await storage.list("")).map((key) => storage.get(key))));
+    const tokenRequests = provider.tokenRequests.length;
+    const apiRequests = provider.apiAuthorizations.length;
+    const rejected = await detailRow(registry, "ccb");
+    expect(rejected).toMatchObject({
+      status: "auth_required",
+      problem: "oauth_required",
+      verification: { outcome: "rejected" },
+    });
+    expect(JSON.stringify(rejected)).not.toContain("access-alice");
+    // Reading status wrote nothing and asked the provider nothing.
+    expect(JSON.stringify(await Promise.all((await storage.list("")).map((key) => storage.get(key))))).toBe(before);
+    expect(provider.tokenRequests).toHaveLength(tokenRequests);
+    expect(provider.apiAuthorizations).toHaveLength(apiRequests);
+
+    // Disconnecting forgets what was observed of the grant.
+    await connector.disconnectAuth!(ctx());
+    expect(await storage.get(recordKey)).toBeNull();
+
+    // A new grant starts unverified, and its first accepted call verifies it.
+    provider.control.apiRejects = false;
+    await storage.set(recordKey, JSON.stringify({ outcome: "rejected", observedAt: new Date().toISOString() }));
+    await authorize(connector, ctx, provider);
+    expect(await detailRow(registry, "ccb")).toMatchObject({ status: "ok" });
+    expect(await detailRow(registry, "ccb")).not.toHaveProperty("verification");
+    await connector.callTool("whoami", {}, ctx());
+    expect(await detailRow(registry, "ccb")).toMatchObject({ status: "ok", verification: { outcome: "ok" } });
+  });
+
+  it("keeps each personal owner's verification apart", async () => {
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ authScope: "personal" });
+    const registry = makeRegistry([connector], { storage });
+    const alice = registry.personalRegistry("alice-key");
+    const bob = registry.personalRegistry("bob-key");
+    await authorize(connector, () => alice.contextFor("ccb", BASE, {}), provider, "alice");
+    await authorize(connector, () => bob.contextFor("ccb", BASE, {}), provider, "bob");
+    await connector.callTool("whoami", {}, alice.contextFor("ccb", BASE, {}));
+    expect((await detailRow(alice, "ccb")).verification).toMatchObject({ outcome: "ok" });
+    expect((await detailRow(bob, "ccb")).verification).toBeUndefined();
   });
 });
 

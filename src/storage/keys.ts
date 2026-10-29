@@ -403,6 +403,25 @@ export const oauthConnectKeys = {
   retry: (nonce: string) => validateStorageKey(`oauth:request-used:${nonce}`),
 } as const satisfies Keyed;
 
+/**
+ * The last verification of a connector's credential or OAuth grant:
+ * `verification:v1`, holding an outcome class, its time and, for a vault
+ * credential, the `updatedAt` it observed. Payload-free and long-lived; a
+ * lost record only makes status say "not verified".
+ */
+export const verificationKeys = {
+  family: {
+    name: "verification",
+    scope: "connector",
+    prefixes: ["verification:v1"],
+    version: { number: 1, in: "key" },
+    codec: jsonCodec,
+    ttl: { kind: "durable" },
+    durable: false,
+  },
+  record: "verification:v1",
+} as const satisfies Keyed;
+
 /** A bounded, credential-partitioned downstream protocol verdict. */
 export const NEGOTIATION_TTL_SECONDS = 300;
 export const negotiationKeys = {

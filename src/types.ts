@@ -201,6 +201,15 @@ export interface ConnectorCredentialConfig {
   fields?: ConnectorCredentialFieldConfig[];
 }
 
+/**
+ * Why a credential test did not pass, as a typed fact with no downstream text.
+ * `rejected`: the service refused the credential. `scope`: it accepted the
+ * credential but refused a permission the connection needs. `unreachable`: the
+ * service could not be reached or was unavailable. `timeout`: it did not
+ * answer within the test's deadline. `failed`: anything else.
+ */
+export type CredentialFailureClass = "rejected" | "scope" | "unreachable" | "timeout" | "failed";
+
 export interface CredentialTestResult {
   ok: boolean;
   /**
@@ -209,6 +218,11 @@ export interface CredentialTestResult {
    * `ok`, and the log records only that a test failed.
    */
   message?: string;
+  /**
+   * Why a failed test failed. Optional: an unclassified failure is `failed`.
+   * Ignored when `ok` is true.
+   */
+  failure?: CredentialFailureClass;
 }
 
 export interface ConnectorContext {

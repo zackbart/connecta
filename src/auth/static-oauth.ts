@@ -15,6 +15,7 @@ import { guardedTransport, sendCredentialPost } from "../guarded-transport.js";
 import { oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { describeFailure } from "../operator-record.js";
+import { writeVerification } from "../credential-verification.js";
 import {
   assertProviderCallOpen,
   bindProviderResponse,
@@ -510,6 +511,8 @@ class StaticOAuthProvider extends KvOAuthProvider {
   }
 }
 
+/** How often a runtime re-records an unchanged grant outcome for one owner. */
+const GRANT_OBSERVATION_INTERVAL_MS = 10 * 60_000;
 const AUTH_REQUIRED_MESSAGE = "Authorization required — open the URL to connect.";
 
 /** Release the resource body before renewal, bounding even the facade's discarded challenge. */
@@ -579,6 +582,26 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const callbackProviders = new WeakMap<object, StaticOAuthProvider>();
   const rejectedScopes = new WeakSet<object>();
   const scopeOf = (ctx: ConnectorContext): object => ctx.requestScope ?? ctx;
+
+  // What real calls observed of the owner's grant, stored as its
+  // last-verified record so status can say more than "a grant exists". An
+  // unchanged outcome is re-recorded at most once per interval per owner
+  // partition in this runtime, so a busy connector does not write per call.
+  // `null` forgets it: a new grant, or none, starts unverified.
+  const observedGrants = new WeakMap<object, { outcome: "ok" | "rejected" | null; at: number }>();
+  const observeGrant = (ctx: ConnectorContext, outcome: "ok" | "rejected" | null): Effect.Effect<void, unknown> => {
+    // Only a registry context names the owner partition the record lives in.
+    const partition = oauthPartitionFor(ctx);
+    if (outcome === "rejected") rejectedScopes.add(scopeOf(ctx));
+    if (!partition) return Effect.void;
+    const at = Date.now();
+    const last = observedGrants.get(partition);
+    if (outcome && last?.outcome === outcome && at - last.at < GRANT_OBSERVATION_INTERVAL_MS) return Effect.void;
+    observedGrants.set(partition, { outcome, at });
+    // Best effort: a lost record only leaves status without a verification,
+    // and the next observation in this runtime writes again.
+    return authValue(() => writeVerification(ctx.storage, outcome).catch(() => void observedGrants.delete(partition)));
+  };
 
   const warnShortSecret = shortSecretWarning();
   const providerFor = (ctx: ConnectorContext, requestOwned = false) => {
@@ -855,7 +878,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             } catch (error) {
               if (signal.aborted) throw signal.reason;
               if (error instanceof UnauthorizedError) {
-                rejectedScopes.add(scopeOf(ctx));
+                yield observeGrant(ctx, "rejected");
                 throw authRequiredError();
               }
               throw error;
@@ -917,8 +940,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         return authView(
           ctx,
           authMethod(() => {
-            return authValue<never>(() => {
-              rejectedScopes.add(scopeOf(ctx));
+            return authFlow<never>(function* () {
+              yield observeGrant(ctx, "rejected");
               throw authRequiredError();
             });
           }),
@@ -1044,7 +1067,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 response: Response;
                 dispatch: ProviderRequest;
               };
-              if (first.status !== 401) return first;
+              if (first.status !== 401) {
+                if (first.ok) yield observeGrant(ctx, "ok");
+                return first;
+              }
               try {
                 (yield authCall(readChallenge, [first, signal, init.method])) as void;
               } catch (error) {
@@ -1068,7 +1094,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                   renewedAfterUnauthorized(dispatch, stale, fresh);
                   if (fresh === stale) renewal = authRequiredError();
                 } catch (error) {
-                  if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
+                  if (error instanceof UnauthorizedError) yield observeGrant(ctx, "rejected");
                   renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
                 }
                 throw vendorRefusal(
@@ -1083,7 +1109,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 response: Response;
                 dispatch: ProviderRequest;
               };
-              if (second.status !== 401) return second;
+              if (second.status !== 401) {
+                if (second.ok) yield observeGrant(ctx, "ok");
+                return second;
+              }
               void second.body?.cancel().catch(() => {});
               return (yield authInvoke(grant, "rejected", [])) as never;
             } catch (error) {
@@ -1093,7 +1122,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               // the invocation's ledger retains the write's uncertainty and handoff.
               if (signal?.aborted) throw signal.reason;
               if (error instanceof UnauthorizedError) {
-                rejectedScopes.add(scopeOf(ctx));
+                yield observeGrant(ctx, "rejected");
                 throw authRequiredError();
               }
               throw error;
@@ -1176,6 +1205,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         if (opts?.force || disconnected) {
           (yield authInvoke(provider, "resetAuthorization", [])) as void;
           rejectedScopes.delete(scopeOf(original));
+          yield observeGrant(ctx, null);
         } else {
           // Hand back a recent consent URL rather than overwrite the verifier
           // the operator may be mid-consent on.
@@ -1241,6 +1271,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const disconnectAuth = authMethod((ctx: ConnectorContext) => {
     return authFlow<void>(function* () {
       rejectedScopes.delete(scopeOf(ctx));
+      yield observeGrant(ctx, null);
       if (!settings.revocationEndpoint) {
         (yield authInvoke(providerFor(ctx), "resetAuthorization", [true])) as void;
         return;
@@ -1311,6 +1342,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             throw new UnauthorizedError("Failed to authorize");
           }
           rejectedScopes.delete(scopeOf(ctx));
+          yield observeGrant(ctx, null);
         });
       }),
       true,
