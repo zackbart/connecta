@@ -70,8 +70,11 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
  * never settles at all.
  */
 const EXECUTE_WATCHDOG_MS = CONFIG_DEFAULTS.execute.watchdogMs;
-/** Complete entries plus an exact omission count, all inside this byte cap. */
-export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
+/**
+ * Room to name every connector of a typical deployment. Past it, complete
+ * entries plus an exact omission count stay inside this byte cap.
+ */
+export const CONNECTOR_INVENTORY_MAX_BYTES = 1_024;
 /**
  * Default budgets for `connecta.emit`. The byte budget is a transport bound,
  * not a context bound — emitted image/audio blocks reach the model as media,
@@ -1779,33 +1782,47 @@ function discardedEmits(emitted: EmitCollector): {
   return emitted.blocks.length > 0 ? { emittedDiscarded: emitted.blocks.length } : {};
 }
 
+const inventoryWords = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/** A title that only respells the id ("Google Calendar" for google_calendar) adds nothing. */
+function titleAddsInformation(id: string, title: string): boolean {
+  const words = inventoryWords(title);
+  const idWords = inventoryWords(id);
+  return words.join("") !== idWords.join("") && words.some((word) => !idWords.includes(word));
+}
+
+/**
+ * Every configured connector, from configuration alone. Detail degrades before
+ * names do: titles go first, then optional guide pointers, and only past the
+ * byte cap do whole entries give way to an exact omission count.
+ */
 function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"]>): string {
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
-  const entries = connectors.map((connector) => {
-    const address = connector.id;
+  const fits = (line: string) => boundedEchoText(line, CONNECTOR_INVENTORY_MAX_BYTES) === line;
+  const entry = (connector: (typeof connectors)[number], detail: number): string => {
+    const notes: string[] = [];
     const title = connector.title?.replace(/\s+/g, " ").trim();
-    const label = title && title !== connector.id ? `${address}: ${boundedEchoText(title, 45)}` : address;
-    if (!connectorGuide(connector)) return label;
-    const requirement = connectorGuideRequired(connector) ? "required guide" : "guide";
-    return `${label} (${requirement} ${connectorSkillName(connector.id)})`;
-  });
-  const shown: string[] = [];
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index];
-    if (entry === undefined) break;
-    const candidate = [...shown, entry].join(", ");
-    const omitted = entries.length - index - 1;
-    const suffix = omitted > 0 ? `; +${omitted} more.` : ".";
-    const serialized = prefix + candidate + suffix;
-    if (boundedEchoText(serialized, CONNECTOR_INVENTORY_MAX_BYTES) !== serialized) {
-      break;
+    if (detail >= 2 && title && titleAddsInformation(connector.id, title)) notes.push(boundedEchoText(title, 45));
+    const required = connectorGuideRequired(connector);
+    if (connectorGuide(connector) && (required || detail >= 1)) {
+      const fetch = `skills({name:"${connectorSkillName(connector.id)}"})`;
+      notes.push(required ? `read first: ${fetch}` : `guide: ${fetch}`);
     }
-    shown.push(entry);
+    return notes.length > 0 ? `${connector.id} (${notes.join("; ")})` : connector.id;
+  };
+  for (const detail of [2, 1, 0]) {
+    const line = `${prefix}${connectors.map((connector) => entry(connector, detail)).join(", ")}.`;
+    if (fits(line)) return line;
   }
-  const omitted = entries.length - shown.length;
-  if (omitted === 0) return `${prefix}${shown.join(", ")}.`;
-  return `${prefix}${shown.join(", ")}${shown.length > 0 ? "; " : ""}+${omitted} more.`;
+  const entries = connectors.map((connector) => entry(connector, 0));
+  let shown = 0;
+  while (fits(`${prefix}${entries.slice(0, shown + 1).join(", ")}; +${entries.length - shown - 1} more.`)) shown++;
+  return `${prefix}${entries.slice(0, shown).join(", ")}${shown > 0 ? "; " : ""}+${entries.length - shown} more.`;
 }
 
 const executeDescription = (

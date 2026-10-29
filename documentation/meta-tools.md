@@ -139,16 +139,25 @@ Live connector probing is not a fourth: the operator pages and `/health` own it.
 
 ## Discovery context
 
-The deployment-derived `execute_code` description carries a live connector
-inventory before any catalog search — registry order, each canonical id, and a
-distinct configured title, with no second name minted for programs. Titles
-normalize whitespace and cap at 48 UTF-8 bytes, the complete line caps at 256,
-entries stay whole, and a truncated line ends with the exact `+N more` count, so
-account and environment hints cannot eat the inventory. It reads only the
-configured registry: no catalog load, no credential probe, no capability, and no
+The deployment-derived `execute_code` description carries a connector
+inventory before any catalog search — registry order and each canonical id,
+with no second name minted for programs. An entry adds the configured title
+only when it says more than the id: a title whose words the id already spells,
+such as `Google Calendar` for `google_calendar`, is dropped. Titles normalize
+whitespace and cap at 48 UTF-8 bytes. A connector with a guide says how to
+fetch it: `read first: skills({name:"connector:<id>"})` for a required guide,
+`guide: skills({name:"connector:<id>"})` otherwise. For example:
+`Connectors: crm (Customer CRM; read first: skills({name:"connector:crm"})), tickets.`
+
+The complete line caps at 1,024 UTF-8 bytes, which names every connector of a
+typical deployment. Past the cap, detail degrades before names do: titles are
+dropped first, then optional guide pointers. Only when bare ids and required
+guide pointers still exceed it do whole entries give way, in registry order, to
+an exact `+N more` count. The inventory reads only the configured registry: no
+catalog load, no credential probe, no live status, no capability, and no
 replacement for canonical discovery or addressing. Program search results carry
 the same bounded `connectorTitle` per tool, so choosing an account or
-environment costs no provider read. The inventory does not probe live access.
+environment costs no provider read.
 
 Read-only lookup belongs in `connecta.search` inside the program; top-level
 `search_tools` stays for explicit catalog inspection and approval-required
@@ -302,8 +311,17 @@ is merely told to fetch the guide first, for any reason listed. Otherwise the
 bounded summary decides — connector-specific sequencing, units, pagination,
 aliases, and generic API conventions still need the guide when they affect the
 task, while a complete and unambiguous one-read schema proceeds directly. Guide
-lookup always uses an exact name returned by `skills({})`, search, or describe;
-callers never manufacture `connector:<id>` from an unmarked connector.
+lookup uses an exact name returned by `skills({})`, search, describe, or the
+`execute_code` inventory; callers never manufacture `connector:<id>` from an
+unmarked connector. A bare connector id, such as `skills({ name: "crm" })` or
+`connecta.skill("crm")`, also serves that connector's guide. Built-in skill
+names stay reserved: `usage` and `investigate` always fetch the built-in skill,
+even when a connector has that id, whose guide stays at `connector:usage` or
+`connector:investigate`. A bare id naming a connector without a guide fails with
+`Connector "<id>" has no usage guide.`; any other unknown name fails as an
+unknown skill. Names containing `:`, including URIs, never fall back to a bare
+id. MCP `skills/get` resolves names the same way; `resources/read` accepts only
+document URIs.
 
 A connector-scoped lexical miss keeps that connector's guide metadata under
 `queryAnalysis`. This matters for generic wrappers whose broad tool name

@@ -197,8 +197,10 @@ is preserved; no JavaScript identifier conversion takes place.
 
 **A2.** Connectors create no guest globals, so an id resembling a JavaScript
 builtin, or one that would collide after sanitization, stays usable through its
-canonical address. The bounded connector inventory in the tool description shows
-canonical ids with bounded configured titles when present. Clauses A3–A5
+canonical address. The bounded connector inventory in the tool description names
+every connector by canonical id, adding a bounded configured title only when it
+says more than the id, and each guide's fetch call (see
+[meta-tools](./meta-tools.md#discovery-context)). Clauses A3–A5
 belonged to shortcut dispatch and stay retired; nothing reuses those ids.
 
 ## The surface
@@ -417,10 +419,12 @@ mismatches, revoked access, and old entries without bindings are `not_found`, as
 are unknown or expired ids; a storage failure is `unavailable`. IDs are random UUIDs.
 The `get_result` meta-tool is removed.
 
-`await connecta.skill(name)` resolves the same URI or compatibility name as
-top-level `skills`, within the admitted connector view. It reads the registry
-behind native `skills/get` and `resources/read`, including opted-in downstream
-skills. It returns
+`await connecta.skill(name)` resolves the same URI, compatibility name, or bare
+connector id as top-level `skills`, within the admitted connector view; built-in
+names stay reserved (see
+[meta-tools](./meta-tools.md#connector-guides-and-skills)). It reads the
+registry behind native `skills/get` and `resources/read`, including opted-in
+downstream skills. It returns
 `{ name, format: "text", text }`; an unknown name is `not_found`. It also
 accepts the top-level tool's `{ name }` object, and `connecta.skills` is an
 undeclared alias of `connecta.skill` with the same host-call accounting, because
@@ -634,8 +638,15 @@ when empty. An empty string reports `program_error` with
 **E6.** A guest `TypeError`, `ReferenceError`, syntax error, invented API, or
 program-authored throw is `program_error`. `details.name` is a bounded engine
 error name; `details.line` is the source line when the runtime supplies one,
-otherwise null. Fixed hints repair imports/require/filesystem access, shadowed
-`connecta`, and invented globals such as `callTool`.
+otherwise null. `message` is `Program <name>: <engine message>`, naming the
+error once even when an executor reports a prefixed message. Fixed hints repair
+imports/require/filesystem access, shadowed `connecta`, invented globals such
+as `callTool`, and a missing `await`: a `TypeError` in a program that reads a
+member straight off a `connecta.*` call (`connecta.call(...).data`,
+`await connecta.search(...).tools`) or off a variable or destructuring bound to
+one without `await` gets `connecta.* returns a Promise; await it`. `then`,
+`catch`, and `finally` are not member reads. Hints are fixed text; no program
+source or value enters them.
 
 An unchanged uncaught host error retains its classification through Error
 identity. A new error containing its message is a new program error. Copied

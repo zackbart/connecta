@@ -203,13 +203,64 @@ const ERROR_NAMES = new Set([
   "AggregateError",
 ]);
 
+const HOST_CALL_RE = /\bconnecta\s*\.\s*(?:search|describe|call|read|result|skills?)\s*\(/g;
+/** A member read that is not a Promise method: `.data`, `?.tools`, `[0]`. */
+const MEMBER_READ = String.raw`\s*(?:(?:\?\.|\.)\s*(?!(?:then|catch|finally)\b)[A-Za-z_$]|(?:\?\.)?\s*\[)`;
+const MEMBER_READ_RE = new RegExp(`^${MEMBER_READ}`);
+/** `name = ` or a destructuring `} = ` directly before the call, so no await. */
+const UNAWAITED_BINDING_RE = /(?:([A-Za-z_$][\w$]*)|[}\]])\s*=\s*$/;
+
+/** The index just past the parenthesis closing the one opened before `start`, skipping string literals. */
+function closingParen(code: string, start: number): number | undefined {
+  let depth = 1;
+  for (let index = start; index < code.length; index++) {
+    const char = code[index];
+    if (char === '"' || char === "'" || char === "`") {
+      for (index++; index < code.length && code[index] !== char; index++) if (code[index] === "\\") index++;
+    } else if (char === "(") depth++;
+    else if (char === ")" && --depth === 0) return index + 1;
+  }
+  return undefined;
+}
+
+/**
+ * Whether the source reads a member of a host call's Promise: a field read
+ * straight off `connecta.call(...)`, or a variable or destructuring bound to
+ * one without `await`. Only the verdict leaves this function, never source.
+ * The first 64 call sites bound the scan of a pathological 64 KiB program.
+ */
+function unawaitedHostResult(code: string): boolean {
+  let sites = 0;
+  for (const match of code.matchAll(HOST_CALL_RE)) {
+    if (++sites > 64) break;
+    const end = closingParen(code, match.index + match[0].length);
+    if (end === undefined) continue;
+    const rest = code.slice(end);
+    if (MEMBER_READ_RE.test(rest)) return true;
+    const binding = UNAWAITED_BINDING_RE.exec(code.slice(Math.max(0, match.index - 128), match.index));
+    if (!binding) continue;
+    const variable = binding[1];
+    if (variable === undefined) return true;
+    if (new RegExp(`(?<![\\w$.])${variable.replaceAll("$", "\\$")}${MEMBER_READ}`).test(rest)) return true;
+  }
+  return false;
+}
+
 /** Fixed repair guidance, used only in agent-facing results. */
 export function programError(
   raw: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown; line?: unknown },
   code: string,
 ) {
-  const message = typeof raw.message === "string" ? raw.message : "Program failed.";
-  const name = typeof raw.name === "string" && ERROR_NAMES.has(raw.name) ? raw.name : "Error";
+  const text = typeof raw.message === "string" ? raw.message : "Program failed.";
+  // Executors may report "TypeError: …" as the message itself; name it once.
+  const prefix = /^([A-Za-z]*Error): /.exec(text)?.[1];
+  const name =
+    typeof raw.name === "string" && ERROR_NAMES.has(raw.name)
+      ? raw.name
+      : prefix && ERROR_NAMES.has(prefix)
+        ? prefix
+        : "Error";
+  const message = prefix === name ? text.slice(name.length + 2) : text;
   const stack = typeof raw.stack === "string" ? raw.stack : "";
   // Compare QuickJS/V8 locations to the wrapper baseline after the source.
   const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
@@ -243,6 +294,8 @@ export function programError(
   ) {
     hint =
       'Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill("usage"). Services are addressed by connector.tool, never guest globals.';
+  } else if (name === "TypeError" && unawaitedHostResult(code)) {
+    hint = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
   }
   return {
     code: "program_error",

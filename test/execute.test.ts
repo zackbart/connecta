@@ -620,6 +620,20 @@ it("reports an empty terminal executor error as failure with a fixed message", a
   });
 });
 
+it.each([
+  ["TypeError: x is not a function", "Program TypeError: x is not a function", "TypeError"],
+  ["Error: failed: twice", "Program Error: failed: twice", "Error"],
+  ["RangeError", "Program Error: RangeError", "Error"],
+])("INV-6: names an executor's prefixed error %j once", async (error, message, name) => {
+  const out = await createExecuteTool(
+    makeRegistry([calcConnector]),
+    BASE,
+    fakeExecutor({ result: undefined, error }),
+    silentLogger,
+  )({ code: "async () => x()" });
+  expect(out.structuredContent).toMatchObject({ error: { code: "program_error", message, details: { name } } });
+});
+
 it.each(["", "x", "failed"])("INV-6: does not match short failure prose %j by containment", async (message) => {
   const connector = connectorWith({
     id: "bad",

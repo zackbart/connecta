@@ -110,7 +110,8 @@ const AVAILABLE_SKILLS = [
  * are bare identifiers and never contain ":", so `connector:<id>` cannot
  * collide with one — not even when a connector's id is literally "usage".
  * Canonical skill URIs and the prefixed compatibility alias reach connector
- * guides. A bare connector id never resolves, so nothing shadows silently.
+ * guides. A bare connector id reaches its guide too, unless it is a built-in
+ * skill name: built-ins always win, so nothing shadows them.
  */
 const CONNECTOR_SKILL_PREFIX = "connector:";
 
@@ -437,6 +438,13 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (
   });
 });
 
+/** `granola` names connector granola's guide; built-in names and URIs never do. */
+function bareConnectorGuide(records: readonly SkillRecord[], name: string): SkillRecord | undefined {
+  if (name.includes(":") || AVAILABLE_SKILLS.some((skill) => skill.name === name)) return undefined;
+  const alias = connectorSkillName(name);
+  return records.find((record) => record.connector !== undefined && record.aliases.includes(alias));
+}
+
 /** Keep the downstream path tree, so relative supporting-file references still resolve. */
 export function downstreamSkillUri(connectorId: string, uri: string): string {
   if (uri.length > 32_768) throw new ConnectorCallError("unavailable", "Downstream skill URI exceeds its bound.");
@@ -617,12 +625,14 @@ export class SkillsRegistry {
     const id = name.startsWith(CONNECTOR_SKILL_PREFIX) ? name.slice(CONNECTOR_SKILL_PREFIX.length) : name;
     const connector = this.registry.getConnector(id);
     if (connector) this.options.onRead?.(connector, "local");
-    const message = name.startsWith(CONNECTOR_SKILL_PREFIX)
-      ? connector
+    // Skill names resolve a bare id with a guide before reaching here; a
+    // resource URI read does not.
+    const message = connector
+      ? connectorGuide(connector) === undefined
         ? `Connector "${boundedEchoText(id)}" has no usage guide.`
-        : `Unknown connector "${boundedEchoText(id)}".`
-      : connector
-        ? `Unknown skill "${boundedEchoText(name)}". Connector guides are fetched as "${boundedEchoText(connectorSkillName(name))}".`
+        : `Connector "${boundedEchoText(id)}" has its guide at "${boundedEchoText(connectorSkillName(id))}".`
+      : name.startsWith(CONNECTOR_SKILL_PREFIX)
+        ? `Unknown connector "${boundedEchoText(id)}".`
         : `Unknown skill "${boundedEchoText(name)}".`;
     return new ConnectorCallError("not_found", `${message} Available skills: ${available}.`);
   }
@@ -913,9 +923,10 @@ export class SkillsRegistry {
           { requestScope: (this as SkillsRegistry).scope, signal: (this as SkillsRegistry).options.requestSignal },
           () =>
             authFlow<SkillRecord>(function* () {
-              const local = (yield* upwardStep(self.local)).find(
-                (record) => record.entry.uri === uri || record.aliases.includes(uri),
-              );
+              const records = yield* upwardStep(self.local);
+              const local =
+                records.find((record) => record.entry.uri === uri || record.aliases.includes(uri)) ??
+                bareConnectorGuide(records, uri);
               if (local) {
                 const record = yield* upwardStep(authCall<SkillRecord>(withManifest, [local]));
                 self.assertSafe([record]);

@@ -1746,6 +1746,50 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
     },
   })),
+  ...[
+    'return connecta.call("reader.read", { value: "x" }).data.length;',
+    'const page = connecta.search({ query: "read" });\nreturn page.tools.map((tool) => tool.address);',
+    'const { tools } = connecta.describe("reader.read");\nreturn tools.length;',
+    'for (const tool of (await connecta.search({ query: "read" }).tools)) return tool;',
+  ].map((source): ContractCase => ({
+    clauses: "E6",
+    name: `INV-6: program errors name a missing await in ${source.split("\n")[0]}`,
+    code: `async () => {\n${source}\n}`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      const error = outcome.value.error as { message: string; details: { name: string; hint: string } };
+      expect(error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.",
+        },
+      });
+      // The engine name appears once, and the hint echoes no program source.
+      expect(error.message).toMatch(/^Program TypeError: (?!TypeError)/);
+      expect(error.details.hint).not.toContain("reader");
+    },
+  })),
+  {
+    clauses: "E6",
+    name: "INV-6: an awaited call followed by an unrelated TypeError keeps the generic hint",
+    code: `async () => {
+      const result = await connecta.call("reader.read", { value: "x" });
+      const pending = connecta.search({ query: "read" });
+      await pending;
+      return result.data.missing.field;
+    }`,
+    check(outcome) {
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        message: expect.stringMatching(/^Program TypeError: (?!TypeError)/),
+        details: {
+          name: "TypeError",
+          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+        },
+      });
+    },
+  },
   {
     clauses: "M1, M2",
     name: "INV-7: unawaited emit delivers real MCP image content",
