@@ -1889,6 +1889,8 @@ describe("remoteMcp() early renewal before dispatch", () => {
    * `access-old` included, and recording what reached it in order.
    */
   function downstream() {
+    /** Holds a renewed connection's handshake answer, as a slow server would. */
+    let afterRenewedHandshake: ((auth: string) => void | Promise<void>) | undefined;
     const valid = new Set(["access-old"]);
     const sent: string[] = [];
     /** Every JSON-RPC method that reached the MCP endpoint, in order. */
@@ -1953,11 +1955,17 @@ describe("remoteMcp() early renewal before dispatch", () => {
       if (message.method) methods.push(message.method);
       if (message.method === "initialize") counts.initialize++;
       if (message.method === "tools/call") sent.push(`tools/call ${authorization}`);
-      return mcp.fetch(new Request(input, init));
+      const response = await mcp.fetch(new Request(input, init));
+      if (message.method === "notifications/initialized" && counts.token > 0)
+        await afterRenewedHandshake?.(authorization);
+      return response;
     }) as FetchLike);
     return {
       sent,
       methods,
+      slowHandshake: (hook: (auth: string) => void | Promise<void>) => {
+        afterRenewedHandshake = hook;
+      },
       counts,
       answer,
       revoke: (token: string) => valid.delete(token),
@@ -2105,18 +2113,53 @@ describe("remoteMcp() early renewal before dispatch", () => {
     },
   );
 
-  it("renews a zero-lifetime token once per request on a reused connection", async () => {
+  it("INV-9: a cached-catalog call renews again after a slow handshake outlives its renewed token", async () => {
+    const storage = memoryStorage();
+    await seedGrant(
+      storage,
+      { issuer, client: { value: client }, tokens: tokens(3600), expiresAt: Date.now() + 30_000 },
+      "v3:seeded",
+      scopes.connector("svc"),
+    );
+    const c = remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+    const registry = makeRegistry([c], { storage });
+    const server = downstream();
+    server.answer.lifetime = 1;
+    const listScope = registry.contextFor("svc", BASE);
+    await c.listTools(listScope);
+    await c.closeScope?.(listScope);
+    expect(server.counts.token).toBe(0);
+    // The invocation renews to a 1 s token; the handshake's answer arrives
+    // after it expired, and the server no longer accepts it.
+    server.slowHandshake(async (auth) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      server.revoke(auth.replace(/^Bearer /, ""));
+    });
+    const result = (await createMetaTools(registry, BASE).callDestructiveTool({ address: "svc.write" })).content[0]!
+      .text;
+    expect(result).toBe("done");
+    expect(server.sent).toEqual(["token", "token", "tools/call Bearer access-new-2"]);
+  });
+
+  it("a zero-lifetime renewal spares only the next check on a reused connection", async () => {
     const storage = await savedGrant(30);
     const server = downstream();
     server.answer.lifetime = 0;
     const c = connector();
     const s = scope(storage);
     await c.callTool("write", {}, s);
-    // The connection now reads the renewed token, expired at issuance; this
-    // request already renewed it, so the next call sends it as it is.
+    // The connection now reads the renewed token, expired at issuance. The
+    // next check sends it as it is; the one after renews again.
+    await c.callTool("write", {}, s);
     await c.callTool("write", {}, s);
     await c.closeScope?.(s);
-    expect(server.sent).toEqual(["token", "tools/call Bearer access-new", "tools/call Bearer access-new"]);
+    expect(server.sent).toEqual([
+      "token",
+      "tools/call Bearer access-new",
+      "tools/call Bearer access-new",
+      "token",
+      "tools/call Bearer access-new-2",
+    ]);
   });
 
   it.each(layouts)("keeps renewal on a 401 for a %s grant stored without an expiry", async (layout) => {

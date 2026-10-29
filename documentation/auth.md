@@ -1461,9 +1461,11 @@ after (INV-9). Sixty seconds covers the refresh's own 20-second token-request
 deadline and the call's send with margin, and matches the early refresh of
 Google service-account tokens; for a typical one-hour token it is under 2% of
 its life. A token that lives under a minute, or arrives already expired, is
-refreshed once per call, in the invocation's check; within one request, neither
-`callTool` nor `ctx.oauth.fetch` renews again a token that request's renewal
-replaced or produced.
+refreshed once per call, in the invocation's check. Later in the same request,
+`callTool` and `ctx.oauth.fetch` send the token that renewal produced without
+renewing it again until its stored expiry passes (or, for a token already
+expired when issued, for the next check only); a token another request rotated
+in since is checked as usual.
 
 The renewal is the flow a 401 would start, through the same refresh
 coordinator: one redemption per owner partition and epoch in an isolate, the

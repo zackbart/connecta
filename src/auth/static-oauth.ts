@@ -41,6 +41,7 @@ import {
   assertOAuthScope,
   authorizingContext,
   codeExchangeResponse,
+  EarlyRenewals,
   earlyRenewalFetch,
   KvOAuthProvider,
   refreshCoordinatorsByPartition,
@@ -810,15 +811,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     },
   );
 
-  // Access tokens an early renewal produced, by request scope. A token that
-  // lives under a minute is due again at once: a request renews it at most
-  // once per call, in the invocation's check, never again in the handler.
-  const earlyRenewed = new WeakMap<object, Set<string>>();
+  // A token that lives under a minute is due again at once: the invocation's
+  // check renews it, and the handler sends it while it is unexpired.
+  const earlyRenewed = new EarlyRenewals();
 
   /**
    * One call's grant use; submitted refresh work keeps the coordinator's owner.
-   * `renewAgain` is the invocation's check, which renews a due token even if
-   * this request's earlier renewal produced it.
+   * `renewAgain` is the invocation's check, which renews any due token,
+   * even one this request's earlier renewal produced.
    */
   const grantFor = (ctx: ConnectorContext, requestOwned = false, renewAgain = false): RenewableGrant => {
     let provider: SharedRead<StaticOAuthProvider> | undefined;
@@ -889,7 +889,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               const scope = scopeOf(ctx);
               if (
                 provider.renewalDue() === tokens.access_token &&
-                (renewAgain || !earlyRenewed.get(scope)?.has(tokens.access_token))
+                (renewAgain || !earlyRenewed.settled(scope, tokens.access_token))
               ) {
                 const fresh = (yield authCall(renewedToken, [
                   provider,
@@ -898,9 +898,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                   requestOwned,
                   true,
                 ])) as string;
-                let renewed = earlyRenewed.get(scope);
-                if (!renewed) earlyRenewed.set(scope, (renewed = new Set()));
-                renewed.add(fresh);
+                earlyRenewed.record(scope, tokens.access_token, fresh, provider.observedExpiry(fresh));
                 return fresh;
               }
               return tokens.access_token;

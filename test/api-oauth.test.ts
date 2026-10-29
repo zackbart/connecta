@@ -1112,6 +1112,101 @@ describe("api() oauth early renewal", () => {
     await storage.set(grantKey, JSON.stringify(record));
   }
 
+  it("INV-9: renews again when a renewed token expires before a handler's second fetch", async () => {
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({
+      tools: [
+        {
+          name: "post_note",
+          description: "Long write",
+          annotations: { readOnlyHint: false },
+          async handler(_args, ctx) {
+            await (await ctx.oauth!.fetch(`${API}/me`)).json();
+            await new Promise((resolve) => setTimeout(resolve, 1_100));
+            provider.expireAccess();
+            return (await ctx.oauth!.fetch(`${API}/notes`, { method: "POST", body: "{}" })).json();
+          },
+        },
+      ],
+    });
+    const registry = makeRegistry([connector], { storage });
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    await expiring(storage, Date.now() + 30_000);
+    provider.control.lifetime = 1;
+    const error = await writeError(registry);
+    expect(error).toBeUndefined();
+    expect(provider.apiAuthorizations.at(-1)).not.toBe(provider.apiAuthorizations[0]);
+  });
+
+  it("INV-9: a long program renews again at its second invocation", async () => {
+    const clock = shiftedClock();
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ tools });
+    const registry = makeRegistry([connector], { storage });
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    await expiring(storage, Date.now() + 30_000);
+    provider.control.lifetime = 120;
+    const execute = createExecuteTool(
+      registry,
+      BASE,
+      scriptedExecutor(async (fns) => {
+        await fns.call!("ccb.post_note", {});
+        clock.offset += 130_000;
+        provider.expireAccess();
+        await fns.call!("ccb.post_note", {});
+        return "done";
+      }),
+      silentLogger,
+      undefined,
+      { readOnly: false, watchdogMs: 300_000 },
+    );
+    const result = (await execute({ code: "async () => null" })).structuredContent as Record<string, unknown>;
+    expect(result.error).toBeUndefined();
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-2", "Bearer access-alice-3"]);
+    expect(refreshes(provider)).toBe(2);
+  });
+
+  it("INV-9: a long handler renews another isolate's later rotation once it comes due", async () => {
+    const clock = shiftedClock();
+    const storage = memoryStorage();
+    const provider = fakeProvider();
+    install(provider);
+    const other = ccb({ tools });
+    const otherRegistry = makeRegistry([other], { storage });
+    const connector = ccb({
+      tools: [
+        {
+          name: "post_note",
+          description: "Long write",
+          annotations: { readOnlyHint: false },
+          async handler(_args, ctx) {
+            await (await ctx.oauth!.fetch(`${API}/me`)).json();
+            await expiring(storage, Date.now() + 30_000);
+            expect(await writeError(otherRegistry)).toBeUndefined();
+            clock.offset += 130_000;
+            provider.expireAccess();
+            return (await ctx.oauth!.fetch(`${API}/notes`, { method: "POST", body: "{}" })).json();
+          },
+        },
+      ],
+    });
+    const registry = makeRegistry([connector], { storage });
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    await expiring(storage, Date.now() + 30_000);
+    provider.control.lifetime = 120;
+    const error = await writeError(registry);
+    expect(error).toBeUndefined();
+    expect(provider.apiAuthorizations).toEqual([
+      "Bearer access-alice-2",
+      "Bearer access-alice-3",
+      "Bearer access-alice-4",
+    ]);
+  });
+
   it("INV-9: renews a token about to expire before a write is sent, once across two isolates", async () => {
     const storage = memoryStorage();
     const provider = fakeProvider();

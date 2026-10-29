@@ -246,6 +246,36 @@ export function earlyRenewalFetch(send: FetchLike, due: string): FetchLike {
   return (input, init) => send(input, { ...init, [EARLY_RENEWAL]: due } as RequestInit);
 }
 
+/**
+ * Access tokens one request's early renewals replaced or produced, so a
+ * check later in the request does not renew a produced token again while it
+ * is within its stored expiry. One already expired when produced (a zero
+ * lifetime) is spared the next check only. A replaced token stands for its
+ * replacement; any other token, another isolate's rotation included, is
+ * checked as usual.
+ */
+export class EarlyRenewals {
+  /** A replaced token's replacement, or a produced token's expiry (0: the next check only). */
+  private readonly scopes = new WeakMap<object, Map<string, string | number>>();
+
+  record(scope: object, due: string, fresh: string, expiresAt: number | undefined): void {
+    let tokens = this.scopes.get(scope);
+    if (!tokens) this.scopes.set(scope, (tokens = new Map()));
+    if (fresh !== due) tokens.set(due, fresh);
+    tokens.set(fresh, expiresAt !== undefined && expiresAt > Date.now() ? expiresAt : 0);
+  }
+
+  /** Whether `due` needs no renewal now; spends a next-check-only exemption. */
+  settled(scope: object, due: string): boolean {
+    const tokens = this.scopes.get(scope);
+    const replacement = tokens?.get(due);
+    const token = typeof replacement === "string" ? replacement : due;
+    const until = tokens?.get(token);
+    if (until === 0) tokens!.delete(token);
+    return until === 0 || (typeof until === "number" && Date.now() < until);
+  }
+}
+
 function earlyRenewalOf(init: RequestInit | undefined): string | undefined {
   const due: unknown = (init as { [EARLY_RENEWAL]?: unknown } | undefined)?.[EARLY_RENEWAL];
   return typeof due === "string" ? due : undefined;
@@ -1736,6 +1766,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** @internal The access token of the last refresh this flow adopted. */
   adoptedRefresh(): string | undefined {
     return this.storedRefresh;
+  }
+
+  /** @internal The stored expiry of `accessToken`, when this provider last read or wrote it. */
+  observedExpiry(accessToken: string): number | undefined {
+    return this.observed?.accessToken === accessToken ? this.observed.expiresAt : undefined;
   }
 
   /** @internal Keep a refused code's answer for the SDK's retry to read. */
