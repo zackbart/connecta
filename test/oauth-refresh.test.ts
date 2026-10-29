@@ -10,6 +10,7 @@ import { UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, OAuthTokens } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator } from "../src/auth/downstream-oauth.js";
+import { invalidateCatalogCache } from "../src/catalog-cache.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { identityStorageKey } from "../src/identity.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -536,6 +537,9 @@ describe("OAuthRefreshCoordinator", () => {
     const connector = remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
     try {
       for (wave = 0; wave < 2; wave++) {
+        // A cached catalog is served without connecting. Invalidate it so each
+        // wave's listing connects with the previous wave's token.
+        await invalidateCatalogCache(storage, "svc");
         oldTokenRequests = 0;
         rejected = deferred<void>();
         tokenEntered = deferred<void>();

@@ -1140,6 +1140,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return runEdge(authOwnMethod<boolean>(KvOAuthProvider.prototype, this, "storedAuthorization", [issuer]));
   }
 
+  /**
+   * One read of the grant's epoch and tokens, for discovery. Unlike the grant
+   * reads a flow makes, it never seals a plaintext record in place, binds an
+   * epoch, records what it handed out, refreshes or discovers (INV-10).
+   */
+  peekGrant(): Promise<{ epoch: string; tokens?: OAuthTokens }> {
+    return runEdge(
+      authOwnMethod<{ epoch: string; tokens?: OAuthTokens }>(KvOAuthProvider.prototype, this, "peekGrant", []),
+    );
+  }
+
   get redirectUrl(): string {
     return this.redirectUri;
   }
@@ -2008,6 +2019,22 @@ export class KvOAuthProvider implements OAuthClientProvider {
         ).pipe(Effect.catch(() => Effect.succeed(false)));
       },
       KvOAuthProvider.prototype.storedAuthorization,
+    );
+    registerAuthMethod(
+      KvOAuthProvider.prototype,
+      "peekGrant",
+      function (this: KvOAuthProvider) {
+        return authFlow<{ epoch: string; tokens?: OAuthTokens }>(
+          function* (this: KvOAuthProvider) {
+            const raw = (yield authInvoke(this, "wait", [
+              authMethod(() => authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>),
+            ])) as string | null;
+            const grant = (yield authInvoke(this, "openGrant", [raw])) as Grant;
+            return { epoch: grant.epoch, ...(grant.body.tokens ? { tokens: grant.body.tokens } : {}) };
+          }.bind(this),
+        );
+      },
+      KvOAuthProvider.prototype.peekGrant,
     );
     registerAuthMethod(
       KvOAuthProvider.prototype,

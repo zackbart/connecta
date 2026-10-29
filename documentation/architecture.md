@@ -603,6 +603,36 @@ Only complete, intake-redacted tools/list, resources/list and
 resources/templates/list successes are stored. Resource payloads are not cached. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
 
+A remote connector's `listTools` without a live connection in its request
+reads this cache before connecting. It derives the same partition a connect
+binds (the admitted principal, the caller's credential digest, or the owner's
+OAuth epoch and token digest) from storage reads only, then makes the SDK's
+two-probe read with the pre-connect empty server identity: the private slot,
+then a shared connector's public slot, served only when written public. OAuth
+grants are read by a non-mutating snapshot: no plaintext grant is sealed in
+place, no epoch is bound, nothing is refreshed. Every identity check during
+cache acceptance reads the grant again and refuses the entry unless the epoch
+its partition was derived from and the token digest both still hold. A missing
+or expired generation is a miss at every check and is never claimed or
+recreated. An unexpired complete entry is returned with no transport,
+handshake, session cleanup or storage write. A miss, an expired entry, an
+explicit `ttlMs: 0`, an invalidated generation, a credential, token or epoch
+change, an operator-disconnected or token-less grant, a cache read failure,
+and a downstream whose stored negotiation verdict is modern all connect as
+before. Modern downstreams connect without a handshake and read the cache
+through the SDK. The connect reuses the credential and negotiation verdict that
+read resolved. `list_changed` arrives only over a live connection, so an
+unconnected catalog changes at its TTL or on invalidation.
+
+A catalog served from this cache, before or after connecting, does not
+validate downstream credential health. An expired or vendor-revoked credential
+can still expose cached tools, and discovery reports no auth-related
+`catalogErrors` entry for it until the cache misses. Tool calls and resource
+reads reach the downstream and report auth failures with their handoffs. A
+status probe connects: a legacy downstream answers a handshake, while a modern
+downstream with a stored verdict connects without a request. A credential test
+always sends a live `tools/list` that bypasses the cache in both directions.
+
 `discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
 listings without `ttlMs`. Positive hints are bounded by
 `catalogMinTtlSeconds` (0) and `catalogMaxTtlSeconds` (86400, also the SDK
