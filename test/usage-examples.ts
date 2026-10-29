@@ -100,7 +100,7 @@ export async function checkUsageExamples(executor: Executor): Promise<void> {
   for (const readOnly of [false, true]) {
     for (const guided of [false, true]) {
       const description = usageDescription(executor, readOnly, guided);
-      expect(description.length).toBeLessThan(1_800);
+      expect(description.length).toBeLessThan(2_500);
       for (const code of examples(description)) {
         const result = await run({ code });
         expect(result.isError).toBeFalsy();

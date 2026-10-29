@@ -135,15 +135,23 @@ and obeys byte/block budgets; text shares the return cap. Return reduced JSON.
 
 `;
 
-/** Kept in sync with GuestApi by the declaration test. These are type notation, not runnable JS. */
-export const GUEST_API_DECLARATION = `search(args?: CatalogSearchArgs): Promise<CatalogSearchResult>;
-describe(args?: CatalogDescribeArgs): Promise<{ tools: CatalogDescription[] }>;
-call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
-call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
-read(uri: string): Promise<GuestResourceResult>;
-result(
-  id: string | GuestResultHandle,
-  options?: { page?: number; offset?: number; maxBytes?: number },
-): Promise<GuestResultPage>;
-skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
-emit(block: GuestNativeBlock | GuestResult): PromiseLike<void>;`;
+/**
+ * The guest API as the execute_code description shows it: compact shapes of
+ * GuestApi in src/guest-types.ts, checked against it by the package-surface
+ * declaration test. Arguments are accepted by GuestApi, results are supertypes
+ * of its results, and no field is invented. Type notation, not runnable JS.
+ */
+export const GUEST_API_DECLARATION = `declare const connecta: {
+search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string }[]; hasMore: boolean; nextOffset?: number }>;
+describe(args: { address?: string; addresses?: string[]; format?: Schemas }): Promise<{ tools: (Tool & { error?: string })[] }>;
+call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<Result>;
+read(uri: string): Promise<{ contents: { uri: string; text?: string; blob?: string }[] }>;
+result(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;
+skill(name: string): Promise<{ text: string }>;
+emit(block: Block | Result): PromiseLike<void>;
+};
+type Schemas = "json" | "compact" | "typescript";
+type Tool = { address: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; signature?: string };
+type Paged = { format: "paged"; resultId?: string; totalBytes: number };
+type Result = ({ format: "json"; data: unknown } | { format: "text"; data: string } | Paged) & { content?: Block[] };
+type Block = { type: string; text?: string; data?: string; mimeType?: string };`;

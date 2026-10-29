@@ -76,8 +76,8 @@ interface CatalogSearchArgs {
   includeSchemaKeys?: boolean;
 }
 interface CatalogDescribeArgs {
-  address?: unknown;
-  addresses?: unknown;
+  address?: string;
+  addresses?: string[];
   format?: SchemaFormat;
   fullDescriptions?: boolean;
 }

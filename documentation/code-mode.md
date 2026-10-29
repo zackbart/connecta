@@ -351,8 +351,11 @@ says so inside its `Promise<…>`.
 ### connecta.call
 
 The published `GuestApi` type describes the supplied global for editors.
-The executable usage guide checks its API notation against those declarations;
-programs still use plain JavaScript.
+The `execute_code` description declares a compact subset of it inline: argument
+shapes `GuestApi` accepts, result fields it returns, and no others. It also
+states that search and describe return objects rather than arrays, that a value
+over 1 MiB returns a paged handle, and that every function except `emit` spends
+a host call (`M7`). Programs still use plain JavaScript.
 
 ```js
 const { data: run, format } = await connecta.call("ci.get_run", { runId: 42 });
@@ -1310,6 +1313,8 @@ and on the Worker adapter with a real Miniflare Loader in `test/guest-api-contra
 Titles name clauses; executor-independent clauses run in both arms.
 `test/codemode-compat.test.ts` pins upstream shape compatibility, minified upstream
 rejection, and branded adapter acceptance across module copies.
+`test/package-surface.node.test.ts` compiles the description's compact guest
+declaration against `GuestApi` and rejects invented, mistyped, and missing members.
 
 | Clauses                | Test                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
