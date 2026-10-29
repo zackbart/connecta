@@ -147,8 +147,11 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
       trace.toolUses.filter((u) => u.tool === "execute_code").length === 1 && invalids(world, trace).length === 0,
     );
   } else if (id === "801-stripe-guessed-parameter-recovery") {
+    // Any page holding the five newest matches reaches the records, including
+    // Stripe's default limit of 10; the exact answer check owns the reduction.
+    const covers = (limit: unknown) => limit === undefined || (/^\d+$/.test(String(limit)) && Number(limit) >= 5);
     const reads = good(world, "stripe_sandbox", "GET", "/v1/customers").filter(
-      (c) => (c.args.query as Args).email === "ada@example.com" && String((c.args.query as Args).limit) === "5",
+      (c) => (c.args.query as Args).email === "ada@example.com" && covers((c.args.query as Args).limit),
     );
     destination(
       reads.length > 0 ||

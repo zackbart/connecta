@@ -1,5 +1,4 @@
 import { googleBoundaryControls, googleTransportControls } from "./tasks/google-controls.js";
-import { GOOGLE_COVERAGE_GAPS } from "./tasks/google.js";
 /**
  * `pnpm run eval:selftest` — the harness checking itself, with no LLM.
  *
@@ -91,7 +90,6 @@ async function play(
   grading: Grading = "route",
 ): Promise<{
   correct: Check[];
-  capabilityGap: boolean;
   wrongDestination: Check[];
   missingEvidence: Check[];
   regressions: ReturnType<typeof counterexamples>;
@@ -464,14 +462,7 @@ async function play(
         },
       }));
       const wrongDestination = task.grade({ world, trace: { ...trace, toolUses: wrongUses } });
-      const capabilityGap =
-        (GOOGLE_COVERAGE_GAPS as readonly string[]).includes(task.id) &&
-        trace.finalAnswer?.includes('"unavailable":true') === true &&
-        trace.toolUses.some(
-          (use) =>
-            use.isError && /unknown_tool|tool_not_found|not_found|Unknown tool|not found/i.test(use.resultText ?? ""),
-        );
-      return { correct, capabilityGap, missingEvidence, wrongDestination, regressions, positives };
+      return { correct, missingEvidence, wrongDestination, regressions, positives };
     },
   );
 }
@@ -548,19 +539,6 @@ for (const task of selected) {
       console.log(`FAIL ${task.id}: replay of the real caught-refusal program against fresh fakes`);
     } else console.log(`ok   ${task.id}: real caught-refusal program against fresh fakes`);
   }
-  if (played.capabilityGap) {
-    if (
-      required(played.correct).every((c) => c.pass) ||
-      required((await play(task, "noop")).correct).every((c) => c.pass)
-    )
-      throw new Error(`Capability gap incorrectly passed: ${task.id}`);
-    for (const control of played.regressions) {
-      if (!control.rejected) throw new Error(`Capability-gap control was accepted: ${task.id}: ${control.name}`);
-      console.log(`       rejected: ${control.name}`);
-    }
-    console.log(`ok   ${task.id}: expected BEFORE capability gap; outcome grader still fails unavailable data`);
-    continue;
-  }
   const reference = played.correct;
   const refFailed = required(reference).filter((item) => !item.pass);
   const noop = (await play(task, "noop")).correct;
@@ -604,12 +582,6 @@ for (const surface of args.has("primary-only") ? [] : (["six", "code"] as const)
     for (const task of selected) {
       const played = await play(task, "reference", surface, grading);
       const noop = await play(task, "noop", surface, grading);
-      if (played.capabilityGap) {
-        if (required(played.correct).every((c) => c.pass) || required(noop.correct).every((c) => c.pass))
-          throw new Error(`Capability gap incorrectly passed: ${task.id}`);
-        console.log(`ok   ${surface}/${grading} ${task.id}: expected BEFORE capability gap; outcome remains failed`);
-        continue;
-      }
       const ok =
         required(played.correct).every((c) => c.pass) &&
         !required(noop.correct).every((c) => c.pass) &&

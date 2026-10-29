@@ -408,6 +408,10 @@ has to observe and report the real pin refusal. REST worlds expose only their
 vendor connectors. Refund retry metrics distinguish
 vendor-proven idempotent replays from duplicate business writes. The grader
 still requires identical arguments and one nonempty key across attempts.
+The rejected-parameter task accepts an email-filtered customer list whose
+page reaches the five newest matches: any integer `limit` of at least 5, or
+Stripe's default of 10. The answer must still name exactly those five ids,
+newest first, and at most one refused guess may precede the accepted read.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
 Seven [Breeze tasks](tasks/breeze.ts) cover filtered profile/tag reads, occurrence
@@ -605,7 +609,9 @@ Gmail subject, label, header and attachment facts must belong to their named
 message. S5 and L5 verify the new row or slide through a successful read-back;
 a write receipt alone does not establish that verification.
 Gmail G3 accepts an exact complete id list sorted numerically or lexically;
-other orderings, duplicates and omissions fail. Sheets S5/S6 accept equivalent
+other orderings, duplicates and omissions fail. Drive D4 accepts `modified` as
+timestamps in revision order or as a map keyed by exactly the reported revision
+ids; a missing, extra or wrong timestamp fails. Sheets S5/S6 accept equivalent
 A..D append table-search ranges on the exact requested sheet and workbook;
 literal values, insert-rows mode, one write and read-back evidence remain
 required. The [disclosed offline correction](baselines/notes-google-grader-followups.md)
@@ -621,13 +627,13 @@ remain a separate product change. Saved Google grading inputs retain both
 subjects' state and regrade identically; omitting that snapshot fails closed.
 
 These are harness additions, not Google product migrations or measured model
-results. Drive revision discovery (`google-drive-4`) is the only expected
-BEFORE capability gap and new-coverage row. Sheets metadata (`google-sheets-7`)
-is an ordinary comparable task: the existing `get_spreadsheet` with `raw: true`
-exposes it. Its metadata check requires returned metadata; a projected response
-without metadata or an echoed lookup does not count. Selftests recognize the
-precise missing-tool reference for Drive and verify that unavailable data still fails the outcome grader. They
-never turn that failure into a successful trial. Product builders measure
+results. Drive revision discovery (`google-drive-4`) began as a BEFORE
+capability gap; Drive's `drive_api_read` now reads `/files/{fileId}/revisions`,
+so it is an ordinary task and an unavailable answer fails like any other. Sheets
+metadata (`google-sheets-7`) is an ordinary comparable task: the existing
+`get_spreadsheet` with `raw: true` exposes it. Its metadata check requires
+returned metadata; a projected response without metadata or an echoed lookup
+does not count. Product builders measure
 BEFORE and AFTER with unchanged prompts, fakes and graders; only reference
 call shapes may adapt to a product's new surface. No paid Google trials belong
 to this shared prerequisite. Run only these deterministic references with
