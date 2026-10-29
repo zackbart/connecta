@@ -488,8 +488,7 @@ describe("D1 query budgets", () => {
     await callTool(app, "svc.echo");
     const warm = { ...d1.count, log: [...d1.count.log] };
     report("warm OAuth call", warm, { grantReads: warm.log.filter((line) => line.includes(":oauth:grant")).length });
-    // Fresh epoch gates (call start, disconnect admission, the post-connect
-    // re-authorization check) and the catalog generation fence stay reads.
+    // Every grant read stays fresh, as does the catalog generation fence.
     expect(warm.roundTrips, warm.log.join("\n")).toBeLessThanOrEqual(WARM_OAUTH.roundTrips);
     expect(warm.statements, warm.log.join("\n")).toBeLessThanOrEqual(WARM_OAUTH.statements);
 
@@ -562,7 +561,10 @@ describe("D1 query budgets", () => {
 
 // Measured ceilings; see the suite header. Before the request read memo
 // (#1173 item 1.3) these were 21/21, 43/51, 8/8 and 12/12 with 5 vault reads.
-const WARM_OAUTH = { roundTrips: 999, statements: 999 };
-const OAUTH_REFRESH = { roundTrips: 999, statements: 999 };
+// OAuth grant reads are never memoized: every SDK message reads its token
+// and epoch fresh, so those two shrink only by the shared verdict and catalog
+// reads.
+const WARM_OAUTH = { roundTrips: 18, statements: 18 };
+const OAUTH_REFRESH = { roundTrips: 40, statements: 48 };
 const COLD_CATALOG = { roundTrips: 5, statements: 5 };
 const UI_DETAIL = { vaultReads: 3, roundTrips: 8, statements: 8 };
