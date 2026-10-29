@@ -11,7 +11,9 @@ import { SEARCH_OUTPUT } from "../src/meta-output.js";
 import { describe, expect, it } from "vitest";
 import { Validator } from "@cfworker/json-schema";
 import type { Executor } from "../src/types.js";
-import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { api } from "../src/connectors/api.js";
+import { calcApi, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { handoffFixture } from "./fixtures/authorization-handoff.js";
 
 const TOKEN = "test-token-123";
 const DRAFT = "https://json-schema.org/draft/2020-12/schema";
@@ -164,6 +166,11 @@ describe("meta-tool output schemas", () => {
         expect(searchValidator.validate(incomplete).valid, key).toBe(false);
         expect(SEARCH_OUTPUT["~standard"].validate(incomplete)).toHaveProperty("issues");
       }
+      const failure = { connector: "calc", code: "unavailable", message: "Down", retryable: true };
+      expect(searchValidator.validate({ ...flat, catalogErrors: [failure] }).valid).toBe(true);
+      const { connector: _connector, ...unscoped } = failure;
+      expect(searchValidator.validate({ ...flat, catalogErrors: [unscoped] }).valid).toBe(false);
+      expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(false);
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
       expect(
@@ -171,6 +178,177 @@ describe("meta-tool output schemas", () => {
           hostCalls: { attempted: -1, admitted: 0, succeeded: 0, failed: 0 },
         }).valid,
       ).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+// Fixed-cost budgets for the always-loaded agent surface, enforced like the
+// bundle caps: each is the measured size plus modest headroom, in UTF-16
+// characters of the wire JSON. Raising one is a deliberate change that states
+// why the always-loaded context should grow. The connector inventory in the
+// execute_code description varies with connector count, so the fixture below
+// is pinned: four connectors, one carrying a guide, one known read.
+const BUDGETS = {
+  total: 14_900,
+  instructions: 1_050,
+  description: {
+    skills: 220,
+    search_tools: 650,
+    call_tool: 260,
+    call_destructive_tool: 300,
+    authorize_connector: 460,
+    execute_code: 2_850,
+  },
+  outputSchema: { skills: 660, search_tools: 3_800, authorize_connector: 420, execute_code: 1_070 },
+  usage: 5_700,
+  searchRow: { default: 360, compact: 630 },
+} as const;
+
+function budgetFixture(readOnly: boolean) {
+  const crm = api("crm", {
+    title: "Customer CRM",
+    description: "Accounts and contacts",
+    usageGuide: { content: "# CRM\n\nAccounts are scoped by workspace. Use ISO dates." },
+    tools: [
+      {
+        name: "get_account",
+        description: "Fetch one account by id, including its owner, plan, and the most recent activity timestamp.",
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Account id" },
+            include: { type: "array", items: { enum: ["owner", "plan", "activity"] } },
+          },
+          required: ["id"],
+        },
+        outputSchema: {
+          type: "object",
+          properties: { id: { type: "string" }, name: { type: "string" }, plan: { type: "string" } },
+        },
+        handler: () => ({ id: "acct_42", name: "Example", plan: "team" }),
+      },
+    ],
+  });
+  const tickets = api("tickets", { title: "Support tickets", description: "Tickets", tools: [] });
+  const notes = api("notes_alice", { title: "Alice notes", description: "Notes", tools: [] });
+  return makeDeployment({ executor: stubExecutor, readOnly, connectors: [calcApi(), crm, tickets, notes] });
+}
+
+const INITIALIZE = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "budget", version: "1" } };
+
+async function fixedSurface(app: ReturnType<typeof makeDeployment>) {
+  const init = await readJsonRpc(await mcpRpc(app, "initialize", INITIALIZE, { token: TOKEN }));
+  const list = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: TOKEN }));
+  return { instructions: init.result.instructions as string, tools: list.result.tools as Array<Record<string, any>> };
+}
+
+async function callTool(app: ReturnType<typeof makeDeployment>, name: string, args: object) {
+  return (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: TOKEN }))).result;
+}
+
+describe("search_tools output schema", () => {
+  it.each([
+    ["oauth", {}],
+    ["operator credential", { credential: true }],
+  ] as const)("validates real %s handoff pages under every host draft", async (_kind, options) => {
+    const flow = handoffFixture({ catalogAuth: true, ...options });
+    try {
+      const list = await readJsonRpc(
+        await flow.app.fetch(
+          new Request("https://connecta.test/mcp/team", mcpRpc("tools/list", {}, { token: "alice" })),
+        ),
+      );
+      const schema = list.result.tools.find((tool: { name: string }) => tool.name === "search_tools").outputSchema;
+      const pages = [
+        (await flow.rpc("search_tools", {})).structuredContent,
+        (await flow.rpc("search_tools", { connector: "service" })).structuredContent,
+      ];
+      expect(pages[0].catalogErrors[0]).toMatchObject({ connector: "service", recovery: expect.any(String) });
+      expect(pages[1].queryAnalysis.catalogError).toMatchObject({ recovery: expect.any(String) });
+      // Typed handoff fields stay typed through the shared definition.
+      const mistyped = structuredClone(pages[0]);
+      mistyped.catalogErrors[0].recovery = "anything";
+      for (const draft of ["2020-12", "2019-09", "7", "4"] as const) {
+        const validator = new Validator(schema, draft);
+        for (const page of pages) expect(validator.validate(page).errors, draft).toEqual([]);
+        expect(validator.validate(mistyped).valid, draft).toBe(false);
+      }
+    } finally {
+      await flow.app.close();
+    }
+  });
+});
+
+describe("always-loaded agent surface budgets", () => {
+  it.each([false, true])(
+    "keeps tools/list, instructions, usage and search rows within budget (readOnly %s)",
+    async (readOnly) => {
+      const app = budgetFixture(readOnly);
+      try {
+        const { instructions, tools } = await fixedSurface(app);
+        const sizes: Record<string, number> = { instructions: instructions.length };
+        let total = instructions.length;
+        for (const tool of tools) {
+          total += JSON.stringify(tool).length;
+          sizes[`${tool.name}.description`] = tool.description.length;
+          if (tool.outputSchema) sizes[`${tool.name}.outputSchema`] = JSON.stringify(tool.outputSchema).length;
+        }
+        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
+        expect(total, JSON.stringify(sizes)).toBeLessThanOrEqual(BUDGETS.total);
+        expect(tools.map((tool) => tool.name).sort()).toEqual(Object.keys(BUDGETS.description).sort());
+        for (const tool of tools) {
+          const name = tool.name as keyof typeof BUDGETS.description;
+          expect(tool.description.length, name).toBeLessThanOrEqual(BUDGETS.description[name]);
+          const schemaBudget = (BUDGETS.outputSchema as Record<string, number>)[name];
+          if (tool.outputSchema === undefined) expect(schemaBudget, name).toBeUndefined();
+          else expect(JSON.stringify(tool.outputSchema).length, name).toBeLessThanOrEqual(schemaBudget!);
+        }
+        const usage = await callTool(app, "skills", { name: "usage" });
+        expect(usage.structuredContent.text.length).toBeLessThanOrEqual(BUDGETS.usage);
+        for (const mode of ["default", "compact"] as const) {
+          const page = await callTool(app, "search_tools", {
+            connector: "crm",
+            query: "get account",
+            ...(mode === "compact" ? { includeSchemas: "compact" } : {}),
+          });
+          expect(page.structuredContent.tools, mode).toHaveLength(1);
+          expect(JSON.stringify(page.structuredContent.tools[0]).length, mode).toBeLessThanOrEqual(
+            BUDGETS.searchRow[mode],
+          );
+        }
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it("keeps live catalog, call and auth state out of the fixed surface", async () => {
+    let failing = true;
+    const flaky = {
+      id: "flaky",
+      kind: "api" as const,
+      title: "Flaky service",
+      async listTools() {
+        if (failing) throw new Error("catalog unavailable");
+        return [{ name: "ping", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        return { ok: true };
+      },
+    };
+    const app = makeDeployment({ executor: stubExecutor, readOnly: false, connectors: [calcApi(), flaky] });
+    try {
+      const before = await fixedSurface(app);
+      const failed = await callTool(app, "search_tools", { query: "ping" });
+      expect(failed.structuredContent.catalogErrors).toHaveLength(1);
+      await callTool(app, "call_tool", { address: "calc.add", args: { a: 1, b: 2 } });
+      await callTool(app, "authorize_connector", { connector: "flaky" });
+      failing = false;
+      await callTool(app, "search_tools", { query: "ping" });
+      expect(await fixedSurface(app)).toStrictEqual(before);
     } finally {
       await app.close();
     }

@@ -9,6 +9,7 @@ import {
   sqlActivityRollbackContract,
   sqlBatchRollbackContract,
   sqlCasExpiryContract,
+  sqlGetManyContract,
   sqlStashFixture,
   type SqlFixture,
 } from "./sql-storage-contract.js";
@@ -59,6 +60,23 @@ async function open(): Promise<SqlFixture> {
 
 describe.skipIf(!bindings)("CAS expiry reclamation over native Workers D1", () => {
   sqlCasExpiryContract(open);
+});
+
+describe.skipIf(!bindings)("getMany over native Workers D1", () => {
+  sqlGetManyContract(open);
+});
+
+describe.skipIf(!bindings)("request read memo without weak references", () => {
+  it("reads storage every time in a Worker without WeakRef or FinalizationRegistry", async () => {
+    await fresh();
+    const response = await bindings!.worker.fetch("https://sql.test/memo");
+    expect(await response.json()).toEqual({
+      weakRef: "undefined",
+      finalizationRegistry: "undefined",
+      values: [null, null],
+      loads: 2,
+    });
+  });
 });
 
 describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {

@@ -1,3 +1,4 @@
+import type { Effect } from "effect";
 import { runEdge } from "../runtime/run.js";
 
 import { authFlow, authProgram, registerAuth, authStorage } from "../auth/native.js";
@@ -6,6 +7,7 @@ import { failureRecord, logFailure } from "../operator-record.js";
 import { sentSecretsForRequest } from "../sent-secrets.js";
 import { assertDownstreamOutputSafe } from "../downstream-input-context.js";
 import { negotiationKeys, NEGOTIATION_TTL_SECONDS } from "../storage/keys.js";
+import { viewReads } from "../runtime/call.js";
 import type { ConnectorContext } from "../types.js";
 
 /** Verdicts carry data only. Clients, signals and secrets remain request-local. */
@@ -16,7 +18,15 @@ const readNegotiationNative = /* @__PURE__ */ registerAuth(readNegotiation, (ctx
   authFlow<PriorDiscovery | undefined>(function* () {
     let prior: PriorDiscovery | undefined;
     try {
-      const raw = (yield authStorage(ctx.storage, "get", [negotiationKeys.verdict(digest)])) as string | null;
+      // Memoized per request: a verdict only orders the versions a handshake
+      // tries, so one read earlier in this request at worst costs a fallback.
+      // This request's own storeNegotiation is a write, which clears the memo.
+      const key = negotiationKeys.verdict(digest);
+      const raw = (yield viewReads(ctx).read(
+        ctx.storage,
+        key,
+        authStorage(ctx.storage, "get", [key]) as Effect.Effect<string | null, unknown>,
+      )) as string | null;
       if (!raw) return;
       const value = JSON.parse(raw);
       if (!Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return;

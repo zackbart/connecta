@@ -1437,10 +1437,13 @@ function metaToolsForRequest(
   };
 }
 
+// Each description states only its own tool's scope; the full routing rule
+// lives once in the server instructions. A client that drops instructions
+// still routes correctly from these scopes plus execute_code's terse lead.
 const SEARCH_DESC = (readOnly: boolean) =>
-  `${readOnly ? "Use top-level search for catalog inspection; this read-only endpoint omits write tools." : "Use top-level search for catalog inspection or write work before call_destructive_tool."} Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement. The host owns confirmation; these filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+  `${readOnly ? "Catalog inspection; this read-only endpoint omits write tools." : "Catalog inspection, or finding a write before call_destructive_tool."} For read work, search inside one execute_code program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement; neither grants authority. Empty query browses. Read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
 const CALL_DESC = (readOnly: boolean) =>
-  `Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. ${readOnly ? "This endpoint is read-only and refuses every write." : "Unannotated or write-capable tools fail closed to call_destructive_tool."} A truncated result carries a connecta.result action.`;
+  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: execute_code. ${readOnly ? "This endpoint is read-only and refuses every write." : "Unannotated or write-capable tools fail closed to call_destructive_tool."} A truncated result carries a connecta.result action.`;
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */

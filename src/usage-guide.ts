@@ -8,35 +8,25 @@ description: How to route work between one execute_code program and Connecta's e
 
 ## Choose the route
 
-| Work | Tool |
-| --- | --- |
-| One known-address read | call_tool |
-| One known-address write | call_destructive_tool |
-| Discovery, multiple or dependent calls, paging, reduction | execute_code |
-
+Route as the server instructions and execute_code's first sentence say.
 Read one account with call_tool: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
-Discover and call together when schemas suffice. search_tools covers catalog
-inspection. On a read-only endpoint, as execute_code's description says, search
-omits writes (guides may name them) and each fails read_only_endpoint; tell the
-user. Unannotated tools fail closed to writes.
-For a requested write, make the call through the write route; the host may ask
-the user to confirm it. Connecta classifies and routes writes; the host owns approval.
+On a read-only endpoint search omits writes (guides may name them) and each
+fails read_only_endpoint; tell the user. Unannotated tools fail closed to writes.
+Connecta classifies and routes a requested write; the host owns approval.
 
 ## The global and the envelopes
 
 Pass JavaScript \`async () => { ... }\`, no arguments. Do not shadow \`connecta\`.
 No imports, require, filesystem, fetch, or timers.
 
-Use \`connecta.call(address, args, { timeoutMs })\` or
-\`connecta.call({ address, args, timeoutMs })\`; both return \`{ data, format }\`.
-\`format: "json"\` carries JSON; \`format: "text"\` carries text. Parse text only
-when documented as JSON. Verify collection roots.
+\`connecta.call(address, args, { timeoutMs })\` and
+\`connecta.call({ address, args, timeoutMs })\` return \`{ data, format }\`.
+Parse \`format: "text"\` only when documented as JSON. Verify collection roots.
 
 \`connecta.read("resource://id/"+encodeURIComponent(uri))\` returns \`{ contents }\` for advertised URIs.
 
-Search/describe return \`{ tools }\`, never an array. Search also returns
-\`catalogErrors\`, pagination, and possible \`absence\`; check failures before
-selecting a match. JSON schemas are the program default. Compact schemas have
+Search/describe return \`{ tools }\`, never an array. Check search's
+\`catalogErrors\` and \`absence\` before selecting a match. Compact schemas have
 \`schemaFormat: "text"\`; do not read their .properties. Select the exact tool and
 account/environment, inspect its schema, and supply its required keys and types.
 
