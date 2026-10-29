@@ -28,21 +28,32 @@ export class ArgumentProblems {
     });
   }
 
-  /** The one refusal for every recorded problem, or undefined when there is none. */
-  refusal(lead: string, args: unknown, schema: JsonSchema | undefined): ConnectorCallError | undefined {
+  /**
+   * The one refusal for every recorded problem, or undefined when there is
+   * none. `withheld` states why no example is offered, for a tool whose schema
+   * cannot prove its arguments safe to echo; without a schema or a reason, the
+   * invocation that owns the schema builds the example.
+   */
+  refusal(
+    lead: string,
+    args: unknown,
+    schema: JsonSchema | undefined,
+    withheld?: string,
+  ): ConnectorCallError | undefined {
     if (!this.#found.length) return undefined;
     const issues = this.#found.map(({ issue }) => issue);
-    const example = schema
-      ? exampleWith(
-          schema,
-          args,
-          this.#found.map(({ issue, fix }) => [issue.path, fix]),
-        )
-      : undefined;
-    // Without the schema, the invocation that owns it builds the example.
-    const unavailable = schema
-      ? { exampleUnavailable: "No corrected call could be built without guessing a value." }
-      : {};
+    const example =
+      schema && !withheld
+        ? exampleWith(
+            schema,
+            args,
+            this.#found.map(({ issue, fix }) => [issue.path, fix]),
+          )
+        : undefined;
+    const unavailable =
+      withheld || schema
+        ? { exampleUnavailable: withheld ?? "No corrected call could be built without guessing a value." }
+        : {};
     return new ConnectorCallError("invalid_args", `${lead}: ${boundedEchoText(issueSummary(issues), 512)}`, {
       validation: { issues, ...(example ?? unavailable) },
     });

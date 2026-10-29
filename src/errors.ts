@@ -288,6 +288,8 @@ const BOUND_TEXT: Record<string, string> = {
   maxLength: "at most # characters",
   minItems: "at least # items",
   maxItems: "at most # items",
+  minProperties: "at least # properties",
+  maxProperties: "at most # properties",
 };
 
 /** A JSON Schema bound keyword as an agent-readable constraint with its number. */

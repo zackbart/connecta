@@ -211,7 +211,13 @@ async function argumentRefusalViolations(
         validation.issues.map((issue) => [issue.path, "omit"] as const),
       )?.example;
     if (example === undefined) found.push(`A1: ${tool.name} gives no corrected example call`);
-    else if (BAD_FIELDS.some((field) => JSON.stringify(example).includes(`"${field}"`)))
+    else if (
+      BAD_FIELDS.some(
+        (field, index) =>
+          JSON.stringify(example).includes(`"${field}"`) ||
+          JSON.stringify(example).includes(`as sent at /fields/${index}>`),
+      )
+    )
       found.push(`A1: ${tool.name}'s example repeats a refused fields path`);
   }
   return found;

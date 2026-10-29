@@ -16,6 +16,7 @@ import {
 } from "../../../test/fixtures/github-api.js";
 import { deferred, spyLogger, waitFor } from "../../../test/fixtures/misc.js";
 import { activitySink, invokeTestCall, makeRegistry } from "../../../test/helpers.js";
+import { createMetaTools } from "../../meta-tools.js";
 import { ConnectorCallError } from "../../errors.js";
 import { AppAuth } from "./lib/auth.js";
 import { githubConnection } from "./api.js";
@@ -123,18 +124,20 @@ describe("GitHub App provider", () => {
       received: "both org and repo",
     });
     for (const path of ["/fields/0", "/terms", "/scopes/0"]) expect(message).toContain(path);
-    const example = {
-      terms: "bug crash",
+    // Sent prose returns as a placeholder; a configured repository and a result field path are the provider's fixes.
+    expect(validation?.example).toEqual({
+      terms: "<literal words>",
       kind: "issues",
       scopes: [{ repo: "other/one" }],
-      fields: ["item.number", "repository"],
-    };
-    expect(validation?.example).toEqual(example);
-    // The example is the one call that now succeeds.
+      fields: ["item.number", "<as sent at /fields/1>"],
+    });
+    expect(JSON.stringify(error)).not.toMatch(/bug is:open|crash/);
+    // Filling the placeholders gives the one call that now succeeds.
     fixture.respond((request) =>
       request.url.pathname === "/search/issues" ? Response.json({ items: [], total_count: 0 }) : undefined,
     );
-    await expect(connection().callTool("search_scoped", example, context())).resolves.toMatchObject({
+    const filled = { ...validation!.example!, terms: "bug crash", fields: ["item.number", "repository"] };
+    await expect(connection().callTool("search_scoped", filled, context())).resolves.toMatchObject({
       structuredContent: { items: [] },
     });
   });
@@ -161,6 +164,41 @@ describe("GitHub App provider", () => {
       issues: [{ path: "/fields/0" }, { path: "/owner", expected: expect.stringContaining("org acme") }],
       example: {},
     });
+  });
+
+  it("INV-4: a joined selector is offered only when the configured scope admits it", async () => {
+    const fixture = apiFixture();
+    const refusal = (await connection()
+      .callTool("search_scoped", { terms: "bug", kind: "issues", scopes: [{ org: "outside", repo: "one" }] }, context())
+      .catch((caught: unknown) => caught)) as ConnectorCallError;
+    expect(refusal.validation?.issues).toEqual([
+      {
+        path: "/scopes/0",
+        expected: expect.stringMatching(/outside\/one is outside the configured scope.*Configured: org acme/),
+        received: "both org and repo",
+      },
+    ]);
+    // Never a joined repository that replaying would refuse at /scopes/0/repo.
+    expect(refusal.validation?.example).toEqual({
+      terms: "<as sent at /terms>",
+      kind: "issues",
+      scopes: [{ repo: "<owner>/<repo>" }],
+    });
+    expect(fixture.fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("INV-4: a hatch refusal never offers the same invalid call as its example", async () => {
+    const fixture = apiFixture();
+    const meta = createMetaTools(makeRegistry([connection()]), "https://connecta.example");
+    const refused = await meta.callDestructiveTool({
+      address: "github.github_api_write",
+      args: { method: "POST", path: "/repos/acme/one/releases", body: { name: "release" } },
+    });
+    const error = (refused.structuredContent as any).error;
+    expect(error).toMatchObject({ code: "invalid_args", validation: { issues: [{ path: "/body/tag_name" }] } });
+    expect(error.validation).not.toHaveProperty("example");
+    expect(error.validation.exampleUnavailable).toContain("github_api_details");
+    expect(fixture.requests.filter((request) => request.url.pathname.endsWith("/releases"))).toHaveLength(0);
   });
 
   it("INV-4: validates all search selectors and cursor partitions before minting", async () => {

@@ -301,10 +301,13 @@ links, plus marker containment in paths and queries.
   never as throws inside `run`: record each problem with
   `problems.add(path, expected, { received?, fix? })`, stating the actual
   bound, allowed values or selector shape in `expected`. A `fix` is a value
-  derived without guessing, a clearly placeholder value such as
-  `"<owner>/<repo>"`, or `"omit"`; the kit builds the example only when every
-  problem has one and the result validates and echoes without a writeOnly
-  value. `fieldsIssues` records every bad `fields` path. The standard probes
+  from configuration or the result shape that the provider has checked would
+  pass (never caller prose), a clearly placeholder value such as
+  `"<owner>/<repo>"`, or `"omit"` of a value that was sent; the kit builds the
+  example only when every problem has one and the corrected call validates, and
+  replaces every other sent value the schema does not prove safe with
+  `"<as sent at /path>"`. A tool whose schema cannot prove its arguments safe
+  to echo, such as a hatch, passes a withheld reason instead. `fieldsIssues` records every bad `fields` path. The standard probes
   every tool taking `fields` with two bad paths and requires both findings, no
   request, and an example.
 

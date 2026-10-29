@@ -1044,9 +1044,12 @@ operation and carries one recovery envelope, `validation`:
 Every finding is listed, and the message repeats them, so one corrected call
 fixes them all. `path` is a JSON Pointer into the submitted arguments. `expected`
 states the actual bound, allowed values, accepted keys or selector shape.
-`received` is the submitted JSON type, `missing`, or, for a numeric bound, the
-submitted number when its schema position is not `writeOnly`; a submitted
-string is never copied. At most eight findings are returned, each field clipped (path and
+`received` is the submitted JSON type, `missing`, or, for a numeric bound of a
+named tool, the submitted number when its schema position is not `writeOnly`; a
+submitted string is never copied. A finding states every constraint its schema
+position declares (bounds, property and item counts, `multipleOf`, `pattern`,
+`format`, `uniqueItems`, enum members, `dependentRequired`), with the failing
+one first, and each position gets one finding. At most eight findings are returned, each field clipped (path and
 expected 256 characters, received 64), and `truncated: true` says something was
 omitted or clipped.
 
@@ -1056,14 +1059,26 @@ against the same validator; complex or unsatisfiable schemas get
 `exampleUnavailable` instead. Synthesis detects recursive references and shares
 a 128-node work budget. A maintained provider's own checks (selectors, search
 terms, `fields` paths) report every problem in one refusal, and their example is
-the submitted call with each finding's fix applied: a value derived from what
-was sent (a bare repository joined to its org, a vendor field moved under
-`item`), a placeholder such as `"<owner>/<repo>"`, or the argument removed. When
-a connector supplies findings without an example, invocation offers the
-submitted call without every listed path if that validates against the
-published schema. A derived example is kept only when it validates, echoes
-within the 512-byte argument echo budget, and holds no `writeOnly` value;
-otherwise `exampleUnavailable` explains why, rather than a guessed value.
+the submitted call with each finding's fix applied: a value the provider derives
+from configuration or the result shape (a bare repository joined to its org only
+when that repository is configured, a vendor field moved under `item`), a
+placeholder such as `"<owner>/<repo>"`, or the argument removed. When a
+connector supplies findings with neither an example nor `exampleUnavailable`,
+invocation offers the submitted call without every listed path.
+
+A derived example copies no submitted value the published schema does not prove
+safe: a boolean, an enum or `const` member, or a number at a declared numeric
+position that is not `writeOnly`. Every other submitted value, including every
+string, becomes the placeholder `"<as sent at /path>"`, naming where to reuse
+what was sent. The corrected call is validated with the submitted values before
+they are replaced. No example is offered when a finding has no fix, when a
+removal targets a value that was not sent (that would repeat the refused call),
+when the corrected call fails the schema, when it exceeds the 512-byte argument
+echo budget, or when it would carry a value this request registered as private
+or the `[redacted]` marker. API hatches (`*_api_read`, `*_api_write`) never
+derive one: their generic schema cannot prove an operation's arguments safe to
+echo, so `exampleUnavailable` points to the operation's `*_api_details`.
+
 `acceptedKeys` names the tool's top-level arguments and
 `conditionalRequirements` lists known `dependentRequired` and
 `if`/`then`/`else` requirements; alternative branches do not emit dependency

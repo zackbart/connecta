@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import type { JsonSchema } from "../src/types.js";
-import { normalizeToolInput, validateToolInput } from "../src/validate.js";
+import { exampleWith, normalizeToolInput, validateToolInput } from "../src/validate.js";
 import { spyLogger } from "./fixtures/misc.js";
 import { silentLogger } from "./helpers.js";
 
@@ -226,7 +226,8 @@ it("INV-6: one envelope states every bound, allowed value and accepted key witho
   expect(error?.validation).toEqual({
     issues: [
       { path: "/mode", expected: 'one of "fast", "safe"', received: "string" },
-      { path: "/count", expected: "at most 10", received: "20" },
+      // A finding states every constraint its schema position declares, not just the one that failed.
+      { path: "/count", expected: "at most 10, at least 1", received: "20" },
       { path: "/limit", expected: "at least 5", received: "4" },
       // A writeOnly position states its type, never the submitted number.
       { path: "/pin", expected: "at least 1000", received: "number" },
@@ -297,4 +298,113 @@ it("INV-6: recursive schema examples stop before expanding beyond a shared synth
   expect(error?.code).toBe("invalid_args");
   expect(error?.validation).not.toHaveProperty("example");
   expect(error?.validation?.exampleUnavailable).toContain("No valid example");
+});
+
+it("INV-6: every constraint the repair envelope carried survives in the findings", () => {
+  const schema: JsonSchema = {
+    type: "object",
+    properties: {
+      attrs: { type: "object", minProperties: 3, maxProperties: 9 },
+      tags: { type: "array", uniqueItems: true, minItems: 3 },
+      step: { type: "integer", multipleOf: 5, minimum: 10 },
+      code: { type: "string", pattern: "^[A-Z]{3}$", minLength: 3 },
+      day: { type: "string", format: "date" },
+      mode: { type: "string", enum: ["fast", "safe"] },
+      kind: { const: "note" },
+      size: { type: "integer", minimum: 1, maximum: 4 },
+      region: { type: "string" },
+    },
+    dependentRequired: { tags: ["region"] },
+  };
+  const findings = [
+    { attrs: { a: 1 }, tags: [1, 1], step: 7, code: "ab", day: "never" },
+    { mode: 1, kind: "page", size: "big" },
+  ].flatMap((args) => validateToolInput(schema, args, OPTS)?.validation?.issues ?? []);
+  // One finding per position, stating every constraint it declares.
+  expect(findings.map((issue) => issue.path)).toEqual([
+    "/region",
+    "/attrs",
+    "/tags",
+    "/step",
+    "/code",
+    "/day",
+    "/mode",
+    "/kind",
+    "/size",
+  ]);
+  expect(Object.fromEntries(findings.map((issue) => [issue.path, issue.expected]))).toEqual({
+    "/attrs": "at least 3 properties, at most 9 properties",
+    "/tags": "at least 3 items, unique items",
+    "/step": "at least 10, a multiple of 5",
+    "/code": "at least 3 characters, matching ^[A-Z]{3}$",
+    "/day": "a date string",
+    "/mode": 'string, one of "fast", "safe"',
+    "/kind": 'the constant "note"',
+    // A type failure still states the position's bounds, as repair's bounds did.
+    "/size": "integer, at least 1, at most 4",
+    "/region": "string (required with tags)",
+  });
+  // Without other findings, a property-count bound is never reduced to the generic schema text.
+  expect(validateToolInput(schema, { attrs: {} }, OPTS)?.message).toContain(
+    "/attrs: expected at least 3 properties, at most 9 properties, received object",
+  );
+});
+
+it("INV-5 INV-6: a derived example copies no sent value the schema cannot prove safe", () => {
+  const schema: JsonSchema = {
+    type: "object",
+    properties: {
+      note: { type: "string" },
+      mode: { type: "string", enum: ["fast", "safe"] },
+      count: { type: "integer" },
+      draft: { type: "boolean" },
+      pin: { type: "integer", writeOnly: true },
+      body: { type: "object" },
+      fields: { type: "array", items: { type: "string" } },
+    },
+    required: ["note"],
+  };
+  const args = {
+    note: "note-sentinel",
+    mode: "fast",
+    count: 3,
+    draft: true,
+    pin: 4242,
+    body: { value: "body-sentinel", n: 5 },
+    fields: ["bad", "ok"],
+  };
+  expect(exampleWith(schema, args, [["/fields/0", "omit"]])).toEqual({
+    example: {
+      note: "<as sent at /note>",
+      mode: "fast",
+      count: 3,
+      draft: true,
+      pin: "<as sent at /pin>",
+      body: { value: "<as sent at /body/value>", n: "<as sent at /body/n>" },
+      fields: ["<as sent at /fields/1>"],
+    },
+  });
+  // Tuple positions resolve through prefixItems; references and alternatives prove nothing.
+  const tuple: JsonSchema = {
+    type: "object",
+    $defs: { mode: { enum: ["fast"] } },
+    properties: {
+      pair: { type: "array", prefixItems: [{ enum: ["a"] }, { type: "string" }] },
+      ref: { $ref: "#/$defs/mode" },
+      either: { anyOf: [{ enum: ["x"] }, { type: "string" }] },
+      fields: { type: "array" },
+    },
+  };
+  expect(
+    exampleWith(tuple, { pair: ["a", "b"], ref: "fast", either: "x", fields: ["bad"] }, [["/fields/0", "omit"]]),
+  ).toEqual({
+    example: { pair: ["a", "<as sent at /pair/1>"], ref: "fast", either: "<as sent at /either>", fields: [] },
+  });
+  // A provider's own fix value appears as given.
+  expect(exampleWith(schema, { note: "x" }, [["/note", { value: "<note>" }]])).toEqual({ example: { note: "<note>" } });
+  // Removing a value that was never sent would repeat the refused call, so there is no example.
+  expect(exampleWith(schema, { note: "x" }, [["/mode", "omit"]])).toBeUndefined();
+  expect(exampleWith(schema, { note: "x", fields: [] }, [["/fields/0", "omit"]])).toBeUndefined();
+  // A corrected call that still fails the schema gives none either.
+  expect(exampleWith(schema, { note: "x" }, [["/note", "omit"]])).toBeUndefined();
 });

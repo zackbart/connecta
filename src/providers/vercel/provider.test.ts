@@ -293,6 +293,36 @@ describe("vercel() over an access token", () => {
     );
   });
 
+  it("INV-5: an argument refusal on an env write never echoes its value in an example", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.setAll("hosting", { value: "vercel-token" }, "fixture");
+    const meta = createMetaTools(
+      makeRegistry([connector], { storage, credentialVault: vault }),
+      "https://connecta.example",
+    );
+    sent = [];
+    const refused = await meta.callDestructiveTool({
+      address: "hosting.vercel_api_write",
+      args: {
+        method: "POST",
+        path: "/v10/projects/web/env",
+        query: { bogus: 1 },
+        body: { key: "TOKEN", value: "env-secret-sentinel", type: "encrypted", target: ["preview"] },
+      },
+    });
+    expect(refused.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", validation: { issues: [{ path: "/query/bogus" }] } },
+    });
+    // The generic hatch schema cannot prove this body safe to echo, so no example is derived.
+    expect((refused.structuredContent as any).error.validation).not.toHaveProperty("example");
+    expect((refused.structuredContent as any).error.validation.exampleUnavailable).toContain("vercel_api_details");
+    expect(JSON.stringify(refused)).not.toContain("env-secret-sentinel");
+    expect(sent).toHaveLength(0);
+  });
+
   it("INV-5 INV-9: names upsert conflicts, preserves partial commits and reports missing acknowledgements without replay", async () => {
     const connector = vercel("hosting", TOKEN);
     const catalog = await connector.listTools(keyed());

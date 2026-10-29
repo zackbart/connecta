@@ -1,6 +1,6 @@
 import { Validator } from "@cfworker/json-schema";
 import { redactCallArguments } from "./argument-redaction.js";
-import { boundedEchoText, boundText, ConnectorCallError, echoedCallArgs, issueSummary, listed } from "./errors.js";
+import { boundedEchoText, boundText, ConnectorCallError, issueSummary, listed } from "./errors.js";
 import type { ArgumentConditionalRequirement, ArgumentValidationDetails, ArgumentValidationIssue } from "./errors.js";
 import { MAX_ARGUMENT_VALIDATION_ISSUES } from "./errors.js";
 import { failureRecord, logFailure, type FailureSubject } from "./operator-record.js";
@@ -43,6 +43,7 @@ export interface CompileValidatorOptions {
 const validators = new WeakMap<JsonSchema, Validator | null>();
 const evaluationWarnings = new WeakSet<JsonSchema>();
 const REQUIRED_PROPERTY_RE = /^Instance does not have required property "([^"]+)"\.$/;
+const DEPENDENT_PROPERTY_RE = /^Instance has "([^"]+)" but does not have "([^"]+)"\.$/;
 
 function plainContainer(value: unknown): value is object {
   if (value === null || typeof value !== "object") return false;
@@ -400,11 +401,32 @@ function minimizeExample(example: unknown, validator: Validator): void {
 }
 
 /** The JSON Pointer of the argument a unit names; a missing property gets its own path. */
-function unitLocation(unit: ValidationUnit): { location: string; missing?: string } {
-  const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : undefined;
+function unitLocation(unit: ValidationUnit): { location: string; missing?: string; with?: string } {
+  const dependent = DEPENDENT_PROPERTY_RE.exec(unit.error);
+  const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : dependent?.[2];
   return missing === undefined
     ? { location: unit.instanceLocation }
-    : { location: `${unit.instanceLocation}/${encodePointerPart(missing)}`, missing };
+    : {
+        location: `${unit.instanceLocation}/${encodePointerPart(missing)}`,
+        missing,
+        ...(dependent ? { with: dependent[1] } : {}),
+      };
+}
+
+const patternText = (pattern: unknown) =>
+  `matching ${typeof pattern === "string" && pattern.length <= 64 ? pattern : "the inputSchema pattern"}`;
+
+/** Every other constraint a schema node declares, so one finding states them all, as repair once did. */
+function constraints(node: Record<string, unknown>, failed: string): unknown[] {
+  return Object.keys(node).flatMap((key) => {
+    const value = node[key];
+    if (key === failed) return [];
+    if (key === "enum" && Array.isArray(value)) return `one of ${listed(value.map((item) => JSON.stringify(item)))}`;
+    if (key === "pattern") return patternText(value);
+    if (key === "format") return `${String(value)} format`;
+    if (key === "uniqueItems") return value === true ? "unique items" : [];
+    return boundText(key, value) ?? [];
+  });
 }
 
 /**
@@ -414,38 +436,44 @@ function unitLocation(unit: ValidationUnit): { location: string; missing?: strin
  * never echoed.
  */
 function issueFor(schema: JsonSchema, args: unknown, safeArgs: unknown, unit: ValidationUnit): ArgumentValidationIssue {
-  const { location, missing } = unitLocation(unit);
+  const { location, missing, with: present } = unitLocation(unit);
   const path = argumentPath(location);
-  const type = receivedType(pointerValue(args, location));
   const keyword = pointerValue(schema, unit.keywordLocation);
+  const parent = unit.keywordLocation.replace(/\/[^/]+$/, "");
+  const node = schemaObject(
+    pointerValue(schema, missing === undefined ? parent : `${parent}/properties/${encodePointerPart(missing)}`),
+  );
+  let received = receivedType(pointerValue(args, location));
+  let expected: string;
   if (missing !== undefined) {
-    const parent = unit.keywordLocation.replace(/\/required$/, "");
-    const declared = declaredType(pointerValue(schema, `${parent}/properties/${encodePointerPart(missing)}/type`));
-    return { path, expected: `${declared ?? "a value"} (required)`, received: "missing" };
-  }
-  if (unit.keyword === "type") return { path, expected: declaredType(keyword) ?? "the declared type", received: type };
-  if (unit.keyword === "false") {
+    expected = `${declaredType(node.type) ?? "a value"} (required${present ? ` with ${present}` : ""})`;
+    received = "missing";
+  } else if (unit.keyword === "false") {
     // A false subschema under additionalProperties names its object's accepted keys.
     if (unit.closedBy === undefined) return { path, expected: "absent: the inputSchema forbids this value" };
     const keys = Object.entries(schemaObject(schemaObject(pointerValue(schema, unit.closedBy)).properties))
       .filter(([, child]) => child !== false)
       .map(([key]) => key);
     return { path, expected: keys.length ? `one of the accepted keys: ${listed(keys)}` : "no additional properties" };
-  }
-  if (unit.keyword === "enum" && Array.isArray(keyword))
-    return { path, expected: `one of ${listed(keyword.map((value) => JSON.stringify(value)))}`, received: type };
-  if (unit.keyword === "const") {
+  } else if (unit.keyword === "const") {
     const constant = JSON.stringify(keyword);
     return { path, expected: constant?.length <= 64 ? `the constant ${constant}` : "the declared constant" };
+  } else if (unit.keyword === "type") expected = declaredType(keyword) ?? "the declared type";
+  else if (unit.keyword === "enum" && Array.isArray(keyword))
+    expected = `one of ${listed(keyword.map((value) => JSON.stringify(value)))}`;
+  else if (unit.keyword === "uniqueItems") expected = "unique items";
+  else if (unit.keyword === "pattern") expected = `a string ${patternText(keyword)}`;
+  else if (unit.keyword === "format") expected = `a ${String(keyword)} string`;
+  else {
+    const bound = boundText(unit.keyword, keyword);
+    const safe = pointerValue(safeArgs, location);
+    if (bound && typeof safe === "number") received = String(safe);
+    expected = bound ?? "a value matching the published inputSchema";
   }
-  const bound = boundText(unit.keyword, keyword);
-  const safe = pointerValue(safeArgs, location);
   return {
     path,
-    expected:
-      bound ??
-      (unit.keyword === "format" ? `a ${String(keyword)} string` : "a value matching the published inputSchema"),
-    received: bound && typeof safe === "number" ? String(safe) : type,
+    expected: [expected, ...constraints(node, missing === undefined ? unit.keyword : "type")].join(", "),
+    received,
   };
 }
 
@@ -458,13 +486,13 @@ function validationIssues(schema: JsonSchema, args: unknown, units: ValidationUn
   } catch {
     safeArgs = undefined;
   }
-  const issues: ArgumentValidationIssue[] = [];
-  for (const unit of units) {
+  // One finding per schema position: each already states every constraint it declares.
+  const seen = new Set<string>();
+  return units.flatMap((unit) => {
     const issue = issueFor(schema, args, safeArgs, unit);
-    if (!issues.some((existing) => existing.path === issue.path && existing.expected === issue.expected))
-      issues.push(issue);
-  }
-  return issues;
+    const key = `${issue.path}\n${unit.keywordLocation.replace(/\/[^/]+$/, "")}\n${unit.keyword === "false"}`;
+    return seen.has(key) ? [] : (seen.add(key), [issue]);
+  });
 }
 
 /** Facts from the published schema and one synthesized example; no caller values. */
@@ -535,9 +563,13 @@ const OMITTED = Symbol("omitted");
 
 /**
  * One corrected call: the caller's arguments with each fix applied. It is kept
- * only when every finding has a fix, the result validates against the
- * published schema, and it echoes whole, without a writeOnly value, within the
- * shared argument echo budget. Anything less is omitted, never guessed.
+ * only when every finding has a fix, every omission removes a value that was
+ * sent, and the corrected call validates against the published schema. What it
+ * returns copies no sent value the schema does not prove safe: a boolean, an
+ * enum or const member, or a number, at a declared position that is not
+ * writeOnly. Anything else becomes the placeholder `"<as sent at /path>"`. Fix
+ * values are the provider's own and appear as given. It must also fit the
+ * shared argument echo budget; anything less is omitted, never guessed.
  */
 export function exampleWith(
   schema: JsonSchema,
@@ -546,13 +578,21 @@ export function exampleWith(
 ): { example: unknown } | undefined {
   try {
     const validator = validators.get(schema) ?? new Validator(schema as never, "2020-12", false);
-    let example = JSON.parse(JSON.stringify(normalizeToolInput(args ?? {}))) as unknown;
+    const example = JSON.parse(JSON.stringify(normalizeToolInput(args ?? {}))) as unknown;
     for (const [path, fix] of fixes) {
       const at = path.lastIndexOf("/");
       const parent = pointerValue(example, `#${path.slice(0, at)}`);
       const key = decodePointerPart(path.slice(at + 1));
-      if (!fix || at < 0 || !key || parent === null || typeof parent !== "object") return undefined;
-      if (Array.isArray(parent) && !(Number(key) < parent.length && /^(?:0|[1-9]\d*)$/.test(key))) return undefined;
+      // Removing a value that was never sent repeats the refused call; arrays take only sent indices.
+      if (
+        !fix ||
+        !key ||
+        parent === null ||
+        typeof parent !== "object" ||
+        ((fix === "omit" || Array.isArray(parent)) && !Object.hasOwn(parent, key)) ||
+        (Array.isArray(parent) && !/^(?:0|[1-9]\d*)$/.test(key))
+      )
+        return undefined;
       // Removal is marked, then pruned, so later fixes keep the caller's array indices.
       Object.defineProperty(parent, key, {
         value: fix === "omit" ? OMITTED : (JSON.parse(JSON.stringify(fix.value)) as unknown),
@@ -561,18 +601,54 @@ export function exampleWith(
         writable: true,
       });
     }
-    const prune = (value: unknown): unknown =>
-      Array.isArray(value)
-        ? value.filter((item) => item !== OMITTED).map(prune)
-        : value !== null && typeof value === "object"
-          ? Object.fromEntries(
-              Object.entries(value).flatMap(([key, item]) => (item === OMITTED ? [] : [[key, prune(item)]])),
-            )
-          : value;
-    example = prune(example);
-    if (!fixes.length || !validator?.validate(example).valid) return undefined;
-    const echoed = echoedCallArgs(example, schema);
-    return "args" in echoed && !echoed.argsRedacted ? { example: echoed.args } : undefined;
+    const fixed = fixes.map(([path]) => path);
+    const walk = (value: unknown, path: string, node: unknown, placeholders: boolean): unknown => {
+      let known = schemaObject(node);
+      for (let hops = 0; typeof known.$ref === "string" && hops < 8; hops++)
+        known = schemaObject(pointerValue(schema, known.$ref));
+      // A reference or alternative that does not resolve proves nothing safe.
+      if (["$ref", "anyOf", "oneOf", "allOf", "if"].some((key) => key in known)) known = {};
+      if (
+        placeholders &&
+        !fixed.some((done) => path === done || path.startsWith(`${done}/`)) &&
+        (known.writeOnly === true ||
+          !(
+            typeof value === "boolean" ||
+            value === null ||
+            typeof value === "object" ||
+            (typeof value === "number" && /number|integer/.test(String(known.type))) ||
+            (Array.isArray(known.enum) && known.enum.includes(value)) ||
+            (Object.hasOwn(known, "const") && known.const === value)
+          ))
+      )
+        return `<as sent at ${path || "/"}>`;
+      if (value === null || typeof value !== "object") return value;
+      const properties = schemaObject(known.properties);
+      const entries = Object.entries(value).flatMap(([key, item]) =>
+        item === OMITTED
+          ? []
+          : [
+              [
+                key,
+                walk(
+                  item,
+                  `${path}/${encodePointerPart(key)}`,
+                  Array.isArray(value)
+                    ? ((Array.isArray(known.prefixItems) ? known.prefixItems[Number(key)] : undefined) ?? known.items)
+                    : Object.hasOwn(properties, key)
+                      ? properties[key]
+                      : known.additionalProperties,
+                  placeholders,
+                ),
+              ] as const,
+            ],
+      );
+      return Array.isArray(value) ? entries.map(([, item]) => item) : Object.fromEntries(entries);
+    };
+    if (!fixes.length || !validator?.validate(walk(example, "", schema, false)).valid) return undefined;
+    // Placeholders already stand in for writeOnly values; the echo budget still bounds the size.
+    const text = JSON.stringify(walk(example, "", schema, true));
+    return boundedEchoText(text) === text ? { example: JSON.parse(text) as unknown } : undefined;
   } catch {
     return undefined;
   }
@@ -680,7 +756,7 @@ export function validateCatalogToolInput(
   }
   if (result && !result.valid) {
     const units = normalizedValidationUnits(schema, result.errors);
-    const nested = (unit: ValidationUnit) => unit.instanceLocation !== "#" || unit.keyword === "required";
+    const nested = (unit: ValidationUnit) => unit.instanceLocation !== "#" || unitLocation(unit).missing !== undefined;
     // A root-level finding often restates a nested one (an alternative that
     // did not match), so nested findings lead and the message names only them.
     const issues = validationIssues(schema, args, [...units.filter(nested), ...units.filter((unit) => !nested(unit))]);

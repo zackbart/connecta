@@ -34,6 +34,7 @@ import {
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { REDACTED } from "./redaction-marker.js";
 import type { JsonSchema } from "./types.js";
 import { exampleWith, validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
@@ -322,34 +323,42 @@ export class InvocationFailure extends Error {
 keepErrorName(InvocationFailure, "InvocationFailure");
 
 /**
- * A connector's findings with an example call. When it supplied none, the
- * caller's arguments without every offending path stand in, if that validates
- * against the published schema and echoes safely. Findings that omit one, or
- * clip a path, never imply one, since that problem would remain.
+ * A connector's findings with at most one safe example call. A connector that
+ * states neither an example nor why it has none gets the caller's arguments
+ * without every offending path, held to the published schema and the same
+ * placeholder rule as every derived example. Findings that omit one, or clip a
+ * path, imply none, since that problem would remain. Any example that would
+ * carry a value this request registered as private, or its withheld marker,
+ * is withheld.
  */
 function withImpliedExample(
   validation: ArgumentValidationDetails,
   schema: JsonSchema | undefined,
   args: unknown,
+  secrets: SentSecrets,
 ): ArgumentValidationDetails {
-  if (validation.example !== undefined) return validation;
-  const implied =
-    schema && listsEveryFinding(validation)
+  const { example: supplied, ...rest } = validation;
+  let example =
+    supplied === undefined && rest.exampleUnavailable === undefined && schema && listsEveryFinding(validation)
       ? exampleWith(
           schema,
           args,
           validation.issues.map((issue) => [issue.path, "omit"] as const),
-        )
-      : undefined;
+        )?.example
+      : supplied;
+  // Never an example that echoes a private value, or one already redacted into the withheld marker.
+  if (example !== undefined && (secrets.changes(example) || JSON.stringify(example).includes(REDACTED)))
+    example = undefined;
   return (
     new ConnectorCallError("invalid_args", "", {
-      validation: {
-        ...validation,
-        ...(implied ?? {
-          exampleUnavailable:
-            validation.exampleUnavailable ?? "No corrected call could be built without guessing a value.",
-        }),
-      },
+      validation:
+        example === undefined
+          ? {
+              ...rest,
+              exampleUnavailable:
+                rest.exampleUnavailable ?? "No corrected call could be built without guessing a value.",
+            }
+          : { ...rest, example },
     }).validation ?? validation
   );
 }
@@ -627,7 +636,7 @@ export class InvocationService {
             if (!error.validation || error.writeOutcome === "unknown") return error;
             return {
               ...error,
-              validation: withImpliedExample(error.validation, resolved?.definition.inputSchema, args),
+              validation: withImpliedExample(error.validation, resolved?.definition.inputSchema, args, sentSecrets),
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
               nextAction: this.catalog.searchRecovery(

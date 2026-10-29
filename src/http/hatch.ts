@@ -1372,7 +1372,12 @@ export function hatch(
         if (args.fields?.length) {
           const roots = index.responseRoots(op);
           if (!roots) invalid(`${method} ${op.path} declares no response properties, so fields cannot narrow it.`);
-          const problem = fieldsProblem(args.fields, roots, "data");
+          const problem = fieldsProblem(
+            args.fields,
+            roots,
+            "data",
+            `Examples are withheld for API operations; read ${tool("details")} for the contract.`,
+          );
           if (problem) {
             if (options.fieldsRoot && roots.has(options.fieldsRoot))
               invalid(

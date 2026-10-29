@@ -161,7 +161,7 @@ describe("repairing error envelopes", () => {
               example: { mode: "fast", count: 1 },
               issues: [
                 { path: "/mode", expected: 'one of "fast", "slow"', received: "string" },
-                { path: "/count", expected: "integer", received: "string" },
+                { path: "/count", expected: "integer, at least 1", received: "string" },
               ],
             },
           },
@@ -255,19 +255,50 @@ describe("repairing error envelopes", () => {
       return outcome.error;
     };
     const fixed = await invoke(["/fields/0", "/fields/2"], { query: "q", fields: ["bad", "title", "worse"] });
-    expect(fixed.validation).toMatchObject({ example: { query: "q", fields: ["title"] } });
+    // Sent strings the schema cannot prove safe come back as placeholders, never verbatim.
+    expect(fixed.validation).toMatchObject({
+      example: { query: "<as sent at /query>", fields: ["<as sent at /fields/1>"] },
+    });
     expect(fixed.validation).not.toHaveProperty("exampleUnavailable");
     expect(fixed.retry).toContain("notes.find");
-    // A required argument cannot be dropped, and a writeOnly value is never echoed.
+    // A required argument cannot be dropped, and removing an absent path would repeat the call.
     for (const [paths, args] of [
       [["/query"], { query: "q" }],
-      [["/fields/0"], { query: "q", fields: ["bad"], token: "token-sentinel" }],
+      [["/fields/0"], { query: "q" }],
     ] as const) {
       const error = await invoke([...paths], args);
       expect(error.validation).not.toHaveProperty("example");
       expect(error.validation?.exampleUnavailable).toContain("without guessing");
-      expect(JSON.stringify(error)).not.toContain("token-sentinel");
     }
+    // A writeOnly value returns only as a placeholder.
+    const secret = await invoke(["/fields/0"], { query: "q", fields: ["bad"], token: "token-sentinel" });
+    expect(secret.validation?.example).toEqual({
+      query: "<as sent at /query>",
+      fields: [],
+      token: "<as sent at /token>",
+    });
+    expect(JSON.stringify(secret)).not.toContain("token-sentinel");
+    // A connector's own example that carries a value this request registered as private is withheld.
+    const registry = makeRegistry([
+      connectorWith({
+        id: "notes",
+        kind: "api",
+        tools: [{ name: "find", annotations: { readOnlyHint: true }, inputSchema: schema }],
+        call: async (_name: string, args: unknown) => {
+          throw new ConnectorCallError("invalid_args", "Bad.", {
+            validation: { issues: [{ path: "/fields/0", expected: "a declared path" }], example: args },
+          });
+        },
+      }),
+    ]);
+    const echoed = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "notes.find",
+      { query: "q", token: "private-token-sentinel" },
+      { source: "call_tool", readOnly: false },
+    );
+    if (echoed.ok) throw new Error("Expected refusal");
+    expect(echoed.error.validation).not.toHaveProperty("example");
+    expect(JSON.stringify(echoed)).not.toContain("private-token-sentinel");
   });
 
   it("INV-6 INV-9: a dispatched write timeout echoes the uncertain call only to the agent and is never repeated", async () => {

@@ -42,15 +42,16 @@ export function fieldsIssues(
   });
 }
 
-/** The single refusal naming every bad `fields` path, if any. */
+/** The single refusal naming every bad `fields` path, if any; `withheld` says why it has no example. */
 export function fieldsProblem(
   fields: readonly string[] | undefined,
   names: ReadonlySet<string>,
   of: string,
+  withheld?: string,
 ): ConnectorCallError | undefined {
   const problems = new ArgumentProblems();
   fieldsIssues(problems, fields, names, of);
-  return problems.refusal("Invalid fields", fields === undefined ? undefined : { fields }, undefined);
+  return problems.refusal("Invalid fields", fields === undefined ? undefined : { fields }, undefined, withheld);
 }
 
 /** Keep only the named dot paths; arrays are narrowed item by item. */

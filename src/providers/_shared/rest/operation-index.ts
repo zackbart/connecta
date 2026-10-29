@@ -132,8 +132,20 @@ function words(text: string): string[] {
     .filter(Boolean);
 }
 
-function invalid(message: string, issues?: ArgumentValidationIssue[]): never {
-  throw new ConnectorCallError("invalid_args", message, issues ? { validation: { issues } } : {});
+/** Index findings name no example: the hatch schema cannot prove an operation's arguments safe to echo. */
+function invalid(message: string, issues?: ArgumentValidationIssue[], details?: string): never {
+  throw new ConnectorCallError(
+    "invalid_args",
+    message,
+    issues
+      ? {
+          validation: {
+            issues,
+            exampleUnavailable: `Examples are withheld for API operations; read ${details} for the contract.`,
+          },
+        }
+      : {},
+  );
 }
 
 function typesOf(node: SchemaNode): readonly string[] {
@@ -422,6 +434,7 @@ export class OperationIndex {
       invalid(
         `Not sent: the path does not match ${op.method} ${op.path} in the pinned API index: ${shown}. Substitute real ids matching ${this.#vendorTool("details")}.${issues.some((issue) => issue.expected?.includes("safe integer")) ? " Integer ids use canonical ASCII decimal notation within the safe-integer range." : ""}`,
         issues.slice(0, MAX_ISSUES),
+        this.#vendorTool("details"),
       );
     }
     return { op, params };
@@ -653,6 +666,7 @@ export class OperationIndex {
         `Not sent: the arguments do not match ${op.method} ${op.path} in the pinned API index: ${shown}` +
           `${issues.length > 5 ? `; ${issues.length - 5} more` : ""}. Read ${this.#vendorTool("details")} for the contract.`,
         issues.slice(0, MAX_ISSUES),
+        this.#vendorTool("details"),
       );
     }
   }
@@ -786,9 +800,9 @@ export class OperationIndex {
         return;
       }
       if (schema.l !== undefined && numeric < schema.l)
-        issues.push({ path: at, expected: `at least ${schema.l}`, received: String(numeric) });
+        issues.push({ path: at, expected: `at least ${schema.l}`, received: "number" });
       if (schema.u !== undefined && numeric > schema.u)
-        issues.push({ path: at, expected: `at most ${schema.u}`, received: String(numeric) });
+        issues.push({ path: at, expected: `at most ${schema.u}`, received: "number" });
     }
     if (value === null || value === "") return;
     if (schema.a) {
