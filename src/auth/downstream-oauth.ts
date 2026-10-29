@@ -19,6 +19,7 @@ import { keepErrorName } from "../redaction-identity.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
 import { Settlement } from "../runtime/settlement.js";
 import { SentSecrets } from "../sent-secrets.js";
+import type { RequestReads } from "../runtime/request-reads.js";
 import {
   OAUTH_FLOW_TTL_SECONDS,
   OAUTH_REFRESH_LEASE_SECONDS,
@@ -1128,6 +1129,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
       name?: string | undefined;
       client?: RemoteOAuthClient | undefined;
       secrets?: SentSecrets | undefined;
+      /** The request's read memo; only the SDK's accessor reads consult it. */
+      reads?: RequestReads | undefined;
     },
   ) {
     if (clientMetadataUrl !== undefined) this.clientMetadataUrl = clientMetadataUrl;
@@ -1196,7 +1199,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * body, written before the vault could seal, is sealed where it lies by
    * compare-and-set; a failure leaves it readable for the next write to seal.
    */
-  private readGrant(signal: AbortSignal | null | undefined = this.signal): Promise<{
+  private readGrant(
+    signal: AbortSignal | null | undefined = this.signal,
+    memoized = false,
+  ): Promise<{
     raw: string | null;
     grant: Grant;
   }> {
@@ -1204,13 +1210,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
       authOwnMethod<{
         raw: string | null;
         grant: Grant;
-      }>(KvOAuthProvider.prototype, this, "readGrant", [signal]),
+      }>(KvOAuthProvider.prototype, this, "readGrant", [signal, memoized]),
     );
   }
 
   /** The grant a bound flow reads: a replaced epoch fails it. */
-  private boundGrant(signal: AbortSignal | null | undefined = this.signal): Promise<Grant> {
-    return runEdge(authOwnMethod<Grant>(KvOAuthProvider.prototype, this, "boundGrant", [signal]));
+  private boundGrant(signal: AbortSignal | null | undefined = this.signal, memoized = false): Promise<Grant> {
+    return runEdge(authOwnMethod<Grant>(KvOAuthProvider.prototype, this, "boundGrant", [signal, memoized]));
   }
 
   /** SDK preparation is call/request-owned; coordinator reads explicitly opt out. */
@@ -2039,14 +2045,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
     registerAuthMethod(
       KvOAuthProvider.prototype,
       "readGrant",
-      function (this: KvOAuthProvider, signal: AbortSignal | null | undefined) {
+      function (this: KvOAuthProvider, signal: AbortSignal | null | undefined, memoized = false) {
         signal = signal === undefined ? this.signal : signal;
 
         return authFlow<{ raw: string | null; grant: Grant }>(
           function* (this: KvOAuthProvider) {
+            const reads = this.clientOptions?.reads;
             let raw = (yield authInvoke(this, "wait", [
               authMethod(() => {
-                return authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>;
+                const read = authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>;
+                // Every read records into the request's memo; only `memoized`
+                // ones (the SDK's accessors, via activeGrant) are answered
+                // from it. Epoch checks, compare-and-set loops, refresh and
+                // reset read storage, so a memoized accessor is never older
+                // than this request's latest epoch check.
+                return reads ? reads.read(this.storage, GRANT, read, !memoized) : read;
               }),
               signal,
             ])) as string | null;
@@ -2088,12 +2101,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
     registerAuthMethod(
       KvOAuthProvider.prototype,
       "boundGrant",
-      function (this: KvOAuthProvider, signal: AbortSignal | null | undefined) {
+      function (this: KvOAuthProvider, signal: AbortSignal | null | undefined, memoized = false) {
         signal = signal === undefined ? this.signal : signal;
 
         return authFlow<Grant>(
           function* (this: KvOAuthProvider) {
-            const { grant } = (yield authInvoke(this, "readGrant", [signal])) as {
+            const { grant } = (yield authInvoke(this, "readGrant", [signal, memoized])) as {
               raw: string | null;
               grant: Grant;
             };
@@ -2108,7 +2121,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
       KvOAuthProvider.prototype,
       "activeGrant",
       function (this: KvOAuthProvider) {
-        return authInvoke(this, "boundGrant", []) as Effect.Effect<Grant, unknown>;
+        // Memoized per request. The SDK asks for tokens, client information
+        // and discovery once per HTTP message; these feed headers and the
+        // SDK's auth bootstrap, never a decision to write. A rotation in
+        // another isolate since this request's last fresh read costs at most a
+        // 401, whose refresh compares against freshly read tokens
+        // (claimRefresh, storeRefresh). Any write in this isolate clears the
+        // memo, and the bound-epoch check below still applies.
+        return authInvoke(this, "boundGrant", [undefined, true]) as Effect.Effect<Grant, unknown>;
       },
       KvOAuthProvider.prototype.activeGrant,
     );

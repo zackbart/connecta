@@ -13,11 +13,13 @@ import { bindActivityRequest } from "../activity-request.js";
 import { resolveDiscoveryConcurrency } from "../concurrency.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { CredentialVault } from "../credential-contract.js";
+import { credentialReads } from "../credential-reads.js";
 import { credentialTestRule, describeUndeclaredCredentialFields, storedCredentialShape } from "../credential-rules.js";
 import { failureRecord, failureStatus, logFailure, recordedToolName, statusFailure } from "../operator-record.js";
 import type { CredentialManagementCapability, UiConnector, UiData, UiTool } from "../operator-ui/model.js";
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
+import { requestReads } from "../runtime/request-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector, ConnectorStatus } from "../types.js";
 import { uiProblemFor } from "../ui.js";
@@ -184,7 +186,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
 
     // The credential card, for someone who may manage this connector's auth.
     // Never fails: a vault that cannot be read is the card's own error.
-    const credentialFor = (c: Connector): Effect.Effect<UiConnector["credential"]> => {
+    const credentialFor = (c: Connector, requestScope: object): Effect.Effect<UiConnector["credential"]> => {
       const mayManageAuth =
         options.mayManage?.(c.id) ?? (c.authScope === "personal" ? Boolean(owner) : options.oauthManagement);
       const declared = c.credential;
@@ -217,7 +219,12 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         ...(declared.placeholder ? { placeholder: declared.placeholder } : {}),
       };
       return attempt(async (): Promise<UiConnector["credential"]> => {
-        const metadata = await vault.metadata(c.id, c.authScope === "personal" ? owner : undefined);
+        // Memoized per request: the card only displays what the drift and
+        // status reads of this same detail already read.
+        const metadata = await credentialReads(vault, requestReads(requestScope)).metadata(
+          c.id,
+          c.authScope === "personal" ? owner : undefined,
+        );
         const fields = credentialFields(metadata);
         const shape = storedCredentialShape(declared, metadata?.fields ?? null);
         return {
@@ -253,7 +260,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
 
     const detail = (c: Connector, signal: AbortSignal, requestScope: object) =>
       Effect.gen(function* () {
-        const drift = yield* attempt(() => registry.credentialDriftFor(c.id));
+        const drift = yield* attempt(() => registry.credentialDriftFor(c.id, requestScope));
         // One deadline covers the whole row. The status and catalog reads once
         // had a second one of the same length inside it, which could only fire
         // after this one had already ended the row.
@@ -264,7 +271,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           options.observeTimeoutMs === undefined
             ? yield* observe(c, drift, signal, requestScope)
             : yield* observeWithin(c, drift, signal, requestScope, options.observeTimeoutMs);
-        const credential = yield* credentialFor(c);
+        const credential = yield* credentialFor(c, requestScope);
         logStatus(c.id, status.state, statusFailure(status), requestScope);
         const problem = timedOut
           ? ("connector_timeout" as const)

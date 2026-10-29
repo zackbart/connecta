@@ -1,5 +1,6 @@
 import type { KVStorage } from "../types.js";
 import { validateStorageKey } from "./keys.js";
+import { noteStorageWrite, observeStorageWrites } from "../runtime/request-reads.js";
 
 interface Entry {
   value: string;
@@ -46,38 +47,46 @@ export function memoryStorage(): KVStorage {
       ...(exp !== undefined ? { exp } : {}),
     });
   };
-  return {
-    capabilities: { absoluteExpiry: true },
-    describe: () => ({ kind: "memory" }),
-    async get(key) {
-      validateStorageKey(key);
-      return fresh(key)?.value ?? null;
+  // Each write settles synchronously, so one note covers it (request-reads.ts).
+  const root = {};
+  return observeStorageWrites(
+    {
+      capabilities: { absoluteExpiry: true },
+      describe: () => ({ kind: "memory" }),
+      async get(key) {
+        validateStorageKey(key);
+        return fresh(key)?.value ?? null;
+      },
+      async set(key, value, opts) {
+        validateStorageKey(key);
+        noteStorageWrite(root, key);
+        write(key, value, opts);
+      },
+      async delete(key) {
+        validateStorageKey(key);
+        noteStorageWrite(root, key);
+        map.delete(key);
+      },
+      async list(prefix) {
+        validateStorageKey(prefix);
+        return [...map.keys()]
+          .filter((key) => {
+            fresh(key);
+            return key.startsWith(prefix) && map.has(key);
+          })
+          .sort();
+      },
+      // Atomic because nothing between the read and the write yields: the body
+      // runs to completion before any other call on this map can start.
+      async compareAndSet(key, expected, next, opts) {
+        validateStorageKey(key);
+        noteStorageWrite(root, key);
+        if ((fresh(key)?.value ?? null) !== expected) return false;
+        if (next === null) map.delete(key);
+        else write(key, next, opts);
+        return true;
+      },
     },
-    async set(key, value, opts) {
-      validateStorageKey(key);
-      write(key, value, opts);
-    },
-    async delete(key) {
-      validateStorageKey(key);
-      map.delete(key);
-    },
-    async list(prefix) {
-      validateStorageKey(prefix);
-      return [...map.keys()]
-        .filter((key) => {
-          fresh(key);
-          return key.startsWith(prefix) && map.has(key);
-        })
-        .sort();
-    },
-    // Atomic because nothing between the read and the write yields: the body
-    // runs to completion before any other call on this map can start.
-    async compareAndSet(key, expected, next, opts) {
-      validateStorageKey(key);
-      if ((fresh(key)?.value ?? null) !== expected) return false;
-      if (next === null) map.delete(key);
-      else write(key, next, opts);
-      return true;
-    },
-  };
+    { root },
+  );
 }

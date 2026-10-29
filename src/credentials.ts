@@ -4,6 +4,8 @@ import type { ConnectorCredentialValues, KVStorage } from "./types.js";
 
 import { deriveOAuthHandoffKey, deriveRequestStateKey } from "./oauth-sealing.js";
 import { credentialKeys } from "./storage/keys.js";
+import type { RequestReads } from "./runtime/request-reads.js";
+import { registerCredentialReads } from "./credential-reads.js";
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -120,6 +122,31 @@ function validateValues(values: ConnectorCredentialValues): ConnectorCredentialV
   return normalized;
 }
 
+type MemoRead = { reads: RequestReads; fresh: boolean };
+
+function metadataOf(credential: CredentialPlaintext | null): CredentialMetadata | null {
+  if (!credential) return null;
+  const fields = Object.fromEntries(
+    Object.entries(credential.values).map(([field, value]) => [
+      field,
+      {
+        configured: true as const,
+        // Only reveal the tail on values comfortably longer than four chars;
+        // for a short secret those four would be half of it.
+        ...(value.length >= 12 ? { lastFour: value.slice(-4) } : {}),
+        updatedAt: credential.updatedAt,
+      },
+    ]),
+  );
+  const single = fields.value;
+  return {
+    configured: true,
+    ...(single?.lastFour ? { lastFour: single.lastFour } : {}),
+    updatedAt: credential.updatedAt,
+    fields,
+  };
+}
+
 /**
  * Encrypted, connector-scoped credential vault over the deployment's existing
  * KVStorage. Only ciphertext enters storage; the AES-GCM key remains an environment
@@ -142,6 +169,14 @@ export class CredentialVault implements Vault {
     this.handoffKey = deriveOAuthHandoffKey(raw);
     this.retryKey = deriveRequestStateKey(raw);
     this.key = crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+    registerCredentialReads(this, {
+      getAll: async (connectorId, owner, reads, fresh) => {
+        const credential = await this.read(connectorId, owner, { reads, fresh });
+        return credential ? { ...credential.values } : null;
+      },
+      metadata: async (connectorId, owner, reads, fresh) =>
+        metadataOf(await this.read(connectorId, owner, { reads, fresh })),
+    });
   }
 
   async signOAuthHandoff(payload: string): Promise<string> {
@@ -173,8 +208,11 @@ export class CredentialVault implements Vault {
     );
   }
 
-  private async read(connectorId: string, owner?: string): Promise<CredentialPlaintext | null> {
-    const raw = await this.storage.get(storageKey(connectorId, owner));
+  private async read(connectorId: string, owner?: string, memo?: MemoRead): Promise<CredentialPlaintext | null> {
+    const key = storageKey(connectorId, owner);
+    const raw = memo
+      ? await memo.reads.readPromise(this.storage, key, () => this.storage.get(key), memo.fresh)
+      : await this.storage.get(key);
     if (!raw) return null;
     const envelope = parseEnvelope(raw);
     try {
@@ -204,27 +242,7 @@ export class CredentialVault implements Vault {
   }
 
   async metadata(connectorId: string, owner?: string): Promise<CredentialMetadata | null> {
-    const credential = await this.read(connectorId, owner);
-    if (!credential) return null;
-    const fields = Object.fromEntries(
-      Object.entries(credential.values).map(([field, value]) => [
-        field,
-        {
-          configured: true as const,
-          // Only reveal the tail on values comfortably longer than four chars;
-          // for a short secret those four would be half of it.
-          ...(value.length >= 12 ? { lastFour: value.slice(-4) } : {}),
-          updatedAt: credential.updatedAt,
-        },
-      ]),
-    );
-    const single = fields.value;
-    return {
-      configured: true,
-      ...(single?.lastFour ? { lastFour: single.lastFour } : {}),
-      updatedAt: credential.updatedAt,
-      fields,
-    };
+    return metadataOf(await this.read(connectorId, owner));
   }
 
   async set(connectorId: string, value: string, updatedBy: string, owner?: string): Promise<CredentialMetadata> {

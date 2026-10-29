@@ -9,6 +9,7 @@ import {
   sqlActivityRollbackContract,
   sqlBatchRollbackContract,
   sqlCasExpiryContract,
+  sqlGetManyContract,
   sqlStashFixture,
   type SqlFixture,
 } from "./sql-storage-contract.js";
@@ -59,6 +60,10 @@ async function open(): Promise<SqlFixture> {
 
 describe.skipIf(!bindings)("CAS expiry reclamation over native Workers D1", () => {
   sqlCasExpiryContract(open);
+});
+
+describe.skipIf(!bindings)("getMany over native Workers D1", () => {
+  sqlGetManyContract(open);
 });
 
 describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {

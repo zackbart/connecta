@@ -13,7 +13,8 @@ import { SentSecrets, sentSecretsForRequest, registerCredentialValues } from "..
 import type { ConnectorContext, ConnectorCredentialValues, KVStorage } from "../types.js";
 import { recordRecovery } from "../call-recovery.js";
 import { fromSignal, runEdge } from "./run.js";
-import { RequestScope, requestOwner as requestOf } from "./request-scope.js";
+import { RequestScope, requestOwner as requestOf, requestReads } from "./request-scope.js";
+import type { RequestReads } from "./request-reads.js";
 
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/call/Caller") {}
@@ -479,6 +480,10 @@ export function contextView(lease: CallLease, operation: ConnectorContext): Conn
 export function chargeView(view: ConnectorContext): Promise<void> {
   const budget = recordedService(view, Budget);
   return budget ? runEdge(budget.charge) : Promise.reject(ended());
+}
+/** The read memo of the request this context belongs to (request-reads.ts). */
+export function viewReads(view: { readonly requestScope?: object | undefined }): RequestReads {
+  return requestReads(views.get(view as ConnectorContext)?.request ?? view.requestScope ?? view);
 }
 /** Admission is sticky until request close; ending a call never makes its copies standalone. */
 export function callScopeKnown(view: ConnectorContext): boolean {

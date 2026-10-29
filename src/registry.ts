@@ -44,6 +44,9 @@ import {
   duringViewEffect,
 } from "./runtime/call.js";
 import { hasNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
+import { observeStorageWrites } from "./runtime/request-reads.js";
+import { requestReads } from "./runtime/request-scope.js";
+import { credentialReads } from "./credential-reads.js";
 import { provideRegistryPrograms, registryEdgeProgram, registryProgram } from "./runtime/registry.js";
 import { causeError, runEdge } from "./runtime/run.js";
 import { Storage } from "./runtime/services.js";
@@ -53,6 +56,7 @@ import {
   storageCompareAndSet,
   storageDelete,
   storageGet,
+  storageGetMany,
   storageSet,
   storageList,
 } from "./runtime/storage.js";
@@ -185,12 +189,15 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     list: async (keyPrefix) => (await storage.list(prefix + keyPrefix)).map((key) => key.slice(prefix.length)),
     compareAndSet: (k, expected, next, o) => storage.compareAndSet(prefix + k, expected, next, o),
   };
+  observeStorageWrites(edge, { storage, prefix });
   return hasNativeStorage(storage)
     ? registerNativeStorage(edge, {
         // Select against the underlying current methods at dispatch. A
         // namespace created during a decoration regains the native path when
         // that decoration is restored, without capturing stale capabilities.
         get: (key) => storageGet(prefix + key).pipe(Effect.provideService(Storage, storage)),
+        getMany: (keys) =>
+          storageGetMany(keys.map((key) => prefix + key)).pipe(Effect.provideService(Storage, storage)),
         set: (key, value, options) =>
           storageSet(prefix + key, value, options).pipe(Effect.provideService(Storage, storage)),
         delete: (key) => storageDelete(prefix + key).pipe(Effect.provideService(Storage, storage)),
@@ -267,8 +274,11 @@ export interface RegistryView {
   ): Promise<boolean>;
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
-  /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
-  credentialDriftFor(id: string): Promise<string | undefined>;
+  /**
+   * Local declared-vs-stored credential mismatch, with no downstream I/O. With
+   * `requestScope`, the read joins that request's read memo.
+   */
+  credentialDriftFor(id: string, requestScope?: object): Promise<string | undefined>;
   /** Value-free shape learned from successful calls, never a provider declaration. */
   observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined;
   /** Passively learn one successful unwrapped result; failures stay isolated. */
@@ -721,8 +731,12 @@ export class Registry implements RegistryView {
     let credentialProgram: Effect.Effect<import("./types.js").ConnectorCredentialValues | null, unknown> | undefined;
     if (this.opts.credentialVault && credentialConfig) {
       const vault = this.opts.credentialVault;
+      // The credential a call sends: always read fresh. It records what it
+      // saw in the request's memo, so a later status or detail read in the
+      // same request is never older than what was sent.
+      const fresh = credentialReads(vault, requestReads(requestScope), true);
       credentialProgram = Effect.tryPromise({
-        try: () => vault.getAll(id, this.opts.credentialOwner),
+        try: () => fresh.getAll(id, this.opts.credentialOwner),
         catch: (error) => error,
       }).pipe(
         Effect.flatMap((values) => {
@@ -1128,8 +1142,8 @@ export class Registry implements RegistryView {
     );
   }
 
-  credentialDriftFor(id: string): Promise<string | undefined> {
-    return runEdge(registryEdgeProgram(Registry.prototype, this, "credentialDriftFor", id));
+  credentialDriftFor(id: string, requestScope?: object): Promise<string | undefined> {
+    return runEdge(registryEdgeProgram(Registry.prototype, this, "credentialDriftFor", id, requestScope));
   }
 
   /** Age of a complete cache entry; reads never refresh it. */
@@ -1341,13 +1355,16 @@ export class Registry implements RegistryView {
             }),
           );
         }),
-      credentialDriftFor: (self, id) =>
+      credentialDriftFor: (self, id, requestScope) =>
         Effect.gen(function* () {
           const credential = self.connectors.get(id)?.credential;
           const vault = self.opts.credentialVault;
           if (!credential || !vault) return undefined;
+          // Memoized per request: drift only labels a status or detail view.
+          // A dispatch reads its credential fresh (contextFor).
+          const reader = requestScope ? credentialReads(vault, requestReads(requestScope)) : vault;
           return yield* Effect.tryPromise({
-            try: () => vault.getAll(id, self.opts.credentialOwner),
+            try: () => reader.getAll(id, self.opts.credentialOwner),
             catch: (error) => error,
           }).pipe(
             Effect.map((values) => {
@@ -1377,8 +1394,14 @@ export class Registry implements RegistryView {
           return duringViewEffect(ctx, () =>
             Effect.gen(function* () {
               if (connector.credential) {
+                // Memoized per request: this read only picks the status shown.
+                // The probe that follows reads the credential it sends fresh.
+                const vault = self.opts.credentialVault;
                 const values = yield* Effect.tryPromise({
-                  try: () => self.opts.credentialVault?.getAll(id, self.opts.credentialOwner) ?? Promise.resolve(null),
+                  try: () =>
+                    vault
+                      ? credentialReads(vault, requestReads(requestScope)).getAll(id, self.opts.credentialOwner)
+                      : Promise.resolve(null),
                   catch: (error) => error,
                 });
                 const shape = storedCredentialShape(connector.credential, values);
@@ -1526,8 +1549,8 @@ class ScopedRegistryView implements RegistryView {
     return this.scope.subjectKey ? this.root.scopedStorage(this.scope.subjectKey) : this.root.resultsStorage();
   }
 
-  credentialDriftFor(id: string): Promise<string | undefined> {
-    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "credentialDriftFor", id));
+  credentialDriftFor(id: string, requestScope?: object): Promise<string | undefined> {
+    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "credentialDriftFor", id, requestScope));
   }
 
   observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined {
@@ -1603,10 +1626,12 @@ class ScopedRegistryView implements RegistryView {
           }
           return carryCatalogFreshness(tools, visible);
         }),
-      credentialDriftFor: (self, id) =>
+      credentialDriftFor: (self, id, requestScope) =>
         Effect.suspend(() => {
           const registry = self.registryFor(id);
-          return registry ? registryProgram(registry, "credentialDriftFor", id) : Effect.succeed(undefined);
+          return registry
+            ? registryProgram(registry, "credentialDriftFor", id, requestScope)
+            : Effect.succeed(undefined);
         }),
       statusFor: (self, ...args) =>
         Effect.suspend(() => {

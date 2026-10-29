@@ -39,6 +39,18 @@ export function storageGet(key: string): Effect.Effect<string | null, unknown, S
   );
 }
 
+/**
+ * Read several keys, in one round trip when the store can; otherwise one
+ * `get` after another. Values come back in `keys` order.
+ */
+export function storageGetMany(keys: readonly string[]): Effect.Effect<(string | null)[], unknown, Storage> {
+  return Storage.use((storage) => {
+    const native = getNativeStorage(storage);
+    if (native?.getMany) return native.getMany(keys);
+    return Effect.forEach(keys, (key) => storageGet(key).pipe(Effect.provideService(Storage, storage)));
+  });
+}
+
 /** Write one key, with the adapter's optional TTL. */
 export function storageSet(
   key: string,
