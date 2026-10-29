@@ -163,8 +163,9 @@
 // privacy as deployment config), defined in `test/provider-standard.ts`. A
 // provider meets these rules, and the Node-only
 // `provider-standard.node.test.ts` enforces the folder rules.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, compactDiscoverySchema } from "../src/catalog.js";
+import { RESPONSE_BUDGET } from "../src/http/hatch-response.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
@@ -380,5 +381,59 @@ describe("standard api() surfaces share one agent-facing shape (decision 0011, S
       surfaceViolations(tools!).map((finding) => `${name} ${finding}`),
     );
     expect(found).toEqual([]);
+  });
+});
+
+describe("hatch details state response fields that read accepts unchanged (S5)", () => {
+  // Path values the fixtures admit: GitHub's scope names the acme organization.
+  const filled: Readonly<Record<string, string>> = { owner: "acme", repo: "widget" };
+  it.each(providerFixtures.map((fixture) => fixture.name))("%s", { timeout: 60_000 }, async (name) => {
+    const connector = providerFixtures.find((fixture) => fixture.name === name)!.create();
+    const tools = await connector.listTools(CONTEXT);
+    const details = tools.find((tool) => tool.name.endsWith("_api_details"));
+    if (!details) return;
+    const prefix = details.name.replace(/_details$/, "");
+    const call = async (tool: string, args: Record<string, unknown>) => {
+      const result = (await connector.callTool(`${prefix}_${tool}`, args, CONTEXT)) as any;
+      return result?.structuredContent ?? result;
+    };
+    const operations = new Map<string, { method: string; path: string }>();
+    for (const query of ["list", "get", "retrieve", "read"]) {
+      const found = await call("search", { query, limit: 8 }).catch(() => ({ operations: [] }));
+      for (const op of found.operations)
+        if (op.tool === `${prefix}_read`) operations.set(`${op.method} ${op.path}`, op);
+    }
+    vi.stubGlobal("fetch", async () => Response.json({}));
+    let described = 0;
+    let validated = 0;
+    try {
+      for (const { method, path } of operations.values()) {
+        const contract = await call("details", { method, path });
+        const response = contract.response;
+        if (!response) continue;
+        described += 1;
+        expect(await call("details", { method, path }), `${method} ${path}`).toEqual(contract);
+        const advertised: string[] = [...response.fields, ...(response.withheld ?? [])];
+        expect(new Set(advertised).size, `${method} ${path}`).toBe(advertised.length);
+        expect(advertised.length).toBeLessThanOrEqual(RESPONSE_BUDGET.paths);
+        expect(advertised.every((field) => field.length <= RESPONSE_BUDGET.pathChars)).toBe(true);
+        // Every advertised path, withheld ones included, must leave a read's outcome exactly as it
+        // is without fields; an undeclared path shows the comparison reaches the fields check.
+        const concrete = path.replace(/\{([^}]+)\}/g, (_, param: string) => filled[param] ?? "fixture1");
+        const outcome = (args: Record<string, unknown>) =>
+          call("read", { ...(method === "GET" ? {} : { method }), path: concrete, ...args }).then(
+            () => "sent",
+            (error: any) => `${error?.code}: ${error?.message}`,
+          );
+        const bare = await outcome({});
+        if ((await outcome({ fields: ["connecta_undeclared"] })) !== bare) validated += 1;
+        for (let at = 0; at < advertised.length; at += 50)
+          expect(await outcome({ fields: advertised.slice(at, at + 50) }), `${method} ${path}`).toBe(bare);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(described).toBeGreaterThan(0);
+    expect(validated).toBeGreaterThan(0);
   });
 });

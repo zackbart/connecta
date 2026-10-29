@@ -395,6 +395,73 @@ it(
 );
 
 it(
+  "INV-10 INV-11: details states each response's fields in fields coordinates, capped, with withheld paths apart",
+  NODE,
+  async () => {
+    const { call, authenticate, sendPath } = setup();
+    const details = (await call("details", { method: "GET", path: "/items" })) as any;
+    // email is the deployment's sensitive field and token a credential name, at any depth.
+    expect(details.response).toEqual({
+      anchor: "data",
+      fields: ["id", "label", "nested", "nested.id"],
+      withheld: ["email", "token", "nested.email"],
+    });
+    expect(await call("details", { method: "GET", path: "/items" })).toEqual(details);
+    for (const omitted of [
+      { method: "POST", path: "/query" },
+      { method: "GET", path: "/blocked" },
+      { method: "GET", path: "/items", param: "limit" },
+    ])
+      expect(await call("details", omitted)).not.toHaveProperty("response");
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(sendPath).not.toHaveBeenCalled();
+    // Every advertised path, withheld ones included, is a valid fields input; withheld values never come back.
+    response = () =>
+      Response.json({
+        id: "i1",
+        email: "alice@example.com",
+        token: "tok-alice-123456789",
+        label: "Widget",
+        nested: { id: "n1", email: "bob@example.com" },
+      });
+    const read = (await call("read", {
+      path: "/items",
+      fields: [...details.response.fields, ...details.response.withheld],
+    })) as any;
+    expect(read.data).toMatchObject({ id: "i1", label: "Widget", nested: { id: "n1" } });
+    expect(JSON.stringify(read.data)).not.toMatch(/alice@example|bob@example|tok-alice/);
+
+    const many = (count: number, width: number) =>
+      Array.from({ length: count }, (_, at) => ({
+        in: "response" as const,
+        path: `f${String(at).padStart(width, "0")}`,
+      }));
+    const shaped = (fields: NonNullable<OpenApiData["fields"]>) => setup({ data: { ...DATA, fields } });
+    const list = (await shaped([
+      [
+        { in: "response", path: "[].id" },
+        { in: "response", path: "[].owner.name" },
+      ],
+    ]).call("details", { method: "GET", path: "/items" })) as any;
+    // A list body anchors at each item; a root the index names only beneath it is listed too.
+    expect(list.response).toEqual({ anchor: "data[]", fields: ["id", "owner", "owner.name"] });
+    const capped = (await shaped([[...many(150, 3), { in: "response", path: `deep.${"x".repeat(200)}` }]]).call(
+      "details",
+      { method: "GET", path: "/items" },
+    )) as any;
+    expect(capped.response.fields).toEqual(many(100, 3).map((field) => field.path));
+    expect(capped.response.omitted).toBe(52);
+    const wide = (await shaped([many(60, 99)]).call("details", { method: "GET", path: "/items" })) as any;
+    expect(JSON.stringify(wide.response.fields).length).toBeLessThanOrEqual(4096);
+    expect(wide.response.fields).toHaveLength(39);
+    expect(wide.response.omitted).toBe(21);
+    await expect(
+      shaped([many(150, 3)]).call("read", { path: "/items", fields: wide.response.fields.slice(0, 1) }),
+    ).rejects.toThrow(/fields path f0+ does not begin/);
+  },
+);
+
+it(
   "INV-3 INV-4 INV-10: binds discovery pages to callers and contracts while delivering large descriptions without IO",
   { ...NODE, timeout: 120_000 },
   async () => {
@@ -511,7 +578,7 @@ it(
         "contract",
         post("create", "/things", {
           payload: form(Schema.Struct({ ...fields, note: Schema.String.annotate({ description }) })),
-          success: Schema.Unknown,
+          success: Schema.Struct({ id: Schema.String }),
         }),
       ),
       { prefix: "contract", title: "Contract", revision: "r1" },
@@ -536,6 +603,10 @@ it(
         connectorContext(storage),
       )) as any;
       expect(new TextEncoder().encode(JSON.stringify(reply)).length).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
+      // The response contract travels once, on the first page. This connection's value safety
+      // knows no /things operation, so it fails closed and nothing is advertised as readable.
+      if (pages === 0) expect(reply.response).toEqual({ anchor: "data", fields: [], withheld: ["id"] });
+      else expect(reply).not.toHaveProperty("response");
       for (const name of Object.keys(reply.body?.schema?.properties ?? {})) properties.add(name);
       for (const name of reply.body?.schema?.required ?? []) required.add(name);
       if (reply.chunk) {

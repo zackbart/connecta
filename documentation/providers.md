@@ -418,6 +418,26 @@ then follow `page.nextCursor` to reach operations beyond the leading profile
 results. Responses contain at most eight compact hits within 16 KiB; fetch
 operation details separately and keep the same query when continuing.
 
+Operation details return the request contract and, for an operation that is
+not refused and declares success-response properties, a `response` section.
+Write `fields` filters and reductions from it without a sampling read:
+
+- `anchor` is `data` when paths start at the read result's `data`, or `data[]`
+  when the body is a list and each path applies to every item.
+- `fields` lists declared paths in the read and write tools' `fields`
+  coordinates; pass them unchanged, such as `fields: ["data[].id"]`.
+- `withheld` lists declared paths that value safety or the deployment's
+  sensitive-field choice removes or may redact, by name or by value. Reading
+  one returns nothing usable; it never appears in `fields`.
+- `omitted` counts declared paths not listed.
+
+Paths list shallowest first, in index order, up to 100 paths and 4,096
+characters of path JSON; a path over 200 characters is never listed. The
+pinned index carries names only, never response types or example values.
+Only the first page of a whole-operation answer carries `response`; `param`
+answers and continuation pages omit it. An operation without declared
+response properties has no `response`, and its reads refuse `fields`.
+
 Maintained REST hatches validate path parameters against their pinned contracts
 before dispatch. Integer ids use canonical ASCII decimal notation within the
 safe-integer range and obey the operation's declared bounds; for example,

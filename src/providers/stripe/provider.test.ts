@@ -55,6 +55,29 @@ describe("stripe() over an API key", () => {
     return error as ConnectorCallError;
   }
 
+  it("INV-5 INV-10: details lists reviewed secrets as withheld, and a read naming them still returns none", async () => {
+    const connector = stripe("billing", SANDBOX);
+    const details = async (path: string) =>
+      ((await connector.callTool("stripe_api_details", { method: "GET", path }, keyed())) as any).response;
+    const intent = await details("/v1/payment_intents/{intent}");
+    expect(intent).toMatchObject({ anchor: "data", withheld: expect.arrayContaining(["client_secret"]) });
+    expect(intent.fields).toEqual(expect.arrayContaining(["id", "amount", "status"]));
+    expect(intent.fields).not.toContain("client_secret");
+    const hooks = await details("/v1/webhook_endpoints");
+    expect(hooks.withheld).toContain("data[].secret");
+    expect(hooks.fields).toEqual(expect.arrayContaining(["data", "has_more", "data[].id", "data[].status"]));
+    expect(sent).toEqual([]);
+    respond = () =>
+      Response.json({ id: "pi_1", object: "payment_intent", amount: 500, client_secret: "pi_1_secret_abc123" });
+    const read = (await connector.callTool(
+      "stripe_api_read",
+      { path: "/v1/payment_intents/pi_1", fields: [...intent.fields.slice(0, 40), ...intent.withheld] },
+      keyed(),
+    )) as any;
+    expect(read.data).toMatchObject({ id: "pi_1", amount: 500 });
+    expect(JSON.stringify(read)).not.toContain("pi_1_secret_abc123");
+  });
+
   it("INV-5: refuses a key whose prefix contradicts the declared mode before any request leaves", async () => {
     const sandbox = stripe("billing", SANDBOX);
     const cases: Array<[string, string]> = [
