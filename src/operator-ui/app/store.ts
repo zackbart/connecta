@@ -824,7 +824,12 @@ async function refreshSnapshot(
         outcome.kind !== "detail" ||
         outcome.detail.status === "error" ||
         outcome.detail.credential?.problem === "credential_unreadable";
-      if (unhealthy) {
+      if (outcome.kind === "detail" && outcome.detail.problem === "connector_timeout") {
+        // A downstream that did not answer would only hold a detail slot for
+        // the server's deadline again. It waits for Refresh, or for a consent
+        // return this tab is already polling for.
+        if (!awaitingAuthorization.has(connector.id)) parkConnectorRecovery(connector.id);
+      } else if (unhealthy) {
         stopOAuthPolling(connector.id);
         scheduleConnectorRecovery(connector.id);
       } else {
@@ -849,6 +854,12 @@ function scheduleConnectorRecovery(id: string): void {
     if (current() && maintainerNow()) void refreshSnapshot(id);
   }, RECOVERY_DELAYS_MS[previous.attempt]);
   connectorRetries.set(id, retry);
+}
+
+/** Spend the automatic budget: only Refresh, or a later success, reads it again. */
+function parkConnectorRecovery(id: string): void {
+  clearTimeout(connectorRetries.get(id)?.timer);
+  connectorRetries.set(id, { attempt: RECOVERY_DELAYS_MS.length, timer: undefined });
 }
 
 // One shared, bounded queue for initial load, refresh, focus and OAuth polls.
@@ -1614,13 +1625,16 @@ function recheckAuthorization(): void {
     if (!state.oauthBusy) for (const id of awaitingAuthorization.keys()) void pollOAuthConnector(id);
     return;
   }
+  // A connector that timed out is not probed again on focus; an outage would
+  // otherwise turn every return to the tab into another long wait.
   const retry = state.data.connectors.filter(
     (connector) =>
-      Boolean(state.connectorFailures[connector.id]) ||
-      connector.status === "error" ||
-      connector.credential?.problem === "credential_unreadable" ||
-      (connector.status === "auth_required" && (connector.oauth || connector.authorizationUrl)) ||
-      awaitingAuthorization.has(connector.id),
+      connector.problem !== "connector_timeout" &&
+      (Boolean(state.connectorFailures[connector.id]) ||
+        connector.status === "error" ||
+        connector.credential?.problem === "credential_unreadable" ||
+        (connector.status === "auth_required" && (connector.oauth || connector.authorizationUrl)) ||
+        awaitingAuthorization.has(connector.id)),
   );
   if (!state.oauthBusy) for (const connector of retry) void refreshConnector(connector.id, true);
 }

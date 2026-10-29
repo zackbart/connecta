@@ -105,6 +105,67 @@ describe("optional deployment modules", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each(["status", "catalog"] as const)(
+    "INV-7: a detail read stops waiting on a hung %s at 8s, as connector_timeout with its credential card",
+    async (hung) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const c = connector();
+      let aborted = false;
+      const hang = (signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) =>
+          signal!.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new Error("SENTINEL-abort"));
+            },
+            { once: true },
+          ),
+        );
+      if (hung === "status") c.status = vi.fn((ctx) => hang(ctx.signal));
+      else c.listTools = vi.fn((ctx) => hang(ctx.signal));
+      c.closeScope = vi.fn(async () => {});
+      const vault = encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32)));
+      await vault.set("shared", "key-1234", "user_operator");
+      const app = createConnecta({
+        readOnly: false,
+        connectors: [c],
+        executor,
+        auth,
+        maintainers,
+        ui: operatorUi(),
+        vault,
+        logger: "silent",
+      });
+      let settled = false;
+      const pending = app.fetch(new Request(BASE + "/ui/connectors/shared", { headers }));
+      void pending.finally(() => {
+        settled = true;
+      });
+      // The deadline starts once the probe does; wait for it without moving the clock.
+      const started = Date.now();
+      await vi.waitFor(() => expect(hung === "status" ? c.status : c.listTools).toHaveBeenCalledOnce(), {
+        interval: 0,
+      });
+      expect(Date.now()).toBe(started);
+      await vi.advanceTimersByTimeAsync(7999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const body = (await (await pending).json()) as any;
+      expect(body).toMatchObject({
+        status: "error",
+        problem: "connector_timeout",
+        tools: [],
+        overlay: { status: "error", problem: "connector_timeout", tools: [] },
+        credential: { label: "API key", configured: true, removable: true },
+      });
+      expect(aborted).toBe(true);
+      expect(c.closeScope).toHaveBeenCalledOnce();
+      expect(JSON.stringify(body)).not.toContain("SENTINEL");
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
   it("bounds a stalled vault read and closes the connector request scope", async () => {
     const c = connector();
     c.closeScope = vi.fn(async () => {});

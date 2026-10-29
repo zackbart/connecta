@@ -1323,6 +1323,49 @@ describe("cached admission and scoped observations (#1113)", () => {
     expect(paths.every((p) => p === "/ui/connectors/crm")).toBe(true);
   });
 
+  it("parks a timed-out connector until Refresh, and keeps polling one returning from consent", async () => {
+    const { store, fetchMock, paths, windowListeners } = await ready();
+    const timedOut = (id: string) => {
+      const base = row(id, "error");
+      return { ...base, problem: "connector_timeout", overlay: { ...base.overlay, problem: "connector_timeout" } };
+    };
+    const answer = (detail: (id: string) => object) => async (path: string) =>
+      Response.json(
+        path.startsWith("/ui/oauth/")
+          ? { state: "auth_required", authorizationUrl: "https://issuer.example/consent" }
+          : detail(path.split("/").at(-1)!),
+      );
+    fetchMock.mockImplementation(answer(timedOut));
+    vi.useFakeTimers();
+    await store.refreshConnector("crm");
+    expect(store.getState().data?.connectors.find((c) => c.id === "crm")).toMatchObject({
+      status: "error",
+      problem: "connector_timeout",
+    });
+    // No automatic retry and no focus probe: each would wait out the deadline again.
+    paths.length = 0;
+    await vi.advanceTimersByTimeAsync(60_000);
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(paths).toEqual([]);
+    await store.refreshConnector("crm");
+    expect(paths).toEqual(["/ui/connectors/crm"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(paths).toEqual(["/ui/connectors/crm"]);
+    // A consent return still polls through a timeout, and stops once connected.
+    paths.length = 0;
+    await store.startOAuth("crm", "continue");
+    await vi.advanceTimersByTimeAsync(4000);
+    // The mutation's own refresh, then a poll every two seconds.
+    expect(paths.filter((p) => p === "/ui/connectors/crm")).toHaveLength(3);
+    fetchMock.mockImplementation(answer((id) => row(id)));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.getState().data?.connectors.find((c) => c.id === "crm")?.status).toBe("ok");
+    const settled = paths.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(paths).toHaveLength(settled);
+  });
+
   it("keeps a stale maintainer snapshot after admission's deadline and blocks reads, connection writes and tokens", async () => {
     const { store, configMock, paths } = await ready();
     const previous = store.getState().contract;

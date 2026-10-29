@@ -556,6 +556,16 @@ the config snapshot, and never treats a `per_caller` overlay as an error.
 complete classified tools with input/output schemas, registration path, catalog
 age, and activity-derived last-call facts under the reader's disclosure policy.
 A failed or timed-out connector releases its own scope; siblings finish independently.
+The status and catalog observation has its own deadline: 8 seconds, or
+`discovery.probeTimeoutMs` when that is shorter, in which case the whole row
+uses that one deadline. The 8-second value is fixed, not configured; agent
+discovery keeps the full `discovery.probeTimeoutMs`. When the deadline ends
+first, the downstream read is aborted and the row returns `status: "error"`
+with `problem: "connector_timeout"` in the row and its overlay. The row still
+carries its credential card and auth permissions, so a slow connector's slot
+stays manageable. Any other failure keeps `connector_unavailable`. The
+connector renders as **Not responding**, with fixed copy, a fix prompt and
+Refresh.
 The summary and each detail carry `viewerKey` for the principal admitted to that
 request. The browser publishes the detail and overlay atomically only when that
 key matches admission. A changed viewer key, including an Access switch between
@@ -630,6 +640,12 @@ Connector Refresh, focus recovery and mutation follow-ups read only affected
 connectors. Focus probes unhealthy rows, never healthy siblings. All detail reads
 share a four-request limit and coalesce per connector. Failures retry only their
 connector with the same bounded backoff; recovery never replays a mutation.
+A `connector_timeout` row is parked instead. It spends its automatic retry
+budget, and focus and visibility returns skip it. Only Refresh, a full refresh
+or a mutation follow-up reads it again, so an outage holds a detail slot once
+per explicit request, never repeatedly. An OAuth start's consent-return poll is
+the exception: a timeout during its 30-second window keeps polling, and success
+still stops it.
 Mutations cancel affected reads and advance their publication fence both at
 dispatch and on settlement, including failure. Follow-ups require an observation
 started after settlement, so a Refresh or retry started during the write cannot
@@ -638,7 +654,7 @@ while identity and full refresh revisions fence the complete view. An explicit
 OAuth start polls only that connector every two seconds for up to 30 seconds.
 Concurrent authorizations retain independent cancellation and publication. Success,
 failed reads, disconnect, navigation, unmount and identity reset stop the matching
-poll. Recovery never starts authorization. A scoped result cannot confirm identity,
+poll; a `connector_timeout` result does not. Recovery never starts authorization. A scoped result cannot confirm identity,
 role, token slots or any other deployment-wide admission fact.
 
 Unreadable credential metadata uses `configured: null`, including named fields,

@@ -47,6 +47,7 @@ export interface AttentionItem {
 
 const PROBLEM_TITLE: Readonly<Record<UiProblem, string>> = {
   connector_unavailable: "is unavailable",
+  connector_timeout: "isn't responding",
   oauth_required: "needs authorization",
   credential_required: "needs a credential",
   auth_required: "needs a secret in the deployment",

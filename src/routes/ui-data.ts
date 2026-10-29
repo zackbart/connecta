@@ -36,6 +36,12 @@ export interface UiDataOptions {
   personalCredentialOwner?: string | undefined;
   mayManage?: ((id: string) => boolean) | undefined;
   timeoutMs?: number | undefined;
+  /**
+   * A shorter deadline for the status and catalog observation alone. When it
+   * ends first the row reports `connector_timeout` and keeps everything it
+   * learned without the downstream, its credential card included.
+   */
+  observeTimeoutMs?: number | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -43,10 +49,12 @@ interface Observed {
   status: ConnectorStatus;
   tools: OperatorTool[];
   catalogFailed: boolean;
+  timedOut?: boolean;
 }
 
 const DETAIL_TIMEOUT_MS = 30_000;
 const DETAIL_TIMED_OUT = "Connection details timed out. Retry this connection.";
+const OBSERVE_TIMED_OUT = "Connector did not answer before the operator page's deadline.";
 
 function attempt<A>(operation: () => Promise<A>): Effect.Effect<A, unknown> {
   return Effect.tryPromise({ try: operation, catch: (error) => error });
@@ -147,6 +155,33 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
       );
     };
 
+    // The observation under its own deadline. Its abort reaches the status
+    // and catalog reads through `inner`, which then settle as an error or a
+    // failed catalog; either way the reason on `inner` says the deadline
+    // ended them, so the row is a timeout rather than a failure.
+    const observeWithin = (
+      c: Connector,
+      drift: string | undefined,
+      signal: AbortSignal,
+      requestScope: object,
+      timeoutMs: number,
+    ): Effect.Effect<Observed, unknown> => {
+      const timeoutError = new Error(OBSERVE_TIMED_OUT);
+      const timedOut = (): Observed => ({
+        status: failureStatus(c.id, timeoutError),
+        tools: [],
+        catalogFailed: false,
+        timedOut: true,
+      });
+      return withDeadlineEffect(
+        (inner) =>
+          observe(c, drift, inner, requestScope).pipe(
+            Effect.map((observed) => (inner.reason === timeoutError ? timedOut() : observed)),
+          ),
+        { timeoutMs, signal, timeoutError },
+      ).pipe(Effect.catch((error) => (error === timeoutError ? Effect.succeed(timedOut()) : Effect.fail(error))));
+    };
+
     // The credential card, for someone who may manage this connector's auth.
     // Never fails: a vault that cannot be read is the card's own error.
     const credentialFor = (c: Connector): Effect.Effect<UiConnector["credential"]> => {
@@ -222,13 +257,21 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         // One deadline covers the whole row. The status and catalog reads once
         // had a second one of the same length inside it, which could only fire
         // after this one had already ended the row.
-        const { status, tools, catalogFailed } = yield* observe(c, drift, signal, requestScope);
+        // The operator page's shorter observation deadline, when it has one,
+        // bounds only the downstream: the credential card below is local
+        // storage and still renders, so a slow vendor's slot stays fixable.
+        const { status, tools, catalogFailed, timedOut } =
+          options.observeTimeoutMs === undefined
+            ? yield* observe(c, drift, signal, requestScope)
+            : yield* observeWithin(c, drift, signal, requestScope, options.observeTimeoutMs);
         const credential = yield* credentialFor(c);
         logStatus(c.id, status.state, statusFailure(status), requestScope);
-        const problem = uiProblemFor(c, status.state, {
-          credentialDrift: Boolean(drift),
-          catalogFailed,
-        });
+        const problem = timedOut
+          ? ("connector_timeout" as const)
+          : uiProblemFor(c, status.state, {
+              credentialDrift: Boolean(drift),
+              catalogFailed,
+            });
         return {
           id: c.id,
           authScope: c.authScope ?? "shared",
@@ -265,22 +308,24 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         } satisfies UiConnector;
       });
 
-    const unavailable = (c: Connector, error: unknown, requestScope: object) =>
+    const unavailable = (c: Connector, error: unknown, requestScope: object, timeoutError: Error) =>
       Effect.sync((): UiConnector => {
         logStatus(c.id, "failed", error, requestScope);
+        // The row's own deadline is a timeout too, whichever ran out first.
+        const problem = error === timeoutError ? "connector_timeout" : "connector_unavailable";
         return {
           id: c.id,
           ...(c.title ? { title: c.title } : {}),
           authScope: c.authScope ?? "shared",
           status: "error",
-          problem: "connector_unavailable",
+          problem,
           oauth: Boolean(c.startAuth && c.disconnectAuth),
           toolCount: 0,
           tools: [],
           overlay: {
             id: c.id,
             status: "error",
-            problem: "connector_unavailable",
+            problem,
             tools: [],
             catalogAgeMs: registry.catalogAgeMs(c.id),
             lastCall: null,
@@ -294,14 +339,15 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         // sibling that happens to belong to the same operator payload.
         const requestScope = {};
         if (options.activityContext) bindActivityRequest(requestScope, options.activityContext);
+        const timeoutError = new Error(DETAIL_TIMED_OUT);
         return withDeadlineEffect((signal) => detail(c, signal, requestScope), {
           timeoutMs: options.timeoutMs ?? DETAIL_TIMEOUT_MS,
           ...(options.signal ? { signal: options.signal } : {}),
-          timeoutError: new Error(DETAIL_TIMED_OUT),
+          timeoutError,
         }).pipe(
           // A hook that throws where it should reject fails its own row too.
           Effect.catchDefect((defect) => Effect.fail(defect)),
-          Effect.catch((error) => unavailable(c, error, requestScope)),
+          Effect.catch((error) => unavailable(c, error, requestScope, timeoutError)),
           Effect.ensuring(
             Effect.suspend(() => closeScope(c, registry.contextFor(c.id, baseUrl, requestScope), options.defer)),
           ),

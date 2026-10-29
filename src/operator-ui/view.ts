@@ -645,6 +645,8 @@ export function connectorStatusTone(status: string): Tone {
 const PROBLEM_COPY: Readonly<Record<UiProblem, string>> = {
   connector_unavailable:
     "Unavailable. Its status check or catalog load failed or timed out. The deployment log has the error.",
+  connector_timeout:
+    "Not responding. It didn't answer in time, so it may be slow or unreachable. This page won't retry it on its own; use Refresh to check again.",
   oauth_required: "Needs OAuth authorization. No grant is stored, or it expired or was revoked.",
   credential_required: "Needs a credential. Nothing usable is stored.",
   auth_required: "Needs authorization. Its secret is set in deployment config, not here.",
@@ -687,6 +689,7 @@ export interface ConnectorVerdict {
 
 const PROBLEM_LABEL: Readonly<Record<UiProblem, string>> = {
   connector_unavailable: "Unavailable",
+  connector_timeout: "Not responding",
   oauth_required: "Authorization needed",
   credential_required: "Credential needed",
   auth_required: "Authorization needed",
