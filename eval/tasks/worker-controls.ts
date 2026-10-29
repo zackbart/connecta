@@ -398,6 +398,50 @@ export async function comparatorTargetControls() {
     ["an offline regrade", (f) => (f.regrade = { source: "x", meta: f.meta })],
     ["an unknown target", (f) => ((f.config as { target: string }).target = "edge")],
   ];
+  // Every shared batch setting must match across targets, as it must across arms.
+  const settings: [string, (file: AgentResultFile) => void][] = [
+    ["concurrency", (f) => (f.config.concurrency = 32)],
+    ["MCP output limit", (f) => (f.config.mcpOutputTokens = 25_000)],
+    ["effort", (f) => (f.config.effort = "xhigh")],
+    ["maxBudgetUsd", (f) => (f.config.maxBudgetUsd = 2)],
+    [
+      "timeoutMs",
+      (f) => {
+        f.config.timeoutMs = 60_000;
+        for (const trial of f.trials) trial.timeoutMs = 60_000;
+      },
+    ],
+    ["repeats", (f) => (f.config.repeats = 2)],
+    ["model set", (f) => f.config.models.push("another-model")],
+    ["task set", (f) => f.config.tasks.push("p5-result-paging")],
+    ["CLI version", (f) => (f.codexVersion = "codex-cli 0.0.1")],
+    ["pairId", (f) => (f.protocol!.pairId = "another-pair")],
+    ["source commit", (f) => (f.meta.git.commit = "0".repeat(40))],
+    ["source srcTree", (f) => (f.meta.git.srcTree = "0".repeat(40))],
+    ["packageVersion", (f) => (f.meta.packageVersion = "0.0.1")],
+    ["node", (f) => (f.meta.node = "v1.0.0")],
+    ["platform", (f) => (f.meta.platform = "plan9")],
+    [
+      "served model",
+      (f) => {
+        const metadata = f.trials[0]!.codex as { servedModel?: string } | undefined;
+        if (metadata) metadata.servedModel = "another-model";
+      },
+    ],
+  ];
+  for (const [label, mutate] of settings) {
+    const node = await fresh("node", "six"),
+      worker = await fresh("worker", "six");
+    mutate(worker);
+    let message = "";
+    try {
+      crossTarget(node, worker);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    if (!message.includes(`Targets must use the same ${label}`))
+      throw new Error(`Cross-target diagnostic did not refuse a different ${label}: ${message || "accepted"}`);
+  }
   // A trial contradicting its batch's target is refused even as a provenance diagnostic.
   const inconsistent = new Set(["a node trial in a worker batch", "an unknown target"]);
   for (const [label, mutate] of mutations) {

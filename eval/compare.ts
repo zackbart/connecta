@@ -266,40 +266,56 @@ function measuredProvenance(label: string, surface: "six" | "code", file: AgentR
 }
 
 /** Provenance is original measurement metadata, never the offline regrade stamp. */
+/** How each batch setting reads for comparison; absent means the shipped default. */
+const SETTINGS: Record<string, { label: string; value?: (file: AgentResultFile) => unknown }> = {
+  tasks: { label: "task set", value: (f) => [...f.config.tasks].sort() },
+  models: { label: "model set", value: (f) => [...f.config.models].sort() },
+  mcpOutputTokens: { label: "MCP output limit", value: (f) => f.config.mcpOutputTokens ?? "host default" },
+  target: { label: "deployment target", value: targetOf },
+};
+
+/**
+ * Every batch setting two comparable result files must share: each config
+ * key, normalized, except those in `except`, plus CLI, protocol, source,
+ * runtime and the served model of every paired trial. One list serves the
+ * six/code comparison and the cross-target diagnostic.
+ */
+function settingMismatches(a: AgentResultFile, b: AgentResultFile, except: string[]): string[] {
+  const out: string[] = [];
+  const differ = (x: unknown, y: unknown) => JSON.stringify(x ?? null) !== JSON.stringify(y ?? null);
+  const keys = [...new Set([...Object.keys(a.config), ...Object.keys(b.config), ...Object.keys(SETTINGS)])];
+  for (const key of keys.filter((k) => !except.includes(k))) {
+    const setting = SETTINGS[key];
+    const read = setting?.value ?? ((f: AgentResultFile) => (f.config as Record<string, unknown>)[key]);
+    if (differ(read(a), read(b))) out.push(setting?.label ?? key);
+  }
+  const cli = (f: AgentResultFile) => (f.config.runner === "claude" ? f.claudeVersion : f.codexVersion);
+  if (differ(cli(a), cli(b))) out.push("CLI version");
+  for (const field of ["pairId", "taskDefinitionsHash", "harnessHash"] as const)
+    if (differ(a.protocol?.[field], b.protocol?.[field])) out.push(field);
+  for (const field of ["commit", "srcTree"] as const)
+    if (differ(a.meta?.git?.[field], b.meta?.git?.[field])) out.push(`source ${field}`);
+  for (const field of ["packageVersion", "node", "platform"] as const)
+    if (differ(a.meta?.[field], b.meta?.[field])) out.push(field);
+  const right = new Map(b.trials.map((t) => [key(t), t]));
+  for (const trial of a.trials) {
+    const paired = right.get(key(trial));
+    if (!paired) continue;
+    const served = (f: AgentResultFile, t: TrialResult) =>
+      (f.config.runner === "claude" ? t.claude : t.codex)?.servedModel;
+    if (differ(served(a, trial), served(b, paired))) out.push(`served model for ${key(trial)}`);
+  }
+  return out;
+}
+
 function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
   const reasons: string[] = [];
-  const equal = (label: string, x: unknown, y: unknown) => {
-    if (x !== y) reasons.push(`Arms must use the same ${label}`);
-  };
   for (const [arm, file] of [
     ["six", a],
     ["code", b],
   ] as const)
     reasons.push(...measuredProvenance(arm, arm, file));
-  equal("task set", JSON.stringify([...a.config.tasks].sort()), JSON.stringify([...b.config.tasks].sort()));
-  equal("model set", JSON.stringify([...a.config.models].sort()), JSON.stringify([...b.config.models].sort()));
-  equal("runner", a.config.runner, b.config.runner);
-  equal(
-    "CLI version",
-    a.config.runner === "claude" ? a.claudeVersion : a.codexVersion,
-    b.config.runner === "claude" ? b.claudeVersion : b.codexVersion,
-  );
-  for (const field of ["pairId", "taskDefinitionsHash", "harnessHash"] as const)
-    equal(field, a.protocol?.[field], b.protocol?.[field]);
-  for (const field of ["commit", "srcTree"] as const)
-    equal(`source ${field}`, a.meta?.git?.[field], b.meta?.git?.[field]);
-  for (const field of ["packageVersion", "node", "platform"] as const) equal(field, a.meta?.[field], b.meta?.[field]);
-  for (const field of ["repeats", "effort", "timeoutMs", "concurrency", "maxBudgetUsd"] as const)
-    equal(field, a.config[field], b.config[field]);
-  equal("MCP output limit", a.config.mcpOutputTokens ?? "host default", b.config.mcpOutputTokens ?? "host default");
-  const right = new Map(b.trials.map((t) => [key(t), t]));
-  for (const trial of a.trials) {
-    const paired = right.get(key(trial));
-    if (!paired) continue;
-    const leftMetadata = a.config.runner === "claude" ? trial.claude : trial.codex;
-    const rightMetadata = b.config.runner === "claude" ? paired.claude : paired.codex;
-    equal(`served model for ${key(trial)}`, leftMetadata?.servedModel, rightMetadata?.servedModel);
-  }
+  for (const label of settingMismatches(a, b, ["surface"])) reasons.push(`Arms must use the same ${label}`);
   return [...new Set(reasons)];
 }
 
@@ -430,21 +446,8 @@ export function crossTarget(node: AgentResultFile, worker: AgentResultFile): str
   ];
   if (targetOf(node) !== "node") reasons.push("--a must be a node result");
   if (targetOf(worker) !== "worker") reasons.push("--b must be a worker result");
-  const same = (label: string, x: unknown, y: unknown) => {
-    if (JSON.stringify(x) !== JSON.stringify(y)) reasons.push(`Targets must use the same ${label}`);
-  };
-  same("task set", [...node.config.tasks].sort(), [...worker.config.tasks].sort());
-  same("model set", [...node.config.models].sort(), [...worker.config.models].sort());
-  for (const field of ["runner", "surface", "grading", "repeats", "timeoutMs", "effort", "maxBudgetUsd"] as const)
-    same(field, node.config[field], worker.config[field]);
-  same("CLI version", node.claudeVersion ?? node.codexVersion, worker.claudeVersion ?? worker.codexVersion);
-  same("paired batch ID", node.protocol?.pairId, worker.protocol?.pairId);
-  same("source commit", node.meta?.git?.commit, worker.meta?.git?.commit);
-  for (const field of ["packageVersion", "node", "platform"] as const)
-    same(field, node.meta?.[field], worker.meta?.[field]);
-  for (const field of ["taskDefinitionsHash", "harnessHash"] as const)
-    same(field, node.protocol?.[field], worker.protocol?.[field]);
-  same("source tree", node.meta?.git?.srcTree, worker.meta?.git?.srcTree);
+  // Every shared batch setting must match; only the target itself differs.
+  for (const label of settingMismatches(node, worker, ["target"])) reasons.push(`Targets must use the same ${label}`);
   if (node.config.grading !== "outcome") reasons.push("measured grading must be outcome");
   if (reasons.length)
     throw new Error(`Cross-target diagnostic refused:\n${[...new Set(reasons)].map((r) => `- ${r}`).join("\n")}`);
