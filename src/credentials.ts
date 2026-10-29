@@ -169,7 +169,8 @@ export class CredentialVault implements Vault {
     this.handoffKey = deriveOAuthHandoffKey(raw);
     this.retryKey = deriveRequestStateKey(raw);
     this.key = crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
-    registerCredentialReads(this, {
+    // The base class's original methods, so an override is never replaced.
+    registerCredentialReads(this, canonicalReads, {
       getAll: async (connectorId, owner, reads, fresh) => {
         const credential = await this.read(connectorId, owner, { reads, fresh });
         return credential ? { ...credential.values } : null;
@@ -327,6 +328,13 @@ export class CredentialVault implements Vault {
     }
   }
 }
+
+// Captured once at definition: a later subclass, instance or prototype
+// override of either method is always called itself (credential-reads.ts).
+const canonicalReads = {
+  getAll: CredentialVault.prototype.getAll,
+  metadata: CredentialVault.prototype.metadata,
+};
 
 export function encryptedCredentialVault(storage: KVStorage, encryptionKey: string): Vault {
   return new CredentialVault(storage, encryptionKey);

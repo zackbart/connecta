@@ -2200,7 +2200,10 @@ Memoized:
 - catalog generation reads that only locate an entry, accepted or refused by a
   fresh fence;
 - the credential reads behind connector status, drift and the operator UI card,
-  which only label a view.
+  which only label a view. Only the built-in vault with its original `getAll`
+  and `metadata` shares a read; a custom vault, a subclass, or an instance
+  that overrides either method is called itself for every read, dispatch
+  included.
 
 Always fresh:
 

@@ -12,7 +12,8 @@ import { WebStandardStreamableHTTPServerTransport, McpServer } from "@modelconte
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { encryptedCredentialVault } from "../src/credentials.js";
+import { api } from "../src/connectors/api.js";
+import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
 import { d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { Effect } from "effect";
 import { RequestReads, observeStorageWrites } from "../src/runtime/request-reads.js";
@@ -454,6 +455,117 @@ describe("request read memo and OAuth", () => {
     const text = await callToolText(app, "svc.echo");
     expect(remote.state.pageTwo).toEqual([]);
     expect(text).not.toContain('"text":"hi"');
+  });
+});
+
+describe("credential reads honor vault overrides", () => {
+  // Review of #1184: the request memo must never substitute the built-in
+  // vault reader for a subclass's own getAll or metadata, including the
+  // fresh read behind a dispatch.
+  const SAVED = /\\?"saved\\?":true/;
+  class RefusingVault extends CredentialVault {
+    override async getAll() {
+      return null;
+    }
+    override async metadata() {
+      return null;
+    }
+  }
+  class ThrowingVault extends CredentialVault {
+    override async getAll(): Promise<never> {
+      throw new Error("vault refused");
+    }
+    override async metadata(): Promise<never> {
+      throw new Error("vault refused");
+    }
+  }
+
+  async function overridden(Vault: typeof RefusingVault | typeof ThrowingVault) {
+    const storage = memoryStorage();
+    // The stored credential is real; only the override refuses it.
+    await new CredentialVault(storage, CREDENTIAL_KEY).set("crm", "stored-secret-123456", "operator");
+    const writes: string[] = [];
+    const app = createTestConnecta({
+      connectors: [
+        api("crm", {
+          credential: { label: "Token" },
+          tools: [
+            {
+              name: "save",
+              description: "Save a record",
+              annotations: { readOnlyHint: false },
+              handler: async (_args, ctx) => {
+                writes.push(String(await ctx.credential?.get()));
+                return { saved: true };
+              },
+            },
+          ],
+        }),
+      ],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      storage,
+      vault: new Vault(storage, CREDENTIAL_KEY),
+      publicUrl: BASE,
+      logger: "silent",
+      executor: {
+        execute: async (_code, providers) => {
+          try {
+            return { result: await providers.find((p) => p.name === "connecta")!.fns.call!("crm.save", {}) };
+          } catch (error) {
+            return { result: undefined, error: error instanceof Error ? error.message : String(error) };
+          }
+        },
+      },
+    });
+    const rpc = async (name: string, args: Record<string, unknown>) =>
+      (
+        await app.fetch(
+          new Request(`${BASE}/mcp`, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${TOKEN}`,
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: ++rpcId,
+              method: "tools/call",
+              params: { name, arguments: args },
+            }),
+          }),
+        )
+      ).text();
+    return { app, rpc, writes };
+  }
+
+  it.each([
+    ["refuses", RefusingVault],
+    ["throws", ThrowingVault],
+  ] as const)(
+    "a vault subclass that %s blocks direct and program writes and labels status and UI",
+    async (_, Vault) => {
+      const { app, rpc, writes } = await overridden(Vault);
+      const direct = await rpc("call_destructive_tool", { address: "crm.save", args: {} });
+      expect(direct).not.toMatch(SAVED);
+      const program = await rpc("execute_code", { code: "async () => connecta.call('crm.save', {})" });
+      expect(program).not.toMatch(SAVED);
+      expect(writes).toEqual([]);
+      const detail = await app.fetch(
+        new Request(`${BASE}/ui/connectors/crm`, { headers: { Authorization: "Bearer clerk-token" } }),
+      );
+      const card = (await detail.json()) as { status: string; credential?: { configured?: boolean } };
+      expect(card.status).not.toBe("ok");
+      expect(card.credential?.configured).not.toBe(true);
+    },
+  );
+
+  it("still memoizes the built-in vault and sends its stored credential", async () => {
+    const { rpc, writes } = await overridden(CredentialVault as typeof RefusingVault);
+    expect(await rpc("execute_code", { code: "async () => connecta.call('crm.save', {})" })).toMatch(SAVED);
+    expect(await rpc("call_destructive_tool", { address: "crm.save", args: {} })).toMatch(SAVED);
+    expect(writes).toEqual(["stored-secret-123456", "stored-secret-123456"]);
   });
 });
 
