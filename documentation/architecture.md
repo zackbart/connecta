@@ -2235,10 +2235,45 @@ Always fresh:
 - the credential a call sends.
 
 `test/request-reads.node.test.ts` holds the memo's contract, including a
-disconnect written by another isolate between paginated `tools/list` pages. It
-also holds D1 round-trip and statement ceilings for a warm OAuth call, an
-expired-token refresh, a refresh before expiry, a cold-isolate catalog load and
-an operator UI detail read.
+disconnect written by another isolate between paginated `tools/list` pages.
+
+### Request budgets (contributor)
+
+`test/request-reads.node.test.ts` also guards the common request shapes the way
+bundle caps guard size. Each case counts downstream HTTP requests, D1 round
+trips (`all`, `run` or `batch`) and SQL statements separately, since a batch is
+one round trip but several statements. The fixture is production-shaped: D1
+over `node:sqlite`, a sealed vault holding the API credential and the OAuth
+grant, Cloudflare Access with `accessTokens()`, a D1 activity sink settled
+through `waitUntil`, the operator UI and QuickJS standing in for Dynamic Worker
+startup. "Cold isolate" is a new deployment instance over the populated
+database. The ceilings, measured value plus about 10% D1 headroom and exact
+downstream counts, live in its `BUDGETS` table. Measured on main in October 2026:
+
+| Request                                  | Downstream | D1 round trips | SQL statements |
+| ---------------------------------------- | ---------: | -------------: | -------------: |
+| Legacy remote MCP call, warm             |          5 |              6 |              7 |
+| Legacy remote MCP call, cold isolate     |          5 |              9 |             12 |
+| Modern remote MCP call, warm             |          1 |              7 |              8 |
+| Modern remote MCP call, cold isolate     |          1 |             10 |             13 |
+| OAuth remote MCP call, warm              |          5 |             19 |             20 |
+| OAuth remote MCP call, cold isolate      |          5 |             22 |             25 |
+| OAuth call after a 401, with refresh     |          9 |             39 |             48 |
+| OAuth call with proactive refresh        |          6 |             35 |             43 |
+| `api()` credential call, warm            |          1 |              3 |              4 |
+| `api()` credential call, cold isolate    |          1 |              6 |              9 |
+| Unscoped search, warm (3 remote, 1 api)  |          0 |             20 |             20 |
+| `execute_code`, 5 calls to one connector |          9 |             10 |             15 |
+| UI connector detail, `api()` credential  |          0 |              2 |              2 |
+| UI connector detail, credential remote   |          4 |              9 |              9 |
+| UI connector detail, OAuth remote        |          4 |             18 |             18 |
+
+Header-auth calls to the legacy (session) server handshake per request:
+`initialize`, `notifications/initialized`, the SSE `GET`, the call and the
+session `DELETE`. The modern server advertises a catalog TTL, so a warm call is
+the call alone. OAuth calls read the grant fresh before every SDK message.
+Run with `D1_BUDGET_REPORT=1` to print each measurement; a failing case prints
+its request and statement log.
 
 ### Contributor provider kit
 
