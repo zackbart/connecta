@@ -348,10 +348,11 @@ describe("Effect behind the published surface", () => {
 
 // The execute_code description shows the model compact guest shapes instead of
 // the published GuestApi names. Compile them against GuestApi so they cannot
-// drift: every compact argument is one GuestApi accepts, every GuestApi result
-// is assignable to its compact shape, and no compact field is absent from GuestApi.
-// result and emit take back what the API returned (handles, results, blocks), so
-// their compact arguments only need to describe those values.
+// drift: compact arguments and GuestApi arguments are assignable both ways (a
+// compact argument the host would refuse fails, and so does a returned handle,
+// result or block the compact shape cannot take back), every GuestApi result is
+// assignable to its compact shape, and no compact field is absent from GuestApi.
+// call's object overload is GuestApi-only; the compact form shows the first.
 describe("advertised guest API declaration", () => {
   const file = join(ROOT, "test", "__advertised-guest-api__.ts");
   const options: ts.CompilerOptions = {
@@ -365,8 +366,7 @@ describe("advertised guest API declaration", () => {
     skipLibCheck: true,
     noEmit: true,
   };
-  const accepted = ["search", "describe", "call", "read", "skill"];
-  const returned = ["result", "emit"];
+  const methods = ["search", "describe", "call", "read", "result", "skill", "emit"];
   let previous: ts.Program | undefined;
   const diagnostics = (declaration: string): string[] => {
     const source = `import type { GuestApi } from "../src/guest-types.js";
@@ -374,12 +374,12 @@ ${declaration}
 type Compact = typeof connecta;
 declare const real: GuestApi;
 declare function accepts<A extends unknown[], R>(compact: (...args: A) => R): (real: (...args: A) => R) => void;
-${accepted.map((method) => `accepts(connecta.${method})(real.${method});`).join("\n")}
-${returned
+type First<F> = F extends { (...args: infer A): unknown; (...args: infer _B): unknown } ? A : never;
+${methods
   .map(
-    (method) => `declare const ${method}Args: Parameters<GuestApi["${method}"]>;
-declare const ${method}Result: ReturnType<GuestApi["${method}"]>;
-export const ${method}: [Parameters<Compact["${method}"]>, ReturnType<Compact["${method}"]>] = [${method}Args, ${method}Result];`,
+    (method) => `accepts(connecta.${method})(real.${method});
+declare const ${method}Args: First<GuestApi["${method}"]>;
+export const ${method}: Parameters<Compact["${method}"]> = ${method}Args;`,
   )
   .join("\n")}
 type Keys<T> = T extends unknown ? keyof T : never;
@@ -419,6 +419,12 @@ export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ?
     ["a wrong result type", "hasMore: boolean;", "hasMore: number;"],
     ["a refused argument", "addresses?: string[];", "addresses?: number[];"],
     ["a missing method", "\nskill(name: string): Promise<{ text: string }>;", ""],
+    ["an optional authored field", "data: string; mimeType: string }", "data: string; mimeType?: string }"],
+    ["an untyped authored block", '{ type: "text"; text: string }', "{ type: string; text: string }"],
+    ["a native block it cannot take back", '| { type: "resource_link"; uri: string; name: string }', ""],
+    ["a handle it cannot take back", "truncated: true; hint: string }", "truncated: true }"],
+    ["an emit that refuses forwarded blocks", "emit(block: Block | Native |", "emit(block: Block |"],
+    ["a result that refuses its handle", "result(id: string | Paged,", "result(id: string,"],
   ])(
     "rejects %s",
     (_name, from, to) => {
@@ -427,4 +433,11 @@ export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ?
     },
     60_000,
   );
+
+  it("refuses an authored block the host would reject", () => {
+    const program = (block: string) => `${GUEST_API_DECLARATION}\nconnecta.emit(${block});`;
+    expect(diagnostics(program('{ type: "image", data: "aGk=", mimeType: "image/png" }'))).toEqual([]);
+    expect(diagnostics(program('{ type: "image", data: "aGk=" }'))).not.toEqual([]);
+    expect(diagnostics(program('{ type: "video", data: "aGk=", mimeType: "video/mp4" }'))).not.toEqual([]);
+  }, 60_000);
 });

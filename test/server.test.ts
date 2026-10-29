@@ -355,7 +355,7 @@ describe("server /mcp end-to-end", () => {
     expect(first).toBe(second);
     expect(first).toMatch(/; \+95 more\.$/);
     expect(new TextEncoder().encode(first).length).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
-    expect((await executeDescription(ids)).length).toBeLessThan(2_650);
+    expect((await executeDescription(ids)).length).toBeLessThan(2_900);
     expect(listTools).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
   });

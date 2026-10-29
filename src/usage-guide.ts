@@ -138,20 +138,21 @@ and obeys byte/block budgets; text shares the return cap. Return reduced JSON.
 /**
  * The guest API as the execute_code description shows it: compact shapes of
  * GuestApi in src/guest-types.ts, checked against it by the package-surface
- * declaration test. Arguments are accepted by GuestApi, results are supertypes
- * of its results, and no field is invented. Type notation, not runnable JS.
+ * declaration test. Arguments match what GuestApi accepts in both directions,
+ * results are supertypes of its results, and no field is invented. Type notation, not runnable JS.
  */
 export const GUEST_API_DECLARATION = `declare const connecta: {
 search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string }[]; hasMore: boolean; nextOffset?: number }>;
-describe(args: { address?: string; addresses?: string[]; format?: Schemas }): Promise<{ tools: (Tool & { error?: string })[] }>;
+describe(args?: { address?: string; addresses?: string[]; format?: Schemas }): Promise<{ tools: (Tool & { error?: string })[] }>;
 call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<Result>;
 read(uri: string): Promise<{ contents: { uri: string; text?: string; blob?: string }[] }>;
 result(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;
 skill(name: string): Promise<{ text: string }>;
-emit(block: Block | Result): PromiseLike<void>;
+emit(block: Block | Native | Exclude<Result, Paged>): PromiseLike<void>;
 };
 type Schemas = "json" | "compact" | "typescript";
 type Tool = { address: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; signature?: string };
-type Paged = { format: "paged"; resultId?: string; totalBytes: number };
-type Result = ({ format: "json"; data: unknown } | { format: "text"; data: string } | Paged) & { content?: Block[] };
-type Block = { type: string; text?: string; data?: string; mimeType?: string };`;
+type Paged = { format: "paged"; valueFormat: "json" | "text"; resultId?: string; totalBytes: number; truncated: true; hint: string };
+type Result = ({ format: "json"; data: unknown } | { format: "text"; data: string } | Paged) & { content?: Native[] };
+type Block = { type: "text"; text: string } | { type: "image" | "audio"; data: string; mimeType: string };
+type Native = Block | { type: "resource"; resource: { uri: string } & ({ text: string } | { blob: string }) } | { type: "resource_link"; uri: string; name: string };`;
