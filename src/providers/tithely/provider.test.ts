@@ -198,16 +198,16 @@ describe("named reads (H9, H10)", () => {
       expect(await call(connection(), tool, args), tool).toEqual({ status: 200, data });
     }
     expect(() => connection({ sensitiveFields: "raw" })).toThrow(/sensitiveFields/);
-    // Details advertises the deployment's choice: dropped names are withheld, never listed as readable.
+    // Details hints the deployment's choice: dropped names are listed as withheld, and only then.
     calls.length = 0;
     const response = async (options: Record<string, unknown> = {}) =>
       ((await call(connection(options), "tithely_api_details", { method: "GET", path: "/organizations/org_1" })) as any)
         .response;
     const dropped = await response();
     expect(dropped.withheld).toEqual(expect.arrayContaining(["object.bank", "object.legal"]));
-    expect(dropped.fields.some((path: string) => /^object\.(bank|legal)\b/.test(path))).toBe(false);
     const returned = await response({ sensitiveFields: "return" });
     expect(returned.fields).toEqual(expect.arrayContaining(["object.bank", "object.legal"]));
+    expect(returned.withheld ?? []).not.toEqual(expect.arrayContaining(["object.bank"]));
     expect(calls).toEqual([]);
   });
 

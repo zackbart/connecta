@@ -395,31 +395,32 @@ it(
 );
 
 it(
-  "INV-10 INV-11: details states each response's fields in fields coordinates, capped, with withheld paths apart",
+  "INV-10 INV-11: details lists selectable response fields in fields coordinates, capped, with a withheld hint",
   NODE,
   async () => {
     const { call, authenticate, sendPath } = setup();
     const details = (await call("details", { method: "GET", path: "/items" })) as any;
-    // email is the deployment's sensitive field and token a credential name, at any depth; a
-    // container holding a withheld path is withheld itself, since reading it returns that path.
+    // Every declared path is selectable. The hint names the subset the rules always withhold:
+    // email is the deployment's sensitive field and token a credential name, at any depth, and
+    // a container holding one is never read whole either.
     expect(details.response).toEqual({
       anchor: "data",
-      fields: ["id", "label", "nested.id"],
+      fields: ["id", "email", "token", "label", "nested", "nested.id", "nested.email"],
       withheld: ["email", "token", "nested", "nested.email"],
     });
     expect(await call("details", { method: "GET", path: "/items" })).toEqual(details);
-    // A reviewed redaction that declares no classifier cannot claim any path readable.
+    // A reviewed redaction that declares no hint names nothing; the hint is never a promise.
     const undeclared = resultSafety({
       reviewed: { redact: (data) => data, withholdsErrors: () => false },
-      sensitiveFields: { names: [], choice: "drop" },
-    });
-    expect(undeclared.transforms({ method: "GET", template: "/items" })(["id"])).toBe(true);
-    expect(
-      resultSafety({
-        review: "Fixture without a table.",
-        sensitiveFields: { names: ["email"], choice: "drop" },
-      }).transforms({ method: "GET", template: "/items" }),
-    ).toSatisfy((transforms: (path: string[]) => boolean) => !transforms(["id"]) && transforms(["nested", "email"]));
+      sensitiveFields: { names: ["email"], choice: "drop" },
+    }).withholds({ method: "GET", template: "/items" });
+    expect([undeclared(["id"]), undeclared(["token"]), undeclared(["nested", "email"])]).toEqual([false, false, true]);
+    const schema = (await (async () => setup().tools.find((tool) => tool.name === "items_api_details")!)())
+      .outputSchema as any;
+    expect(schema.properties.response.properties.fields.description).toMatch(/Not a readability promise/);
+    expect(schema.properties.response.properties.withheld.description).toMatch(
+      /Best-effort hint.*unlisted path may still be withheld or redacted/,
+    );
     for (const omitted of [
       { method: "POST", path: "/query" },
       { method: "GET", path: "/blocked" },
@@ -428,7 +429,7 @@ it(
       expect(await call("details", omitted)).not.toHaveProperty("response");
     expect(authenticate).not.toHaveBeenCalled();
     expect(sendPath).not.toHaveBeenCalled();
-    // Every advertised path, withheld ones included, is a valid fields input; withheld values never come back.
+    // Every advertised path is a valid fields input; withheld values never come back.
     response = () =>
       Response.json({
         id: "i1",
@@ -439,7 +440,7 @@ it(
       });
     const read = (await call("read", {
       path: "/items",
-      fields: [...details.response.fields, ...details.response.withheld],
+      fields: details.response.fields,
     })) as any;
     expect(read.data).toMatchObject({ id: "i1", label: "Widget", nested: { id: "n1" } });
     expect(JSON.stringify(read.data)).not.toMatch(/alice@example|bob@example|tok-alice/);
@@ -616,9 +617,8 @@ it(
         connectorContext(storage),
       )) as any;
       expect(new TextEncoder().encode(JSON.stringify(reply)).length).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
-      // The response contract travels once, on the first page. This connection's value safety
-      // knows no /things operation, so it fails closed and nothing is advertised as readable.
-      if (pages === 0) expect(reply.response).toEqual({ anchor: "data", fields: [], withheld: ["id"] });
+      // The response contract travels once, on the first page.
+      if (pages === 0) expect(reply.response).toEqual({ anchor: "data", fields: ["id"] });
       else expect(reply).not.toHaveProperty("response");
       for (const name of Object.keys(reply.body?.schema?.properties ?? {})) properties.add(name);
       for (const name of reply.body?.schema?.required ?? []) required.add(name);

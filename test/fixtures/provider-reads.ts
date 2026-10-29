@@ -126,27 +126,25 @@ export function populated(
 }
 
 /**
- * Hold one operation's details to an actual vendor body: each named path is
- * withheld and never a field, a plain read returns none of `secrets`, and every
- * listed field returns exactly what the vendor sent.
+ * Hold one operation's details to an actual vendor body: each named path is a
+ * selectable field (and in the `withheld` hint where `hinted`), the contract
+ * makes no readability promise, and a real read selecting the paths returns
+ * none of `secrets` and changes the value at each.
  */
-export async function expectContractHolds(options: {
+export async function expectRedactedOnRead(options: {
   readonly details: () => Promise<any>;
-  readonly read: (fields?: readonly string[]) => Promise<any>;
+  readonly read: (fields: readonly string[]) => Promise<any>;
   readonly body: unknown;
-  readonly withheld: readonly string[];
+  readonly paths: readonly string[];
+  readonly hinted?: readonly string[];
   readonly secrets: readonly string[];
 }): Promise<void> {
   const response = (await options.details()).response;
-  for (const path of options.withheld) {
-    expect(response.withheld, path).toContain(path);
-    expect(response.fields, path).not.toContain(path);
-  }
-  const plain = JSON.stringify(await options.read());
-  for (const secret of options.secrets) expect(plain).not.toContain(secret);
-  for (let at = 0; at < response.fields.length; at += 50) {
-    const chunk: string[] = response.fields.slice(at, at + 50);
-    const read = await options.read(chunk);
-    for (const field of chunk) expect(valuesAt(read.data, field), field).toEqual(valuesAt(options.body, field));
-  }
+  for (const path of options.paths) expect(response.fields, path).toContain(path);
+  for (const path of options.hinted ?? []) expect(response.withheld, path).toContain(path);
+  for (const path of response.withheld ?? []) expect(response.fields, path).toContain(path);
+  const read = await options.read(options.paths);
+  const text = JSON.stringify(read);
+  for (const secret of options.secrets) expect(text).not.toContain(secret);
+  for (const path of options.paths) expect(valuesAt(read.data, path), path).not.toEqual(valuesAt(options.body, path));
 }

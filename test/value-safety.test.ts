@@ -209,46 +209,70 @@ describe("value-safety engine", () => {
     expect(safety.redact({ url: checkout }, "GET", "/")).toEqual({ url: "https://checkout.example.com/c/pay/cs_1" });
   });
 
-  it("INV-5 INV-10: classifies every path a rule may change, at any depth, its containers and its maps", () => {
+  it("INV-5 INV-10: hints only paths a rule withholds whatever their value, and the body confirms each", () => {
     const safety = engine({
       operations: {
         "GET /v1/things": redact("Hooks carry secrets.", [
           "hook_uuid",
+          "data[].hook_uuid",
           "drains[].headers{}",
-          "bypass@keys",
+          "aliases@keys",
           "url:dest_conf",
+          "origin:callback",
+          "items[?env].value",
         ]),
         "POST /v1/keys": refuse("It mints a key."),
       },
-      fields: { card_number: { verdict: "redact", reason: "A PAN." } },
-      resources: { key: "object", rules: { session: { reason: "A payer page.", paths: ["client_secret"] } } },
+      fields: {
+        card_number: { verdict: "redact", reason: "A PAN." },
+        token_hint: { verdict: "keep", reason: "Metadata." },
+      },
+      resources: { key: "object", rules: { session: { reason: "A payer page.", paths: ["payer_page"] } } },
     });
-    const reads = safety.transforms("GET", "/v1/things");
+    const hint = safety.withholds("GET", "/v1/things");
     const split = (path: string) => path.split(".");
-    // A reviewed path applies inside an envelope too, and its container and map hold what it
-    // changes. (A container the index declares above a changed path is the hatch's to withhold.)
-    for (const path of [
+    const known = [
       "hook_uuid",
-      "result[].hook_uuid",
-      "drains",
-      "drains[].headers",
-      "bypass",
-      "result[].dest_conf",
-      "data[].client_secret",
+      "data[].hook_uuid",
+      "callback",
       "card_number",
+      "x.card_number",
       "items[].private_token",
-      "env",
-      "rules[].value",
-      "routes[].headers",
-    ])
-      expect(reads(split(path)), path).toBe(true);
-    for (const path of ["id", "drains[].name", "result[].created_on", "object", "data[].amount"])
-      expect(reads(split(path)), path).toBe(false);
-    expect(safety.transforms("POST", "/v1/keys")(["id"])).toBe(true);
-    // Another operation has none of these reviewed paths, but resource rules and names hold everywhere.
-    const other = safety.transforms("POST", "/v1/things");
-    expect(other(["hook_uuid"])).toBe(false);
-    expect(other(["data", "client_secret"])).toBe(true);
+    ];
+    // Value-dependent rules (a URL's parameters, a map's keys or values, a typed record, a resource
+    // type) and reviewed paths placed elsewhere are not hints; neither is a reviewed keep.
+    const unknown = [
+      "id",
+      "result[].hook_uuid",
+      "drains[].headers",
+      "aliases",
+      "dest_conf",
+      "items[].value",
+      "payer_page",
+      "token_hint",
+    ];
+    expect(known.filter((path) => !hint(split(path)))).toEqual([]);
+    expect(unknown.filter((path) => hint(split(path)))).toEqual([]);
+    // Each hinted path really is withheld from a body that carries it.
+    const body = {
+      hook_uuid: "h-1",
+      data: [{ hook_uuid: "h-2" }],
+      callback: "not-a-url",
+      card_number: "4242",
+      x: { card_number: "4242" },
+      items: [{ private_token: "t-1" }],
+    };
+    const out = safety.redact(structuredClone(body), "GET", "/v1/things") as any;
+    expect([
+      out.hook_uuid,
+      out.data[0].hook_uuid,
+      out.callback,
+      out.card_number,
+      out.x.card_number,
+      out.items[0].private_token,
+    ]).toEqual(Array(6).fill(REDACTED));
+    expect(safety.withholds("POST", "/v1/keys")(["id"])).toBe(true);
+    expect(safety.withholds("POST", "/v1/things")(["hook_uuid"])).toBe(false);
   });
 
   it("INV-5: withholds error text for reviewed operations and credential inputs unless the review says vendor", () => {

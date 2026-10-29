@@ -2249,15 +2249,11 @@ declared response roots before dispatch. Search answers stay within 16 KiB
 cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
 cursor. `src/http/hatch-response.ts` builds details' capped `response` section
-from the index's declared response paths in `fields` coordinates. A path is
-readable only when two checks agree. First, `ResultSafety.transforms` reads the
-connection's own rules as a conservative classifier. `ValueSafety.transforms`
-tries each reviewed path at every depth, applies every resource rule and
-key-name rule without exemptions, and maps a map or `@keys` to any name.
-Custom redactions declare their own classifier, and one that declares none
-transforms every path. Second, skeleton bodies of each value shape pass through
-the same `redact`. Containers inherit their declared descendants' verdicts, and
-anything inconclusive withholds. Standard hatch search removes conversational framing; framing-only
+from the index's declared response paths in `fields` coordinates. It lists
+selectable paths and promises no readability. Its `withheld` hint comes from
+`ResultSafety.withholds`: `ValueSafety.withholds` reads the rules `redact`
+applies that change any value they reach, and custom redactions may declare
+their own hint. Value-dependent rules are never hints. Standard hatch search removes conversational framing; framing-only
 queries return no matches. It admits partial lexical matches alongside full
 matches. Action/read queries require all content nouns in the operation text,
 or any noun in the path/id with at least half the nouns in the text. Their

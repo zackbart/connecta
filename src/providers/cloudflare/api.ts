@@ -591,6 +591,11 @@ export const safety = (): SafetyOptions => {
           : SAFETY.redact(body, operation.method, canonical(operation)),
       withholdsErrors: (operation) =>
         operation.method === "POST" && operation.template === "/graphql" ? false : reviewed.withholdsErrors(operation),
+      // The table applies to the envelope and again to its result, as redact does.
+      withholds: (operation) => {
+        const hint = reviewed.withholds!(operation);
+        return (path) => hint(path) || (path[0]?.replace(/\[\]$/, "") === "result" && hint(path.slice(1)));
+      },
     },
     sensitiveFields: { names: [], choice: "drop" },
   };

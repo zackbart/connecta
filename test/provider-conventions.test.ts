@@ -167,7 +167,7 @@ import { describe, expect, it } from "vitest";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, compactDiscoverySchema } from "../src/catalog.js";
 import { RESPONSE_BUDGET } from "../src/http/hatch-response.js";
 import { canonicalJson } from "../src/canonical-json.js";
-import { populated, readWorld, valuesAt } from "./fixtures/provider-reads.js";
+import { expectRedactedOnRead, populated, readWorld, valuesAt } from "./fixtures/provider-reads.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
@@ -386,7 +386,7 @@ describe("standard api() surfaces share one agent-facing shape (decision 0011, S
   });
 });
 
-describe("hatch details state response fields that real reads return unchanged (S5)", () => {
+describe("hatch details list selectable response fields, hint withheld ones, and promise nothing (S5)", () => {
   // Valid path and query values for the fixtures: GitHub's App scope names acme/one, Granola
   // ids are not_ plus 14 characters, and QuickBooks company info names the configured realm.
   const filled = (name: string, path: string, param: string, schema: any): string => {
@@ -421,18 +421,17 @@ describe("hatch details state response fields that real reads return unchanged (
     stripe: { has_more: false },
     tithely: { status: "success" },
   };
-  const variants = [
-    // Secret-shaped, and sharing no text with the harness credentials, which sent-secret
-    // redaction would rightly take out of any value.
-    (index: number) => `sk_live_51Hq${index}Zx9eR4tY7uI0pA3sD6fGhJ`,
-    (index: number) => 40 + index,
-    () => true,
-  ];
+  // Secret-shaped, and sharing no text with the harness credentials, which sent-secret
+  // redaction would rightly take out of any value.
+  const secret = (index: number) => `sk_live_51Hq${index}Zx9eR4tY7uI0pA3sD6fGhJ`;
   it.each(providerFixtures.map((fixture) => fixture.name))("%s", { timeout: 120_000 }, async (name) => {
     const world = await readWorld(name);
     const tools = await world.connector.listTools(world.context());
     const details = tools.find((tool) => tool.name.endsWith("_api_details"));
     if (!details) return;
+    const schema = (details.outputSchema as any).properties.response.properties;
+    expect(schema.fields.description).toMatch(/Not a readability promise: value safety may still withhold or redact/);
+    expect(schema.withheld.description).toMatch(/Best-effort hint.*An unlisted path may still be withheld or redacted/);
     const prefix = details.name.replace(/_details$/, "");
     const call = async (tool: string, args: Record<string, unknown>) => {
       const result = (await world.connector.callTool(`${prefix}_${tool}`, args, world.context())) as any;
@@ -445,7 +444,7 @@ describe("hatch details state response fields that real reads return unchanged (
         if (op.tool === `${prefix}_read`) operations.set(`${op.method} ${op.path}`, op);
     }
     let tested = 0;
-    const unreached: string[] = [];
+    const problems: string[] = [];
     // A bounded, deterministic sample: the first eight read operations the searches find.
     for (const { method, path } of [...operations.values()].slice(0, 8)) {
       const contract = await call("details", { method, path });
@@ -454,10 +453,14 @@ describe("hatch details state response fields that real reads return unchanged (
       tested += 1;
       const label = `${method} ${path}`;
       expect(await call("details", { method, path }), label).toEqual(contract);
-      const advertised: string[] = [...response.fields, ...(response.withheld ?? [])];
-      expect(new Set(advertised).size, label).toBe(advertised.length);
-      expect(advertised.length).toBeLessThanOrEqual(RESPONSE_BUDGET.paths);
-      expect(advertised.every((field) => field.length <= RESPONSE_BUDGET.pathChars)).toBe(true);
+      const withheld: string[] = response.withheld ?? [];
+      expect(new Set(response.fields).size, label).toBe(response.fields.length);
+      expect(
+        withheld.filter((field) => !response.fields.includes(field)),
+        label,
+      ).toEqual([]);
+      expect(response.fields.length).toBeLessThanOrEqual(RESPONSE_BUDGET.paths);
+      expect(response.fields.every((field: string) => field.length <= RESPONSE_BUDGET.pathChars)).toBe(true);
       const args: Record<string, unknown> = {
         ...(method === "GET" ? {} : { method }),
         path: path.replace(/\{([^}]+)\}/g, (_: string, param: string) =>
@@ -471,51 +474,192 @@ describe("hatch details state response fields that real reads return unchanged (
       );
       if (Object.keys(query).length) args["query"] = query;
       if (contract.body?.required) {
-        const schema = contract.body.schema;
+        const body = contract.body.schema;
         args["body"] = Object.fromEntries(
-          (schema.required ?? []).map((key: string) => [key, sample(schema.properties?.[key], "fixture1")]),
+          (body.required ?? []).map((key: string) => [key, sample(body.properties?.[key], "fixture1")]),
         );
       }
-      // An undeclared path must be refused while the same read without fields is not, so each
-      // operation's comparison provably reaches the fields check.
-      world.serve(populated(response, variants[0]!, fixed[name]));
+      const body = populated(response, secret, fixed[name]);
+      world.serve(body);
       const outcome = (extra: Record<string, unknown>): Promise<{ result?: any; error?: string }> =>
         call("read", { ...args, ...extra }).then(
           (result) => ({ result }),
           (error: any) => ({ error: `${error?.code}: ${error?.message}` }),
         );
-      const bare = await outcome({});
+      // An undeclared path is refused while the same read without fields is not, so each
+      // operation's comparison provably reaches the fields check.
       const control = await outcome({ fields: ["connecta_undeclared"] });
       expect(control.error, label).toMatch(/fields path connecta_undeclared/);
-      expect(bare.error ?? "", label).not.toMatch(/fields path|declares no response properties/);
-      for (const field of advertised)
-        expect(field.replace(/\[\](?=\.|$)/g, "").split(".")[0], label).not.toBe("connecta_undeclared");
-      // Each advertised readable path, served populated through the real read path in each
-      // value shape, comes back exactly as sent: never redacted, dropped, or moved.
-      // A vendor that rejects one shape (a malformed total, a string where it decodes a number)
-      // must accept another: every operation is read and compared in at least one.
-      let compared = false;
-      const errors: string[] = [];
-      for (const leaf of variants) {
-        const body = populated(response, leaf, fixed[name]);
-        world.serve(body);
-        for (let at = 0; at < response.fields.length; at += 50) {
-          const chunk = response.fields.slice(at, at + 50);
-          const read = await outcome({ fields: chunk });
-          if (!read.result) {
-            errors.push(read.error!);
-            continue;
-          }
-          compared = true;
-          for (const field of chunk)
-            expect(canonicalJson(valuesAt(read.result.data, field)), `${label} ${field}`).toBe(
-              canonicalJson(valuesAt(body, field)),
-            );
+      // Every advertised path is accepted by the real read and selects exactly what the same read
+      // returns there without fields; a hinted path really comes back withheld or redacted.
+      // Nothing promises the other paths' values.
+      const whole = await outcome({});
+      if (!whole.result) problems.push(`${label}: ${whole.error}`);
+      for (let at = 0; at < response.fields.length; at += 50) {
+        const chunk: string[] = response.fields.slice(at, at + 50);
+        const read = await outcome({ fields: chunk });
+        if (!read.result) {
+          problems.push(`${label}: ${read.error}`);
+          continue;
+        }
+        for (const field of chunk) {
+          const sent = valuesAt(body, field);
+          const got = valuesAt(read.result.data, field);
+          if (canonicalJson(got) !== canonicalJson(valuesAt(whole.result?.data, field)))
+            problems.push(`${label} ${field}: selects a different value`);
+          if (withheld.includes(field) && canonicalJson(got) === canonicalJson(sent))
+            problems.push(`${label} ${field}: hinted withheld, read whole`);
         }
       }
-      if (!compared && response.fields.length) unreached.push(`${label}: ${errors[0]}`);
     }
     expect(tested).toBeGreaterThan(0);
-    expect(unreached).toEqual([]);
+    expect(problems).toEqual([]);
   });
+
+  // Values the contract never promised, from actual vendor shapes: an expandable, polymorphic or
+  // opaque container is selectable, and the real read still redacts what value safety finds in it.
+  const ACCOUNT = "0123456789abcdef0123456789abcdef";
+  const unwrap = async (result: Promise<unknown>) => {
+    const value = (await result) as any;
+    return value?.structuredContent ?? value;
+  };
+  const intent = { id: "pi_1", object: "payment_intent", amount: 500, client_secret: "pi_1_secret_stored" };
+  it.each([
+    {
+      name: "cloudflare",
+      template: "/accounts/{account_id}/builds/workers/{script_name}/deploy_hooks",
+      path: `/accounts/${ACCOUNT}/builds/workers/edge-worker/deploy_hooks`,
+      body: {
+        success: true,
+        errors: [],
+        messages: [],
+        result: [
+          {
+            deploy_hook_uuid: "8c3e1b0a-1d2f-4a5b-9c6d-7e8f9a0b1c2d",
+            deploy_hook_name: "main deploys",
+            branch: "main",
+            created_on: "2026-01-01T00:00:00Z",
+          },
+        ],
+        result_info: { page: 1, per_page: 20, count: 1, total_count: 1 },
+      },
+      paths: ["result[].deploy_hook_uuid"],
+      hinted: ["result[].deploy_hook_uuid", "result"],
+      secrets: ["8c3e1b0a-1d2f-4a5b-9c6d-7e8f9a0b1c2d"],
+    },
+    {
+      name: "cloudflare",
+      template: "/accounts/{account_id}/logpush/jobs",
+      path: `/accounts/${ACCOUNT}/logpush/jobs`,
+      body: {
+        success: true,
+        errors: [],
+        messages: [],
+        result: [
+          {
+            id: 7,
+            name: "worker traces",
+            dataset: "workers_trace_events",
+            enabled: true,
+            destination_conf:
+              "s3://logs-bucket/workers?region=us-east-1&access-key-id=AKIAFIXTURE&secret-access-key=logpush-stored-secret",
+          },
+        ],
+      },
+      paths: ["result[].destination_conf"],
+      hinted: ["result[].destination_conf"],
+      secrets: ["logpush-stored-secret", "AKIAFIXTURE"],
+    },
+    {
+      name: "vercel",
+      template: "/v2/integrations/log-drains",
+      path: "/v2/integrations/log-drains",
+      body: [
+        {
+          id: "ld_1",
+          name: "drain",
+          url: "https://drain.example/ingest",
+          headers: { "X-Custom": "stored-drain-secret" },
+        },
+      ],
+      paths: ["headers"],
+      secrets: ["stored-drain-secret"],
+    },
+    {
+      name: "vercel",
+      template: "/v13/deployments/{idOrUrl}",
+      path: "/v13/deployments/dpl_1",
+      body: { id: "dpl_1", name: "web", readyState: "READY", env: ["API_TOKEN=stored-env-secret"] },
+      paths: ["env"],
+      secrets: ["stored-env-secret"],
+    },
+    {
+      name: "vercel",
+      template: "/v9/projects/{idOrName}",
+      path: "/v9/projects/web",
+      body: {
+        id: "prj_1",
+        name: "web",
+        protectionBypass: { "bypass-secret-abc123": { createdAt: 1767225600000, scope: "automation-bypass" } },
+      },
+      // Reviewed as metadata whose keys are secrets: redacting keys depends on the value, so no hint.
+      paths: ["protectionBypass"],
+      secrets: ["bypass-secret-abc123"],
+    },
+    {
+      name: "stripe",
+      template: "/v1/events/{id}",
+      path: "/v1/events/evt_1",
+      body: { id: "evt_1", object: "event", type: "payment_intent.succeeded", data: { object: intent } },
+      paths: ["data"],
+      secrets: ["pi_1_secret_stored"],
+    },
+    {
+      name: "stripe",
+      template: "/v1/checkout/sessions/{session}",
+      path: "/v1/checkout/sessions/cs_1",
+      body: { id: "cs_1", object: "checkout.session", mode: "payment", payment_intent: intent },
+      paths: ["payment_intent"],
+      secrets: ["pi_1_secret_stored"],
+    },
+    {
+      name: "docs",
+      template: "/documents/{documentId}",
+      path: "/documents/doc_1",
+      body: {
+        documentId: "doc_1",
+        title: "Launch plan",
+        inlineObjects: {
+          "kix.1": {
+            objectId: "kix.1",
+            inlineObjectProperties: {
+              embeddedObject: {
+                imageProperties: {
+                  contentUri: "https://lh3.googleusercontent.com/stored-content-capability",
+                  sourceUri: "https://images.example/a.png",
+                },
+              },
+            },
+          },
+        },
+      },
+      paths: ["inlineObjects"],
+      secrets: ["stored-content-capability"],
+    },
+  ])(
+    "$name $template: listed and selectable, yet redacted on read",
+    async ({ name, template, path, body, paths, hinted, secrets }) => {
+      const world = await readWorld(name);
+      world.serve(body);
+      await expectRedactedOnRead({
+        details: () =>
+          unwrap(world.connector.callTool(`${name}_api_details`, { method: "GET", path: template }, world.context())),
+        read: (fields) => unwrap(world.connector.callTool(`${name}_api_read`, { path, fields }, world.context())),
+        body,
+        paths,
+        ...(hinted ? { hinted } : {}),
+        secrets,
+      });
+    },
+  );
 });

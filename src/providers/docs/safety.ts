@@ -3,7 +3,7 @@ import { RequestSecrets } from "../../http/services.js";
 import type { ConnectOptions } from "../../http/vendor.js";
 import type { SafetyOptions } from "../../http/safety.js";
 import { googleSafety } from "../_shared/google/kit.js";
-import { pathTransforms } from "../_shared/rest/value-safety.js";
+import { pathWithholds } from "../_shared/rest/value-safety.js";
 import type { Operation } from "../../http/vendor.js";
 
 /** ImageProperties.contentUri delegates the requester's image access for 30 minutes.
@@ -36,7 +36,7 @@ export function docsSafety(operations: readonly Operation[]): SafetyOptions {
         };
         return visit(data);
       },
-      transforms: () => pathTransforms({ paths: ["imageProperties.contentUri"] }),
+      withholds: () => pathWithholds({ paths: ["imageProperties.contentUri"], anyDepth: true }),
     },
   };
 }

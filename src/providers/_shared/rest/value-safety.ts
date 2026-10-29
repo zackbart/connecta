@@ -1491,54 +1491,42 @@ function acceptsCredential(schema: JsonSchema | undefined, depth: number): boole
   );
 }
 
-/** Whether value safety may change the value at a declared path (segments, list markers dropped) or beneath it. */
-export type PathTransforms = (path: readonly string[]) => boolean;
+/** Whether value safety always withholds or redacts the value at a declared response path (list markers dropped). */
+export type PathWithholds = (path: readonly string[]) => boolean;
 
 const ENV_VALUE_NAMES = ENV_VALUE_FIELDS.map(normalizedName);
-const VALUE_DEPENDENT_NAMES = [...LABELLED_VALUE_FIELDS, ...HEADER_RULE_VALUES, ...DESTINATION_KEYS, "headers"].map(
-  normalizedName,
-);
 
 /**
- * The heuristic's key-name rules, ignoring every exemption: a credential
- * name, an environment container, and each field a value-dependent rule
- * (a labelled or typed secret record, a header rule, a destination, route or
- * delivery headers) may withhold whatever the record says.
+ * A best-effort hint for discovery over rules that change whatever value they
+ * reach: a path is withheld when it sits at or inside a reviewed path (matched
+ * from the body's root, or at any depth with `anyDepth`), or any of its names
+ * satisfies the name rule, which also sees the parent's name. Rules that
+ * depend on a value (`url:`, `[?…]`, `@keys`) are not hints. Names compare
+ * normalized, and `{}` or `*` matches any name.
  */
-function heuristicName(name: string): boolean {
-  return (
-    containsCredential(name) ||
-    CREDENTIAL_SUFFIX.test(name) ||
-    ENV_CONTAINERS.includes(name) ||
-    VALUE_DEPENDENT_NAMES.includes(name)
-  );
-}
-
-/**
- * A conservative classifier over reviewed paths in the path language and a
- * name rule. A path is transformed when a rule may reach it, anything beneath
- * it, or a container it sits in: every reviewed path is tried at every depth
- * (a vendor may apply it inside an envelope), list markers match nothing, and
- * maps and secret-keyed maps match any name. Names compare normalized.
- */
-export function pathTransforms(rules: {
+export function pathWithholds(rules: {
   readonly paths?: readonly string[];
-  readonly names?: (normalized: string) => boolean;
-}): PathTransforms {
-  const patterns = (rules.paths ?? []).map((raw) =>
-    parsePath(raw)
-      .segments.filter((segment) => !segment.startsWith("["))
-      .map((segment) => (segment === "{}" || segment === "@keys" ? "*" : normalizedName(segment))),
-  );
+  readonly names?: (normalized: string, parent: string) => boolean;
+  readonly anyDepth?: true;
+}): PathWithholds {
+  const patterns = (rules.paths ?? []).flatMap((raw) => {
+    const { mode, segments } = parsePath(raw);
+    if (mode === "url" || segments.some((segment) => segment.startsWith("[?") || segment === "@keys")) return [];
+    return [
+      segments
+        .filter((segment) => segment !== "[]")
+        .map((segment) => (segment === "{}" ? "*" : normalizedName(segment))),
+    ];
+  });
   return (path) => {
     const names = path.map((segment) => normalizedName(segment.replace(/\[\]$/, "")));
-    if (rules.names && names.some(rules.names)) return true;
-    return patterns.some(
-      (pattern) =>
-        pattern.length === 0 ||
-        names.some((_, at) =>
-          pattern.every((part, index) => at + index >= names.length || part === "*" || part === names[at + index]),
-        ),
+    if (rules.names && names.some((name, at) => rules.names!(name, names[at - 1] ?? ""))) return true;
+    return patterns.some((pattern) =>
+      (rules.anyDepth ? names.map((_, at) => at) : [0]).some(
+        (at) =>
+          pattern.length <= names.length - at &&
+          pattern.every((part, index) => part === "*" || part === names[at + index]),
+      ),
     );
   };
 }
@@ -1553,11 +1541,11 @@ export interface ValueSafety {
   /** One success body made value-safe: reviewed paths, environment bodies, resource rules, then the heuristic. */
   redact(data: unknown, method: string, template: string): unknown;
   /**
-   * The same rules `redact` applies, read as a conservative path classifier
-   * for discovery: true when any rule may change the value at a declared
-   * response path or anything beneath it.
+   * A discovery hint read from the rules `redact` applies: true when a rule
+   * that changes whatever value it reaches covers this declared path. False
+   * promises nothing; value-dependent rules still apply at read time.
    */
-  transforms(method: string, template: string): PathTransforms;
+  withholds(method: string, template: string): PathWithholds;
   /**
    * Whether a failure's vendor text is withheld: any reviewed operation
    * unless its verdict says `errors: "vendor"`, or an unreviewed one whose
@@ -1576,43 +1564,45 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
     const key = `${method} ${template}`;
     return Object.hasOwn(table.operations, key) ? table.operations[key] : undefined;
   };
-  const classifiers = new Map<string, PathTransforms>();
-  // Which resource a discriminated object is remains unknown before the vendor answers, so
-  // every resource rule applies to every operation, at any depth. Embedded-URL paths are not
-  // field rules: like URL sanitizing everywhere, they change only text that carries a URL.
-  const everywhere = Object.values(table.resources?.rules ?? {}).flatMap((rule) => [
-    ...(rule.paths ?? []),
-    ...(rule.withheld ?? []),
-    ...(rule.verbatim ?? []),
-  ]);
+  const hints = new Map<string, PathWithholds>();
   const redactedNames = Object.entries(fields)
     .filter(([, review]) => review.verdict === "redact")
     .map(([name]) => normalizedName(name));
+  const keptNames = Object.entries(fields)
+    .filter(([, review]) => review.verdict === "keep")
+    .map(([name]) => normalizedName(name));
+  const scopeParents = scopeMaps.map(normalizedName);
   return {
     table,
     verdict,
-    transforms(method, template) {
+    withholds(method, template) {
       const key = `${method} ${template}`;
-      let classifier = classifiers.get(key);
-      if (!classifier) {
+      let hint = hints.get(key);
+      if (!hint) {
         const reviewed = verdict(method, template);
         const env = table.envBodies?.test(template) === true;
-        classifier =
+        const kept = new Set([
+          ...keptNames,
+          ...(reviewed && reviewed.verdict !== "refuse" ? (reviewed.keep ?? []) : []).map((path) =>
+            trailOf(path).map(normalizedName).at(-1)!,
+          ),
+        ]);
+        hint =
           reviewed?.verdict === "refuse"
             ? () => true
-            : pathTransforms({
-                paths: [
-                  ...(reviewed?.verdict === "redact" ? reviewed.paths : []),
-                  ...everywhere,
-                  // The heuristic's deploy hook rule names a parent and its child.
-                  "deployhooks.url",
-                ],
-                names: (name) =>
-                  heuristicName(name) || redactedNames.includes(name) || (env && ENV_VALUE_NAMES.includes(name)),
+            : pathWithholds({
+                paths: reviewed?.verdict === "redact" ? reviewed.paths : [],
+                names: (name, parent) =>
+                  redactedNames.includes(name) ||
+                  (env && ENV_VALUE_NAMES.includes(name)) ||
+                  (parent === "deployhooks" && name === "url") ||
+                  (!kept.has(name) &&
+                    !scopeParents.includes(parent) &&
+                    (containsCredential(name) || CREDENTIAL_SUFFIX.test(name))),
               });
-        classifiers.set(key, classifier);
+        hints.set(key, hint);
       }
-      return classifier;
+      return hint;
     },
     refusal(method, template) {
       const reviewed = verdict(method, template);

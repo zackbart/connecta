@@ -576,8 +576,6 @@ export function tithelySafety(sensitiveFields: SafetyOptions["sensitiveFields"])
       // The hatch's index names each path's canonical operation; only typed sends carry projection flags.
       resolve: (method, path) => ({ method, template: TITHELY_INDEX.resolve(method, path).op.path }),
       withholdsErrors: () => false,
-      // Only typed sends add a payout currency; no path is withheld but the sensitive fields.
-      transforms: () => () => false,
       redact: (body, operation) => {
         if (operation.flags?.["payoutCurrency"] !== true) return body;
         if (operation.template === listOrganizations.path) {

@@ -863,7 +863,7 @@ export function hatch(
   );
   const searchTool = tool("search");
   const detailsTool = tool("details");
-  // The response contract is fixed for a connection, so each operation's probe runs once.
+  // The response contract is fixed for a connection, so each operation's is built once.
   const responses = new Map<number, ResponseContract | undefined>();
   const responseOf = (op: Operation) => {
     if (!responses.has(op.row)) responses.set(op.row, responseContract(index, op, connection.safety));
@@ -875,12 +875,13 @@ export function hatch(
         description: "Paths start at the read result's data; data[] means each item of a list body.",
       }),
       fields: Schema.Array(Schema.String).annotate({
-        description: "Declared success-response paths, valid as fields inputs unchanged. Names only, no types.",
+        description:
+          "Selectable declared success-response paths, valid as fields inputs unchanged. Not a readability promise: value safety may still withhold or redact any value at read time.",
       }),
       withheld: Schema.optionalKey(
         Schema.Array(Schema.String).annotate({
           description:
-            "Declared paths value safety or privacy filtering removes or may redact, by name or by value; do not rely on them.",
+            "Best-effort hint: listed paths value safety always withholds or redacts. An unlisted path may still be withheld or redacted.",
         }),
       ),
       omitted: Schema.optionalKey(
@@ -888,7 +889,10 @@ export function hatch(
           description: `Declared paths not listed: deeper ones past ${RESPONSE_BUDGET.paths} paths or ${RESPONSE_BUDGET.chars} chars, or over ${RESPONSE_BUDGET.pathChars} chars.`,
         }),
       ),
-    }).annotate({ description: "Absent when the operation declares no response properties or is refused." }),
+    }).annotate({
+      description:
+        "Where declared response values are, not whether they are readable. Absent when the operation declares no response properties or is refused.",
+    }),
   );
   const tools = [
     read(connection, {

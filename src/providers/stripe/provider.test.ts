@@ -55,23 +55,23 @@ describe("stripe() over an API key", () => {
     return error as ConnectorCallError;
   }
 
-  it("INV-5 INV-10: details lists reviewed secrets as withheld, and a read naming them still returns none", async () => {
+  it("INV-5 INV-10: details hints credential fields as withheld, and a read naming them still returns none", async () => {
     const connector = stripe("billing", SANDBOX);
     const details = async (path: string) =>
       ((await connector.callTool("stripe_api_details", { method: "GET", path }, keyed())) as any).response;
     const intent = await details("/v1/payment_intents/{intent}");
     expect(intent).toMatchObject({ anchor: "data", withheld: expect.arrayContaining(["client_secret"]) });
-    expect(intent.fields).toEqual(expect.arrayContaining(["id", "amount", "status"]));
-    expect(intent.fields).not.toContain("client_secret");
+    // Every declared path is selectable; the hint names the subset value safety always withholds.
+    expect(intent.fields).toEqual(expect.arrayContaining(["id", "amount", "status", "client_secret"]));
     const hooks = await details("/v1/webhook_endpoints");
     expect(hooks.withheld).toEqual(expect.arrayContaining(["data", "data[].secret"]));
-    expect(hooks.fields).toEqual(expect.arrayContaining(["has_more", "data[].id", "data[].status"]));
+    expect(hooks.fields).toEqual(expect.arrayContaining(["has_more", "data", "data[].id", "data[].secret"]));
     expect(sent).toEqual([]);
     respond = () =>
       Response.json({ id: "pi_1", object: "payment_intent", amount: 500, client_secret: "pi_1_secret_abc123" });
     const read = (await connector.callTool(
       "stripe_api_read",
-      { path: "/v1/payment_intents/pi_1", fields: [...intent.fields.slice(0, 40), ...intent.withheld] },
+      { path: "/v1/payment_intents/pi_1", fields: intent.fields.slice(0, 50) },
       keyed(),
     )) as any;
     expect(read.data).toMatchObject({ id: "pi_1", amount: 500 });

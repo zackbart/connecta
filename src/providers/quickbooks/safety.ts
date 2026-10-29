@@ -196,27 +196,38 @@ function reportTree(value: unknown): unknown {
       .map(([key, entry]) => [key, reportTree(entry)]),
   );
 }
-/** Whether `safeRecord` returns this path within a record unchanged: only the scalars and fields it picks. */
-function recordKeeps(path: readonly string[]): boolean {
+type Kept = "whole" | "trimmed" | "dropped";
+/** What `safeRecord` does to a path within a record: returns it whole, trims it to picked fields, or drops it. */
+function recordPath(path: readonly string[]): Kept {
   const [head, ...rest] = path;
-  if (head === undefined) return false;
-  if (rest.length === 0) return (scalars as readonly string[]).includes(head);
-  if ((details as readonly string[]).includes(head) || head === "Line") return recordKeeps(rest);
-  const [leaf, ...beyond] = rest;
-  if (beyond.length) return false;
-  if ((references as readonly string[]).includes(head)) return ["value", "name", "type"].includes(leaf!);
-  if (head === "MetaData") return ["CreateTime", "LastUpdatedTime"].includes(leaf!);
-  return head === "LinkedTxn" && ["TxnId", "TxnType", "TxnLineId"].includes(leaf!);
+  if (head === undefined) return "trimmed";
+  if ((scalars as readonly string[]).includes(head)) return rest.length ? "dropped" : "whole";
+  if ((details as readonly string[]).includes(head) || head === "Line") return recordPath(rest);
+  const picked =
+    head === "MetaData"
+      ? ["CreateTime", "LastUpdatedTime"]
+      : head === "LinkedTxn"
+        ? ["TxnId", "TxnType", "TxnLineId"]
+        : (references as readonly string[]).includes(head)
+          ? ["value", "name", "type"]
+          : undefined;
+  if (!picked) return "dropped";
+  if (rest.length === 0) return "trimmed";
+  return rest.length === 1 && picked.includes(rest[0]!) ? "whole" : "dropped";
 }
-/** The closed projection read as a path classifier: anything it does not pick whole is transformed. */
-function quickbooksTransforms(template: string) {
+/** The closed projection as a discovery hint: a path it always drops is withheld. */
+function quickbooksWithholds(template: string) {
   return (path: readonly string[]) => {
     const names = path.map((segment) => segment.replace(/\[\]$/, ""));
     if (template.startsWith("/reports/")) return !names.every((name) => REPORT_KEYS.has(name));
     if (template.startsWith("/companyinfo/"))
-      return !(names.length === 2 && names[0] === "CompanyInfo" && COMPANY_KEYS.includes(names[1]!));
-    const record = template === "/query" ? (names[0] === "QueryResponse" ? names.slice(1) : []) : names;
-    return !(record.length > 1 && ENTITIES.includes(record[0]!) && recordKeeps(record.slice(1)));
+      return (
+        names[0] !== "CompanyInfo" || names.length > 2 || (names.length === 2 && !COMPANY_KEYS.includes(names[1]!))
+      );
+    const [root, ...rest] = template === "/query" && names[0] === "QueryResponse" ? names.slice(1) : names;
+    if (template === "/query" && names[0] !== "QueryResponse") return true;
+    if (root === undefined) return false;
+    return !ENTITIES.includes(root) || recordPath(rest) === "dropped";
   };
 }
 
@@ -232,7 +243,7 @@ export function quickbooksSafety(options: Readonly<QuickBooksOptions>): SafetyOp
         return { method: op.method, template: op.path };
       },
       withholdsErrors: () => true,
-      transforms: (operation) => quickbooksTransforms(operation.template),
+      withholds: (operation) => quickbooksWithholds(operation.template),
       redact: (body, operation) => {
         const root = object(body);
         if (operation.template.startsWith("/reports/")) return reportTree(root);

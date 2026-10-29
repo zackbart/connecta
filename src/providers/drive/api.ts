@@ -84,11 +84,7 @@ export const safety = {
     },
     redact: (data: unknown, op: { method: string; template: string }) =>
       withholdDriveLinks(values.redact(data, op.method, op.template)),
-    // Drive links may carry a resource key anywhere, so every link-named field may be withheld.
-    transforms: (op: { method: string; template: string }) => {
-      const reviewed = values.transforms(op.method, op.template);
-      return (path: readonly string[]) => reviewed(path) || path.some((segment) => /links?(?:\[\])?$/i.test(segment));
-    },
+    withholds: (op: { method: string; template: string }) => values.withholds(op.method, op.template),
     withholdsErrors: (op: { method: string; template: string }) =>
       values.withholdsErrors(driveIndex.ops.find((entry) => entry.method === op.method && entry.path === op.template)!),
   },
