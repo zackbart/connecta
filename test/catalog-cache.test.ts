@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Server } from "@modelcontextprotocol/server";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import {
   catalogClientOptions,
   catalogExpiry,
@@ -11,6 +11,7 @@ import {
 } from "../src/catalog-cache.js";
 import { catalogIsFresh } from "../src/catalog-freshness.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { CredentialVault } from "../src/credentials.js";
 import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { callerOf } from "../src/connector-caller.js";
@@ -23,7 +24,8 @@ import { responseCacheKeys, scopes } from "../src/storage/keys.js";
 import { withDeadline } from "../src/timeout.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, deferred, scriptedExecutor, waitFor } from "./fixtures/misc.js";
-import { required, silentLogger } from "./helpers.js";
+import { seedGrant } from "./fixtures/oauth.js";
+import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 
 const BASE = "https://connecta.test";
@@ -392,6 +394,11 @@ describe("SQL-backed SDK catalog cache", () => {
       for (const connector of pair)
         expect((await connector.listTools(ctx)).map((tool) => tool.name)).toEqual(["old_catalog"]);
       expect(listings).toBe(1);
+      // The second instance served the complete cached catalog without connecting.
+      expect(servers).toHaveLength(1);
+      // A live status probe connects it, so both instances hold connections.
+      for (const connector of pair) expect((await connector.status!(ctx)).state).toBe("ok");
+      expect(servers).toHaveLength(2);
       await pair[closing]!.closeScope!(ctx);
       const live = pair[1 - closing]!;
       expect((await live.listTools(ctx)).map((tool) => tool.name)).toEqual(["old_catalog"]);
@@ -476,6 +483,10 @@ describe("SQL-backed SDK catalog cache", () => {
       await connector.closeScope!(root.contextFor(id, BASE, seed));
       const listingScope = {};
       if (operation === "listing") closers.push(() => connector.closeScope!(root.contextFor(id, BASE, listingScope)));
+      // A cached catalog is served without connecting. Invalidate it so the
+      // opening listing connects and fetches, leaving a live client behind.
+      if (operation === "listing") await invalidateCatalogCache(store, id);
+      const opened = operation === "listing" ? 1 : 0;
       let completed: ConnectorContext | undefined;
       const original =
         operation === "resource" ? connector.readResource!.bind(connector) : connector.listTools.bind(connector);
@@ -508,18 +519,18 @@ describe("SQL-backed SDK catalog cache", () => {
               timeoutError: new Error("Listing deadline"),
             });
           expect((await liveList()).map((tool) => tool.name)).toEqual(["old_catalog"]);
-          expect(listings).toBe(1);
+          expect(listings).toBe(1 + opened);
           const generation = await store.get(responseCacheKeys.generation(id));
           changed = true;
           await servers[1]!.notification({ method: "notifications/tools/list_changed" });
           await waitFor(async () => (await store.get(responseCacheKeys.generation(id))) !== generation);
           // This is the same live client whose opening operation already ended.
           expect((await liveList()).map((tool) => tool.name)).toEqual(["new_catalog"]);
-          expect(listings).toBe(2);
+          expect(listings).toBe(2 + opened);
           for (const key of await store.list(responseCacheKeys.prefix(id)))
             expect(await store.get(key)).not.toContain(TOKEN_A);
           expect((await liveList()).map((tool) => tool.name)).toEqual(["new_catalog"]);
-          expect(listings).toBe(2);
+          expect(listings).toBe(2 + opened);
           // If rotation storage fails later, the real SDK must still delete both
           // current-generation slots after the previous listing's signal ended.
           const set = store.set.bind(store);
@@ -540,7 +551,7 @@ describe("SQL-backed SDK catalog cache", () => {
           expect(JSON.stringify(warning.mock.calls)).not.toContain("Fence refused");
           expect((await liveList()).map((tool) => tool.name)).toEqual(["old_catalog"]);
           expect((await liveList()).map((tool) => tool.name)).toEqual(["old_catalog"]);
-          expect(listings).toBe(3);
+          expect(listings).toBe(3 + opened);
           const fresh = {};
           // Workerd forbids reading another request's signal. A SQL cache hit must
           // carry no operation context from the request that published its catalog.
@@ -553,7 +564,7 @@ describe("SQL-backed SDK catalog cache", () => {
             await connector.closeScope!(root.contextFor(id, BASE, fresh));
             foreignSignal.mockRestore();
           }
-          expect(listings).toBe(3);
+          expect(listings).toBe(3 + opened);
           return "invalidated";
         }),
         silentLogger,
@@ -1235,4 +1246,237 @@ it("INV-9 INV-8: an explicit zero-TTL refresh removes a previous reusable listin
   expect(await cache.responseCacheStore!.get(key)).toBeDefined();
   await cache.responseCacheStore!.set(key, { value: JSON.stringify({ tools, ttlMs: 0 }), expiresAt: Date.now() });
   expect(await cache.responseCacheStore!.get(key)).toBeUndefined();
+});
+
+/** A stateful 2025-era downstream: every connection pays initialize, initialized, a standalone GET and a DELETE. */
+function legacyDownstream(name: string, hint: { ttlMs?: number } = {}) {
+  const requests: string[] = [];
+  const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const body =
+      request.method === "POST"
+        ? ((await request
+            .clone()
+            .json()
+            .catch(() => null)) as { method?: string; id?: unknown } | null)
+        : null;
+    requests.push(request.method === "POST" ? (body?.method ?? "response") : request.method);
+    const session = sessions.get(request.headers.get("mcp-session-id") ?? "");
+    if (session) return session.handleRequest(request);
+    if (body?.method !== "initialize")
+      return Response.json(
+        { jsonrpc: "2.0", id: body?.id ?? null, error: { code: -32000, message: "Server not initialized" } },
+        { status: 400 },
+      );
+    const transport: WebStandardStreamableHTTPServerTransport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      enableJsonResponse: true,
+      onsessioninitialized: (id: string) => {
+        sessions.set(id, transport);
+      },
+    });
+    const server = new Server({ name, version: "1" }, { capabilities: { tools: {} } });
+    server.setRequestHandler("tools/list", async () => ({
+      tools: [{ name: `${name}_read`, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+      ...(hint.ttlMs !== undefined ? { ttlMs: hint.ttlMs } : {}),
+    }));
+    await server.connect(transport);
+    return transport.handleRequest(request);
+  };
+  return {
+    fetch,
+    requests,
+    listings: () => requests.filter((method) => method === "tools/list").length,
+    handshakes: () => requests.filter((method) => method === "initialize").length,
+  };
+}
+
+describe("pre-connect cached catalogs", () => {
+  async function deployment(hint: { ttlMs?: number } = {}) {
+    const store = await storage();
+    const vault = new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+    const shared = legacyDownstream("crm", hint);
+    const keyed = legacyDownstream("tickets", hint);
+    const pinned = legacyDownstream("notes", hint);
+    const ids = { shared: `crm_${suffix}`, keyed: `tickets_${suffix}`, pinned: `notes_${suffix}` };
+    const connectors = [
+      // Negotiates once, then reuses the stored legacy verdict.
+      remoteMcp(ids.shared, {
+        url: "https://crm.test/mcp",
+        fetch: shared.fetch,
+        auth: { type: "headers", headers: { Authorization: `Bearer ${TOKEN_A}` } },
+      }),
+      remoteMcp(ids.keyed, { url: "https://tickets.test/mcp", fetch: keyed.fetch, auth: { type: "credential" } }),
+      remoteMcp(ids.pinned, { url: "https://notes.test/mcp", fetch: pinned.fetch, versionNegotiation: "legacy" }),
+      calcConnector,
+    ];
+    await vault.set(ids.keyed, TOKEN_A, "operator");
+    const downstreams = [shared, keyed, pinned];
+    // Each search is one request: a fresh registry over the same storage, as
+    // in a new isolate, whose connector scopes close when it ends.
+    const search = async (registry = makeRegistry(connectors, { storage: store, credentialVault: vault })) => {
+      const requestScope = {};
+      try {
+        return await new CatalogService(registry, BASE, { requestScope }).search({ query: "read" });
+      } finally {
+        for (const connector of connectors)
+          await connector.closeScope?.(registry.contextFor(connector.id, BASE, requestScope));
+      }
+    };
+    return {
+      store,
+      vault,
+      ids,
+      downstreams,
+      search,
+      requests: () => downstreams.reduce((sum, downstream) => sum + downstream.requests.length, 0),
+      listings: () => downstreams.reduce((sum, downstream) => sum + downstream.listings(), 0),
+      handshakes: () => downstreams.reduce((sum, downstream) => sum + downstream.handshakes(), 0),
+      reset: () => {
+        for (const downstream of downstreams) downstream.requests.length = 0;
+      },
+    };
+  }
+  const names = (result: Awaited<ReturnType<CatalogService["search"]>>) =>
+    result.entries.map((entry) => entry.tool.name).sort();
+
+  it("INV-8 INV-10: a warm search over cached legacy connectors sends no downstream request and writes nothing", async () => {
+    const d = await deployment();
+    // A miss connects every legacy connector and publishes its complete catalog.
+    const cold = await d.search();
+    expect(names(cold)).toEqual(["crm_read", "notes_read", "tickets_read"]);
+    expect(d.handshakes()).toBe(3);
+    expect(d.listings()).toBe(3);
+    d.reset();
+    const writes = (["set", "compareAndSet", "delete"] as const).map((method) => vi.spyOn(d.store, method));
+    const warm = await d.search();
+    expect(names(warm)).toEqual(names(cold));
+    expect(warm.queryAnalysis?.catalogError).toBeUndefined();
+    // Budget: zero handshakes, zero listings, zero session cleanup.
+    expect(d.downstreams.map((downstream) => downstream.requests)).toEqual([[], [], []]);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
+  });
+
+  it("INV-8: an expired catalog connects and lists again", async () => {
+    const d = await deployment();
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await d.search();
+    d.reset();
+    now += 299_000;
+    await d.search();
+    expect(d.requests()).toBe(0);
+    now += 2_000;
+    const expired = await d.search();
+    expect(names(expired)).toEqual(["crm_read", "notes_read", "tickets_read"]);
+    expect(d.handshakes()).toBe(3);
+    expect(d.listings()).toBe(3);
+  });
+
+  it("INV-8: an explicit zero TTL is never reused, so every listing connects", async () => {
+    const d = await deployment({ ttlMs: 0 });
+    await d.search();
+    d.reset();
+    await d.search();
+    expect(d.handshakes()).toBe(3);
+    expect(d.listings()).toBe(3);
+  });
+
+  it("INV-5 INV-10: a rotated credential misses the previous partition and connects with the new value", async () => {
+    const d = await deployment();
+    await d.search();
+    d.reset();
+    await d.vault.set(d.ids.keyed, TOKEN_B, "operator");
+    await d.search();
+    const [shared, keyed, pinned] = d.downstreams;
+    expect(shared!.requests).toEqual([]);
+    expect(pinned!.requests).toEqual([]);
+    expect(keyed!.handshakes()).toBe(1);
+    expect(keyed!.listings()).toBe(1);
+    d.reset();
+    // The new partition is now warm; the old value's entry is never consulted.
+    await d.search();
+    expect(d.requests()).toBe(0);
+  });
+
+  it("INV-8: an invalidated catalog connects and lists again", async () => {
+    const d = await deployment();
+    await d.search();
+    d.reset();
+    await invalidateCatalogCache(d.store, d.ids.shared);
+    await d.search();
+    const [shared, keyed, pinned] = d.downstreams;
+    expect([shared!.handshakes(), shared!.listings()]).toEqual([1, 1]);
+    expect([...keyed!.requests, ...pinned!.requests]).toEqual([]);
+  });
+
+  it("INV-5 INV-10: an OAuth catalog is served without connecting only for the live grant's tokens", async () => {
+    const store = await storage();
+    const id = `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const downstream = legacyDownstream("calendar");
+    vi.stubGlobal("fetch", downstream.fetch);
+    const connector = remoteMcp(id, { url: "https://calendar.test/mcp", auth: { type: "oauth" } });
+    const grant = (accessToken: string, epoch = "v3:seeded") =>
+      seedGrant(
+        store,
+        { issuer: "https://calendar.test", tokens: { access_token: accessToken, token_type: "Bearer" } },
+        epoch,
+        scopes.connector(id),
+      );
+    const search = async () => {
+      const registry = makeRegistry([connector], { storage: store });
+      const requestScope = {};
+      try {
+        return await new CatalogService(registry, BASE, { requestScope }).search({ query: "read" });
+      } finally {
+        await connector.closeScope!(registry.contextFor(id, BASE, requestScope));
+      }
+    };
+    await grant("access-1");
+    expect(names(await search())).toEqual(["calendar_read"]);
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([1, 1]);
+    downstream.requests.length = 0;
+    const writes = (["set", "compareAndSet", "delete"] as const).map((method) => vi.spyOn(store, method));
+    expect(names(await search())).toEqual(["calendar_read"]);
+    expect(downstream.requests).toEqual([]);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    // New tokens in the same epoch are a new identity: the pre-connect read misses.
+    await grant("access-2");
+    await search();
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([1, 1]);
+    downstream.requests.length = 0;
+    // A re-authorization moves the epoch, which partitions the catalog anew.
+    await grant("access-2", "v3:reauthorized");
+    await search();
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([1, 1]);
+    downstream.requests.length = 0;
+    // A grant without tokens is never served from the cache; the connect decides.
+    await seedGrant(store, { issuer: "https://calendar.test" }, "v3:reauthorized", scopes.connector(id));
+    await search();
+    expect(downstream.handshakes()).toBe(1);
+  });
+
+  it("a credential test proves the stored value live even when its catalog is cached", async () => {
+    const d = await deployment();
+    await d.search();
+    d.reset();
+    const connector = remoteMcp(d.ids.keyed, {
+      url: "https://tickets.test/mcp",
+      fetch: d.downstreams[1]!.fetch,
+      auth: { type: "credential" },
+    });
+    const ctx = {
+      ...connectorContext(d.store),
+      requestScope: {},
+      credential: {
+        get: () => d.vault.get(d.ids.keyed),
+        getAll: () => d.vault.getAll(d.ids.keyed),
+      },
+    } as unknown as ConnectorContext;
+    expect(await connector.testCredential!(TOKEN_A, ctx)).toMatchObject({ ok: true });
+    expect(d.downstreams[1]!.handshakes()).toBe(1);
+  });
 });

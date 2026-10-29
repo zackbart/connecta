@@ -636,6 +636,8 @@ interface Listing {
   generation: { value?: string };
   ended: boolean;
   credentialIdentity?: string | undefined;
+  /** Whether the generation was read from storage rather than newly drawn. */
+  generationStored?: boolean;
 }
 interface CacheOperation {
   ctx: ConnectorContext;
@@ -656,6 +658,7 @@ export function catalogClientOptions(
   owner?: object,
   sharing: "private" | "shared" = "private",
   resolveCredentialIdentity?: () => Promise<string>,
+  connectionless = false,
 ): Promise<
   Pick<ClientOptions, "responseCacheStore" | "cachePartition" | "defaultCacheTtlMs"> & {
     intake: (
@@ -670,6 +673,7 @@ export function catalogClientOptions(
     withListing: <T>(ctx: ConnectorContext, read: () => Promise<T>) => Promise<T>;
     currentContext: () => ConnectorContext;
     fallbackTools: () => Promise<ListToolsResult | undefined>;
+    cachedTools: (ctx: ConnectorContext) => Promise<ListToolsResult | undefined>;
   }
 > {
   return runEdge(
@@ -682,6 +686,7 @@ export function catalogClientOptions(
       owner,
       sharing,
       resolveCredentialIdentity,
+      connectionless,
     ]),
   );
 }
@@ -696,6 +701,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
     owner?: object,
     sharing: "private" | "shared" = "private",
     resolveCredentialIdentity?: () => Promise<string>,
+    connectionless = false,
   ) =>
     authFlow<Awaited<ReturnType<typeof catalogClientOptions>>>(function* () {
       const request = Context.get(viewServices(ctx), RequestScope);
@@ -1150,7 +1156,9 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
       };
       try {
         const { stopped, io } = capture({ ctx, generation: connectionGeneration, ended: false });
-        if (!stopped()) {
+        // A connectionless reader only lists, and each listing reads its own
+        // generation; there are no connection-owned writes to fence.
+        if (!connectionless && !stopped()) {
           const current = (yield authCall(io, [
             cacheMethod(
               () =>
@@ -1194,12 +1202,13 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                 listing.credentialIdentity = yield authInvoke<string>(operation, "io", [resolveCredentialIdentity]);
               if (!operation.stopped()) {
                 try {
-                  const generation: string =
-                    (yield authInvoke<string | null>(operation, "io", [
-                      cacheMethod(() =>
-                        authStorage<string | null>(storage, "get", [responseCacheKeys.generation(connectorId)]),
-                      ),
-                    ])) ?? crypto.randomUUID();
+                  const stored = (yield authInvoke<string | null>(operation, "io", [
+                    cacheMethod(() =>
+                      authStorage<string | null>(storage, "get", [responseCacheKeys.generation(connectorId)]),
+                    ),
+                  ])) as string | null;
+                  const generation = stored ?? crypto.randomUUID();
+                  listing.generationStored = stored !== null;
                   listing.generation.value = generation;
                   connectionGeneration.value = generation;
                 } catch (error) {
@@ -1223,6 +1232,37 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             else void previous.then(release);
           }
         }),
+      );
+      // A complete, unexpired tools/list entry, read before any connection
+      // exists. This is the SDK's own two-probe read: the private slot
+      // `[serverIdentity, cachePartition]`, then a shared connector's public
+      // slot `[serverIdentity, ""]`, served only when written as public.
+      // `address` binds the configured connector rather than the self-reported
+      // identity, so the pre-connect `""` identity selects the same entries.
+      // Expired, partial, refused (`ttlMs: 0`) and invalidated entries miss,
+      // and the read writes nothing.
+      const cachedTools = cacheMethod((listingCtx: ConnectorContext) =>
+        authCall<ListToolsResult | undefined>(withListing, [
+          listingCtx,
+          cacheMethod(() =>
+            authFlow<ListToolsResult | undefined>(function* () {
+              // No stored generation means no entry, and claiming one is a write.
+              if (!active?.generationStored) return undefined;
+              const read = (slot: string) =>
+                authInvoke<CacheEntry | undefined>(store, "get", [
+                  { method: "tools/list", params: "", partition: JSON.stringify(["", slot]) },
+                ]);
+              let entry = (yield read(partition)) as CacheEntry | undefined;
+              if (entry === undefined && sharing === "shared") {
+                const shared = (yield read("")) as CacheEntry | undefined;
+                entry = shared?.scope === "public" ? shared : undefined;
+              }
+              if (entry?.expiresAt === undefined || !(entry.expiresAt > Date.now())) return undefined;
+              const result = JSON.parse(entry.value) as ListToolsResult;
+              return Array.isArray(result.tools) ? result : undefined;
+            }),
+          ),
+        ]),
       );
       const fallbackTools = cacheMethod(() =>
         authFlow<ListToolsResult | undefined>(function* () {
@@ -1251,6 +1291,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         intake,
         completeCatalogRefresh,
         fallbackTools,
+        cachedTools,
         responseCacheStore: store,
         cachePartition: partition,
         defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000,

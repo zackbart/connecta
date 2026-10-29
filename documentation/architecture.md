@@ -603,6 +603,24 @@ Only complete, intake-redacted tools/list, resources/list and
 resources/templates/list successes are stored. Resource payloads are not cached. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
 
+A remote connector's `listTools` without a live connection in its request
+reads this cache before connecting. It derives the same partition a connect
+binds (the admitted principal, the caller's credential digest, or the owner's
+live OAuth epoch and token digest) from storage reads only, then makes the
+SDK's two-probe read with the pre-connect empty server identity: the private
+slot, then a shared connector's public slot, served only when written public.
+An unexpired complete entry is returned with no transport, handshake, session
+cleanup or storage write. A miss, an expired entry, an explicit `ttlMs: 0`,
+an invalidated generation, a credential, token or epoch change, an
+operator-disconnected or token-less grant, a cache read failure, and a
+downstream whose stored negotiation verdict is modern all connect as before.
+Modern downstreams connect without a handshake and read the cache through the
+SDK. The connect reuses the credential and negotiation verdict that read
+resolved. Only a cache-backed catalog avoids the connection: a tool call, a
+resource read, a status probe and a credential test still reach the
+downstream, and `list_changed` arrives only over a live connection, so an
+unconnected catalog changes at its TTL or on invalidation.
+
 `discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
 listings without `ttlMs`. Positive hints are bounded by
 `catalogMinTtlSeconds` (0) and `catalogMaxTtlSeconds` (86400, also the SDK
