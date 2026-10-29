@@ -65,7 +65,9 @@ choose the right one for the conversation. The model does not choose its
 own access level.
 
 Maintainers run the deployment and can reach its whole tool list through
-the main human endpoint. Other people use their assigned pools.
+the main human endpoint, `/mcp`. Other people use their assigned pools. A
+person in exactly one pool can use that same `/mcp` address: their sign-in
+selects the pool, and they get only its tools.
 Agents use shared accounts selected by the operator. They do not inherit
 the account of the person chatting with them.
 

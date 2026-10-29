@@ -1244,6 +1244,7 @@ function metaToolsForRequest(
             binding.identity.subject !== identity.subject ||
             binding.identity.principal !== identity.principal ||
             binding.identity.endpoint !== identity.endpoint ||
+            binding.identity.pool !== identity.pool ||
             binding.identity.origin !== identity.origin ||
             (binding.program === undefined
               ? typeof binding.connector !== "string" || typeof binding.tool !== "string"

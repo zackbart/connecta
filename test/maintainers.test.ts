@@ -53,9 +53,9 @@ describe("maintainers", () => {
           expect(await response.json()).toEqual({ resource: `${BASE}${path.slice(METADATA.length) || "/mcp"}` });
         }
       }
-      const refused = await mcpRpc(app, "tools/list", {}, { token: "other" });
-      expect(refused.status).toBe(404);
-      await refused.arrayBuffer();
+      const routed = await mcpRpc(app, "tools/list", {}, { token: "other" });
+      expect(routed.status).toBe(200);
+      await routed.arrayBuffer();
     } finally {
       await app.close();
     }

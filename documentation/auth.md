@@ -44,7 +44,9 @@ auth through the operator UI.
    with several (Clerk's Frontend API URL or `cloudflare-access` as namespace).
    Keep these stable: personal credentials are partitioned by principal.
 4. Typecheck and restart/redeploy. Sign in as the person and verify their
-   intended endpoint and tools. A pool-only member at plain `/mcp` gets 404.
+   intended endpoint and tools. A non-maintainer listed in exactly one pool
+   may use plain `/mcp`, which serves that pool; with zero or several pools,
+   plain `/mcp` answers the private 404 and they use `/mcp/<pool>`.
    With the UI enabled, the [member page](./operator-ui.md#use-the-member-page)
    shows their pool URLs and client setup; `/ui/api/config` returns 200 with
    `role: "member"`. It does not grant the maintainer pages, shared credential
@@ -727,8 +729,17 @@ bypasses the scoped registry. These refusals happen before any request leaves. A
 never reach it; a deployment's own connectors still cannot read the caller.
 
 Access is read from one place, deployment code. Top-level
-`maintainers` lists the people who reach plain `/mcp`, which serves the whole
-catalog with the deployment's `readOnly`, and the operator routes. Each pool's
+`maintainers` lists the people who receive the whole catalog at plain `/mcp`
+with the deployment's `readOnly`, and who reach the operator routes. A
+non-maintainer person listed in exactly one pool receives that pool at plain
+`/mcp` exactly as `/mcp/<pool>` serves it: its `tools`, `readOnly`, `surface`,
+`executeCode` and `description`. A maintainer keeps the whole catalog even when
+also listed in pools. Membership is matched on the admitted, resolved
+`{ namespace, id }`, so a bare `"bob"` and the explicit reference it resolves
+to are the same person, and the same id in another namespace is not. Authentication, OAuth challenges and resource audiences are plain `/mcp`'s;
+the pool is chosen after authentication. Construction warns, naming each
+non-maintainer person listed in several pools, and `describeConfig()` lists them
+in `peopleInSeveralPools`. Each pool's
 `members` lists who reaches that pool, people at `/mcp/<pool>` and agents at
 `/agent/<pool>`, which serve exactly that pool's `tools`. A maintainer opens no pool implicitly; list them as a member to use
 one. Nothing intersects these lists with anything else, and a request never
@@ -775,6 +786,10 @@ the whole security claim, in one place on purpose.
 replacement. A guarded read grant becomes a pool with `readOnly: true`.
 
 ### Team pools
+
+Every person in exactly one pool can configure plain `/mcp`; their sign-in
+selects that pool, so one client configuration serves every team. A person in
+several pools uses each pool's `/mcp/<pool>`.
 
 Keep membership in deployment code; static lists can be built with ordinary
 code at construction:
@@ -893,11 +908,11 @@ admitted.
 
 | Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                                                                                                               |
-| Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                                    |
+| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers and the unique member pool to other people. Neither intersects with or widens anything.                                                                    |
+| Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                |
 | Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                |
 | Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                 |
-| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; plain `/mcp` and a pool without one serve the shared instructions unchanged. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                   |
+| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; a maintainer at plain `/mcp` and a pool without one serve the shared instructions unchanged. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.  |
 | Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 characters of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
 | Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                     |
 | Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                        |
@@ -947,7 +962,12 @@ Protected-resource metadata stays public at both default aliases,
 Discovery does not authenticate callers or evaluate membership, so fresh
 OAuth clients can discover how to authenticate. Admission applies after auth
 to MCP requests and result/page handles. Handles remain bound to their
-originating endpoint; paging re-admits the caller at that endpoint. A pool
+originating requested pathname and admitted pool; paging re-admits the caller
+at that endpoint and re-resolves their pool, which must still match. A handle
+minted at plain `/mcp` never pages at `/mcp/<pool>` or the reverse, even for the
+same pool, and a membership change fails it closed. Handles minted before this
+binding existed fail closed. Auth-elicitation and downstream-input
+continuations carry the same pathname and pool binding. A pool
 cannot read a `/mcp` handle, and `/mcp` cannot read a pool's handle.
 
 Operator catalog (`/ui/data`, `/ui/connectors/<id>`), activity, shared

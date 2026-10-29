@@ -113,6 +113,7 @@ export type AuthDenialReason =
   | "email_domain_denied"
   | "gate_denied"
   | "gate_failed"
+  | "ambiguous_pool"
   | "not_maintainer"
   | "pool_not_declared"
   | "not_pool_member";
@@ -144,6 +145,7 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "email_domain_denied",
   "gate_denied",
   "gate_failed",
+  "ambiguous_pool",
   "not_maintainer",
   "pool_not_declared",
   "not_pool_member",

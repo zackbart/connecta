@@ -58,6 +58,7 @@ interface AuthRequestState {
   version: 1;
   principal: string;
   endpoint: string;
+  pool: string | null;
   connector: string;
   tool: string;
   address?: string;
@@ -183,7 +184,12 @@ export class AuthElicitation {
                   createRequestStateCodec<AuthRequestState | SealedDownstreamState>({
                     key: bytes,
                     ttlSeconds: TTL_MS / 1000,
-                    bind: () => canonical({ principal: self.options.principal, endpoint: self.options.endpoint }),
+                    bind: () =>
+                      canonical({
+                        principal: self.options.principal,
+                        endpoint: self.options.endpoint,
+                        pool: self.options.registry.resultIdentity().pool,
+                      }),
                   }),
                 ),
               ),
@@ -423,6 +429,7 @@ export class AuthElicitation {
               version: 1,
               principal,
               endpoint: self.options.endpoint,
+              pool: self.options.registry.resultIdentity().pool,
               connector: id,
               tool,
               ...(typeof args.address === "string" ? { address: args.address } : {}),
@@ -581,6 +588,7 @@ export class AuthElicitation {
               !principal ||
               state.principal !== principal ||
               state.endpoint !== endpoint ||
+              state.pool !== registry.resultIdentity().pool ||
               typeof state.connector !== "string" ||
               !registry.getConnector(state.connector) ||
               !canManage(state.connector) ||
