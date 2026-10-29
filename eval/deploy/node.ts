@@ -1,13 +1,6 @@
-import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
-import { granola } from "@zackbart/connecta/providers/granola";
-import { gmail } from "@zackbart/connecta/providers/gmail";
-import { drive } from "@zackbart/connecta/providers/drive";
-import { docs } from "@zackbart/connecta/providers/docs";
-import { sheets } from "@zackbart/connecta/providers/sheets";
-import { slides } from "@zackbart/connecta/providers/slides";
-import { forms } from "@zackbart/connecta/providers/forms";
 import { ALICE } from "../fakes/google.js";
 import { holdFakeKitTransport, repinFakeKitTransport } from "../fakes/transport.js";
+import { connectCcb, evalConfig, evalMcpPath, presetCredentials } from "./compose.js";
 /**
  * The Node deployment the agent evals run against uses the template's stored
  * access-token auth, SQLite storage, QuickJS executor, operator UI, and
@@ -25,17 +18,8 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { github } from "@zackbart/connecta/providers/github";
-import { stripe } from "@zackbart/connecta/providers/stripe";
-import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
-import { vercel } from "@zackbart/connecta/providers/vercel";
-import { ccb } from "@zackbart/connecta/providers/ccb";
-import { overflow } from "@zackbart/connecta/providers/overflow";
-import { breeze } from "@zackbart/connecta/providers/breeze";
-import { planningCenter } from "@zackbart/connecta/providers/planning-center";
-import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A, SHOP_ZONE } from "../fakes/rest.js";
-import { createConnecta, remoteMcp } from "@zackbart/connecta";
+import { createConnecta } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { listen } from "@zackbart/connecta/node";
@@ -52,6 +36,12 @@ export interface Deployment {
   mcpUrl: string;
   token: string;
   programs: ProgramObservation[];
+  /** Worker target only: every vendor request its gateway dispatched. */
+  vendorRequests?(): { method: string; url: string; status: number | "rejected" }[];
+  /** Worker target only: where its hidden secrets surface in wrangler's output or logs. */
+  secretLeaks?(): Promise<{ findings: string[]; sources: string[] }>;
+  /** Refresh `programs` from a deployment that observes them out of process. */
+  observe?(): Promise<ProgramObservation[]>;
   /** The operator saving a credential in the connection page. */
   openConnect(url: string): Promise<void>;
   setCredential(connectorId: string, value: string): Promise<void>;
@@ -60,22 +50,17 @@ export interface Deployment {
 }
 
 /**
- * `extra` is a task's untyped passthrough, spread over the config last, so a
- * later phase's task can switch on a config key this adapter has never heard
- * of without a harness change.
+ * `extra` is a task's untyped passthrough; see `evalConfig` in compose.ts.
+ * `everyPool` names connector ids added to every pool, such as injected faults.
  */
 export async function startNodeDeployment(
   connectors: ConnectorSpec[],
   extra: Record<string, unknown> = {},
   oauth?: FakeOAuth,
   surface: Surface = "six",
+  everyPool: string[] = [],
 ): Promise<Deployment> {
-  const { pool: selected, pools: taskPools, quickbooksWrites, ...passthrough } = extra;
   let endpointReadOnly = false;
-  // Plain /mcp serves maintainers only and an agent is never one (#837): the
-  // agent token reaches every connector at the `eval` pool's /agent endpoint.
-  const ids = [...(oauth ? ["oauth"] : []), ...connectors.map((spec) => spec.id)];
-  const pool = typeof selected === "string" ? selected : oauth ? undefined : "eval";
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
   let database: ReturnType<typeof openSqlite> | undefined;
   let connecta: ReturnType<typeof createConnecta> | undefined;
@@ -115,118 +100,36 @@ export async function startNodeDeployment(
       "eval-provisioning",
     );
     const vault = encryptedCredentialVault(storage, randomBytes(32).toString("base64"));
-    const quiet = { debug() {}, info() {}, warn() {}, error() {} };
     let observed = (cleanupExecutor = observedExecutor(surface));
     const previousPrograms: ProgramObservation[] = [];
     // The fakes route their own credentials; see eval/fakes/transport.ts.
     const qb = connectors.find((s) => s.quickbooks);
     const notes = connectors.find((s) => s.granola);
     const build = () =>
-      createConnecta({
-        readOnly: endpointReadOnly,
-        storage,
-        agents: ["eval-machine"],
-        accessTokens: accessTokens(storage),
-        ...(oauth ? { auth: oauth.inbound(), maintainers: ["eval-human"] } : {}),
-        pools: {
-          eval: {
-            tools: ids,
-            members: ["agent:eval-machine"],
-            ...(connectors.some((s) => s.google) ? { owner: ALICE } : {}),
+      createConnecta(
+        evalConfig(
+          {
+            connectors,
+            extra,
+            fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
+            readOnly: endpointReadOnly,
+            everyPool,
           },
-          ...(taskPools as Record<string, { tools: string[]; members: string[]; readOnly?: boolean }> | undefined),
-        },
-        publicUrl: origin,
-        executor: observed.executor,
-        vault,
-        ui: operatorUi(),
-        logger: quiet,
-        connectors: [
-          ...(oauth ? [oauth.connector()] : []),
-          ...connectors.map((spec) => {
-            const options = { purpose: spec.description };
-            if (spec.granola) return granola(spec.id, options);
-            if (spec.google) {
-              const factory = { gmail, drive, docs, sheets, slides, forms }[spec.google.product];
-              return factory(spec.id, {
-                ...options,
-                serviceAccount: spec.google.serviceAccount,
-                subject: spec.google.subject === "fixed" ? ALICE : () => ALICE,
-              });
-            }
-            if (spec.rest === "github")
-              return github(spec.id, {
-                ...options,
-                app: spec.githubApp!,
-                scopes: [
-                  { org: "alice", access: "read-write", workflows: "write" },
-                  { repo: "bob/one", access: "read" },
-                ],
-              });
-            if (spec.rest === "ccb")
-              return ccb(spec.id, {
-                ...options,
-                environment: "production",
-                mode: "system",
-                access: "read-write",
-                ...JSON.parse(spec.credential!.value!),
-              });
-            if (spec.rest === "overflow")
-              return overflow(spec.id, { ...options, environment: "staging", baseUrl: spec.url });
-            if (spec.rest === "breeze") return breeze(spec.id, { ...options, subdomain: "church" });
-            if (spec.rest === "planning-center") return planningCenter(spec.id, { ...options, baseUrl: spec.url });
-            if (spec.rest === "stripe")
-              return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
-            if (spec.rest === "tithely")
-              return tithely(spec.id, { ...options, environment: "live", baseUrl: `${spec.url}/api/v1` });
-            if (spec.rest === "vercel")
-              return vercel(spec.id, { ...options, auth: { type: "token" }, teamId: "team_fake" });
-            if (spec.rest === "cloudflare")
-              return cloudflare(spec.id, {
-                ...options,
-                ...(spec.id === "cloudflare_legacy"
-                  ? { auth: { type: "globalApiKey" as const } }
-                  : { auth: { type: "apiToken" as const } }),
-                pin: { accountIds: [ACCOUNT_A] },
-                ...(spec.id === "cloudflare_legacy"
-                  ? { instructions: `The operator's zone inventory reports shop.example.org as zone ${SHOP_ZONE}.` }
-                  : {}),
-              });
-            return remoteMcp(spec.id, {
-              url: spec.url,
-              title: spec.title,
-              description: spec.description,
-              ...(spec.usageGuide ? { usageGuide: spec.usageGuide } : {}),
-              logger: quiet,
-              ...(spec.credential
-                ? { auth: { type: "credential" as const, credential: { label: spec.credential.label } } }
-                : {}),
-            });
-          }),
-        ],
-        ...(qb
-          ? {
-              auth: quickbooksAuth,
-              maintainers: ["alice", "bob"],
-              pools: quickbooksPools(quickbooksWrites === true),
-              connectors: quickbooksConnectors(quickbooksWrites === true, qb.quickbooks!.clientId),
-            }
-          : {}),
-        ...(passthrough as Partial<Parameters<typeof createConnecta>[0]>),
-      });
+          {
+            storage,
+            accessTokens: accessTokens(storage),
+            publicUrl: origin,
+            executor: observed.executor,
+            vault,
+            ui: operatorUi(),
+            ...(oauth
+              ? { auth: { auth: oauth.inbound(), maintainers: ["eval-human"] }, oauthConnector: oauth.connector() }
+              : {}),
+          },
+        ),
+      );
     connecta = build();
-    for (const spec of connectors) {
-      if (spec.rest !== "ccb" && spec.credential?.value) {
-        if (
-          spec.id === "cloudflare_legacy" ||
-          spec.rest === "tithely" ||
-          spec.rest === "planning-center" ||
-          spec.rest === "overflow"
-        )
-          await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
-        else await vault.set(spec.id, spec.credential.value, "operator");
-      }
-    }
+    await presetCredentials(vault, connectors);
     server = listen(
       { ...connecta, fetch: (...args) => forSurface(connecta!, surface).fetch(...args) },
       {
@@ -240,14 +143,7 @@ export async function startNodeDeployment(
     if (qb || notes || connectors.some((spec) => spec.rest || spec.google)) releaseTransport = holdFakeKitTransport();
     else repinFakeKitTransport();
     await once(server, "listening");
-    for (const spec of connectors.filter((entry) => entry.rest === "ccb")) {
-      const connector = connecta.registry.getConnector(spec.id)!;
-      const ctx = connecta.registry.contextFor(spec.id, origin);
-      const start = await connector.startAuth!({ ...ctx, allowAuthorization: true });
-      const state = new URL(start.authorizationUrl!).searchParams.get("state")!;
-      if (!(await connector.verifyState!(state, ctx))) throw new Error("CCB eval OAuth state was refused.");
-      await connector.finishAuth!("fake-code", ctx, new URLSearchParams({ code: "fake-code", state }));
-    }
+    await connectCcb(connecta, connectors, origin);
     return {
       kind: "node-template-shape",
       get programs() {
@@ -265,11 +161,7 @@ export async function startNodeDeployment(
           }
         : {}),
       origin,
-      // Agents use /agent/<pool>; human endpoints refuse their cta_ token (#837).
-      mcpUrl:
-        !oauth && typeof pool === "string"
-          ? `${origin}/agent/${pool}`
-          : `${origin}/mcp${typeof pool === "string" ? `/${pool}` : ""}`,
+      mcpUrl: `${origin}${evalMcpPath(extra, !!oauth)}`,
       token: oauth?.token ?? token,
       openConnect: async (url) => {
         const target = new URL(url);

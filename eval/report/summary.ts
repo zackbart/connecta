@@ -27,11 +27,15 @@ export interface AgentResultFile {
     maxBudgetUsd?: number;
     mcpOutputTokens?: number | "host default";
     runner?: "codex" | "claude";
+    /** Absent in results written before the worker target existed: node. */
+    target?: import("../deploy/targets.js").Target;
   };
   tasks: { id: string; title: string; measures: string; introducedIn: string }[];
   planned: PlannedTask[];
   trials: TrialResult[];
   skipped?: { id: string; flag: string; reason: string }[];
+  /** Tasks a default worker batch refused, with the reason; never run. */
+  refused?: { id: string; reason: string }[];
   stopped?: string;
   regrade?: { source: string; meta: RunMeta };
 }

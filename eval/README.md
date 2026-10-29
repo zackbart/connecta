@@ -238,6 +238,127 @@ recorded. Every trial has saved them since 0.29. Older files, such as the
 Trials missing other historical metrics such as `modelTurns` or `toolErrors`
 are left out of that median, which prints its smaller `n`.
 
+## Deployment targets
+
+`--target node` (the default) runs each trial against the Node template shape:
+SQLite, the QuickJS executor, stored agent tokens and `listen()`.
+`--target worker` runs the same tasks and graders against the production shape
+on workerd, which is SQLite-backed local D1, the Dynamic Worker executor,
+Access, the vault and the operator UI. Each trial boots
+[deploy/worker-agent.ts](deploy/worker-agent.ts) under `wrangler dev`, with
+the Worker example's compatibility date, flags and bindings. Both targets build
+their configuration from one composition, [deploy/compose.ts](deploy/compose.ts),
+and only the platform slots differ. The worker composition also admits people
+through Access; the eval stand-in's user is the one maintainer. Agents still
+use `/agent/<pool>` with the managed `cta_` token on both targets.
+
+```sh
+pnpm run eval:agent --runner claude --models claude-haiku-5-5 --grading outcome --target worker \
+  --tasks cross-connector-join,p5-known-read-routing,truncated-read-paging,stripe-step2-decline-join
+```
+
+A worker batch runs `pnpm run build` first unless `--no-build` is given,
+because the Worker imports the package by name from `dist/`.
+
+- **Vendor traffic.** The Worker fetches loopback fakes directly. Every other
+  request goes to a Node-side vendor gateway, which dispatches it through the
+  fake vendor transport below, with `redirect: "manual"`. Credential routing and
+  every fail-closed refusal therefore apply unchanged, and a refusal reaches
+  the provider as a rejected fetch, as on Node.
+  - The gateway admits only requests carrying the trial's random gateway
+    credential. It strips that credential before forwarding. It refuses
+    loopback and non-HTTP(S) targets, so it is never a path to a local service.
+  - The Worker follows redirects under the transport's rules
+    ([deploy/gateway-fetch.ts](deploy/gateway-fetch.ts)). Each hop is
+    classified again and sent `redirect: "manual"`, so the wrapper never lets
+    workerd follow a `Location` itself. A cross-origin hop drops Authorization,
+    Cookie and Proxy-Authorization for the rest of the chain.
+    `redirect: "error"` rejects, and so do more than 20 hops.
+- **Observed programs.** The program observer wraps the Dynamic Worker
+  executor exactly as it wraps QuickJS on Node. Graders read the same
+  `world.programs`, fetched from the Worker after the conversation.
+- **Process lifecycle.** Every `wrangler dev` runs in its own process group on
+  a port below the kernel's ephemeral range, with its own devtools port, so
+  concurrent trials never share a port with each other or with a fake.
+  - A group stays tracked until no live member remains, even if wrangler's
+    launcher exits or crashes first. Stopping a group sends SIGTERM, then
+    SIGKILL after 5 s.
+  - A trial stops its group when it ends. The first SIGINT/SIGTERM stops the
+    batch in order; a second kills every group at once. Process exit also kills
+    any group still tracked.
+- **Network isolation, and its limits.** Isolation differs between wrangler's
+  Node processes and the native workerd process.
+  - **Wrangler's Node processes** run with `WRANGLER_SEND_METRICS=false` and
+    `WRANGLER_HIDE_BANNER=true`. The banner is the unconditional trigger of its
+    npm update check.
+  - They also preload [support/egress-guard.cjs](support/egress-guard.cjs).
+    It refuses, inside the Node process:
+    - every TCP connect to a non-loopback host, through any `net`, `tls`,
+      `http`, `http2` or `fetch` path, an existing Socket's `connect()`
+      included;
+    - every DNS query for a non-loopback name, through `dns`, `dns.promises`
+      or a `Resolver`;
+    - every UDP send or connect to a non-loopback address.
+
+    Loopback and Unix-socket traffic pass. A selftest control aims each path
+    at a listener on a non-loopback local interface and asserts it receives
+    nothing. This is a JavaScript-level guard: it does not stop native addons
+    or raw bindings.
+
+  - **The native workerd process is not network-sandboxed.** A Node preload
+    cannot cover a native binary, and no OS-level isolation (a network
+    namespace or firewall) is applied. The Worker code under test (connecta's
+    fetch, provider calls and OAuth) uses `globalThis.fetch`, which the Worker
+    replaces with the gateway wrapper before any request.
+    - A selftest control runs worker trials for REST, Google, GitHub App, CCB
+      OAuth and Granola providers. It asserts that every vendor request the
+      fake transport handled arrived through the authenticated gateway.
+    - Code inside workerd that bypasses that wrapper, for example a fetch
+      captured before the wrapper is installed or a raw socket, is not
+      blocked at the OS level and could reach the network. OS-level isolation
+      is a tracked follow-up.
+- **Secrets stay hidden.** The gateway credential and the vault key reach the
+  Worker through a `.dev.vars` file (mode 0600) in the trial directory.
+  Wrangler binds them as secrets and prints them only as `(hidden)`. Its debug
+  log goes to that directory through `WRANGLER_LOG_PATH` and is removed with
+  it. A selftest control asserts that no 8-character window of either secret
+  appears in any wrangler output or log file of the trial.
+- **Eligibility.** The worker target serves every active task except:
+  - `p5-auth-url-capable` and `p5-auth-connect-incapable`: the fake OAuth
+    inbound auth, connector and URL-elicitation host are in-process Node
+    objects;
+  - any task under `--surface code`: that arm wraps the Node deployment's fetch
+    and QuickJS bridge;
+  - any task whose `deployment` passthrough cannot cross into the Worker as JSON.
+
+  Naming a refused task in `--tasks` fails the run with each reason. A batch
+  without `--tasks` runs every eligible task and lists each refused task with
+  its reason in the result's `refused`; it never runs, skips or passes them.
+
+Result files record `config.target`, and every trial records its `target`;
+older files without the field ran on node. The six/code comparator refuses to
+pair results from different targets, even with `--allow-mismatch`.
+`eval:compare --cross-target --a <node.json> --b <worker.json>` is the only
+pairing.
+
+- Each file must pass the comparator's measured-provenance checks: a fresh,
+  unregraded batch on the current protocol, with a known, clean source and
+  runtime.
+- Every trial's target, arm, runner, grading, deadline and task definitions
+  must match its batch.
+- The two files must share the pair ID, source commit and tree, runtime,
+  surface, runner, CLI version, tasks, models, repeats, deadline, task
+  definitions and harness.
+
+It prints each target's efficiency summary from `eval/report/efficiency.ts`,
+then each task's passing medians on both targets side by side, and reaches no
+decision. Either comparison refuses a trial whose target contradicts its batch,
+even with `--allow-mismatch`.
+
+Fakes answer only for the `127.0.0.1:<port>` address they publish. A request
+naming any other host, such as another process on a shared machine sweeping
+`localhost` ports, gets `421 Misdirected Request` and never reaches a ledger.
+
 ## A/B arms, grading and decision rule
 
 For #765 and draft decision record #775, run the same 19 tasks on a fresh

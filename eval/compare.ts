@@ -12,11 +12,13 @@ import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
 import {
+  efficiencyLines,
   fmtSize,
   median,
   modelEfficiency,
   reliability,
   trialEfficiency,
+  type Grade,
   type Reliability,
 } from "./report/efficiency.js";
 
@@ -70,6 +72,7 @@ const trialSchema = z
     taskDefinitionsHash: z.string().regex(/^[a-f0-9]{64}$/),
     model: knownString,
     runner: z.enum(["codex", "claude"]),
+    target: z.enum(["node", "worker"]).optional(),
     surface: z.enum(["six", "code"]),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
@@ -137,6 +140,8 @@ function validate(file: AgentResultFile, surface: "six" | "code"): Map<string, T
     )
       throw new Error(`Trial outside declared batch ${key(trial)}`);
     if (trials.has(key(trial))) throw new Error(`Duplicate trial ${key(trial)}`);
+    if ((trial.target ?? "node") !== targetOf(file))
+      throw new Error(`Trial ${key(trial)} ran on ${trial.target ?? "node"}, not its batch's ${targetOf(file)} target`);
     const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
     if (!task) throw new Error(`No grader for ${trial.task}`);
     // Normal completed trials are validated by the regrader. Validate rows
@@ -188,103 +193,138 @@ function safety(trials: TrialResult[]) {
   };
 }
 
-/** Provenance is original measurement metadata, never the offline regrade stamp. */
-function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
+/** Results written before the worker target existed ran on node. */
+const targetOf = (file: AgentResultFile) => file.config.target ?? "node";
+
+/**
+ * The measured-batch provenance one result file must carry before it enters
+ * any comparison: fresh, unregraded, on the current protocol and a clean known
+ * source, with every trial consistent with its batch, target included.
+ */
+function measuredProvenance(label: string, surface: "six" | "code", file: AgentResultFile): string[] {
   const reasons: string[] = [];
   const current = runProtocol();
   const known = (value: unknown) =>
     typeof value === "string" && value.trim() !== "" && !/unknown|unavailable/i.test(value);
-  const equal = (label: string, x: unknown, y: unknown) => {
-    if (x !== y) reasons.push(`Arms must use the same ${label}`);
-  };
-  for (const [arm, file] of [
-    ["six", a],
-    ["code", b],
-  ] as const) {
-    if (file.config.surface !== arm) reasons.push(`${arm}: explicit ${arm} arm label is required`);
-    if (file.config.grading !== "outcome") reasons.push(`${arm}: measured grading must be outcome`);
-    if (file.config.runner !== "codex" && file.config.runner !== "claude") reasons.push(`${arm}: runner is required`);
-    if (file.regrade) reasons.push(`${arm}: offline regrade is not a fresh measured batch`);
-    if (!file.protocol || file.protocol.version !== 1) reasons.push(`${arm}: measured protocol version 1 is required`);
-    if (!known(file.protocol?.pairId)) reasons.push(`${arm}: fresh paired batch ID is required`);
-    for (const field of ["taskDefinitionsHash", "harnessHash"] as const) {
-      if (file.protocol?.[field] !== current[field])
-        reasons.push(`${arm}: ${field} is missing or differs from the current protocol`);
-    }
-    for (const field of ["commit", "srcTree"] as const)
-      if (!/^[a-f0-9]{12,40}$/.test(file.meta?.git?.[field] ?? ""))
-        reasons.push(`${arm}: known source ${field} is required`);
-    for (const field of ["dirty", "srcDirty"] as const)
-      if (file.meta?.git?.[field] !== false) reasons.push(`${arm}: ${field} must be recorded false`);
-    for (const field of ["packageVersion", "node", "platform"] as const)
-      if (!known(file.meta?.[field])) reasons.push(`${arm}: runtime ${field} is required`);
-    const cli = file.config.runner === "claude" ? file.claudeVersion : file.codexVersion;
-    if (!known(cli)) reasons.push(`${arm}: CLI version is required`);
-    if (
-      !Number.isInteger(file.config.concurrency) ||
-      file.config.concurrency < 1 ||
-      !Number.isFinite(file.config.timeoutMs) ||
-      file.config.timeoutMs <= 0
-    )
-      reasons.push(`${arm}: valid concurrency and deadline are required`);
-    for (const trial of file.trials) {
-      const label = `${arm}: trial ${key(trial)}`;
-      const schema = trialSchema.safeParse(trial);
-      if (!schema.success)
-        for (const issue of schema.error.issues)
-          reasons.push(`${label} invalid ${issue.path.join(".")}: ${issue.message}`);
-      if (trial.surface !== arm || trial.grading !== "outcome" || trial.runner !== file.config.runner)
-        reasons.push(`${label} must record its arm, outcome grading and runner`);
-      if (trial.taskDefinitionsHash !== file.protocol?.taskDefinitionsHash)
-        reasons.push(`${label} taskDefinitionsHash contradicts batch`);
-      const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
-      if (trial.timeoutMs !== (task?.limits?.timeoutMs ?? file.config.timeoutMs))
-        reasons.push(`${label} deadline contradicts task/batch`);
-      if ((trial.codex && file.config.runner !== "codex") || (trial.claude && file.config.runner !== "claude"))
-        reasons.push(`${label} runner metadata contradicts config`);
-      const runner = file.config.runner === "claude" ? "claude" : "codex";
-      if (isNA(trial, runner)) continue;
-      const observed = observation(trial, runner);
-      const metadata = (runner === "claude" ? claudeObservationSchema : observationSchema).safeParse(observed);
-      if (!metadata.success)
-        for (const issue of metadata.error.issues)
-          reasons.push(`${label} invalid runner metadata ${issue.path.join(".")}: ${issue.message}`);
-      if (observed?.requestedModel !== trial.model) reasons.push(`${label} requested model contradicts pair`);
-      if (observed?.servedModel !== trial.model)
-        reasons.push(`${label} served model contradicts requested model/batch`);
-      if (observed?.version !== (runner === "claude" ? cli?.replace(/ \(Claude Code\)$/, "") : cli))
-        reasons.push(`${label} CLI version contradicts batch`);
-      if (trial.status === "skipped") reasons.push(`${label} unsupported skip`);
-    }
+  if (file.config.surface !== surface) reasons.push(`${label}: explicit ${surface} arm label is required`);
+  if (file.config.grading !== "outcome") reasons.push(`${label}: measured grading must be outcome`);
+  if (file.config.runner !== "codex" && file.config.runner !== "claude") reasons.push(`${label}: runner is required`);
+  if (file.regrade) reasons.push(`${label}: offline regrade is not a fresh measured batch`);
+  if (!file.protocol || file.protocol.version !== 1) reasons.push(`${label}: measured protocol version 1 is required`);
+  if (!known(file.protocol?.pairId)) reasons.push(`${label}: fresh paired batch ID is required`);
+  for (const field of ["taskDefinitionsHash", "harnessHash"] as const) {
+    if (file.protocol?.[field] !== current[field])
+      reasons.push(`${label}: ${field} is missing or differs from the current protocol`);
   }
-  equal("task set", JSON.stringify([...a.config.tasks].sort()), JSON.stringify([...b.config.tasks].sort()));
-  equal("model set", JSON.stringify([...a.config.models].sort()), JSON.stringify([...b.config.models].sort()));
-  equal("runner", a.config.runner, b.config.runner);
-  equal(
-    "CLI version",
-    a.config.runner === "claude" ? a.claudeVersion : a.codexVersion,
-    b.config.runner === "claude" ? b.claudeVersion : b.codexVersion,
-  );
-  for (const field of ["pairId", "taskDefinitionsHash", "harnessHash"] as const)
-    equal(field, a.protocol?.[field], b.protocol?.[field]);
   for (const field of ["commit", "srcTree"] as const)
-    equal(`source ${field}`, a.meta?.git?.[field], b.meta?.git?.[field]);
-  for (const field of ["packageVersion", "node", "platform"] as const) equal(field, a.meta?.[field], b.meta?.[field]);
-  for (const field of ["repeats", "effort", "timeoutMs", "concurrency", "maxBudgetUsd"] as const)
-    equal(field, a.config[field], b.config[field]);
-  equal("MCP output limit", a.config.mcpOutputTokens ?? "host default", b.config.mcpOutputTokens ?? "host default");
+    if (!/^[a-f0-9]{12,40}$/.test(file.meta?.git?.[field] ?? ""))
+      reasons.push(`${label}: known source ${field} is required`);
+  for (const field of ["dirty", "srcDirty"] as const)
+    if (file.meta?.git?.[field] !== false) reasons.push(`${label}: ${field} must be recorded false`);
+  for (const field of ["packageVersion", "node", "platform"] as const)
+    if (!known(file.meta?.[field])) reasons.push(`${label}: runtime ${field} is required`);
+  const cli = file.config.runner === "claude" ? file.claudeVersion : file.codexVersion;
+  if (!known(cli)) reasons.push(`${label}: CLI version is required`);
+  if (
+    !Number.isInteger(file.config.concurrency) ||
+    file.config.concurrency < 1 ||
+    !Number.isFinite(file.config.timeoutMs) ||
+    file.config.timeoutMs <= 0
+  )
+    reasons.push(`${label}: valid concurrency and deadline are required`);
+  if (file.config.target !== undefined && file.config.target !== "node" && file.config.target !== "worker")
+    reasons.push(`${label}: target must be node or worker`);
+  for (const trial of file.trials) {
+    const row = `${label}: trial ${key(trial)}`;
+    const schema = trialSchema.safeParse(trial);
+    if (!schema.success)
+      for (const issue of schema.error.issues) reasons.push(`${row} invalid ${issue.path.join(".")}: ${issue.message}`);
+    if (trial.surface !== surface || trial.grading !== "outcome" || trial.runner !== file.config.runner)
+      reasons.push(`${row} must record its arm, outcome grading and runner`);
+    if ((trial.target ?? "node") !== targetOf(file)) reasons.push(`${row} target contradicts batch`);
+    if (trial.taskDefinitionsHash !== file.protocol?.taskDefinitionsHash)
+      reasons.push(`${row} taskDefinitionsHash contradicts batch`);
+    const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
+    if (trial.timeoutMs !== (task?.limits?.timeoutMs ?? file.config.timeoutMs))
+      reasons.push(`${row} deadline contradicts task/batch`);
+    if ((trial.codex && file.config.runner !== "codex") || (trial.claude && file.config.runner !== "claude"))
+      reasons.push(`${row} runner metadata contradicts config`);
+    const runner = file.config.runner === "claude" ? "claude" : "codex";
+    if (isNA(trial, runner)) continue;
+    const observed = observation(trial, runner);
+    const metadata = (runner === "claude" ? claudeObservationSchema : observationSchema).safeParse(observed);
+    if (!metadata.success)
+      for (const issue of metadata.error.issues)
+        reasons.push(`${row} invalid runner metadata ${issue.path.join(".")}: ${issue.message}`);
+    if (observed?.requestedModel !== trial.model) reasons.push(`${row} requested model contradicts pair`);
+    if (observed?.servedModel !== trial.model) reasons.push(`${row} served model contradicts requested model/batch`);
+    if (observed?.version !== (runner === "claude" ? cli?.replace(/ \(Claude Code\)$/, "") : cli))
+      reasons.push(`${row} CLI version contradicts batch`);
+    if (trial.status === "skipped") reasons.push(`${row} unsupported skip`);
+  }
+  return reasons;
+}
+
+/** Provenance is original measurement metadata, never the offline regrade stamp. */
+/** How each batch setting reads for comparison; absent means the shipped default. */
+const SETTINGS: Record<string, { label: string; value?: (file: AgentResultFile) => unknown }> = {
+  tasks: { label: "task set", value: (f) => [...f.config.tasks].sort() },
+  models: { label: "model set", value: (f) => [...f.config.models].sort() },
+  mcpOutputTokens: { label: "MCP output limit", value: (f) => f.config.mcpOutputTokens ?? "host default" },
+  target: { label: "deployment target", value: targetOf },
+};
+
+/**
+ * Every batch setting two comparable result files must share: each config
+ * key, normalized, except those in `except`, plus CLI, protocol, source,
+ * runtime and the served model of every paired trial. One list serves the
+ * six/code comparison and the cross-target diagnostic.
+ */
+function settingMismatches(a: AgentResultFile, b: AgentResultFile, except: string[]): string[] {
+  const out: string[] = [];
+  const differ = (x: unknown, y: unknown) => JSON.stringify(x ?? null) !== JSON.stringify(y ?? null);
+  const keys = [...new Set([...Object.keys(a.config), ...Object.keys(b.config), ...Object.keys(SETTINGS)])];
+  for (const key of keys.filter((k) => !except.includes(k))) {
+    const setting = SETTINGS[key];
+    const read = setting?.value ?? ((f: AgentResultFile) => (f.config as Record<string, unknown>)[key]);
+    if (differ(read(a), read(b))) out.push(setting?.label ?? key);
+  }
+  const cli = (f: AgentResultFile) => (f.config.runner === "claude" ? f.claudeVersion : f.codexVersion);
+  if (differ(cli(a), cli(b))) out.push("CLI version");
+  for (const field of ["pairId", "taskDefinitionsHash", "harnessHash"] as const)
+    if (differ(a.protocol?.[field], b.protocol?.[field])) out.push(field);
+  for (const field of ["commit", "srcTree"] as const)
+    if (differ(a.meta?.git?.[field], b.meta?.git?.[field])) out.push(`source ${field}`);
+  for (const field of ["packageVersion", "node", "platform"] as const)
+    if (differ(a.meta?.[field], b.meta?.[field])) out.push(field);
   const right = new Map(b.trials.map((t) => [key(t), t]));
   for (const trial of a.trials) {
     const paired = right.get(key(trial));
     if (!paired) continue;
-    const leftMetadata = a.config.runner === "claude" ? trial.claude : trial.codex;
-    const rightMetadata = b.config.runner === "claude" ? paired.claude : paired.codex;
-    equal(`served model for ${key(trial)}`, leftMetadata?.servedModel, rightMetadata?.servedModel);
+    const served = (f: AgentResultFile, t: TrialResult) =>
+      (f.config.runner === "claude" ? t.claude : t.codex)?.servedModel;
+    if (differ(served(a, trial), served(b, paired))) out.push(`served model for ${key(trial)}`);
   }
+  return out;
+}
+
+function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
+  const reasons: string[] = [];
+  for (const [arm, file] of [
+    ["six", a],
+    ["code", b],
+  ] as const)
+    reasons.push(...measuredProvenance(arm, arm, file));
+  for (const label of settingMismatches(a, b, ["surface"])) reasons.push(`Arms must use the same ${label}`);
   return [...new Set(reasons)];
 }
 
 export function compare(a: AgentResultFile, b: AgentResultFile, options: { allowMismatch?: boolean } = {}): string {
+  // Node and workerd are different deployments: no override pairs them here.
+  if (targetOf(a) !== targetOf(b))
+    throw new Error(
+      `Comparison refused: arms ran on different targets (${targetOf(a)}, ${targetOf(b)}); use --cross-target for a diagnostic`,
+    );
   const mismatches = provenance(a, b);
   if (mismatches.length && !options.allowMismatch)
     throw new Error(`Comparison refused:\n${mismatches.map((r) => `- ${r}`).join("\n")}`);
@@ -297,7 +337,7 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
   const lines: string[] = mismatches.length
     ? ["NON-COMPARABLE: --allow-mismatch diagnostics", ...mismatches.map((r) => `  - ${r}`)]
     : [
-        `Paired batch: ${a.protocol!.pairId}; source ${a.meta.git.commit}; tasks ${a.protocol!.taskDefinitionsHash}; harness ${a.protocol!.harnessHash}`,
+        `Paired batch: ${a.protocol!.pairId}; target ${targetOf(a)}; source ${a.meta.git.commit}; tasks ${a.protocol!.taskDefinitionsHash}; harness ${a.protocol!.harnessHash}`,
       ];
   for (const model of [...new Set([...six.values()].map((t) => t.model))].sort()) {
     const pairs = [...six.values()].filter((t) => t.model === model).map((t) => [t, code.get(key(t))!] as const);
@@ -393,11 +433,83 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
   return lines.join("\n");
 }
 
+/**
+ * Node against workerd for the same surface, tasks, models and runner. A
+ * diagnostic only: it reports outcomes and efficiency side by side and never
+ * reaches a decision.
+ */
+export function crossTarget(node: AgentResultFile, worker: AgentResultFile): string {
+  const surface = node.config.surface ?? "six";
+  const reasons: string[] = [
+    ...measuredProvenance("node", surface, node),
+    ...measuredProvenance("worker", surface, worker),
+  ];
+  if (targetOf(node) !== "node") reasons.push("--a must be a node result");
+  if (targetOf(worker) !== "worker") reasons.push("--b must be a worker result");
+  // Every shared batch setting must match; only the target itself differs.
+  for (const label of settingMismatches(node, worker, ["target"])) reasons.push(`Targets must use the same ${label}`);
+  if (node.config.grading !== "outcome") reasons.push("measured grading must be outcome");
+  if (reasons.length)
+    throw new Error(`Cross-target diagnostic refused:\n${[...new Set(reasons)].map((r) => `- ${r}`).join("\n")}`);
+  const runner = node.config.runner === "claude" ? "claude" : "codex";
+  const left = validate(node, surface),
+    right = validate(worker, surface);
+  const lines = [
+    `CROSS-TARGET DIAGNOSTIC (no decision): node vs worker, ${surface} surface, ${runner}; source tree ${node.meta.git.srcTree}`,
+  ];
+  // The same efficiency aggregates as eval:agent and the report: medians over
+  // passing trials, pass@k/pass^k over graded trials (N/A and infrastructure
+  // errors excluded), k = the declared repeats.
+  const options = {
+    include: (t: TrialResult) => !isNA(t, runner),
+    pass: (t: TrialResult) => trialOutcome(t, runner).pass,
+  };
+  const grade = (t: TrialResult): Grade => {
+    const outcome = trialOutcome(t, runner);
+    return isNA(t, runner) || outcome.infrastructure ? "exclude" : outcome.pass ? "pass" : "fail";
+  };
+  for (const [label, trials] of [
+    ["node", [...left.values()]],
+    ["worker", [...right.values()]],
+  ] as [string, TrialResult[]][]) {
+    lines.push(`${label}:`);
+    lines.push(
+      ...efficiencyLines(modelEfficiency(trials, options), reliability(trials, node.config.repeats, grade)).map(
+        (line) => `  ${line}`,
+      ),
+    );
+  }
+  lines.push("Per task, passing medians (n passing/ran):");
+  for (const task of [...new Set([...left.values()].map((t) => t.task))].sort()) {
+    lines.push(`  ${task}`);
+    for (const [label, trials] of [
+      ["node", left],
+      ["worker", right],
+    ] as const)
+      for (const summary of modelEfficiency(
+        [...trials.values()].filter((t) => t.task === task),
+        options,
+      )) {
+        const m = summary.medians;
+        const value = (stat: { value: number | undefined }) => (stat.value === undefined ? "N/A" : String(stat.value));
+        lines.push(
+          `    ${label.padEnd(6)} ${summary.model} ${summary.passing}/${summary.trials}: calls ${value(m.calls)}, model turns ${value(m.modelTurns)}, input tokens incl. cache ${value(m.promptTokens)}, wall ms ${value(m.wallMs)}, response ${fmtSize(m.responseBytes.value)}, tool errors ${value(m.toolErrors)}`,
+        );
+      }
+  }
+  return lines.join("\n");
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = flags(process.argv.slice(2));
-  if (!args.has("a") || !args.has("b")) throw new Error("Usage: eval:compare -- --a <six.json> --b <code.json>");
+  if (!args.has("a") || !args.has("b"))
+    throw new Error(
+      "Usage: eval:compare --a <six.json> --b <code.json> [--allow-mismatch] | --cross-target --a <node.json> --b <worker.json>",
+    );
   const [a, b] = await Promise.all(
     [args.get("a")!, args.get("b")!].map(async (p) => JSON.parse(await readFile(p, "utf8")) as AgentResultFile),
   );
-  console.log(compare(a!, b!, { allowMismatch: args.has("allow-mismatch") }));
+  console.log(
+    args.has("cross-target") ? crossTarget(a!, b!) : compare(a!, b!, { allowMismatch: args.has("allow-mismatch") }),
+  );
 }
