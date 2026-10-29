@@ -13,7 +13,7 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 | Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                                                                                                                                                    |
 | Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [Clerk Organizations](#one-clerk-instance-one-organization-per-deployment), [management](#human-authentication-management)                                                        |
 | Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                                                                                                                                                         |
-| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                                                                                  |
+| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refreshing before expiry](#refreshing-before-expiry), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                           |
 | Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens), [principal forwarding](#forwarding-the-admitted-principal), [Google hosted MCP](#google-service-account-tokens-and-hosted-mcp) |
 | Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                                                                                                                                                          |
 
@@ -1309,6 +1309,17 @@ connector](#downstream-oauth-on-api) stores no client. A vault without the
 optional `seal`/`open` members keeps the body plaintext with a startup
 warning; no vault, plaintext as always.
 
+The body also holds `expiresAt`, the epoch milliseconds the stored access token
+expires: its `expires_in`, counted from just before the request that issued it
+was sent (the code exchange, or the refresh's token request), never from when
+its answer arrived or was saved, so a slow answer cannot push the expiry past
+the token's real one. An `expires_in` of `0` expires at issuance. It is written
+with the tokens it describes, replaced with them and dropped with them, in the
+sealed and plaintext layouts alike. A grant stored before this field existed,
+or one whose token response carried no `expires_in`, has none. Reading a grant
+never adds it (INV-10), so such a grant gains one only at its next token write,
+and until then is refreshed only after a 401.
+
 **Pre-layout-3 grants.** The layout-2 migration and historical-key cleanup
 are removed. An owner with only old keys is treated as unauthorized; a warning
 names the unsupported layout and the need to Connect again or migrate on
@@ -1442,6 +1453,47 @@ removal and revocation flow when deployment configuration supplies
 `revocationEndpoint`; without it, removal remains local. The configured
 client secret is used in memory and is never saved with the grant.
 
+## Refreshing before expiry
+
+A call refreshes the grant before it sends a token that is within 60 seconds of
+its stored `expiresAt`, so a write never meets the 401 it could not be repeated
+after (INV-9). Sixty seconds covers the refresh's own 20-second token-request
+deadline and the call's send with margin, and matches the early refresh of
+Google service-account tokens; for a typical one-hour token it is under 2% of
+its life. A token that lives under a minute, or arrives already expired, is
+refreshed once per call, in the invocation's check. Later in the same request,
+`callTool` and `ctx.oauth.fetch` send the token that renewal produced without
+renewing it again until its stored expiry passes (or, for a token already
+expired when issued, for the next check only); a token another request rotated
+in since is checked as usual.
+
+The renewal is the flow a 401 would start, through the same refresh
+coordinator: one redemption per owner partition and epoch in an isolate, the
+shared-storage lease and spent-fingerprint CAS across isolates, and the commit
+before anyone is released. Its token request names the access token it
+replaces, so a caller whose own read came before another request's rotation
+adopts that rotation instead of redeeming again. Two isolates that find the
+same token due spend one refresh token between them.
+
+| Where                                                                       | When                                                                                                        | A failed renewal                                                                                                                                                                |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The invocation's authorization check, before it enters the connector        | Every `call_tool`, `call_destructive_tool`, and program call, after the grant read that check already makes | Fails the call before anything is sent: `downstream_oauth_required` (or retryable `unavailable` for a waiter deadline), with no `writeOutcome` and no `reconciliationRequired`. |
+| `remoteMcp()`'s `callTool`, before it sends `tools/call` on a reused client | The token the connection last read has come due since                                                       | Ends the call before `tools/call` is sent. A call already entered reports it as the invocation reports any failure after entry.                                                 |
+| `api()`'s `ctx.oauth.fetch`, before each request                            | The token the request just read is due, as in a handler that runs long                                      | Is thrown into the handler, which may already have sent other requests, so a write keeps the invocation's conservative outcome.                                                 |
+
+Whether a token is due is decided from the grant read the step already made: a
+grant not yet due costs no extra storage read. A due token costs one more grant
+read for the renewal's own flow, and then the refresh's own reads and writes.
+Status, listing (including the stored-catalog read without a connection),
+discovery, the operator UI, and `authorize_connector` never renew a token
+(INV-10). Nothing renews in the background: renewal belongs to the call that
+found the token due, which owns its preparation until the claim CAS is
+submitted, as for a 401.
+
+A grant without `expiresAt` keeps the earlier behavior: it is refreshed after a
+downstream 401, a write's 401 is never resent, and the refresh that follows
+stores `expiresAt` for every later call.
+
 ## Refresh failures
 
 A refresh token is spent when dispatch begins. Every refresh request passes
@@ -1516,10 +1568,20 @@ a dispatched record. The refresh HTTP request and response body have a
 20-second deadline. After the response or a dispatched exchange failure,
 grant commit and cleanup share a separate 20-second deadline, including all
 storage reads, CAS retries, fingerprint resolution, and lease release.
-Contenders wait at most 35 seconds with 10 ms to 250 ms
-backoff. A waiter deadline returns retryable `unavailable`, keeps the grant,
-and starts no consent. It never permits resending a spent token.
+Contenders wait at most 35 seconds, and never past the caller's own signal,
+which carries the request's deadline. A waiter polls the lease from 50 ms,
+doubling to at most 2 seconds between polls, so a wait that runs the full 35
+seconds polls at most 22 times. Each poll is one batched storage read of the
+lease, the grant, the spent fingerprint, and the holder's liveness key named by
+the previous poll (one D1 statement); a store without batched reads reads them
+one at a time, lease first, so a completed lease is never paired with the grant
+from before its commit. A waiter deadline returns retryable `unavailable`,
+keeps the grant, and starts no consent. It never permits resending a spent
+token.
 
+A grant with `expiresAt` is normally renewed before its token expires
+([Refreshing before expiry](#refreshing-before-expiry)). A token revoked early,
+or one stored without an expiry, can still draw a 401.
 A `remoteMcp()` write the downstream answered with HTTP 401 is never sent
 again (INV-9). The SDK still refreshes the grant, and connecta stops its
 resend before it leaves, so any fresh call after the target is reconciled uses
@@ -2738,6 +2800,9 @@ owner's access token as `Authorization: Bearer` with these rules:
 
 - Only `apiOrigins` receive tokens; refuse other origins before sending, including
   untrusted response URLs. Return redirects unfollowed; handlers cannot set `Authorization`.
+- A token within a minute of its stored expiry is renewed before the handler
+  runs, and again before any request that finds it due
+  ([Refreshing before expiry](#refreshing-before-expiry)).
 - On 401, recover exactly once using an already rotated token or one coalesced
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
   owner is cancelled after the answer. Only a positively read-classified

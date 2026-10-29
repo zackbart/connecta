@@ -46,6 +46,7 @@ export interface StoredGrantRecord {
     issuer?: string;
     client?: { value: Record<string, unknown>; binding?: string; carried?: true };
     tokens?: { access_token: string; refresh_token?: string; token_type: string; [key: string]: unknown };
+    expiresAt?: number;
     discovery?: Record<string, unknown>;
   };
 }
