@@ -6,7 +6,7 @@ import { authView } from "../auth/native-call.js";
 import { authFlow, authCall, authInvoke, authValue, authMethod, authCatch } from "../auth/native.js";
 import { isOAuthCredentialRequest } from "../auth/oauth-token-response.js";
 import { deriveContext } from "../derived-context.js";
-import { operationContext, openRequest, viewServices, viewSignal, viewReads } from "../runtime/call.js";
+import { operationContext, openRequest, viewServices, viewSignal } from "../runtime/call.js";
 import {
   assertRemoteOAuthClient,
   declareSelfHostedClient,
@@ -2643,7 +2643,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         secrets: sentSecretsFor(ctx),
         authorizationParams,
         resourceOrigin: destination.origin,
-        reads: viewReads(ctx),
       },
     );
     if (state) state.provider = provider;

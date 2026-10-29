@@ -1,8 +1,8 @@
 // Request-scoped memo of storage reads (INV-7).
 //
-// One request often reads the same key many times: the SDK asks the OAuth
-// provider for tokens once per HTTP message, and status, drift and detail
-// views each open the same credential. A call site that has argued staleness
+// One request often reads the same key many times: a catalog listing reads its
+// generation at each step, and status, drift and detail views each open the
+// same credential. A call site that has argued staleness
 // within one request is safe reads through `RequestReads.read`; every other
 // read stays a plain storage read. The memo belongs to one request owner,
 // holds plain strings only, and is emptied when the request closes. Nothing in
@@ -19,13 +19,22 @@
 // include the write. So a write by this request, or by any other request in
 // this isolate, is never hidden by a memoized value. A store whose writes
 // connecta cannot observe (a custom adapter, or a built-in one whose methods
-// were replaced) is never memoized. Writes in another isolate, and expiry
-// within the request, are the staleness a memoizing call site accepts for the
-// rest of one request; it must say why that is safe.
+// were replaced) is never memoized. Writes in another isolate or process, and
+// expiry within the request, are invisible here: a memoized key can lag them
+// for the rest of the request. So no read that gates authority, sends a
+// credential or decides a write may be memoized; a call site that memoizes
+// must say why that staleness is safe.
 //
 // A `fresh` read bypasses the lookup and records what it saw, so a memoized
 // reader never returns a value older than this request's latest fresh read of
-// the same key.
+// the same key. Only the latest read of a key this request started records:
+// an earlier read that settles later, possibly from before another isolate's
+// write, never replaces a newer observation.
+//
+// The registry of open memos holds weak references, so a request owner that is
+// never closed cannot pin its memo. A runtime without `WeakRef` and
+// `FinalizationRegistry` (workerd before compatibility date 2025-05-05 without
+// `enable_weak_ref`) memoizes nothing: every read goes to storage.
 import { Effect } from "effect";
 import type { KVStorage } from "../types.js";
 
@@ -108,22 +117,26 @@ interface StoreEntries {
   values: Map<string, string | null>;
   /** Advanced by each write notice; a read records only if unchanged. */
   versions: Map<string, number>;
+  /** The last read of each key this memo started; only that one records. */
+  started: Map<string, number>;
 }
+
+const weakReferences = () => typeof WeakRef === "function" && typeof FinalizationRegistry === "function";
 
 export class RequestReads {
   private closed = false;
   private readonly stores = new Map<StoreIdentity, StoreEntries>();
-  private readonly ref = new WeakRef(this);
+  private readonly ref: WeakRef<RequestReads> | undefined = weakReferences() ? new WeakRef(this) : undefined;
 
   private entriesFor(store: StoreIdentity): StoreEntries {
     let entries = this.stores.get(store);
     if (!entries) {
-      entries = { values: new Map(), versions: new Map() };
+      entries = { values: new Map(), versions: new Map(), started: new Map() };
       this.stores.set(store, entries);
       eachOpen(store, () => {}); // prune collected memos
       let memos = open.get(store);
       if (!memos) open.set(store, (memos = new Set()));
-      memos.add(this.ref);
+      memos.add(this.ref!);
     }
     return entries;
   }
@@ -142,15 +155,22 @@ export class RequestReads {
     key: string,
     fresh: boolean,
   ): { hit: true; value: string | null } | { hit: false; record: (value: string | null) => void } | undefined {
-    const address = this.closed ? undefined : physical(storage, key);
+    const address = this.closed || !this.ref ? undefined : physical(storage, key);
     if (!address) return undefined;
     const entries = this.entriesFor(address.store);
     if (!fresh && entries.values.has(address.key)) return { hit: true, value: entries.values.get(address.key)! };
     const before = entries.versions.get(address.key) ?? 0;
+    const read = (entries.started.get(address.key) ?? 0) + 1;
+    entries.started.set(address.key, read);
     return {
       hit: false,
       record: (value) => {
-        if (!this.closed && (entries.versions.get(address.key) ?? 0) === before) entries.values.set(address.key, value);
+        if (
+          !this.closed &&
+          entries.started.get(address.key) === read &&
+          (entries.versions.get(address.key) ?? 0) === before
+        )
+          entries.values.set(address.key, value);
       },
     };
   }
@@ -191,7 +211,7 @@ export class RequestReads {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    for (const store of this.stores.keys()) open.get(store)?.delete(this.ref);
+    for (const store of this.stores.keys()) if (this.ref) open.get(store)?.delete(this.ref);
     this.stores.clear();
   }
 }

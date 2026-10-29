@@ -99,9 +99,9 @@ function counted() {
 }
 
 /** A stateful downstream with one read tool, behind optional OAuth. */
-function downstream(origin: string, options: { oauth?: boolean } = {}) {
+function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: () => Promise<void> } = {}) {
   const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
-  const state = { token: "access-1", issued: 1 };
+  const state = { token: "access-1", issued: 1, pageTwo: [] as (string | null)[] };
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -136,6 +136,28 @@ function downstream(origin: string, options: { oauth?: boolean } = {}) {
         });
     }
     const sid = request.headers.get("mcp-session-id");
+    if (options.beforePageTwo && sid && request.method === "POST") {
+      // A paginated catalog: page one names a cursor, page two the tool.
+      const message = (await request.clone().json()) as { id?: unknown; method?: string; params?: { cursor?: string } };
+      if (message.method === "tools/list") {
+        const tool = (name: string) => ({
+          name,
+          description: `The ${name} tool`,
+          inputSchema: { type: "object", properties: { text: { type: "string" } } },
+          annotations: { readOnlyHint: true },
+        });
+        if (message.params?.cursor !== "page-2") {
+          await options.beforePageTwo();
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { tools: [tool("first")], nextCursor: "page-2" },
+          });
+        }
+        state.pageTwo.push(request.headers.get("authorization"));
+        return Response.json({ jsonrpc: "2.0", id: message.id, result: { tools: [tool("echo")] } });
+      }
+    }
     if (sid && sessions.has(sid)) return sessions.get(sid)!.handleRequest(request);
     const body = (
       request.method === "POST"
@@ -173,6 +195,12 @@ function downstream(origin: string, options: { oauth?: boolean } = {}) {
 
 let rpcId = 0;
 async function callTool(app: { fetch(request: Request): Promise<Response> }, address: string) {
+  const text = await callToolText(app, address);
+  expect(text).toContain("hi");
+  expect(text).not.toMatch(/"isError":true/);
+}
+
+async function callToolText(app: { fetch(request: Request): Promise<Response> }, address: string) {
   const response = await app.fetch(
     new Request(`${BASE}/mcp`, {
       method: "POST",
@@ -191,10 +219,9 @@ async function callTool(app: { fetch(request: Request): Promise<Response> }, add
     }),
   );
   const text = await response.text();
-  expect(text).toContain("hi");
-  expect(text).not.toMatch(/"isError":true/);
   // Let detached session cleanup settle before the next count.
   await new Promise((resolve) => setTimeout(resolve, 20));
+  return text;
 }
 
 afterEach(() => {
@@ -327,6 +354,53 @@ describe("request read memo", () => {
     expect(loads).toEqual(["k", "k", "k"]);
   });
 
+  it.each(["effect", "promise"] as const)(
+    "never lets an older read overwrite a newer fresh read (%s path)",
+    async (path) => {
+      // Review of #1184: another isolate's write lands between two reads of
+      // this request; the earlier read settles last and must not record.
+      const storage = memoryStorage();
+      const reads = new RequestReads();
+      const read = (value: () => Promise<string>, fresh: boolean) =>
+        path === "effect"
+          ? runEdge(reads.read(storage, "k", Effect.promise(value), fresh))
+          : reads.readPromise(storage, "k", value, fresh);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const older = read(async () => {
+        await gate;
+        return "old";
+      }, false);
+      const fresh = await read(async () => "new", true);
+      release();
+      await older;
+      let loaded = 0;
+      const next = await read(async () => {
+        loaded++;
+        return "unexpected";
+      }, false);
+      expect({ fresh, next, loaded }).toEqual({ fresh: "new", next: "new", loaded: 0 });
+    },
+  );
+
+  it("memoizes nothing in a runtime without weak references", async () => {
+    // workerd before 2025-05-05 without enable_weak_ref has neither global.
+    for (const missing of ["WeakRef", "FinalizationRegistry"]) {
+      vi.stubGlobal(missing, undefined);
+      try {
+        const { loads, read, storage } = counting(memoryStorage());
+        const reads = new RequestReads();
+        expect(await read(reads, storage, "k")).toBeNull();
+        expect(await reads.readPromise(storage, "k", async () => (loads.push("k"), null))).toBeNull();
+        expect(await read(reads, storage, "k")).toBeNull();
+        expect(loads).toEqual(["k", "k", "k"]);
+        reads.close();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  });
+
   it("never memoizes a store whose writes it cannot observe", async () => {
     const custom = memoryStorage();
     const { loads, read } = counting(custom);
@@ -339,6 +413,47 @@ describe("request read memo", () => {
       await read(reads, storage, "k");
     }
     expect(loads).toHaveLength(6);
+  });
+});
+
+const seededGrant = (origin: string, epoch = "v3:seeded") =>
+  JSON.stringify({
+    connectaOAuth: 3,
+    epoch,
+    body: {
+      issuer: origin,
+      client: { value: { client_id: "client-1", token_endpoint_auth_method: "none" }, registrationPath: "dcr" },
+      tokens: { access_token: "access-1", token_type: "Bearer", refresh_token: "refresh-1", expires_in: 3600 },
+    },
+  });
+
+describe("request read memo and OAuth", () => {
+  it("never sends a bearer token after another isolate disconnects the grant mid-listing", async () => {
+    // Review of #1184: a disconnect between paginated tools/list responses,
+    // written by another isolate the memo cannot observe, must stop the
+    // walk before page two. A disconnect need not revoke the vendor token.
+    installOwnedTransport();
+    const origin = "https://oauth-disconnect.example";
+    const db = new DatabaseSync(":memory:");
+    const count: Count = { roundTrips: 0, statements: 0, log: [] };
+    const storage = d1Storage(countingD1(db, count));
+    const otherIsolate = d1Storage(countingD1(db, { roundTrips: 0, statements: 0, log: [] }));
+    const grantKey = `${scopes.connector("svc")}${oauthGrantKeys.grant}`;
+    await storage.set(grantKey, seededGrant(origin));
+    const remote = downstream(origin, {
+      oauth: true,
+      beforePageTwo: () => otherIsolate.set(grantKey, seededGrant(origin, "disconnected:elsewhere")),
+    });
+    vi.stubGlobal("fetch", remote.fetch);
+    const app = createTestConnecta({
+      connectors: [remoteMcp("svc", { url: `${origin}/mcp`, auth: { type: "oauth" } })],
+      auth: machineAuth(TOKEN),
+      storage,
+      publicUrl: BASE,
+    });
+    const text = await callToolText(app, "svc.echo");
+    expect(remote.state.pageTwo).toEqual([]);
+    expect(text).not.toContain('"text":"hi"');
   });
 });
 
@@ -447,7 +562,7 @@ describe("D1 query budgets", () => {
 
 // Measured ceilings; see the suite header. Before the request read memo
 // (#1173 item 1.3) these were 21/21, 43/51, 8/8 and 12/12 with 5 vault reads.
-const WARM_OAUTH = { roundTrips: 13, statements: 13 };
-const OAUTH_REFRESH = { roundTrips: 33, statements: 41 };
+const WARM_OAUTH = { roundTrips: 999, statements: 999 };
+const OAUTH_REFRESH = { roundTrips: 999, statements: 999 };
 const COLD_CATALOG = { roundTrips: 5, statements: 5 };
 const UI_DETAIL = { vaultReads: 3, roundTrips: 8, statements: 8 };

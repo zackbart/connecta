@@ -2174,23 +2174,48 @@ closes (INV-7). It holds plain strings keyed by the physical key in the
 underlying store, so namespaced views of one partition share an entry and two
 principals' partitions never do. A read consults it only where the call site
 opts in and states why staleness within one request is safe; every other read
-goes to storage. Every write through the SQL drivers, `memoryStorage()` or a
-namespaced view over them drops that key from every open memo in the isolate,
-before submission and again on settlement, and a read the write overlapped is
-not recorded. A custom store, or a built-in one with a replaced method, is never
-memoized. A fresh read records what it saw, so a memoized reader is never older
-than its request's latest fresh read of the key. Memoized today: the SDK's
-OAuth accessor reads (`tokens`, `clientInformation`, `discoveryState`); the
-negotiation verdict; catalog generation reads that only locate an entry; and
-the credential reads behind connector status, drift and the operator UI card.
-Fresh, always: OAuth epoch checks (call admission, `beginFlow`, the
-post-connect re-authorization check), the pre-connect `peekGrant` snapshot and
-each identity check during cache acceptance, compare-and-set loops, refresh
-claims and leases, resets and disconnects, the catalog generation fence before
-a cached entry is served or published, and the credential a call sends.
-`test/request-reads.node.test.ts` holds the memo's contract and D1 round-trip
-and statement ceilings for a warm OAuth call, an expired-token refresh, a
-cold-isolate catalog load and an operator UI detail read.
+goes to storage.
+
+- Every write through the SQL drivers, `memoryStorage()` or a namespaced view
+  over them drops that key from every open memo in the same isolate, before
+  submission and again on settlement. A read that such a write overlapped is
+  not recorded.
+- Only the latest read of a key that the request started records. An earlier
+  read that settles later never replaces a newer fresh observation.
+- A fresh read records what it saw, so a memoized reader is never older than
+  its request's latest fresh read of the key.
+- A custom store, or a built-in one with a replaced method, is never memoized.
+- A runtime without `WeakRef` and `FinalizationRegistry` memoizes nothing:
+  workerd before compatibility date 2025-05-05 without `enable_weak_ref` reads
+  storage every time.
+
+The memo cannot see another isolate, another process sharing the database, or
+an entry expiring. After the first read, a memoized key can lag such a change
+for the rest of the request. So nothing that gates authority, sends a
+credential, or decides a write is memoized.
+
+Memoized:
+
+- the negotiation verdict, which only orders handshake versions;
+- catalog generation reads that only locate an entry, accepted or refused by a
+  fresh fence;
+- the credential reads behind connector status, drift and the operator UI card,
+  which only label a view.
+
+Always fresh:
+
+- every OAuth grant read, including the token and epoch check behind each SDK
+  message (a disconnect need not revoke the vendor token), `peekGrant` and
+  every cache-acceptance identity check, compare-and-set loops, refresh claims
+  and leases, resets and disconnects;
+- the catalog generation fence before a cached entry is served or published;
+- the credential a call sends.
+
+`test/request-reads.node.test.ts` holds the memo's contract, including a
+disconnect written by another isolate between paginated `tools/list` pages. It
+also holds D1 round-trip and statement ceilings for a warm OAuth call, an
+expired-token refresh, a cold-isolate catalog load and an operator UI detail
+read.
 
 ### Contributor provider kit
 
