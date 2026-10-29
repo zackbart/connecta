@@ -209,6 +209,35 @@ Authentication and rate-limit errors stop further trials. The result records
 full final answers, clipped display transcripts, fake calls, grades, image
 output checks, and simulated URL elicitations.
 
+### Efficiency metrics
+
+`eval:agent` ends a batch with a compact summary per model, and the HTML report
+adds an Efficiency table after the pass matrix. Both use
+`eval/report/efficiency.ts`, as `eval:compare` does:
+
+- Passing-trial medians: top-level calls, model turns, input tokens including
+  cache reads and writes, output tokens, wall time, tool errors, guide fetches
+  and response bytes. A median over fewer trials than pass shows its `n`.
+- pass@k and pass^k: for each task × model cell with k graded trials, the
+  chance that at least one, or all, of k trials pass, then their unweighted
+  mean over cells. k is the declared `--repeats`. Cells with fewer than k
+  graded trials have no estimate and are counted. N/A trials are excluded; the
+  summary and report also exclude infrastructure errors, like their pass rate.
+  With one repeat both equal the pass rate.
+- Response bytes: UTF-8 bytes of each top-level tool result the agent received,
+  by tool, per call and per trial. Non-text blocks count as their recorded JSON.
+- Guide fetches: `skills` calls with a non-empty `name`, plus `connecta.skill`
+  calls inside programs. `skills` calls that list or search guides do not count.
+- Most expensive trials: the three ran trials with the most total tokens, each
+  with its largest single response, guide fetches and tool errors.
+
+Response sizes and guide fetches are derived from saved grading inputs
+(`saved.trace.toolUses` and `saved.world.programs`); no new trial field is
+recorded. Every trial has saved them since 0.29. Older files, such as the
+`codex-2026-09-25-*` baselines, lack them and report N/A, as do N/A rows.
+Trials missing other historical metrics such as `modelTurns` or `toolErrors`
+are left out of that median, which prints its smaller `n`.
+
 ## A/B arms, grading and decision rule
 
 For #765 and draft decision record #775, run the same 19 tasks on a fresh
@@ -329,9 +358,16 @@ The code arm rejects JSON-RPC batches before dispatch; use one
 program for multiple operations.
 It prints outcome counts/rates, each task's pass-count delta and paired gains
 and losses, drops of at least three trials, duplicate-write and export-once
-violations, mean model turns, top-level calls, input/output tokens and wall time.
-First-attempt program errors count trials whose first `execute_code` result is
-an error; trials without a program count zero. Missing observations print N/A.
+violations, and per arm the mean and median model turns, top-level calls,
+input/output tokens, wall time and tool errors. It also prints pass@k and
+pass^k for each task and their mean over tasks, guide fetches and response
+bytes per trial, and per-call response bytes by tool; see
+[Efficiency metrics](#efficiency-metrics). Here k is the declared repeat count
+and the eligible trials are those of the outcome rate, so infrastructure errors
+count as misses. First-attempt program errors count trials whose first
+`execute_code` result is an error; trials without a program count zero.
+Missing observations print N/A. These efficiency figures are diagnostics; the
+decision rule below does not use them.
 
 The following decision rule is registered before collecting A/B data. Evaluate
 it separately for each model. The code arm passes only if:
