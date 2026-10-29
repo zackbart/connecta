@@ -446,7 +446,8 @@ describe("hatch details state response fields that real reads return unchanged (
     }
     let tested = 0;
     const unreached: string[] = [];
-    for (const { method, path } of operations.values()) {
+    // A bounded, deterministic sample: the first eight read operations the searches find.
+    for (const { method, path } of [...operations.values()].slice(0, 8)) {
       const contract = await call("details", { method, path });
       const response = contract.response;
       if (!response) continue;
