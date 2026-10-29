@@ -673,7 +673,9 @@ publish a new catalog after invalidation without letting an older listing
 adopt its generation. A public transport observer starts a generation rotation
 before the SDK processes tool or resource list-changed notifications; its lifetime is
 the connection's, including after a successful resource read or listing ends.
-Opposite-scope cleanup only deletes its entry. SDK listings serialize per client
+Opposite-scope cleanup only deletes its entry. A zero-TTL write and
+opposite-scope cleanup skip deleting an entry their own listing read as
+missing and has not written since. SDK listings serialize per client
 because the cache store has no per-call options. Their operation binding lasts
 through the SDK's cleanup, and each cache method captures that binding before
 awaiting. Cache I/O checks cancellation and scope teardown at every await
@@ -695,7 +697,14 @@ activity write. The first complete catalog is a baseline.
 Hash-only baselines publish bounded chunks before a manifest. They store the
 catalog digest and hashes of each tool name and fact, so added, removed and changed counts require no persisted tool names or
 schemas. They use the exact host auth/config cache partition, survive catalog
-expiry and invalidation, and expire after 48 hours. There is no connection-wide
+expiry and invalidation, and expire 48 hours after they are written. A refresh
+reads the manifest first. When its digest matches a baseline written within the
+last hour, the refresh writes nothing; an older matching baseline is rewritten
+with fresh chunks, so every refresh leaves a baseline for at least 47 hours.
+A manifest's lifetime is never extended without new chunks, so its chunks
+always outlive it. A changed digest writes the new baseline and reports drift
+against the previous one. An unchanged zero-TTL listing therefore writes
+nothing, while it still lists live every time. There is no connection-wide
 fallback baseline across partitions. Private catalog events use the admitted
 principal actor basis even for shared-auth connectors; activity disclosure
 requires that same owner and the recorded pool's grants. Ownerless private

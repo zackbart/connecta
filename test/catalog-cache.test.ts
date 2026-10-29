@@ -345,6 +345,83 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(baseline).not.toMatch(/old|new|inputSchema/);
   });
 
+  it("INV-6 INV-8: a modern zero-TTL catalog lists every call, writes nothing while unchanged and still records drift", async () => {
+    const store = await storage();
+    const id = `modern_zero_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const recordChange = vi.fn();
+    let description = "Read a record";
+    let listings = 0;
+    // The SDK server's default catalog hint is `ttlMs: 0`.
+    const downstream = httpDownstream(
+      (mcp) =>
+        mcp.registerTool("read", { description, annotations: { readOnlyHint: true } }, async () => ({ content: [] })),
+      {
+        capture: async (request) => {
+          if (request.method !== "POST") return;
+          if (((await request.json()) as { method?: string }).method === "tools/list") listings++;
+        },
+      },
+    );
+    const connector = remoteMcp(id, { url: downstream.url, fetch: downstream.fetch });
+    const call = async () => {
+      const registry = new Registry([connector], {
+        storage: store,
+        logger: silentLogger,
+        catalogDriftActivity: { recordChange, sink: { record: () => {} }, serverInfo: { name: "test", version: "1" } },
+      });
+      const ctx = registry.contextFor(id, BASE, {});
+      try {
+        return (await connector.listTools(ctx)).map((tool) => tool.description);
+      } finally {
+        await connector.closeScope!(ctx);
+      }
+    };
+    const writes = () => (["set", "compareAndSet", "delete"] as const).map((method) => vi.spyOn(store, method));
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    expect(await call()).toEqual(["Read a record"]);
+    const baseline = (await store.list(responseCacheKeys.prefix(id))).filter(
+      (key) => key.includes(":refresh-digest:") && !key.includes(":chunk:"),
+    );
+    expect(baseline).toHaveLength(1);
+    const written = await store.get(baseline[0]!);
+
+    // Budget: a warm unchanged call still lists, never reuses, and writes nothing.
+    let spies = writes();
+    expect(await call()).toEqual(["Read a record"]);
+    expect(listings).toBe(2);
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    expect(await store.get(baseline[0]!)).toBe(written);
+    expect(recordChange).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+
+    // An hour on, the unchanged baseline is rewritten once and reports no drift.
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    now += 60 * 60 * 1000;
+    await call();
+    expect(await store.get(baseline[0]!)).not.toBe(written);
+    expect(recordChange).not.toHaveBeenCalled();
+
+    // A changed catalog writes its baseline and records drift once.
+    description = "Read one record";
+    spies = writes();
+    expect(await call()).toEqual(["Read one record"]);
+    expect(spies[0]).toHaveBeenCalled();
+    expect(spies[1]).toHaveBeenCalled();
+    expect(recordChange).toHaveBeenCalledOnce();
+    expect(recordChange.mock.calls[0]![1]).toMatchObject({
+      connectorId: id,
+      drift: { kind: "catalog_changed", addedTools: 0, removedTools: 0, changedTools: 1 },
+    });
+    vi.restoreAllMocks();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    spies = writes();
+    await call();
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    expect(recordChange).toHaveBeenCalledOnce();
+    expect(listings).toBe(5);
+  });
+
   it.each([0])(
     "INV-7 INV-8: closing temporary instance %s preserves another instance with the same connector id and request scope",
     async (closing) => {
