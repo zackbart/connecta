@@ -2,7 +2,6 @@ import { playReference } from "./agent/reference.js";
 import { QUICKBOOKS_WRITE_TASK } from "./tasks/quickbooks-writes.js";
 import { QUICKBOOKS_TASK } from "./tasks/quickbooks.js";
 import { GRANOLA_TASK } from "./tasks/granola.js";
-import { GRANOLA_KEY } from "./fakes/granola.js";
 /**
  * `pnpm run eval:smoke [--targets a,b] [--no-build] [--out path]` — boot both
  * deployment shapes from this checkout and drive them over MCP and a browser.
@@ -700,10 +699,12 @@ async function providerJourney(
                       "--var",
                       `PUBLIC_URL:${origin}`,
                       ...(notes
-                        ? ["--var", `GRANOLA_URL:${world.granola.url}`, "--var", `GRANOLA_KEY:${GRANOLA_KEY}`]
+                        ? ["--var", `GRANOLA_URL:${world.granola.url}`, "--var", `GRANOLA_KEY:${world.granola.key}`]
                         : [
                             "--var",
                             `QUICKBOOKS_URL:${world.quickbooks.url}`,
+                            "--var",
+                            `QUICKBOOKS_CLIENT:${world.quickbooks.clientId}`,
                             "--var",
                             `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
                           ]),

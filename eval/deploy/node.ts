@@ -1,13 +1,13 @@
-import { interceptQuickBooks, quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
+import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
 import { granola } from "@zackbart/connecta/providers/granola";
-import { interceptGranola } from "./granola.js";
 import { gmail } from "@zackbart/connecta/providers/gmail";
 import { drive } from "@zackbart/connecta/providers/drive";
 import { docs } from "@zackbart/connecta/providers/docs";
 import { sheets } from "@zackbart/connecta/providers/sheets";
 import { slides } from "@zackbart/connecta/providers/slides";
 import { forms } from "@zackbart/connecta/providers/forms";
-import { ALICE, installGoogleKitTransport } from "../fakes/google.js";
+import { ALICE } from "../fakes/google.js";
+import { holdFakeKitTransport, repinFakeKitTransport } from "../fakes/transport.js";
 /**
  * The Node deployment the agent evals run against uses the template's stored
  * access-token auth, SQLite storage, QuickJS executor, operator UI, and
@@ -34,7 +34,7 @@ import { overflow } from "@zackbart/connecta/providers/overflow";
 import { breeze } from "@zackbart/connecta/providers/breeze";
 import { planningCenter } from "@zackbart/connecta/providers/planning-center";
 import { tithely } from "@zackbart/connecta/providers/tithely";
-import { ACCOUNT_A, SHOP_ZONE, installRestKitTransport } from "../fakes/rest.js";
+import { ACCOUNT_A, SHOP_ZONE } from "../fakes/rest.js";
 import { createConnecta, remoteMcp } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
@@ -81,8 +81,7 @@ export async function startNodeDeployment(
   let connecta: ReturnType<typeof createConnecta> | undefined;
   let server: ReturnType<typeof listen> | undefined;
   let cleanupExecutor: ReturnType<typeof observedExecutor> | undefined;
-  let restoreFetch: (() => void) | undefined;
-  let restoreTransport: (() => void) | undefined;
+  let releaseTransport: (() => void) | undefined;
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -100,8 +99,7 @@ export async function startNodeDeployment(
       } finally {
         try {
           database?.close();
-          restoreTransport?.();
-          restoreFetch?.();
+          releaseTransport?.();
         } finally {
           await rm(dir, { recursive: true, force: true });
         }
@@ -120,10 +118,9 @@ export async function startNodeDeployment(
     const quiet = { debug() {}, info() {}, warn() {}, error() {} };
     let observed = (cleanupExecutor = observedExecutor(surface));
     const previousPrograms: ProgramObservation[] = [];
+    // The fakes route their own credentials; see eval/fakes/transport.ts.
     const qb = connectors.find((s) => s.quickbooks);
-    if (qb) restoreFetch = interceptQuickBooks(qb.url);
     const notes = connectors.find((s) => s.granola);
-    if (notes) restoreFetch = interceptGranola(notes.url);
     const build = () =>
       createConnecta({
         readOnly: endpointReadOnly,
@@ -212,7 +209,7 @@ export async function startNodeDeployment(
               auth: quickbooksAuth,
               maintainers: ["alice", "bob"],
               pools: quickbooksPools(quickbooksWrites === true),
-              connectors: quickbooksConnectors(quickbooksWrites === true),
+              connectors: quickbooksConnectors(quickbooksWrites === true, qb.quickbooks!.clientId),
             }
           : {}),
         ...(passthrough as Partial<Parameters<typeof createConnecta>[0]>),
@@ -238,10 +235,11 @@ export async function startNodeDeployment(
         gracefulShutdown: false,
       },
     );
+    // listen() just installed Node's owned sender, which bypasses the fake
+    // routing. Re-pin it in the same tick, before any request can dispatch.
+    if (qb || notes || connectors.some((spec) => spec.rest || spec.google)) releaseTransport = holdFakeKitTransport();
+    else repinFakeKitTransport();
     await once(server, "listening");
-    if (qb || notes) restoreTransport = installRestKitTransport();
-    else if (connectors.some((spec) => spec.rest)) installRestKitTransport();
-    if (connectors.some((spec) => spec.google)) installGoogleKitTransport();
     for (const spec of connectors.filter((entry) => entry.rest === "ccb")) {
       const connector = connecta.registry.getConnector(spec.id)!;
       const ctx = connecta.registry.contextFor(spec.id, origin);

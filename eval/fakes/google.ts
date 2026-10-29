@@ -1,7 +1,7 @@
 /** Frozen Workspace universe. Only owned in-memory routes; never a real Google account. */
 import { generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
-import { configureGuardedTransport } from "../../src/guarded-transport.js";
+import { routeFakeVendor } from "./transport.js";
 import type { ConnectorSpec } from "./world.js";
 import type { Ledger, CallRecord } from "./service.js";
 
@@ -489,22 +489,14 @@ export function googleState() {
 }
 export type GoogleState = ReturnType<typeof googleState>;
 
-const issuers = new Map<string, FakeGoogle>();
-const tokens = new Map<string, { world: FakeGoogle; subject: string; scopes: string[] }>();
-let originalFetch: typeof fetch | undefined;
-let previousTransport: ReturnType<typeof configureGuardedTransport>;
-
-export function installGoogleKitTransport(): void {
-  const previous = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  if (!previousTransport) previousTransport = previous;
-}
-
 export class FakeGoogle {
   readonly state = googleState();
   readonly boundaryTokens: string[] = [];
   serviceAccount!: { clientEmail: string; privateKey: string };
   private publicKey!: ReturnType<typeof generateKeyPairSync>["publicKey"];
   private catalogBytes = "";
+  private readonly grants = new Map<string, { subject: string; scopes: string[] }>();
+  private release: (() => void) | undefined;
   constructor(
     readonly ledger: Ledger,
     readonly options: GoogleOptions,
@@ -564,42 +556,34 @@ export class FakeGoogle {
     this.catalogBytes = [...GOOGLE_PRODUCTS, "_shared/google"]
       .map((p) => corpus(new URL(`../../src/providers/${p}/`, import.meta.url)))
       .join("\n");
-    issuers.set(this.serviceAccount.clientEmail, this);
-    if (!originalFetch) {
-      originalFetch = globalThis.fetch;
-      const forward = originalFetch;
-      globalThis.fetch = async (input, init) => {
-        const request = new Request(input, init),
-          url = new URL(request.url);
-        if (!HOSTS.has(url.hostname)) {
-          if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return forward(request);
-          throw new Error("Unregistered Google fake destination");
-        }
-        if (url.protocol !== "https:" || url.port) throw new Error("Unregistered Google fake origin");
-        if (url.href === "https://oauth2.googleapis.com/token") {
-          const parameters = new URLSearchParams(await request.text());
-          if (
-            request.method !== "POST" ||
-            parameters.get("grant_type") !== "urn:ietf:params:oauth:grant-type:jwt-bearer"
-          )
-            throw new Error("Unregistered Google token method or grant");
-          const assertion = parameters.get("assertion") ?? "";
-          let claims: Row;
-          try {
-            claims = JSON.parse(Buffer.from(assertion.split(".")[1] ?? "", "base64url").toString());
-          } catch {
-            throw new Error("Unregistered Google assertion");
-          }
-          const world = issuers.get(claims.iss);
-          if (!world) throw new Error("Unregistered Google issuer");
-          return world.mint(assertion, claims);
-        }
-        const bearer = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
-        const grant = tokens.get(bearer);
-        if (!grant) throw new Error("Unregistered Google bearer identity");
-        return grant.world.handle(request, grant.subject, grant.scopes);
-      };
+    const issuer = `iss:${this.serviceAccount.clientEmail}`;
+    this.release = routeFakeVendor({
+      hosts: [...HOSTS],
+      owns: (credential) => credential === issuer || this.grants.has(credential),
+      target: (request) => this.vendor(request),
+    });
+  }
+
+  /** Only this world's issuer and minted tokens reach here; the registry refuses everything else. */
+  private async vendor(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.href === "https://oauth2.googleapis.com/token") {
+      const parameters = new URLSearchParams(await request.text());
+      if (request.method !== "POST" || parameters.get("grant_type") !== "urn:ietf:params:oauth:grant-type:jwt-bearer")
+        throw new Error("Unregistered Google token method or grant");
+      const assertion = parameters.get("assertion") ?? "";
+      let claims: Row;
+      try {
+        claims = JSON.parse(Buffer.from(assertion.split(".")[1] ?? "", "base64url").toString());
+      } catch {
+        throw new Error("Unregistered Google assertion");
+      }
+      if (claims.iss !== this.serviceAccount.clientEmail) throw new Error("Unregistered Google issuer");
+      return this.mint(assertion, claims);
     }
+    const grant = this.grants.get(request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "");
+    if (!grant) throw new Error("Unregistered Google bearer identity");
+    return this.handle(request, grant.subject, grant.scopes);
   }
 
   private mint(assertion: string, claims: Row): Response {
@@ -629,7 +613,7 @@ export class FakeGoogle {
         this.catalogBytes.includes(part),
       )
     );
-    tokens.set(token, { world: this, subject: claims.sub, scopes });
+    this.grants.set(token, { subject: claims.sub, scopes });
     this.state.mints.push({ subject: claims.sub, scopes });
     return Response.json({ access_token: token, expires_in: 3599, token_type: "Bearer" });
   }
@@ -645,14 +629,9 @@ export class FakeGoogle {
   }
 
   async stop() {
-    issuers.delete(this.serviceAccount.clientEmail);
-    for (const [key, grant] of tokens) if (grant.world === this) tokens.delete(key);
-    if (!issuers.size && originalFetch) {
-      globalThis.fetch = originalFetch;
-      originalFetch = undefined;
-      configureGuardedTransport(previousTransport);
-      previousTransport = undefined;
-    }
+    this.release?.();
+    this.release = undefined;
+    this.grants.clear();
   }
 
   async handle(request: Request, subject: string, scopes: string[]): Promise<Response> {

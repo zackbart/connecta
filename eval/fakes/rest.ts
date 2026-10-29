@@ -2,7 +2,7 @@
 import { serveFetch, type Served } from "../support/serve.js";
 import type { CallRecord, Ledger } from "./service.js";
 import { randomUUID } from "node:crypto";
-import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
+import { routeFakeVendor } from "./transport.js";
 import { stripeStep2Read } from "./stripe.js";
 import { vercelStep2Dispatch } from "./vercel.js";
 import { cloudflareStep2Read } from "./cloudflare.js";
@@ -22,77 +22,16 @@ const HOSTS: Record<RestVendor, string[]> = {
   cloudflare: ["api.cloudflare.com"],
   vercel: ["api.vercel.com"],
 };
-const routes = new Map<string, { url: string; hosts: string[] }>();
-let originalFetch: typeof fetch | undefined;
-let previousKitTransport: GuardedTransport | undefined;
-let kitInstalled = false;
+const keyed = new Map<string, () => void>();
 
-/** listen() installs Node's sender; evals route kit calls through the fake-credential guard too. */
-export function installRestKitTransport(): () => void {
-  const wasInstalled = kitInstalled;
-  const priorTransport = previousKitTransport;
-  const previous = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  if (!kitInstalled) previousKitTransport = previous;
-  kitInstalled = true;
-  return () => {
-    configureGuardedTransport(previous);
-    kitInstalled = wasInstalled;
-    previousKitTransport = priorTransport;
-  };
-}
-
-/** Keep the providers' production host guards; route only fresh fake credentials. */
-function installTransport() {
-  if (originalFetch) return;
-  const forward = globalThis.fetch;
-  originalFetch = forward;
-  globalThis.fetch = (async (input, init) => {
-    const request = new Request(input, init);
-    const url = new URL(request.url);
-    if (
-      !Object.values(HOSTS).flat().includes(url.hostname) &&
-      url.hostname !== "church.breezechms.com" &&
-      url.hostname !== "api.github.com" &&
-      url.hostname !== "api.ccbchurch.com"
-    )
-      return forward(request);
-    const oauthClient =
-      url.hostname === "api.ccbchurch.com" && url.pathname === "/oauth/token"
-        ? request.headers.get("authorization")?.startsWith("Basic ")
-          ? Buffer.from(request.headers.get("authorization")!.slice(6), "base64").toString().split(":")[0]
-          : new URLSearchParams(await request.clone().text()).get("client_id")
-        : undefined;
-    const key =
-      oauthClient ??
-      request.headers.get("api-key") ??
-      request.headers.get("x-auth-key") ??
-      request.headers.get("authorization")?.replace(/^Bearer /, "");
-    let target = key ? routes.get(key) : undefined;
-    if (!target && url.hostname === "api.github.com" && key) {
-      try {
-        target = routes.get(`jwt:${JSON.parse(Buffer.from(key.split(".")[1] ?? "", "base64url").toString()).iss}`);
-      } catch {
-        /* unregistered credentials refuse below */
-      }
-    }
-    if (!target || !target.hosts.includes(url.hostname)) throw new Error("Eval refused non-fake vendor transport");
-    return forward(new Request(`${target.url}${url.pathname}${url.search}`, request));
-  }) as typeof fetch;
-}
 /** Register an explicitly confined fake credential, shared by provider evals. */
 export function registerFakeRoute(key: string, url: string, hosts: string[]) {
-  installTransport();
-  routes.set(key, { url, hosts });
+  if (keyed.has(key)) throw new Error("Eval fake credential registered twice");
+  keyed.set(key, routeFakeVendor({ hosts, owns: (value) => value === key, target: url }));
 }
 export function unregisterFakeRoute(key: string) {
-  routes.delete(key);
-  if (!routes.size && originalFetch) {
-    globalThis.fetch = originalFetch;
-    originalFetch = undefined;
-    if (kitInstalled) configureGuardedTransport(previousKitTransport);
-    kitInstalled = false;
-    previousKitTransport = undefined;
-  }
+  keyed.get(key)?.();
+  keyed.delete(key);
 }
 type Row = Record<string, any>;
 // Stripe compares parameters rather than their serialization order.
@@ -187,19 +126,11 @@ export class FakeRestService {
   }
   async start() {
     this.served = await serveFetch((request) => this.handle(request));
-    installTransport();
-    routes.set(this.token, { url: this.url, hosts: HOSTS[this.vendor] });
+    registerFakeRoute(this.token, this.url, HOSTS[this.vendor]);
   }
   async stop() {
-    routes.delete(this.token);
+    unregisterFakeRoute(this.token);
     await this.served?.close();
-    if (!routes.size && originalFetch) {
-      globalThis.fetch = originalFetch;
-      originalFetch = undefined;
-      if (kitInstalled) configureGuardedTransport(previousKitTransport);
-      kitInstalled = false;
-      previousKitTransport = undefined;
-    }
   }
   private async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);

@@ -14,6 +14,7 @@ interface Env {
   CREDENTIAL_ENCRYPTION_KEY: string;
   QUICKBOOKS_URL: string;
   QUICKBOOKS_WRITES: string;
+  QUICKBOOKS_CLIENT: string;
 }
 let connecta: ReturnType<typeof createConnecta> | undefined;
 let token: string | undefined;
@@ -49,7 +50,7 @@ export default {
       executor: workerExecutor({ loader: env.LOADER }),
       ui: operatorUi(),
       vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
-      connectors: quickbooksConnectors(env.QUICKBOOKS_WRITES === "true"),
+      connectors: quickbooksConnectors(env.QUICKBOOKS_WRITES === "true", env.QUICKBOOKS_CLIENT),
     });
     return connecta.fetch(request, env, ctx);
   },

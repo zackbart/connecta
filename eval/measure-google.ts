@@ -1,6 +1,7 @@
 /** Local cold/warm characterization, no model calls or real Google traffic. */
 import { spawnSync } from "node:child_process";
-import { FakeGoogle, GOOGLE_PRODUCTS, ALICE, installGoogleKitTransport } from "./fakes/google.js";
+import { FakeGoogle, GOOGLE_PRODUCTS, ALICE } from "./fakes/google.js";
+import { holdFakeKitTransport } from "./fakes/transport.js";
 import { Ledger } from "./fakes/service.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { performance } from "node:perf_hooks";
@@ -51,7 +52,7 @@ if (!selected) {
     if (url.hostname !== "oauth2.googleapis.com" && firstSend === undefined) firstSend = performance.now();
     return forward(input, init);
   };
-  installGoogleKitTransport();
+  const releaseTransport = holdFakeKitTransport();
   const rows = [];
   try {
     for (const temperature of ["cold", "warm"]) {
@@ -69,6 +70,7 @@ if (!selected) {
     console.log(JSON.stringify({ product, importMs, factoryMs, calls: rows }));
   } finally {
     globalThis.fetch = forward;
+    releaseTransport();
     await world.stop();
   }
 }

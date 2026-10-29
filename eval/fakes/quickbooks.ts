@@ -1,7 +1,9 @@
 /** Small stateful Intuit stand-in: exact query fixtures, no SQL parser or vendor network. */
 import { serveFetch, type Served } from "../support/serve.js";
 import type { Ledger } from "./service.js";
-import { QB_CLIENT, QB_SECRET, QB_COMPANIES } from "../deploy/quickbooks.js";
+import { randomBytes } from "node:crypto";
+import { QB_CLIENT, QB_SECRET, QB_COMPANIES, QB_HOSTS } from "../deploy/quickbooks.js";
+import { routeFakeVendor } from "./transport.js";
 
 type Row = Record<string, any>;
 export const QB_PRIVATE = "private-bank-card-tax-contact";
@@ -40,6 +42,9 @@ const report = {
   },
 };
 export const quickbooksState = () => ({
+  /** Per-world OAuth client and token suffix: concurrent worlds never share a credential. */
+  clientId: `${QB_CLIENT}-${randomBytes(6).toString("hex")}`,
+  tag: randomBytes(6).toString("hex"),
   companies: Object.fromEntries(
     Object.entries(QB_COMPANIES).map(([owner, realm]) => [
       realm,
@@ -89,15 +94,34 @@ export const quickbooksState = () => ({
 export class FakeQuickBooks {
   readonly state = quickbooksState();
   private server?: Served;
+  private release: (() => void) | undefined;
+  /** Every token this world issued, so spent and revoked ones still reach its 401s. */
+  private readonly issued = new Set<string>();
   constructor(private readonly ledger: Ledger) {}
   get url() {
     return this.server!.url;
   }
+  get clientId() {
+    return this.state.clientId;
+  }
   async start() {
     this.server = await serveFetch((r) => this.fetch(r));
+    this.release = routeFakeVendor({
+      hosts: QB_HOSTS,
+      owns: (credential) => credential === this.clientId || this.issued.has(credential),
+      target: this.url,
+      stampVendorOrigin: true,
+    });
   }
   async stop() {
+    this.release?.();
+    this.release = undefined;
     await this.server?.close();
+  }
+  private token(kind: "access" | "refresh", realm: string, generation: number, suffix = "") {
+    const value = `qb-${kind}-${realm}-${generation}${suffix}.${this.state.tag}`;
+    this.issued.add(value);
+    return value;
   }
   expire() {
     this.state.hour++;
@@ -135,7 +159,7 @@ export class FakeQuickBooks {
       }
       const grant = this.state.grants.find((g) => g.refresh === json?.token);
       if (
-        auth !== `Basic ${btoa(`${QB_CLIENT}:${QB_SECRET}`)}` ||
+        auth !== `Basic ${btoa(`${this.clientId}:${QB_SECRET}`)}` ||
         !grant ||
         request.headers.get("accept") !== "application/json" ||
         request.headers.get("content-type") !== "application/json" ||
@@ -149,7 +173,7 @@ export class FakeQuickBooks {
       }
       result = {};
     } else if (url.pathname === "/oauth2/v1/tokens/bearer") {
-      if (auth !== `Basic ${btoa(`${QB_CLIENT}:${QB_SECRET}`)}`) status = 401;
+      if (auth !== `Basic ${btoa(`${this.clientId}:${QB_SECRET}`)}`) status = 401;
       else if (body.get("grant_type") === "authorization_code") {
         realm = body.get("code") ?? "";
         if (!this.state.companies[realm]) status = 400;
@@ -157,8 +181,8 @@ export class FakeQuickBooks {
           const suffix = this.state.grants.some((g) => g.realm === realm) ? `-${this.state.grants.length}` : "";
           this.state.grants.push({
             realm,
-            access: `qb-access-${realm}-0${suffix}`,
-            refresh: `qb-refresh-${realm}-0${suffix}`,
+            access: this.token("access", realm, 0, suffix),
+            refresh: this.token("refresh", realm, 0, suffix),
             generation: 0,
             expired: false,
             revoked: false,
@@ -172,10 +196,10 @@ export class FakeQuickBooks {
           tokenGrant = grant;
           realm = grant.realm;
           grant.generation++;
-          grant.access = `qb-access-${realm}-${grant.generation}`;
+          grant.access = this.token("access", realm, grant.generation);
           // Intuit may return identical refresh bytes for two hourly renewals.
           if (realm !== QB_COMPANIES.alice || grant.generation > 2)
-            grant.refresh = `qb-refresh-${realm}-${grant.generation}`;
+            grant.refresh = this.token("refresh", realm, grant.generation);
           grant.expired = false;
         }
       }

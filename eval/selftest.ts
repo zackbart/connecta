@@ -35,13 +35,15 @@ import type { TrialResult } from "./agent/run.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
-import { restTransportControls } from "./tasks/rest-controls.js";
+import { fakeTransportInterleaving, restTransportControls } from "./tasks/rest-controls.js";
 
 await googleTransportControls();
 await googleBoundaryControls();
 console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools, read-only and native reads");
 await restTransportControls();
 console.log("ok   fake vendor transport: concurrent worlds, credential/host refusals and cleanup");
+await fakeTransportInterleaving();
+console.log("ok   fake vendor transport: interleaved families stay routed, fail closed and uninstall once");
 
 function validPng(base64: string): boolean {
   const bytes = Buffer.from(base64, "base64");

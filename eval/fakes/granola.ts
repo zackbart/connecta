@@ -1,14 +1,19 @@
 /** Independent fake-only meeting state and physical HTTP ledger; no vendor account. */
 import { serveFetch, type Served } from "../support/serve.js";
 import type { Ledger } from "./service.js";
+import { randomBytes } from "node:crypto";
+import { routeFakeVendor } from "./transport.js";
 
+/** Prefix of every world's key, so a leak check needs no per-world state. */
 export const GRANOLA_KEY = "grn_eval_workspace_83ab912f";
 export const GRANOLA_NOTE = "not_abcdefghijklmn";
 export const GRANOLA_FOLDER = "fol_abcdefghijklmn";
 export const GRANOLA_SPACE = "spa_abcdefghijklmn";
 export const GRANOLA_PHOTO = "https://files.example.com/private-photo-capability";
 function granolaState() {
+  const key = `${GRANOLA_KEY}_${randomBytes(8).toString("hex")}`;
   return {
+    key,
     spaces: [{ id: GRANOLA_SPACE, object: "space", name: "Product" }],
     folders: [
       { id: GRANOLA_FOLDER, object: "folder", name: "Planning", parent_folder_id: null, space_id: GRANOLA_SPACE },
@@ -27,7 +32,7 @@ function granolaState() {
         attachments: [{ id: "att_abcdefghijklmn", object: "attachment", type: "photo", url: GRANOLA_PHOTO }],
         transcript: null,
         owner: { name: "Alice", email: "alice@example.com" },
-        debug_echo: GRANOLA_KEY,
+        debug_echo: key,
       },
     ],
     transcript: [
@@ -51,21 +56,33 @@ function granolaState() {
 export class FakeGranola {
   readonly state = granolaState();
   private server?: Served;
+  private release: (() => void) | undefined;
   constructor(private readonly ledger: Ledger) {}
   get url() {
     if (!this.server) throw new Error("Granola fake is not started");
     return this.server.url;
   }
+  /** This world's workspace key; unique per world so concurrent worlds route apart. */
+  get key() {
+    return this.state.key;
+  }
   async start() {
     this.server = await serveFetch(async (request) => this.fetch(request));
+    this.release = routeFakeVendor({
+      hosts: ["public-api.granola.ai"],
+      owns: (credential) => credential === this.key,
+      target: this.url,
+    });
   }
   async stop() {
+    this.release?.();
+    this.release = undefined;
     await this.server?.close();
   }
   fetch(request: Request): Response {
     const url = new URL(request.url);
     const query = Object.fromEntries(url.searchParams);
-    const authorized = request.headers.get("authorization") === `Bearer ${GRANOLA_KEY}`;
+    const authorized = request.headers.get("authorization") === `Bearer ${this.key}`;
     const record = {
       seq: this.ledger.next(),
       at: Date.now(),
