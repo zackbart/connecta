@@ -124,7 +124,8 @@ it("INV-4 INV-5: isolates skill disclosure across principals, pools and tool-onl
   expect(JSON.stringify(bob.result)).not.toContain("downstream/remote");
   expect(JSON.stringify(bob.result)).not.toContain("connectors/remote");
   // Bob is neither a maintainer nor a member of the remote pool.
-  for (const path of ["/mcp", "/mcp/remote"]) {
+  expect((await rpc(c, "skills/list", {}, "/mcp", "bob")).result).toEqual(bob.result);
+  for (const path of ["/mcp/remote"]) {
     const refused = await rpc(c, "skills/list", {}, path, "bob");
     expect(refused).toMatchObject({ error: { code: -33004 } });
     expect(JSON.stringify(refused)).not.toContain("remote");
@@ -497,4 +498,33 @@ it("INV-5 INV-8: keeps blob credential collisions validly encoded through HTTP s
       await c.close();
     }
   }
+});
+
+it("INV-4: a bare connector id serves that connector's guide while built-in names stay reserved", async () => {
+  const quiet = api("quiet", { tools: [] });
+  const root = makeRegistry([guided("granola", true), guided("usage"), guided("investigate"), quiet]);
+  const mt = createMetaTools(root, BASE);
+  const guest = (await buildSandboxProviders(root, BASE, silentLogger))[0]!.fns;
+  const text = async (name: string) => (await mt.skills({ name })).content[0]?.text;
+  const canonical = await text("connector:granola");
+  expect(canonical).toContain("Read granola.");
+  expect(await text("granola")).toBe(canonical);
+  expect(((await guest.skill!("granola")) as { text: string }).text).toBe(canonical);
+  expect(((await guest.skill!({ name: "granola" })) as { text: string }).text).toBe(canonical);
+  expect((await new SkillsRegistry(root, BASE).get("granola")).skill.uri).toBe(
+    "skill://connecta/connectors/granola/SKILL.md",
+  );
+  // Built-in skill names are never shadowed by a connector of the same id.
+  for (const name of ["usage", "investigate"]) {
+    expect(await text(name)).not.toContain(`Read ${name}.`);
+    expect(await text(`connector:${name}`)).toContain(`Read ${name}.`);
+  }
+  // Namespaced and URI-shaped names never fall back to a bare id.
+  const unknown = await mt.skills({ name: "connector:missing" });
+  expect(unknown.isError).toBe(true);
+  expect(unknown.content[0]?.text).toContain('Unknown connector "missing".');
+  const guideless = await mt.skills({ name: "quiet" });
+  expect(guideless.isError).toBe(true);
+  expect(guideless.content[0]?.text).toContain('Connector "quiet" has no usage guide.');
+  expect((await mt.skills({ name: "nothing" })).content[0]?.text).toContain('Unknown skill "nothing".');
 });

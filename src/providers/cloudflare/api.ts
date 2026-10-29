@@ -486,7 +486,7 @@ class CloudflareIndex extends OperationIndex {
           "invalid_args",
           `Not sent: Cloudflare path parameter ${name} must be at least 1. Read cloudflare_api_details for the pinned contract.`,
           {
-            validation: { issues: [{ path: `/path/${name}`, code: "minimum", expected: "at least 1" }] },
+            validation: { issues: [{ path: `/path/${name}`, expected: "at least 1" }] },
           },
         );
       }
@@ -591,6 +591,14 @@ export const safety = (): SafetyOptions => {
           : SAFETY.redact(body, operation.method, canonical(operation)),
       withholdsErrors: (operation) =>
         operation.method === "POST" && operation.template === "/graphql" ? false : reviewed.withholdsErrors(operation),
+      // The table applies to the envelope and again to its result, as redact does.
+      withholds: (operation) => {
+        const hint = reviewed.withholds!(operation);
+        return (path) =>
+          hint(path) ||
+          (path[0] === "result" && hint(path.slice(1))) ||
+          (path[0] === "result[]" && hint(["[]", ...path.slice(1)]));
+      },
     },
     sensitiveFields: { names: [], choice: "drop" },
   };

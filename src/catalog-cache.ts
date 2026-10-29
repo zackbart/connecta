@@ -9,6 +9,7 @@ import {
   authProgram,
   registerAuth,
   authStorage,
+  authStorageMany,
   authMap,
   authAwait,
 } from "./auth/native.js";
@@ -29,7 +30,7 @@ import { advanceCatalogRevision, catalogRevision } from "./catalog-revision.js";
 import { callerOf } from "./connector-caller.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Context } from "effect";
-import { RequestScope } from "./runtime/request-scope.js";
+import { ownerReads, RequestScope } from "./runtime/request-scope.js";
 import { serviceFor, setViewService, viewServices } from "./runtime/call.js";
 import { ConnectorCallError } from "./errors.js";
 import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
@@ -409,6 +410,8 @@ export function observeCatalogExpiry(
 // failure for five minutes. Resources never use stale inventories. A fallback
 // carries its original expired deadline and cannot authorize auth recovery.
 const STALE_FALLBACK_MS = 300_000;
+/** Catalog chunks one storage read fetches together. */
+const CHUNKS_PER_READ = 8;
 class CatalogPolicy extends Context.Service<CatalogPolicy, CatalogCacheSettings>()(
   "connecta/operation/CatalogPolicy",
 ) {}
@@ -705,6 +708,20 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
   ) =>
     authFlow<Awaited<ReturnType<typeof catalogClientOptions>>>(function* () {
       const request = Context.get(viewServices(ctx), RequestScope);
+      // Generation reads that only locate an entry are memoized for this
+      // request; every acceptance or publication check reads it fresh. A
+      // generation is never reused once replaced, so a stale one only
+      // addresses an entry that the fresh check then refuses.
+      const reads = ownerReads(request);
+      const generationRead = (memoized: boolean) => {
+        const key = responseCacheKeys.generation(connectorId);
+        return reads.read(
+          storage,
+          key,
+          authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>,
+          !memoized,
+        );
+      };
       // SDK callbacks start at their own Promise edge. Reprovide only their
       // canonical request owner, never the initiating call's live services.
       const cacheMethod = <Args extends unknown[], A>(program: (...args: Args) => Effect.Effect<A, unknown>) =>
@@ -768,14 +785,15 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             manifest: Manifest;
           }
         | undefined;
-      const currentGeneration = cacheMethod(({ stopped, io, generation }: CacheOperation) =>
+      const currentGeneration = cacheMethod(({ stopped, io, generation }: CacheOperation, memoized: boolean = false) =>
         authFlow<string | undefined>(function* () {
           const key = responseCacheKeys.generation(connectorId);
           for (let attempt = 0; attempt < 16; attempt++) {
             if (stopped()) return undefined;
-            const current = (yield authCall(io, [
-              cacheMethod(() => authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>),
-            ])) as string | null;
+            // A retry after a lost claim always reads fresh.
+            const current = (yield authCall(io, [cacheMethod(() => generationRead(memoized && attempt === 0))])) as
+              | string
+              | null;
             if (stopped()) return undefined;
             if (current) return current;
             // A connectionless reader never claims or recreates a generation: a
@@ -799,7 +817,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           throw new Error("Catalog cache generation is busy.");
         }),
       );
-      const namespace = cacheMethod((operation: CacheOperation) =>
+      const namespace = cacheMethod((operation: CacheOperation, memoized: boolean = false) =>
         authFlow<string | undefined>(function* () {
           const { stopped, generation, io } = operation;
           if (
@@ -807,7 +825,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             ((yield authCall(io, [resolveCredentialIdentity])) as string) !== operation.credentialIdentity
           )
             return undefined;
-          const current = (yield authCall(currentGeneration, [operation])) as string | undefined;
+          const current = (yield authCall(currentGeneration, [operation, memoized])) as string | undefined;
           if (!current || stopped()) return undefined;
           generation.value ??= current;
           return generation.value === current
@@ -831,7 +849,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             (pair[1] !== partition && (pair[1] !== "" || sharing !== "shared"))
           )
             return undefined;
-          const prefix = (yield authCall(namespace, [operation])) as string | undefined;
+          // Locating only: get's fence and set's publication re-check fresh.
+          const prefix = (yield authCall(namespace, [operation, true])) as string | undefined;
           if (!prefix || stopped()) return undefined;
           const digest = (
             (yield authCall(fingerprintSerializedCatalog, [
@@ -962,21 +981,24 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                 (key.method !== "tools/list" || m.expiresAt + STALE_FALLBACK_MS <= Date.now()))
             )
               return undefined;
+            // Up to CHUNKS_PER_READ chunks per round trip, so one answer stays a
+            // few megabytes; the generation fence below still decides whether
+            // what was read may be served.
             const chunks: string[] = [];
-            for (let i = 0; i < m.chunkCount; i++) {
+            for (let first = 0; first < m.chunkCount; first += CHUNKS_PER_READ) {
               if (stopped()) return undefined;
-              const chunk = (yield authCall(io, [
-                cacheMethod(
-                  () =>
-                    authStorage(storage, "get", [responseCacheKeys.chunk(root, m.revision, i)]) as Effect.Effect<
-                      string | null,
-                      unknown
-                    >,
-                ),
-              ])) as string | null;
-              if (stopped() || chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES)
-                return undefined;
-              chunks.push(chunk);
+              const keys = Array.from({ length: Math.min(CHUNKS_PER_READ, m.chunkCount - first) }, (_, i) =>
+                responseCacheKeys.chunk(root, m.revision, first + i),
+              );
+              const read = (yield authCall(io, [cacheMethod(() => authStorageMany(storage, keys))])) as (
+                | string
+                | null
+              )[];
+              for (const chunk of read) {
+                if (stopped() || chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES)
+                  return undefined;
+                chunks.push(chunk);
+              }
             }
             const value = chunks.join("");
             const fingerprint = (yield authCall(fingerprintSerializedCatalog, [value])) as {
@@ -1162,15 +1184,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         // A connectionless reader only lists, and each listing reads its own
         // generation; there are no connection-owned writes to fence.
         if (!connectionless && !stopped()) {
-          const current = (yield authCall(io, [
-            cacheMethod(
-              () =>
-                authStorage(storage, "get", [responseCacheKeys.generation(connectorId)]) as Effect.Effect<
-                  string | null,
-                  unknown
-                >,
-            ),
-          ])) as string | null;
+          // Memoized: a connection's writes publish only after a fresh check.
+          const current = (yield authCall(io, [cacheMethod(() => generationRead(true))])) as string | null;
           if (!stopped()) connectionGeneration.value = current ?? crypto.randomUUID();
         }
       } catch (error) {
@@ -1205,10 +1220,10 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                 listing.credentialIdentity = yield authInvoke<string>(operation, "io", [resolveCredentialIdentity]);
               if (!operation.stopped()) {
                 try {
+                  // Memoized: it locates the listing's entries, which the
+                  // fresh fence in get accepts or refuses.
                   const stored = (yield authInvoke<string | null>(operation, "io", [
-                    cacheMethod(() =>
-                      authStorage<string | null>(storage, "get", [responseCacheKeys.generation(connectorId)]),
-                    ),
+                    cacheMethod(() => generationRead(true)),
                   ])) as string | null;
                   const generation = stored ?? crypto.randomUUID();
                   listing.generationStored = stored !== null;

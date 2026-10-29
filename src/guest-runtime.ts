@@ -155,16 +155,27 @@ export function guestInitializer(): string {
       }
     });
   }
+  // Result fields read off an unawaited host call flag the run, still undefined.
+  let unawaited = false;
+  const fields = {};
+  for (const key of ["data", "format", "content", "tools", "catalogErrors", "total", "text", "resultId", "hasMore", "nextOffset"])
+    fields[key] = { get() { unawaited = true; } };
+  const hosted = (fn) => function () {
+    const promise = apply(fn, undefined, arguments);
+    if (promise && typeof promise === "object") defineProperties(promise, fields);
+    return promise;
+  };
+  const skill = hosted(provider.skill);
   const namespace = freeze({
     __proto__: null,
-    search: provider.search,
-    describe: provider.describe,
-    call,
-    read: provider.read,
-    result: provider.result,
-    skill: provider.skill,
+    search: hosted(provider.search),
+    describe: hosted(provider.describe),
+    call: hosted(call),
+    read: hosted(provider.read),
+    result: hosted(provider.result),
+    skill,
     // Undeclared alias: models write connecta.skills, the top-level tool's name.
-    skills: provider.skill,
+    skills: skill,
     emit(block) {
       const ref = block && typeof block === "object" ? weakGet(nativeRefs, block) : undefined;
       return trackEmission(emit(ref || block));
@@ -179,7 +190,13 @@ export function guestInitializer(): string {
       return async (program) => {
         if (used) throw new NativeError("Guest runner initialization is single-use.");
         used = true;
-        const result = await program(namespace);
+        let result;
+        try {
+          result = await program(namespace);
+        } catch (error) {
+          if (unawaited) try { await provider.unawaited(); } catch {}
+          throw error;
+        }
         for (let i = 0; i < pending.length; i++) {
           const report = await pending[i].settled;
           if (!report.ok && !pending[i].handled) throw report.error;
@@ -205,11 +222,19 @@ const ERROR_NAMES = new Set([
 
 /** Fixed repair guidance, used only in agent-facing results. */
 export function programError(
-  raw: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown; line?: unknown },
+  raw: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown; line?: unknown; unawaited?: unknown },
   code: string,
 ) {
-  const message = typeof raw.message === "string" ? raw.message : "Program failed.";
-  const name = typeof raw.name === "string" && ERROR_NAMES.has(raw.name) ? raw.name : "Error";
+  const text = typeof raw.message === "string" ? raw.message : "Program failed.";
+  // Executors may report "TypeError: …" as the message itself; name it once.
+  const prefix = /^([A-Za-z]*Error): /.exec(text)?.[1];
+  const name =
+    typeof raw.name === "string" && ERROR_NAMES.has(raw.name)
+      ? raw.name
+      : prefix && ERROR_NAMES.has(prefix)
+        ? prefix
+        : "Error";
+  const message = prefix === name ? text.slice(name.length + 2) : text;
   const stack = typeof raw.stack === "string" ? raw.stack : "";
   // Compare QuickJS/V8 locations to the wrapper baseline after the source.
   const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
@@ -226,7 +251,9 @@ export function programError(
           ? Math.max(1, Number(location[1]) - Number(baseline[1]) + code.split("\n").length + 1)
           : null;
   let hint = "Use plain JavaScript in one async () => { ... } expression and the connecta global.";
-  if (
+  if (raw.unawaited === true) {
+    hint = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
+  } else if (
     /\brequire\b|\b[Ii]mports?\b|\bfs\b|filesystem|node:/.test(message) ||
     (name === "SyntaxError" && /\bimport\b/.test(code))
   ) {

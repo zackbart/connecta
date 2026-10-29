@@ -74,6 +74,7 @@ const config: ConnectaConfigDescription = {
     { namespace: CLERK, id: "user_ada" },
     { namespace: CLERK, id: "user_grace" },
   ],
+  peopleInSeveralPools: [],
   classification: {},
   auth: [{ kind: "clerk", interactive: true, ui: "clerk" }],
   agents: ["simon-ada", "triage"],
@@ -83,8 +84,8 @@ const config: ConnectaConfigDescription = {
       path: "/mcp/ada",
       tools: ["gmail", "github.read"],
       members: [
-        { kind: "human", namespace: CLERK, id: "user_ada" },
         { kind: "agent", name: "simon-ada" },
+        { kind: "agent", name: "triage" },
       ],
       readOnly: false,
       surface: "meta",
@@ -98,7 +99,6 @@ const config: ConnectaConfigDescription = {
       tools: ["github.read", "drive.search"],
       members: [
         { kind: "human", namespace: CLERK, id: "user_lin" },
-        { kind: "agent", name: "triage" },
       ],
       readOnly: true,
       surface: "meta",
@@ -182,7 +182,7 @@ const pools: OperatorPoolV2[] = [
       { connectorId: "gmail", tools: "all" },
       { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
     ],
-    members: [ada, { kind: "agent", name: "simon-ada" }],
+    members: [{ kind: "agent", name: "simon-ada" }, { kind: "agent", name: "triage" }],
   },
   {
     name: "support",
@@ -196,9 +196,9 @@ const pools: OperatorPoolV2[] = [
       { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
       { connectorId: "drive", tools: [{ name: "search", requireReadOnly: true }] },
     ],
-    members: [lin, { kind: "agent", name: "triage" }],
+    members: [lin],
   },
-  // A group pool has no owner, so no Workspace subject for agents.
+  // A people-only group pool; Workspace mappings use each person.
   {
     name: "team",
     humanPath: "/mcp/team",
@@ -220,7 +220,7 @@ const pools: OperatorPoolV2[] = [
 
 const agents: OperatorAgent[] = [
   { name: "simon-ada", credentialTypes: ["access_token"], pools: ["ada"], token: { state: "issued", issuedAt: EARLIER, revision: "simonAdaIssuedRevision" }, lastSeenAt: NOW },
-  { name: "triage", credentialTypes: ["access_token"], pools: ["support"], token: { state: "none", revision: "triageNoneRevision0000" }, lastSeenAt: null },
+  { name: "triage", credentialTypes: ["access_token"], pools: ["ada"], token: { state: "none", revision: "triageNoneRevision0000" }, lastSeenAt: null },
 ];
 
 const matrix: OperatorConnectorPoolCell[] = [

@@ -928,7 +928,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           ...Object.fromEntries(
             team.map((person) => [
               `assistant-${person.id}`,
-              { tools: ["mail"], owner: person.email, members: [person.id, "agent:assistant"] },
+              { tools: ["mail"], owner: person.email, members: ["agent:assistant"] },
             ]),
           ),
           // Alice assists Bob: Bob owns it, and Alice still acts as herself.
@@ -936,7 +936,11 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           // A group pool names no owner, so its agents have no mailbox.
           group: {
             tools: ["mail", ...(options.extra ?? []).map((connector) => connector.id)],
-            members: ["alice", "bob", "agent:assistant"],
+            members: ["alice", "bob"],
+          },
+          "group-agents": {
+            tools: ["mail", ...(options.extra ?? []).map((connector) => connector.id)],
+            members: ["agent:assistant"],
           },
         },
         ...(options.executor ? { executor: options.executor } : {}),
@@ -1040,7 +1044,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           ).result;
         const addresses = (result: { structuredContent: { tools: { address: string }[] } }) =>
           result.structuredContent.tools.map((tool) => tool.address);
-        const group = { agentPool: "group" };
+        const group = { agentPool: "group-agents" };
 
         expect(addresses(await rpc(assistant, group, "search_tools", { query: "labels" }))).toEqual([
           "shared_mail.list_labels",
@@ -1166,7 +1170,12 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           pools: {
             group: {
               tools: connectors.map((connector) => connector.id),
-              members: ["alice", "agent:assistant"],
+              members: ["alice"],
+              ...(owner ? { owner } : {}),
+            },
+            "group-agents": {
+              tools: connectors.map((connector) => connector.id),
+              members: ["agent:assistant"],
               ...(owner ? { owner } : {}),
             },
           },
@@ -1185,7 +1194,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
                   name: "execute_code",
                   arguments: { code: "async () => null" },
                 },
-                { token: assistant, agentPool: "group" },
+                { token: assistant, agentPool: "group-agents" },
               ),
             ),
           )
@@ -1207,7 +1216,11 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         if (name.startsWith("off-page")) {
           const fresh = await readJsonRpc(
             await ownerless.fetch(
-              mcpRpc("tools/call", { name: "search_tools", arguments: args }, { token: assistant, agentPool: "group" }),
+              mcpRpc(
+                "tools/call",
+                { name: "search_tools", arguments: args },
+                { token: assistant, agentPool: "group-agents" },
+              ),
             ),
           );
           expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 2, hasMore: false });

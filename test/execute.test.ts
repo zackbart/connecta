@@ -283,6 +283,24 @@ it("a synchronous unawaited burst cannot return success after exhausting its bud
   expect(out.structuredContent).not.toHaveProperty("result");
 });
 
+it("a bridge may send the uncounted missing-await notice only once per run", async () => {
+  const executor: Executor = {
+    async execute(_code, providers) {
+      const notice = required(connectaProvider(providers).fns.unawaited);
+      await notice();
+      for (let i = 0; i < 100; i++) void Promise.resolve(notice()).catch(() => {});
+      return { result: "must not be returned", logs: [] };
+    },
+  };
+  const out = await createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger)({ code: "" });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "budget_exceeded", retryable: false },
+    hostCalls: { attempted: 0, admitted: 0 },
+  });
+  expect(out.structuredContent).not.toHaveProperty("result");
+});
+
 describe("execute_code executor watchdog", () => {
   // Ported from executor's wedge repro (UsefulSoftwareCo/executor,
   // runtime-dynamic-worker/src/wedge-repro.test.ts): an executor whose own
@@ -618,6 +636,20 @@ it("reports an empty terminal executor error as failure with a fixed message", a
     error: { code: "program_error", message: "Program Error: Execution failed without an error message." },
     logs: "before failure",
   });
+});
+
+it.each([
+  ["TypeError: x is not a function", "Program TypeError: x is not a function", "TypeError"],
+  ["Error: failed: twice", "Program Error: failed: twice", "Error"],
+  ["RangeError", "Program Error: RangeError", "Error"],
+])("INV-6: names an executor's prefixed error %j once", async (error, message, name) => {
+  const out = await createExecuteTool(
+    makeRegistry([calcConnector]),
+    BASE,
+    fakeExecutor({ result: undefined, error }),
+    silentLogger,
+  )({ code: "async () => x()" });
+  expect(out.structuredContent).toMatchObject({ error: { code: "program_error", message, details: { name } } });
 });
 
 it.each(["", "x", "failed"])("INV-6: does not match short failure prose %j by containment", async (message) => {

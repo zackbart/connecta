@@ -113,6 +113,12 @@ Pool endpoint rows show the effective surface (`meta` or `native`) and whether
 code is on. These are read-only facts from deployment configuration; change
 `surface` and `executeCode` in deployment code.
 
+Plain `/mcp` is routed by sign-in: the `/mcp` row and matrix column show the
+whole catalog maintainers receive, and a pool row shows what its people
+receive at both `/mcp/<pool>` and, when they belong to no other pool, plain
+`/mcp`. A note above the rows says so. People in several pools appear in
+`config.peopleInSeveralPools`; plain `/mcp` refuses them.
+
 One row each for `/mcp` and every pool: the path, a read-only pill on a
 read-only endpoint, a copyable URL, who can use it, its connectors as colored
 monograms (four, then "+N"), its tool count over a read and write bar, and a
@@ -121,7 +127,9 @@ Setup button.
 - Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
   elsewhere, as an avatar stack named on hover and to screen readers (label,
   raw id when the label is null, or agent name). Four show, then a "+N"
-  button. A pool with agent members labels its two URLs People and Agents.
+  button. A pool lists only people or only agents. An agent pool's row
+  still shows two URLs labeled People and Agents; the People URL
+  (`/mcp/<pool>`) admits no one, because the pool has no people.
 - Expanding a row lists everyone by name, then each connector with what it
   runs as and its tools, write tools amber with a pencil. Runs-as comes from
   the endpoint's matrix cell: "Shared · saved <date>", "Shared · connected
@@ -340,10 +348,12 @@ connections**, has no tabs; its heading shows the signed-in email when the
 sign-in exposes one (Clerk's primary email), and its top bar shows branding and
 an **Account** button with Sign out or Change token. It lists:
 
-- **Your endpoints**: one card per admitted `/mcp/<pool>` URL with a copy button
-  and **Client setup**. For example, Bob in pool `team` copies
-  `https://connecta.example.com/mcp/team` into an MCP client and authenticates
-  as Bob.
+- **Your endpoints**: one card per address with a copy button and **Client
+  setup**. A member of exactly one pool sees one card for plain `/mcp`, named
+  after the pool it serves; a member of several pools sees one
+  `/mcp/<pool>` card per pool. For example, Bob, only in pool `team`, copies
+  `https://connecta.example.com/mcp` into an MCP client and authenticates as
+  Bob.
 - **Your accounts**: the personal connectors in their pools, each with a
   monogram, tool count, one status badge in an aligned column, and only the
   controls its `manage.actions` lists. A saved credential that no longer fits
@@ -415,7 +425,8 @@ without this capability contribute an unconfirmed count of zero. For example,
 The maintainer view carries:
 
 - `config`, the construction-time `describeConfig()` snapshot, including
-  `maintainers` and each pool's `members`, and `configSources`, which labels
+  `maintainers`, each pool's `members`, `peopleInSeveralPools` (non-maintainer
+  people plain `/mcp` refuses because they are in several pools), and `configSources`, which labels
   each serialized leaf as `default` or `config` from option presence rather
   than equality with the default. Factory descriptions carry relative
   `optionSources` paths so resolved module and transport defaults retain their
@@ -488,7 +499,9 @@ The maintainer view carries:
 The member view is exactly that member's projection: `config`,
 `configSources` and `root` are `null`, `live.connectors`, `agents` and
 `matrix` are empty, and `live.activity` is `"forbidden"`. `pools` lists only
-their pools, each with `owner: null` and `members: []`. `connectors` lists
+their pools, each with `owner: null` and `members: []`. With exactly one pool,
+its `humanPath` is `/mcp`, the address that serves them that pool, and the
+member's catalog reads carry that pool as plain `/mcp` would. `connectors` lists
 each connector in those pools with its title, the member's pools that serve
 it, its auth scope, the tools those pools grant with their classification,
 `connection` (their own partition's state and problem code for a personal
@@ -638,7 +651,16 @@ bounded at 2, 2, 4 and 8 seconds; a later focus return can try again after backo
 
 Connector Refresh, focus recovery and mutation follow-ups read only affected
 connectors. Focus probes unhealthy rows, never healthy siblings. All detail reads
-share a four-request limit and coalesce per connector. Failures retry only their
+in one tab share an eight-request limit and coalesce per connector, so a page of
+up to eight connectors loads in one round. The limit is fixed, not configured.
+It bounds how many connectors one tab waits on at once; a tab still reads each
+connector once per load, so the limit adds no requests to any one connector.
+Detail reads do not consume `admission.requests` permits, which govern `/mcp`
+only. They still share isolate CPU and memory, D1, and downstream account quotas
+with agent traffic; each tab adds up to eight concurrent downstream reads, and
+several connectors on one vendor account share that vendor's rate limit. Over HTTP/1.1 the browser itself allows about six
+connections per origin.
+Failures retry only their
 connector with the same bounded backoff; recovery never replays a mutation.
 A `connector_timeout` row is parked instead. It spends its automatic retry
 budget, and focus and visibility returns skip it. Only Refresh, a full refresh

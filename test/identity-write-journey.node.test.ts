@@ -89,7 +89,8 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
       }),
       pools: {
         eval: { tools: ["notes"], members: ["agent:eval-machine"] },
-        team: { tools: ["notes"], members: ["alice", "bob", "agent:eval-machine"] },
+        team: { tools: ["notes"], members: ["alice", "bob"] },
+        "team-agents": { tools: ["notes"], members: ["agent:eval-machine"] },
         locked: { tools: ["notes"], members: ["bob"], readOnly: true },
         readers: { tools: ["notes.read"], members: ["alice", "bob"] },
         account: { tools: ["account"], members: ["alice", "bob"] },
@@ -123,7 +124,7 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     };
     const bob = await session("/mcp/team", "bob");
     const locked = await session("/mcp/locked", "bob");
-    const machine = await session("/agent/team", deployment.token);
+    const machine = await session("/agent/team-agents", deployment.token);
     const search = await bob.call("search_tools", { query: "", limit: 50 });
     expect(search.isError).toBe(false);
     expect(search.text).toContain("notes.read");
@@ -142,7 +143,7 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     for (const [path, token, status] of [
       ["/mcp/team", "carol", 404],
       ["/mcp/team", deployment.token, 401],
-      ["/agent/team", "bob", 401],
+      ["/agent/team-agents", "bob", 401],
     ] as const) {
       const response = await fetch(`${origin}${path}`, { headers: { Authorization: `Bearer ${token}` } });
       expect(response.status, path).toBe(status);

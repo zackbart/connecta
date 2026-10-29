@@ -117,6 +117,7 @@ export function githubConnection() {
         return { method: op.method, template: op.path };
       },
       redact: (data, op) => githubSafety.redact(data, op.method, op.template),
+      withholds: (op) => githubSafety.withholds(op.method, op.template),
       withholdsErrors: () => true,
     },
     sensitiveFields: { names: [], choice: "drop" },

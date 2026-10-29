@@ -4,14 +4,8 @@ packages:
 # Isolate Eve's Node 24 framework and peers from core's Node 22 install.
 sharedWorkspaceLockfile: false
 
-# Eve 0.86.0 pins vulnerable undici 8.10.2; remove once Eve pins undici >=8.12.2.
-packageConfigs:
-  "@zackbart/connecta-eve":
-    overrides:
-      "eve@0.86.0>undici": 8.12.3
-
 minimumReleaseAgeExclude:
-  - eve@0.86.0
+  - eve@0.90.0
 
 allowBuilds:
   esbuild: true

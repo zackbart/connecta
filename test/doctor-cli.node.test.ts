@@ -40,6 +40,7 @@ async function doctorAgainst(
     maintainers?: IdentityReference[];
     env?: Record<string, string>;
     storage?: KVStorage;
+    member?: boolean;
   } = {},
 ): Promise<string> {
   const connecta = createConnecta({
@@ -64,7 +65,9 @@ async function doctorAgainst(
     ],
     executor: customExecutor(executor, { lifecycle: "self-managed" }),
     auth: options.auth ?? machineAuth(TOKEN),
-    maintainers: options.maintainers ?? [MACHINE],
+    maintainers:
+      options.maintainers ?? (options.member ? [{ namespace: TEST_MACHINE_NAMESPACE, id: "owner" }] : [MACHINE]),
+    ...(options.member ? { pools: { team: { tools: ["echo"], members: [MACHINE] } } } : {}),
     logger: "silent",
     ...(options.storage ? { storage: options.storage } : {}),
   });
@@ -92,6 +95,11 @@ async function doctorAgainst(
 }
 
 describe("connecta doctor's executor line", () => {
+  it("checks a person's unique pool at /mcp without --pool", async () => {
+    const line = await doctorAgainst({ execute: async () => ({ result: 42 }) }, { member: true });
+    expect(line).toContain("Connecta doctor passed");
+  });
+
   it("bounds and sanitizes the name before it reaches a terminal", async () => {
     const hostile: Executor = {
       name: "\u001b[31mEvil\nSandbox " + "x".repeat(80),

@@ -7,8 +7,9 @@ import { assertsAgents } from "./agent-identity.js";
 import { ConfigError } from "./config-schema.js";
 import {
   memberContext,
+  peopleInSeveralPools,
   resolveMaintainers,
-  resolveMembers,
+  resolvePoolMembers,
   type MemberContext,
   type ResolvedPool,
 } from "./membership.js";
@@ -119,7 +120,7 @@ function resolvePools(
       Object.freeze({
         access,
         readOnly: pool.readOnly ?? readOnly,
-        members: Object.freeze(resolveMembers(pool.members, path, members)),
+        members: Object.freeze(resolvePoolMembers(pool.members, path, members)),
         ...(pool.owner !== undefined ? { owner: pool.owner.trim() } : {}),
         ...(pool.description !== undefined ? { description: pool.description.trim() } : {}),
         ...(pool.surface === "native" ? { native: { executeCode: pool.executeCode ?? true } } : {}),
@@ -292,6 +293,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     members,
   );
   const pools = resolvePools(resolved.pools, resolved.readOnly, registry, members);
+  for (const person of peopleInSeveralPools(pools, maintainers)) {
+    logger.warn("[connecta] Plain /mcp refuses a person in several pools", person);
+  }
   warnInsecureConfig(resolved);
   const requestAdmission = new AdmissionController(resolved.admission.requests);
   let codeAdmission: AdmissionController | undefined;

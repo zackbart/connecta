@@ -54,7 +54,8 @@ export async function proof({ origin, getToken, exchange, expected, fetcher = fe
   await verify(current, expected.owner);
   const instructions = connectaInstructions({ url: origin, pool: "assistant", getToken, fetch: fetcher });
   const memo = async (_key, fn) => fn({ idempotencyKey: "proof", abortSignal: new AbortController().signal });
-  const guidance = await instructions.evaluate({ memo, turn: { id: "proof" } });
+  // Eve keys a defineDynamic() function by this registered symbol.
+  const guidance = await instructions[Symbol.for("eve.dynamic")]({ memo, turn: { id: "proof" } });
   assert.match(guidance?.content ?? "", /Disposable workload identity proof/);
   const rpc = async (
     variant,

@@ -95,16 +95,16 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   Each agent keeps one Connecta connection whose harness, never the model,
   picks the pool per turn. Tiers are nested pools of shared connectors with
   no `owner`, each spreading the tool list below. Recommended names are
-  `<agent>` for the lowest and `<agent>-<tier>` above it; any named pool,
-  including an existing `team` or `leadership` pool, may be a tier if all its
-  human members are cleared for it. A chat gets the most capable tier everyone
-  present is cleared for, and the lowest when anyone present is unknown.
-  `<agent>-<user>` (that user's highest tier plus their own connector ids,
-  `owner` set to their Workspace address) is used only in a one-on-one with
-  that user. List only cleared people in a tier, and never another person in
-  a `<agent>-<user>` pool: its per-user connectors act as that user for every
-  member. Never add a second Connecta connection or mount downstream tools
-  directly.
+  `<agent>` for the lowest and `<agent>-<tier>` above it. Every pool lists
+  only people or only `agent:` references; mixing them throws at
+  construction. Tiers and `<agent>-<user>` pools list only the agent. People
+  with a tier's reach get their own people-only pool (for example `team`
+  beside `assistant-team`) spreading the same tool-list constant. A chat gets
+  the most capable tier everyone present is cleared for, and the lowest when
+  anyone present is unknown. `<agent>-<user>` (that user's highest tier plus
+  their own connector ids, `owner` set to their Workspace address) is used
+  only in a one-on-one with that user. Never add a second Connecta connection
+  or mount downstream tools directly.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand

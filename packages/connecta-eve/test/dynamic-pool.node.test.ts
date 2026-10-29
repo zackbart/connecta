@@ -1,9 +1,10 @@
-// Node-only: uses real Eve 0.86's reaction runner, checkpointed memos and replay guard.
+// Node-only: uses real Eve 0.90's reaction runner, checkpointed memos and replay guard.
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import type { DynamicSentinel } from "eve/connections";
 import { ContextContainer } from "../node_modules/eve/dist/src/context/container.js";
 import { SessionIdKey } from "../node_modules/eve/dist/src/context/keys.js";
+import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition.js";
 import { stepProjection } from "../node_modules/eve/dist/src/harness/session-machine/current.js";
 import { changedSinceOffered } from "../node_modules/eve/dist/src/harness/approval-outcome.js";
 import { dynamicConnectionVersions } from "../node_modules/eve/dist/src/reactions/kinds/connection.js";
@@ -32,7 +33,7 @@ function eveSession(definitions: { connection?: DynamicSentinel; instructions?: 
     sourceId: kind,
     sourceKind: "module",
     logicalPath: `agent/${kind}/connecta.ts`,
-    evaluate: definition.evaluate,
+    evaluate: dynamicEvaluate(definition),
   });
   ctx.set(BundleKey, {
     resolvedAgent: {

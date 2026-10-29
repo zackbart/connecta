@@ -70,8 +70,11 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
  * never settles at all.
  */
 const EXECUTE_WATCHDOG_MS = CONFIG_DEFAULTS.execute.watchdogMs;
-/** Complete entries plus an exact omission count, all inside this byte cap. */
-export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
+/**
+ * Room to name every connector of a typical deployment. Past it, complete
+ * entries plus an exact omission count stay inside this byte cap.
+ */
+export const CONNECTOR_INVENTORY_MAX_BYTES = 1_024;
 /**
  * Default budgets for `connecta.emit`. The byte budget is a transport bound,
  * not a context bound — emitted image/audio blocks reach the model as media,
@@ -501,6 +504,8 @@ interface SandboxLimits {
   programWrites?: ProgramWrites | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
+  /** Set when a failed program had read a result field off an unawaited host call. */
+  unawaited?: { read: boolean } | undefined;
 }
 
 /** Numeric accounting only; no addresses, arguments, or results. */
@@ -572,6 +577,7 @@ function sandboxProvider(
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
   let emitAttempts = 0;
+  let unawaitedNotices = 0;
   const maxEmitAttempts =
     Math.max(EXECUTE_MAX_EMITTED_BLOCKS, limits.emitCollector?.maxBlocks ?? EXECUTE_MAX_EMITTED_BLOCKS) * 4;
   // A rejected bridge promise is catchable in both sandboxes. End the host
@@ -1093,104 +1099,123 @@ function sandboxProvider(
     name: "connecta",
     // Trusted host code the program runs after and cannot undo.
     prelude: guestPrelude(),
-    fns: Object.fromEntries(
-      Object.entries(operations).map(([name, operation]) => [
-        name,
-        (...args: unknown[]) => {
-          if (budgetFailure) return stopped;
-          // Invalid emits still allocate guest promises and typed rejections.
-          // Bound those attempts without consuming the invocation budget or discarding identities.
-          if (name === "emit" && ++emitAttempts > maxEmitAttempts) {
-            budgetFailure = guestFailure(
-              "budget_exceeded",
-              `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`,
-            );
-            programWrites?.close();
-            limits.dispatchController?.abort();
-            limits.onHostCallBudgetExceeded?.(budgetFailure);
-            return stopped;
-          }
-          // L4/M7: spend on entry, before even invalid arguments are checked;
-          // emit has a separate budget and never spends this one.
-          // Transparent transfer pages consume the already-admitted call, not guest host calls.
-          const counted =
-            name !== "emit" && !(name === "result" && typeof args[0] === "string" && transfers.has(args[0]));
-          if (counted && ++hostCalls.attempted > maxHostCalls) {
-            hostCalls.failed++;
-            budgetFailure = new HostCallBudgetExceeded(hostCalls, maxHostCalls);
-            programWrites?.close();
-            limits.dispatchController?.abort();
-            limits.onHostCallBudgetExceeded?.(budgetFailure);
-            return stopped;
-          }
-          if (counted) hostCalls.admitted++;
-          const started = Date.now();
-          const utility = name === "result" || name === "skill";
-          let stage: ResultReadStage | "skill lookup" = name === "result" ? "result storage" : "skill lookup";
-          const invoke = Effect.suspend(() => operation(...args));
-          const guarded = utility
-            ? withDeadlineEffect(
-                (utilitySignal) =>
-                  Effect.suspend(() =>
-                    operation(args[0], args[1], utilitySignal, (current: ResultReadStage) => {
-                      stage = current;
-                    }),
-                  ),
-                {
-                  timeoutMs: hostCallTimeoutMs,
-                  ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
-                  timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
-                },
-              )
-            : invoke;
-          const settled = runEdge(
-            guarded.pipe(
-              Effect.catch((error) => {
-                if (utility && hostAccessSignal?.aborted)
-                  return typedFailure(
-                    guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`),
-                  );
-                if (utility && error instanceof InvocationFailure && error.code === "timeout") {
-                  const elapsedMs = Date.now() - started;
-                  const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
-                  return typedFailure(
-                    new InvocationFailure({
-                      code: "timeout",
-                      message,
-                      retryable: true,
-                      details: {
-                        operation: `connecta.${name}`,
-                        stage,
-                        elapsedMs,
-                        deadlineMs: hostCallTimeoutMs,
-                      },
-                    }),
-                  );
-                }
-                return typedFailure(error);
-              }),
-            ),
-          ).then(
-            (value) => {
-              if (counted) hostCalls.succeeded++;
-              return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
-            },
-            (err: unknown) => {
-              if (counted) hostCalls.failed++;
-              if (budgetFailure) return stopped;
-              throw redactAgentOutput(sentSecrets, err);
-            },
+    fns: {
+      // Uncounted: a failed program read a result field off an unawaited host call.
+      // One notice per run; any further call through the bridge ends the run.
+      unawaited: () => {
+        if (budgetFailure) return stopped;
+        if (++unawaitedNotices > 1) {
+          budgetFailure = guestFailure(
+            "budget_exceeded",
+            "execute_code missing-await notice is limited to one per run.",
           );
-          // The executor owns this promise, and a program may abandon a call
-          // that the run's end then cancels before anyone has awaited it.
-          // The rejection is still there for whoever does; it is just not an
-          // unhandled rejection of the host's, which workerd reports as soon
-          // as a microtask passes without a handler.
-          settled.catch(() => {});
-          return settled;
-        },
-      ]),
-    ),
+          programWrites?.close();
+          limits.dispatchController?.abort();
+          limits.onHostCallBudgetExceeded?.(budgetFailure);
+          return stopped;
+        }
+        if (limits.unawaited) limits.unawaited.read = true;
+        return Promise.resolve();
+      },
+      ...Object.fromEntries(
+        Object.entries(operations).map(([name, operation]) => [
+          name,
+          (...args: unknown[]) => {
+            if (budgetFailure) return stopped;
+            // Invalid emits still allocate guest promises and typed rejections.
+            // Bound those attempts without consuming the invocation budget or discarding identities.
+            if (name === "emit" && ++emitAttempts > maxEmitAttempts) {
+              budgetFailure = guestFailure(
+                "budget_exceeded",
+                `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`,
+              );
+              programWrites?.close();
+              limits.dispatchController?.abort();
+              limits.onHostCallBudgetExceeded?.(budgetFailure);
+              return stopped;
+            }
+            // L4/M7: spend on entry, before even invalid arguments are checked;
+            // emit has a separate budget and never spends this one.
+            // Transparent transfer pages consume the already-admitted call, not guest host calls.
+            const counted =
+              name !== "emit" && !(name === "result" && typeof args[0] === "string" && transfers.has(args[0]));
+            if (counted && ++hostCalls.attempted > maxHostCalls) {
+              hostCalls.failed++;
+              budgetFailure = new HostCallBudgetExceeded(hostCalls, maxHostCalls);
+              programWrites?.close();
+              limits.dispatchController?.abort();
+              limits.onHostCallBudgetExceeded?.(budgetFailure);
+              return stopped;
+            }
+            if (counted) hostCalls.admitted++;
+            const started = Date.now();
+            const utility = name === "result" || name === "skill";
+            let stage: ResultReadStage | "skill lookup" = name === "result" ? "result storage" : "skill lookup";
+            const invoke = Effect.suspend(() => operation(...args));
+            const guarded = utility
+              ? withDeadlineEffect(
+                  (utilitySignal) =>
+                    Effect.suspend(() =>
+                      operation(args[0], args[1], utilitySignal, (current: ResultReadStage) => {
+                        stage = current;
+                      }),
+                    ),
+                  {
+                    timeoutMs: hostCallTimeoutMs,
+                    ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
+                    timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
+                  },
+                )
+              : invoke;
+            const settled = runEdge(
+              guarded.pipe(
+                Effect.catch((error) => {
+                  if (utility && hostAccessSignal?.aborted)
+                    return typedFailure(
+                      guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`),
+                    );
+                  if (utility && error instanceof InvocationFailure && error.code === "timeout") {
+                    const elapsedMs = Date.now() - started;
+                    const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
+                    return typedFailure(
+                      new InvocationFailure({
+                        code: "timeout",
+                        message,
+                        retryable: true,
+                        details: {
+                          operation: `connecta.${name}`,
+                          stage,
+                          elapsedMs,
+                          deadlineMs: hostCallTimeoutMs,
+                        },
+                      }),
+                    );
+                  }
+                  return typedFailure(error);
+                }),
+              ),
+            ).then(
+              (value) => {
+                if (counted) hostCalls.succeeded++;
+                return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
+              },
+              (err: unknown) => {
+                if (counted) hostCalls.failed++;
+                if (budgetFailure) return stopped;
+                throw redactAgentOutput(sentSecrets, err);
+              },
+            );
+            // The executor owns this promise, and a program may abandon a call
+            // that the run's end then cancels before anyone has awaited it.
+            // The rejection is still there for whoever does; it is just not an
+            // unhandled rejection of the host's, which workerd reports as soon
+            // as a microtask passes without a handler.
+            settled.catch(() => {});
+            return settled;
+          },
+        ]),
+      ),
+    },
   };
 }
 
@@ -1384,6 +1409,7 @@ export function createExecuteTool(
         maxResultChars,
       );
       const resultDependencies: ProgramResultDependency[] = [];
+      const unawaited = { read: false };
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
@@ -1452,6 +1478,7 @@ export function createExecuteTool(
                 programWrites,
                 resultDependencies,
                 dispatchController,
+                unawaited,
               },
               requestScope,
             ),
@@ -1506,6 +1533,7 @@ export function createExecuteTool(
         emitted,
         diagnostics,
         program,
+        unawaited,
         // Emitted text shares the return cap; a follow-up page run gets all of it.
         guardResult: (value: unknown) =>
           authCall<unknown>(guardProgramReturn, [
@@ -1615,6 +1643,7 @@ interface RunReport {
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
   program: string;
+  unawaited: { read: boolean };
   guardResult: (value: unknown) => Effect.Effect<unknown, unknown>;
 }
 
@@ -1660,7 +1689,7 @@ function failedRun(err: unknown, logger: Logger, { emitted, diagnostics, program
 /** The response for an ExecuteResult: the program's error or its value. */
 function finishedRun(
   outcome: ExecuteResult,
-  { emitted, diagnostics, program, guardResult }: RunReport,
+  { emitted, diagnostics, program, unawaited, guardResult }: RunReport,
 ): Effect.Effect<ToolResult, unknown> {
   return authFlow<ToolResult>(function* () {
     if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
@@ -1708,6 +1737,7 @@ function finishedRun(
                 outcome.failure?.name ?? /^(SyntaxError|ReferenceError|TypeError|RangeError):/.exec(outcome.error)?.[1],
               message: outcome.error || "Execution failed without an error message.",
               ...(outcome.failure?.line !== undefined ? { line: outcome.failure.line - 1 } : {}),
+              unawaited: unawaited.read,
             },
             program,
           ),
@@ -1779,33 +1809,47 @@ function discardedEmits(emitted: EmitCollector): {
   return emitted.blocks.length > 0 ? { emittedDiscarded: emitted.blocks.length } : {};
 }
 
+const inventoryWords = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/** A title that only respells the id ("Google Calendar" for google_calendar) adds nothing. */
+function titleAddsInformation(id: string, title: string): boolean {
+  const words = inventoryWords(title);
+  const idWords = inventoryWords(id);
+  return words.join("") !== idWords.join("") && words.some((word) => !idWords.includes(word));
+}
+
+/**
+ * Every configured connector, from configuration alone. Detail degrades before
+ * names do: titles go first, then optional guide pointers, and only past the
+ * byte cap do whole entries give way to an exact omission count.
+ */
 function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"]>): string {
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
-  const entries = connectors.map((connector) => {
-    const address = connector.id;
+  const fits = (line: string) => boundedEchoText(line, CONNECTOR_INVENTORY_MAX_BYTES) === line;
+  const entry = (connector: (typeof connectors)[number], detail: number): string => {
+    const notes: string[] = [];
     const title = connector.title?.replace(/\s+/g, " ").trim();
-    const label = title && title !== connector.id ? `${address}: ${boundedEchoText(title, 45)}` : address;
-    if (!connectorGuide(connector)) return label;
-    const requirement = connectorGuideRequired(connector) ? "required guide" : "guide";
-    return `${label} (${requirement} ${connectorSkillName(connector.id)})`;
-  });
-  const shown: string[] = [];
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index];
-    if (entry === undefined) break;
-    const candidate = [...shown, entry].join(", ");
-    const omitted = entries.length - index - 1;
-    const suffix = omitted > 0 ? `; +${omitted} more.` : ".";
-    const serialized = prefix + candidate + suffix;
-    if (boundedEchoText(serialized, CONNECTOR_INVENTORY_MAX_BYTES) !== serialized) {
-      break;
+    if (detail >= 2 && title && titleAddsInformation(connector.id, title)) notes.push(boundedEchoText(title, 45));
+    const required = connectorGuideRequired(connector);
+    if (connectorGuide(connector) && (required || detail >= 1)) {
+      const fetch = `skills({name:"${connectorSkillName(connector.id)}"})`;
+      notes.push(required ? `read first: ${fetch}` : `guide: ${fetch}`);
     }
-    shown.push(entry);
+    return notes.length > 0 ? `${connector.id} (${notes.join("; ")})` : connector.id;
+  };
+  for (const detail of [2, 1, 0]) {
+    const line = `${prefix}${connectors.map((connector) => entry(connector, detail)).join(", ")}.`;
+    if (fits(line)) return line;
   }
-  const omitted = entries.length - shown.length;
-  if (omitted === 0) return `${prefix}${shown.join(", ")}.`;
-  return `${prefix}${shown.join(", ")}${shown.length > 0 ? "; " : ""}+${omitted} more.`;
+  const entries = connectors.map((connector) => entry(connector, 0));
+  let shown = 0;
+  while (fits(`${prefix}${entries.slice(0, shown + 1).join(", ")}; +${entries.length - shown - 1} more.`)) shown++;
+  return `${prefix}${entries.slice(0, shown).join(", ")}${shown > 0 ? "; " : ""}+${entries.length - shown} more.`;
 }
 
 const executeDescription = (
@@ -1821,13 +1865,11 @@ ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
 \`\`\`ts
-declare const connecta: {
 ${GUEST_API_DECLARATION}
-};
 \`\`\`
-Search: {tools}, catalogErrors. JSON schemas default; compact text. Calls: {data, format:"json"|"text"}; >1 MiB: paged handle. Oversized returns: resultId/nextAction. connecta.result pages; UTF-8 byte offsets. allSettled keeps typed errors; host budget_exceeded ends the run.
+search and describe return objects, not arrays. Schemas default to JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except emit spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. When paging is available, an oversized program return carries resultId and nextAction.
 
-Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks. Authored: text/base64 image/audio; no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}; connecta.skill("investigate"): workflow.`;
+Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks unchanged; an authored Block's image/audio data is base64. emit needs no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and

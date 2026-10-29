@@ -99,6 +99,18 @@ never retried and requires re-consent. Valid rotations retry their grant commit
 up to 32 times without another HTTP request; exhausted commits and all dispatched
 provider failures require re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
 contracts.
+The grant body stores `expiresAt` beside the tokens it describes; reads never
+add it (INV-10). A call renews a token within `OAUTH_REFRESH_SKEW_MS` (60 s)
+of it before sending: the invocation's authorization check (`registerInvocationAuth`
+in `src/connectors/remote-mcp.ts` and `src/connectors/api-connector.ts`) runs
+the 401 flow before entering the connector, so a failed renewal is a
+pre-dispatch authorization failure, never an unknown write (INV-9).
+`KvOAuthProvider.renewalDue` decides from the grant read that check already
+made, in memory. The token request carries the access token it replaces
+(`earlyRenewalFetch`), and the coordinator adopts any stored token that differs
+instead of redeeming again. Status, listing, discovery and the connectionless
+catalog read never renew. [Auth](./auth.md#refreshing-before-expiry) has the
+operator contract.
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
 clients, abort signals, and the connector scope a probe opens all belong to the
@@ -2004,6 +2016,11 @@ value, matching that fallback. Interruption remains interruption. The lookup
 module imports no SQL or platform implementation and does not change the
 published storage interfaces.
 
+`NativeStorage.getMany` reads several keys in one statement, answering by
+position exactly as one `get` per key would; the SQL drivers share it, a
+replaced `get` answers each key itself, and other stores fall back to one `get`
+at a time. Catalog reads fetch up to eight chunks per round trip with it.
+
 `openSqlite` retains file modes, WAL, busy timeout,
 and database ownership. `test/sql-effect-contract.ts` retains affected-row,
 50-claim, typed-failure, cancellation, and tracing probes on SQLite and native
@@ -2163,6 +2180,58 @@ within five minutes of expiry in the same auth partition. Partial walks and
 auth or permission failures refuse fallback; resources require unexpired
 inventories, and stale fallback cannot authorize post-entry auth recovery.
 
+**Repeated reads share one request's memo.** `src/runtime/request-reads.ts`
+gives each request owner a memo of storage reads, emptied when the request
+closes (INV-7). It holds plain strings keyed by the physical key in the
+underlying store, so namespaced views of one partition share an entry and two
+principals' partitions never do. A read consults it only where the call site
+opts in and states why staleness within one request is safe; every other read
+goes to storage.
+
+- Every write through the SQL drivers, `memoryStorage()` or a namespaced view
+  over them drops that key from every open memo in the same isolate, before
+  submission and again on settlement. A read that such a write overlapped is
+  not recorded.
+- Only the latest read of a key that the request started records. An earlier
+  read that settles later never replaces a newer fresh observation.
+- A fresh read records what it saw, so a memoized reader is never older than
+  its request's latest fresh read of the key.
+- A custom store, or a built-in one with a replaced method, is never memoized.
+- A runtime without `WeakRef` and `FinalizationRegistry` memoizes nothing:
+  workerd before compatibility date 2025-05-05 without `enable_weak_ref` reads
+  storage every time.
+
+The memo cannot see another isolate, another process sharing the database, or
+an entry expiring. After the first read, a memoized key can lag such a change
+for the rest of the request. So nothing that gates authority, sends a
+credential, or decides a write is memoized.
+
+Memoized:
+
+- the negotiation verdict, which only orders handshake versions;
+- catalog generation reads that only locate an entry, accepted or refused by a
+  fresh fence;
+- the credential reads behind connector status, drift and the operator UI card,
+  which only label a view. Only the built-in vault with its original `getAll`
+  and `metadata` shares a read; a custom vault, a subclass, or an instance
+  that overrides either method is called itself for every read, dispatch
+  included.
+
+Always fresh:
+
+- every OAuth grant read, including the token and epoch check behind each SDK
+  message (a disconnect need not revoke the vendor token), `peekGrant` and
+  every cache-acceptance identity check, compare-and-set loops, refresh claims
+  and leases, resets and disconnects;
+- the catalog generation fence before a cached entry is served or published;
+- the credential a call sends.
+
+`test/request-reads.node.test.ts` holds the memo's contract, including a
+disconnect written by another isolate between paginated `tools/list` pages. It
+also holds D1 round-trip and statement ceilings for a warm OAuth call, an
+expired-token refresh, a refresh before expiry, a cold-isolate catalog load and
+an operator UI detail read.
+
 ### Contributor provider kit
 
 Provider declarations use `src/http/vendor.ts` for HttpApi operations and
@@ -2191,7 +2260,14 @@ declared response roots before dispatch. Search answers stay within 16 KiB
 (at most eight compact entries, long labels cut and marked, continuation by
 cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
-cursor. Standard hatch search removes conversational framing; framing-only
+cursor. `src/http/hatch-response.ts` builds details' capped `response` section
+from the index's declared response paths in `fields` coordinates. It lists
+selectable paths and promises no readability. Its `withheld` hint comes from
+`ResultSafety.withholds`: `ValueSafety.withholds` reads the rules `redact`
+applies that change every non-null value they reach, matched with list
+markers. Custom redactions may declare their own hint. Rules that can pass a
+value through (`url:`, `origin:`, `[?…]`, `@keys`, string-only scrubbing) are
+never hints. Standard hatch search removes conversational framing; framing-only
 queries return no matches. It admits partial lexical matches alongside full
 matches. Action/read queries require all content nouns in the operation text,
 or any noun in the path/id with at least half the nouns in the text. Their
@@ -2869,6 +2945,11 @@ Effect is pinned exactly; deployments using Effect must resolve the same version
 Per-provider bundles are reported, not capped, because their standalone graphs
 include the shared core again. Deployed non-provider shapes are capped by
 `scripts/bundle-budget.json`.
+The always-loaded agent surface has fixed-cost caps of the same kind: the
+`always-loaded agent surface budgets` cases in
+`test/meta-tool-schemas.test.ts` cap the instructions plus `tools/list` total,
+each tool description and output schema, the `usage` skill, and one default
+and one compact search row, measured on a pinned four-connector fixture.
 
 [Decision 0019](https://github.com/zackbart/connecta/blob/main/decisions/0019-core-validation-http-boundaries.md) records the rejected Schema/HttpApi measurements.
 

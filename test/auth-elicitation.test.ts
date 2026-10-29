@@ -19,13 +19,16 @@ afterEach(async () => {
 function setup(
   options: {
     native?: boolean;
+    routed?: boolean;
+    poolName?: string;
+    storage?: ReturnType<typeof memoryStorage>;
     catalogAuth?: boolean;
     credential?: boolean;
     namedCredential?: boolean;
     uiPath?: string;
   } = {},
 ) {
-  const storage = memoryStorage();
+  const storage = options.storage ?? memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   let connected = false;
   const call = vi.fn(async (name: string) => {
@@ -35,6 +38,7 @@ function setup(
   const connector: Connector = {
     id: "service",
     kind: "api",
+    ...(options.routed ? { authScope: "personal" as const } : {}),
     listTools: async () => {
       if (options.catalogAuth && !connected) throw new ConnectorCallError("auth_required", "PRIVATE_CATALOG_AUTH");
       return [
@@ -66,8 +70,9 @@ function setup(
     vault,
     ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
+    ...(options.routed ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
     pools: {
-      trusted: {
+      [options.poolName ?? "trusted"]: {
         tools: ["service"],
         members: [{ namespace: "https://clerk.example.test", id: "alice" }],
         readOnly: false,
@@ -219,6 +224,19 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(JSON.stringify(result)).not.toContain("downstream.test");
     expect(flow.connector.startAuth).not.toHaveBeenCalled();
     expect(sign).toHaveBeenCalledOnce();
+  });
+
+  it("invalidates routed auth continuations when membership selects a different pool", async () => {
+    const storage = memoryStorage();
+    const first = setup({ routed: true, storage, poolName: "team" });
+    const state = (await first.rpc()).result.requestState;
+    expect(state).toBeTypeOf("string");
+    const moved = setup({ routed: true, storage, poolName: "other" });
+    expect((await moved.rpc(undefined, undefined, { state, action: "accept" })).error).toMatchObject({
+      code: -32602,
+      data: { reason: "invalid_request_state" },
+    });
+    expect(moved.call).not.toHaveBeenCalled();
   });
 
   it("INV-4: decline and cancel terminate without dispatch or another prompt", async () => {

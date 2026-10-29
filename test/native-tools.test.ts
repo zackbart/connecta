@@ -13,7 +13,7 @@ import { NATIVE_NAME_MAX, nativeToolName } from "../src/native-tools.js";
 import { CONNECTA_INSTRUCTIONS, nativeInstructions } from "../src/skills.js";
 import type { JsonSchema } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { readJsonRpc } from "./fixtures/http.js";
+import { fakeClerkAuth, readJsonRpc } from "./fixtures/http.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 
@@ -130,6 +130,60 @@ function envelope(result: { content: Array<{ text: string }> }) {
 }
 
 describe("native tool surface", () => {
+  it("routes people to native pools without execute_code and records the admitted pool", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    const c = createTestConnecta({
+      connectors: [
+        api("notes", {
+          tools: [
+            {
+              name: "read",
+              description: "Read notes",
+              annotations: { readOnlyHint: true },
+              handler: () => ({ ok: true }),
+            },
+          ],
+        }),
+      ],
+      auth: fakeClerkAuth({ token: "bob", userId: "bob" }),
+      maintainers: ["alice"],
+      pools: {
+        team: { tools: ["notes"], members: ["bob"], surface: "native", executeCode: false, description: "Team notes" },
+      },
+      activity: activityHistory({
+        store: {
+          record: async (event) => {
+            events.push(event);
+          },
+        },
+      }),
+      logger: silentLogger,
+    });
+    const send = async (path: string, method: string, params: object) =>
+      readJsonRpc(
+        await c.fetch(
+          new Request(`${BASE}${path}`, {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer bob",
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+            },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          }),
+        ),
+      );
+    const listed = await send("/mcp", "tools/list", {});
+    expect(listed).toEqual(await send("/mcp/team", "tools/list", {}));
+    expect(listed.result.tools.map((t: { name: string }) => t.name)).toContain("notes__read");
+    expect(listed.result.tools.map((t: { name: string }) => t.name)).not.toContain("execute_code");
+    for (const path of ["/mcp", "/mcp/team"]) {
+      expect((await send(path, "tools/call", { name: "notes__read", arguments: {} })).result.isError).toBeFalsy();
+    }
+    expect(events.filter((e) => e.pool === "team")).toHaveLength(2);
+    await c.close();
+  });
+
   it("lists each pool tool as <connector>__<tool> with annotations from its classification", async () => {
     const { connecta, token } = await admitted();
     for (const modern of [true, false]) {
@@ -285,7 +339,7 @@ describe("native tool surface", () => {
       expect(invalid.result.isError).toBe(true);
       expect(envelope(invalid.result).error).toMatchObject({
         code: "invalid_args",
-        validation: { issues: [{ path: "/id", code: "required" }] },
+        validation: { issues: [{ path: "/id", received: "missing" }] },
       });
       for (const modern of [true, false]) {
         for (const name of ["crm__nope", "crm__wrong__get_person", "crm__export_all", "crm__export.all"]) {

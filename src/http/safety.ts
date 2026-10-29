@@ -14,7 +14,7 @@
 import { Effect } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import type { OperationIndex } from "../providers/_shared/rest/operation-index.js";
-import type { ValueSafety } from "../providers/_shared/rest/value-safety.js";
+import type { PathWithholds, ValueSafety } from "../providers/_shared/rest/value-safety.js";
 import { Refusal, type OperationRef } from "./errors.js";
 
 export interface ResultSafety {
@@ -26,6 +26,11 @@ export interface ResultSafety {
   readonly redact: (data: unknown, operation: OperationRef) => unknown;
   /** Whether a failure of this operation withholds the vendor's text; codes and statuses still route. */
   readonly withholdsErrors: (operation: OperationRef) => boolean;
+  /**
+   * A discovery hint: the declared response paths `redact` always withholds or redacts, from
+   * the reviewed rules and the sensitive-field choice. An unlisted path promises nothing.
+   */
+  readonly withholds: (operation: OperationRef) => PathWithholds;
 }
 
 export interface SafetyOptions {
@@ -40,6 +45,8 @@ export interface SafetyOptions {
     readonly resolve?: (method: string, path: string) => OperationRef;
     readonly redact: (data: unknown, operation: OperationRef) => unknown;
     readonly withholdsErrors: (operation: OperationRef) => boolean;
+    /** A discovery hint for the paths `redact` always withholds or redacts; absent, it names none. */
+    readonly withholds?: (operation: OperationRef) => PathWithholds;
   };
   /** A global review permitting unindexed paths only when there is no reviewed table. */
   readonly review?: string;
@@ -90,6 +97,11 @@ export function resultSafety(options: SafetyOptions): ResultSafety {
       return dropped.size > 0 ? strip(safe) : safe;
     },
     withholdsErrors: (operation) => reviewed?.withholdsErrors(operation) === true,
+    withholds: (operation) => {
+      const reviewedHint = reviewed?.withholds?.(operation);
+      return (path) =>
+        path.some((segment) => dropped.has(segment.replace(/\[\]$/, ""))) || reviewedHint?.(path) === true;
+    },
   };
 }
 
@@ -117,6 +129,10 @@ export function restSafety(reviewed: ValueSafety, index: OperationIndex): NonNul
     withholdsErrors: (operation) => {
       const op = indexed(operation);
       return op ? reviewed.withholdsErrors(op) : true;
+    },
+    withholds: (operation) => {
+      const op = indexed(operation);
+      return op ? reviewed.withholds(op.method, op.path) : () => false;
     },
   };
 }

@@ -41,7 +41,7 @@ For setup and migrations, see [Integrating services](../documentation/integratin
 
 A **pool** is a named selection of tools and the people or agents allowed
 to use them. The operator creates it and gives it an **endpoint**: a
-connection address for that pool.
+connection address for that pool. Each pool lists only people or only agents.
 
 One pool might let the assistant read CRM records. Another might let a
 person update tickets. Tools and accounts are separate choices: a pool
@@ -65,7 +65,9 @@ choose the right one for the conversation. The model does not choose its
 own access level.
 
 Maintainers run the deployment and can reach its whole tool list through
-the main human endpoint. Other people use their assigned pools.
+the main human endpoint, `/mcp`. Other people use their assigned pools. A
+person in exactly one pool can use that same `/mcp` address: their sign-in
+selects the pool, and they get only its tools.
 Agents use shared accounts selected by the operator. They do not inherit
 the account of the person chatting with them.
 

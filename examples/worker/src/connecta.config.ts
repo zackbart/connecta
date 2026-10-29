@@ -111,6 +111,7 @@ export default defineConfig((env: Env) => {
     // Access user ids or "agent:<name>". The starter pool is the agent's base
     // pool (shared connectors, no owner), named after the agent as the agent
     // pool layout requires.
+    // Each pool lists only people or only agents; share tool lists across separate pools.
     pools: { ci: { tools: ["echo"], members: ["agent:ci"] } },
     // Connectors that declare a `credential` slot become editable by a
     // maintainer (shared) or by the member it belongs to (personal),

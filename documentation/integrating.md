@@ -57,6 +57,7 @@ const crm = remoteMcp("crm", {
 });
 const base = ["crm", "tickets"]; // the agent's lowest tier
 // connectors: [crm, tickets], agents: ["assistant"],
+// Agent tiers list only agents; people use a separate pool sharing base.
 // pools: { assistant: { tools: base, members: ["agent:assistant"] } }
 ```
 
@@ -305,6 +306,11 @@ literal header credentials with personal scope. Review
 [management permissions](./auth.md#management-permissions) before exposing a
 new integration or its authentication controls.
 
+Plain `/mcp` serves maintainers the whole catalog and every other person their
+single pool, so one URL can serve the meta-tools to `alice` and a native pool's
+tools to `bob`. After changing a pool's `tools`, `readOnly`, `surface` or
+`executeCode`, check it as a member at plain `/mcp` as well as at `/mcp/<pool>`.
+
 After editing configuration, run the deployment's typecheck and doctor, then
 perform a bounded read. Add negative checks for target restrictions and writes
 when authoring a handler or provider. Follow repository verification policy
@@ -331,7 +337,7 @@ check shared behavior. Provider-specific tests remain beside each provider.
 
 Use [`@zackbart/connecta-eve`](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
 in the Eve app for an app-owned connection and endpoint instructions refreshed
-once per turn. It requires Node 24 and Eve 0.86.x, and installs separately from
+once per turn. It requires Node 24 and Eve 0.90.x, and installs separately from
 Connecta. Follow its README for the two agent files, token environment variables,
 optional write approval and Vercel OIDC token source. Configure the server's
 [agent and pool membership](./auth.md#issue-rotate-or-revoke-an-agent-token)

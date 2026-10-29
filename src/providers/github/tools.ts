@@ -3,7 +3,8 @@ import { api } from "../../connectors/api.js";
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal } from "../../http/errors.js";
-import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import type { ArgumentProblems } from "../../http/argument-problems.js";
+import { fieldsInput, fieldsIssues, selectFields } from "../../http/fields.js";
 import { hatch, type HatchBinding } from "../../http/hatch.js";
 import { githubPage } from "../../http/hatch-paging.js";
 import { Integer, isMinChars } from "../../http/json-schema.js";
@@ -79,6 +80,43 @@ function selectors(input: unknown, policy: ScopePolicy): GitHubScope[] {
     const t = target(parts[0], parts.length === 2 ? parts[1] : undefined);
     const grant = policy.scope(t);
     return { repo: `${t.owner}/${t.repo}`, access: grant.access };
+  });
+}
+
+const SEARCH_TERMS = /^[a-z0-9_. -]{1,128}$/i;
+const BOOLEAN_TERMS = /\b(?:OR|NOT|AND)\b/i;
+
+/**
+ * Record every selector problem by shape alone: a refusal never repeats a
+ * submitted org or repository, and list_scopes names the configured grants.
+ */
+function selectorIssues(problems: ArgumentProblems, input: readonly unknown[] | undefined, policy: ScopePolicy) {
+  input?.forEach((item, index) => {
+    const value = row(item),
+      at = `/scopes/${index}`;
+    if ((value.org === undefined) === (value.repo === undefined))
+      return problems.add(
+        at,
+        'exactly one key: {"org": "<org>"} for an org-wide grant or {"repo": "<owner>/<repo>"}',
+        value.org === undefined ? "neither org nor repo" : "both org and repo",
+      );
+    let admitted = false;
+    try {
+      if (value.org !== undefined) admitted = policy.scopes.some((scope) => scope.org === policy.owner(value.org));
+      else {
+        const parts = typeof value.repo === "string" ? value.repo.split("/") : [];
+        admitted = !!policy.scope(target(parts[0], parts.length === 2 ? parts[1] : undefined));
+      }
+    } catch (error) {
+      if (!(error instanceof ConnectorCallError)) throw error;
+    }
+    if (!admitted)
+      problems.add(
+        `${at}/${value.org !== undefined ? "org" : "repo"}`,
+        value.org !== undefined
+          ? "an organization configured for org-wide access; list_scopes names them"
+          : '"<owner>/<repo>" of a configured repository or one in a configured org; list_scopes names them',
+      );
   });
 }
 
@@ -278,20 +316,25 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       );
     return position;
   };
-  const namesCheck = (fields: readonly string[] | undefined, names: ReadonlySet<string>) =>
-    checked(() => {
-      const bad = fieldsProblem(fields, names, "an item");
-      if (bad) throw bad;
-    });
   const scopesTool = read(connection, {
     name: "list_scopes",
     description:
       "List configured GitHub grants locally, or verified reachable repositories for one configured owner. Without owner this reads configuration without network access.",
     input: Schema.Struct({ owner: Schema.optionalKey(text("Configured owner; omit for local grants.")), ...common }),
     output: Schema.Struct({ items: Schema.Array(ScopeRow), page: StandardPage }),
+    check: (args, problems) => {
+      fieldsIssues(problems, args.fields, scopeNames, "an item");
+      if (args.owner === undefined) return;
+      try {
+        policy.owner(args.owner);
+      } catch (error) {
+        if (!(error instanceof ConnectorCallError)) throw error;
+        // Without owner, the listing reads the configured grants locally.
+        problems.add("/owner", "a configured owner; omit owner to list the configured grants");
+      }
+    },
     run: (args) =>
       Effect.gen(function* () {
-        yield* namesCheck(args.fields, scopeNames);
         const limit = args.limit ?? 30,
           normalized = { ...args, limit };
         const raw = yield* decode("list_scopes", normalized);
@@ -389,17 +432,21 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       ...common,
     }),
     output: Schema.Struct({ items: Schema.Array(SearchRow), page: StandardPage, incomplete_results: Schema.Boolean }),
+    check: (args, problems) => {
+      // Rows wrap the vendor's record under item, so a vendor field is item.<field>.
+      fieldsIssues(problems, args.fields, searchNames, "an item (vendor fields are under item)");
+      if (!SEARCH_TERMS.test(args.terms) || BOOLEAN_TERMS.test(args.terms))
+        problems.add(
+          "/terms",
+          "literal words of letters, digits, spaces, _ . or -, at most 128 characters, without qualifiers such as is:open or label:x and without OR, AND or NOT; kind and scopes select the rest",
+        );
+      selectorIssues(problems, args.scopes, policy);
+    },
     run: (args) =>
       Effect.gen(function* () {
-        yield* namesCheck(args.fields, searchNames);
-        const selected = yield* checked(() => {
-          if (!/^[a-z0-9_. -]{1,128}$/i.test(args.terms) || /\b(?:OR|NOT|AND)\b/i.test(args.terms))
-            throw new ConnectorCallError(
-              "invalid_args",
-              "Search terms must be literal words, without qualifiers or Boolean operators.",
-            );
-          return args.scopes === undefined ? policy.scopes : selectors(args.scopes, policy);
-        });
+        const selected = yield* checked(() =>
+          args.scopes === undefined ? policy.scopes : selectors(args.scopes, policy),
+        );
         const partitions = yield* checked(() => searchPartitions(selected)),
           limit = args.limit ?? 30,
           normalized = { ...args, limit };

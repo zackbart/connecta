@@ -198,6 +198,17 @@ describe("named reads (H9, H10)", () => {
       expect(await call(connection(), tool, args), tool).toEqual({ status: 200, data });
     }
     expect(() => connection({ sensitiveFields: "raw" })).toThrow(/sensitiveFields/);
+    // Details hints the deployment's choice: dropped names are listed as withheld, and only then.
+    calls.length = 0;
+    const response = async (options: Record<string, unknown> = {}) =>
+      ((await call(connection(options), "tithely_api_details", { method: "GET", path: "/organizations/org_1" })) as any)
+        .response;
+    const dropped = await response();
+    expect(dropped.withheld).toEqual(expect.arrayContaining(["object.bank", "object.legal"]));
+    const returned = await response({ sensitiveFields: "return" });
+    expect(returned.fields).toEqual(expect.arrayContaining(["object.bank", "object.legal"]));
+    expect(returned.withheld ?? []).not.toEqual(expect.arrayContaining(["object.bank"]));
+    expect(calls).toEqual([]);
   });
 
   it("falls back to fund names when giving_types_full is absent", async () => {

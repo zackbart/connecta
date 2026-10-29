@@ -13,7 +13,7 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 | Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                                                                                                                                                    |
 | Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [Clerk Organizations](#one-clerk-instance-one-organization-per-deployment), [management](#human-authentication-management)                                                        |
 | Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                                                                                                                                                         |
-| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                                                                                  |
+| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refreshing before expiry](#refreshing-before-expiry), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                           |
 | Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens), [principal forwarding](#forwarding-the-admitted-principal), [Google hosted MCP](#google-service-account-tokens-and-hosted-mcp) |
 | Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                                                                                                                                                          |
 
@@ -44,7 +44,9 @@ auth through the operator UI.
    with several (Clerk's Frontend API URL or `cloudflare-access` as namespace).
    Keep these stable: personal credentials are partitioned by principal.
 4. Typecheck and restart/redeploy. Sign in as the person and verify their
-   intended endpoint and tools. A pool-only member at plain `/mcp` gets 404.
+   intended endpoint and tools. A non-maintainer listed in exactly one pool
+   may use plain `/mcp`, which serves that pool; with zero or several pools,
+   plain `/mcp` answers the private 404 and they use `/mcp/<pool>`.
    With the UI enabled, the [member page](./operator-ui.md#use-the-member-page)
    shows their pool URLs and client setup; `/ui/api/config` returns 200 with
    `role: "member"`. It does not grant the maintainer pages, shared credential
@@ -66,9 +68,11 @@ In the Node template and Worker example, `CONNECTA_MAINTAINERS` is a
 comma-separated list of these ids; update that environment variable when
 using their roster wiring. Pool membership remains code. To remove a person,
 remove their memberships and maintainer entry, restart/redeploy, and remove
-their sign-in admission as appropriate. Never add another person to an
-agent's `<agent>-<user>` pool, and add a person to an agent's tier only if
-they are cleared for it; follow [the pool layout](#organizing-an-agents-pools).
+their sign-in admission as appropriate. Never add a person to an agent's
+pool: a pool lists only people or only agents, and mixing them throws at
+construction. Give people who share an agent tier's reach their own people-only
+pool that reuses the tier's tool-list constant, and keep each `<agent>-<user>`
+pool agent-only; follow [the pool layout](#organizing-an-agents-pools).
 
 ## Connect a shared credential
 
@@ -727,8 +731,17 @@ bypasses the scoped registry. These refusals happen before any request leaves. A
 never reach it; a deployment's own connectors still cannot read the caller.
 
 Access is read from one place, deployment code. Top-level
-`maintainers` lists the people who reach plain `/mcp`, which serves the whole
-catalog with the deployment's `readOnly`, and the operator routes. Each pool's
+`maintainers` lists the people who receive the whole catalog at plain `/mcp`
+with the deployment's `readOnly`, and who reach the operator routes. A
+non-maintainer person listed in exactly one pool receives that pool at plain
+`/mcp` exactly as `/mcp/<pool>` serves it: its `tools`, `readOnly`, `surface`,
+`executeCode` and `description`. A maintainer keeps the whole catalog even when
+also listed in pools. Membership is matched on the admitted, resolved
+`{ namespace, id }`, so a bare `"bob"` and the explicit reference it resolves
+to are the same person, and the same id in another namespace is not. Authentication, OAuth challenges and resource audiences are plain `/mcp`'s;
+the pool is chosen after authentication. Construction warns, naming each
+non-maintainer person listed in several pools, and `describeConfig()` lists them
+in `peopleInSeveralPools`. Each pool's
 `members` lists who reaches that pool, people at `/mcp/<pool>` and agents at
 `/agent/<pool>`, which serve exactly that pool's `tools`. A maintainer opens no pool implicitly; list them as a member to use
 one. Nothing intersects these lists with anything else, and a request never
@@ -776,6 +789,12 @@ replacement. A guarded read grant becomes a pool with `readOnly: true`.
 
 ### Team pools
 
+Every person in exactly one pool can configure plain `/mcp`; their sign-in
+selects that pool, so one client configuration serves every team. A person in
+several pools uses each pool's `/mcp/<pool>`. Only people pools count: a pool
+lists only people or only agents, so an agent's pools never change where a
+person's plain `/mcp` routes.
+
 Keep membership in deployment code; static lists can be built with ordinary
 code at construction:
 
@@ -800,9 +819,9 @@ Marketing's every `campaigns` tool and only `issues.search`. Neither pool
 serves `billing`; only the owner's plain `/mcp` does. A person in both pools
 uses two endpoints, never a union.
 
-A team pool can also be one of an agent's tiers: the same pool lists the
-cleared people and the agent, and each reaches it at their own address
-([people in a tier](#organizing-an-agents-pools)).
+A human team pool and an agent tier are separate pools. Share a tool-list
+constant between them, with people in `team` and only agent references in
+`assistant-team` ([pool layout](#organizing-an-agents-pools)).
 
 | Catalog change          | Exact `connector.tool` in a pool                                        |
 | ----------------------- | ----------------------------------------------------------------------- |
@@ -891,16 +910,16 @@ warning says, every pool path answers the 404 because nobody can be a member,
 and every agent endpoint answers the machine-only 401 because no agent can be
 admitted.
 
-| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                                                                                                               |
-| Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                                    |
-| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                |
-| Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                 |
-| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; plain `/mcp` and a pool without one serve the shared instructions unchanged. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                   |
-| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 characters of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
-| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                     |
-| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                        |
+| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers and the unique member pool to other people. Neither intersects with or widens anything.                                                                                                                                         |
+| Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                     |
+| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                                                                                     |
+| Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                                                                                      |
+| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; a maintainer at plain `/mcp` and a pool without one serve the shared instructions unchanged. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                       |
+| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, mixed people and agent membership (a `ConfigError` naming the pool), unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 characters of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                                                                                          |
+| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                                                                                             |
 
 Pool descriptions are trimmed before validation. The remaining text must be
 1 to 500 characters and contain no C0 or C1 control characters (including tabs,
@@ -947,7 +966,12 @@ Protected-resource metadata stays public at both default aliases,
 Discovery does not authenticate callers or evaluate membership, so fresh
 OAuth clients can discover how to authenticate. Admission applies after auth
 to MCP requests and result/page handles. Handles remain bound to their
-originating endpoint; paging re-admits the caller at that endpoint. A pool
+originating requested pathname and admitted pool; paging re-admits the caller
+at that endpoint and re-resolves their pool, which must still match. A handle
+minted at plain `/mcp` never pages at `/mcp/<pool>` or the reverse, even for the
+same pool, and a membership change fails it closed. Handles minted before this
+binding existed fail closed. Auth-elicitation and downstream-input
+continuations carry the same pathname and pool binding. A pool
 cannot read a `/mcp` handle, and `/mcp` cannot read a pool's handle.
 
 Operator catalog (`/ui/data`, `/ui/connectors/<id>`), activity, shared
@@ -964,9 +988,10 @@ activity. Anyone else gets the same 404, and an agent token the machine-only
 shell carries no catalog data.
 
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
-plain `/mcp` endpoint and is required: a deployment that omits it fails at
+plain `/mcp` endpoint for maintainers and is required: a deployment that omits it fails at
 construction and must choose `true` or `false`. A pool inherits it unless the
-pool sets its own `readOnly`, in either direction. A writable endpoint lets
+pool sets its own `readOnly`, in either direction. A person routed to their
+pool at plain `/mcp` gets that pool's effective `readOnly`. A writable endpoint lets
 `call_destructive_tool` and programs write, and the MCP client decides what to
 approve. On a read-only endpoint, write tools are absent from `search_tools`
 results, `connecta.search`, and `connecta.describe`, and `call_tool`,
@@ -997,9 +1022,9 @@ for agents, just as an `authScope: "personal"` connector is: `search_tools`,
 `connecta.search`, `connecta.describe`, `skills`, and connector discovery omit
 it, `authorize_connector` answers "Unknown connector", and a call by address
 fails `unknown_address`, the same as for a connector that does not exist.
-People in the same pool still see it and act as themselves. This is what lets
-one pool be a team pool for people, each acting as themselves on Workspace, and
-also list an agent that reaches only the pool's shared connectors.
+People use a separate people-only pool, where they see the connector and
+act as themselves. Share the same tool-list constant between the people pool
+and an agent-only pool when both need the same tools.
 
 `owner` is a Workspace email address, checked at construction and listed in
 `describeConfig()` (`null` when unset). Over HTTP, `/ui/api/config` serves it
@@ -1025,7 +1050,7 @@ createConnecta({
   pools: Object.fromEntries(
     team.map((person) => [
       `assistant-${person.handle}`,
-      { tools: ["gmail", "drive"], owner: person.email, members: [person.id, "agent:assistant"] },
+      { tools: ["gmail", "drive"], owner: person.email, members: ["agent:assistant"] },
     ]),
   ),
   connectors: [
@@ -1037,12 +1062,11 @@ createConnecta({
 ```
 
 The agent harness, not the model, picks the pool for each turn, which is what
-keeps one person's mailbox from another's. Adding a person to someone else's
-pool opens nothing of the owner's Workspace account to them, since people act
-as themselves through the mapping. That holds only for Workspace mappings:
-every other connector in the pool, including a shared-auth connector holding
-the owner's own account, runs the same for every member
-([members of a personal pool](#organizing-an-agents-pools)).
+keeps one person's mailbox from another's. Personal agent pools list only
+the agent, whether or not they set an `owner`. People use separate pools;
+their Workspace calls use the mapping and always act as themselves. A shared-auth
+connector holding a user's own account runs as that account for every admitted
+agent ([personal pools](#organizing-an-agents-pools)).
 
 A fixed `subject` address is the explicit shared-account exception: every
 caller, person or agent, acts as it in every pool that lists the connector,
@@ -1067,10 +1091,10 @@ section holds the complete rules.
 2. **Tiers.** An agent's tiers are named pools ordered from least to most
    capable. Recommended names are `<agent>` for the lowest tier and
    `<agent>-<tier>` for higher tiers (`assistant-team`, `assistant-leads`).
-   A tier may be any named pool, including an existing team pool such as
-   `team` or `leadership`, as long as its human members are all cleared for
-   it (rule 10). An agent with one tier uses it as the lowest. Tiers never
-   hold per-user connectors and never set an `owner`.
+   Every tier is agent-only. A human team with the same reach uses a separate
+   pool sharing the same tool-list constant (rule 10). An agent with one tier
+   uses it as the lowest. Tiers never hold per-user connectors and never set
+   an `owner`.
 3. **Personal pool `<agent>-<user>`.** `/agent/<agent>-<user>` serves pool
    `<agent>-<user>`: the highest tier that user is cleared for, plus that
    user's own connectors. Use it only in a one-on-one with that user.
@@ -1103,26 +1127,24 @@ section holds the complete rules.
    reaches every tier above. For example, billing restricted to leads goes
    in the leads tier. Per-user connectors (`notes_alice`) go only in personal
    pools, and so do the Workspace connectors with a mapping `subject` that
-   the agent uses; rule 10 covers listing them in a tier for its people.
+   the agent uses. People use a separate pool for their own accounts.
 8. **Changes stay in config.** Adding an account for a user adds its
    connector and lists it in that user's pool `tools`. Adding a user adds one
    `<agent>-<user>` pool. Adding a tier adds one pool and one constant, and
    the tier's place in the harness's tier list.
-9. **No other person in a personal pool.** The only human member an
-   `<agent>-<user>` pool may have is that same user, and usually it has none.
-   Never add another person: its per-user connectors (`notes_alice`) use that
-   user's account for everyone the pool admits, so another member would read
-   and write the user's account as their own. A person's own use normally
-   goes through their own pools or plain `/mcp`.
-10. **People in a tier are cleared for it.** A tier can also be a human team
-    pool: list the people cleared for that tier in its `members` beside the
-    agent. They use it at `/mcp/<pool>`, the agent at `/agent/<pool>`.
-    List no one else: a member reaches
-    every shared connector the tier holds, on the deployment's account. Such a
-    pool may also list Workspace mapping connectors or `authScope: "personal"`
-    connectors for its people, who act as themselves on them; those connectors
-    are absent for the agent, since a tier has no owner and an agent has no
-    principal.
+9. **Personal pools list only the agent.** An `<agent>-<user>` pool lists
+   only `"agent:<agent>"`, with or without an `owner`. No person belongs
+   there: mixed membership throws `ConfigError` at construction. A person's
+   own use goes through a separate people-only pool or plain `/mcp`.
+10. **People use separate team pools.** A tier is never a human team pool.
+    Define `teamTools` once, then use it for `team` with people in
+    `members` and `assistant-team` with only the agent. People open
+    `/mcp/team`; the agent opens `/agent/assistant-team`. Every person
+    listed must be cleared for every shared connector in their pool.
+    The human pool may also list Workspace mapping connectors and
+    `authScope: "personal"` connectors, on which each person acts as
+    themselves. Keep them out of the tier: they are absent for agents,
+    since an agent has no principal and a tier has no owner.
 
 **Choosing the pool each turn**
 
@@ -1176,8 +1198,9 @@ createConnecta({
   pools: {
     // Lowest tier and fallback: reads guests may use.
     assistant: { tools: guestTools, readOnly: true, members: [agent] },
-    // Also the team's own pool at /mcp/assistant-team.
-    "assistant-team": { tools: teamTools, members: [agent, "user_alice", "user_bob"] },
+    // Same reach, separate membership: people and the agent each have a pool.
+    team: { tools: teamTools, members: ["user_alice", "user_bob"] },
+    "assistant-team": { tools: teamTools, members: [agent] },
     "assistant-leads": { tools: leadsTools, members: [agent] },
     // Each personal pool spreads its user's highest tier.
     "assistant-alice": {
@@ -1235,8 +1258,8 @@ gets `assistant`, even if the platform marks the chat as direct. Rule 9 is
 why each personal pool lists only the agent: people act as themselves only
 through a Workspace mapping, and a shared-auth connector such as
 `notes_alice` acts as Alice for whoever the pool admits.
-Rule 10 is why `assistant-team` may list Alice and Bob: it holds only
-connectors that every member may use on the deployment's account.
+Rule 10 gives Alice and Bob a separate `team` pool sharing `teamTools`;
+`poolFor` selects only agent pools and its tier selection stays the same.
 
 ## Shared and personal auth
 
@@ -1285,6 +1308,17 @@ it lies on first read, by compare-and-set. An [`api()` OAuth
 connector](#downstream-oauth-on-api) stores no client. A vault without the
 optional `seal`/`open` members keeps the body plaintext with a startup
 warning; no vault, plaintext as always.
+
+The body also holds `expiresAt`, the epoch milliseconds the stored access token
+expires: its `expires_in`, counted from just before the request that issued it
+was sent (the code exchange, or the refresh's token request), never from when
+its answer arrived or was saved, so a slow answer cannot push the expiry past
+the token's real one. An `expires_in` of `0` expires at issuance. It is written
+with the tokens it describes, replaced with them and dropped with them, in the
+sealed and plaintext layouts alike. A grant stored before this field existed,
+or one whose token response carried no `expires_in`, has none. Reading a grant
+never adds it (INV-10), so such a grant gains one only at its next token write,
+and until then is refreshed only after a 401.
 
 **Pre-layout-3 grants.** The layout-2 migration and historical-key cleanup
 are removed. An owner with only old keys is treated as unauthorized; a warning
@@ -1419,6 +1453,47 @@ removal and revocation flow when deployment configuration supplies
 `revocationEndpoint`; without it, removal remains local. The configured
 client secret is used in memory and is never saved with the grant.
 
+## Refreshing before expiry
+
+A call refreshes the grant before it sends a token that is within 60 seconds of
+its stored `expiresAt`, so a write never meets the 401 it could not be repeated
+after (INV-9). Sixty seconds covers the refresh's own 20-second token-request
+deadline and the call's send with margin, and matches the early refresh of
+Google service-account tokens; for a typical one-hour token it is under 2% of
+its life. A token that lives under a minute, or arrives already expired, is
+refreshed once per call, in the invocation's check. Later in the same request,
+`callTool` and `ctx.oauth.fetch` send the token that renewal produced without
+renewing it again until its stored expiry passes (or, for a token already
+expired when issued, for the next check only); a token another request rotated
+in since is checked as usual.
+
+The renewal is the flow a 401 would start, through the same refresh
+coordinator: one redemption per owner partition and epoch in an isolate, the
+shared-storage lease and spent-fingerprint CAS across isolates, and the commit
+before anyone is released. Its token request names the access token it
+replaces, so a caller whose own read came before another request's rotation
+adopts that rotation instead of redeeming again. Two isolates that find the
+same token due spend one refresh token between them.
+
+| Where                                                                       | When                                                                                                        | A failed renewal                                                                                                                                                                |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The invocation's authorization check, before it enters the connector        | Every `call_tool`, `call_destructive_tool`, and program call, after the grant read that check already makes | Fails the call before anything is sent: `downstream_oauth_required` (or retryable `unavailable` for a waiter deadline), with no `writeOutcome` and no `reconciliationRequired`. |
+| `remoteMcp()`'s `callTool`, before it sends `tools/call` on a reused client | The token the connection last read has come due since                                                       | Ends the call before `tools/call` is sent. A call already entered reports it as the invocation reports any failure after entry.                                                 |
+| `api()`'s `ctx.oauth.fetch`, before each request                            | The token the request just read is due, as in a handler that runs long                                      | Is thrown into the handler, which may already have sent other requests, so a write keeps the invocation's conservative outcome.                                                 |
+
+Whether a token is due is decided from the grant read the step already made: a
+grant not yet due costs no extra storage read. A due token costs one more grant
+read for the renewal's own flow, and then the refresh's own reads and writes.
+Status, listing (including the stored-catalog read without a connection),
+discovery, the operator UI, and `authorize_connector` never renew a token
+(INV-10). Nothing renews in the background: renewal belongs to the call that
+found the token due, which owns its preparation until the claim CAS is
+submitted, as for a 401.
+
+A grant without `expiresAt` keeps the earlier behavior: it is refreshed after a
+downstream 401, a write's 401 is never resent, and the refresh that follows
+stores `expiresAt` for every later call.
+
 ## Refresh failures
 
 A refresh token is spent when dispatch begins. Every refresh request passes
@@ -1493,10 +1568,20 @@ a dispatched record. The refresh HTTP request and response body have a
 20-second deadline. After the response or a dispatched exchange failure,
 grant commit and cleanup share a separate 20-second deadline, including all
 storage reads, CAS retries, fingerprint resolution, and lease release.
-Contenders wait at most 35 seconds with 10 ms to 250 ms
-backoff. A waiter deadline returns retryable `unavailable`, keeps the grant,
-and starts no consent. It never permits resending a spent token.
+Contenders wait at most 35 seconds, and never past the caller's own signal,
+which carries the request's deadline. A waiter polls the lease from 50 ms,
+doubling to at most 2 seconds between polls, so a wait that runs the full 35
+seconds polls at most 22 times. Each poll is one batched storage read of the
+lease, the grant, the spent fingerprint, and the holder's liveness key named by
+the previous poll (one D1 statement); a store without batched reads reads them
+one at a time, lease first, so a completed lease is never paired with the grant
+from before its commit. A waiter deadline returns retryable `unavailable`,
+keeps the grant, and starts no consent. It never permits resending a spent
+token.
 
+A grant with `expiresAt` is normally renewed before its token expires
+([Refreshing before expiry](#refreshing-before-expiry)). A token revoked early,
+or one stored without an expiry, can still draw a 401.
 A `remoteMcp()` write the downstream answered with HTTP 401 is never sent
 again (INV-9). The SDK still refreshes the grant, and connecta stops its
 resend before it leaves, so any fresh call after the target is reconciled uses
@@ -2715,6 +2800,9 @@ owner's access token as `Authorization: Bearer` with these rules:
 
 - Only `apiOrigins` receive tokens; refuse other origins before sending, including
   untrusted response URLs. Return redirects unfollowed; handlers cannot set `Authorization`.
+- A token within a minute of its stored expiry is renewed before the handler
+  runs, and again before any request that finds it due
+  ([Refreshing before expiry](#refreshing-before-expiry)).
 - On 401, recover exactly once using an already rotated token or one coalesced
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
   owner is cancelled after the answer. Only a positively read-classified

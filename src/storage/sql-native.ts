@@ -81,6 +81,8 @@ function schemaOnce(
     });
 }
 // --- key-value ----------------------------------------------------------
+/** Keys one `getMany` statement binds. */
+const GET_MANY_KEYS = 64;
 /** Expired rows one write removes on its way. */
 const SWEEP_ROWS = 16;
 function ttlMillis(ttlSeconds?: number): number | null {
@@ -128,6 +130,37 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
         validateStorageKey(key);
         yield* ensure();
         return yield* current(key);
+      });
+    },
+    getMany(keys) {
+      return Effect.gen(function* () {
+        for (const key of keys) validateStorageKey(key);
+        if (keys.length === 0) return [];
+        yield* ensure();
+        // One statement for every key: a chunked value costs one round trip.
+        // Rows answer by position, never by the key text a driver returns.
+        // Bound parameters stay under D1's per-statement limit of 100.
+        const values: (string | null)[] = keys.map(() => null);
+        for (let offset = 0; offset < keys.length; offset += GET_MANY_KEYS) {
+          const batch = keys.slice(offset, offset + GET_MANY_KEYS);
+          const rows = yield* driver.all<{
+            position: number;
+            value: string;
+            value_bytes: TextBytes | null;
+          }>({
+            sql: `WITH wanted (position, key) AS (VALUES ${batch.map((_, i) => `(${offset + i}, ?)`).join(", ")})
+             SELECT wanted.position AS position, ${textColumn("value")}
+             FROM wanted JOIN connecta_kv ON connecta_kv.key = wanted.key AND ${live}`,
+            params: batch,
+          });
+          for (const row of rows)
+            values[row.position] = textOf(
+              row.value,
+              row.value_bytes,
+              `the stored value of ${JSON.stringify(keys[row.position])}`,
+            );
+        }
+        return values;
       });
     },
     set(key, value, opts) {

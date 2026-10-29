@@ -67,6 +67,7 @@ export interface DownstreamRequestState {
   kind: "downstream";
   principal: string;
   endpoint: string;
+  pool: string | null;
   connector: string;
   address: string;
   target: string;
@@ -362,6 +363,7 @@ export class DownstreamElicitation {
               kind: "downstream",
               principal,
               endpoint,
+              pool: self.options.registry.resultIdentity().pool,
               connector: pending.connector,
               address: String(args.address),
               target: pending.address,
@@ -572,6 +574,7 @@ export class DownstreamElicitation {
               state.kind !== "downstream" ||
               state.principal !== principal ||
               state.endpoint !== endpoint ||
+              state.pool !== registry.resultIdentity().pool ||
               state.connector !== wrapper.connector ||
               typeof state.address !== "string" ||
               typeof state.target !== "string" ||

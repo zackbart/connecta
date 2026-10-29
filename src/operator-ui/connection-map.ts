@@ -224,7 +224,7 @@ function callerSummary(caller: Caller): string {
 }
 
 function callerDetail(caller: Caller, maintainers: ReadonlySet<string>): string {
-  if (caller.kind === "person") return maintainers.has(caller.id) ? "maintainer" : "member";
+  if (caller.kind === "person") return maintainers.has(caller.id) ? "maintainer" : "member · /mcp if one pool";
   if (caller.agent?.credentialTypes.includes("vercel_oidc")) return "agent · Vercel OIDC";
   const state = caller.agent?.token?.state;
   return state === "issued"

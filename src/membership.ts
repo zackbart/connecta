@@ -26,6 +26,7 @@ export interface ResolvedPool {
   readOnly: boolean;
   /** Exactly the pool's `tools`; nothing intersects or widens it. */
   access: ConnectorAccess;
+  /** Non-empty and homogeneous: all people or all agents. */
   members: readonly Member[];
   /** Trimmed `owner`: the Workspace address agents in this pool act as. */
   owner?: string;
@@ -119,7 +120,7 @@ const memberKey = (member: Member): string =>
  * Resolve one list of references, throwing on any that is malformed,
  * ambiguous, unknown, or repeated (INV-11).
  */
-export function resolveMembers(value: unknown, path: string, context: MemberContext): Member[] {
+function resolveMembers(value: unknown, path: string, context: MemberContext): Member[] {
   if (!Array.isArray(value)) {
     throw new ConfigError(`${path} must be an array of principal ids, { namespace, id }, or "agent:<name>".`);
   }
@@ -131,6 +132,15 @@ export function resolveMembers(value: unknown, path: string, context: MemberCont
     seen.add(key);
     return Object.freeze(member);
   });
+}
+
+/** Resolve a pool's members, which are all people or all agents (INV-11). */
+export function resolvePoolMembers(value: unknown, path: string, context: MemberContext): Member[] {
+  const members = resolveMembers(value, path, context);
+  if (!members.every((member) => member.kind === members[0]!.kind)) {
+    throw new ConfigError(`${path} mixes people and agents; list only one kind.`);
+  }
+  return members;
 }
 
 /**
@@ -147,7 +157,7 @@ export function resolveMaintainers(
   if (value === undefined || (Array.isArray(value) && value.length === 0)) {
     if (admitsPeople) {
       throw new ConfigError(
-        `${path} is required with inbound auth: list the people who may use plain /mcp, administer shared ` +
+        `${path} is required with inbound auth: list the people who receive the whole catalog at plain /mcp, administer shared ` +
           "credentials, manage agent tokens, and read activity.",
       );
     }
@@ -182,6 +192,30 @@ export function isMember(member: Member, identity: Readonly<AuthenticatedIdentit
     principal.namespace === member.namespace &&
     principal.id === member.id
   );
+}
+
+/**
+ * Non-maintainer people listed in several pools, in declaration order. Plain
+ * `/mcp` routes a person by their single pool, so it refuses each of these.
+ * An open deployment admits no people, so it has none.
+ */
+export function peopleInSeveralPools(
+  pools: ReadonlyMap<string, ResolvedPool>,
+  maintainers: readonly IdentityReference[],
+): Array<{ namespace: string; id: string; pools: string[] }> {
+  if (maintainers.length === 0) return [];
+  const people = new Map<string, { namespace: string; id: string; pools: string[] }>();
+  for (const [name, pool] of pools) {
+    for (const member of pool.members) {
+      if (member.kind !== "human") continue;
+      if (maintainers.some((m) => m.namespace === member.namespace && m.id === member.id)) continue;
+      const key = JSON.stringify([member.namespace, member.id]);
+      const person = people.get(key) ?? { namespace: member.namespace, id: member.id, pools: [] };
+      if (!person.pools.includes(name)) person.pools.push(name);
+      people.set(key, person);
+    }
+  }
+  return [...people.values()].filter((person) => person.pools.length > 1);
 }
 
 /** Whether an admitted identity is a listed maintainer. */

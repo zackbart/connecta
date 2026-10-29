@@ -207,9 +207,11 @@ existing-record migration.
 
 One deployment serves one tenant and may admit several people. Node uses Clerk
 for human auth; Access is Workers-only. With inbound auth, `maintainers` is
-required: only they reach plain `/mcp` and the operator UI. Everyone else
-reaches a pool that lists them in `members`: people at `/mcp/<pool>`, agents
-at `/agent/<pool>`. Maintainers alone administer shared credentials, manage
+required: they receive the whole catalog at plain `/mcp` and the operator UI.
+Everyone else reaches a pool that lists them in `members`: people at
+`/mcp/<pool>`, agents at `/agent/<pool>`. A person in exactly one pool may also
+use plain `/mcp`, which serves them that pool, so one client URL can be handed
+to every person; a person in several pools must use `/mcp/<pool>`. Maintainers alone administer shared credentials, manage
 agent tokens, and read activity; members connect their own accounts on
 personal connectors in their pools.
 [Auth](./auth.md#principals-visibility-and-operators) owns maintainers and members;
@@ -332,6 +334,7 @@ and [Eve agents](./meta-tools.md#eve-agents).
 
 - [Provider migration for 0.35](./provider-migration-0.35.md) collects provider upgrade actions for 0.35.0, including removal of Infisical, Notion, and Mixpanel factories.
 - [Migration to 0.34](./migration-0.34.md) covers the Overview landing page, Endpoints at `/endpoints`, default browser titles, and Workspace discovery in owner-less agent pools. No storage migration or token rotation is needed from 0.33.
+- [Split mixed pools](./pool-membership-upgrade.md) before starting a deployment that lists people and agents together; mixed membership now throws at construction.
 - [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2 with its operator route changes, and the pre-auth listen fix.
 - [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Pool members name `"agent:<name>"` instead of matching token record ids.
 - [Retired layout migrations](./migration-retired-layouts.md) requires completing Node JSON → SQLite, Workers KV → D1, and every OAuth layout-2 grant conversion on 0.37.1 before upgrading. The new package no longer supplies those migrations.

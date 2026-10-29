@@ -114,7 +114,12 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 1. **Expose each provider as a guest global** whose properties are its `fns`,
    called with the program's arguments and awaited. Connecta supplies `search`,
    `describe`, `call`, `read`, `result`, `skill`, and `emit`; the prelude also
-   binds the guest's `skills` alias to `skill`.
+   binds the guest's `skills` alias to `skill`. Connecta also supplies
+   `unawaited`, which the built-in prelude calls at most once, after a failed
+   program read a result field off an unawaited call. It spends no host call;
+   the host admits one notice per run and ends the run with `budget_exceeded`
+   on any further call, so a bridge that exposes it directly gains no
+   uncounted round trips.
 2. **Evaluate `prelude` after the provider globals exist and before the
    program.** It is trusted host code that installs the immutable namespace
    and waits for emission acknowledgements. Capture runner intrinsics first;
@@ -197,8 +202,10 @@ is preserved; no JavaScript identifier conversion takes place.
 
 **A2.** Connectors create no guest globals, so an id resembling a JavaScript
 builtin, or one that would collide after sanitization, stays usable through its
-canonical address. The bounded connector inventory in the tool description shows
-canonical ids with bounded configured titles when present. Clauses A3–A5
+canonical address. The bounded connector inventory in the tool description names
+every connector by canonical id, adding a bounded configured title only when it
+says more than the id, and each guide's fetch call (see
+[meta-tools](./meta-tools.md#discovery-context)). Clauses A3–A5
 belonged to shortcut dispatch and stay retired; nothing reuses those ids.
 
 ## The surface
@@ -351,8 +358,14 @@ says so inside its `Promise<…>`.
 ### connecta.call
 
 The published `GuestApi` type describes the supplied global for editors.
-The executable usage guide checks its API notation against those declarations;
-programs still use plain JavaScript.
+The `execute_code` description declares a compact subset of it inline: argument
+shapes that match what `GuestApi` accepts, result fields it returns, and no
+others. Authored emit blocks are the exact variants `M1` accepts;
+forwarded blocks are the native variants from `result.content`. It also
+states that search and describe return objects rather than arrays, that a call
+result over 1 MiB returns a paged handle, and that every function except `emit`
+spends a host call (`M7`). `GuestApi`'s `emit` takes no paged handle, which the
+host refuses. Programs still use plain JavaScript.
 
 ```js
 const { data: run, format } = await connecta.call("ci.get_run", { runId: 42 });
@@ -411,10 +424,12 @@ mismatches, revoked access, and old entries without bindings are `not_found`, as
 are unknown or expired ids; a storage failure is `unavailable`. IDs are random UUIDs.
 The `get_result` meta-tool is removed.
 
-`await connecta.skill(name)` resolves the same URI or compatibility name as
-top-level `skills`, within the admitted connector view. It reads the registry
-behind native `skills/get` and `resources/read`, including opted-in downstream
-skills. It returns
+`await connecta.skill(name)` resolves the same URI, compatibility name, or bare
+connector id as top-level `skills`, within the admitted connector view; built-in
+names stay reserved (see
+[meta-tools](./meta-tools.md#connector-guides-and-skills)). It reads the
+registry behind native `skills/get` and `resources/read`, including opted-in
+downstream skills. It returns
 `{ name, format: "text", text }`; an unknown name is `not_found`. It also
 accepts the top-level tool's `{ name }` object, and `connecta.skills` is an
 undeclared alias of `connecta.skill` with the same host-call accounting, because
@@ -628,8 +643,20 @@ when empty. An empty string reports `program_error` with
 **E6.** A guest `TypeError`, `ReferenceError`, syntax error, invented API, or
 program-authored throw is `program_error`. `details.name` is a bounded engine
 error name; `details.line` is the source line when the runtime supplies one,
-otherwise null. Fixed hints repair imports/require/filesystem access, shadowed
-`connecta`, and invented globals such as `callTool`.
+otherwise null. `message` is `Program <name>: <engine message>`, naming the
+error once even when an executor reports a prefixed message. Fixed hints repair
+imports/require/filesystem access, shadowed `connecta`, invented globals such
+as `callTool`, and a missing `await`. Detection is at runtime, never from
+source: the Promise each `connecta.*` call except `emit` returns has
+non-enumerable getters for result fields (`data`, `format`, `content`, `tools`,
+`catalogErrors`, `total`, `text`, `resultId`, `hasMore`, `nextOffset`). Reading
+one before `await`, as in `connecta.call(...).data` or
+`const { tools } = connecta.search(...)`, returns undefined as before and sets
+a per-run flag. When that program then fails, the prelude reports the flag
+through the uncounted `unawaited` host function before the failure crosses,
+and the hint is `connecta.* returns a Promise; await it`. Awaiting, `then`,
+`Promise.all`, and `Promise.allSettled` never read those fields. Hints are
+fixed text; no program source, field name, or value enters them.
 
 An unchanged uncaught host error retains its classification through Error
 identity. A new error containing its message is a new program error. Copied
@@ -663,13 +690,14 @@ past the deployment's result cap. A clipped address still identifies the mistake
 by its position; a short one is exact and untagged.
 
 **E8.** A remote MCP tool whose advertised schema rejects the call fails before
-provider dispatch with `invalid_args`, carrying bounded, value-free
-`{ path, code, expected }` findings and the same scoped
-`function: "connecta.search"` recovery every other in-program miss gets. A
-declared property reports the schema keyword that failed, never the validator's
-duplicate `additionalProperties` branch; a truly undeclared property still
-reports `additionalProperties`. Unsupported schemas pass through; unrecognized
-provider prose remains `connector_call_failed`.
+provider dispatch with `invalid_args`, carrying every bounded
+`{ path, expected, received? }` finding, one corrected `example` when it can be
+built, and the same scoped `function: "connecta.search"` recovery every other
+in-program miss gets ([argument recovery](./meta-tools.md#argument-recovery)).
+A declared property reports the constraint that failed, never the validator's
+duplicate `additionalProperties` branch; a truly undeclared property reports
+the accepted keys. Unsupported schemas pass through; unrecognized provider
+prose remains `connector_call_failed`.
 
 ## Results and projection
 
@@ -938,17 +966,17 @@ deadline past the ceiling means raising the ceiling too.
 **L4.** Per-execution bounds that are contract, identical in both executors
 because connecta enforces them above the sandbox:
 
-| Bound                                                                                   | Value                                                                                                                                                                                                                                                             |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Host calls per execution, shared by every guest call except `emit`                      | 20 by default, `execute.maxHostCalls`                                                                                                                                                                                                                             |
-| Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites`                                                                                                                                                                                                                                |
-| Deadline per host call                                                                  | `connecta.call`: its `timeoutMs`, else `calls.defaultTimeoutMs`, else `execute.hostCallTimeoutMs` (15 s); `result`, `skill` and `read`: `execute.hostCallTimeoutMs`. One deadline covers catalog resolution, admission, the connector call, and result processing |
-| Discovery page                                                                          | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                                                                                                                                                                           |
-| `describe` addresses                                                                    | ≤ 100                                                                                                                                                                                                                                                             |
-| `describe` nearby suggestions                                                           | ≤ 3 canonical addresses per failed entry                                                                                                                                                                                                                          |
-| Caller text echoed by `describe` recovery                                               | ≤ 512 UTF-8 bytes per field, plus `…`                                                                                                                                                                                                                             |
-| Result                                                                                  | 24,000 serialized characters by default, `execute.maxResultChars` (4,000–1,000,000)                                                                                                                                                                               |
-| Logs presented to the model                                                             | 4,000 characters                                                                                                                                                                                                                                                  |
+| Bound                                                                                                | Value                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host calls per execution, shared by every guest call except `emit` and the single `unawaited` notice | 20 by default, `execute.maxHostCalls`                                                                                                                                                                                                                             |
+| Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`)              | 10 by default, `execute.maxWrites`                                                                                                                                                                                                                                |
+| Deadline per host call                                                                               | `connecta.call`: its `timeoutMs`, else `calls.defaultTimeoutMs`, else `execute.hostCallTimeoutMs` (15 s); `result`, `skill` and `read`: `execute.hostCallTimeoutMs`. One deadline covers catalog resolution, admission, the connector call, and result processing |
+| Discovery page                                                                                       | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                                                                                                                                                                           |
+| `describe` addresses                                                                                 | ≤ 100                                                                                                                                                                                                                                                             |
+| `describe` nearby suggestions                                                                        | ≤ 3 canonical addresses per failed entry                                                                                                                                                                                                                          |
+| Caller text echoed by `describe` recovery                                                            | ≤ 512 UTF-8 bytes per field, plus `…`                                                                                                                                                                                                                             |
+| Result                                                                                               | 24,000 serialized characters by default, `execute.maxResultChars` (4,000–1,000,000)                                                                                                                                                                               |
+| Logs presented to the model                                                                          | 4,000 characters                                                                                                                                                                                                                                                  |
 
 For any tool whose output declares `page`, continue while `page.hasMore` is true.
 When approaching the program's host-call limit, return `page.nextCursor` before
@@ -1310,6 +1338,9 @@ and on the Worker adapter with a real Miniflare Loader in `test/guest-api-contra
 Titles name clauses; executor-independent clauses run in both arms.
 `test/codemode-compat.test.ts` pins upstream shape compatibility, minified upstream
 rejection, and branded adapter acceptance across module copies.
+`test/package-surface.node.test.ts` compiles the description's compact guest
+declaration against `GuestApi`, checks arguments in both directions, and rejects
+invented, mistyped, and missing members and authored blocks the host refuses.
 
 | Clauses                | Test                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

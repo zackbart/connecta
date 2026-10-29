@@ -66,26 +66,29 @@ function usageSkill(): string {
   return USAGE_SKILL;
 }
 
+const INVESTIGATE_DESCRIPTION =
+  "Plan an investigation that spans several services; resolve scope, identities, and capability limits before querying, then return the answer with its evidence.";
+
 const INVESTIGATE_SKILL = `---
 name: investigate
-description: Plan purchase verification, experiment checks, and customer or deployment investigations across services; resolve scope and capability limits before querying.
+description: ${INVESTIGATE_DESCRIPTION}
 ---
 
 # Investigate across services
 
 ## Plan the investigation
 
-Start from the user's question and the evidence that would answer it. Select the app, account, and environment from connector titles, purposes, and relevant guides before looking up records. Reuse verified ids within the task; never carry an id across connectors just because its name matches.
+Start from the user's question and the evidence that would answer it. Select the account, environment, and time window from connector titles, purposes, and relevant guides before looking up records. Reuse verified ids within the task; never carry an id across connectors just because its name matches.
 
-- Purchase verification: resolve the same customer and environment across payment, subscription access, and analytics. Check each separately; a recorded payment does not prove access, and a missing analytics event does not prove payment failure.
-- Experiment checks: confirm the project, experiment, time window, and exposure population before comparing outcomes. Return the requested comparison and any missing evidence; do not expand into an unrelated analytics audit.
-- Customer or deployment investigations: locate the exact customer or deployment first, then follow only the records needed to explain the reported symptom. Use provider links or ids so the answer can be checked.
+- Resolve the same subject in each service separately. A record in one service does not prove the matching state in another, and a missing record in one does not prove failure elsewhere.
+- Confirm the scope a comparison needs (which records, which window, which population) before comparing. Return the requested comparison and any missing evidence; do not expand into an unrelated audit.
+- Locate the exact record first, then follow only the records needed to explain the reported symptom. Use provider links or ids so the answer can be checked.
 
 Establish capability limits early. A partial search is not proof that a tool is absent, and an unavailable catalog is not an empty dataset. Try a scoped search for the missing operation, inspect its guide when relevant, and distinguish unsupported work from missing data or authorization. If the required evidence is unavailable, return what was verified and the specific gap instead of approximating a different question through repeated calls.
 
 A host transport error that requires reconnecting this MCP server cannot be repaired by a downstream tool. Reconnect in the host; do not repeatedly call \`authorize_connector\` through the failed connection.
 
-Return the answer first, then the evidence and any unresolved gap. Include the app/environment, time window, and source ids or links needed to check it. Separate observed facts from inferences. Stop when the requested evidence is sufficient.
+Return the answer first, then the evidence and any unresolved gap. Include the account or environment, time window, and source ids or links needed to check it. Separate observed facts from inferences. Stop when the requested evidence is sufficient.
 `;
 
 const AVAILABLE_SKILLS = [
@@ -97,8 +100,7 @@ const AVAILABLE_SKILLS = [
   },
   {
     name: "investigate",
-    description:
-      "Plan purchase verification, experiment checks, and customer or deployment investigations across services; resolve scope and capability limits before querying.",
+    description: INVESTIGATE_DESCRIPTION,
     content: () => INVESTIGATE_SKILL,
   },
 ] as const;
@@ -108,7 +110,8 @@ const AVAILABLE_SKILLS = [
  * are bare identifiers and never contain ":", so `connector:<id>` cannot
  * collide with one — not even when a connector's id is literally "usage".
  * Canonical skill URIs and the prefixed compatibility alias reach connector
- * guides. A bare connector id never resolves, so nothing shadows silently.
+ * guides. A bare connector id reaches its guide too, unless it is a built-in
+ * skill name: built-ins always win, so nothing shadows them.
  */
 const CONNECTOR_SKILL_PREFIX = "connector:";
 
@@ -435,6 +438,13 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (
   });
 });
 
+/** `granola` names connector granola's guide; built-in names and URIs never do. */
+function bareConnectorGuide(records: readonly SkillRecord[], name: string): SkillRecord | undefined {
+  if (name.includes(":") || AVAILABLE_SKILLS.some((skill) => skill.name === name)) return undefined;
+  const alias = connectorSkillName(name);
+  return records.find((record) => record.connector !== undefined && record.aliases.includes(alias));
+}
+
 /** Keep the downstream path tree, so relative supporting-file references still resolve. */
 export function downstreamSkillUri(connectorId: string, uri: string): string {
   if (uri.length > 32_768) throw new ConnectorCallError("unavailable", "Downstream skill URI exceeds its bound.");
@@ -615,12 +625,14 @@ export class SkillsRegistry {
     const id = name.startsWith(CONNECTOR_SKILL_PREFIX) ? name.slice(CONNECTOR_SKILL_PREFIX.length) : name;
     const connector = this.registry.getConnector(id);
     if (connector) this.options.onRead?.(connector, "local");
-    const message = name.startsWith(CONNECTOR_SKILL_PREFIX)
-      ? connector
+    // Skill names resolve a bare id with a guide before reaching here; a
+    // resource URI read does not.
+    const message = connector
+      ? connectorGuide(connector) === undefined
         ? `Connector "${boundedEchoText(id)}" has no usage guide.`
-        : `Unknown connector "${boundedEchoText(id)}".`
-      : connector
-        ? `Unknown skill "${boundedEchoText(name)}". Connector guides are fetched as "${boundedEchoText(connectorSkillName(name))}".`
+        : `Connector "${boundedEchoText(id)}" has its guide at "${boundedEchoText(connectorSkillName(id))}".`
+      : name.startsWith(CONNECTOR_SKILL_PREFIX)
+        ? `Unknown connector "${boundedEchoText(id)}".`
         : `Unknown skill "${boundedEchoText(name)}".`;
     return new ConnectorCallError("not_found", `${message} Available skills: ${available}.`);
   }
@@ -911,9 +923,10 @@ export class SkillsRegistry {
           { requestScope: (this as SkillsRegistry).scope, signal: (this as SkillsRegistry).options.requestSignal },
           () =>
             authFlow<SkillRecord>(function* () {
-              const local = (yield* upwardStep(self.local)).find(
-                (record) => record.entry.uri === uri || record.aliases.includes(uri),
-              );
+              const records = yield* upwardStep(self.local);
+              const local =
+                records.find((record) => record.entry.uri === uri || record.aliases.includes(uri)) ??
+                bareConnectorGuide(records, uri);
               if (local) {
                 const record = yield* upwardStep(authCall<SkillRecord>(withManifest, [local]));
                 self.assertSafe([record]);

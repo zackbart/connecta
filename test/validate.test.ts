@@ -34,13 +34,16 @@ describe("validateToolInput", () => {
       },
       OPTS,
     );
-    expect(err?.validation).toEqual({
-      issues: [
-        { path: "/title", code: "required", expected: "string" },
-        { path: "/settings/enabled", code: "type", expected: "boolean" },
-        { path: "/settings/retries", code: "type", expected: "integer" },
-      ],
-    });
+    expect(err?.validation?.issues).toEqual([
+      { path: "/title", expected: "string (required)", received: "missing" },
+      { path: "/settings/enabled", expected: "boolean", received: "string" },
+      { path: "/settings/retries", expected: "integer", received: "string" },
+    ]);
+    // Every finding is in the message, so a text-only reader repairs the call in one turn.
+    expect(err?.message).toBe(
+      'Invalid arguments for "acme.create_note": /title: expected string (required), received missing; ' +
+        "/settings/enabled: expected boolean, received string; /settings/retries: expected integer, received string",
+    );
     expect(JSON.stringify(err?.validation)).not.toContain("submitted-secret");
     expect(JSON.stringify(err?.validation)).not.toContain("also-secret");
   });
@@ -52,22 +55,11 @@ describe("validateToolInput", () => {
       allOf: [{ properties: { x: { enum: ["A"] } } }, { properties: { x: false } }],
     };
     const err = validateToolInput(schema, { x: "B" }, OPTS);
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/x",
-          code: "enum",
-          expected: "one of the declared values",
-        },
-        {
-          path: "/x",
-          code: "additionalProperties",
-          expected: "no additional properties",
-        },
-      ],
-    });
-    expect(err?.message).toContain("/x: expected one of the declared values (enum)");
-    expect(err?.message).not.toContain('["A"]');
+    expect(err?.validation?.issues).toEqual([
+      { path: "/x", expected: 'one of "A"', received: "string" },
+      { path: "/x", expected: "absent: the inputSchema forbids this value" },
+    ]);
+    expect(err?.message).toContain('/x: expected one of "A", received string');
     expect(err?.message).not.toContain("False boolean schema");
   });
 
@@ -214,29 +206,62 @@ describe("validateToolInput", () => {
   });
 });
 
-it("INV-6: agent repair includes schema keys, enum values, bounds and received types without caller values", () => {
+it("INV-6: one envelope states every bound, allowed value and accepted key without caller strings", () => {
   const schema: JsonSchema = {
     type: "object",
     additionalProperties: false,
     properties: {
       mode: { type: "string", enum: ["fast", "safe"] },
       count: { type: "integer", minimum: 1, maximum: 10 },
+      limit: { type: "integer", minimum: 5 },
+      pin: { type: "integer", minimum: 1000, writeOnly: true },
     },
     required: ["mode", "count"],
   };
-  const error = validateToolInput(schema, { mode: "caller-secret", count: 20, typo: "another-secret" }, OPTS);
-  expect(error?.repair).toMatchObject({
-    acceptedKeys: ["mode", "count"],
-    issues: expect.arrayContaining([
-      { path: "/mode", receivedType: "string", enumValues: ["fast", "safe"] },
-      { path: "/count", receivedType: "number", bounds: { minimum: 1, maximum: 10 } },
-      { path: "/typo", receivedType: "string", acceptedKeys: ["mode", "count"] },
-    ]),
+  const error = validateToolInput(
+    schema,
+    { mode: "caller-secret", count: 20, limit: 4, pin: 7, typo: "another-secret" },
+    OPTS,
+  );
+  expect(error?.validation).toEqual({
+    issues: [
+      { path: "/mode", expected: 'one of "fast", "safe"', received: "string" },
+      // A finding states every constraint its schema position declares, not just the one that failed.
+      { path: "/count", expected: "at most 10, at least 1", received: "20" },
+      { path: "/limit", expected: "at least 5", received: "4" },
+      // A writeOnly position states its type, never the submitted number.
+      { path: "/pin", expected: "at least 1000", received: "number" },
+      // An undeclared key is caller text, so the path names only its position.
+      { path: "/<key>", expected: "one of the accepted keys: mode, count, limit, pin" },
+    ],
+    acceptedKeys: ["mode", "count", "limit", "pin"],
     example: { mode: "fast", count: 1 },
   });
-  expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
-  expect(JSON.stringify(error?.repair)).not.toContain("caller-secret");
-  expect(JSON.stringify(error?.repair)).not.toContain("another-secret");
+  expect(error?.message).toContain("/limit: expected at least 5, received 4");
+  expect(error).not.toHaveProperty("repair");
+  expect(validateToolInput(schema, error?.validation?.example, OPTS)).toBeNull();
+  for (const text of [JSON.stringify(error?.validation), error?.message])
+    for (const value of ["caller-secret", "another-secret", ": 7", "received 7"]) expect(text).not.toContain(value);
+});
+
+it("INV-6: a legacy repair passed by a custom connector folds into the one envelope", () => {
+  const error = new ConnectorCallError("invalid_args", "Bad mode.", {
+    validation: { issues: [{ path: "/mode", code: "enum", expected: "fast or safe" }] },
+    repair: {
+      acceptedKeys: ["mode"],
+      issues: [
+        { path: "/mode", receivedType: "string", enumValues: ["fast", "safe"] },
+        { path: "/size", receivedType: "number", bounds: { maximum: 3 } },
+      ],
+      example: { mode: "fast" },
+    },
+  });
+  // Its received types and schema facts join the findings; the findings themselves come from validation.
+  expect(error.validation).toEqual({
+    issues: [{ path: "/mode", expected: "fast or safe", received: "string" }],
+    acceptedKeys: ["mode"],
+    example: { mode: "fast" },
+  });
 });
 
 it("INV-6: examples are verified and oversized schema detail is bounded", () => {
@@ -246,12 +271,22 @@ it("INV-6: examples are verified and oversized schema detail is bounded", () => 
     required: ["code"],
   };
   const error = validateToolInput(unsupported, {}, OPTS);
-  expect(error?.repair).not.toHaveProperty("example");
-  expect(error?.repair?.exampleUnavailable).toContain("No valid example");
+  expect(error?.validation).not.toHaveProperty("example");
+  expect(error?.validation?.exampleUnavailable).toContain("No valid example");
   const large: JsonSchema = { type: "string", enum: ["e".repeat(10000)] };
-  const repair = validateToolInput(large, 1, OPTS)?.repair;
-  expect(repair?.truncated).toBe(true);
-  expect(JSON.stringify(repair).length).toBeLessThan(4096);
+  const validation = validateToolInput(large, 1, OPTS)?.validation;
+  expect(validation?.truncated).toBe(true);
+  expect(JSON.stringify(validation).length).toBeLessThan(4096);
+  const wide = new ConnectorCallError("invalid_args", "Wide.", {
+    validation: {
+      issues: Array.from({ length: 12 }, (_, index) => ({ path: `/p${index}`, expected: "x".repeat(300) })),
+      example: { text: "y".repeat(5000) },
+    },
+  }).validation;
+  // Eight findings at most; an example that would break the 4 KiB budget is withheld whole.
+  expect(wide?.issues).toHaveLength(8);
+  expect(wide).toMatchObject({ truncated: true, exampleUnavailable: expect.stringContaining("budget") });
+  expect(new TextEncoder().encode(JSON.stringify(wide)).length).toBeLessThanOrEqual(4096);
 });
 
 it("INV-6: recursive schema examples stop before expanding beyond a shared synthesis budget", () => {
@@ -262,6 +297,99 @@ it("INV-6: recursive schema examples stop before expanding beyond a shared synth
   };
   const error = validateToolInput(schema, {}, OPTS);
   expect(error?.code).toBe("invalid_args");
-  expect(error?.repair).not.toHaveProperty("example");
-  expect(error?.repair?.exampleUnavailable).toContain("No valid example");
+  expect(error?.validation).not.toHaveProperty("example");
+  expect(error?.validation?.exampleUnavailable).toContain("No valid example");
+});
+
+it("INV-6: every constraint the repair envelope carried survives in the findings", () => {
+  const schema: JsonSchema = {
+    type: "object",
+    properties: {
+      attrs: { type: "object", minProperties: 3, maxProperties: 9 },
+      tags: { type: "array", uniqueItems: true, minItems: 3 },
+      step: { type: "integer", multipleOf: 5, minimum: 10 },
+      code: { type: "string", pattern: "^[A-Z]{3}$", minLength: 3 },
+      day: { type: "string", format: "date" },
+      mode: { type: "string", enum: ["fast", "safe"] },
+      kind: { const: "note" },
+      size: { type: "integer", minimum: 1, maximum: 4 },
+      region: { type: "string" },
+    },
+    dependentRequired: { tags: ["region"] },
+  };
+  const findings = [
+    { attrs: { a: 1 }, tags: [1, 1], step: 7, code: "ab", day: "never" },
+    { mode: 1, kind: "page", size: "big" },
+  ].flatMap((args) => validateToolInput(schema, args, OPTS)?.validation?.issues ?? []);
+  // One finding per position, stating every constraint it declares.
+  expect(findings.map((issue) => issue.path)).toEqual([
+    "/region",
+    "/attrs",
+    "/tags",
+    "/step",
+    "/code",
+    "/day",
+    "/mode",
+    "/kind",
+    "/size",
+  ]);
+  expect(Object.fromEntries(findings.map((issue) => [issue.path, issue.expected]))).toEqual({
+    "/attrs": "at least 3 properties, at most 9 properties",
+    "/tags": "at least 3 items, unique items",
+    "/step": "at least 10, a multiple of 5",
+    "/code": "at least 3 characters, matching ^[A-Z]{3}$",
+    "/day": "a date string",
+    "/mode": 'string, one of "fast", "safe"',
+    "/kind": 'the constant "note"',
+    // A type failure still states the position's bounds, as repair's bounds did.
+    "/size": "integer, at least 1, at most 4",
+    "/region": "string (required with tags)",
+  });
+  // Without other findings, a property-count bound is never reduced to the generic schema text.
+  expect(validateToolInput(schema, { attrs: {} }, OPTS)?.message).toContain(
+    "/attrs: expected at least 3 properties, at most 9 properties, received object",
+  );
+});
+
+it("INV-5 INV-6: a refusal names no submitted key and renders no literal at a sensitive position", () => {
+  // Reviewer reproduction (round 2, finding 1): a dynamic map key.
+  const maps: JsonSchema = {
+    type: "object",
+    properties: {
+      headers: { type: "object", additionalProperties: { type: "string" } },
+      fields: { type: "array", items: { type: "string", enum: ["id", "title"] } },
+    },
+  };
+  const mapped = validateToolInput(maps, { headers: { "X-Secret-SENTINEL": 1 }, fields: ["bad"] }, OPTS);
+  expect(mapped?.validation?.issues.map((issue) => issue.path)).toEqual(["/headers/<key>", "/fields/0"]);
+  const typo = validateToolInput(
+    { type: "object", properties: { mode: { type: "string" } }, additionalProperties: false },
+    { "typo-SENTINEL": 1 },
+    OPTS,
+  );
+  expect(typo?.validation?.issues).toEqual([{ path: "/<key>", expected: "one of the accepted keys: mode" }]);
+  // Reviewer reproduction (round 2, finding 3): enum and const at writeOnly positions, also inherited.
+  const secret: JsonSchema = {
+    type: "object",
+    properties: {
+      password: { type: "string", writeOnly: true, enum: ["credential-SENTINEL"] },
+      token: { writeOnly: true, const: "const-SENTINEL" },
+      nested: {
+        type: "object",
+        writeOnly: true,
+        properties: { pin: { type: "string", enum: ["inherited-SENTINEL"], pattern: "^pattern-SENTINEL$" } },
+        required: ["pin"],
+      },
+    },
+    required: ["password"],
+  };
+  for (const args of [{ password: "wrong" }, { password: "wrong", token: "x", nested: { pin: "y" } }, {}]) {
+    const error = validateToolInput(secret, args, OPTS);
+    expect(error?.code).toBe("invalid_args");
+    expect(JSON.stringify([error?.message, error?.validation])).not.toMatch(/SENTINEL|wrong/);
+  }
+  // A non-sensitive literal still renders.
+  expect(validateToolInput(maps, { fields: ["bad"] }, OPTS)?.validation?.issues[0]?.expected).toBe(
+    'one of "id", "title"',
+  );
 });

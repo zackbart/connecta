@@ -1491,6 +1491,61 @@ function acceptsCredential(schema: JsonSchema | undefined, depth: number): boole
   );
 }
 
+/** Whether value safety always withholds or redacts a non-null value at a declared response path (`data[]`, `id`). */
+export type PathWithholds = (path: readonly string[]) => boolean;
+
+const ENV_VALUE_NAMES = ENV_VALUE_FIELDS.map(normalizedName);
+
+/** `data[].id` segments as tokens, a list's items as `[]`: `["data", "[]", "id"]`. */
+function tokensOf(segments: readonly string[]): string[] {
+  return segments.flatMap((segment) =>
+    segment === "[]"
+      ? ["[]"]
+      : segment.endsWith("[]")
+        ? [normalizedName(segment.slice(0, -2)), "[]"]
+        : [normalizedName(segment)],
+  );
+}
+
+/**
+ * A best-effort hint for discovery over rules that change every non-null value
+ * they reach: a path is withheld when it sits at or inside a reviewed redaction
+ * path (matched from the body's root, or at any depth with `anyDepth`), or any
+ * of its names satisfies the name rule, which also sees the parent's name.
+ * Paths carry their list markers: a reviewed `[]` needs a declared list there,
+ * while a named segment also reaches every item of a list. Rules that can leave
+ * a value unchanged (`url:`, `origin:` or `#url` sanitizing, `[?…]`, `@keys`)
+ * are not hints. Names compare normalized, and `{}` or `*` matches any name.
+ */
+export function pathWithholds(rules: {
+  readonly paths?: readonly string[];
+  readonly names?: (normalized: string, parent: string) => boolean;
+  readonly anyDepth?: true;
+}): PathWithholds {
+  const patterns = (rules.paths ?? []).flatMap((raw) => {
+    const { mode, segments } = parsePath(raw);
+    if (mode !== "redact" || segments.some((segment) => segment.startsWith("[?") || segment === "@keys")) return [];
+    return [segments.map((segment) => (segment === "[]" ? "[]" : segment === "{}" ? "*" : normalizedName(segment)))];
+  });
+  const reaches = (pattern: readonly string[], tokens: readonly string[], from: number) => {
+    let at = from;
+    for (const part of pattern) {
+      if (part !== "[]") while (tokens[at] === "[]") at += 1;
+      if (at >= tokens.length || (part === "[]" ? tokens[at] !== "[]" : part !== "*" && part !== tokens[at]))
+        return false;
+      at += 1;
+    }
+    return true;
+  };
+  return (path) => {
+    const tokens = tokensOf(path);
+    const names = tokens.filter((token) => token !== "[]");
+    if (rules.names && names.some((name, at) => rules.names!(name, names[at - 1] ?? ""))) return true;
+    const starts = rules.anyDepth ? tokens.flatMap((token, at) => (token === "[]" ? [] : [at])) : [0];
+    return patterns.some((pattern) => starts.some((at) => reaches(pattern, tokens, at)));
+  };
+}
+
 /** What a vendor's tools ask of its reviewed table. */
 export interface ValueSafety {
   readonly table: ValueSafetyTable;
@@ -1500,6 +1555,12 @@ export interface ValueSafety {
   refusal(method: string, template: string): string | undefined;
   /** One success body made value-safe: reviewed paths, environment bodies, resource rules, then the heuristic. */
   redact(data: unknown, method: string, template: string): unknown;
+  /**
+   * A discovery hint read from the rules `redact` applies: true when a rule
+   * that changes whatever value it reaches covers this declared path. False
+   * promises nothing; value-dependent rules still apply at read time.
+   */
+  withholds(method: string, template: string): PathWithholds;
   /**
    * Whether a failure's vendor text is withheld: any reviewed operation
    * unless its verdict says `errors: "vendor"`, or an unreviewed one whose
@@ -1518,9 +1579,45 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
     const key = `${method} ${template}`;
     return Object.hasOwn(table.operations, key) ? table.operations[key] : undefined;
   };
+  const hints = new Map<string, PathWithholds>();
+  const redactedNames = Object.entries(fields)
+    .filter(([, review]) => review.verdict === "redact")
+    .map(([name]) => normalizedName(name));
+  const keptNames = Object.entries(fields)
+    .filter(([, review]) => review.verdict === "keep")
+    .map(([name]) => normalizedName(name));
+  const scopeParents = scopeMaps.map(normalizedName);
   return {
     table,
     verdict,
+    withholds(method, template) {
+      const key = `${method} ${template}`;
+      let hint = hints.get(key);
+      if (!hint) {
+        const reviewed = verdict(method, template);
+        const env = table.envBodies?.test(template) === true;
+        const kept = new Set([
+          ...keptNames,
+          ...(reviewed && reviewed.verdict !== "refuse" ? (reviewed.keep ?? []) : []).map((path) =>
+            trailOf(path).map(normalizedName).at(-1)!,
+          ),
+        ]);
+        hint =
+          reviewed?.verdict === "refuse"
+            ? () => true
+            : pathWithholds({
+                paths: reviewed?.verdict === "redact" ? reviewed.paths : [],
+                names: (name, parent) =>
+                  redactedNames.includes(name) ||
+                  (env && ENV_VALUE_NAMES.includes(name)) ||
+                  (parent === "deployhooks" && name === "url") ||
+                  // The suffix rule scrubs only strings, so only the whole-value credential rule hints.
+                  (!kept.has(name) && !scopeParents.includes(parent) && containsCredential(name)),
+              });
+        hints.set(key, hint);
+      }
+      return hint;
+    },
     refusal(method, template) {
       const reviewed = verdict(method, template);
       return reviewed?.verdict === "refuse" ? `Connecta refuses ${method} ${template}. ${reviewed.reason}` : undefined;

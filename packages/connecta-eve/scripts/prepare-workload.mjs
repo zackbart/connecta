@@ -51,7 +51,7 @@ await writeFile(
 );
 await writeFile(
   join(output, "pnpm-workspace.yaml"),
-  `minimumReleaseAgeExclude:\n  - eve@${manifest.devDependencies.eve}\noverrides:\n  "eve@${manifest.devDependencies.eve}>undici": 8.12.3\n  "@vercel/cli-config@0.3.3>zod": 4.6.6\n`,
+  `minimumReleaseAgeExclude:\n  - eve@${manifest.devDependencies.eve}\noverrides:\n  "@vercel/cli-config@0.3.3>zod": 4.6.6\n`,
 );
 await writeFile(join(output, ".gitignore"), "node_modules/\n.vercel/\nlocal-results.json\n");
 await writeFile(join(output, ".vercelignore"), "local-check.mjs\nlocal-results.json\nprovenance.json\n");
@@ -93,7 +93,6 @@ await writeFile(
       eve: manifest.devDependencies.eve,
       oidc: "4.0.3",
       functions: "3.10.3",
-      undiciOverride: "8.12.3",
       cliConfigZodOverride: "4.6.6",
       hashes,
       live: false,

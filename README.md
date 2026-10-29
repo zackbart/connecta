@@ -38,7 +38,7 @@ should call.
 
 | Boundary         | What Connecta does                                                                                                        |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Access           | A pool limits the tools its members can reach.                                                                            |
+| Access           | A pool limits the tools its members can reach; it lists only people or only agents.                                       |
 | Writes           | For tools marked as writes, once a change is sent, Connecta won't automatically send it again.                            |
 | Secrets          | Known secrets are redacted from agent output. Enable the credential vault to encrypt stored credentials and OAuth tokens. |
 | Read-only access | Read-only endpoints hide writes and refuse attempts to call them.                                                         |
@@ -69,7 +69,8 @@ connections and access rules still need configuring.
    the server with the access rules you choose.
 3. **Connect your AI app.** This app is the MCP client: it uses Connecta's
    tools on your agent's behalf. Give it the pool address and authentication
-   method supplied by your operator. [Connecting agents](./guides/connecting-agents.md)
+   method supplied by your operator. A person in a single pool can use the
+   plain `/mcp` address; their sign-in selects the pool. [Connecting agents](./guides/connecting-agents.md)
    explains what to ask for; the [deployment guide](./documentation/deploying.md)
    has runnable steps.
 

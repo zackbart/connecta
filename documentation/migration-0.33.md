@@ -40,6 +40,10 @@ the sections in order, then [verify](#verify).
 | `DELETE /ui/credentials/<id>` on an empty slot answering 204                          | 409 `{ "problem": "credential_required" }`                                                                                              |
 | The `agent_not_maintainer` denial reason                                              | Removed; agents are refused at human endpoints before admission                                                                         |
 
+This guide records the 0.33 migration. Current versions require every pool to
+list only people or only agents. If a 0.33 deployment combined them, follow
+[Split mixed pools](./pool-membership-upgrade.md) as well.
+
 ## Maintainers and pool members
 
 0.32 combined an identity resolver, a top-level `grant`, and pool `grant`
@@ -349,4 +353,4 @@ pools: {
    absent: search finds none of their tools and a call fails
    `unknown_address`. The same holds in any pool without an owner, even one
    that lists a Workspace connector with a subject mapping.
-6. Confirm each `<agent>-<user>` pool lists no other person in `members`.
+6. Confirm each `<agent>-<user>` pool lists only the agent in `members` (the current construction rule).

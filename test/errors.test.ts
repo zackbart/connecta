@@ -91,19 +91,24 @@ describe("classifyCallError", () => {
     const details = classifyCallError(
       new ConnectorCallError("invalid_args", "invalid", {
         validation: {
-          issues: Array.from({ length: 5 }, (_, index) => ({
+          issues: Array.from({ length: 10 }, (_, index) => ({
             path: `/${"p".repeat(300)}${index}`,
             code: "c".repeat(100),
-            expected: "e".repeat(200),
+            expected: "e".repeat(300),
+            received: "r".repeat(100),
           })),
         },
       }),
     );
-    expect(details.validation?.issues).toHaveLength(3);
     expect(details.validation?.truncated).toBe(true);
+    expect(details.validation?.issues.length).toBeLessThanOrEqual(8);
+    expect(new TextEncoder().encode(JSON.stringify(details.validation)).length).toBeLessThanOrEqual(4096);
     expect(details.validation?.issues[0]?.path.length).toBeLessThanOrEqual(256);
-    expect(details.validation?.issues[0]?.code.length).toBeLessThanOrEqual(64);
-    expect(details.validation?.issues[0]?.expected.length).toBeLessThanOrEqual(128);
+    expect(details.validation?.issues[0]?.expected.length).toBeLessThanOrEqual(256);
+    expect(details.validation?.issues[0]?.received?.length).toBeLessThanOrEqual(64);
+    // The keyword is accepted from custom connectors but no longer returned.
+    expect(details.validation?.issues[0]).not.toHaveProperty("code");
+    expect(details).not.toHaveProperty("repair");
   });
 
   it("INV-6: untyped prose never decides code or retryability", () => {

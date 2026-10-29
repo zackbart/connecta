@@ -49,7 +49,12 @@ write tools from `search_tools` results and describe, and refuses every write
 call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
 `resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
-advertise `outputSchema`. The two direct-call tools omit it because their default
+advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
+including every authorization-handoff field, once under `$defs.failure`;
+`catalogErrors[]` references it through `allOf` with `connector` required, and
+`queryAnalysis.catalogError` references it directly. The schema declares no
+`$schema`, and validators for drafts 4, 7, 2019-09 and 2020-12 accept the same
+pages. The two direct-call tools omit it because their default
 mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
 `data` and declares `format` in its complete result envelope.
@@ -134,16 +139,25 @@ Live connector probing is not a fourth: the operator pages and `/health` own it.
 
 ## Discovery context
 
-The deployment-derived `execute_code` description carries a live connector
-inventory before any catalog search — registry order, each canonical id, and a
-distinct configured title, with no second name minted for programs. Titles
-normalize whitespace and cap at 48 UTF-8 bytes, the complete line caps at 256,
-entries stay whole, and a truncated line ends with the exact `+N more` count, so
-account and environment hints cannot eat the inventory. It reads only the
-configured registry: no catalog load, no credential probe, no capability, and no
+The deployment-derived `execute_code` description carries a connector
+inventory before any catalog search — registry order and each canonical id,
+with no second name minted for programs. An entry adds the configured title
+only when it says more than the id: a title whose words the id already spells,
+such as `Google Calendar` for `google_calendar`, is dropped. Titles normalize
+whitespace and cap at 48 UTF-8 bytes. A connector with a guide says how to
+fetch it: `read first: skills({name:"connector:<id>"})` for a required guide,
+`guide: skills({name:"connector:<id>"})` otherwise. For example:
+`Connectors: crm (Customer CRM; read first: skills({name:"connector:crm"})), tickets.`
+
+The complete line caps at 1,024 UTF-8 bytes, which names every connector of a
+typical deployment. Past the cap, detail degrades before names do: titles are
+dropped first, then optional guide pointers. Only when bare ids and required
+guide pointers still exceed it do whole entries give way, in registry order, to
+an exact `+N more` count. The inventory reads only the configured registry: no
+catalog load, no credential probe, no live status, no capability, and no
 replacement for canonical discovery or addressing. Program search results carry
 the same bounded `connectorTitle` per tool, so choosing an account or
-environment costs no provider read. The inventory does not probe live access.
+environment costs no provider read.
 
 Read-only lookup belongs in `connecta.search` inside the program; top-level
 `search_tools` stays for explicit catalog inspection and approval-required
@@ -297,8 +311,17 @@ is merely told to fetch the guide first, for any reason listed. Otherwise the
 bounded summary decides — connector-specific sequencing, units, pagination,
 aliases, and generic API conventions still need the guide when they affect the
 task, while a complete and unambiguous one-read schema proceeds directly. Guide
-lookup always uses an exact name returned by `skills({})`, search, or describe;
-callers never manufacture `connector:<id>` from an unmarked connector.
+lookup uses an exact name returned by `skills({})`, search, describe, or the
+`execute_code` inventory; callers never manufacture `connector:<id>` from an
+unmarked connector. A bare connector id, such as `skills({ name: "crm" })` or
+`connecta.skill("crm")`, also serves that connector's guide. Built-in skill
+names stay reserved: `usage` and `investigate` always fetch the built-in skill,
+even when a connector has that id, whose guide stays at `connector:usage` or
+`connector:investigate`. A bare id naming a connector without a guide fails with
+`Connector "<id>" has no usage guide.`; any other unknown name fails as an
+unknown skill. Names containing `:`, including URIs, never fall back to a bare
+id. MCP `skills/get` resolves names the same way; `resources/read` accepts only
+document URIs.
 
 A connector-scoped lexical miss keeps that connector's guide metadata under
 `queryAnalysis`. This matters for generic wrappers whose broad tool name
@@ -307,12 +330,29 @@ disappearing with the zero-tool page.
 
 Two built-in skills are byte-identical across deployments. `usage` is fetched
 only for missing guidance or program repair, and owns program selection detail, examples, runtime
-differences, and repair guidance; `investigate` is on-demand guidance for
-purchase verification, experiment checks, and customer or deployment
-investigations — shared guidance, not a saved workflow and not a source of
-deployment-specific ids. The always-loaded instructions and tool definitions keep
+differences, and repair guidance; `investigate` is domain-neutral on-demand
+guidance for an investigation that spans several services — shared guidance,
+not a saved workflow and not a source of deployment-specific ids. `skills`
+lists it; the `execute_code` description does not advertise it. The always-loaded instructions and tool definitions keep
 route selection, the fail-closed boundary, and the minimum guest syntax, so a
 client that never fetches a skill can still write a valid first program.
+
+The server instructions state the complete routing rule once. Some clients
+drop server instructions, so each tool description stays sufficient for its own
+correct use without restating that rule: `call_tool` names its scope (one
+known-address read) and points other read work to `execute_code`;
+`search_tools` names its scope (catalog inspection, or finding a write) and
+points read work into a program; `execute_code` opens with the terse
+three-route lead (`One known read: call_tool. One known write:
+call_destructive_tool. Everything else: execute_code.`, or the read-only
+two-route form). The `usage` skill points to those two sources instead of
+repeating them.
+
+Tool descriptions and output schemas carry deployment configuration only: the
+connector inventory, budgets, the endpoint's read-only setting, and whether any
+visible connector has a guide. No catalog outcome, call, authorization state,
+or other live status reaches `tools/list` or the instructions, so the
+always-loaded surface stays byte-stable for a client's prompt cache.
 The instructions are the same on every endpoint except one addition: at
 `/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
 [`description`](./auth.md#pools) has it appended after `This endpoint: `, so
@@ -1027,28 +1067,77 @@ A remote MCP tool's advertised `inputSchema` is checked in the shared invocation
 path before admission and provider dispatch, so a mismatch is the non-retryable
 `invalid_args` identically on `call_tool`, `call_destructive_tool`,
 generated-code failures, and rejected promises. The error names the connector and
-operation and carries `validation.issues`: JSON Pointer `path`, schema-keyword
-`code`, and expected shape, with submitted values never copied into a finding. At
-most three are returned, and `validation.truncated` says when more exist — the
-same three-item bound describe's nearby-address list uses.
+operation and carries one recovery envelope, `validation`:
+
+```json
+{
+  "issues": [
+    { "path": "/limit", "expected": "at least 5", "received": "4" },
+    { "path": "/mode", "expected": "one of \"fast\", \"safe\"", "received": "string" },
+    { "path": "/<key>", "expected": "one of the accepted keys: mode, limit" }
+  ],
+  "acceptedKeys": ["mode", "limit"],
+  "example": { "mode": "fast", "limit": 5 }
+}
+```
+
+Every finding is listed, and the message repeats them, so one corrected call
+fixes them all.
+
+A refusal contains only names and literals the published schema declares at
+non-sensitive positions, numbers allowed by the bound rule below, and fixed
+placeholder text. It never contains a submitted string or object key, in the
+message, a finding, `acceptedKeys` or the example. A position is sensitive when
+it or an ancestor is `writeOnly`; a named tool's input schema marks each request
+secret that way. API hatch findings name only the operation contract's
+properties and enum members, as `*_api_details` publishes them.
+
+- `path` is a JSON Pointer naming declared properties and array indices. The
+  first key the schema does not declare (a misspelled argument, a map key)
+  reads `<key>` and ends the path, e.g. `/headers/<key>`.
+- `expected` states the constraint that failed, then every other constraint
+  the position declares: bounds, property and item counts, `multipleOf`,
+  `pattern`, `format`, `uniqueItems`, enum members, `dependentRequired`
+  (`string (required with tags)`). A sensitive position never renders an enum,
+  `const` or pattern literal. Each position gets one finding.
+- `received` is the submitted JSON type, `missing`, or, for a numeric bound at
+  a non-sensitive position of a named tool, the submitted number.
+
+At most eight findings are returned, each field clipped (path and expected 256
+characters, received 64), and `truncated: true` says something was omitted or
+clipped.
+
+`example` is one valid call synthesized from the published schema and checked
+against the same validator. It never copies a submitted value, and a sensitive
+position never renders a schema literal (`enum`, `const`, `default`,
+`examples`). Complex or unsatisfiable schemas get `exampleUnavailable` instead.
+Synthesis detects recursive references and shares a 128-node work budget.
+Invocation uses only this schema example, never a connector's copy of the
+call, unless the connector states `exampleUnavailable`. API hatches
+(`*_api_read`, `*_api_write`) always do: their generic schema says nothing
+about an operation's arguments, so the reason points to the operation's
+`*_api_details`.
+
+`acceptedKeys` names the tool's top-level arguments. `conditionalRequirements`
+lists known `dependentRequired` and `dependentSchemas` requirements by
+property name; `if`/`then`/`else` conditions are schema subtrees and are not
+rendered. The envelope has a 4 KiB budget:
+optional detail, then the example, then trailing findings are dropped whole,
+with `truncated: true`. A `repair` object a custom connector passes contributes
+its received types and schema facts. A custom connector's own findings must
+follow the same rule. Operator records contain only checked failure facts,
+never findings or examples.
 
 `nextAction` points to discovery scoped to the same connector and tool name when
 the compact schema is needed, routed like any other miss: a program to
 `connecta.search`, a top-level call to `search_tools`. `retry` says to correct
-the listed arguments and reissue the original operation. Which keyword a finding
-names, and what the local validator declines to evaluate, is
-[code mode](./code-mode.md#errors)'s `E8`.
+the listed arguments and reissue the original operation. What the local
+validator declines to evaluate is [code mode](./code-mode.md#errors)'s `E8`.
 
-`repair` adds agent-only detail from that tool's published schema: accepted
-keys, received JSON types, enum values, numeric/length/item bounds, and known
-conditional requirements such as `dependentRequired` and `if`/`then`/`else`.
-Its `example` is synthesized without submitted values and checked against the
-same validator. Complex or unsatisfiable schemas get `exampleUnavailable`
-rather than an invalid example. Synthesis detects recursive references and
-shares a 128-node work budget. Alternative branches do not emit dependency
-advice unless the branch condition is known. Repair detail has a 4 KiB budget; oversized
-detail is withheld whole with `truncated: true`. Operator records still contain
-only checked failure facts, never findings or examples.
+Earlier releases returned `validation.issues[].code` (the schema keyword)
+and a separate `repair` object. Both are gone from responses; a custom
+connector may still pass `code` and `repair` to `ConnectorCallError`, which
+folds `repair` into `validation`.
 
 Unknown-address errors list `configuredConnectors` from the current endpoint's
 scoped registry, including an empty list when none are accessible. They never
@@ -1311,7 +1400,7 @@ window, a native `tools/list` carries a 300-second private cache hint, against
 an hour on meta endpoints. This hint does not guarantee that a host refreshes
 its cached annotations; the stale-approval race is accepted on writable pools.
 
-**Listing.** `tools/list` is one page with no cursor (Eve 0.86 reads only the
+**Listing.** `tools/list` is one page with no cursor (Eve 0.90 reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
 JSON-RPC error asking the operator to narrow the pool; nothing is silently
 dropped. A connector whose catalog cannot load is left out of that listing

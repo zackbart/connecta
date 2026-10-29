@@ -619,8 +619,7 @@ export async function checkHostFailureArrays(executor: Executor): Promise<void> 
   const baseline = await harness.run(executor, `async () => ${call}`);
   expect(baseline.value.error).toMatchObject({
     code: "invalid_args",
-    validation: { issues: expect.any(Array) },
-    repair: { issues: expect.any(Array), acceptedKeys: expect.any(Array) },
+    validation: { issues: expect.any(Array), acceptedKeys: expect.any(Array) },
   });
   for (const data of ["undefined", '"AA=="']) {
     const outcome = await harness.run(
@@ -635,7 +634,7 @@ export async function checkHostFailureArrays(executor: Executor): Promise<void> 
       try { ${call}; }
       catch (error) {
         for (let i = 0; i < arrays.length; i++) { arrays[i].length = 0; arrays[i].push("altered"); }
-        for (const list of [error.details.validation.issues, error.details.repair.issues, error.details.repair.acceptedKeys]) {
+        for (const list of [error.details.validation.issues, error.details.validation.acceptedKeys]) {
           list.length = 0;
           list.push("altered");
         }
@@ -1746,6 +1745,74 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
     },
   })),
+  ...[
+    'return connecta.call("reader.read", { value: "x" }).data.length;',
+    'return connecta["call"]("reader.read", { value: "x" }).data.length;',
+    'return (connecta.search({ query: "read" })).tools.map((tool) => tool.address);',
+    'const page = connecta.search({ query: "read" });\nreturn page.tools.map((tool) => tool.address);',
+    'const { tools } = connecta.describe("reader.read");\nreturn tools.length;',
+    'for (const tool of (await connecta.search({ query: "read" }).tools)) return tool;',
+  ].map((source): ContractCase => ({
+    clauses: "E6",
+    name: `INV-6: program errors name a missing await in ${source.split("\n")[0]}`,
+    code: `async () => {\n${source}\n}`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      const error = outcome.value.error as { message: string; details: { name: string; hint: string } };
+      expect(error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.",
+        },
+      });
+      // The engine name appears once, and reporting the read spends no host call.
+      expect(error.message).toMatch(/^Program TypeError: (?!TypeError)/);
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 1, admitted: 1 });
+    },
+  })),
+  ...[
+    'let page = connecta.search({ query: "read" });\npage = await page;\nreturn page.tools.missing.field;',
+    "/* connecta.call().data */ return null.field;",
+    'const result = await connecta.call("reader.read", { value: "x" });\nconst pending = connecta.search({ query: "read" });\nawait pending;\nreturn result.data.missing.field;',
+  ].map((source): ContractCase => ({
+    clauses: "E6",
+    name: `INV-6: an awaited or host-call-free TypeError keeps the generic hint: ${source.split("\n")[0]}`,
+    code: `async () => {\n${source}\n}`,
+    check(outcome) {
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        message: expect.stringMatching(/^Program TypeError: (?!TypeError)/),
+        details: {
+          name: "TypeError",
+          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+        },
+      });
+    },
+  })),
+  {
+    clauses: "E6",
+    name: "INV-6: unawaited-read tracking leaves await, then, Promise.all and Promise.allSettled unchanged",
+    code: `async () => {
+      const pending = connecta.call("reader.read", { value: "a" });
+      const keys = Object.keys(pending).length + JSON.stringify(pending).length;
+      const [first, page] = await Promise.all([pending, connecta.search({ query: "read" })]);
+      const settled = await Promise.allSettled([connecta.call("reader.read", { value: "b" })]);
+      const chained = await connecta.call("reader.read", { value: "c" }).then(({ data }) => data);
+      return { keys, first: first.data, tools: Array.isArray(page.tools), settled: settled[0].status, chained };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({
+        keys: 2,
+        first: expect.anything(),
+        tools: true,
+        settled: "fulfilled",
+        chained: expect.anything(),
+      });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 4, failed: 0 });
+    },
+  },
   {
     clauses: "M1, M2",
     name: "INV-7: unawaited emit delivers real MCP image content",
@@ -2675,12 +2742,8 @@ return fs;
         nextAction: "connecta.search",
         validation: {
           issues: [
-            { path: "/text", code: "required", expected: "string" },
-            {
-              path: "/options/uppercase",
-              code: "type",
-              expected: "boolean",
-            },
+            { path: "/text", expected: "string (required)", received: "missing" },
+            { path: "/options/uppercase", expected: "boolean", received: "string" },
           ],
         },
       });
@@ -2770,13 +2833,7 @@ return fs;
         connector: "remote",
         operation: "remote.echo",
         validation: {
-          issues: [
-            {
-              path: "/options/uppercase",
-              code: "type",
-              expected: "boolean",
-            },
-          ],
+          issues: [{ path: "/options/uppercase", expected: "boolean", received: "string" }],
         },
         nextAction: {
           function: "connecta.search",

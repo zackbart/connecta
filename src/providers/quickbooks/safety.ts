@@ -149,43 +149,88 @@ function safeRecord(value: unknown): Record<string, unknown> {
     out["LinkedTxn"] = source["LinkedTxn"].map((row) => pick(row, ["TxnId", "TxnType", "TxnLineId"]));
   return out;
 }
+const REPORT_KEYS = new Set([
+  "Header",
+  "Columns",
+  "Column",
+  "Rows",
+  "Row",
+  "Summary",
+  "ColData",
+  "ColTitle",
+  "ColType",
+  "MetaData",
+  "Name",
+  "Value",
+  "Option",
+  "Time",
+  "ReportName",
+  "DateMacro",
+  "ReportBasis",
+  "StartPeriod",
+  "EndPeriod",
+  "SummarizeColumnsBy",
+  "Currency",
+  "value",
+  "id",
+  "type",
+  "group",
+]);
+const ENTITIES = ["Customer", "Vendor", "Account", "Item", "Invoice", "Bill", "Payment", "BillPayment"];
+const COMPANY_KEYS = [
+  "Id",
+  "SyncToken",
+  "CompanyName",
+  "LegalName",
+  "Country",
+  "FiscalYearStartMonth",
+  "SupportedLanguages",
+];
 // Report trees retain vendor hierarchy, column metadata and empty strings. No index has a fixed metric meaning.
 function reportTree(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(reportTree);
   if (typeof value !== "object" || value === null) return scalar(value);
-  const keys = new Set([
-    "Header",
-    "Columns",
-    "Column",
-    "Rows",
-    "Row",
-    "Summary",
-    "ColData",
-    "ColTitle",
-    "ColType",
-    "MetaData",
-    "Name",
-    "Value",
-    "Option",
-    "Time",
-    "ReportName",
-    "DateMacro",
-    "ReportBasis",
-    "StartPeriod",
-    "EndPeriod",
-    "SummarizeColumnsBy",
-    "Currency",
-    "value",
-    "id",
-    "type",
-    "group",
-  ]);
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => keys.has(key))
+      .filter(([key]) => REPORT_KEYS.has(key))
       .map(([key, entry]) => [key, reportTree(entry)]),
   );
 }
+type Kept = "whole" | "trimmed" | "dropped";
+/** What `safeRecord` does to a path within a record: returns it whole, trims it to picked fields, or drops it. */
+function recordPath(path: readonly string[]): Kept {
+  const [head, ...rest] = path;
+  if (head === undefined) return "trimmed";
+  if ((scalars as readonly string[]).includes(head)) return rest.length ? "dropped" : "whole";
+  if ((details as readonly string[]).includes(head) || head === "Line") return recordPath(rest);
+  const picked =
+    head === "MetaData"
+      ? ["CreateTime", "LastUpdatedTime"]
+      : head === "LinkedTxn"
+        ? ["TxnId", "TxnType", "TxnLineId"]
+        : (references as readonly string[]).includes(head)
+          ? ["value", "name", "type"]
+          : undefined;
+  if (!picked) return "dropped";
+  if (rest.length === 0) return "trimmed";
+  return rest.length === 1 && picked.includes(rest[0]!) ? "whole" : "dropped";
+}
+/** The closed projection as a discovery hint: a path it always drops is withheld. */
+function quickbooksWithholds(template: string) {
+  return (path: readonly string[]) => {
+    const names = path.map((segment) => segment.replace(/\[\]$/, ""));
+    if (template.startsWith("/reports/")) return !names.every((name) => REPORT_KEYS.has(name));
+    if (template.startsWith("/companyinfo/"))
+      return (
+        names[0] !== "CompanyInfo" || names.length > 2 || (names.length === 2 && !COMPANY_KEYS.includes(names[1]!))
+      );
+    const [root, ...rest] = template === "/query" && names[0] === "QueryResponse" ? names.slice(1) : names;
+    if (template === "/query" && names[0] !== "QueryResponse") return true;
+    if (root === undefined) return false;
+    return !ENTITIES.includes(root) || recordPath(rest) === "dropped";
+  };
+}
+
 export function quickbooksSafety(options: Readonly<QuickBooksOptions>): SafetyOptions {
   return {
     reviewed: {
@@ -198,41 +243,27 @@ export function quickbooksSafety(options: Readonly<QuickBooksOptions>): SafetyOp
         return { method: op.method, template: op.path };
       },
       withholdsErrors: () => true,
+      withholds: (operation) => quickbooksWithholds(operation.template),
       redact: (body, operation) => {
         const root = object(body);
         if (operation.template.startsWith("/reports/")) return reportTree(root);
         if (operation.template.startsWith("/companyinfo/"))
           return {
-            CompanyInfo: pick(root["CompanyInfo"], [
-              "Id",
-              "SyncToken",
-              "CompanyName",
-              "LegalName",
-              "Country",
-              "FiscalYearStartMonth",
-              "SupportedLanguages",
-            ]),
+            CompanyInfo: pick(root["CompanyInfo"], COMPANY_KEYS),
           };
         if (operation.template === "/query") {
           const query = object(root["QueryResponse"]);
           return {
             QueryResponse: Object.fromEntries(
               Object.entries(query)
-                .filter(
-                  ([key]) =>
-                    ["Customer", "Vendor", "Account", "Item", "Invoice", "Bill", "Payment", "BillPayment"].includes(
-                      key,
-                    ) && Array.isArray(query[key]),
-                )
+                .filter(([key]) => ENTITIES.includes(key) && Array.isArray(query[key]))
                 .map(([key, rows]) => [key, (rows as unknown[]).map(safeRecord)]),
             ),
           };
         }
         return Object.fromEntries(
           Object.entries(root)
-            .filter(([key]) =>
-              ["Customer", "Vendor", "Account", "Item", "Invoice", "Bill", "Payment", "BillPayment"].includes(key),
-            )
+            .filter(([key]) => ENTITIES.includes(key))
             .map(([key, record]) => [key, safeRecord(record)]),
         );
       },

@@ -8,35 +8,25 @@ description: How to route work between one execute_code program and Connecta's e
 
 ## Choose the route
 
-| Work | Tool |
-| --- | --- |
-| One known-address read | call_tool |
-| One known-address write | call_destructive_tool |
-| Discovery, multiple or dependent calls, paging, reduction | execute_code |
-
+Route as the server instructions and execute_code's first sentence say.
 Read one account with call_tool: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
-Discover and call together when schemas suffice. search_tools covers catalog
-inspection. On a read-only endpoint, as execute_code's description says, search
-omits writes (guides may name them) and each fails read_only_endpoint; tell the
-user. Unannotated tools fail closed to writes.
-For a requested write, make the call through the write route; the host may ask
-the user to confirm it. Connecta classifies and routes writes; the host owns approval.
+On a read-only endpoint search omits writes (guides may name them) and each
+fails read_only_endpoint; tell the user. Unannotated tools fail closed to writes.
+Connecta classifies and routes a requested write; the host owns approval.
 
 ## The global and the envelopes
 
 Pass JavaScript \`async () => { ... }\`, no arguments. Do not shadow \`connecta\`.
 No imports, require, filesystem, fetch, or timers.
 
-Use \`connecta.call(address, args, { timeoutMs })\` or
-\`connecta.call({ address, args, timeoutMs })\`; both return \`{ data, format }\`.
-\`format: "json"\` carries JSON; \`format: "text"\` carries text. Parse text only
-when documented as JSON. Verify collection roots.
+\`connecta.call(address, args, { timeoutMs })\` and
+\`connecta.call({ address, args, timeoutMs })\` return \`{ data, format }\`.
+Parse \`format: "text"\` only when documented as JSON. Verify collection roots.
 
 \`connecta.read("resource://id/"+encodeURIComponent(uri))\` returns \`{ contents }\` for advertised URIs.
 
-Search/describe return \`{ tools }\`, never an array. Search also returns
-\`catalogErrors\`, pagination, and possible \`absence\`; check failures before
-selecting a match. JSON schemas are the program default. Compact schemas have
+Search/describe return \`{ tools }\`, never an array. Check search's
+\`catalogErrors\` and \`absence\` before selecting a match. Compact schemas have
 \`schemaFormat: "text"\`; do not read their .properties. Select the exact tool and
 account/environment, inspect its schema, and supply its required keys and types.
 
@@ -135,15 +125,24 @@ and obeys byte/block budgets; text shares the return cap. Return reduced JSON.
 
 `;
 
-/** Kept in sync with GuestApi by the declaration test. These are type notation, not runnable JS. */
-export const GUEST_API_DECLARATION = `search(args?: CatalogSearchArgs): Promise<CatalogSearchResult>;
-describe(args?: CatalogDescribeArgs): Promise<{ tools: CatalogDescription[] }>;
-call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
-call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
-read(uri: string): Promise<GuestResourceResult>;
-result(
-  id: string | GuestResultHandle,
-  options?: { page?: number; offset?: number; maxBytes?: number },
-): Promise<GuestResultPage>;
-skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
-emit(block: GuestNativeBlock | GuestResult): PromiseLike<void>;`;
+/**
+ * The guest API as the execute_code description shows it: compact shapes of
+ * GuestApi in src/guest-types.ts, checked against it by the package-surface
+ * declaration test. Arguments match what GuestApi accepts in both directions,
+ * results are supertypes of its results, and no field is invented. Type notation, not runnable JS.
+ */
+export const GUEST_API_DECLARATION = `declare const connecta: {
+search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string }[]; hasMore: boolean; nextOffset?: number }>;
+describe(args?: { address?: string; addresses?: string[]; format?: Schemas }): Promise<{ tools: (Tool & { error?: string })[] }>;
+call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<Result>;
+read(uri: string): Promise<{ contents: { uri: string; text?: string; blob?: string }[] }>;
+result(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;
+skill(name: string): Promise<{ text: string }>;
+emit(block: Block | Native | Exclude<Result, Paged>): PromiseLike<void>;
+};
+type Schemas = "json" | "compact" | "typescript";
+type Tool = { address: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; signature?: string };
+type Paged = { format: "paged"; valueFormat: "json" | "text"; resultId?: string; totalBytes: number; truncated: true; hint: string };
+type Result = ({ format: "json"; data: unknown } | { format: "text"; data: string } | Paged) & { content?: Native[] };
+type Block = { type: "text"; text: string } | { type: "image" | "audio"; data: string; mimeType: string };
+type Native = Block | { type: "resource"; resource: { uri: string } & ({ text: string } | { blob: string }) } | { type: "resource_link"; uri: string; name: string };`;

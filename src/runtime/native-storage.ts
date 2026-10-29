@@ -6,6 +6,8 @@ import type { ActivityPage, ActivityStore, ToolCallActivityEvent } from "../acti
 
 export interface NativeStorage {
   get(key: string): Effect.Effect<string | null, unknown>;
+  /** Several keys in one round trip, each as `get` would read it. */
+  getMany?(keys: readonly string[]): Effect.Effect<(string | null)[], unknown>;
   set(key: string, value: string, options?: Parameters<KVStorage["set"]>[2]): Effect.Effect<void, unknown>;
   delete(key: string): Effect.Effect<void, unknown>;
   list(prefix: string): Effect.Effect<string[], unknown>;
@@ -54,8 +56,20 @@ function current<A>(
 export function registerNativeStorage(edge: KVStorage, native: NativeStorage): KVStorage {
   const own = { get: edge.get, set: edge.set, delete: edge.delete, list: edge.list, compareAndSet: edge.compareAndSet };
   storageMethods.set(edge, own);
+  const getMany = native.getMany;
   storage.set(edge, {
     get: (key) => current(edge, "get", own.get, [key], () => native.get(key)),
+    // A replaced `get` answers each key itself, in order, as before.
+    ...(getMany
+      ? {
+          getMany: (keys: readonly string[]) =>
+            typed(() =>
+              Reflect.get(edge, "get") === own.get
+                ? getMany(keys)
+                : Effect.forEach(keys, (key) => current(edge, "get", own.get, [key], () => native.get(key))),
+            ),
+        }
+      : {}),
     set: (key, value, options) =>
       current(edge, "set", own.set, [key, value, options], () => native.set(key, value, options)),
     delete: (key) => current(edge, "delete", own.delete, [key], () => native.delete(key)),

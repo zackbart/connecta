@@ -22,7 +22,7 @@ import type { KVStorage } from "../src/types.js";
 import { connectorContext as ctx, deferred, scriptedExecutor, spyLogger } from "./fixtures/misc.js";
 import { createTestConnecta, required, makeRegistry, seedCatalog, silentLogger } from "./helpers.js";
 import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
-import { mcpRpc } from "./fixtures/http.js";
+import { fakeClerkAuth, readJsonRpc, mcpRpc } from "./fixtures/http.js";
 import { seedGrant } from "./fixtures/oauth.js";
 
 beforeEach(() => {
@@ -219,6 +219,56 @@ function makeHttpDownstream(
 }
 
 describe("remoteMcp() connector", () => {
+  it("partitions routed human catalogs by resolved pool while sharing the explicit alias", async () => {
+    const first = await connectServer();
+    const second = await connectServer();
+    closer = async () => {
+      await first.server.close();
+      await second.server.close();
+    };
+    const transports = [first.clientTransport, second.clientTransport];
+    let builds = 0;
+    const storage = memoryStorage();
+    const build = (pool: string) =>
+      createTestConnecta({
+        connectors: [
+          remoteMcp("down", {
+            url: "https://unused.example/mcp",
+            _transportFactory: () => {
+              builds++;
+              return required(transports.shift());
+            },
+          }),
+        ],
+        storage,
+        auth: fakeClerkAuth({ token: "bob", userId: "bob" }),
+        maintainers: ["alice"],
+        pools: { [pool]: { tools: ["down"], members: ["bob"] } },
+        logger: silentLogger,
+      });
+    const search = async (app: ReturnType<typeof build>, path: string) => {
+      const req = mcpRpc("tools/call", { name: "search_tools", arguments: { query: "echo" } });
+      req.headers.set("Authorization", "Bearer bob");
+      return readJsonRpc(await app.fetch(new Request(`${BASE}${path}`, req)));
+    };
+    const team = build("team");
+    try {
+      const routed = await search(team, "/mcp");
+      expect(routed.result.isError).toBeFalsy();
+      expect((await search(team, "/mcp/team")).result).toEqual(routed.result);
+      expect(builds).toBe(1);
+    } finally {
+      await team.close();
+    }
+    const moved = build("other");
+    try {
+      expect((await search(moved, "/mcp")).result.isError).toBeFalsy();
+      expect(builds).toBe(2);
+    } finally {
+      await moved.close();
+    }
+  });
+
   it("INV-7: keeps an OAuth connection usable after its first call's failure deadline scope ends", async () => {
     const storage = memoryStorage();
     await seedGrant(storage, {

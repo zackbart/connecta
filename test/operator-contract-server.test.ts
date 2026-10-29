@@ -184,9 +184,15 @@ async function team(
       team: {
         tools: ["wiki.read", "mail", "notes", "calendar"],
         owner: "team@example.com",
-        members: ["bob", "lin", "agent:bot"],
+        members: ["bob", "lin"],
       },
-      ops: { tools: ["wiki", "hidden"], members: ["carol", "agent:gone"] },
+      "team-agents": {
+        tools: ["wiki.read", "mail", "notes", "calendar"],
+        owner: "team@example.com",
+        members: ["agent:bot"],
+      },
+      ops: { tools: ["wiki", "hidden"], members: ["carol"] },
+      "ops-agents": { tools: ["wiki", "hidden"], members: ["agent:gone"] },
     },
     ...(options.activity
       ? {
@@ -353,7 +359,7 @@ describe("operator contract v2 server", () => {
         { kind: "human", namespace: TEST_MACHINE_NAMESPACE, id: "machine", label: null },
       ],
     });
-    expect(alice.pools).toEqual([
+    const peoplePools = [
       {
         name: "team",
         humanPath: "/mcp/team",
@@ -372,7 +378,6 @@ describe("operator contract v2 server", () => {
           { kind: "human", namespace: NAMESPACE, id: "bob", label: "Bob Example" },
           // No directory entry: null, never the id.
           { kind: "human", namespace: NAMESPACE, id: "lin", label: null },
-          { kind: "agent", name: "bot" },
         ],
       },
       {
@@ -387,31 +392,42 @@ describe("operator contract v2 server", () => {
           { connectorId: "wiki", tools: "all" },
           { connectorId: "hidden", tools: "all" },
         ],
-        members: [
-          { kind: "human", namespace: NAMESPACE, id: "carol", label: null },
-          { kind: "agent", name: "gone" },
-        ],
+        members: [{ kind: "human", namespace: NAMESPACE, id: "carol", label: null }],
       },
-    ]);
+    ];
+    const agentPool = (index: number, name: string) => ({
+      ...peoplePools[index],
+      name: peoplePools[index]!.name + "-agents",
+      humanPath: peoplePools[index]!.humanPath + "-agents",
+      agentPath: peoplePools[index]!.agentPath + "-agents",
+      members: [{ kind: "agent", name }],
+    });
+    expect(alice.pools).toEqual([peoplePools[0], agentPool(0, "bot"), peoplePools[1], agentPool(1, "gone")]);
     expect(alice.agents.map((agent) => [agent.name, agent.pools])).toEqual([
-      ["bot", ["team"]],
+      ["bot", ["team-agents"]],
       ["idle", []],
-      ["gone", ["ops"]],
+      ["gone", ["ops-agents"]],
     ]);
     expect(alice.connectors).toEqual([]);
     expect(alice.live.connectors.map((c) => c.id)).toEqual(["wiki", "mail", "notes", "calendar", "hidden"]);
     expect(alice.matrix.map((cell) => [cell.connectorId, cell.pool, cell.tools])).toEqual([
       ["wiki", null, "all"],
       ["wiki", "team", ["read"]],
+      ["wiki", "team-agents", ["read"]],
       ["wiki", "ops", "all"],
+      ["wiki", "ops-agents", "all"],
       ["mail", null, "all"],
       ["mail", "team", "all"],
+      ["mail", "team-agents", "all"],
       ["notes", null, "all"],
       ["notes", "team", "all"],
+      ["notes", "team-agents", "all"],
       ["calendar", null, "all"],
       ["calendar", "team", "all"],
+      ["calendar", "team-agents", "all"],
       ["hidden", null, "all"],
       ["hidden", "ops", "all"],
+      ["hidden", "ops-agents", "all"],
     ]);
     // A machine maintainer's read is not interactive, so it carries no directory label.
     const machine = await read(send, "machine");

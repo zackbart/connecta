@@ -156,13 +156,13 @@ describe("repairing error envelopes", () => {
           {
             code: "invalid_args",
             retryable: false,
-            repair: {
+            validation: {
               acceptedKeys: ["mode", "count"],
               example: { mode: "fast", count: 1 },
-              issues: expect.arrayContaining([
-                expect.objectContaining({ enumValues: ["fast", "slow"] }),
-                expect.objectContaining({ receivedType: "string", bounds: { minimum: 1 } }),
-              ]),
+              issues: [
+                { path: "/mode", expected: 'one of "fast", "slow"', received: "string" },
+                { path: "/count", expected: "integer, at least 1", received: "string" },
+              ],
             },
           },
         ],
@@ -219,6 +219,53 @@ describe("repairing error envelopes", () => {
       expect(records).not.toContain("acceptedKeys");
       expect(records).not.toContain("uncertainCall");
     });
+  });
+
+  it("INV-5 INV-6: a connector refusal's example comes only from the published schema", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1 },
+        fields: { type: "array", items: { type: "string" } },
+        token: { type: "string", writeOnly: true },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    };
+    const invoke = async (validation: Record<string, unknown>, args: Record<string, unknown>) => {
+      const registry = makeRegistry([
+        connectorWith({
+          id: "notes",
+          kind: "api",
+          tools: [{ name: "find", annotations: { readOnlyHint: true }, inputSchema: schema }],
+          call: async () => {
+            throw new ConnectorCallError("invalid_args", "Bad.", {
+              validation: { issues: [{ path: "/fields/0", expected: "a declared path" }], ...validation },
+            });
+          },
+        }),
+      ]);
+      const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "notes.find",
+        args,
+        { source: "call_tool", readOnly: false },
+      );
+      if (outcome.ok) throw new Error("Expected refusal");
+      return outcome.error;
+    };
+    const args = { query: "query-sentinel", fields: ["field-sentinel"], token: "token-sentinel" };
+    // A connector's own copy of the call is replaced by the schema's synthesized example.
+    for (const supplied of [{}, { example: args }]) {
+      const error = await invoke(supplied, args);
+      expect(error.validation).toMatchObject({ example: { query: "x" } });
+      expect(error.retry).toContain("notes.find");
+      expect(JSON.stringify(error)).not.toMatch(/sentinel/);
+    }
+    // A stated reason stands, and no example rides beside it.
+    const withheld = await invoke({ exampleUnavailable: "Read notes_api_details." }, args);
+    expect(withheld.validation).not.toHaveProperty("example");
+    expect(withheld.validation?.exampleUnavailable).toBe("Read notes_api_details.");
+    expect(JSON.stringify(withheld)).not.toMatch(/sentinel/);
   });
 
   it("INV-6 INV-9: a dispatched write timeout echoes the uncertain call only to the agent and is never repeated", async () => {

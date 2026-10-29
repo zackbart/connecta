@@ -47,8 +47,9 @@ links the executable checks.
   only server annotations; deployment overrides never relax replay safety.
   Effective or source write forbids replay and makes an ambiguous dispatched
   failure non-retryable. Missing or contradictory hints fail closed.
-- **INV-2: Writes respect the endpoint.** Each endpoint (plain `/mcp`, and a
-  pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
+- **INV-2: Writes respect the endpoint.** Each endpoint scope (plain `/mcp`,
+  which serves a maintainer the whole catalog and another person their single
+  pool, and a pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
   tools from search, describe, and a native pool's tool list, and refuses every write call on every path
   before validation or dispatch; guides may still name them. A connector's `readOnly` applies the same restriction on every endpoint and composes with endpoint policy by OR. A writable endpoint sends writes only through
   `call_destructive_tool`, programs, and on a native pool the write's own

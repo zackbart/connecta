@@ -864,6 +864,9 @@ function parkConnectorRecovery(id: string): void {
 
 // One shared, bounded queue for initial load, refresh, focus and OAuth polls.
 // Only plain detail results are coalesced; transports remain request-owned.
+// Each read is its own request for one connector, so the limit sets how many
+// downstreams one tab waits on at once, not how often any one is read.
+const DETAIL_READ_LIMIT = 8;
 const connectorReads = new Map<
   string,
   { controller: AbortController; signal: AbortSignal; promise: Promise<DetailOutcome> }
@@ -882,7 +885,7 @@ async function coalescedConnector(
   const controller = new AbortController();
   const combined = AbortSignal.any([signal, controller.signal]);
   const promise = (async () => {
-    if (activeConnectorReads >= 4) await new Promise<void>((resolve) => connectorWaiters.push(resolve));
+    if (activeConnectorReads >= DETAIL_READ_LIMIT) await new Promise<void>((resolve) => connectorWaiters.push(resolve));
     else activeConnectorReads++;
     try {
       if (combined.aborted) return { kind: "stale" } as const;

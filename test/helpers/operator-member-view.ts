@@ -136,7 +136,7 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
   return {
     pools: pools.map(({ name, humanPath, agentPath, readOnly, surface, executeCode, tools }) => ({
       name,
-      humanPath,
+      humanPath: pools.length === 1 ? "/mcp" : humanPath,
       agentPath,
       readOnly,
       surface,
