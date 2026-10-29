@@ -333,9 +333,9 @@ export function efficiencyLines(models: ModelEfficiency[], rel?: Reliability): s
     const r = rel?.models.find((entry) => entry.model === summary.model);
     const n = (stat: { n: number }) => (stat.n === summary.passing ? "" : ` (n=${stat.n})`);
     lines.push(
-      `${summary.model}: ${summary.passing}/${summary.trials} passing` +
+      `${summary.model}: ${summary.passing}/${summary.trials} passing/ran` +
         (r
-          ? `; pass@${rel!.k} ${fmtRate(r.passAtK)}, pass^${rel!.k} ${fmtRate(r.passHatK)} over ${r.cells} cell(s)${r.unestimated ? `, ${r.unestimated} with fewer than ${rel!.k} graded` : ""}`
+          ? `; pass@${rel!.k} ${fmtRate(r.passAtK)}, pass^${rel!.k} ${fmtRate(r.passHatK)} over ${r.cells} cell(s)${r.unestimated ? `, ${r.unestimated} with fewer than ${rel!.k} graded` : ""} (reliability excludes N/A and infrastructure errors)`
           : ""),
     );
     lines.push(

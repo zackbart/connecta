@@ -239,10 +239,10 @@ describe("eval efficiency aggregates", () => {
     expect(models[1]).toMatchObject({ trials: 1, passing: 0 });
     expect(models[1]!.medians.calls).toEqual({ value: undefined, n: 0 });
     const text = efficiencyLines(models, rel).join("\n");
-    expect(text).toContain("m1: 2/3 passing; pass@1 66.7%, pass^1 66.7% over 3 cell(s)");
+    expect(text).toContain("m1: 2/3 passing/ran; pass@1 66.7%, pass^1 66.7% over 3 cell(s)");
     expect(text).toContain("expensive: c #1 fail 9100 tokens 1s: largest response 50 B from execute_code");
     expect(text).toContain("1 guide fetch(es), 1 tool error(s)");
     expect(text).toContain("call_tool median 2.0 KB, max 2.0 KB (1 calls)");
-    expect(text).toContain("m2: 0/1 passing");
+    expect(text).toContain("m2: 0/1 passing/ran");
   });
 });

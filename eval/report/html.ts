@@ -126,7 +126,7 @@ function efficiency(file: AgentResultFile): string {
           `<li><a href="#task-${esc(trial.task)}">${esc(trial.task)}</a> #${trial.repeat} <span class="badge ${trial.status}">${trial.status}</span> ${fmtNum(trial.totalTokens, 0)} tokens · ${fmtMs(trial.wallMs)}${trial.costUsd === undefined ? "" : ` · ${fmtUsd(trial.costUsd)}`}<div class="sub">${esc(expenseReason(trial))}</div></li>`,
       )
       .join("");
-    return `<tr><th>${esc(shortModel(summary.model))}<div class="sub">${summary.passing}/${summary.trials} passing</div></th>
+    return `<tr><th>${esc(shortModel(summary.model))}<div class="sub">${summary.passing}/${summary.trials} passing/ran; reliability excludes N/A and infrastructure errors</div></th>
       <td>${fmtPct(r?.passAtK)} / ${fmtPct(r?.passHatK)}<div class="sub">${r?.cells ?? 0} cell(s)${r?.unestimated ? `, ${r.unestimated} short of ${k}` : ""}</div></td>
       <td>${stat(fmtNum(m.calls.value), m.calls.n, summary.passing)} · ${stat(fmtNum(m.modelTurns.value), m.modelTurns.n, summary.passing)}</td>
       <td>${stat(fmtNum(m.promptTokens.value, 0), m.promptTokens.n, summary.passing)} / ${fmtNum(m.outputTokens.value, 0)}</td>
