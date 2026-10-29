@@ -778,6 +778,9 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             ])) as string | null;
             if (stopped()) return undefined;
             if (current) return current;
+            // A connectionless reader never claims or recreates a generation: a
+            // missing one is a miss at every check, never a reused namespace.
+            if (connectionless) return undefined;
             const next = generation.value ?? crypto.randomUUID();
             const claimed = (yield authCall(io, [
               cacheMethod(

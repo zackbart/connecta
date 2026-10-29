@@ -52,6 +52,7 @@ import type {
   JSONRPCMessage,
   ListResourcesResult,
   ListResourceTemplatesResult,
+  OAuthTokens,
   PriorDiscovery,
   ReadResourceResult,
   ListToolsResult,
@@ -3143,11 +3144,23 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         let epoch = "";
         let identity: (() => Promise<string>) | undefined;
         if (isOauth) {
+          // Read-only grant snapshots: no in-place sealing, epoch binding or
+          // refresh. Every identity check during cache acceptance re-reads the
+          // grant and refuses unless both the epoch this partition was derived
+          // from and the token digest still hold, as a bound connect would.
           const provider = newProvider(ctx);
-          epoch = (yield authInvoke(provider, "liveEpoch", [])) as string;
-          if (provider.isOperatorDisconnectedEpoch(epoch) || !((yield authCall(granted, [provider])) as boolean))
-            return preread;
-          identity = catalogIdentityFor(provider);
+          const snapshot = (yield authInvoke(provider, "peekGrant", [])) as { epoch: string; tokens?: OAuthTokens };
+          epoch = snapshot.epoch;
+          if (provider.isOperatorDisconnectedEpoch(epoch) || !snapshot.tokens) return preread;
+          const bound = epoch;
+          identity = authMethod(() =>
+            authFlow<string>(function* () {
+              const current = (yield authInvoke(provider, "peekGrant", [])) as { epoch: string; tokens?: OAuthTokens };
+              // A distinct value per refusal never matches the listing's identity.
+              if (current.epoch !== bound || !current.tokens) return `superseded:${crypto.randomUUID()}`;
+              return yield authCall<string>(sha256Hex, [JSON.stringify(current.tokens)]);
+            }),
+          );
         }
         if (opts.versionNegotiation !== "legacy") {
           const digest = (yield authCall(sha256Hex, [negotiationInputs(ctx, credentialDigest, epoch)])) as string;
@@ -3931,7 +3944,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (cached.tools) clean = redactCatalog(ctx, cached.tools);
         else {
           const client = (yield authCall(ensureConnected, [ctx, state, cached])) as Client;
-          const options = requestOptions(ctx) ?? {};
+          // A credential test must observe the downstream answer itself, never
+          // the SDK cache a modern connection reads without any request.
+          const options: CacheableRequestOptions = {
+            ...requestOptions(ctx),
+            ...(liveListings.has(ctx) ? { cacheMode: "bypass" as const } : {}),
+          };
           listingContexts.set(options, ctx);
           try {
             const result = (yield authInvoke(client, "listTools", [undefined, options])) as ListToolsResult;

@@ -20,7 +20,7 @@ import { createExecuteTool } from "../src/execute.js";
 import { Registry } from "../src/registry.js";
 import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sql.js";
 import { sentSecretsForRequest } from "../src/sent-secrets.js";
-import { responseCacheKeys, scopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, responseCacheKeys, scopes } from "../src/storage/keys.js";
 import { withDeadline } from "../src/timeout.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, deferred, scriptedExecutor, waitFor } from "./fixtures/misc.js";
@@ -1457,6 +1457,152 @@ describe("pre-connect cached catalogs", () => {
     await seedGrant(store, { issuer: "https://calendar.test" }, "v3:reauthorized", scopes.connector(id));
     await search();
     expect(downstream.handshakes()).toBe(1);
+  });
+
+  /** One OAuth connector over a legacy downstream, searched by a fresh registry per request. */
+  async function oauthDeployment(options: { vault?: boolean } = {}) {
+    const store = await storage();
+    const vault = options.vault
+      ? new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))))
+      : undefined;
+    const id = `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const downstream = legacyDownstream("calendar");
+    vi.stubGlobal("fetch", downstream.fetch);
+    const connector = remoteMcp(id, { url: "https://calendar.test/mcp", auth: { type: "oauth" } });
+    const grantKey = scopes.connector(id) + oauthGrantKeys.grant;
+    const grant = (accessToken: string, epoch = "v3:seeded") =>
+      seedGrant(
+        store,
+        { issuer: "https://calendar.test", tokens: { access_token: accessToken, token_type: "Bearer" } },
+        epoch,
+        scopes.connector(id),
+      );
+    const search = async () => {
+      const registry = makeRegistry([connector], { storage: store, ...(vault ? { credentialVault: vault } : {}) });
+      const requestScope = {};
+      try {
+        return await new CatalogService(registry, BASE, { requestScope }).search({ query: "read" });
+      } finally {
+        await connector.closeScope!(registry.contextFor(id, BASE, requestScope));
+      }
+    };
+    return { store, downstream, grantKey, grant, search };
+  }
+
+  it("INV-5: an epoch replaced during the pre-connect read never serves the previous epoch's catalog", async () => {
+    const d = await oauthDeployment();
+    await d.grant("access-1", "v3:first");
+    await d.search();
+    d.downstream.requests.length = 0;
+    // The first grant read sees the old epoch; every later read sees a
+    // re-authorization that happens to carry the same token bytes.
+    const get = d.store.get.bind(d.store);
+    let swapped = false;
+    vi.spyOn(d.store, "get").mockImplementation(async (key) => {
+      const value = await get(key);
+      if (key === d.grantKey && !swapped) {
+        swapped = true;
+        await d.grant("access-1", "v3:second");
+      }
+      return value;
+    });
+    expect(names(await d.search())).toEqual(["calendar_read"]);
+    expect(swapped).toBe(true);
+    // The pre-read refused the stale partition, and the connect bound the new epoch.
+    expect([d.downstream.handshakes(), d.downstream.listings()]).toEqual([1, 1]);
+  });
+
+  it("INV-10: a pre-connect hit never seals a plaintext OAuth grant in place", async () => {
+    const d = await oauthDeployment({ vault: true });
+    await d.grant("access-1");
+    await d.search();
+    // The connect sealed the grant. Restore the plaintext layout-3 record.
+    expect(JSON.parse((await d.store.get(d.grantKey))!).sealed).toBeDefined();
+    await d.grant("access-1");
+    const plaintext = await d.store.get(d.grantKey);
+    expect(JSON.parse(plaintext!).body.tokens.access_token).toBe("access-1");
+    d.downstream.requests.length = 0;
+    const writes = (["set", "compareAndSet", "delete"] as const).map((method) => vi.spyOn(d.store, method));
+    expect(names(await d.search())).toEqual(["calendar_read"]);
+    expect(d.downstream.requests).toEqual([]);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
+    expect(await d.store.get(d.grantKey)).toBe(plaintext);
+  });
+
+  it("INV-8 INV-10: a connectionless read never claims a generation that expires mid-read", async () => {
+    const store = await storage();
+    const ctx = { ...connectorContext(store), requestScope: {} };
+    const id = `expiring_${crypto.randomUUID().replaceAll("-", "")}`;
+    const writer = await catalogClientOptions(ctx, id, "configuration", "grant");
+    const key = { method: "tools/list", params: "", partition: JSON.stringify(["server", writer.cachePartition]) };
+    const value = JSON.stringify({ tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs: 60_000 });
+    await writer.withListing(ctx, async () =>
+      writer.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000, scope: "private" }),
+    );
+    const generationKey = responseCacheKeys.generation(id);
+    const reader = await catalogClientOptions(
+      ctx,
+      id,
+      "configuration",
+      "grant",
+      undefined,
+      undefined,
+      "private",
+      undefined,
+      true,
+    );
+    expect((await reader.cachedTools(ctx))?.tools.map((tool) => tool.name)).toEqual(["read"]);
+    // The generation expires right after the listing pins it.
+    const get = store.get.bind(store);
+    let expired = false;
+    vi.spyOn(store, "get").mockImplementation(async (requested) => {
+      const result = await get(requested);
+      if (requested === generationKey && !expired) {
+        expired = true;
+        await store.delete(generationKey);
+      }
+      return result;
+    });
+    const claims = vi.spyOn(store, "compareAndSet");
+    expect(await reader.cachedTools(ctx)).toBeUndefined();
+    expect(expired).toBe(true);
+    expect(claims).not.toHaveBeenCalled();
+    expect(await get(generationKey)).toBeNull();
+  });
+
+  it("a credential test lists live against a modern server whose catalog the SDK has cached", async () => {
+    const store = await storage();
+    const vault = new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    const id = `modern_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    let listings = 0;
+    const downstream = httpDownstream(
+      (mcp) => mcp.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] })),
+      {
+        catalogTtlMs: 60_000,
+        capture: async (request) => {
+          if (request.method !== "POST") return;
+          if (((await request.json()) as { method?: string }).method === "tools/list") listings++;
+        },
+      },
+    );
+    const connector = remoteMcp(id, { url: downstream.url, fetch: downstream.fetch, auth: { type: "credential" } });
+    await vault.set(id, TOKEN_A, "operator");
+    const withRegistry = async <T>(run: (ctx: ConnectorContext) => Promise<T>) => {
+      const registry = makeRegistry([connector], { storage: store, credentialVault: vault });
+      const ctx = registry.contextFor(id, BASE, {});
+      try {
+        return await run(ctx);
+      } finally {
+        await connector.closeScope!(ctx);
+      }
+    };
+    await withRegistry((ctx) => connector.listTools(ctx));
+    expect(listings).toBe(1);
+    // A modern connection reads the cached catalog without a request.
+    await withRegistry((ctx) => connector.listTools(ctx));
+    expect(listings).toBe(1);
+    expect(await withRegistry((ctx) => connector.testCredential!(TOKEN_A, ctx))).toMatchObject({ ok: true });
+    expect(listings).toBe(2);
   });
 
   it("a credential test proves the stored value live even when its catalog is cached", async () => {
