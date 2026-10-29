@@ -502,26 +502,31 @@ const catalogFailureProperties = {
   },
 };
 
+/** The one typed failure (and auth handoff) both failure fields reference. */
+const FAILURE_REF = { $ref: "#/$defs/failure" } as const;
+
 /**
  * The outputSchema contract for either search adapter. Guest API registration
  * can reuse this value instead of maintaining a second page definition.
+ * Every failure field references one local `$defs` entry, so the typed auth
+ * handoff is advertised once instead of once per field.
  */
 export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
   type: "object",
   required: ["catalogErrors", "tools", "total", "offset", "limit", "hasMore"],
   additionalProperties: false,
-  properties: {
-    catalogErrors: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["connector", "code", "message", "retryable"],
-        additionalProperties: false,
-        properties: {
-          ...catalogFailureProperties,
-        },
-      },
+  $defs: {
+    failure: {
+      type: "object",
+      required: ["code", "message", "retryable"],
+      additionalProperties: false,
+      properties: catalogFailureProperties,
     },
+  },
+  properties: {
+    // `allOf` rather than a `$ref` sibling keeps `required` enforced by
+    // validators that predate 2020-12 sibling semantics.
+    catalogErrors: { type: "array", items: { allOf: [FAILURE_REF], required: ["connector"] } },
     absence: {
       type: "object",
       required: ["service", "message", "configuredConnectors"],
@@ -578,12 +583,7 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
         unknownConnector: { const: true },
         configuredConnectors: stringListSchema,
         unavailableConnectorCount: { type: "integer", minimum: 0 },
-        catalogError: {
-          type: "object",
-          required: ["code", "message", "retryable"],
-          additionalProperties: false,
-          properties: catalogFailureProperties,
-        },
+        catalogError: FAILURE_REF,
         ...guideProperties,
         guidance: { type: "string" },
       },

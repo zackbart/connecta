@@ -2869,6 +2869,11 @@ Effect is pinned exactly; deployments using Effect must resolve the same version
 Per-provider bundles are reported, not capped, because their standalone graphs
 include the shared core again. Deployed non-provider shapes are capped by
 `scripts/bundle-budget.json`.
+The always-loaded agent surface has fixed-cost caps of the same kind: the
+`always-loaded agent surface budgets` cases in
+`test/meta-tool-schemas.test.ts` cap the instructions plus `tools/list` total,
+each tool description and output schema, the `usage` skill, and one default
+and one compact search row, measured on a pinned four-connector fixture.
 
 [Decision 0019](https://github.com/zackbart/connecta/blob/main/decisions/0019-core-validation-http-boundaries.md) records the rejected Schema/HttpApi measurements.
 

@@ -1825,7 +1825,7 @@ ${GUEST_API_DECLARATION}
 \`\`\`
 search and describe return objects, not arrays. Schemas default to JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except emit spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. When paging is available, an oversized program return carries resultId and nextAction.
 
-Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks unchanged; an authored Block's image/audio data is base64. emit needs no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}; connecta.skill("investigate"): workflow.`;
+Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks unchanged; an authored Block's image/audio data is base64. emit needs no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and
