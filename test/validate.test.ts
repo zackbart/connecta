@@ -34,13 +34,16 @@ describe("validateToolInput", () => {
       },
       OPTS,
     );
-    expect(err?.validation).toEqual({
-      issues: [
-        { path: "/title", code: "required", expected: "string" },
-        { path: "/settings/enabled", code: "type", expected: "boolean" },
-        { path: "/settings/retries", code: "type", expected: "integer" },
-      ],
-    });
+    expect(err?.validation?.issues).toEqual([
+      { path: "/title", expected: "string (required)", received: "missing" },
+      { path: "/settings/enabled", expected: "boolean", received: "string" },
+      { path: "/settings/retries", expected: "integer", received: "string" },
+    ]);
+    // Every finding is in the message, so a text-only reader repairs the call in one turn.
+    expect(err?.message).toBe(
+      'Invalid arguments for "acme.create_note": /title: expected string (required), received missing; ' +
+        "/settings/enabled: expected boolean, received string; /settings/retries: expected integer, received string",
+    );
     expect(JSON.stringify(err?.validation)).not.toContain("submitted-secret");
     expect(JSON.stringify(err?.validation)).not.toContain("also-secret");
   });
@@ -52,22 +55,11 @@ describe("validateToolInput", () => {
       allOf: [{ properties: { x: { enum: ["A"] } } }, { properties: { x: false } }],
     };
     const err = validateToolInput(schema, { x: "B" }, OPTS);
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/x",
-          code: "enum",
-          expected: "one of the declared values",
-        },
-        {
-          path: "/x",
-          code: "additionalProperties",
-          expected: "no additional properties",
-        },
-      ],
-    });
-    expect(err?.message).toContain("/x: expected one of the declared values (enum)");
-    expect(err?.message).not.toContain('["A"]');
+    expect(err?.validation?.issues).toEqual([
+      { path: "/x", expected: 'one of "A"', received: "string" },
+      { path: "/x", expected: "absent: the inputSchema forbids this value" },
+    ]);
+    expect(err?.message).toContain('/x: expected one of "A", received string');
     expect(err?.message).not.toContain("False boolean schema");
   });
 
@@ -214,29 +206,60 @@ describe("validateToolInput", () => {
   });
 });
 
-it("INV-6: agent repair includes schema keys, enum values, bounds and received types without caller values", () => {
+it("INV-6: one envelope states every bound, allowed value and accepted key without caller strings", () => {
   const schema: JsonSchema = {
     type: "object",
     additionalProperties: false,
     properties: {
       mode: { type: "string", enum: ["fast", "safe"] },
       count: { type: "integer", minimum: 1, maximum: 10 },
+      limit: { type: "integer", minimum: 5 },
+      pin: { type: "integer", minimum: 1000, writeOnly: true },
     },
     required: ["mode", "count"],
   };
-  const error = validateToolInput(schema, { mode: "caller-secret", count: 20, typo: "another-secret" }, OPTS);
-  expect(error?.repair).toMatchObject({
-    acceptedKeys: ["mode", "count"],
-    issues: expect.arrayContaining([
-      { path: "/mode", receivedType: "string", enumValues: ["fast", "safe"] },
-      { path: "/count", receivedType: "number", bounds: { minimum: 1, maximum: 10 } },
-      { path: "/typo", receivedType: "string", acceptedKeys: ["mode", "count"] },
-    ]),
+  const error = validateToolInput(
+    schema,
+    { mode: "caller-secret", count: 20, limit: 4, pin: 7, typo: "another-secret" },
+    OPTS,
+  );
+  expect(error?.validation).toEqual({
+    issues: [
+      { path: "/mode", expected: 'one of "fast", "safe"', received: "string" },
+      { path: "/count", expected: "at most 10", received: "20" },
+      { path: "/limit", expected: "at least 5", received: "4" },
+      // A writeOnly position states its type, never the submitted number.
+      { path: "/pin", expected: "at least 1000", received: "number" },
+      { path: "/typo", expected: "one of the accepted keys: mode, count, limit, pin" },
+    ],
+    acceptedKeys: ["mode", "count", "limit", "pin"],
     example: { mode: "fast", count: 1 },
   });
-  expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
-  expect(JSON.stringify(error?.repair)).not.toContain("caller-secret");
-  expect(JSON.stringify(error?.repair)).not.toContain("another-secret");
+  expect(error?.message).toContain("/limit: expected at least 5, received 4");
+  expect(error).not.toHaveProperty("repair");
+  expect(validateToolInput(schema, error?.validation?.example, OPTS)).toBeNull();
+  for (const text of [JSON.stringify(error?.validation), error?.message])
+    for (const value of ["caller-secret", "another-secret", ": 7", "received 7"]) expect(text).not.toContain(value);
+});
+
+it("INV-6: a legacy repair passed by a custom connector folds into the one envelope", () => {
+  const error = new ConnectorCallError("invalid_args", "Bad mode.", {
+    validation: { issues: [{ path: "/mode", code: "enum", expected: "fast or safe" }] },
+    repair: {
+      acceptedKeys: ["mode"],
+      issues: [
+        { path: "/mode", receivedType: "string", enumValues: ["fast", "safe"] },
+        { path: "/size", receivedType: "number", bounds: { maximum: 3 } },
+      ],
+      example: { mode: "fast" },
+    },
+  });
+  // Its received types and schema facts join the findings; the findings themselves come from validation.
+  expect(error.validation).toEqual({
+    issues: [{ path: "/mode", expected: "fast or safe", received: "string" }],
+    acceptedKeys: ["mode"],
+    example: { mode: "fast" },
+  });
 });
 
 it("INV-6: examples are verified and oversized schema detail is bounded", () => {
@@ -246,12 +269,22 @@ it("INV-6: examples are verified and oversized schema detail is bounded", () => 
     required: ["code"],
   };
   const error = validateToolInput(unsupported, {}, OPTS);
-  expect(error?.repair).not.toHaveProperty("example");
-  expect(error?.repair?.exampleUnavailable).toContain("No valid example");
+  expect(error?.validation).not.toHaveProperty("example");
+  expect(error?.validation?.exampleUnavailable).toContain("No valid example");
   const large: JsonSchema = { type: "string", enum: ["e".repeat(10000)] };
-  const repair = validateToolInput(large, 1, OPTS)?.repair;
-  expect(repair?.truncated).toBe(true);
-  expect(JSON.stringify(repair).length).toBeLessThan(4096);
+  const validation = validateToolInput(large, 1, OPTS)?.validation;
+  expect(validation?.truncated).toBe(true);
+  expect(JSON.stringify(validation).length).toBeLessThan(4096);
+  const wide = new ConnectorCallError("invalid_args", "Wide.", {
+    validation: {
+      issues: Array.from({ length: 12 }, (_, index) => ({ path: `/p${index}`, expected: "x".repeat(300) })),
+      example: { text: "y".repeat(5000) },
+    },
+  }).validation;
+  // Eight findings at most; an example that would break the 4 KiB budget is withheld whole.
+  expect(wide?.issues).toHaveLength(8);
+  expect(wide).toMatchObject({ truncated: true, exampleUnavailable: expect.stringContaining("budget") });
+  expect(new TextEncoder().encode(JSON.stringify(wide)).length).toBeLessThanOrEqual(4096);
 });
 
 it("INV-6: recursive schema examples stop before expanding beyond a shared synthesis budget", () => {
@@ -262,6 +295,6 @@ it("INV-6: recursive schema examples stop before expanding beyond a shared synth
   };
   const error = validateToolInput(schema, {}, OPTS);
   expect(error?.code).toBe("invalid_args");
-  expect(error?.repair).not.toHaveProperty("example");
-  expect(error?.repair?.exampleUnavailable).toContain("No valid example");
+  expect(error?.validation).not.toHaveProperty("example");
+  expect(error?.validation?.exampleUnavailable).toContain("No valid example");
 });

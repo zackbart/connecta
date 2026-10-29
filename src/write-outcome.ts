@@ -413,7 +413,6 @@ function withoutRetry(error: ConnectorCallError): ConnectorCallError {
       writeOutcome: "unknown",
       ...(error.details ? { details: error.details } : {}),
       ...(error.validation ? { validation: error.validation } : {}),
-      ...(error.repair ? { repair: error.repair } : {}),
       ...(error.current ? { current: error.current } : {}),
     }),
   );
@@ -462,7 +461,6 @@ export function providerFailureMessage(error: ConnectorCallError, message: strin
       ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
       ...(error.details ? { details: error.details } : {}),
       ...(error.validation ? { validation: error.validation } : {}),
-      ...(error.repair ? { repair: error.repair } : {}),
       ...(error.current ? { current: error.current } : {}),
     }),
   );
@@ -508,7 +506,6 @@ function uncertainProviderFailure(
         ? {
             ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
             ...(error.validation ? { validation: error.validation } : {}),
-            ...(error.repair ? { repair: error.repair } : {}),
             ...(error.current ? { current: error.current } : {}),
           }
         : {}),

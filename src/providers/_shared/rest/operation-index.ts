@@ -11,7 +11,7 @@ import { parseIndexDetails } from "./compact-index.js";
 // are refused with the accepted names, because a guessed argument is the most
 // common way an agent wastes a call. Drift between the pin and the vendor is
 // caught by `providers:check` and refreshed by `providers:spec`.
-import { ConnectorCallError, type ArgumentRepairDetails, type ArgumentValidationIssue } from "../../../errors.js";
+import { ConnectorCallError, issueSummary, type ArgumentValidationIssue } from "../../../errors.js";
 import type { JsonSchema } from "../../../types.js";
 
 export type RestMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -132,11 +132,8 @@ function words(text: string): string[] {
     .filter(Boolean);
 }
 
-function invalid(message: string, issues?: ArgumentValidationIssue[], repair?: ArgumentRepairDetails): never {
-  throw new ConnectorCallError("invalid_args", message, {
-    ...(issues ? { validation: { issues } } : {}),
-    ...(repair ? { repair } : {}),
-  });
+function invalid(message: string, issues?: ArgumentValidationIssue[]): never {
+  throw new ConnectorCallError("invalid_args", message, issues ? { validation: { issues } } : {});
 }
 
 function typesOf(node: SchemaNode): readonly string[] {
@@ -156,7 +153,7 @@ function distance(a: string, b: string): number {
   return previous[b.length]!;
 }
 
-/** The accepted names, bounded and led by the likeliest intended one; repair details carry the full list. */
+/** The accepted names, bounded and led by the likeliest intended one; the full list is in the tool schema. */
 function oneOf(names: readonly string[], given?: string): string {
   const close =
     given === undefined
@@ -413,15 +410,14 @@ export class OperationIndex {
       }
     });
     const issues: ArgumentValidationIssue[] = [];
-    const repair: ArgumentRepairDetails["issues"] = [];
     for (const [name, at, , schema] of this.#row(op)?.[0] ?? []) {
       if (at === "path" && params[name] !== undefined)
-        this.#check(schema, decodeURIComponent(params[name]), `/path/${name}`, issues, repair);
+        this.#check(schema, decodeURIComponent(params[name]), `/path/${name}`, issues);
     }
     if (issues.length) {
       const shown = issues
         .slice(0, 5)
-        .map((issue) => `${issue.path} (${issue.code}: ${issue.expected})`)
+        .map((issue) => issueSummary([issue]))
         .join("; ");
       invalid(
         `Not sent: the path does not match ${op.method} ${op.path} in the pinned API index: ${shown}. Substitute real ids matching ${this.#vendorTool("details")}.${issues.some((issue) => issue.expected?.includes("safe integer")) ? " Integer ids use canonical ASCII decimal notation within the safe-integer range." : ""}`,
@@ -617,7 +613,6 @@ export class OperationIndex {
   check(op: Operation, query: Readonly<Record<string, unknown>>, body: unknown): void {
     const row = this.#row(op);
     const issues: ArgumentValidationIssue[] = [];
-    const repair: ArgumentRepairDetails["issues"] = [];
     const declared = (row ? row[0] : []).filter(([, at]) => at === "query");
     const accepted = declared.map(([name]) => name);
     for (const [name, value] of Object.entries(query)) {
@@ -626,40 +621,38 @@ export class OperationIndex {
       if (!param) {
         issues.push({
           path: `/query/${name}`,
-          code: "additionalProperties",
           expected: accepted.length ? oneOf(accepted, name) : "no query parameters",
+          received: valueType(value),
         });
-        repair.push({ path: `/query/${name}`, receivedType: valueType(value), acceptedKeys: accepted });
         continue;
       }
-      this.#check(param[3], value, `/query/${name}`, issues, repair);
+      this.#check(param[3], value, `/query/${name}`, issues);
     }
     for (const [name, , required] of declared) {
       if (required === 1 && query[name] === undefined) {
-        issues.push({ path: `/query/${name}`, code: "required", expected: "a value" });
+        issues.push({ path: `/query/${name}`, expected: "a value (required)", received: "missing" });
       }
     }
     const bodyRow = row && row[1] !== 0 ? row[1] : undefined;
     if (body !== undefined) {
       if (!bodyRow) {
-        issues.push({ path: "/body", code: "false", expected: "no body for this operation" });
+        issues.push({ path: "/body", expected: "no body for this operation" });
       } else {
-        this.#check(bodyRow[1], body, "/body", issues, repair);
+        this.#check(bodyRow[1], body, "/body", issues);
       }
     } else if (bodyRow?.[2] === 1) {
       // An optional body may be omitted whole; a required one may not.
-      issues.push({ path: "/body", code: "required", expected: `a ${bodyRow[0]} body` });
+      issues.push({ path: "/body", expected: `a ${bodyRow[0]} body (required)`, received: "missing" });
     }
     if (issues.length > 0) {
       const shown = issues
         .slice(0, 5)
-        .map((issue) => `${issue.path} (${issue.code}: ${issue.expected})`)
+        .map((issue) => issueSummary([issue]))
         .join("; ");
       invalid(
         `Not sent: the arguments do not match ${op.method} ${op.path} in the pinned API index: ${shown}` +
           `${issues.length > 5 ? `; ${issues.length - 5} more` : ""}. Read ${this.#vendorTool("details")} for the contract.`,
         issues.slice(0, MAX_ISSUES),
-        repair.length ? { issues: repair.slice(0, 5) } : undefined,
       );
     }
   }
@@ -737,13 +730,7 @@ export class OperationIndex {
     return out as JsonSchema;
   }
 
-  #check(
-    node: SchemaNode,
-    value: unknown,
-    at: string,
-    issues: ArgumentValidationIssue[],
-    repair: ArgumentRepairDetails["issues"],
-  ): void {
+  #check(node: SchemaNode, value: unknown, at: string, issues: ArgumentValidationIssue[]): void {
     if (issues.length >= MAX_ISSUES) return;
     const schema = this.#deref(node);
     const path = at.startsWith("/path/");
@@ -762,7 +749,6 @@ export class OperationIndex {
       ) {
         issues.push({
           path: at,
-          code: "type",
           expected: integer ? "a canonical ASCII decimal safe integer" : "a canonical ASCII decimal number",
         });
         return;
@@ -771,7 +757,7 @@ export class OperationIndex {
     } else if (path && types.length && !types.includes("string") && !schema.a) {
       if (types.includes("boolean") && (value === "true" || value === "false")) value = value === "true";
       else {
-        issues.push({ path: at, code: "type", expected: types.join(" or ") });
+        issues.push({ path: at, expected: types.join(" or ") });
         return;
       }
     }
@@ -779,7 +765,7 @@ export class OperationIndex {
     // Conflicting composed constraints (disjoint enums or types) admit nothing,
     // not even the null or "" that otherwise unsets a field.
     if (schema.e?.length === 0) {
-      issues.push({ path: at, code: "enum", expected: "no value: this field's combined constraints admit none" });
+      issues.push({ path: at, expected: "no value: this field's combined constraints admit none" });
       return;
     }
     // Only newly opted-in bounded schemas enforce scalar numeric values;
@@ -796,39 +782,36 @@ export class OperationIndex {
             ? Number(value)
             : NaN;
       if (!Number.isFinite(numeric) || (integer && !Number.isSafeInteger(numeric))) {
-        issues.push({ path: at, code: "type", expected: integer ? "integer" : "finite number" });
+        issues.push({ path: at, expected: integer ? "integer" : "finite number" });
         return;
       }
       if (schema.l !== undefined && numeric < schema.l)
-        issues.push({ path: at, code: "minimum", expected: `at least ${schema.l}` });
+        issues.push({ path: at, expected: `at least ${schema.l}`, received: String(numeric) });
       if (schema.u !== undefined && numeric > schema.u)
-        issues.push({ path: at, code: "maximum", expected: `at most ${schema.u}` });
+        issues.push({ path: at, expected: `at most ${schema.u}`, received: String(numeric) });
     }
     if (value === null || value === "") return;
     if (schema.a) {
-      let fewest: { issues: ArgumentValidationIssue[]; repair: ArgumentRepairDetails["issues"] } | undefined;
+      let fewest: ArgumentValidationIssue[] | undefined;
       for (const branch of schema.a) {
-        const attempt = { issues: [] as ArgumentValidationIssue[], repair: [] as ArgumentRepairDetails["issues"] };
-        this.#check(branch, value, at, attempt.issues, attempt.repair);
-        if (attempt.issues.length === 0) return;
-        if (!fewest || attempt.issues.length < fewest.issues.length) fewest = attempt;
+        const attempt: ArgumentValidationIssue[] = [];
+        this.#check(branch, value, at, attempt);
+        if (attempt.length === 0) return;
+        if (!fewest || attempt.length < fewest.length) fewest = attempt;
       }
-      if (fewest) {
-        issues.push(...fewest.issues);
-        repair.push(...fewest.repair);
-      }
+      if (fewest) issues.push(...fewest);
       return;
     }
     if (schema.e && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
       if (!schema.e.some((option) => option === value || String(option) === String(value))) {
-        issues.push({ path: at, code: "enum", expected: oneOf(schema.e.map(String)) });
+        issues.push({ path: at, expected: oneOf(schema.e.map(String)) });
       }
       return;
     }
     if (schema.p || types.includes("object")) {
       if (!isRecord(value)) {
         if (types.length === 0 || types.includes("object")) {
-          issues.push({ path: at, code: "type", expected: "object" });
+          issues.push({ path: at, expected: "object" });
         }
         return;
       }
@@ -837,32 +820,32 @@ export class OperationIndex {
       for (const [key, item] of Object.entries(value)) {
         if (item === undefined) continue;
         const child = properties[key];
-        if (child) this.#check(child, item, `${at}/${key}`, issues, repair);
-        else if (schema.m) this.#check(schema.m, item, `${at}/${key}`, issues, repair);
+        if (child) this.#check(child, item, `${at}/${key}`, issues);
+        else if (schema.m) this.#check(schema.m, item, `${at}/${key}`, issues);
         else if (schema.p) {
           issues.push({
             path: `${at}/${key}`,
-            code: "additionalProperties",
             expected: accepted.length ? oneOf(accepted, key) : "no properties",
+            received: valueType(item),
           });
-          repair.push({ path: `${at}/${key}`, receivedType: valueType(item), acceptedKeys: accepted });
         }
       }
       for (const key of schema.r ?? []) {
-        if (value[key] === undefined) issues.push({ path: `${at}/${key}`, code: "required", expected: "a value" });
+        if (value[key] === undefined)
+          issues.push({ path: `${at}/${key}`, expected: "a value (required)", received: "missing" });
       }
       return;
     }
     if (schema.i || types.includes("array")) {
       if (!Array.isArray(value)) {
-        issues.push({ path: at, code: "type", expected: "array" });
+        issues.push({ path: at, expected: "array" });
         return;
       }
-      if (schema.i) value.forEach((item, index) => this.#check(schema.i!, item, `${at}/${index}`, issues, repair));
+      if (schema.i) value.forEach((item, index) => this.#check(schema.i!, item, `${at}/${index}`, issues));
       return;
     }
     if (types.length > 0 && (isRecord(value) || Array.isArray(value))) {
-      issues.push({ path: at, code: "type", expected: types.join(" or ") });
+      issues.push({ path: at, expected: types.join(" or ") });
     }
   }
 }

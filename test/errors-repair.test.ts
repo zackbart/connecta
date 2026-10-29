@@ -156,13 +156,13 @@ describe("repairing error envelopes", () => {
           {
             code: "invalid_args",
             retryable: false,
-            repair: {
+            validation: {
               acceptedKeys: ["mode", "count"],
               example: { mode: "fast", count: 1 },
-              issues: expect.arrayContaining([
-                expect.objectContaining({ enumValues: ["fast", "slow"] }),
-                expect.objectContaining({ receivedType: "string", bounds: { minimum: 1 } }),
-              ]),
+              issues: [
+                { path: "/mode", expected: 'one of "fast", "slow"', received: "string" },
+                { path: "/count", expected: "integer", received: "string" },
+              ],
             },
           },
         ],
@@ -219,6 +219,55 @@ describe("repairing error envelopes", () => {
       expect(records).not.toContain("acceptedKeys");
       expect(records).not.toContain("uncertainCall");
     });
+  });
+
+  it("INV-6: a connector's findings without an example get the call minus offending optional paths", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1 },
+        fields: { type: "array", items: { type: "string" } },
+        token: { type: "string", writeOnly: true },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    };
+    const refuse = (paths: string[]) => async () => {
+      throw new ConnectorCallError("invalid_args", "Bad.", {
+        validation: { issues: paths.map((path) => ({ path, expected: "a declared path" })) },
+      });
+    };
+    const invoke = async (paths: string[], args: Record<string, unknown>) => {
+      const registry = makeRegistry([
+        connectorWith({
+          id: "notes",
+          kind: "api",
+          tools: [{ name: "find", annotations: { readOnlyHint: true }, inputSchema: schema }],
+          call: refuse(paths),
+        }),
+      ]);
+      const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "notes.find",
+        args,
+        { source: "call_tool", readOnly: false },
+      );
+      if (outcome.ok) throw new Error("Expected refusal");
+      return outcome.error;
+    };
+    const fixed = await invoke(["/fields/0", "/fields/2"], { query: "q", fields: ["bad", "title", "worse"] });
+    expect(fixed.validation).toMatchObject({ example: { query: "q", fields: ["title"] } });
+    expect(fixed.validation).not.toHaveProperty("exampleUnavailable");
+    expect(fixed.retry).toContain("notes.find");
+    // A required argument cannot be dropped, and a writeOnly value is never echoed.
+    for (const [paths, args] of [
+      [["/query"], { query: "q" }],
+      [["/fields/0"], { query: "q", fields: ["bad"], token: "token-sentinel" }],
+    ] as const) {
+      const error = await invoke([...paths], args);
+      expect(error.validation).not.toHaveProperty("example");
+      expect(error.validation?.exampleUnavailable).toContain("without guessing");
+      expect(JSON.stringify(error)).not.toContain("token-sentinel");
+    }
   });
 
   it("INV-6 INV-9: a dispatched write timeout echoes the uncertain call only to the agent and is never repeated", async () => {

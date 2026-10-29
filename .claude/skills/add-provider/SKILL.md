@@ -295,6 +295,18 @@ links, plus marker containment in paths and queries.
 - **S6 privacy:** no `raw` or any argument that widens what value safety or
   the privacy projection drops. A sensitive set is controlled only by the
   deployment's `sensitiveFields: "drop" | "return"` option.
+- **A1 argument refusals:** a tool's own argument checks (those its input
+  Schema cannot express) report every problem in one `invalid_args`, with one
+  corrected example call. Declare them in the tool's `check(args, problems)`,
+  never as throws inside `run`: record each problem with
+  `problems.add(path, expected, { received?, fix? })`, stating the actual
+  bound, allowed values or selector shape in `expected`. A `fix` is a value
+  derived without guessing, a clearly placeholder value such as
+  `"<owner>/<repo>"`, or `"omit"`; the kit builds the example only when every
+  problem has one and the result validates and echoes without a writeOnly
+  value. `fieldsIssues` records every bad `fields` path. The standard probes
+  every tool taking `fields` with two bad paths and requires both findings, no
+  request, and an example.
 
 Names stay snake_case `verb_object`, with the safety class as the verb (H2),
 and H1–H14 otherwise apply. Recover omitted data through a wider projection or

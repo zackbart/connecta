@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { memoryStorage } from "../src/storage/memory.js";
+import { ConnectorCallError } from "../src/errors.js";
 import type { VendorErrors } from "../src/http/errors.js";
-import type { ConnectorContext } from "../src/types.js";
+import type { Connector, ConnectorContext, JsonSchema } from "../src/types.js";
+import { exampleWith, validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
 import {
   authoredTools,
@@ -17,6 +19,7 @@ import {
   layoutViolations,
   surfaceViolations,
   type ProviderFacts,
+  type ToolFacts,
 } from "./provider-standard.js";
 import { authoredFixtures } from "./providers.generated.js";
 
@@ -158,6 +161,115 @@ describe("the provider standard (decision 0011)", () => {
       { connection: { provider: "Gmail" }, index, binding },
     ])
       expect(() => googleBindings.check(options)).toThrow("googleHatchBinding");
+  });
+});
+
+const BAD_FIELDS = ["zz_unknown_a", "zz_unknown_b"];
+
+/**
+ * A1: a tool's own argument checks report every problem in one refusal with a
+ * corrected call, so an agent repairs it in one turn. Probed offline through
+ * `fields`, the custom check every projecting read shares: two bad paths on an
+ * otherwise valid call must come back as one `invalid_args` naming both,
+ * before any request, with an example — the connector's own, or the call
+ * without the bad paths, which invocation supplies. Hatch reads resolve their
+ * path first, and a tool whose schema admits no synthesized call is not probed.
+ */
+async function argumentRefusalViolations(
+  connector: Pick<Connector, "callTool">,
+  tools: readonly ToolFacts[],
+  context: ConnectorContext,
+  requests: () => number,
+): Promise<string[]> {
+  const found: string[] = [];
+  for (const tool of tools) {
+    const schema = tool.inputSchema as JsonSchema | undefined;
+    if (!(schema?.properties as Record<string, unknown> | undefined)?.["fields"] || /_api_[a-z]+$/.test(tool.name))
+      continue;
+    const valid = validateToolInput(schema!, { zz_unknown: 1 }, { address: tool.name })?.validation?.example;
+    if (valid === null || typeof valid !== "object" || Array.isArray(valid)) continue;
+    const args = { ...valid, fields: BAD_FIELDS };
+    const before = requests();
+    const error = await connector.callTool(tool.name, args, context).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    const validation = error instanceof ConnectorCallError ? error.validation : undefined;
+    if (requests() !== before) found.push(`A1: ${tool.name} sent a request before refusing its arguments`);
+    if (!(error instanceof ConnectorCallError) || error.code !== "invalid_args" || !validation) {
+      found.push(`A1: ${tool.name} does not refuse bad fields with structured invalid_args findings`);
+      continue;
+    }
+    const paths = validation.issues.map((issue) => issue.path);
+    if (!["/fields/0", "/fields/1"].every((path) => paths.includes(path)))
+      found.push(`A1: ${tool.name} reports ${paths.join(", ") || "no path"}, not every bad fields path`);
+    const example =
+      validation.example ??
+      exampleWith(
+        schema!,
+        args,
+        validation.issues.map((issue) => [issue.path, "omit"] as const),
+      )?.example;
+    if (example === undefined) found.push(`A1: ${tool.name} gives no corrected example call`);
+    else if (BAD_FIELDS.some((field) => JSON.stringify(example).includes(`"${field}"`)))
+      found.push(`A1: ${tool.name}'s example repeats a refused fields path`);
+  }
+  return found;
+}
+
+describe("argument refusals (A1)", () => {
+  it("holds every provider's own argument checks to one complete refusal with an example", async () => {
+    const fetchStub = vi.fn(async () => {
+      throw new Error("A1 probes send nothing.");
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const found: string[] = [];
+      for (const { facts, tools } of folders) {
+        const create = authoredFixtures[facts.name];
+        if (!create || !tools) continue;
+        const connector = create() as unknown as Parameters<typeof argumentRefusalViolations>[0];
+        const findings = await argumentRefusalViolations(connector, tools, CONTEXT, () => fetchStub.mock.calls.length);
+        found.push(...findings.map((finding) => `${facts.name} ${finding}`));
+      }
+      expect(found).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("flags a check that refuses one problem per call without an example", async () => {
+    const tool = {
+      name: "get_note",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" }, fields: { type: "array", items: { type: "string" } } },
+        required: ["id"],
+      },
+    };
+    let sent = 0;
+    const firstOnly = {
+      callTool: async (_name: string, args: { fields?: string[] }) => {
+        const bad = args.fields?.findIndex((field) => !["id", "title"].includes(field)) ?? -1;
+        throw new ConnectorCallError("invalid_args", "Bad fields path.", {
+          validation: { issues: [{ path: `/fields/${bad}`, expected: "id or title" }] },
+        });
+      },
+    };
+    expect(await argumentRefusalViolations(firstOnly as never, [tool], CONTEXT, () => sent)).toEqual([
+      "A1: get_note reports /fields/0, not every bad fields path",
+      "A1: get_note's example repeats a refused fields path",
+    ]);
+    const prose = {
+      callTool: async () => {
+        sent++;
+        throw new ConnectorCallError("invalid_args", "fields path zz_unknown_a is not a property.");
+      },
+    };
+    expect(await argumentRefusalViolations(prose as never, [tool], CONTEXT, () => sent)).toEqual([
+      "A1: get_note sent a request before refusing its arguments",
+      "A1: get_note does not refuse bad fields with structured invalid_args findings",
+    ]);
   });
 });
 

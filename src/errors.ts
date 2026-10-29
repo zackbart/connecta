@@ -115,23 +115,54 @@ export function classificationCode(value: unknown): ClassificationCode | undefin
     : undefined;
 }
 
-/** One bounded, payload-free explanation of an input-schema mismatch. */
+/**
+ * One bounded fix for an argument. `expected` states the actual bound, allowed
+ * values or shape; `received` is the submitted JSON type, or a submitted number
+ * when its schema position is not writeOnly. Never a submitted string.
+ */
 export interface ArgumentValidationIssue {
   /** JSON Pointer into the submitted arguments; "/" means the root value. */
   path: string;
-  /** JSON Schema keyword that rejected the argument. */
-  code: string;
-  /** Expected shape only — never the submitted value. */
+  /** What the argument must be, e.g. `at least 5` or `one of "fast", "slow"`. */
   expected: string;
+  /** What arrived, e.g. `string`, `missing` or `4`. */
+  received?: string;
+  /**
+   * @deprecated Accepted from custom connectors for compatibility and no longer
+   * returned; `expected` carries the constraint.
+   */
+  code?: string;
 }
 
+/** A conditional requirement read from the published schema. */
+export interface ArgumentConditionalRequirement {
+  path: string;
+  condition: unknown;
+  required: string[];
+}
+
+/** Every bounded argument finding and one corrected example call. */
 export interface ArgumentValidationDetails {
   issues: ArgumentValidationIssue[];
-  /** More findings existed but were omitted from the bounded response. */
+  /** The tool's top-level argument names. */
+  acceptedKeys?: string[];
+  conditionalRequirements?: ArgumentConditionalRequirement[];
+  /**
+   * One complete corrected call. Placeholder values look like `<owner>/<repo>`;
+   * an example is omitted rather than guessed.
+   */
+  example?: unknown;
+  /** Why no example accompanies these findings. */
+  exampleUnavailable?: string;
+  /** More findings or detail existed but were omitted from the bounded response. */
   truncated?: true;
 }
 
-/** Agent-only facts from the published schema, never operator record fields. */
+/**
+ * @deprecated Pass these facts in `validation`, which connecta now returns as
+ * the single argument-recovery envelope. A `repair` passed to
+ * {@link ConnectorCallError} is folded into `validation`.
+ */
 export interface ArgumentRepairDetails {
   acceptedKeys?: string[];
   issues: Array<{
@@ -141,38 +172,22 @@ export interface ArgumentRepairDetails {
     enumValues?: unknown[];
     bounds?: Record<string, number>;
   }>;
-  conditionalRequirements?: Array<{
-    path: string;
-    condition: unknown;
-    required: string[];
-  }>;
-  /** Synthesized from the schema and checked by the same validator. */
+  conditionalRequirements?: ArgumentConditionalRequirement[];
   example?: unknown;
   exampleUnavailable?: string;
   truncated?: true;
 }
 
-/** Drop oversized detail whole; clipping keys or examples changes their meaning. */
-function boundedRepair(details: ArgumentRepairDetails | undefined): ArgumentRepairDetails | undefined {
-  if (!details) return undefined;
-  try {
-    const text = JSON.stringify(details);
-    return new TextEncoder().encode(text).length <= 4096
-      ? (JSON.parse(text) as ArgumentRepairDetails)
-      : {
-          issues: [],
-          truncated: true,
-          exampleUnavailable: "Repair detail exceeds the response budget. Inspect the published inputSchema.",
-        };
-  } catch {
-    return undefined;
-  }
-}
-
-export const MAX_ARGUMENT_VALIDATION_ISSUES = 3;
+/**
+ * Up to eight findings per refusal: enough for every argument of a maintained
+ * tool (the widest declare fewer than eight top-level arguments) while each
+ * finding stays a few hundred bytes inside the 4 KiB envelope below.
+ */
+export const MAX_ARGUMENT_VALIDATION_ISSUES = 8;
 const MAX_ARGUMENT_ISSUE_PATH_CHARS = 256;
-const MAX_ARGUMENT_ISSUE_CODE_CHARS = 64;
-const MAX_ARGUMENT_ISSUE_EXPECTED_CHARS = 128;
+const MAX_ARGUMENT_ISSUE_EXPECTED_CHARS = 256;
+const MAX_ARGUMENT_ISSUE_RECEIVED_CHARS = 64;
+const MAX_ARGUMENT_VALIDATION_BYTES = 4096;
 
 function boundedIssueText(value: string, maxChars: number): { value: string; truncated: boolean } {
   if (value.length <= maxChars) return { value, truncated: false };
@@ -255,24 +270,112 @@ export function echoedCallArgs(args: unknown, schema?: JsonSchema): { args?: unk
       : {};
 }
 
-function boundedValidation(details: ArgumentValidationDetails | undefined): ArgumentValidationDetails | undefined {
-  if (!details) return undefined;
-  let truncated = details.truncated === true || details.issues.length > MAX_ARGUMENT_VALIDATION_ISSUES;
-  const issues = details.issues.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES).map((issue) => {
-    const path = boundedIssueText(issue.path, MAX_ARGUMENT_ISSUE_PATH_CHARS);
-    const code = boundedIssueText(issue.code, MAX_ARGUMENT_ISSUE_CODE_CHARS);
-    const expected = boundedIssueText(issue.expected, MAX_ARGUMENT_ISSUE_EXPECTED_CHARS);
-    truncated ||= path.truncated || code.truncated || expected.truncated;
+function plainJson(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value)) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+const BOUND_TEXT: Record<string, string> = {
+  minimum: "at least #",
+  maximum: "at most #",
+  exclusiveMinimum: "greater than #",
+  exclusiveMaximum: "less than #",
+  multipleOf: "a multiple of #",
+  minLength: "at least # characters",
+  maxLength: "at most # characters",
+  minItems: "at least # items",
+  maxItems: "at most # items",
+};
+
+/** A JSON Schema bound keyword as an agent-readable constraint with its number. */
+export function boundText(keyword: string, bound: unknown): string | undefined {
+  return typeof bound === "number" ? BOUND_TEXT[keyword]?.replace("#", String(bound)) : undefined;
+}
+
+/** Up to twelve items, then a count. */
+export function listed(items: readonly string[]): string {
+  return items.length > 12 ? `${items.slice(0, 12).join(", ")}, … (${items.length} in all)` : items.join(", ");
+}
+
+/** One agent-readable clause per finding, for the error message. */
+export function issueSummary(issues: readonly ArgumentValidationIssue[]): string {
+  return issues
+    .map((issue) => `${issue.path}: expected ${issue.expected}${issue.received ? `, received ${issue.received}` : ""}`)
+    .join("; ");
+}
+
+/** Envelopes that list every finding; only clipped text or optional detail may be missing. */
+const everyFinding = new WeakSet<ArgumentValidationDetails>();
+
+/** Whether an envelope lists every finding, so removing each listed path can repair the call. */
+export function listsEveryFinding(validation: ArgumentValidationDetails): boolean {
+  return everyFinding.has(validation);
+}
+
+/**
+ * Bound argument findings into the one recovery envelope. A legacy `repair`
+ * contributes its received types and schema facts. The envelope is capped at
+ * 4 KiB: optional detail goes first, then the example, then trailing findings,
+ * so what remains is always whole.
+ */
+function boundedValidation(
+  details: ArgumentValidationDetails | undefined,
+  repair: ArgumentRepairDetails | undefined,
+): ArgumentValidationDetails | undefined {
+  if (!details && !repair) return undefined;
+  const source = { ...repair, ...details };
+  const all = (details?.issues ?? []).filter(
+    (issue, index, list) =>
+      typeof issue?.path === "string" &&
+      typeof issue.expected === "string" &&
+      list.findIndex((other) => other.path === issue.path && other.expected === issue.expected) === index,
+  );
+  // A clipped path no longer names the argument to repair.
+  let dropped = source.truncated === true || all.length > MAX_ARGUMENT_VALIDATION_ISSUES;
+  let truncated = dropped;
+  const clip = (value: string, max: number) => {
+    const bounded = boundedIssueText(value, max);
+    truncated ||= bounded.truncated;
+    return bounded.value;
+  };
+  const issues = all.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES).map(({ path, expected, received }) => {
+    received ??= repair?.issues?.find((legacy) => legacy?.path === path)?.receivedType;
+    const clipped = clip(path, MAX_ARGUMENT_ISSUE_PATH_CHARS);
+    dropped ||= clipped !== path;
     return {
-      path: path.value,
-      code: code.value,
-      expected: expected.value,
+      path: clipped,
+      expected: clip(expected, MAX_ARGUMENT_ISSUE_EXPECTED_CHARS),
+      ...(typeof received === "string" ? { received: clip(received, MAX_ARGUMENT_ISSUE_RECEIVED_CHARS) } : {}),
     };
   });
-  return {
-    issues,
-    ...(truncated ? { truncated: true as const } : {}),
-  };
+  const result: ArgumentValidationDetails = { issues };
+  if (Array.isArray(source.acceptedKeys) && source.acceptedKeys.length)
+    result.acceptedKeys = source.acceptedKeys.filter((key) => typeof key === "string");
+  if (Array.isArray(source.conditionalRequirements) && source.conditionalRequirements.length)
+    result.conditionalRequirements = plainJson(source.conditionalRequirements) as ArgumentConditionalRequirement[];
+  const example = Object.hasOwn(source, "example") ? plainJson(source.example) : undefined;
+  if (example !== undefined) result.example = example;
+  else if (typeof source.exampleUnavailable === "string")
+    result.exampleUnavailable = clip(source.exampleUnavailable, MAX_ARGUMENT_ISSUE_EXPECTED_CHARS);
+  const fits = () => echoEncoder.encode(JSON.stringify(result)).length <= MAX_ARGUMENT_VALIDATION_BYTES - 20;
+  for (const key of ["conditionalRequirements", "acceptedKeys", "example"] as const) {
+    if (fits()) break;
+    if (!(key in result)) continue;
+    delete result[key];
+    truncated = true;
+    if (key === "example")
+      result.exampleUnavailable = "The example exceeds the response budget. Inspect the published inputSchema.";
+  }
+  while (!fits() && issues.length > 1) {
+    issues.pop();
+    truncated = dropped = true;
+  }
+  if (truncated) result.truncated = true;
+  if (!dropped) everyFinding.add(result);
+  return result;
 }
 
 /** Optional transport diagnostics; never a URL path or raw runtime message. */
@@ -493,9 +596,11 @@ export class ConnectorCallError extends Error {
    * of the wire format is `classifyCallError`'s job, not this constructor's.
    */
   readonly retryAfterMs: number | undefined;
-  /** Bounded schema findings for `invalid_args`; never submitted values. */
+  /**
+   * Every bounded argument finding for `invalid_args`, with one corrected
+   * example call when it can be built without guessing.
+   */
   readonly validation: ArgumentValidationDetails | undefined;
-  readonly repair: ArgumentRepairDetails | undefined;
   /**
    * Sanitized transport diagnostics, for `unavailable` and for a write whose
    * outcome is unknown (a timeout's errno, an abort's class).
@@ -523,6 +628,7 @@ export class ConnectorCallError extends Error {
       retryAfterMs?: number;
       cause?: unknown;
       validation?: ArgumentValidationDetails;
+      /** @deprecated Pass these facts in `validation`; they are folded into it. */
       repair?: ArgumentRepairDetails;
       details?: UnavailableDetails;
       current?: Readonly<Record<string, number>>;
@@ -536,8 +642,7 @@ export class ConnectorCallError extends Error {
     this.retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
     this.details =
       code === "unavailable" || opts.writeOutcome === "unknown" ? sanitizedUnavailableDetails(opts.details) : undefined;
-    this.validation = code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
-    this.repair = code === "invalid_args" ? boundedRepair(opts.repair) : undefined;
+    this.validation = code === "invalid_args" ? boundedValidation(opts.validation, opts.repair) : undefined;
     this.current = code === "conflict" ? boundedCurrent(opts.current) : undefined;
     this.writeOutcome = opts.writeOutcome === "unknown" ? "unknown" : undefined;
   }
@@ -564,9 +669,8 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
   retryable: boolean;
   /** Connector-known wait window; see {@link ConnectorCallError.retryAfterMs}. */
   retryAfterMs?: number;
-  /** Bounded input-schema findings; paths and expectations, never values. */
+  /** Every bounded argument finding and one corrected example call. */
   validation?: ArgumentValidationDetails;
-  repair?: ArgumentRepairDetails;
   /** On a `conflict`: where each thing the write touched stands now. */
   current?: Readonly<Record<string, number>>;
   /** Connector whose failed operation needs recovery. */
@@ -775,7 +879,6 @@ export function classifyWithoutAdvice(
       retryable: err.retryable,
       ...(err.retryAfterMs !== undefined ? { retryAfterMs: err.retryAfterMs } : {}),
       ...(err.validation ? { validation: err.validation } : {}),
-      ...(err.repair ? { repair: err.repair } : {}),
       ...(err.details ? { details: err.details } : {}),
       ...(err.current ? { current: err.current } : {}),
       ...(err.writeOutcome ? { writeOutcome: err.writeOutcome } : {}),

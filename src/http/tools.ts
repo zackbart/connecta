@@ -30,7 +30,8 @@ import {
   withheldDefect,
   type HttpFailure,
 } from "./errors.js";
-import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
+import { ArgumentProblems } from "./argument-problems.js";
+import { fieldsInput, fieldsIssues, selectFields } from "./fields.js";
 import { catalogSchema, Integer } from "./json-schema.js";
 import { boundCursor, Cursor, StandardPage, type Page } from "./paging.js";
 import {
@@ -80,6 +81,12 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly output: O;
   /** Default: one implicit `write` step. Declare every step before serving, including reads served as writes. */
   readonly writeSteps?: WriteSteps<I["Type"]>;
+  /**
+   * Argument checks the input Schema cannot express. Record every problem
+   * instead of throwing at the first, each with a fix where one is known; the
+   * kit refuses once, before `run`, with all of them and an example call.
+   */
+  readonly check?: (args: I["Type"], problems: ArgumentProblems) => void;
   readonly run: (args: I["Type"]) => Effect.Effect<O["Type"], HttpFailure, CallServices>;
 }
 
@@ -131,10 +138,17 @@ function propertyNames(schema: Schema.Top, what: string): ReadonlySet<string> {
   return new Set(Object.keys(fields));
 }
 
-/** Refuse a bad `fields` path before anything is sent. */
-function checkFields(fields: readonly string[] | undefined, names: ReadonlySet<string>, of: string) {
-  const error = fieldsProblem(fields, names, of);
-  return error ? Effect.fail(new Refusal({ error })) : Effect.void;
+/** A tool's own check plus every bad `fields` path, refused together before anything is sent. */
+function withFields<A extends { readonly fields?: readonly string[] }>(
+  names: ReadonlySet<string>,
+  of: string,
+  check: ((args: never, problems: ArgumentProblems) => void) | undefined,
+) {
+  return (args: A, problems: ArgumentProblems) => {
+    fieldsIssues(problems, args.fields, names, of);
+    const { fields: _fields, ...rest } = args;
+    check?.(rest as never, problems);
+  };
 }
 
 const fieldsExample = (names: ReadonlySet<string>) => {
@@ -167,9 +181,9 @@ export function read<I extends Input, O extends Schema.Top>(
     {
       ...spec,
       input,
+      check: withFields(names, "the result", spec.check),
       run: (args: { readonly fields?: readonly string[] }) =>
         Effect.gen(function* () {
-          yield* checkFields(args.fields, names, "the result");
           const { fields, ...rest } = args;
           return selectFields(yield* spec.run(rest as I["Type"]), fields);
         }),
@@ -282,9 +296,9 @@ export function list(
       input,
       // `fields` narrows each item, so items render sparse; the envelope keeps items and page required.
       output: Schema.Unknown,
+      check: withFields(names, "an item", undefined),
       run: (args: Readonly<Record<string, unknown>> & { readonly fields?: readonly string[] }) =>
         Effect.gen(function* () {
-          yield* checkFields(args.fields, names, "an item");
           // A cursor stays valid when only the projection changes between pages.
           const { fields, cursor: supplied, ...rest } = args;
           const scope =
@@ -517,6 +531,24 @@ function build<I extends Input, O extends Schema.Top>(
         // Its message can quote the argument; as a defect, api() withholds it.
         Effect.flatMap(() => decode(args).pipe(Effect.orDie)),
         Effect.map((decoded) => (spec.inputOrder === "original" ? originalOrder(decoded, args) : decoded)),
+        Effect.flatMap((decoded) => {
+          if (!spec.check) return Effect.succeed(decoded);
+          const check = spec.check;
+          return Effect.try({
+            try: () => {
+              const problems = new ArgumentProblems();
+              check(decoded, problems);
+              const refusal = problems.refusal("Invalid arguments", args, tool.inputSchema);
+              if (refusal) throw refusal;
+              return decoded;
+            },
+            catch: (error) => error,
+          }).pipe(
+            Effect.catch((error) =>
+              error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+            ),
+          );
+        }),
         Effect.flatMap((decoded) =>
           Effect.gen(function* () {
             const key = idempotency?.key(decoded);

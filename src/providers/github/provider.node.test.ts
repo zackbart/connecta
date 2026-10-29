@@ -98,6 +98,71 @@ describe("GitHub App provider", () => {
     },
   );
 
+  it("INV-4: one search refusal carries every fix the three serial refusals did, with a corrected call", async () => {
+    const fixture = apiFixture();
+    // A live trace needed three calls: the fields path, then the terms, then the selector.
+    const error = await connection()
+      .callTool(
+        "search_scoped",
+        {
+          terms: "bug is:open OR crash",
+          kind: "issues",
+          scopes: [{ org: "other", repo: "one" }],
+          fields: ["number", "repository"],
+        },
+        context(),
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConnectorCallError);
+    expect(fixture.fetchStub).not.toHaveBeenCalled();
+    const { message, validation } = error as ConnectorCallError;
+    expect(validation?.issues.map((issue) => issue.path)).toEqual(["/fields/0", "/terms", "/scopes/0"]);
+    expect(validation?.issues[0]?.expected).toContain("scope, repository, item");
+    expect(validation?.issues[2]).toMatchObject({
+      expected: expect.stringMatching(/\{"org": "<org>"\}.*\{"repo": "<owner>\/<repo>"\}.*repo other\/one/),
+      received: "both org and repo",
+    });
+    for (const path of ["/fields/0", "/terms", "/scopes/0"]) expect(message).toContain(path);
+    const example = {
+      terms: "bug crash",
+      kind: "issues",
+      scopes: [{ repo: "other/one" }],
+      fields: ["item.number", "repository"],
+    };
+    expect(validation?.example).toEqual(example);
+    // The example is the one call that now succeeds.
+    fixture.respond((request) =>
+      request.url.pathname === "/search/issues" ? Response.json({ items: [], total_count: 0 }) : undefined,
+    );
+    await expect(connection().callTool("search_scoped", example, context())).resolves.toMatchObject({
+      structuredContent: { items: [] },
+    });
+  });
+
+  it("INV-4: an unfixable search problem gets placeholders, never an invented scope", async () => {
+    apiFixture();
+    const error = (await connection()
+      .callTool("search_scoped", { terms: "is:open", kind: "issues", scopes: [{}, { repo: "outside/x" }] }, context())
+      .catch((caught: unknown) => caught)) as ConnectorCallError;
+    expect(error.validation?.issues.map((issue) => [issue.path, issue.received])).toEqual([
+      ["/terms", undefined],
+      ["/scopes/0", "neither org nor repo"],
+      ["/scopes/1/repo", undefined],
+    ]);
+    expect(error.validation?.example).toEqual({
+      terms: "<literal words>",
+      kind: "issues",
+      scopes: [{ repo: "<owner>/<repo>" }, { repo: "<owner>/<repo>" }],
+    });
+    const owner = (await connection()
+      .callTool("list_scopes", { owner: "outside", fields: ["nope"] }, context())
+      .catch((caught: unknown) => caught)) as ConnectorCallError;
+    expect(owner.validation).toMatchObject({
+      issues: [{ path: "/fields/0" }, { path: "/owner", expected: expect.stringContaining("org acme") }],
+      example: {},
+    });
+  });
+
   it("INV-4: validates all search selectors and cursor partitions before minting", async () => {
     const fixture = apiFixture();
     for (const args of [

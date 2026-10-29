@@ -1027,28 +1027,62 @@ A remote MCP tool's advertised `inputSchema` is checked in the shared invocation
 path before admission and provider dispatch, so a mismatch is the non-retryable
 `invalid_args` identically on `call_tool`, `call_destructive_tool`,
 generated-code failures, and rejected promises. The error names the connector and
-operation and carries `validation.issues`: JSON Pointer `path`, schema-keyword
-`code`, and expected shape, with submitted values never copied into a finding. At
-most three are returned, and `validation.truncated` says when more exist — the
-same three-item bound describe's nearby-address list uses.
+operation and carries one recovery envelope, `validation`:
+
+```json
+{
+  "issues": [
+    { "path": "/limit", "expected": "at least 5", "received": "4" },
+    { "path": "/mode", "expected": "one of \"fast\", \"safe\"", "received": "string" },
+    { "path": "/typo", "expected": "one of the accepted keys: mode, limit" }
+  ],
+  "acceptedKeys": ["mode", "limit"],
+  "example": { "mode": "fast", "limit": 5 }
+}
+```
+
+Every finding is listed, and the message repeats them, so one corrected call
+fixes them all. `path` is a JSON Pointer into the submitted arguments. `expected`
+states the actual bound, allowed values, accepted keys or selector shape.
+`received` is the submitted JSON type, `missing`, or, for a numeric bound, the
+submitted number when its schema position is not `writeOnly`; a submitted
+string is never copied. At most eight findings are returned, each field clipped (path and
+expected 256 characters, received 64), and `truncated: true` says something was
+omitted or clipped.
+
+`example` is one complete corrected call. For a schema mismatch it is
+synthesized from the published schema without submitted values and checked
+against the same validator; complex or unsatisfiable schemas get
+`exampleUnavailable` instead. Synthesis detects recursive references and shares
+a 128-node work budget. A maintained provider's own checks (selectors, search
+terms, `fields` paths) report every problem in one refusal, and their example is
+the submitted call with each finding's fix applied: a value derived from what
+was sent (a bare repository joined to its org, a vendor field moved under
+`item`), a placeholder such as `"<owner>/<repo>"`, or the argument removed. When
+a connector supplies findings without an example, invocation offers the
+submitted call without every listed path if that validates against the
+published schema. A derived example is kept only when it validates, echoes
+within the 512-byte argument echo budget, and holds no `writeOnly` value;
+otherwise `exampleUnavailable` explains why, rather than a guessed value.
+`acceptedKeys` names the tool's top-level arguments and
+`conditionalRequirements` lists known `dependentRequired` and
+`if`/`then`/`else` requirements; alternative branches do not emit dependency
+advice unless the branch condition is known. The envelope has a 4 KiB budget:
+optional detail, then the example, then trailing findings are dropped whole,
+with `truncated: true`. A `repair` object a custom connector passes contributes
+its received types and schema facts. Operator records contain only checked failure facts,
+never findings or examples.
 
 `nextAction` points to discovery scoped to the same connector and tool name when
 the compact schema is needed, routed like any other miss: a program to
 `connecta.search`, a top-level call to `search_tools`. `retry` says to correct
-the listed arguments and reissue the original operation. Which keyword a finding
-names, and what the local validator declines to evaluate, is
-[code mode](./code-mode.md#errors)'s `E8`.
+the listed arguments and reissue the original operation. What the local
+validator declines to evaluate is [code mode](./code-mode.md#errors)'s `E8`.
 
-`repair` adds agent-only detail from that tool's published schema: accepted
-keys, received JSON types, enum values, numeric/length/item bounds, and known
-conditional requirements such as `dependentRequired` and `if`/`then`/`else`.
-Its `example` is synthesized without submitted values and checked against the
-same validator. Complex or unsatisfiable schemas get `exampleUnavailable`
-rather than an invalid example. Synthesis detects recursive references and
-shares a 128-node work budget. Alternative branches do not emit dependency
-advice unless the branch condition is known. Repair detail has a 4 KiB budget; oversized
-detail is withheld whole with `truncated: true`. Operator records still contain
-only checked failure facts, never findings or examples.
+Earlier releases returned `validation.issues[].code` (the schema keyword)
+and a separate `repair` object. Both are gone from responses; a custom
+connector may still pass `code` and `repair` to `ConnectorCallError`, which
+folds `repair` into `validation`.
 
 Unknown-address errors list `configuredConnectors` from the current endpoint's
 scoped registry, including an empty list when none are accessible. They never

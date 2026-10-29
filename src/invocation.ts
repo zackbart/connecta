@@ -15,8 +15,10 @@ import {
   echoedCallArgs,
   framingError,
   keyResendAdviceOf,
+  listsEveryFinding,
   resendAdviceOf,
   withResendAdvice,
+  type ArgumentValidationDetails,
   type AuthRecoveryMode,
   type CallErrorDetails,
   type ClassificationCode,
@@ -32,7 +34,8 @@ import {
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
-import { validateCatalogToolInput } from "./validate.js";
+import type { JsonSchema } from "./types.js";
+import { exampleWith, validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { recoveryRecord, recordRecoveryFacts } from "./call-recovery.js";
 import { callFromContext, contextView, viewServices, Credentials } from "./runtime/call.js";
@@ -319,6 +322,39 @@ export class InvocationFailure extends Error {
 keepErrorName(InvocationFailure, "InvocationFailure");
 
 /**
+ * A connector's findings with an example call. When it supplied none, the
+ * caller's arguments without every offending path stand in, if that validates
+ * against the published schema and echoes safely. Findings that omit one, or
+ * clip a path, never imply one, since that problem would remain.
+ */
+function withImpliedExample(
+  validation: ArgumentValidationDetails,
+  schema: JsonSchema | undefined,
+  args: unknown,
+): ArgumentValidationDetails {
+  if (validation.example !== undefined) return validation;
+  const implied =
+    schema && listsEveryFinding(validation)
+      ? exampleWith(
+          schema,
+          args,
+          validation.issues.map((issue) => [issue.path, "omit"] as const),
+        )
+      : undefined;
+  return (
+    new ConnectorCallError("invalid_args", "", {
+      validation: {
+        ...validation,
+        ...(implied ?? {
+          exampleUnavailable:
+            validation.exampleUnavailable ?? "No corrected call could be built without guessing a value.",
+        }),
+      },
+    }).validation ?? validation
+  );
+}
+
+/**
  * Shared downstream invocation engine. Address/catalog resolution is delegated
  * to the request-local CatalogService; every remaining call semantic lives
  * here so MCP and code mode cannot drift independently.
@@ -591,6 +627,7 @@ export class InvocationService {
             if (!error.validation || error.writeOutcome === "unknown") return error;
             return {
               ...error,
+              validation: withImpliedExample(error.validation, resolved?.definition.inputSchema, args),
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
               nextAction: this.catalog.searchRecovery(

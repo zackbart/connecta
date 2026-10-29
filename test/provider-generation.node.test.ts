@@ -1072,10 +1072,15 @@ describe("OpenAPI operation index generation", () => {
       refusal = error;
     }
     expect(refusal?.code).toBe("invalid_args");
-    expect(refusal.validation.issues.map((issue: any) => `${issue.path} ${issue.code}`)).toEqual(
-      expect.arrayContaining(["/body/typ additionalProperties", "/body/nmae additionalProperties"]),
+    expect(refusal.validation.issues).toEqual(
+      expect.arrayContaining([
+        { path: "/body/typ", expected: expect.stringMatching(/^type\? one of /), received: "string" },
+        { path: "/body/nmae", expected: expect.stringMatching(/^name\? one of /), received: "string" },
+      ]),
     );
-    expect(() => index.check(create, {}, undefined)).toThrow("/body (required: a application/json body)");
+    expect(() => index.check(create, {}, undefined)).toThrow(
+      "/body: expected a application/json body (required), received missing",
+    );
   });
 
   it("keeps array, binary, and open bodies with their requiredness, and HEAD operations", async () => {
@@ -1087,8 +1092,10 @@ describe("OpenAPI operation index generation", () => {
     const bulk = index.resolve("PUT", "/accounts/a1/storage/kv/namespaces/n1/bulk").op;
     expect(index.contract(bulk).body).toMatchObject({ contentType: "application/json", required: true });
     expect(() => index.check(bulk, {}, [{ key: "k", value: "v" }])).not.toThrow();
-    expect(() => index.check(bulk, {}, [{ key: "k" }])).toThrow("/body/0/value (required: a value)");
-    expect(() => index.check(bulk, {}, { key: "k", value: "v" })).toThrow("/body (type: array)");
+    expect(() => index.check(bulk, {}, [{ key: "k" }])).toThrow(
+      "/body/0/value: expected a value (required), received missing",
+    );
+    expect(() => index.check(bulk, {}, { key: "k", value: "v" })).toThrow("/body: expected array");
     const script = index.resolve("PUT", "/accounts/a1/scripts/s/content").op;
     expect(index.bodyType(script)).toBe("application/octet-stream");
     const settings = index.resolve("PATCH", "/accounts/a1/settings").op;
@@ -1146,11 +1153,11 @@ describe("OpenAPI operation index generation", () => {
     expect(properties.ttl.type).toBe("integer");
     expect(properties.priority.enum).toEqual([]);
     expect(() => index.check(create, {}, { type: "A" })).not.toThrow();
-    expect(() => index.check(create, {}, { type: "CNAME" })).toThrow("/body/type (enum: one of A)");
+    expect(() => index.check(create, {}, { type: "CNAME" })).toThrow("/body/type: expected one of A");
     // Disjoint constraints admit nothing, and say so rather than naming an empty list.
     for (const value of ["A", "MX", "anything"]) {
       expect(() => index.check(create, {}, { kind: value })).toThrow(
-        "/body/kind (enum: no value: this field's combined constraints admit none)",
+        "/body/kind: expected no value: this field's combined constraints admit none",
       );
     }
     expect(() => index.check(create, {}, { priority: 5 })).toThrow("admit none");
@@ -1181,7 +1188,7 @@ describe("OpenAPI operation index generation", () => {
     );
     const create = narrowed.resolve("POST", "/records").op;
     expect(() => narrowed.check(create, {}, { kind: "A" })).not.toThrow();
-    expect(() => narrowed.check(create, {}, { kind: "B" })).toThrow("/body/kind (enum: one of A)");
+    expect(() => narrowed.check(create, {}, { kind: "B" })).toThrow("/body/kind: expected one of A");
     const emptied = new OperationIndex(
       buildOperationIndex(body({ allOf: [{ enum: ["C"] }, { anyOf: [{ enum: ["A"] }, { enum: ["B"] }] }] }), source),
       { vendor: "cf", title: "Cloudflare" },

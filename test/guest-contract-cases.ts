@@ -619,8 +619,7 @@ export async function checkHostFailureArrays(executor: Executor): Promise<void> 
   const baseline = await harness.run(executor, `async () => ${call}`);
   expect(baseline.value.error).toMatchObject({
     code: "invalid_args",
-    validation: { issues: expect.any(Array) },
-    repair: { issues: expect.any(Array), acceptedKeys: expect.any(Array) },
+    validation: { issues: expect.any(Array), acceptedKeys: expect.any(Array) },
   });
   for (const data of ["undefined", '"AA=="']) {
     const outcome = await harness.run(
@@ -635,7 +634,7 @@ export async function checkHostFailureArrays(executor: Executor): Promise<void> 
       try { ${call}; }
       catch (error) {
         for (let i = 0; i < arrays.length; i++) { arrays[i].length = 0; arrays[i].push("altered"); }
-        for (const list of [error.details.validation.issues, error.details.repair.issues, error.details.repair.acceptedKeys]) {
+        for (const list of [error.details.validation.issues, error.details.validation.acceptedKeys]) {
           list.length = 0;
           list.push("altered");
         }
@@ -2675,12 +2674,8 @@ return fs;
         nextAction: "connecta.search",
         validation: {
           issues: [
-            { path: "/text", code: "required", expected: "string" },
-            {
-              path: "/options/uppercase",
-              code: "type",
-              expected: "boolean",
-            },
+            { path: "/text", expected: "string (required)", received: "missing" },
+            { path: "/options/uppercase", expected: "boolean", received: "string" },
           ],
         },
       });
@@ -2770,13 +2765,7 @@ return fs;
         connector: "remote",
         operation: "remote.echo",
         validation: {
-          issues: [
-            {
-              path: "/options/uppercase",
-              code: "type",
-              expected: "boolean",
-            },
-          ],
+          issues: [{ path: "/options/uppercase", expected: "boolean", received: "string" }],
         },
         nextAction: {
           function: "connecta.search",
