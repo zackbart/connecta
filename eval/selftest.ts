@@ -34,12 +34,14 @@ import type { TrialResult } from "./agent/run.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
-import { gatewayControls, gatewayRedirectControls } from "./tasks/worker-controls.js";
+import { gatewayControls, gatewayRedirectControls, workerdProcessControls } from "./tasks/worker-controls.js";
 import { fakeTransportInterleaving, fakeTransportRedirects, restTransportControls } from "./tasks/rest-controls.js";
 
 await gatewayControls();
 await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");
+await workerdProcessControls();
+console.log("ok   workerd lifecycle: launcher crash leaves no group member; wrangler egress fails closed");
 await googleTransportControls();
 await googleBoundaryControls();
 console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools, read-only and native reads");

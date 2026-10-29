@@ -5,22 +5,73 @@
  * receives SIGINT/SIGTERM, is killed, so no workerd outlives the run.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimental_readRawConfig } from "wrangler";
 import { ROOT } from "./meta.js";
 
-const children = new Set<ChildProcess>();
+/**
+ * Process groups by leader pid. A group stays tracked until no live member
+ * remains, whatever the leader did: wrangler's launcher can exit or crash
+ * while its CLI and workerd processes keep running in the same group.
+ */
+const groups = new Set<number>();
 
-function killGroup(child: ChildProcess, signal: NodeJS.Signals) {
+/** Live (non-zombie) members of a process group; `kill(-pgid, 0)` where /proc is absent. */
+export async function groupMembers(pgid: number): Promise<number[]> {
   try {
-    process.kill(-child.pid!, signal);
+    const members: number[] = [];
+    for (const entry of await readdir("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      let stat: string;
+      try {
+        stat = await readFile(`/proc/${entry}/stat`, "utf8");
+      } catch {
+        continue; // exited while scanning
+      }
+      // Fields after the parenthesised command: state, ppid, pgrp.
+      const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      if (Number(pgrp) === pgid && state !== "Z") members.push(Number(entry));
+    }
+    return members;
   } catch {
-    child.kill(signal);
+    try {
+      process.kill(-pgid, 0);
+      return [pgid];
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM" ? [pgid] : [];
+    }
   }
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(-pgid, signal);
+  } catch {
+    // no member left to signal
+  }
+}
+
+async function settle(pgid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (!(await groupMembers(pgid)).length) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+}
+
+/** SIGTERM, then SIGKILL after 5 s; tracking ends only when the group is empty. */
+async function stopGroup(pgid: number): Promise<void> {
+  if (!groups.has(pgid)) return;
+  signalGroup(pgid, "SIGTERM");
+  if (!(await settle(pgid, 5_000))) {
+    signalGroup(pgid, "SIGKILL");
+    if (!(await settle(pgid, 5_000))) throw new Error(`Process group ${pgid} survived SIGKILL`);
+  }
+  groups.delete(pgid);
 }
 
 let guarded = false;
@@ -31,9 +82,9 @@ function guardExit() {
   process.once("exit", killAllProcesses);
 }
 
-/** Kill every live group now; for a second interrupt that cannot wait for an orderly stop. */
+/** Kill every tracked group now; for a second interrupt that cannot wait for an orderly stop. */
 export function killAllProcesses() {
-  for (const child of children) killGroup(child, "SIGKILL");
+  for (const pgid of groups) signalGroup(pgid, "SIGKILL");
 }
 
 /** For harnesses with no orderly interrupt of their own: kill every group, then exit. */
@@ -53,27 +104,39 @@ export function startProcess(command: string, argv: string[], options: { cwd: st
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
-  children.add(child);
-  child.once("exit", () => children.delete(child));
+  if (child.pid !== undefined) groups.add(child.pid);
   let output = "";
   child.stdout?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
   child.stderr?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
   return { child, output: () => output };
 }
 
+/** Stop the child's whole process group, including members that outlived it. */
 export async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
-  // wrangler and tsx both fork; signal the whole group.
-  killGroup(child, "SIGTERM");
-  const timer = setTimeout(() => killGroup(child, "SIGKILL"), 5_000);
-  await once(child, "exit").catch(() => undefined);
-  clearTimeout(timer);
+  if (child.pid !== undefined) await stopGroup(child.pid);
 }
 
-/** Stop every child still running, for a harness that is about to exit. */
+/** Stop every tracked group, for a harness that is about to exit. */
 export async function stopAllProcesses(): Promise<void> {
-  await Promise.all([...children].map(stopProcess));
+  await Promise.all([...groups].map(stopGroup));
 }
+
+/**
+ * Wrangler's own Node process may not reach the network: no update check, no
+ * metrics, and a preload that refuses every non-loopback TCP/TLS connect.
+ */
+export const WRANGLER_ENV = {
+  WRANGLER_SEND_METRICS: "false",
+  // The startup banner is the update check's unconditional trigger.
+  WRANGLER_HIDE_BANNER: "true",
+  CI: "1",
+  NODE_OPTIONS: [
+    process.env.NODE_OPTIONS,
+    `--require ${JSON.stringify(join(ROOT, "eval", "support", "egress-guard.cjs"))}`,
+  ]
+    .filter(Boolean)
+    .join(" "),
+};
 
 export async function waitForHealth(origin: string, child: ChildProcess, output: () => string, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
@@ -164,7 +227,7 @@ export async function wranglerDev(options: {
           (variable) => ["--var", variable],
         ),
       ],
-      { cwd: ROOT, env: { WRANGLER_SEND_METRICS: "false", CI: "1" } },
+      { cwd: ROOT, env: WRANGLER_ENV },
     );
   const bootMs = options.bootMs ?? 90_000;
   let proc: ReturnType<typeof startProcess> | undefined;

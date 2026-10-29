@@ -4,10 +4,15 @@
  * process-group cleanup after a launcher crash, the egress guard on wrangler's
  * own Node processes, and comparator provenance across targets.
  */
+import { spawnSync } from "node:child_process";
+import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startVendorGateway } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { routeFakeVendor } from "../fakes/transport.js";
 import { serveFetch } from "../support/serve.js";
+import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
 
 async function rejects(action: () => Promise<unknown>, pattern: RegExp, message: string): Promise<void> {
   try {
@@ -152,4 +157,75 @@ export async function gatewayRedirectControls() {
     /Eval refused/,
     "A gateway refusal did not reject the fetch",
   );
+}
+
+/**
+ * A crashed wrangler launcher must not orphan its CLI or workerd, and
+ * wrangler's own Node processes cannot reach a non-loopback host.
+ */
+export async function workerdProcessControls() {
+  const dir = await mkdtemp(join(tmpdir(), "connecta-workerd-control-"));
+  try {
+    const main = join(dir, "worker.js");
+    await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
+    for (const cleanup of ["close", "killAll"] as const) {
+      const dev = await wranglerDev({ name: "connecta-workerd-control", main, bootMs: 60_000 });
+      const pgid = dev.process().child.pid!;
+      const before = await groupMembers(pgid);
+      const environments = await Promise.all(
+        before.map((pid) => readFile(`/proc/${pid}/environ`, "utf8").catch(() => "")),
+      );
+      if (
+        process.platform === "linux" &&
+        !environments.some((env) => env.includes("egress-guard.cjs") && env.includes("WRANGLER_HIDE_BANNER=true"))
+      )
+        throw new Error("wrangler runs without the egress guard or with its update banner");
+      process.kill(pgid, "SIGKILL");
+      await new Promise((resolve) => dev.process().child.once("exit", resolve));
+      if (!(await groupMembers(pgid)).length)
+        throw new Error("Probe precondition: no wrangler process outlived its launcher");
+      if (cleanup === "close") await dev.close();
+      else {
+        killAllProcesses();
+        const deadline = Date.now() + 5_000;
+        while ((await groupMembers(pgid)).length && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        await stopAllProcesses();
+        await dev.close();
+      }
+      const survivors = await groupMembers(pgid);
+      if (survivors.length)
+        throw new Error(`${cleanup} after a launcher crash left process(es) ${survivors.join(", ")} running`);
+    }
+  } finally {
+    await stopAllProcesses();
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  const probe = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `const net = require("node:net"), tls = require("node:tls");
+const failed = (socket) => new Promise((resolve) => { socket.once("error", (e) => resolve(e.code)); socket.once("connect", () => { socket.destroy(); resolve("connected"); }); socket.once("secureConnect", () => { socket.destroy(); resolve("connected"); }); });
+(async () => {
+  const server = net.createServer((s) => s.end()).listen(0, "127.0.0.1");
+  await new Promise((r) => server.once("listening", r));
+  const out = {
+    net: await failed(net.connect(443, "registry.npmjs.org")),
+    tls: await failed(tls.connect({ host: "1.1.1.1", port: 443 })),
+    fetch: await fetch("https://registry.npmjs.org/wrangler").then(() => "connected", (e) => e.cause?.code ?? String(e)),
+    loopback: await failed(net.connect(server.address().port, "127.0.0.1")),
+  };
+  server.close();
+  console.log(JSON.stringify(out));
+})();`,
+    ],
+    { encoding: "utf8", timeout: 30_000, env: { ...process.env, NODE_OPTIONS: WRANGLER_ENV.NODE_OPTIONS } },
+  );
+  const result = JSON.parse(probe.stdout.trim().split("\n").at(-1) ?? "{}") as Record<string, string>;
+  for (const kind of ["net", "tls", "fetch"])
+    if (result[kind] !== "EVAL_EGRESS_REFUSED")
+      throw new Error(`Egress guard let ${kind} reach the network: ${JSON.stringify(result)} ${probe.stderr}`);
+  if (result.loopback !== "connected") throw new Error(`Egress guard blocked loopback: ${JSON.stringify(result)}`);
 }
