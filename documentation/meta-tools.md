@@ -692,6 +692,15 @@ and connector id, never connector-supplied error text. Other failures retain
 `retryAfterMs`. A scoped search also keeps its bounded failure subset under
 `queryAnalysis.catalogError` for clients that already use it.
 
+An unscoped search gives each connector at most 5 seconds (or
+`discovery.probeTimeoutMs` when shorter) and ends within a 9-second discovery
+budget. A connector that recently timed out or failed slowly is skipped for up
+to 60 seconds: its entry keeps the recorded code with `retryable: true`,
+`retryAfterMs`, and the message `Connector "X" was skipped because its catalog
+lookup failed recently (CODE). Search with connector "X" to try it now.` A
+scoped search always probes. See
+[Discovery health](./architecture.md#storage-credentials-and-connectors).
+
 Tool rows carry the address, configured display title when present, guide and
 guide summary when available, and stored classification. Requested schemas have
 `schemaFormat: "json"` for JSON Schema values or `schemaFormat: "text"` for

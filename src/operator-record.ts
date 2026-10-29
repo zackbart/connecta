@@ -475,6 +475,8 @@ export type FailureEvent =
   | "Authentication released after its pending work became unreachable"
   | "negotiation cache read failed"
   | "negotiation cache write failed"
+  | "discovery health read failed"
+  | "discovery health write failed"
   | "pool tool grant is unreachable"
   | "call failed"
   | "input schema unusable; arguments are not validated"

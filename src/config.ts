@@ -109,8 +109,10 @@ const discovery = {
   /**
    * Deadline (ms) for each downstream probe/catalog call fanned out by
    * `search_tools` and by `connecta.search`/`connecta.describe` inside
-   * `execute_code`. Defaults to 30_000. A timed-out connector degrades
-   * independently; this does not apply to tool calls. Catalog walks receive the
+   * `execute_code`. Defaults to 30_000. An unscoped search caps each probe at
+   * 5_000 and its whole fan-out at 9_000, and skips a connector whose
+   * discovery recently timed out for up to 60 seconds. A timed-out connector
+   * degrades independently; this does not apply to tool calls. Catalog walks receive the
    * same cancellation signal, which aborts an in-flight page where supported and
    * prevents another from starting.
    */

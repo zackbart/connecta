@@ -645,6 +645,36 @@ status probe connects: a legacy downstream answers a handshake, while a modern
 downstream with a stored verdict connects without a request. A credential test
 always sends a live `tools/list` that bypasses the cache in both directions.
 
+**Discovery health.** An unscoped search (`search_tools` or `connecta.search`
+without `connector`) probes each connector for at most 5,000 ms, or
+`discovery.probeTimeoutMs` when that is shorter, and its whole fan-out ends
+within a 9,000 ms discovery budget: a probe that starts late gets only what
+remains, and one that cannot start reports `timeout`. A scoped search,
+`connecta.describe`, native `tools/list` and tool calls keep the full
+`discovery.probeTimeoutMs`. A probe that times out on its own deadline, or a
+retryable failure that took at least one second or named its own wait, writes
+a record in the `connector-health:v1:` family: the connecta classification
+code, observation time, retry time (60 seconds later, or the downstream's
+shorter named wait, at least one second), and the connector's catalog
+invalidation generation. Records hold no downstream text, tools, arguments or
+credentials. Each is keyed by connector id and a digest of the catalog owner
+partition (principal, subject, caller identity and pool, endpoint and public
+URL), the connector's described configuration and the package version, so one
+owner's record never skips another owner's search. Until its retry time an
+unscoped search skips that connector and reports it in `catalogErrors` with
+the recorded code, `retryable: true`, `retryAfterMs`, and a fixed message that
+names the scoped search to try it now; no tools from the failed walk are ever
+served. A scoped search still probes and settles the record. A record whose
+generation no longer matches lapses, so a credential change, OAuth connect or
+disconnect, or operator invalidation clears every partition at once. A success,
+or an auth or permission failure that shows the connector answers, clears the
+record this request saw. Caller cancellation, a probe the budget cut short, a
+fast failure, and a non-retryable failure record nothing. After its retry time a
+record lingers for 60 seconds: one request claims the next probe by
+compare-and-set and the others keep skipping until it settles or its claim
+lapses. Health reads are one `getMany` per unscoped search, made once per
+request; a health storage failure is logged and never fails discovery.
+
 `discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
 listings without `ttlMs`. Positive hints are bounded by
 `catalogMinTtlSeconds` (0) and `catalogMaxTtlSeconds` (86400, also the SDK
@@ -1852,7 +1882,7 @@ storage is the root's namespaced to its principal.
 | Admission (`executor-admission.ts`, `call-admission.ts`)               | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires.                                                                                                                                                                                                                                                                                                                                    |
 | One tool call (`invocation.ts`)                                        | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`.                                                                                                                                                                                                                                                                                                     |
 | `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. Public executor methods stay Promise-shaped; registered built-in execution composes directly as an Effect under the signal and `execute.watchdogMs`. Queued acquisition retains its Promise request handoff. Each guest host call is a fiber of its own.                                                                                                                                                                     |
-| Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency.                                                                                                                                                                                    |
+| Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency; unscoped search adds the discovery budget and health record (`discovery-health.ts`).                                                                                               |
 | Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
 | Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
 | Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |

@@ -10,6 +10,8 @@ import { Effect } from "effect";
 import { runEdge } from "../src/runtime/run.js";
 import { openRequest } from "../src/runtime/call.js";
 import type { ToolDef } from "../src/types.js";
+import { ConnectorCallError } from "../src/errors.js";
+import type { RegistryView } from "../src/registry.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeRegistry } from "./helpers.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -335,5 +337,187 @@ describe("request-scoped catalog cache", () => {
       rank.mockRestore();
       openRequest(service.requestScope).close();
     }
+  });
+});
+
+describe("discovery health across requests", () => {
+  // A connector whose listing never answers until `healthy` is set; it ends only on its signal.
+  function hangingConnector(id: string, state: { healthy: boolean; listings: number; answerMs?: number }) {
+    return connectorWith({
+      id,
+      tools: async (ctx) => {
+        state.listings++;
+        if (state.healthy) {
+          if (state.answerMs) await new Promise((resolve) => setTimeout(resolve, state.answerMs));
+          return [{ name: "read_hung", annotations: { readOnlyHint: true } }];
+        }
+        return new Promise((_, reject) => {
+          const signal = ctx.signal!;
+          if (signal.aborted) reject(signal.reason);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    });
+  }
+  const healthy = connectorWith({ id: "notes", tools: [{ name: "read_note", annotations: { readOnlyHint: true } }] });
+
+  async function searchOnce(
+    registry: RegistryView,
+    args: Parameters<CatalogService["search"]>[0],
+    options: ConstructorParameters<typeof CatalogService>[2] = {},
+  ) {
+    const service = new CatalogService(registry, BASE, { probeTimeoutMs: 300, ...options });
+    const started = Date.now();
+    try {
+      return { page: await service.search(args), ms: Date.now() - started };
+    } finally {
+      openRequest(service.requestScope).close();
+    }
+  }
+
+  it("INV-6 INV-8: skips a hung connector on later unscoped searches and reports it with retryAfterMs", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+    const runs = [];
+    for (let i = 0; i < 3; i++) runs.push(await searchOnce(registry, { query: "read" }));
+    // The first search waits out the probe deadline; the next two do not.
+    expect(runs[0]!.ms).toBeGreaterThanOrEqual(290);
+    expect(runs[1]!.ms).toBeLessThan(200);
+    expect(runs[2]!.ms).toBeLessThan(200);
+    expect(state.listings).toBe(1);
+    for (const { page } of runs) {
+      expect(page.entries.map((entry) => entry.tool.address)).toEqual(["notes.read_note"]);
+      expect(page.catalogErrors).toEqual([expect.objectContaining({ connector: "hung", code: "timeout" })]);
+    }
+    const skipped = runs[1]!.page.catalogErrors[0]!;
+    expect(skipped.message).toBe(
+      'Connector "hung" was skipped because its catalog lookup failed recently (timeout). Search with connector "hung" to try it now.',
+    );
+    expect(skipped.retryable).toBe(true);
+    expect(skipped.retryAfterMs).toBeGreaterThan(50_000);
+    expect(skipped.retryAfterMs).toBeLessThanOrEqual(60_000);
+    // Typed facts only: no tools, text or credentials in the stored record.
+    const keys = await storage.list("connector-health:v1:hung:");
+    expect(keys).toHaveLength(1);
+    expect(Object.keys(JSON.parse((await storage.get(keys[0]!))!)).sort()).toEqual([
+      "code",
+      "generation",
+      "observedAt",
+      "retryAt",
+      "v",
+    ]);
+  });
+
+  it("probes a skipped connector on a scoped search and clears its record on recovery", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+    await searchOnce(registry, { query: "read" });
+    state.healthy = true;
+    expect((await searchOnce(registry, { query: "read" })).page.catalogErrors).toHaveLength(1);
+    expect(state.listings).toBe(1);
+    const scoped = await searchOnce(registry, { connector: "hung", query: "" });
+    expect(scoped.page.entries.map((entry) => entry.tool.address)).toEqual(["hung.read_hung"]);
+    expect(await storage.list("connector-health:v1:hung:")).toEqual([]);
+    const unscoped = await searchOnce(registry, { query: "read" });
+    expect(unscoped.page.catalogErrors).toEqual([]);
+    expect(unscoped.page.entries.map((entry) => entry.tool.address).sort()).toEqual([
+      "hung.read_hung",
+      "notes.read_note",
+    ]);
+  });
+
+  it("forgets a record when the connector's catalog generation rotates on a credential change", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+    await searchOnce(registry, { query: "read" });
+    state.healthy = true;
+    await registry.invalidateStored("hung");
+    const next = await searchOnce(registry, { query: "read" });
+    expect(next.page.catalogErrors).toEqual([]);
+    expect(state.listings).toBe(2);
+    expect(await storage.list("connector-health:v1:hung:")).toEqual([]);
+  });
+
+  it("INV-4 INV-5: keeps one owner's record out of another owner's search", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+    const alice = registry.scoped({ connectorIds: "all", principalKey: "alice" });
+    const bob = registry.scoped({ connectorIds: "all", principalKey: "bob" });
+    await searchOnce(alice, { query: "read" });
+    expect(state.listings).toBe(1);
+    await searchOnce(alice, { query: "read" });
+    expect(state.listings).toBe(1);
+    const other = await searchOnce(bob, { query: "read" });
+    expect(other.ms).toBeGreaterThanOrEqual(290);
+    expect(state.listings).toBe(2);
+  });
+
+  it("records nothing when the caller cancels or a fast failure answers", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    const failing = connectorWith({
+      id: "flaky",
+      tools: async () => {
+        throw new ConnectorCallError("unavailable", "Upstream returned 503.");
+      },
+    });
+    const registry = makeRegistry([hangingConnector("hung", state), failing, healthy], { storage });
+    const caller = new AbortController();
+    const service = new CatalogService(registry, BASE, { probeTimeoutMs: 1_000, requestSignal: caller.signal });
+    const pending = service.search({ query: "read" });
+    setTimeout(() => caller.abort(new Error("caller left")), 20);
+    await pending.catch(() => undefined);
+    openRequest(service.requestScope).close();
+    await searchOnce(registry, { query: "read" });
+    expect(await storage.list("connector-health:v1:hung:")).toHaveLength(1);
+    expect(await storage.list("connector-health:v1:flaky:")).toEqual([]);
+    expect(state.listings).toBe(2);
+  });
+
+  it("ends the unscoped fan-out at the discovery budget without recording the probes it cut short", async () => {
+    const storage = memoryStorage();
+    const states = [0, 1, 2].map(() => ({ healthy: false, listings: 0 }));
+    const registry = makeRegistry(
+      states.map((state, index) => hangingConnector(`hung${index}`, state)),
+      { storage },
+    );
+    // One at a time: the first spends its deadline, the second gets what
+    // remains of the budget, and the third never starts.
+    const { page, ms } = await searchOnce(
+      registry,
+      { query: "read" },
+      { probeTimeoutMs: 150, discoveryBudgetMs: 200, concurrency: 1 },
+    );
+    expect(ms).toBeGreaterThanOrEqual(190);
+    expect(ms).toBeLessThan(400);
+    expect(page.catalogErrors.map((error) => error.code)).toEqual(["timeout", "timeout", "timeout"]);
+    expect(states.map((state) => state.listings)).toEqual([1, 1, 0]);
+    expect(await storage.list("connector-health:v1:hung0:")).toHaveLength(1);
+    expect(await storage.list("connector-health:v1:hung1:")).toEqual([]);
+    expect(await storage.list("connector-health:v1:hung2:")).toEqual([]);
+  });
+
+  it("lets exactly one of many concurrent searches probe once a record's retry time passes", async () => {
+    const storage = memoryStorage();
+    const state: { healthy: boolean; listings: number; answerMs?: number } = { healthy: false, listings: 0 };
+    const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+    await searchOnce(registry, { query: "read" });
+    const [key] = await storage.list("connector-health:v1:hung:");
+    const record = JSON.parse((await storage.get(key!))!);
+    await storage.set(key!, JSON.stringify({ ...record, retryAt: Date.now() - 1 }), {
+      expiresAtMs: Date.now() + 60_000,
+    });
+    // The recovered connector answers slowly, so every search reads the record while one probes.
+    state.healthy = true;
+    state.answerMs = 100;
+    const pages = await Promise.all(Array.from({ length: 8 }, () => searchOnce(registry, { query: "read" })));
+    expect(state.listings).toBe(2);
+    const probed = pages.filter(({ page }) => page.catalogErrors.length === 0);
+    expect(probed).toHaveLength(1);
+    expect(await storage.list("connector-health:v1:hung:")).toEqual([]);
   });
 });
