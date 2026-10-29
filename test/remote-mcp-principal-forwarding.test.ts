@@ -155,7 +155,10 @@ async function deployment(
     agents: ["assistant"],
     accessTokens: accessTokens(storage),
     storage,
-    pools: { team: { tools: ["notes"], members: ["alice", "bob", "agent:assistant"] } },
+    pools: {
+      team: { tools: ["notes"], members: ["alice", "bob"] },
+      "team-agents": { tools: ["notes"], members: ["agent:assistant"] },
+    },
     ...(options.executor ? { executor: options.executor } : {}),
     logger: options.logger ?? silentLogger,
   });
@@ -172,7 +175,7 @@ async function callOver(
   const request = mcpRpc(
     "tools/call",
     { name, arguments: args },
-    { token, ...(token.startsWith("cta_") ? { agentPool: "team" } : { pool: "team" }) },
+    { token, ...(token.startsWith("cta_") ? { agentPool: "team-agents" } : { pool: "team" }) },
   );
   for (const [header, value] of Object.entries(headers)) request.headers.set(header, value);
   return (await readJsonRpc(await connecta.fetch(request))).result;
@@ -248,9 +251,9 @@ it("INV-4: refuses agents with a typed error unless the deployment accepts them"
         // Resolved before connecting and before reusing the client, always as the agent.
         expect(token).toHaveBeenCalled();
         for (const [, input] of token.mock.calls)
-          expect(input.principal).toEqual({ kind: "agent", name: "assistant", pool: "team" });
+          expect(input.principal).toEqual({ kind: "agent", name: "assistant", pool: "team-agents" });
         expect(downstream.calls().map((call) => call.authorization)).toEqual([
-          `Bearer ${TOKEN_SENTINEL}-agent-assistant-team`,
+          `Bearer ${TOKEN_SENTINEL}-agent-assistant-team-agents`,
         ]);
       }
     } finally {

@@ -85,7 +85,10 @@ async function deployment(maxBodyBytes?: number, maxDurationMs = 5_000, connecto
     agents: ["bot"],
     accessTokens: accessTokens(storage),
     storage,
-    pools: { team: { tools: [connector.id], members: ["bob", "agent:bot"] } },
+    pools: {
+      team: { tools: [connector.id], members: ["bob"] },
+      "team-agents": { tools: [connector.id], members: ["agent:bot"] },
+    },
     publicUrl: BASE,
     logger: silentLogger,
     admission: { requests: { concurrency: 4, maxQueueSize: 8, queueTimeoutMs: 1_000, maxDurationMs, maxBodyBytes } },
@@ -103,9 +106,9 @@ async function admittedTotal(c: { fetch(request: Request): Promise<Response> }):
 
 describe("MCP request bodies before auth", () => {
   it.each([
-    ["/agent/team", 401],
+    ["/agent/team-agents", 401],
     ["/agent/unknown", 401],
-    ["/agent/team/", 404],
+    ["/agent/team-agents/", 404],
     ["/mcp", 401],
     ["/mcp/team", 401],
   ] as const)(
@@ -128,7 +131,7 @@ describe("MCP request bodies before auth", () => {
   );
 
   it.each([
-    ["/agent/team", "bot"],
+    ["/agent/team-agents", "bot"],
     ["/mcp/team", "bob"],
     ["/mcp", "alice"],
   ] as const)(
@@ -250,7 +253,7 @@ describe("authenticated MCP body limits", () => {
     it.each([
       ["/mcp", "alice"],
       ["/mcp/team", "bob"],
-      ["/agent/team", "bot"],
+      ["/agent/team-agents", "bot"],
     ] as const)(
       `INV-7 INV-9: refuses oversized ${modern ? "modern" : "fresh legacy"} writes at %s before dispatch`,
       WORKERS,
@@ -291,7 +294,7 @@ describe("authenticated MCP body limits", () => {
     it.each([
       ["/mcp", "alice"],
       ["/mcp/team", "bob"],
-      ["/agent/team", "bot"],
+      ["/agent/team-agents", "bot"],
     ] as const)(
       `INV-7 INV-11: bounds ${modern ? "modern" : "fresh legacy"} bodies at %s and releases admission`,
       WORKERS,
@@ -350,7 +353,7 @@ describe("authenticated MCP body limits", () => {
   it.each([
     ["/mcp", "alice"],
     ["/mcp/team", "bob"],
-    ["/agent/team", "bot"],
+    ["/agent/team-agents", "bot"],
   ] as const)(
     "INV-7: keeps a lower deployment cap on listen candidates at %s before their fixed classification ceiling",
     WORKERS,

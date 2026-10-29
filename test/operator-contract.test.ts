@@ -89,6 +89,13 @@ describe("operator config contract", () => {
         readOnly: false,
         tools: [{ connectorId: "static_api", tools: "all" }],
       },
+      {
+        name: "support-agents",
+        humanPath: "/mcp/support-agents",
+        agentPath: "/agent/support-agents",
+        readOnly: false,
+        tools: [{ connectorId: "static_api", tools: "all" }],
+      },
     ]);
   });
 

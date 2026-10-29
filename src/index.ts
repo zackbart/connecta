@@ -9,7 +9,7 @@ import {
   memberContext,
   peopleInSeveralPools,
   resolveMaintainers,
-  resolveMembers,
+  resolvePoolMembers,
   type MemberContext,
   type ResolvedPool,
 } from "./membership.js";
@@ -120,7 +120,7 @@ function resolvePools(
       Object.freeze({
         access,
         readOnly: pool.readOnly ?? readOnly,
-        members: Object.freeze(resolveMembers(pool.members, path, members)),
+        members: Object.freeze(resolvePoolMembers(pool.members, path, members)),
         ...(pool.owner !== undefined ? { owner: pool.owner.trim() } : {}),
         ...(pool.description !== undefined ? { description: pool.description.trim() } : {}),
         ...(pool.surface === "native" ? { native: { executeCode: pool.executeCode ?? true } } : {}),

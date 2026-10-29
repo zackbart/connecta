@@ -38,7 +38,7 @@ should call.
 
 | Boundary         | What Connecta does                                                                                                        |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Access           | A pool limits the tools its members can reach.                                                                            |
+| Access           | A pool limits the tools its members can reach; it lists only people or only agents.                                       |
 | Writes           | For tools marked as writes, once a change is sent, Connecta won't automatically send it again.                            |
 | Secrets          | Known secrets are redacted from agent output. Enable the credential vault to encrypt stored credentials and OAuth tokens. |
 | Read-only access | Read-only endpoints hide writes and refuse attempts to call them.                                                         |

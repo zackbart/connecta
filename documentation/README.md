@@ -8,19 +8,19 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 
 ## Operator tasks
 
-| Task                                             | Self-contained procedure                                                                                                            |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Add or remove a connector                        | [Change the connector roster](./integrating.md#add-or-remove-a-connector)                                                           |
-| Set up a maintained provider                     | [Maintained provider setup](./providers.md)                                                                                         |
-| Inspect maintained API sources and tools         | [API sources and tool inventory](./providers.md#api-sources-and-tool-inventory)                                                     |
-| Organize an agent's pools and tiers              | [Organizing an agent's pools](./auth.md#organizing-an-agents-pools)                                                                 |
-| Add a person (maintainer or pool member)         | [Add a person](./auth.md#add-a-person), [member page](./operator-ui.md#use-the-member-page)                                         |
-| Connect Google hosted MCP with a service account | [Google tokens and shared-agent/personal-people setup](./auth.md#google-service-account-tokens-and-hosted-mcp)                      |
-| Connect a shared credential                      | [Connect a shared credential](./auth.md#connect-a-shared-credential)                                                                |
-| Issue, rotate, or revoke an agent token          | [Manage an agent token](./auth.md#issue-rotate-or-revoke-an-agent-token)                                                            |
-| Upgrade between versions                         | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [migration to 0.33](./migration-0.33.md) |
-| Diagnose with `connecta doctor`                  | [Verify and diagnose](./deploying.md#verify-and-diagnose)                                                                           |
-| Connect a client with tool search                | [Native tool surface](./meta-tools.md#native-tool-surface), [Eve agents](./meta-tools.md#eve-agents)                                |
+| Task                                             | Self-contained procedure                                                                                                                                                                      |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add or remove a connector                        | [Change the connector roster](./integrating.md#add-or-remove-a-connector)                                                                                                                     |
+| Set up a maintained provider                     | [Maintained provider setup](./providers.md)                                                                                                                                                   |
+| Inspect maintained API sources and tools         | [API sources and tool inventory](./providers.md#api-sources-and-tool-inventory)                                                                                                               |
+| Organize an agent's pools and tiers              | [Organizing an agent's pools](./auth.md#organizing-an-agents-pools)                                                                                                                           |
+| Add a person (maintainer or pool member)         | [Add a person](./auth.md#add-a-person), [member page](./operator-ui.md#use-the-member-page)                                                                                                   |
+| Connect Google hosted MCP with a service account | [Google tokens and shared-agent/personal-people setup](./auth.md#google-service-account-tokens-and-hosted-mcp)                                                                                |
+| Connect a shared credential                      | [Connect a shared credential](./auth.md#connect-a-shared-credential)                                                                                                                          |
+| Issue, rotate, or revoke an agent token          | [Manage an agent token](./auth.md#issue-rotate-or-revoke-an-agent-token)                                                                                                                      |
+| Upgrade between versions                         | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [splitting mixed pools](./pool-membership-upgrade.md) and [migration to 0.33](./migration-0.33.md) |
+| Diagnose with `connecta doctor`                  | [Verify and diagnose](./deploying.md#verify-and-diagnose)                                                                                                                                     |
+| Connect a client with tool search                | [Native tool surface](./meta-tools.md#native-tool-surface), [Eve agents](./meta-tools.md#eve-agents)                                                                                          |
 
 For removed hosted presets and the former hosted modes of Stripe, Vercel,
 Cloudflare, and GitHub, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).

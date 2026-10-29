@@ -69,7 +69,8 @@ export const quickbooksPools = (writes = false) => ({
     tools: ["qb_alice", ...(writes ? ["qb_readonly_0", "qb_readonly_1", "qb_budget_1", "qb_budget_4"] : [])],
     members: ["agent:eval-machine"],
   },
-  readonly: { tools: ["qb_alice"], members: ["agent:eval-machine", "alice"], readOnly: true },
+  readonly: { tools: ["qb_alice"], members: ["alice"], readOnly: true },
+  "readonly-agents": { tools: ["qb_alice"], members: ["agent:eval-machine"], readOnly: true },
   bob: { tools: ["qb_bob"], members: ["bob"] },
 });
 

@@ -39,7 +39,9 @@ If an agent needs to act as Alice, put that access in her personal pool and set
 to use. Confirm the pool's tools and members before adding an owner. Follow
 [the agent pool layout](./auth.md#organizing-an-agents-pools) for the full
 configuration. People in the same pool, agents in owned pools and connectors
-with a fixed `subject` address keep their behavior.
+with a fixed `subject` address keep their behavior. Current versions also
+require each pool to list only people or only agents; see
+[Split mixed pools](./pool-membership-upgrade.md).
 
 ## Optional settings and development tooling
 

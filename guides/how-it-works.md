@@ -41,7 +41,7 @@ For setup and migrations, see [Integrating services](../documentation/integratin
 
 A **pool** is a named selection of tools and the people or agents allowed
 to use them. The operator creates it and gives it an **endpoint**: a
-connection address for that pool.
+connection address for that pool. Each pool lists only people or only agents.
 
 One pool might let the assistant read CRM records. Another might let a
 person update tickets. Tools and accounts are separate choices: a pool

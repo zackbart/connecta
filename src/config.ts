@@ -301,8 +301,9 @@ const pool = {
   /**
    * Who may open `/mcp/<name>`: principal ids in the namespace of the one
    * interactive auth provider, `{ namespace, id }`, or `"agent:<name>"` for a
-   * declared agent. Required and non-empty; the pool serves exactly its
-   * `tools` to these members and the same 404 to everyone else.
+   * declared agent. All members must be people or all must be agents. Required
+   * and non-empty; the pool serves exactly its `tools` to these members and
+   * the same 404 to everyone else.
    */
   members: required(
     opaque<readonly MemberRef[]>({ check: assertMemberList }),
@@ -314,8 +315,8 @@ const pool = {
    * connector whose `subject` is a mapping function. Humans always act as
    * themselves through that mapping, and a fixed `subject` address applies to
    * everyone. Without an owner, a mapping-subject Workspace connector is
-   * absent for this pool's agents, as a personal connector is; people in the
-   * pool still see it.
+   * absent for this pool's agents, as a personal connector is. People use a
+   * separate pool and always act as themselves.
    */
   owner: opaque<string>({
     check: (value, path) => {
