@@ -23,13 +23,11 @@ import { GRANOLA_TASK } from "./tasks/granola.js";
  * by name, which resolves to dist/. No LLM; needs no network. Every step is
  * time-bounded and every child process group is stopped on exit or signal.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { strict as assert } from "node:assert";
-import { once } from "node:events";
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { experimental_readRawConfig } from "wrangler";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { startNodeDeployment } from "./deploy/node.js";
@@ -38,6 +36,15 @@ import type { SmokeCheck, SmokeResultFile, SmokeTarget } from "./report/summary.
 import { connectMcp, parseJson, type McpSession } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 import { freePort } from "./support/serve.js";
+import {
+  killChildrenOnSignal,
+  startProcess,
+  stopAllProcesses,
+  stopProcess,
+  waitForHealth,
+  wranglerDev,
+  type WranglerDev,
+} from "./support/workerd.js";
 import { META_TOOLS } from "./agent/surface.js";
 
 const SIX = META_TOOLS;
@@ -76,58 +83,7 @@ async function step(checks: SmokeCheck[], name: string, run: () => Promise<strin
   }
 }
 
-const children = new Set<ChildProcess>();
-function killGroup(child: ChildProcess, signal: NodeJS.Signals) {
-  try {
-    process.kill(-child.pid!, signal);
-  } catch {
-    child.kill(signal);
-  }
-}
-for (const signal of ["SIGINT", "SIGTERM"] as const)
-  process.once(signal, () => {
-    for (const child of children) killGroup(child, "SIGKILL");
-    process.exit(130);
-  });
-
-function startProcess(command: string, argv: string[], options: { cwd: string; env?: Record<string, string> }) {
-  const child = spawn(command, argv, {
-    cwd: options.cwd,
-    env: { ...process.env, ...options.env },
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
-  });
-  children.add(child);
-  child.once("exit", () => children.delete(child));
-  let output = "";
-  child.stdout?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
-  child.stderr?.on("data", (chunk) => (output = (output + String(chunk)).slice(-8_000)));
-  return { child, output: () => output };
-}
-
-async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
-  // wrangler and tsx both fork; signal the whole group.
-  killGroup(child, "SIGTERM");
-  const timer = setTimeout(() => killGroup(child, "SIGKILL"), 5_000);
-  await once(child, "exit").catch(() => undefined);
-  clearTimeout(timer);
-}
-
-async function waitForHealth(origin: string, child: ChildProcess, output: () => string, timeoutMs = 60_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`process exited before /health was ready:\n${output().slice(-1_500)}`);
-    try {
-      const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1_000) });
-      if (response.ok) return;
-    } catch {
-      // still starting
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
-  }
-  throw new Error(`/health not ready within ${timeoutMs}ms:\n${output().slice(-1_500)}`);
-}
+killChildrenOnSignal();
 
 interface Battery {
   origin: string;
@@ -418,28 +374,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
   };
   const world = kind === "worker-fakes" ? new World() : undefined;
   await world?.start();
-  const persist = await mkdtemp(join(tmpdir(), "connecta-smoke-wrangler-"));
-  // The example's own compatibility date, flags and bindings, so workerd
-  // behaves as a deployment would. Only the entry differs: the Access stand-in.
-  const { rawConfig: example } = experimental_readRawConfig({
-    config: join(ROOT, "examples", "worker", "wrangler.jsonc"),
-  });
-  const config = join(persist, "wrangler.json");
-  await writeFile(
-    config,
-    JSON.stringify({
-      name: `connecta-smoke-${kind}`,
-      main: join(ROOT, "eval", "deploy", `${kind}.ts`),
-      compatibility_date: example.compatibility_date,
-      compatibility_flags: example.compatibility_flags,
-      d1_databases: example.d1_databases,
-      worker_loaders: example.worker_loaders,
-    }),
-  );
-  const port = await freePort();
-  const origin = `http://127.0.0.1:${port}`;
   const vars = [
-    `PUBLIC_URL:${origin}`,
     // The Access stand-in's user is the example's maintainer (#837).
     "CONNECTA_MAINTAINERS:eval-operator",
     `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
@@ -452,30 +387,21 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
         ]
       : []),
   ];
-  const boot = () =>
-    startProcess(
-      join(ROOT, "node_modules", ".bin", "wrangler"),
-      [
-        "dev",
-        "--config",
-        config,
-        "--ip",
-        "127.0.0.1",
-        "--port",
-        String(port),
-        "--persist-to",
-        persist,
-        "--show-interactive-dev-session=false",
-        ...vars.flatMap((variable) => ["--var", variable]),
-      ],
-      { cwd: ROOT, env: { WRANGLER_SEND_METRICS: "false", CI: "1" } },
-    );
-  let proc = boot();
+  // The example's own compatibility date, flags and bindings, so workerd
+  // behaves as a deployment would. Only the entry differs: the Access stand-in.
+  let booting: WranglerDev | undefined;
   try {
-    const booted = await step(checks, "boot (wrangler dev)", () =>
-      waitForHealth(origin, proc.child, proc.output, 90_000),
-    );
-    if (!booted) return target;
+    const booted = await step(checks, "boot (wrangler dev)", async () => {
+      booting = await wranglerDev({
+        name: `connecta-smoke-${kind}`,
+        main: join(ROOT, "eval", "deploy", `${kind}.ts`),
+        cliVars: vars,
+        publicUrlVar: true,
+      });
+    });
+    if (!booted || !booting) return target;
+    const dev = booting;
+    const { origin, persist } = dev;
     await mcpBattery(
       checks,
       kind === "worker-example"
@@ -519,7 +445,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
         async () => {
           // Open the physical local D1 only while workerd is stopped. Trigger rows
           // prove committed mutations, independent of route or adapter counters.
-          await stopProcess(proc.child);
+          await dev.stop();
           const files = (await readdir(persist, { recursive: true })).filter((file) => {
             if (!file.endsWith(".sqlite") || !file.includes("/d1/")) return false;
             const db = new DatabaseSync(join(persist, file), { readOnly: true });
@@ -551,11 +477,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
         WHEN OLD.key LIKE '%:billing:credential:v1'
         BEGIN INSERT INTO credential_writes VALUES (OLD.key, 'delete'); END;`),
           );
-          const restart = async () => {
-            await stopProcess(proc.child);
-            proc = boot();
-            await waitForHealth(origin, proc.child, proc.output, 90_000);
-          };
+          const restart = () => dev.restart();
           await restart();
           const { chromium, expect } = await import("@playwright/test");
           const browser = await chromium.launch();
@@ -606,7 +528,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
           } finally {
             await browser.close();
           }
-          await stopProcess(proc.child);
+          await dev.stop();
           inspect((db) => {
             const rows = db
               .prepare(
@@ -635,10 +557,8 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
       );
     return target;
   } finally {
-    await stopProcess(proc.child);
+    await booting?.close();
     await world?.stop();
-    // wrangler's bundle scratch lands beside the config, inside this directory.
-    await rm(persist, { recursive: true, force: true });
     target.status = checks.every((item) => item.pass) ? "pass" : "fail";
   }
 }
@@ -666,59 +586,24 @@ async function providerJourney(
           ...(kind.startsWith("worker-")
             ? {
                 deploy: async (world: World) => {
-                  const persist = await mkdtemp(join(tmpdir(), "connecta-qb-workerd-"));
-                  const { rawConfig: example } = experimental_readRawConfig({
-                    config: join(ROOT, "examples/worker/wrangler.jsonc"),
-                  });
-                  const config = join(persist, "wrangler.json");
-                  await writeFile(
-                    config,
-                    JSON.stringify({
-                      name: notes ? "connecta-granola-smoke" : "connecta-qb-smoke",
-                      main: join(ROOT, notes ? "eval/deploy/worker-granola.ts" : "eval/deploy/worker-quickbooks.ts"),
-                      compatibility_date: example.compatibility_date,
-                      compatibility_flags: example.compatibility_flags,
-                      d1_databases: example.d1_databases,
-                      worker_loaders: example.worker_loaders,
-                    }),
-                  );
-                  const origin = `http://127.0.0.1:${await freePort()}`;
-                  const proc = startProcess(
-                    join(ROOT, "node_modules/.bin/wrangler"),
-                    [
-                      "dev",
-                      "--config",
-                      config,
-                      "--ip",
-                      "127.0.0.1",
-                      "--port",
-                      new URL(origin).port,
-                      "--persist-to",
-                      persist,
-                      "--show-interactive-dev-session=false",
-                      "--var",
-                      `PUBLIC_URL:${origin}`,
+                  const dev = await wranglerDev({
+                    name: notes ? "connecta-granola-smoke" : "connecta-qb-smoke",
+                    main: join(ROOT, notes ? "eval/deploy/worker-granola.ts" : "eval/deploy/worker-quickbooks.ts"),
+                    cliVars: [
                       ...(notes
-                        ? ["--var", `GRANOLA_URL:${world.granola.url}`, "--var", `GRANOLA_KEY:${world.granola.key}`]
+                        ? [`GRANOLA_URL:${world.granola.url}`, `GRANOLA_KEY:${world.granola.key}`]
                         : [
-                            "--var",
                             `QUICKBOOKS_URL:${world.quickbooks.url}`,
-                            "--var",
                             `QUICKBOOKS_CLIENT:${world.quickbooks.clientId}`,
-                            "--var",
                             `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
                           ]),
-                      "--var",
                       `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
                     ],
-                    { cwd: ROOT, env: { WRANGLER_SEND_METRICS: "false", CI: "1" } },
-                  );
-                  const close = async () => {
-                    await stopProcess(proc.child);
-                    await rm(persist, { recursive: true, force: true });
-                  };
+                    publicUrlVar: true,
+                  });
+                  const origin = dev.origin;
+                  const close = () => dev.close();
                   try {
-                    await waitForHealth(origin, proc.child, proc.output, 90_000);
                     const { token } = (await (await fetch(`${origin}/__eval/token`)).json()) as { token: string };
                     return {
                       kind,
@@ -796,6 +681,6 @@ await mkdir(dirname(out), { recursive: true });
 await writeFile(out, `${JSON.stringify(file, null, 1)}\n`);
 console.error(`[smoke] results: ${out}`);
 // A whole-journey timeout may return before its deployment's finally runs.
-await Promise.all([...children].map(stopProcess));
+await stopAllProcesses();
 // Lingering sockets or a stuck child must not hold the result open.
 process.exit(targets.some((target) => target.status === "fail") ? 1 : 0);

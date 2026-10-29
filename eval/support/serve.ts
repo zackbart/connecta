@@ -20,6 +20,15 @@ export interface Served {
 export async function serveFetch(handler: (request: Request) => Promise<Response>, port = 0): Promise<Served> {
   const server: Server = createServer((req, res) => {
     void (async () => {
+      // A fake answers only for the address it published. Other processes on
+      // a shared host sweep `localhost:<port>`; such a probe must never reach
+      // a fake's ledger as a vendor call.
+      if (req.headers.host !== `127.0.0.1:${(server.address() as AddressInfo).port}`) {
+        req.resume();
+        res.statusCode = 421;
+        res.end("Misdirected request");
+        return;
+      }
       try {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);

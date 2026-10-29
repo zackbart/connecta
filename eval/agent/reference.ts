@@ -3,7 +3,8 @@
  * fresh world and the published-edge Node deployment, shared by
  * `eval:outcomes` and `eval:selftest`. No CLI or model runs.
  */
-import { startNodeDeployment, type Deployment } from "../deploy/node.js";
+import type { Deployment } from "../deploy/node.js";
+import { observedPrograms, startDeployment, type Target } from "../deploy/targets.js";
 import { World } from "../fakes/world.js";
 import { connectMcp, type McpSession } from "../support/mcp.js";
 import type { ActiveTask } from "../tasks/types.js";
@@ -46,6 +47,8 @@ export interface Played {
 interface PlayOptions {
   mode: "reference" | "noop";
   deploy?(world: World): Promise<Deployment>;
+  /** The deployment shape when `deploy` is absent; node by default. */
+  target?: Target;
   surface?: Surface;
   /** Runs after the surface check and before the reference, on the same session. */
   before?(ctx: { session: McpSession; world: World; toolUses: ToolUse[] }): Promise<void>;
@@ -67,12 +70,7 @@ export async function playReference<T>(
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
     deployment = options.deploy
       ? await options.deploy(world)
-      : await startNodeDeployment(
-          world.connectorSpecs(),
-          task.deployment,
-          task.world?.oauth ? world.oauth : undefined,
-          surface,
-        );
+      : await startDeployment(options.target ?? "node", world, task, surface);
     const hostEvents: StreamEvent[] = [];
     host = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
@@ -137,7 +135,7 @@ export async function playReference<T>(
         },
       });
     }
-    world.programs = deployment.programs;
+    world.programs = await observedPrograms(deployment);
     const trace = scriptedTrace(toolUses, finalAnswer, transcript);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     return await inspect({ world, trace, deployment });

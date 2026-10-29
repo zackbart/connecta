@@ -235,6 +235,15 @@ export function repinFakeKitTransport(): void {
   if (holds > 0) configureGuardedTransport(routedSender);
 }
 
+/**
+ * Keep the routed fetch installed with no route of its own, so a caller that
+ * dispatches through `globalThis.fetch` (the workerd vendor gateway) fails
+ * closed even while its world registers no vendor.
+ */
+export function holdFakeRouting(): () => void {
+  return acquire();
+}
+
 /** Live counts, for selftests proving release order does not matter. */
 export function fakeTransportState() {
   return { routes: routes.size, references, holds, installed: patch !== undefined };

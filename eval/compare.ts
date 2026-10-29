@@ -12,11 +12,13 @@ import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
 import {
+  efficiencyLines,
   fmtSize,
   median,
   modelEfficiency,
   reliability,
   trialEfficiency,
+  type Grade,
   type Reliability,
 } from "./report/efficiency.js";
 
@@ -70,6 +72,7 @@ const trialSchema = z
     taskDefinitionsHash: z.string().regex(/^[a-f0-9]{64}$/),
     model: knownString,
     runner: z.enum(["codex", "claude"]),
+    target: z.enum(["node", "worker"]).optional(),
     surface: z.enum(["six", "code"]),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
@@ -188,6 +191,9 @@ function safety(trials: TrialResult[]) {
   };
 }
 
+/** Results written before the worker target existed ran on node. */
+const targetOf = (file: AgentResultFile) => file.config.target ?? "node";
+
 /** Provenance is original measurement metadata, never the offline regrade stamp. */
 function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
   const reasons: string[] = [];
@@ -235,6 +241,7 @@ function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
           reasons.push(`${label} invalid ${issue.path.join(".")}: ${issue.message}`);
       if (trial.surface !== arm || trial.grading !== "outcome" || trial.runner !== file.config.runner)
         reasons.push(`${label} must record its arm, outcome grading and runner`);
+      if ((trial.target ?? "node") !== targetOf(file)) reasons.push(`${label} target contradicts batch`);
       if (trial.taskDefinitionsHash !== file.protocol?.taskDefinitionsHash)
         reasons.push(`${label} taskDefinitionsHash contradicts batch`);
       const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
@@ -285,6 +292,11 @@ function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
 }
 
 export function compare(a: AgentResultFile, b: AgentResultFile, options: { allowMismatch?: boolean } = {}): string {
+  // Node and workerd are different deployments: no override pairs them here.
+  if (targetOf(a) !== targetOf(b))
+    throw new Error(
+      `Comparison refused: arms ran on different targets (${targetOf(a)}, ${targetOf(b)}); use --cross-target for a diagnostic`,
+    );
   const mismatches = provenance(a, b);
   if (mismatches.length && !options.allowMismatch)
     throw new Error(`Comparison refused:\n${mismatches.map((r) => `- ${r}`).join("\n")}`);
@@ -297,7 +309,7 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
   const lines: string[] = mismatches.length
     ? ["NON-COMPARABLE: --allow-mismatch diagnostics", ...mismatches.map((r) => `  - ${r}`)]
     : [
-        `Paired batch: ${a.protocol!.pairId}; source ${a.meta.git.commit}; tasks ${a.protocol!.taskDefinitionsHash}; harness ${a.protocol!.harnessHash}`,
+        `Paired batch: ${a.protocol!.pairId}; target ${targetOf(a)}; source ${a.meta.git.commit}; tasks ${a.protocol!.taskDefinitionsHash}; harness ${a.protocol!.harnessHash}`,
       ];
   for (const model of [...new Set([...six.values()].map((t) => t.model))].sort()) {
     const pairs = [...six.values()].filter((t) => t.model === model).map((t) => [t, code.get(key(t))!] as const);
@@ -393,11 +405,88 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
   return lines.join("\n");
 }
 
+/**
+ * Node against workerd for the same surface, tasks, models and runner. A
+ * diagnostic only: it reports outcomes and efficiency side by side and never
+ * reaches a decision.
+ */
+export function crossTarget(node: AgentResultFile, worker: AgentResultFile): string {
+  const reasons: string[] = [];
+  if (targetOf(node) !== "node") reasons.push("--a must be a node result");
+  if (targetOf(worker) !== "worker") reasons.push("--b must be a worker result");
+  const same = (label: string, x: unknown, y: unknown) => {
+    if (JSON.stringify(x) !== JSON.stringify(y)) reasons.push(`Targets must use the same ${label}`);
+  };
+  same("task set", [...node.config.tasks].sort(), [...worker.config.tasks].sort());
+  same("model set", [...node.config.models].sort(), [...worker.config.models].sort());
+  for (const field of ["runner", "surface", "grading", "repeats", "timeoutMs", "effort", "maxBudgetUsd"] as const)
+    same(field, node.config[field], worker.config[field]);
+  same("CLI version", node.claudeVersion ?? node.codexVersion, worker.claudeVersion ?? worker.codexVersion);
+  for (const field of ["taskDefinitionsHash", "harnessHash"] as const)
+    same(field, node.protocol?.[field], worker.protocol?.[field]);
+  same("source tree", node.meta?.git?.srcTree, worker.meta?.git?.srcTree);
+  if (node.config.grading !== "outcome") reasons.push("measured grading must be outcome");
+  if (reasons.length) throw new Error(`Cross-target diagnostic refused:\n${reasons.map((r) => `- ${r}`).join("\n")}`);
+  const surface = node.config.surface ?? "six";
+  const runner = node.config.runner === "claude" ? "claude" : "codex";
+  const left = validate(node, surface),
+    right = validate(worker, surface);
+  const lines = [
+    `CROSS-TARGET DIAGNOSTIC (no decision): node vs worker, ${surface} surface, ${runner}; source tree ${node.meta.git.srcTree}`,
+  ];
+  // The same efficiency aggregates as eval:agent and the report: medians over
+  // passing trials, pass@k/pass^k over graded trials (N/A and infrastructure
+  // errors excluded), k = the declared repeats.
+  const options = {
+    include: (t: TrialResult) => !isNA(t, runner),
+    pass: (t: TrialResult) => trialOutcome(t, runner).pass,
+  };
+  const grade = (t: TrialResult): Grade => {
+    const outcome = trialOutcome(t, runner);
+    return isNA(t, runner) || outcome.infrastructure ? "exclude" : outcome.pass ? "pass" : "fail";
+  };
+  for (const [label, trials] of [
+    ["node", [...left.values()]],
+    ["worker", [...right.values()]],
+  ] as [string, TrialResult[]][]) {
+    lines.push(`${label}:`);
+    lines.push(
+      ...efficiencyLines(modelEfficiency(trials, options), reliability(trials, node.config.repeats, grade)).map(
+        (line) => `  ${line}`,
+      ),
+    );
+  }
+  lines.push("Per task, passing medians (n passing/ran):");
+  for (const task of [...new Set([...left.values()].map((t) => t.task))].sort()) {
+    lines.push(`  ${task}`);
+    for (const [label, trials] of [
+      ["node", left],
+      ["worker", right],
+    ] as const)
+      for (const summary of modelEfficiency(
+        [...trials.values()].filter((t) => t.task === task),
+        options,
+      )) {
+        const m = summary.medians;
+        const value = (stat: { value: number | undefined }) => (stat.value === undefined ? "N/A" : String(stat.value));
+        lines.push(
+          `    ${label.padEnd(6)} ${summary.model} ${summary.passing}/${summary.trials}: calls ${value(m.calls)}, model turns ${value(m.modelTurns)}, input tokens incl. cache ${value(m.promptTokens)}, wall ms ${value(m.wallMs)}, response ${fmtSize(m.responseBytes.value)}, tool errors ${value(m.toolErrors)}`,
+        );
+      }
+  }
+  return lines.join("\n");
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = flags(process.argv.slice(2));
-  if (!args.has("a") || !args.has("b")) throw new Error("Usage: eval:compare -- --a <six.json> --b <code.json>");
+  if (!args.has("a") || !args.has("b"))
+    throw new Error(
+      "Usage: eval:compare --a <six.json> --b <code.json> [--allow-mismatch] | --cross-target --a <node.json> --b <worker.json>",
+    );
   const [a, b] = await Promise.all(
     [args.get("a")!, args.get("b")!].map(async (p) => JSON.parse(await readFile(p, "utf8")) as AgentResultFile),
   );
-  console.log(compare(a!, b!, { allowMismatch: args.has("allow-mismatch") }));
+  console.log(
+    args.has("cross-target") ? crossTarget(a!, b!) : compare(a!, b!, { allowMismatch: args.has("allow-mismatch") }),
+  );
 }

@@ -2,6 +2,9 @@
  * `pnpm run eval:agent [options]` runs fake-only tasks through Codex or Claude Code.
  *
  *   --runner       codex (default) or claude
+ *   --target       node (default) or worker: the deployment shape each trial
+ *                  boots; worker runs workerd under wrangler dev
+ *   --no-build     skip `pnpm run build` before a worker batch
  *   --models       comma-separated model ids; see eval/README.md for defaults
  *   --repeats      trials per task × model (default 1)
  *   --tasks        comma-separated task ids (default every active task)
@@ -18,6 +21,9 @@
  * trial ran once, completed normally and passed.
  */
 import { parseSurface } from "./agent/surface.js";
+import { parseTarget, workerRefusal } from "./deploy/targets.js";
+import { killAllProcesses } from "./support/workerd.js";
+import { spawnSync } from "node:child_process";
 import { parseGrading } from "./tasks/grading.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -34,6 +40,7 @@ import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 const args = flags(process.argv.slice(2));
 const surface = parseSurface(args.get("surface"));
 const grading = parseGrading(args.get("grading"));
+const target = parseTarget(args.get("target"));
 const runner = args.get("runner") ?? "codex";
 if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be codex or claude");
 if (
@@ -67,12 +74,27 @@ const wanted = args
   .get("tasks")
   ?.split(",")
   .map((id) => id.trim());
-const tasks = wanted ? eligible.filter((task) => wanted.includes(task.id)) : eligible;
-if (wanted && tasks.length !== wanted.length) {
+const selected = wanted ? eligible.filter((task) => wanted.includes(task.id)) : eligible;
+if (wanted && selected.length !== wanted.length) {
   throw new Error(
     `Unknown task in --tasks. Eligible tasks: ${eligible.map((task) => task.id).join(", ")}. Skipped tasks need --include-skipped <flag>`,
   );
 }
+// The worker target refuses what it cannot serve: named tasks fail the run,
+// and a default batch records the refused tasks rather than running them.
+const refused =
+  target === "worker"
+    ? selected.flatMap((task) => {
+        const reason = workerRefusal(task, surface);
+        return reason ? [{ id: task.id, reason }] : [];
+      })
+    : [];
+if (wanted && refused.length)
+  throw new Error(
+    `The worker target refuses ${refused.length} task(s):\n${refused.map((r) => `- ${r.id}: ${r.reason}`).join("\n")}`,
+  );
+const tasks = selected.filter((task) => !refused.some((r) => r.id === task.id));
+if (!tasks.length) throw new Error("No task to run");
 if (!Number.isInteger(repeats) || repeats < 1) throw new Error("--repeats must be a positive integer");
 if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("--concurrency must be a positive integer");
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("--timeout-min must be a finite positive number");
@@ -89,6 +111,7 @@ const file: AgentResultFile = {
   [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
   config: {
     runner,
+    target,
     surface,
     grading,
     models,
@@ -102,8 +125,16 @@ const file: AgentResultFile = {
   tasks: tasks.map(({ id, title, measures, introducedIn }) => ({ id, title, measures, introducedIn })),
   planned: PLANNED,
   skipped,
+  ...(refused.length ? { refused } : {}),
   trials: [],
 };
+if (target === "worker" && !args.has("no-build")) {
+  // The Worker imports the package by name, which resolves to dist/.
+  console.error("[eval] pnpm run build");
+  const built = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"] });
+  if (built.status !== 0) throw new Error("pnpm run build failed");
+}
+for (const r of refused) console.error(`[eval] REFUSED on worker: ${r.id}: ${r.reason}`);
 await mkdir(dirname(out), { recursive: true });
 const save = async () => {
   const temporary = `${out}.tmp`;
@@ -112,14 +143,20 @@ const save = async () => {
 };
 await save();
 console.error(
-  `[eval] ${tasks.length} task(s) × ${models.length} model(s) × ${repeats} repeat(s), concurrency ${concurrency}, ${version}`,
+  `[eval] ${tasks.length} task(s) × ${models.length} model(s) × ${repeats} repeat(s) on ${target}, concurrency ${concurrency}, ${version}`,
 );
 const interrupted = new AbortController();
-process.once("SIGINT", () => interrupted.abort());
-process.once("SIGTERM", () => interrupted.abort());
+// The first signal stops the batch in order; a second kills workerd and exits.
+for (const signal of ["SIGINT", "SIGTERM"] as const)
+  process.on(signal, () => {
+    if (!interrupted.signal.aborted) return interrupted.abort();
+    killAllProcesses();
+    process.exit(130);
+  });
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
   runner,
+  target,
   surface,
   grading,
   concurrency,

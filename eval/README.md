@@ -238,6 +238,69 @@ recorded. Every trial has saved them since 0.29. Older files, such as the
 Trials missing other historical metrics such as `modelTurns` or `toolErrors`
 are left out of that median, which prints its smaller `n`.
 
+## Deployment targets
+
+`--target node` (the default) runs each trial against the Node template shape:
+SQLite, the QuickJS executor, stored agent tokens and `listen()`.
+`--target worker` runs the same tasks and graders against the production shape
+on workerd, which is SQLite-backed local D1, the Dynamic Worker executor,
+Access, the vault and the operator UI. Each trial boots
+[deploy/worker-agent.ts](deploy/worker-agent.ts) under `wrangler dev`, with
+the Worker example's compatibility date, flags and bindings. Both targets build
+their configuration from one composition, [deploy/compose.ts](deploy/compose.ts),
+and only the platform slots differ. The worker composition also admits people
+through Access; the eval stand-in's user is the one maintainer. Agents still
+use `/agent/<pool>` with the managed `cta_` token on both targets.
+
+```sh
+pnpm run eval:agent --runner claude --models claude-haiku-5-5 --grading outcome --target worker \
+  --tasks cross-connector-join,p5-known-read-routing,truncated-read-paging,stripe-step2-decline-join
+```
+
+A worker batch runs `pnpm run build` first unless `--no-build` is given,
+because the Worker imports the package by name from `dist/`.
+
+- **Vendor traffic.** The Worker fetches loopback fakes directly. Every other
+  request goes to a Node-side vendor gateway, which dispatches it through the
+  fake vendor transport below, with `redirect: "manual"`. Credential routing and
+  every fail-closed refusal therefore apply unchanged, and a refusal reaches
+  the provider as a rejected fetch, as on Node. A followed redirect sends each
+  hop back through the gateway, so workerd never follows a `Location` around
+  the transport.
+- **Observed programs.** The program observer wraps the Dynamic Worker
+  executor exactly as it wraps QuickJS on Node. Graders read the same
+  `world.programs`, fetched from the Worker after the conversation.
+- **Process lifecycle.** Every `wrangler dev` runs in its own process group on
+  a port below the kernel's ephemeral range, with its own devtools port, so
+  concurrent trials never share a port with each other or with a fake. A trial
+  stops its group when it ends. The first SIGINT/SIGTERM stops the batch in
+  order; a second kills every group at once. Process exit also kills any group
+  still running.
+- **Eligibility.** The worker target serves every active task except:
+  - `p5-auth-url-capable` and `p5-auth-connect-incapable`: the fake OAuth
+    inbound auth, connector and URL-elicitation host are in-process Node
+    objects;
+  - any task under `--surface code`: that arm wraps the Node deployment's fetch
+    and QuickJS bridge;
+  - any task whose `deployment` passthrough cannot cross into the Worker as JSON.
+
+  Naming a refused task in `--tasks` fails the run with each reason. A batch
+  without `--tasks` runs every eligible task and lists each refused task with
+  its reason in the result's `refused`; it never runs, skips or passes them.
+
+Result files record `config.target`, and every trial records its `target`;
+older files without the field ran on node. The six/code comparator refuses to
+pair results from different targets, even with `--allow-mismatch`.
+`eval:compare --cross-target --a <node.json> --b <worker.json>` is the only
+pairing. It needs the same surface, runner, CLI version, tasks, models,
+repeats, deadline, task definitions, harness and source tree. For each target
+it prints the efficiency summary from `eval/report/efficiency.ts`, then each
+task's passing medians on both targets side by side, and reaches no decision.
+
+Fakes answer only for the `127.0.0.1:<port>` address they publish. A request
+naming any other host, such as another process on a shared machine sweeping
+`localhost` ports, gets `421 Misdirected Request` and never reaches a ledger.
+
 ## A/B arms, grading and decision rule
 
 For #765 and draft decision record #775, run the same 19 tasks on a fresh

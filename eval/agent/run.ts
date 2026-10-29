@@ -5,7 +5,8 @@
  */
 import type { CallRecord } from "../fakes/service.js";
 import { World } from "../fakes/world.js";
-import { startNodeDeployment } from "../deploy/node.js";
+import type { Deployment } from "../deploy/node.js";
+import { observedPrograms, startDeployment, type Target } from "../deploy/targets.js";
 import { connectMcp, type ListedTool } from "../support/mcp.js";
 import type { ActiveTask, Check } from "../tasks/types.js";
 import { runCodex } from "./codex.js";
@@ -57,6 +58,8 @@ export interface TrialResult {
   taskDefinitionsHash?: string;
   timeoutMs?: number;
   runner?: "codex" | "claude";
+  /** Absent in results written before the worker target existed: node. */
+  target?: Target;
   surface?: Surface;
   grading?: Grading;
   model: string;
@@ -100,6 +103,7 @@ export interface TrialResult {
 }
 
 interface TrialOptions {
+  target?: Target;
   surface?: Surface;
   grading?: Grading;
   runner?: "codex" | "claude";
@@ -144,6 +148,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     taskDefinitionsHash: runProtocol().taskDefinitionsHash,
     timeoutMs: task.limits?.timeoutMs ?? options.timeoutMs,
   };
+  const target = options.target ?? "node";
   const startedAt = new Date().toISOString();
   const skip = task.runnerSkips?.[options.runner ?? "codex"];
   if (skip)
@@ -151,6 +156,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       task: task.id,
       ...protocol,
       runner: options.runner ?? "codex",
+      target,
       surface: surfaceArm,
       grading,
       model,
@@ -177,17 +183,12 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       ledger: [],
     };
   const world = new World(task.world);
-  let cleanupDeployment: Awaited<ReturnType<typeof startNodeDeployment>> | undefined;
+  let cleanupDeployment: Deployment | undefined;
   let cleanupHost: Awaited<ReturnType<typeof startAuthHost>> | undefined;
   try {
     await world.start();
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-    const deployment = (cleanupDeployment = await startNodeDeployment(
-      world.connectorSpecs(),
-      task.deployment,
-      task.world?.oauth ? world.oauth : undefined,
-      surfaceArm,
-    ));
+    const deployment = (cleanupDeployment = await startDeployment(target, world, task, surfaceArm));
     const hostEvents: StreamEvent[] = [];
     const host = (cleanupHost = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
@@ -247,7 +248,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
         return followUp.prompt;
       },
     });
-    world.programs = deployment.programs;
+    world.programs = await observedPrograms(deployment);
     const trace = parseTrace(run.events, run.turnStarts, prompts);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     for (const note of notes) {
@@ -297,6 +298,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       task: task.id,
       ...protocol,
       runner: options.runner ?? "codex",
+      target,
       surface: surfaceArm,
       grading,
       model,
