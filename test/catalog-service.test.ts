@@ -16,6 +16,7 @@ import type { KVStorage } from "../src/types.js";
 import { d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { bindDiscoveryEndpoint } from "../src/discovery-health.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { sha256Hex } from "../src/bytes.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeRegistry } from "./helpers.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -582,7 +583,38 @@ describe("discovery health across requests", () => {
     expect(second.page.catalogErrors.find((error) => error.connector === "hung")?.message).toContain("was skipped");
   }, 15_000);
 
-  it("INV-5: keys health by value-free configuration, so no persisted key derives from a configured secret", async () => {
+  it("INV-5 INV-6: keys health by the described configuration through the deployment key, path tokens included", async () => {
+    // describe() keeps an endpoint's path; a token there reaches the record key
+    // only through the deployment's keyed digest.
+    const token = "pt5Rc8Wy2Gn7Ks";
+    const described = (state: { healthy: boolean; listings: number }) => ({
+      ...hangingConnector("hung", state),
+      describe: () => ({
+        source: { kind: "custom" as const },
+        endpoint: { origin: "https://crm.example", path: `/mcp/${token}` },
+      }),
+    });
+    const storage = memoryStorage();
+    const vault = (fill: number) =>
+      new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(fill))));
+    const recordAt = async (fill: number) => {
+      const state = { healthy: false, listings: 0 };
+      await searchOnce(makeRegistry([described(state), healthy], { storage, credentialVault: vault(fill) }), {
+        query: "read",
+      });
+      expect(state.listings).toBe(1);
+      return storage.list("connector-health:v1:hung:");
+    };
+    const [first] = await recordAt(7);
+    const keys = await recordAt(9);
+    // The rotated deployment key addresses a different record for the same configuration.
+    expect(keys).toHaveLength(2);
+    expect(keys.filter((key) => key !== first)).toHaveLength(1);
+    const needles = [token, `/mcp/${token}`, await sha256Hex(token), await sha256Hex(`/mcp/${token}`)];
+    for (const key of keys) for (const needle of needles) expect(key).not.toContain(needle);
+  });
+
+  it("INV-5: keys health by the described configuration, which leaves out configured header values", async () => {
     // Two deployments of one connector differing only in a configured secret,
     // which describe() leaves out: one key, and nothing derived from either.
     const remote = (token: string) =>

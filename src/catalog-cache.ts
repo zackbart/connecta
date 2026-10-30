@@ -37,6 +37,7 @@ import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
 import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
+import { secretDigest } from "./storage-digest.js";
 import { responseCacheKeys } from "./storage/keys.js";
 import { CatalogPolicy, type CatalogCacheSettings } from "./catalog-policy.js";
 import type { ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } from "./types.js";
@@ -1360,12 +1361,16 @@ const customCatalogCacheNative = /* @__PURE__ */ registerAuth(
         | ConnectorCredentialValues
         | null
         | undefined;
-      const auth = (
-        (yield authCall(fingerprintSerializedCatalog, [JSON.stringify(credential ?? null)])) as {
-          fingerprint: string;
-          byteLength: number;
-        }
-      ).fingerprint;
+      // Credential values enter the stored partition only through a keyed digest.
+      const auth =
+        credential == null
+          ? (
+              (yield authCall(fingerprintSerializedCatalog, ["null"])) as {
+                fingerprint: string;
+                byteLength: number;
+              }
+            ).fingerprint
+          : ((yield authCall(secretDigest, [ctx, JSON.stringify(credential)])) as string);
       const cache = (yield authCall(catalogClientOptions, [ctx, connectorId, "custom-connector", auth])) as Awaited<
         ReturnType<typeof catalogClientOptions>
       >;

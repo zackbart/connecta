@@ -10,6 +10,7 @@ import {
   type CompletedCatalogRefresh,
 } from "../src/catalog-cache.js";
 import { catalogIsFresh } from "../src/catalog-freshness.js";
+import { sha256Hex } from "../src/bytes.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
 import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
@@ -1416,10 +1417,24 @@ function legacyDownstream(name: string, hint: { ttlMs?: number } = {}) {
 }
 
 describe("pre-connect cached catalogs", () => {
-  async function deployment(hint: { ttlMs?: number } = {}) {
-    const store = await storage();
-    const vault = new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
-    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+  async function deployment(
+    hint: { ttlMs?: number } = {},
+    options: {
+      store?: KVStorage;
+      suffix?: string;
+      vaultKey?: number;
+      header?: string;
+      url?: string;
+      /** The shared connector without auth, so its URL is its only configured value. */
+      bare?: boolean;
+    } = {},
+  ) {
+    const store = options.store ?? (await storage());
+    const vault = new CredentialVault(
+      store,
+      btoa(String.fromCharCode(...new Uint8Array(32).fill(options.vaultKey ?? 7))),
+    );
+    const suffix = options.suffix ?? crypto.randomUUID().replaceAll("-", "").slice(0, 12);
     const shared = legacyDownstream("crm", hint);
     const keyed = legacyDownstream("tickets", hint);
     const pinned = legacyDownstream("notes", hint);
@@ -1427,9 +1442,11 @@ describe("pre-connect cached catalogs", () => {
     const connectors = [
       // Negotiates once, then reuses the stored legacy verdict.
       remoteMcp(ids.shared, {
-        url: "https://crm.test/mcp",
+        url: options.url ?? "https://crm.test/mcp",
         fetch: shared.fetch,
-        auth: { type: "headers", headers: { Authorization: `Bearer ${TOKEN_A}` } },
+        ...(options.bare
+          ? {}
+          : { auth: { type: "headers" as const, headers: { Authorization: `Bearer ${options.header ?? TOKEN_A}` } } }),
       }),
       remoteMcp(ids.keyed, { url: "https://tickets.test/mcp", fetch: keyed.fetch, auth: { type: "credential" } }),
       remoteMcp(ids.pinned, { url: "https://notes.test/mcp", fetch: pinned.fetch, versionNegotiation: "legacy" }),
@@ -1524,6 +1541,138 @@ describe("pre-connect cached catalogs", () => {
     expect(d.requests()).toBe(0);
   });
 
+  // Every stored row that addresses a downstream catalog, negotiation verdict or health record.
+  const cacheRows = async (store: KVStorage) =>
+    Promise.all(
+      (await store.list(""))
+        .filter((key) => /response-cache:|negotiation:|connector-health:/.test(key))
+        .map(async (key) => [key, (await store.get(key)) ?? ""] as const),
+    );
+
+  it("INV-5 INV-6: cache keys depend on the deployment key, never on a guessable configured value alone", async () => {
+    const store = await storage();
+    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+    const url = `https://crm.test/mcp?key=${TOKEN_B}`;
+    const first = await deployment({}, { store, suffix, url });
+    await first.search();
+    const before = await cacheRows(store);
+    // No row holds a configured secret, or a plain digest of a guess at one.
+    const guesses = [TOKEN_A, TOKEN_B, `Bearer ${TOKEN_A}`, `?key=${TOKEN_B}`, url];
+    const digests = await Promise.all(guesses.map((guess) => sha256Hex(guess)));
+    for (const [key, value] of before)
+      for (const needle of [...guesses, ...guesses.map(encodeURIComponent), ...digests]) {
+        expect(key).not.toContain(needle);
+        expect(value).not.toContain(needle);
+      }
+    // The same secrets under another deployment key address none of those
+    // rows: a stored key is no function of public inputs and a guessed secret.
+    const second = await deployment({}, { store, suffix, url, vaultKey: 9 });
+    await second.search();
+    // Every connector's configuration is keyed whole, so each lists again.
+    expect(second.downstreams.map((downstream) => downstream.listings())).toEqual([1, 1, 1]);
+    expect(second.handshakes()).toBe(3);
+    const keys = (rows: (readonly [string, string])[]) =>
+      new Set(rows.map(([key]) => key).filter((key) => !key.endsWith(":generation")));
+    const earlier = keys(before);
+    expect(earlier.size).toBeGreaterThan(0);
+    const fresh = [...keys(await cacheRows(store))].filter((key) => !earlier.has(key));
+    for (const id of Object.values(first.ids)) expect(fresh.some((key) => key.includes(id))).toBe(true);
+  });
+
+  it("INV-4 INV-5 INV-6: an endpoint path token keys its partitions only through the deployment key", async () => {
+    const store = await storage();
+    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+    const [tokenA, tokenB] = ["pt7Qw2Zr9Lk4Vx", "pt3Hm8Ns1Bd6Jc"];
+    const url = (token: string) => `https://crm.test/mcp/${token}`;
+    const search = async (token: string, vaultKey = 7) => {
+      const d = await deployment({}, { store, suffix, url: url(token), vaultKey, bare: true });
+      await d.search();
+      return d;
+    };
+    const shared = `crm_${suffix}`;
+    // The catalog configuration digests and negotiation keys stored for the endpoint.
+    const fingerprints = async () =>
+      new Set(
+        (await store.list("")).flatMap((key) => {
+          if (key.startsWith(responseCacheKeys.prefix(shared))) {
+            const config = /^(sha256:\d+:[0-9a-f]{64}):/.exec(key.slice(responseCacheKeys.prefix(shared).length));
+            return config ? [config[1]!] : [];
+          }
+          return key.startsWith(scopes.connector(shared)) && key.includes("negotiation:") ? [key] : [];
+        }),
+      );
+    expect((await search(tokenA)).downstreams[0]!.listings()).toBe(1);
+    // The same token is warm.
+    expect((await search(tokenA)).requests()).toBe(0);
+    const first = await fingerprints();
+    expect(first.size).toBe(2);
+    // Another token is its own partition; the other connectors stay warm.
+    const other = await search(tokenB);
+    expect(other.downstreams.map((downstream) => downstream.listings())).toEqual([1, 0, 0]);
+    expect((await fingerprints()).size).toBe(4);
+    // A rotated deployment key changes both fingerprints for the same token;
+    // the original key finds its entries again.
+    const before = await fingerprints();
+    expect((await search(tokenA, 9)).downstreams[0]!.listings()).toBe(1);
+    const rotated = [...(await fingerprints())].filter((fingerprint) => !before.has(fingerprint));
+    expect(rotated).toHaveLength(2);
+    expect((await search(tokenA)).requests()).toBe(0);
+    // No row holds a path token, or a plain digest of it or of the URL.
+    const guesses = [tokenA, tokenB, url(tokenA), url(tokenB), `/mcp/${tokenA}`, `/mcp/${tokenB}`];
+    const needles = [
+      ...guesses,
+      ...guesses.map(encodeURIComponent),
+      ...(await Promise.all(guesses.map((guess) => sha256Hex(guess)))),
+    ];
+    for (const [key, value] of await cacheRows(store))
+      for (const needle of needles) {
+        expect(key).not.toContain(needle);
+        expect(value).not.toContain(needle);
+      }
+  });
+
+  it("INV-4 INV-5: a static header changed by redeploy misses the previous partition at once", async () => {
+    const store = await storage();
+    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+    await (await deployment({}, { store, suffix })).search();
+    const rotated = await deployment({}, { store, suffix, header: TOKEN_B });
+    await rotated.search();
+    const [shared, keyed, pinned] = rotated.downstreams;
+    expect([shared!.handshakes(), shared!.listings()]).toEqual([1, 1]);
+    expect([...keyed!.requests, ...pinned!.requests]).toEqual([]);
+    // Each header keeps its own partition: the earlier one is still warm.
+    const restored = await deployment({}, { store, suffix });
+    await restored.search();
+    expect(restored.requests()).toBe(0);
+  });
+
+  it("INV-5: without a vault, secret-bearing keys use a per-process key and still partition by header", async () => {
+    const store = await storage();
+    const downstream = legacyDownstream("crm");
+    const id = `crm_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const search = async (token: string) => {
+      const connector = remoteMcp(id, {
+        url: "https://crm.test/mcp",
+        fetch: downstream.fetch,
+        auth: { type: "headers", headers: { Authorization: `Bearer ${token}` } },
+      });
+      const registry = makeRegistry([connector], { storage: store });
+      const requestScope = {};
+      try {
+        return await new CatalogService(registry, BASE, { requestScope }).search({ query: "read" });
+      } finally {
+        await connector.closeScope?.(registry.contextFor(id, BASE, requestScope));
+      }
+    };
+    await search(TOKEN_A);
+    await search(TOKEN_A);
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([1, 1]);
+    await search(TOKEN_B);
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([2, 2]);
+    const digest = await sha256Hex(`Bearer ${TOKEN_A}`);
+    for (const [key, value] of await cacheRows(store)) expect(`${key}${value}`).not.toContain(digest);
+  });
+
   it("INV-8: an invalidated catalog connects and lists again", async () => {
     const d = await deployment();
     await d.search();
@@ -1583,15 +1732,23 @@ describe("pre-connect cached catalogs", () => {
   });
 
   /** One OAuth connector over a legacy downstream, searched by a fresh registry per request. */
-  async function oauthDeployment(options: { vault?: boolean } = {}) {
-    const store = await storage();
+  async function oauthDeployment(
+    options: { vault?: boolean; vaultKey?: number; store?: KVStorage; id?: string; clientMetadataUrl?: string } = {},
+  ) {
+    const store = options.store ?? (await storage());
     const vault = options.vault
-      ? new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))))
+      ? new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(options.vaultKey ?? 7))))
       : undefined;
-    const id = `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const id = options.id ?? `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
     const downstream = legacyDownstream("calendar");
     vi.stubGlobal("fetch", downstream.fetch);
-    const connector = remoteMcp(id, { url: "https://calendar.test/mcp", auth: { type: "oauth" } });
+    const connector = remoteMcp(id, {
+      url: "https://calendar.test/mcp",
+      auth: {
+        type: "oauth",
+        ...(options.clientMetadataUrl !== undefined ? { clientMetadataUrl: options.clientMetadataUrl } : {}),
+      },
+    });
     const grantKey = scopes.connector(id) + oauthGrantKeys.grant;
     const grant = (accessToken: string, epoch = "v3:seeded") =>
       seedGrant(
@@ -1611,6 +1768,74 @@ describe("pre-connect cached catalogs", () => {
     };
     return { store, downstream, grantKey, grant, search };
   }
+
+  it.each([
+    ["path", (token: string) => `https://client.test/${encodeURIComponent(token)}/client.json`],
+    ["query", (token: string) => `https://client.test/connecta/client.json?key=${token}`],
+  ] as const)(
+    "INV-5 INV-6: a client metadata URL's %s reaches cache keys only through the deployment key",
+    async (_shape, metadata) => {
+      const store = await storage();
+      const id = `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+      const search = async (token: string, vaultKey: number) => {
+        const d = await oauthDeployment({ vault: true, vaultKey, store, id, clientMetadataUrl: metadata(token) });
+        await d.search();
+        return d.downstream;
+      };
+      await seedGrant(
+        store,
+        { issuer: "https://calendar.test", tokens: { access_token: "access-1", token_type: "Bearer" } },
+        "v3:seeded",
+        scopes.connector(id),
+      );
+      // The configuration digest each catalog namespace is stored under.
+      const configs = async () =>
+        new Set(
+          (await store.list(responseCacheKeys.prefix(id)))
+            .map((key) => /^(sha256:\d+:[0-9a-f]{64}):/.exec(key.slice(responseCacheKeys.prefix(id).length))?.[1])
+            .filter((config): config is string => config !== undefined),
+        );
+      expect((await search(TOKEN_A, 7)).listings()).toBe(1);
+      expect((await search(TOKEN_A, 7)).requests).toEqual([]);
+      const first = await configs();
+      expect(first.size).toBe(1);
+      // The query partitions exactly: another value lists for itself.
+      expect((await search(TOKEN_B, 7)).listings()).toBe(1);
+      expect((await configs()).size).toBe(2);
+      // No row holds the query, or a plain digest of a guess at the URL or its query.
+      const guesses = [
+        TOKEN_A,
+        TOKEN_B,
+        metadata(TOKEN_A),
+        metadata(TOKEN_B),
+        `?key=${TOKEN_A}`,
+        `?key=${TOKEN_B}`,
+        `https://client.test/${encodeURIComponent(TOKEN_A)}/client.json`,
+        `/${encodeURIComponent(TOKEN_B)}/client.json`,
+      ];
+      const needles = [
+        ...guesses,
+        ...guesses.map(encodeURIComponent),
+        ...(await Promise.all(guesses.map((guess) => sha256Hex(guess)))),
+      ];
+      const rows = await cacheRows(store);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const [key, value] of rows)
+        for (const needle of needles) {
+          expect(key).not.toContain(needle);
+          expect(value).not.toContain(needle);
+        }
+      // A rotated deployment key stores the same configuration under a new
+      // digest, and addresses none of the earlier entries; the original key
+      // finds them again.
+      const before = await configs();
+      expect((await search(TOKEN_A, 9)).listings()).toBe(1);
+      const rotated = [...(await configs())].filter((config) => !before.has(config));
+      expect(rotated).toHaveLength(1);
+      expect(first.has(rotated[0]!)).toBe(false);
+      expect((await search(TOKEN_A, 7)).requests).toEqual([]);
+    },
+  );
 
   it("INV-5: an epoch replaced during the pre-connect read never serves the previous epoch's catalog", async () => {
     const d = await oauthDeployment();

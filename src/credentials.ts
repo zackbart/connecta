@@ -2,7 +2,7 @@ import { advanceCatalogRevision } from "./catalog-revision.js";
 import type { CredentialMetadata, CredentialVault as Vault } from "./credential-contract.js";
 import type { ConnectorCredentialValues, KVStorage } from "./types.js";
 
-import { deriveOAuthHandoffKey, deriveRequestStateKey } from "./oauth-sealing.js";
+import { deriveOAuthHandoffKey, deriveRequestStateKey, deriveStorageDigestKey } from "./oauth-sealing.js";
 import { credentialKeys } from "./storage/keys.js";
 import type { RequestReads } from "./runtime/request-reads.js";
 import { registerCredentialReads } from "./credential-reads.js";
@@ -165,6 +165,7 @@ export class CredentialVault implements Vault {
   private readonly key: Promise<CryptoKey>;
   private readonly handoffKey: Promise<CryptoKey>;
   private readonly retryKey: Promise<Uint8Array>;
+  private readonly digestKey: Promise<CryptoKey>;
 
   constructor(
     private readonly storage: KVStorage,
@@ -176,6 +177,7 @@ export class CredentialVault implements Vault {
     }
     this.handoffKey = deriveOAuthHandoffKey(raw);
     this.retryKey = deriveRequestStateKey(raw);
+    this.digestKey = deriveStorageDigestKey(raw);
     this.key = crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
     // The base class's original methods, so an override is never replaced.
     registerCredentialReads(this, canonicalReads, {
@@ -196,6 +198,10 @@ export class CredentialVault implements Vault {
 
   async requestStateKey(): Promise<Uint8Array> {
     return new Uint8Array(await this.retryKey);
+  }
+
+  storageDigestKey(): Promise<CryptoKey> {
+    return this.digestKey;
   }
 
   async verifyOAuthHandoff(payload: string, signature: string): Promise<boolean> {

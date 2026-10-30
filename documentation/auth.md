@@ -1336,8 +1336,8 @@ A personal connector is absent — not refused — from any request without a
 stable namespaced principal. For one that can see it, connector storage, vault
 records, OAuth generations, and observed result shapes are
 partitioned under an opaque SHA-256 identity key. Remote catalog cache keys
-include that owner and the admitted pool, plus the credential digest and OAuth
-epoch; refreshes coalesce within
+include that owner and the admitted pool, plus the keyed credential digest and
+OAuth epoch (see [cache keys](./architecture.md#storage-credentials-and-connectors)); refreshes coalesce within
 one owner, and another owner's epoch cannot retire them. Keep namespaces and
 principal ids stable across upgrades, since changing either selects different
 partitions. Literal `auth: { type: "headers" }` keeps its secret in deployment
@@ -2551,6 +2551,15 @@ Before an accepted retry restarts any call, it rechecks every entered read.
 A write classification, changed classification digest, or stale catalog returns
 `auth_replay_refused` with reconciliation guidance, including in programs on a writable endpoint.
 Pre-invocation credential-resolution eligibility is unchanged.
+Custom vaults may implement the host-only `storageDigestKey` method, returning a
+non-extractable HMAC-SHA-256 signing `CryptoKey` that is stable across the
+deployment's processes, purpose-specific and never stored.
+`encryptedCredentialVault()` derives it with HKDF from its credential key.
+Remote catalog, negotiation-verdict and connector-health keys digest their
+inputs (configured URLs and headers, credentials, request tokens, OAuth token
+responses, described configuration) with it, so their partitions are
+deployment-keyed. Without it they use a random per-process key: partitions stay
+exact, but each process or isolate keeps its own entries.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
 deployment retains the ordinary handoff. It must return a stable,
 purpose-specific deployment key of at least 32 bytes. Only the MCP boundary
