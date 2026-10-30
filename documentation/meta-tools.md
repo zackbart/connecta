@@ -211,8 +211,21 @@ fill in stays behind `_api_search` and `_api_details`. Ready calls pass the same
 endpoint, connector read-only, safety, hidden-tool and grant checks as the
 vocabulary match, through a visible read tool in the caller's view. They are
 computed offline from the construction-time index, read no account data, and
-start no authorization. Each hatch offers at most three, shortest path first,
-and a page at most three in connector order. Later pages carry none. A ready
+start no authorization.
+
+A ready call must also be what the query names. Every query word other than an
+action (`list`, `get`, `count`, `show`, `create`, `update`, `delete` and their
+vocabulary aliases) must match the operation's resource identity: a path
+segment or its operationId, with singular/plural normalization and the
+provider's declared synonyms. Version segments such as `v1` never count, and a
+summary may supply only actions. A query with no object word gets no ready
+call. Ready calls are omitted entirely when the top result is an exact tool name
+or address, or a complete match on an authored tool rather than the hatch's
+own search or read tool. For example, `list teams` returns `list_teams` and no
+ready call, even when other operations mention teams in their summaries.
+Each hatch offers at most three, ranked by a last path segment naming the
+resource, then the fewest resource words the query did not ask for, then path
+length; a page carries at most three in connector order. Later pages carry none. A ready
 call keeps its read tool's `guideRequired` and `guideRequiredReasons`, and its
 connector appears in `connectors`.
 
