@@ -1676,15 +1676,23 @@ describe("pre-connect cached catalogs", () => {
   });
 
   /** One OAuth connector over a legacy downstream, searched by a fresh registry per request. */
-  async function oauthDeployment(options: { vault?: boolean } = {}) {
-    const store = await storage();
+  async function oauthDeployment(
+    options: { vault?: boolean; vaultKey?: number; store?: KVStorage; id?: string; clientMetadataUrl?: string } = {},
+  ) {
+    const store = options.store ?? (await storage());
     const vault = options.vault
-      ? new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))))
+      ? new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(options.vaultKey ?? 7))))
       : undefined;
-    const id = `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const id = options.id ?? `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
     const downstream = legacyDownstream("calendar");
     vi.stubGlobal("fetch", downstream.fetch);
-    const connector = remoteMcp(id, { url: "https://calendar.test/mcp", auth: { type: "oauth" } });
+    const connector = remoteMcp(id, {
+      url: "https://calendar.test/mcp",
+      auth: {
+        type: "oauth",
+        ...(options.clientMetadataUrl !== undefined ? { clientMetadataUrl: options.clientMetadataUrl } : {}),
+      },
+    });
     const grantKey = scopes.connector(id) + oauthGrantKeys.grant;
     const grant = (accessToken: string, epoch = "v3:seeded") =>
       seedGrant(
@@ -1704,6 +1712,60 @@ describe("pre-connect cached catalogs", () => {
     };
     return { store, downstream, grantKey, grant, search };
   }
+
+  it("INV-5 INV-6: a client metadata URL's query reaches cache keys only through the deployment key", async () => {
+    const store = await storage();
+    const id = `calendar_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const metadata = (token: string) => `https://client.test/connecta/client.json?key=${token}`;
+    const search = async (token: string, vaultKey: number) => {
+      const d = await oauthDeployment({ vault: true, vaultKey, store, id, clientMetadataUrl: metadata(token) });
+      await d.search();
+      return d.downstream;
+    };
+    await seedGrant(
+      store,
+      { issuer: "https://calendar.test", tokens: { access_token: "access-1", token_type: "Bearer" } },
+      "v3:seeded",
+      scopes.connector(id),
+    );
+    // The configuration digest each catalog namespace is stored under.
+    const configs = async () =>
+      new Set(
+        (await store.list(responseCacheKeys.prefix(id)))
+          .map((key) => /^(sha256:\d+:[0-9a-f]{64}):/.exec(key.slice(responseCacheKeys.prefix(id).length))?.[1])
+          .filter((config): config is string => config !== undefined),
+      );
+    expect((await search(TOKEN_A, 7)).listings()).toBe(1);
+    expect((await search(TOKEN_A, 7)).requests).toEqual([]);
+    const first = await configs();
+    expect(first.size).toBe(1);
+    // The query partitions exactly: another value lists for itself.
+    expect((await search(TOKEN_B, 7)).listings()).toBe(1);
+    expect((await configs()).size).toBe(2);
+    // No row holds the query, or a plain digest of a guess at the URL or its query.
+    const guesses = [TOKEN_A, TOKEN_B, metadata(TOKEN_A), metadata(TOKEN_B), `?key=${TOKEN_A}`, `?key=${TOKEN_B}`];
+    const needles = [
+      ...guesses,
+      ...guesses.map(encodeURIComponent),
+      ...(await Promise.all(guesses.map((guess) => sha256Hex(guess)))),
+    ];
+    const rows = await cacheRows(store);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [key, value] of rows)
+      for (const needle of needles) {
+        expect(key).not.toContain(needle);
+        expect(value).not.toContain(needle);
+      }
+    // A rotated deployment key stores the same configuration under a new
+    // digest, and addresses none of the earlier entries; the original key
+    // finds them again.
+    const before = await configs();
+    expect((await search(TOKEN_A, 9)).listings()).toBe(1);
+    const rotated = [...(await configs())].filter((config) => !before.has(config));
+    expect(rotated).toHaveLength(1);
+    expect(first.has(rotated[0]!)).toBe(false);
+    expect((await search(TOKEN_A, 7)).requests).toEqual([]);
+  });
 
   it("INV-5: an epoch replaced during the pre-connect read never serves the previous epoch's catalog", async () => {
     const d = await oauthDeployment();

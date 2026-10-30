@@ -366,6 +366,16 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
 });
 
 /** Extra headers are immutable code configuration, not another auth channel. */
+/**
+ * A configured URL as stored keys may show it: origin and path, with its
+ * userinfo, query and fragment set apart for the keyed digest. Undefined when
+ * it has none, so the URL keys as configured.
+ */
+function keyedParts(url: URL): { url: string; secrets: string[] } | undefined {
+  const secrets = [url.username, url.password, url.search, url.hash];
+  return secrets.some(Boolean) ? { url: `${url.origin}${url.pathname}`, secrets } : undefined;
+}
+
 function extraResourceHeaders(id: string, opts: RemoteMcpOptions): Readonly<Record<string, string>> | undefined {
   if (opts.headers === undefined) return undefined;
   const refuse = () =>
@@ -3217,30 +3227,44 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
       : undefined;
   // The configured values that can carry a secret: auth header values, a
-  // static client's secret, and the URL's userinfo, query and fragment. Stored
-  // keys see them only through one keyed digest, never as a plain hash, so no
-  // stored key checks a guessed secret offline. A connector without them keeps
-  // its keys unchanged.
+  // static client's secret, and the userinfo, query and fragment of every
+  // configured URL (the endpoint and a client metadata document). Stored keys
+  // see them only through one keyed digest and keep each URL's origin and path
+  // in the clear. A connector without them keeps its keys unchanged. The
+  // static client's issuer, the self-hosted client URL and the redirect URI
+  // admit no query, userinfo or fragment, so they carry none.
   const configuredUrl = new URL(opts.url);
-  const urlSecrets = [configuredUrl.username, configuredUrl.password, configuredUrl.search, configuredUrl.hash];
-  const keyedUrl = urlSecrets.some(Boolean) ? `${configuredUrl.origin}${configuredUrl.pathname}` : undefined;
+  const endpointKey = keyedParts(configuredUrl);
+  const metadataKey = clientMetadataUrl === undefined ? undefined : keyedParts(new URL(clientMetadataUrl));
   const configuredHeaders = opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers;
   const configSecrets =
-    keyedUrl !== undefined || configuredHeaders !== undefined || staticClient?.clientSecret !== undefined
-      ? JSON.stringify([keyedUrl ? urlSecrets : null, configuredHeaders ?? null, staticClient?.clientSecret ?? null])
+    endpointKey || metadataKey || configuredHeaders !== undefined || staticClient?.clientSecret !== undefined
+      ? JSON.stringify([
+          endpointKey?.secrets ?? null,
+          configuredHeaders ?? null,
+          staticClient?.clientSecret ?? null,
+          metadataKey?.secrets ?? null,
+        ])
       : undefined;
   const configSecretDigest = (ctx: ConnectorContext): Promise<string | undefined> =>
     configSecrets === undefined ? Promise.resolve(undefined) : secretDigest(ctx, configSecrets);
+  // A metadata URL excludes a static client, so the configured one is in use.
   const keyedOAuthConfigFor = (ctx: ConnectorContext) => {
     const config = oauthConfigFor(ctx);
-    return config && staticClient ? { ...config, client: { ...staticClient, clientSecret: undefined } } : config;
+    return (
+      config && {
+        ...config,
+        client: staticClient && { ...staticClient, clientSecret: undefined },
+        clientMetadataUrl: metadataKey?.url ?? config.clientMetadataUrl,
+      }
+    );
   };
   // The catalog cache's configuration, partition and sharing are derived the
   // same way for a connect and for a pre-connect cache read, so both address
   // exactly the same entries.
   const catalogConfigFor = (ctx: ConnectorContext, secrets: string | undefined) =>
     JSON.stringify({
-      url: keyedUrl ?? configuredUrl.href,
+      url: endpointKey?.url ?? configuredUrl.href,
       auth: opts.auth?.type ?? null,
       headers: secrets,
       ...(extraHeaders ? { extraHeaders } : {}),
@@ -3269,7 +3293,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     epoch: string,
   ) =>
     JSON.stringify([
-      keyedUrl ?? opts.url,
+      endpointKey?.url ?? opts.url,
       opts.versionNegotiation ?? "auto",
       opts.auth?.type,
       secrets,
