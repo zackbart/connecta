@@ -61,6 +61,8 @@ const ROOT_FILES = new Set([
 ]);
 const TEST_FILE = /^provider(?:\.[a-z][a-z0-9-]*)?(?:\.node)?\.test\.ts$/;
 const EVIDENCE_FILES = new Set(["openapi.json", "openapi.document.json", "value-safety.json", "review.md"]);
+/** Provider-local eval wiring, never shipped (eval/support/provider-eval.ts). */
+const EVAL_FILES = new Set(["fake.ts", "tasks.ts", "deploy.ts", "worker.ts"]);
 /** Evidence whose bytes `providers:generate` hashes into drift.json. */
 const KIND_FILES: Readonly<Record<string, { required: string[]; forbidden: string[] }>> = {
   api: { required: ["api.ts", "tools.ts"], forbidden: ["hosted.ts"] },
@@ -112,10 +114,16 @@ export function layoutViolations(provider: ProviderFacts): string[] {
       if (!ROOT_FILES.has(file) && !TEST_FILE.test(file)) found.push(`L1: ${file} is not a standard root file`);
     } else if (top === "lib") {
       if (!file.endsWith(".ts")) found.push(`L1: ${file}: lib/ holds TypeScript modules only`);
+    } else if (top === "eval") {
+      if (rest.length !== 1 || !EVAL_FILES.has(rest[0]!))
+        found.push(`L1: ${file}: eval/ holds only fake.ts, tasks.ts, deploy.ts and worker.ts`);
     } else if (top !== "evidence") {
-      found.push(`L1: ${top}/ is not evidence/ or lib/`);
+      found.push(`L1: ${top}/ is not evidence/, lib/ or eval/`);
     }
   }
+  const evals = ["fake.ts", "tasks.ts", "deploy.ts"].filter((file) => has(`eval/${file}`));
+  if (provider.files.some((file) => file.startsWith("eval/")) && evals.length !== 3)
+    found.push("L1: eval/ needs fake.ts, tasks.ts and deploy.ts together");
   const kind = KIND_FILES[provider.kind];
   if (!kind) found.push(`L2: kind "${provider.kind}" is not "api"`);
   for (const file of kind?.required ?? []) if (!has(file)) found.push(`L2: kind "${provider.kind}" needs ${file}`);
@@ -318,7 +326,18 @@ export function driftViolations(
 }
 
 /** G: SKILL.md carries agent-facing domain guidance only, rendered by the one guide renderer. */
-export function guideViolations(provider: ProviderFacts, documentation: string): string[] {
+/** Marks the setup skeleton `providers:generate` inserts for a provider with no providers.md section. */
+export const setupSkeleton = (name: string) => `<!-- provider-setup-skeleton: ${name} -->`;
+
+/**
+ * `skeleton` admits the generated setup skeleton, so `providers:generate` can
+ * write it; the standard suite then requires the section to be written.
+ */
+export function guideViolations(
+  provider: ProviderFacts,
+  documentation: string,
+  { skeleton = false }: { skeleton?: boolean } = {},
+): string[] {
   const found: string[] = [];
   const source = provider.read("SKILL.md") ?? "";
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
@@ -364,6 +383,9 @@ export function guideViolations(provider: ProviderFacts, documentation: string):
   }
   if (!documentation.split(/\r?\n/).includes(`## ${provider.display}`)) {
     found.push(`G7: documentation/providers.md has no "## ${provider.display}" section`);
+  }
+  if (!skeleton && documentation.includes(setupSkeleton(provider.name))) {
+    found.push(`G7: documentation/providers.md "## ${provider.display}" is still the generated setup skeleton`);
   }
   return found;
 }

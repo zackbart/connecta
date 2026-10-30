@@ -13,7 +13,7 @@ import { connectorGuide } from "../../src/skills.js";
 import { sentSecretsForRequest, redactAgentOutput } from "../../src/sent-secrets.js";
 import { configureGuardedTransport, guardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
 import { FakeGoogle, ALICE } from "../fakes/google.js";
-import { FakeGranola } from "../fakes/granola.js";
+import { FakeGranola } from "../../src/providers/granola/eval/fake.js";
 import { FakeQuickBooks } from "../fakes/quickbooks.js";
 import { QB_COMPANIES, QB_SECRET } from "../deploy/quickbooks.js";
 import {

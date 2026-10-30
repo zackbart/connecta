@@ -1,8 +1,9 @@
 /** Independent fake-only meeting state and physical HTTP ledger; no vendor account. */
-import { serveFetch, type Served } from "../support/serve.js";
-import type { Ledger } from "./service.js";
+import { serveFetch, type Served } from "../../../../eval/support/serve.js";
+import type { Ledger } from "../../../../eval/fakes/service.js";
 import { randomBytes } from "node:crypto";
-import { routeFakeVendor } from "./transport.js";
+import { routeFakeVendor } from "../../../../eval/fakes/transport.js";
+import type { ProviderFake } from "../../../../eval/support/provider-eval.js";
 
 /** Prefix of every world's key, so a leak check needs no per-world state. */
 export const GRANOLA_KEY = "grn_eval_workspace_83ab912f";
@@ -138,3 +139,22 @@ export class FakeGranola {
     return send({ error: "Not found" }, 404);
   }
 }
+
+export const evalFake: ProviderFake<FakeGranola> = {
+  create: (ledger) => new FakeGranola(ledger),
+  specs: (fake) => [
+    {
+      id: "granola",
+      title: "Granola",
+      description: "Workspace meetings",
+      url: fake.url,
+      credential: { label: "Workspace API key", value: fake.key },
+    },
+  ],
+  saved: (state) =>
+    Array.isArray(state.notes) &&
+    Array.isArray(state.transcript) &&
+    Array.isArray(state.spaces) &&
+    Array.isArray(state.folders) &&
+    !!state.privateNote,
+};

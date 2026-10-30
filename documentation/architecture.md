@@ -1593,7 +1593,10 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   Node/SQLite/QuickJS and native Workers/D1. It covers transcript-too-large
   recovery, empty intermediate pages, selected fields, withheld photo/credential
   values and shared-vault reuse after application reconstruction. No-op,
-  fabricated-read and erased-delivery controls must fail.
+  fabricated-read and erased-delivery controls must fail. Its fake, tasks and
+  deployment wiring live in `src/providers/granola/eval/`, unshipped;
+  `providers:generate` registers a provider's `eval/` wiring with the harness
+  (`eval/README.md`, provider-local eval wiring).
 - `test/identity-write-journey.node.test.ts` uses the existing Node deployment
   adapter, stateful MCP fake, SQLite vault and QuickJS to grade admitted human
   and machine identities, pool isolation, fail-closed discovery, endpoint and

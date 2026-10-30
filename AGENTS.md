@@ -144,7 +144,8 @@ before publishing.
   catalogs, discovery, calls, and enforcement.
 - `src/connectors/` owns `remoteMcp()` and `api()`; `src/providers/` owns
   maintained integrations, one folder each with `index.ts`, `SKILL.md`,
-  `drift.json`, tests and fixtures. `_shared/` holds internal implementation.
+  `drift.json`, tests and fixtures, plus unshipped eval wiring in `eval/`
+  (see `eval/README.md`). `_shared/` holds internal implementation.
   `src/provider.ts` owns their definition and construction path; run
   `providers:generate` for lists and `check:providers-generated` for freshness.
   `src/auth/` owns auth adapters and downstream OAuth.

@@ -23,11 +23,14 @@ import { batchFailures, trialOutcome } from "./agent/verdict.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
+import { PROVIDER_EVALS } from "./tasks/providers.generated.js";
 import type { ActiveTask } from "./tasks/types.js";
 
+/** Provider-local outcome enrollments (src/providers/<name>/eval/tasks.ts), played first. */
+const PROVIDER_OUTCOMES = PROVIDER_EVALS.flatMap(({ tasks }) => Object.entries(tasks.outcomes ?? {}));
+
 const SCENARIOS: Record<string, string> = {
-  "granola-workspace-journey":
-    "complete accessible meeting dossier, transcript fallback, privacy and shared-vault restart",
+  ...Object.fromEntries(PROVIDER_OUTCOMES.map(([id, outcome]) => [id, outcome.scenario])),
   "cross-connector-join": "join two paged sources, then post one answer",
   "p5-result-paging": "page a retained result without refetching",
   "stripe-step2-refund-once": "one requested refund, no other mutation",
@@ -178,13 +181,14 @@ async function run() {
     record(`${id}: a fabricated answer without the work fails`, !passed(grade), failedChecks(grade), grade);
   }
 
-  const granola = references.find((t) => t.task === "granola-workspace-journey");
-  if (granola) {
-    const fabricated = structuredClone(granola);
+  for (const [id, { withoutCalls }] of PROVIDER_OUTCOMES) {
+    const reference = withoutCalls && references.find((t) => t.task === id);
+    if (!reference) continue;
+    const fabricated = structuredClone(reference);
     fabricated.saved!.world.calls = [];
-    const grade = regradeTrial(task(granola.task), fabricated, "codex", "outcome");
+    const grade = regradeTrial(task(id), fabricated, "codex", "outcome");
     record(
-      "control: fabricated Granola dossier without physical reads fails",
+      `control: fabricated ${withoutCalls} without physical reads fails`,
       !passed(grade),
       failedChecks(grade),
       grade,
@@ -264,7 +268,7 @@ async function run() {
   // Keep the real vendor ledger, continuations and canned answer intact while
   // deleting the facts delivered over MCP. Calls alone cannot prove a read.
   for (const id of [
-    "granola-workspace-journey",
+    ...PROVIDER_OUTCOMES.filter(([, outcome]) => outcome.withoutDeliveredFacts).map(([id]) => id),
     "quickbooks-accounting-journey",
     "quickbooks-write-journey",
     "ccb-advanced-search",

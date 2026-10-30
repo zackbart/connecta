@@ -45,7 +45,8 @@
         "src/providers/planning-center/fixtures.ts",
         // The eval harness: CLI entries, plus the Worker entries wrangler loads.
         "eval/*.ts",
-        "eval/deploy/worker-*.ts"
+        "eval/deploy/worker-*.ts",
+        "src/providers/*/eval/worker.ts"
       ],
       "project": [
         "src/**/*.ts",
