@@ -226,7 +226,10 @@ export const connectorHealthKeys = {
     validateStorageKey(`connector-health:v1:${connectorId}:${partitionDigest}:status`),
 } as const satisfies Keyed;
 
-/** SDK catalog response cache, complete manifests published after their chunks. */
+/**
+ * SDK catalog response cache, complete manifests published after their chunks.
+ * Secret-bearing inputs reach these keys only through `secretDigest`.
+ */
 export const responseCacheKeys = {
   family: {
     name: "response-cache",
@@ -449,7 +452,7 @@ export const verificationKeys = {
   record: "verification:v1",
 } as const satisfies Keyed;
 
-/** A bounded, credential-partitioned downstream protocol verdict. */
+/** A bounded, credential-partitioned downstream protocol verdict, keyed through `secretDigest`. */
 export const NEGOTIATION_TTL_SECONDS = 300;
 /**
  * A legacy verdict lives longer: a server that upgrades still answers the
