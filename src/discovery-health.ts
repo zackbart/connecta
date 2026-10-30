@@ -10,8 +10,9 @@
 // describe and calls still reach the connector.
 //
 // Records sit beside the catalog cache, in its store and owner partition:
-// principal, subject, caller identity and pool, endpoint, the connector's
-// described configuration and the package version (INV-4, INV-5). Each record
+// principal, subject, caller identity and pool, origin, the admitted endpoint,
+// the connector's described configuration, a digest of its effective options
+// and the package version (INV-4, INV-5). Each record
 // also carries the connector's catalog invalidation generation as it was when
 // written. A credential change, OAuth connect or disconnect, or operator
 // invalidation rotates that generation, so every partition's record lapses at
@@ -19,8 +20,8 @@
 // starts nothing (INV-10).
 //
 // After its retry time a record lingers, so exactly one request can claim the
-// next probe by compare-and-set; the others keep skipping until that probe
-// settles or its claim lapses. A success, or an auth failure that proves the
+// next probe by compare-and-set as it dispatches it; the others keep skipping
+// until that probe settles or its lease lapses. A success, or an auth failure that proves the
 // connector answers, clears the record. A fast failure is not recorded:
 // asking again costs the next search nothing. Caller cancellation and a probe cut
 // short by the discovery budget record nothing.
@@ -37,6 +38,7 @@ import { storageCompareAndSet, storageGetMany, storageSet } from "./runtime/stor
 import { connectorHealthKeys, CONNECTOR_HEALTH_LINGER_MS, responseCacheKeys } from "./storage/keys.js";
 import type { Connector, KVStorage, Logger } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
+import { effectiveConfigOf } from "./connector-fingerprint.js";
 
 /** How long unscoped search skips a connector after a failed discovery. */
 const DISCOVERY_RETRY_MS = 60_000;
@@ -98,23 +100,43 @@ function encodeFact(fact: HealthFact): { raw: string; expiresAtMs: number } {
   return { raw: JSON.stringify(fact), expiresAtMs: Math.ceil(fact.retryAt + CONNECTOR_HEALTH_LINGER_MS) };
 }
 
-// A connector's described configuration, digested once per connector object.
+// A connector's configuration, digested once per connector object: what it
+// describes, plus its effective options with the values `describe()` leaves
+// out (configured header values, URL queries), so rotating a configured
+// credential or redeploying changed options moves every record to a new key.
+// Only the digest is kept; the options never reach storage.
 const configDigests = new WeakMap<Connector, Promise<string>>();
 function configDigest(connector: Connector): Promise<string> {
   let digest = configDigests.get(connector);
   if (!digest) {
-    let described: unknown = null;
-    try {
-      described = connector.describe?.() ?? null;
-    } catch {
-      described = null;
-    }
+    const read = (value: () => unknown) => {
+      try {
+        return canonicalJson(value() ?? null);
+      } catch {
+        return null;
+      }
+    };
     digest = sha256Hex(
-      canonicalJson([CONNECTA_VERSION, connector.kind ?? null, connector.authScope ?? null, described]),
+      JSON.stringify([
+        CONNECTA_VERSION,
+        connector.kind ?? null,
+        connector.authScope ?? null,
+        read(() => connector.describe?.()),
+        read(() => effectiveConfigOf(connector)),
+      ]),
     );
     configDigests.set(connector, digest);
   }
   return digest;
+}
+
+// The endpoint a request was admitted at (plain `/mcp`, a pool, an agent
+// path). The same person and pool can reach one connector through several,
+// and each keeps its own records.
+const endpoints = new WeakMap<object, string>();
+/** Bind the admitted endpoint to a request scope, before any discovery runs in it. */
+export function bindDiscoveryEndpoint(requestScope: object, endpoint: string): void {
+  endpoints.set(requestScope, endpoint);
 }
 
 /** The record's address for one connector in this view's owner partition. */
@@ -132,7 +154,9 @@ function slotAddress(
     const { storage, partition } = catalogOwnerPartition(ctx);
     if (!storage) return Effect.succeed(undefined);
     return Effect.promise(async () => {
-      const digest = await sha256Hex(JSON.stringify([partition, await configDigest(connector)]));
+      const digest = await sha256Hex(
+        JSON.stringify([partition, endpoints.get(requestScope) ?? null, await configDigest(connector)]),
+      );
       return {
         storage,
         key: connectorHealthKeys.discovery(id, digest),
@@ -144,9 +168,9 @@ function slotAddress(
 }
 
 /**
- * Each connector's verdict for this discovery, in `ids` order. With `skip`,
- * a current record skips its connector and an expired one is claimed for
- * `claimMs` so that only this request probes it. Without `skip` every
+ * Each connector's verdict for this discovery, in `ids` order. With `skip`, a
+ * record of the current generation comes back as `skip`: current until its
+ * `retryAt`, claimable at dispatch once that has passed. Without `skip` every
  * connector is probed and the slot only settles the record afterwards. A
  * storage failure is a probe with no slot: health never fails discovery.
  */
@@ -155,7 +179,7 @@ export function readDiscoveryHealth(
   ids: readonly string[],
   baseUrl: string,
   requestScope: object,
-  options: { skip: boolean; claimMs: number },
+  options: { skip: boolean },
 ): Effect.Effect<HealthVerdict[]> {
   return Effect.gen(function* () {
     const addresses = yield* Effect.forEach(ids, (id) => slotAddress(registry, id, baseUrl, requestScope), {
@@ -193,26 +217,36 @@ export function readDiscoveryHealth(
           raw: values[position * 2] ?? null,
         };
         const fact = parseFact(slot.raw);
-        const now = Date.now();
-        if (!options.skip || !fact || fact.generation !== slot.generation) {
-          verdicts[index] = { slot };
-        } else if (fact.retryAt > now) {
-          verdicts[index] = { slot, skip: { code: fact.code, retryAt: fact.retryAt } };
-        } else {
-          // Half-open: one request claims the next probe; the rest keep skipping.
-          const claim = encodeFact({ ...fact, retryAt: now + options.claimMs });
-          const claimed = yield* storageCompareAndSet(slot.key, slot.raw, claim.raw, {
-            expiresAtMs: claim.expiresAtMs,
-          }).pipe(
-            Effect.provideService(Storage, storage),
-            Effect.catchCause(() => Effect.succeed(false)),
-          );
-          if (claimed) slot.raw = claim.raw;
-          verdicts[index] = claimed ? { slot } : { slot, skip: { code: fact.code, retryAt: now + options.claimMs } };
-        }
+        verdicts[index] =
+          !options.skip || !fact || fact.generation !== slot.generation
+            ? { slot }
+            : { slot, skip: { code: fact.code, retryAt: fact.retryAt } };
       }
     }
     return verdicts;
+  });
+}
+
+/**
+ * Claim the probe of a record whose retry time has passed, as the probe is
+ * dispatched: one compare-and-set against the record this request read, with
+ * a lease that outlasts the probe and its settlement. Others keep skipping
+ * until the lease lapses or the probe settles. False when another request
+ * holds it, or the record changed.
+ */
+export function claimDiscoveryProbe(slot: HealthSlot, leaseMs: number): Effect.Effect<boolean> {
+  return Effect.suspend(() => {
+    const fact = parseFact(slot.raw);
+    if (!fact) return Effect.succeed(slot.raw === null);
+    const claim = encodeFact({ ...fact, retryAt: Date.now() + leaseMs });
+    return storageCompareAndSet(slot.key, slot.raw, claim.raw, { expiresAtMs: claim.expiresAtMs }).pipe(
+      Effect.provideService(Storage, slot.storage),
+      Effect.map((claimed) => {
+        if (claimed) slot.raw = claim.raw;
+        return claimed;
+      }),
+      Effect.catchCause(() => Effect.succeed(false)),
+    );
   });
 }
 

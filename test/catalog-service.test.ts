@@ -12,6 +12,10 @@ import { openRequest } from "../src/runtime/call.js";
 import type { ToolDef } from "../src/types.js";
 import { ConnectorCallError } from "../src/errors.js";
 import type { RegistryView } from "../src/registry.js";
+import type { KVStorage } from "../src/types.js";
+import { bindDiscoveryEndpoint } from "../src/discovery-health.js";
+import { effectiveConfigOf, registerEffectiveConfig } from "../src/connector-fingerprint.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeRegistry } from "./helpers.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -486,14 +490,14 @@ describe("discovery health across requests", () => {
       { storage },
     );
     // One at a time: the first spends its deadline, the second gets what
-    // remains of the budget, and the third never starts.
+    // remains of the budget less the settlement slice, and the third never starts.
     const { page, ms } = await searchOnce(
       registry,
       { query: "read" },
-      { probeTimeoutMs: 150, discoveryBudgetMs: 200, concurrency: 1 },
+      { probeTimeoutMs: 150, discoveryBudgetMs: 300, concurrency: 1 },
     );
-    expect(ms).toBeGreaterThanOrEqual(190);
-    expect(ms).toBeLessThan(400);
+    expect(ms).toBeGreaterThanOrEqual(250);
+    expect(ms).toBeLessThan(450);
     expect(page.catalogErrors.map((error) => error.code)).toEqual(["timeout", "timeout", "timeout"]);
     expect(states.map((state) => state.listings)).toEqual([1, 1, 0]);
     expect(await storage.list("connector-health:v1:hung0:")).toHaveLength(1);
@@ -519,5 +523,136 @@ describe("discovery health across requests", () => {
     const probed = pages.filter(({ page }) => page.catalogErrors.length === 0);
     expect(probed).toHaveLength(1);
     expect(await storage.list("connector-health:v1:hung:")).toEqual([]);
+  });
+
+  it("measures each probe's own time, so a fast failure beside a slow timeout is not recorded", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    let flaky = 0;
+    const failing = connectorWith({
+      id: "flaky",
+      tools: async () => {
+        flaky++;
+        throw new ConnectorCallError("unavailable", "Upstream returned 503.");
+      },
+    });
+    const registry = makeRegistry([hangingConnector("hung", state), failing, healthy], { storage });
+    // The hung probe takes over a second; the 503 answers at once beside it.
+    await searchOnce(registry, { query: "read" }, { probeTimeoutMs: 1_100 });
+    const second = await searchOnce(registry, { query: "read" }, { probeTimeoutMs: 1_100 });
+    expect(flaky).toBe(2);
+    expect(state.listings).toBe(1);
+    expect(await storage.list("connector-health:v1:flaky:")).toEqual([]);
+    expect(second.page.catalogErrors.find((error) => error.connector === "flaky")?.message).toBe(
+      'Connector "flaky" catalog lookup failed (unavailable).',
+    );
+  });
+
+  it("claims a lapsed record as its probe is dispatched, with a lease that outlasts the probe", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    // Six steady catalogs ahead of it, one at a time, delay the hung one's
+    // dispatch past a claim taken when health was read.
+    const steady = Array.from({ length: 6 }, (_, index) =>
+      connectorWith({
+        id: `steady${index}`,
+        tools: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          return [{ name: "read_steady", annotations: { readOnlyHint: true } }];
+        },
+      }),
+    );
+    const registry = makeRegistry([...steady, hangingConnector("hung", state)], { storage });
+    const options = { probeTimeoutMs: 400, concurrency: 1 };
+    await searchOnce(registry, { query: "read" }, options);
+    expect(state.listings).toBe(1);
+    const [key] = await storage.list("connector-health:v1:hung:");
+    const record = JSON.parse((await storage.get(key!))!);
+    await storage.set(key!, JSON.stringify({ ...record, retryAt: Date.now() - 1 }), {
+      expiresAtMs: Date.now() + 60_000,
+    });
+    // A reaches the hung connector after about 1.5 s and probes it for 0.4 s.
+    // B reads health while that probe runs, past when a read-time claim
+    // (the probe deadline plus a second) would have lapsed.
+    const first = searchOnce(registry, { query: "read" }, options);
+    await new Promise((resolve) => setTimeout(resolve, 1_650));
+    const second = await searchOnce(registry, { query: "read" }, options);
+    await first;
+    expect(state.listings).toBe(2);
+    expect(second.page.catalogErrors.find((error) => error.connector === "hung")?.message).toContain("was skipped");
+  }, 15_000);
+
+  it("keeps records apart when a connector's effective configuration changes, without storing it", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    // Two deployments of one connector whose described shape is identical:
+    // only a configured credential differs, which describe() leaves out.
+    const build = (token: string) => {
+      const connector = hangingConnector("hung", state);
+      registerEffectiveConfig(connector, () => ({ headers: { Authorization: `Bearer ${token}` } }));
+      return connector;
+    };
+    await searchOnce(makeRegistry([build("first-secret"), healthy], { storage }), { query: "read" });
+    expect(state.listings).toBe(1);
+    const rotated = makeRegistry([build("second-secret"), healthy], { storage });
+    await searchOnce(rotated, { query: "read" });
+    expect(state.listings).toBe(2);
+    const keys = await storage.list("connector-health:v1:hung:");
+    expect(keys).toHaveLength(2);
+    for (const key of keys) {
+      expect(key).not.toContain("secret");
+      expect(await storage.get(key)).not.toContain("secret");
+    }
+    // The real builders register their options, header values included.
+    const remote = (token: string) =>
+      remoteMcp("crm", {
+        url: "https://crm.example/mcp",
+        auth: { type: "headers", headers: { Authorization: `Bearer ${token}` } },
+      });
+    expect(JSON.stringify(effectiveConfigOf(remote("one")))).not.toBe(JSON.stringify(effectiveConfigOf(remote("two"))));
+  });
+
+  it("INV-4: keeps one admitted endpoint's record from skipping the connector on another", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+    // The same caller and pool, admitted at plain /mcp and at /mcp/notes.
+    const at = (endpoint: string) => {
+      const requestScope = {};
+      bindDiscoveryEndpoint(requestScope, endpoint);
+      return { requestScope };
+    };
+    await searchOnce(registry, { query: "read" }, at('["default",null]'));
+    await searchOnce(registry, { query: "read" }, at('["default",null]'));
+    expect(state.listings).toBe(1);
+    const other = await searchOnce(registry, { query: "read" }, at('["pool","notes"]'));
+    expect(state.listings).toBe(2);
+    expect(other.page.catalogErrors[0]?.message).not.toContain("was skipped");
+  });
+
+  it("bounds health storage by the discovery budget, reads and settlement writes alike", async () => {
+    const backing = memoryStorage();
+    const slow = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // A plain adapter, so every health read and write pays the delay.
+    const storage: KVStorage = {
+      capabilities: backing.capabilities,
+      get: async (key) =>
+        key.startsWith("connector-health:") ? (await slow(250), backing.get(key)) : backing.get(key),
+      set: async (key, value, opts) => {
+        if (key.startsWith("connector-health:")) await slow(250);
+        return backing.set(key, value, opts);
+      },
+      delete: (key) => backing.delete(key),
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, opts) => backing.compareAndSet(key, expected, next, opts),
+    };
+    const state = { healthy: false, listings: 0 };
+    const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+    const read = await searchOnce(registry, { query: "read" }, { discoveryBudgetMs: 50 });
+    expect(read.ms).toBeLessThan(200);
+    // Reads within budget, then a timed-out probe whose write would outlast it.
+    const write = await searchOnce(registry, { query: "read" }, { probeTimeoutMs: 100, discoveryBudgetMs: 600 });
+    expect(write.ms).toBeLessThan(800);
+    expect(write.page.entries.map((entry) => entry.tool.address)).toEqual(["notes.read_note"]);
   });
 });

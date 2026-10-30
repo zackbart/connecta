@@ -156,6 +156,7 @@ import {
 import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
 import { recordRequestField } from "../provider-call-facts.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
+import { registerEffectiveConfig } from "../connector-fingerprint.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
@@ -4825,5 +4826,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     );
   if (isOauth) withStoredAuth(connector, (ctx) => newProvider(ctx).storedAuthorization());
   if (principalPolicy) tagPrincipalForwarding(connector);
+  registerEffectiveConfig(connector, () => opts);
   return connector;
 }

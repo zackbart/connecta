@@ -34,7 +34,12 @@ import {
   UNSCOPED_DISCOVERY_BUDGET_MS,
   UNSCOPED_PROBE_TIMEOUT_MS,
 } from "./timeout.js";
-import { readDiscoveryHealth, settleDiscoveryHealth, type HealthVerdict } from "./discovery-health.js";
+import {
+  claimDiscoveryProbe,
+  readDiscoveryHealth,
+  settleDiscoveryHealth,
+  type HealthVerdict,
+} from "./discovery-health.js";
 import type { Connector, JsonSchema, ToolDef } from "./types.js";
 import { keepErrorName } from "./redaction-identity.js";
 import { operationVocabularyMatches } from "./operation-vocabulary.js";
@@ -43,8 +48,13 @@ import { operationVocabularyMatches } from "./operation-vocabulary.js";
 interface SearchProbe {
   id: string;
   result: Result.Result<ToolDef[], unknown>;
-  settle?: { timeoutError: Error; started: number };
+  settle?: { timeoutError: Error; elapsedMs: number };
 }
+
+/** The slice of an unscoped search's budget kept for recording what its probes saw. */
+const SETTLE_RESERVE_MS = 500;
+/** How long a probe claim outlives its probe and settlement, against clock skew. */
+const CLAIM_MARGIN_MS = 1_000;
 
 /** A connector unscoped search skipped because its discovery failed recently. */
 class DiscoverySkipped extends Error {
@@ -870,9 +880,12 @@ export class CatalogService {
   // probe deadline, reads its health record beside the probe, and settles it
   // after. An unscoped search reads health first, skips a connector whose
   // discovery failed recently, probes the rest under a shorter deadline, and
-  // ends the whole fan-out within one discovery budget: a probe that starts
-  // late gets only what remains. Caller cancellation and a probe the budget
-  // cut short leave health as it was.
+  // settles each record as its probe ends. One discovery budget bounds all of
+  // it, health storage included: a probe that starts late gets only what
+  // remains less a slice kept for settling, and health I/O that outlasts the
+  // budget is abandoned as unknown. A lapsed record is claimed as its probe is
+  // dispatched, with a lease that outlasts the probe and its settlement.
+  // Caller cancellation and a probe the budget cut short leave health as it was.
   private searchCatalogs(
     ids: readonly string[],
     scoped: boolean,
@@ -880,57 +893,38 @@ export class CatalogService {
     return Effect.gen({ self: this }, function* () {
       const deadline = scoped ? this.probeTimeoutMs : Math.min(this.probeTimeoutMs, UNSCOPED_PROBE_TIMEOUT_MS);
       const budgetEnd = scoped ? Infinity : Date.now() + this.discoveryBudgetMs;
+      const settleReserve = scoped ? 0 : Math.min(SETTLE_RESERVE_MS, Math.floor(this.discoveryBudgetMs / 10));
+      // Health storage under what remains of the budget and the request's
+      // signal. Running out is not a failure: health is then unknown.
+      const withinBudget = <A>(io: Effect.Effect<A>, unknown: A): Effect.Effect<A> =>
+        Effect.suspend(() => {
+          const remaining = Math.ceil(budgetEnd - Date.now());
+          if (remaining <= 0 || this.requestSignal?.aborted) return Effect.succeed(unknown);
+          return withDeadlineEffect(() => io, {
+            ...(this.requestSignal ? { signal: this.requestSignal } : {}),
+            ...(Number.isFinite(remaining) ? { timeoutMs: remaining } : {}),
+            timeoutError: new Error("Discovery health storage outlasted the discovery budget."),
+          }).pipe(Effect.catch(() => Effect.succeed(unknown)));
+        });
       // A skip that has lapsed is read again, so this request can claim the probe.
       const unread = ids.filter((id) => {
         const known = this.health.get(id);
         return !known || (!scoped && known.skip !== undefined && known.skip.retryAt <= Date.now());
       });
       const readHealth = Effect.map(
-        readDiscoveryHealth(this.registry, unread, this.baseUrl, this.requestScope, {
-          skip: !scoped,
-          claimMs: deadline + 1_000,
-        }),
+        withinBudget(
+          readDiscoveryHealth(this.registry, unread, this.baseUrl, this.requestScope, { skip: !scoped }),
+          unread.map((): HealthVerdict => ({})),
+        ),
         (read) => unread.forEach((id, index) => this.health.set(id, read[index]!)),
       );
-      const probeOne = (id: string): Effect.Effect<SearchProbe> =>
-        Effect.suspend(() => {
-          const skip = scoped ? undefined : this.health.get(id)?.skip;
-          const now = Date.now();
-          if (skip && skip.retryAt > now)
-            return Effect.succeed({
-              id,
-              result: Result.fail(new DiscoverySkipped(skip.code, Math.ceil(skip.retryAt - now))),
-            });
-          const remaining = Math.ceil(budgetEnd - now);
-          const budgetCut = remaining < deadline;
-          const timeoutError = budgetCut
-            ? new ConnectorCallError(
-                "timeout",
-                `${this.searchRoute} stopped probing "${id}" at the ${this.discoveryBudgetMs}ms discovery budget`,
-              )
-            : new ConnectorCallError("timeout", `${this.searchRoute} probe of "${id}" timed out after ${deadline}ms`);
-          if (remaining <= 0) return Effect.succeed({ id, result: Result.fail(timeoutError) });
-          return Effect.map(
-            Effect.result(this.probe(id, false, budgetCut ? remaining : deadline, timeoutError)),
-            (result): SearchProbe =>
-              budgetCut && Result.isFailure(result) && result.failure === timeoutError
-                ? { id, result }
-                : { id, result, settle: { timeoutError, started: now } },
-          );
-        });
-      const probed = scoped
-        ? (yield* Effect.all([readHealth, Effect.forEach(ids, probeOne, { concurrency: this.concurrency })], {
-            concurrency: 2,
-          }))[1]
-        : yield* Effect.andThen(readHealth, Effect.forEach(ids, probeOne, { concurrency: this.concurrency }));
-      // Settle what each probe saw. Only probes record; a cancelled request records nothing.
-      yield* Effect.forEach(
-        probed,
-        (outcome) => {
-          const slot = this.health.get(outcome.id)?.slot;
-          const { result, settle } = outcome;
-          if (!settle || !slot || this.requestSignal?.aborted) return Effect.void;
-          return Effect.map(
+      // Record what one probe saw, unless the caller left.
+      const settleOne = (outcome: SearchProbe): Effect.Effect<void> => {
+        const slot = this.health.get(outcome.id)?.slot;
+        const { result, settle } = outcome;
+        if (!settle || !slot || this.requestSignal?.aborted) return Effect.void;
+        return Effect.map(
+          withinBudget(
             settleDiscoveryHealth(
               slot,
               Result.isSuccess(result)
@@ -939,14 +933,78 @@ export class CatalogService {
                     ok: false,
                     failure: result.failure,
                     timedOut: result.failure === settle.timeoutError,
-                    elapsedMs: Date.now() - settle.started,
+                    elapsedMs: settle.elapsedMs,
                   },
             ),
-            (settled) => void this.health.set(outcome.id, settled),
-          );
-        },
-        { concurrency: "unbounded" },
+            undefined,
+          ),
+          (settled) => {
+            if (settled) this.health.set(outcome.id, settled);
+          },
+        );
+      };
+      const probeOne = (id: string): Effect.Effect<SearchProbe> =>
+        Effect.gen({ self: this }, function* () {
+          const verdict = scoped ? undefined : this.health.get(id);
+          const skip = verdict?.skip;
+          if (skip && skip.retryAt > Date.now())
+            return {
+              id,
+              result: Result.fail(new DiscoverySkipped(skip.code, Math.ceil(skip.retryAt - Date.now()))),
+            };
+          const timeoutFor = (remaining: number) => {
+            const budgetCut = remaining < deadline;
+            return {
+              budgetCut,
+              timeoutMs: budgetCut ? remaining : deadline,
+              timeoutError: budgetCut
+                ? new ConnectorCallError(
+                    "timeout",
+                    `${this.searchRoute} stopped probing "${id}" at the ${this.discoveryBudgetMs}ms discovery budget`,
+                  )
+                : new ConnectorCallError(
+                    "timeout",
+                    `${this.searchRoute} probe of "${id}" timed out after ${deadline}ms`,
+                  ),
+            };
+          };
+          let plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));
+          if (plan.timeoutMs <= 0) return { id, result: Result.fail(plan.timeoutError) };
+          // A lapsed record: claim this probe now, as it is dispatched.
+          if (skip && verdict?.slot) {
+            const leaseMs = plan.timeoutMs + settleReserve + CLAIM_MARGIN_MS;
+            const claimed = yield* withinBudget(claimDiscoveryProbe(verdict.slot, leaseMs), false);
+            if (!claimed) {
+              const retryAt = Date.now() + leaseMs;
+              this.health.set(id, { slot: verdict.slot, skip: { code: skip.code, retryAt } });
+              return { id, result: Result.fail(new DiscoverySkipped(skip.code, leaseMs)) };
+            }
+            this.health.set(id, { slot: verdict.slot });
+            plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));
+            if (plan.timeoutMs <= 0) return { id, result: Result.fail(plan.timeoutError) };
+          }
+          const started = Date.now();
+          const result = yield* Effect.result(this.probe(id, false, plan.timeoutMs, plan.timeoutError));
+          // Elapsed time is this probe's own, measured as it settles.
+          const elapsedMs = Date.now() - started;
+          const outcome: SearchProbe =
+            plan.budgetCut && Result.isFailure(result) && result.failure === plan.timeoutError
+              ? { id, result }
+              : { id, result, settle: { timeoutError: plan.timeoutError, elapsedMs } };
+          if (scoped) return outcome;
+          yield* settleOne(outcome);
+          return { id, result };
+        });
+      if (!scoped) {
+        yield* readHealth;
+        const probed = yield* Effect.forEach(ids, probeOne, { concurrency: this.concurrency });
+        return probed.map((outcome) => outcome.result);
+      }
+      const [, probed] = yield* Effect.all(
+        [readHealth, Effect.forEach(ids, probeOne, { concurrency: this.concurrency })],
+        { concurrency: 2 },
       );
+      yield* Effect.forEach(probed, settleOne, { concurrency: "unbounded" });
       return probed.map((outcome) => outcome.result);
     });
   }

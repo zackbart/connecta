@@ -647,33 +647,52 @@ always sends a live `tools/list` that bypasses the cache in both directions.
 
 **Discovery health.** An unscoped search (`search_tools` or `connecta.search`
 without `connector`) probes each connector for at most 5,000 ms, or
-`discovery.probeTimeoutMs` when that is shorter, and its whole fan-out ends
-within a 9,000 ms discovery budget: a probe that starts late gets only what
-remains, and one that cannot start reports `timeout`. A scoped search,
+`discovery.probeTimeoutMs` when that is shorter, and the whole search, health
+storage included, ends within a 9,000 ms discovery budget. A tenth of the
+budget, at most 500 ms, is kept for recording outcomes: a probe that starts
+late gets only what remains before that slice, and one that cannot start
+reports `timeout`. Health reads, claims and writes run under what remains of
+the budget and the request's signal; one that outlasts it is abandoned as
+unknown, never finished after the response. A scoped search,
 `connecta.describe`, native `tools/list` and tool calls keep the full
 `discovery.probeTimeoutMs`. A probe that times out on its own deadline, or a
-retryable failure that took at least one second or named its own wait, writes
-a record in the `connector-health:v1:` family: the connecta classification
-code, observation time, retry time (60 seconds later, or the downstream's
-shorter named wait, at least one second), and the connector's catalog
-invalidation generation. Records hold no downstream text, tools, arguments or
-credentials. Each is keyed by connector id and a digest of the catalog owner
-partition (principal, subject, caller identity and pool, endpoint and public
-URL), the connector's described configuration and the package version, so one
-owner's record never skips another owner's search. Until its retry time an
-unscoped search skips that connector and reports it in `catalogErrors` with
-the recorded code, `retryable: true`, `retryAfterMs`, and a fixed message that
-names the scoped search to try it now; no tools from the failed walk are ever
-served. A scoped search still probes and settles the record. A record whose
-generation no longer matches lapses, so a credential change, OAuth connect or
-disconnect, or operator invalidation clears every partition at once. A success,
-or an auth or permission failure that shows the connector answers, clears the
-record this request saw. Caller cancellation, a probe the budget cut short, a
-fast failure, and a non-retryable failure record nothing. After its retry time a
-record lingers for 60 seconds: one request claims the next probe by
-compare-and-set and the others keep skipping until it settles or its claim
-lapses. Health reads are one `getMany` per unscoped search, made once per
-request; a health storage failure is logged and never fails discovery.
+retryable failure that itself took at least one second or named its own wait,
+writes a record in the `connector-health:v1:` family: the connecta
+classification code, observation time, retry time (60 seconds later, or the
+downstream's shorter named wait, at least one second), and the connector's
+catalog invalidation generation. Each probe's time is its own, measured as it
+settles. Records hold no downstream text, tools, arguments or credentials.
+Each is keyed by connector id and a digest of the catalog owner partition
+(principal, subject, caller identity and pool, origin and public URL), the
+admitted endpoint (plain `/mcp`, `/mcp/<pool>` or `/agent/<pool>`), the
+connector's described configuration, a digest of its effective options and
+the package version. The effective options include what `describe()` leaves
+out, such as configured header values and URL queries, so rotating a
+configured credential or redeploying changed options moves to a fresh record;
+only the digest reaches storage. One owner's or endpoint's record never skips
+another's search. Until its retry time an unscoped search skips that connector
+and reports it in `catalogErrors` with the recorded code, `retryable: true`,
+`retryAfterMs`, and a fixed message that names the scoped search to try it
+now; no tools from the failed walk are ever served. A scoped search still
+probes and settles the record. A record whose generation no longer matches
+lapses, so a vault credential change, OAuth connect or disconnect, or operator
+invalidation clears every partition at once. A success, or an auth or
+permission failure that shows the connector answers, clears the record this
+request saw. Caller cancellation, a probe the budget cut short, a fast
+failure, and a non-retryable failure record nothing. After its retry time a
+record lingers for 60 seconds: the request that dispatches the next probe
+claims it by compare-and-set, with a lease covering that probe's deadline, the
+settlement slice and a second; the others keep skipping until it settles or
+the lease lapses. Health reads are one `getMany` per unscoped search, made
+once per request; a health storage failure is logged and never fails
+discovery.
+
+A healthy connector whose complete catalog always takes longer than 5 seconds
+to list can therefore stay out of unscoped discovery: each unscoped probe
+times out and records it. A scoped search, or any operation with the longer
+`discovery.probeTimeoutMs` deadline that completes the listing (describe, a
+tool call), warms a reusable complete catalog that later unscoped searches
+read without the slow listing, and a success clears the record.
 
 `discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
 listings without `ttlMs`. Positive hints are bounded by
