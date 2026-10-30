@@ -8,6 +8,7 @@ import { expect, vi } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
+import { GUEST_FUNCTIONS } from "../src/guest-functions.js";
 import { createMetaTools, type ToolResult } from "../src/meta-tools.js";
 import { downstreamSkillUri } from "../src/skills.js";
 import { createConnecta } from "../src/index.js";
@@ -1752,6 +1753,10 @@ export const CONTRACT_CASES: ContractCase[] = [
     'const page = connecta.search({ query: "read" });\nreturn page.tools.map((tool) => tool.address);',
     'const { tools } = connecta.describe("reader.read");\nreturn tools.length;',
     'for (const tool of (await connecta.search({ query: "read" }).tools)) return tool;',
+    // Every registry function that spends a host call, aliases included.
+    ...GUEST_FUNCTIONS.flatMap((fn) =>
+      fn.budget === "hostCall" ? [fn.name, ...("alias" in fn ? [fn.alias.name] : [])] : [],
+    ).map((name) => `return connecta.${name}().data.length;`),
   ].map((source): ContractCase => ({
     clauses: "E6",
     name: `INV-6: program errors name a missing await in ${source.split("\n")[0]}`,
@@ -3302,7 +3307,12 @@ return fs;
       const result = record(outcome);
       // Both executors expose the same finite namespace without inherited members.
       expect(result.inheritedType).toBe("undefined");
-      expect(result.methods).toEqual(["call", "describe", "emit", "read", "result", "search", "skill", "skills"]);
+      // The registry's public functions and aliases, and nothing else.
+      expect(result.methods).toEqual(
+        GUEST_FUNCTIONS.flatMap((fn) =>
+          fn.budget === "once" ? [] : [fn.name, ...("alias" in fn ? [fn.alias.name] : [])],
+        ).sort(),
+      );
       expect(result.frozen).toBe(true);
       for (const removed of ["ui", "batch", "__callNamespace"]) {
         expect(String(result[removed]).length).toBeGreaterThan(0);
