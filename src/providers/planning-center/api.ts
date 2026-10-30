@@ -1,4 +1,4 @@
-import { Routes } from "../../agent-routes.js";
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { asArray, asRecord } from "../_shared/json.js";
 import { Effect, Schema } from "effect";
 import type { GuardedRequest } from "../../connectors/guarded-fetch.js";
@@ -73,7 +73,7 @@ export const authenticate = Effect.gen(function* () {
   if (!applicationId || !secret) {
     return yield* fail(
       "auth_required",
-      `No Planning Center personal access token is configured for this connector; it needs both the Application ID and the Secret. Call ${routes.authorize} for recovery options. When available, an operator can add the token in this connection in the operator UI.`,
+      `No Planning Center personal access token is configured for this connector; it needs both the Application ID and the Secret. ${routePhrases(routes).authorizeFor("recovery options")}. When available, an operator can add the token in this connection in the operator UI.`,
     );
   }
   // HTTP Basic is `id:secret` in Latin-1 base64. A colon in the id, or any

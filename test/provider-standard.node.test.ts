@@ -545,12 +545,12 @@ describe("the provider standard's rules", () => {
         path === "lib/notes.ts" ? text : path === "skill.generated.ts" ? "Approaching execute_code's limit" : "",
     });
     expect(routeNameViolations(facts('const hint = "Raise it for a direct call_tool read";'))).toEqual([
-      "S7: lib/notes.ts spells call_tool; build it from routesOf(ctx), Routes or routeDescription",
+      "S7: lib/notes.ts spells call_tool; build it from routePhrases, Routes or routeDescription",
     ]);
     expect(
       routeNameViolations(
         facts(
-          "// Programs reach execute_code's bridge.\nconst hint = `Raise it for a direct ${routesOf(ctx).read} read`;",
+          "// Programs reach execute_code's bridge.\nconst hint = `Raise it for a direct ${routePhrases(ctx).onlyDirectRead}`;",
         ),
       ),
     ).toEqual([]);

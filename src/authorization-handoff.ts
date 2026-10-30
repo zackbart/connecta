@@ -1,4 +1,4 @@
-import { META_ROUTES } from "./agent-routes.js";
+import { routePhrases } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { upwardStep } from "./upward.js";
 import type { ConnectorCredentialValues } from "./types.js";
@@ -17,8 +17,6 @@ interface HandoffOptions {
   oauthConnectUnavailable?: string | undefined;
   /** Route names the handoff's text uses: the request's surface. */
   routes?: AgentRouteNames | undefined;
-  /** A native pool without execute_code, where no program can confirm the catalog. */
-  nativeWithoutCode?: boolean | undefined;
 }
 
 // A write whose outcome is unknown is never told to retry after recovery: it
@@ -35,9 +33,11 @@ function outcomeAware(build: (unknownWrite: boolean) => AuthorizationHandoff): A
 
 function oauthFollowUp(connectorId: string, unknownWrite: boolean, opts: HandoffOptions): string {
   const then = `Then ${unknownWrite ? RECONCILE : "retry the original call"}`;
-  return opts.nativeWithoutCode
-    ? `${then}. Retry the original native call after recovery.`
-    : `${then}; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside ${(opts.routes ?? META_ROUTES).program} confirms the catalog now loads.`;
+  // Without programs, no connecta.search can confirm the catalog.
+  const { program } = routePhrases(opts.routes);
+  return program
+    ? `${then}; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside ${program} confirms the catalog now loads.`
+    : `${then}. Retry the original native call after recovery.`;
 }
 
 /** Shared with explicit authorization; errors never request a forced restart. */
@@ -83,7 +83,7 @@ const authorizationHandoffNative = /* @__PURE__ */ registerAuth(
             message:
               "Credential recovery needs both a vault and the optional UI. Configure " +
               "vault and ui in deployment code, then call " +
-              `${(opts.routes ?? META_ROUTES).authorize} again.`,
+              `${routePhrases(opts.routes).authorizeAgain}.`,
           };
         }
         const fields = connector.credential.fields?.map((field) => ({

@@ -712,5 +712,5 @@ it("builds route text with the names of the surface serving it", async () => {
     ).error.message as string;
   expect(await refusal()).toContain("Invoke it through call_destructive_tool so the MCP host");
   expect(await refusal(routeNames("code"))).toContain("Invoke it through connecta.call inside execute_code so");
-  expect(await refusal(routeNames("native"))).toContain("Invoke it through the original native tool so");
+  expect(await refusal(routeNames("native"))).toContain("Invoke it through its own native tool so the MCP host");
 });

@@ -24,6 +24,8 @@
 // The grant itself (storage, coordination across isolates, the token
 // request, the request-scope latch) stays in src/auth/.
 
+import { Routes } from "../agent-routes.js";
+import type { AgentRouteNames } from "../types.js";
 import { Cause, Context, Effect, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -119,7 +121,8 @@ function sentToken(request: HttpClientRequest.HttpClientRequest): string {
 export function refreshOnce(
   guarded: GuardedClient<CallServices | Grant>,
   options?: GrantRenewal & {
-    readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
+    /** Words a write's unanswered 401 with the call's route names; it runs during the call. */
+    readonly writeUnauthorized?: (renewal: Write401Renewal, routes: AgentRouteNames) => ConnectorCallError;
     readonly challengeMaxBytes?: number;
   },
 ): GuardedClient<CallServices | Grant> {
@@ -136,7 +139,7 @@ export function refreshOnce(
       const refusal = new Refusal({
         error:
           !readRequest(entry ?? {}) && options?.writeUnauthorized
-            ? options.writeUnauthorized({ _tag: "Failed", failure: error })
+            ? options.writeUnauthorized({ _tag: "Failed", failure: error }, yield* Routes)
             : error,
       });
       const dispatch = entry ? (yield* Dispatches).find((item) => item.request === entry) : undefined;
@@ -200,7 +203,7 @@ export function refreshOnce(
                 };
           // This is still the resource request's own 401. The common failure
           // mapper attaches its provenance; settleWrite decides the outcome.
-          return yield* Effect.fail(new Refusal({ error: options.writeUnauthorized(facts) }));
+          return yield* Effect.fail(new Refusal({ error: options.writeUnauthorized(facts, yield* Routes) }));
         }
         return HttpClientResponse.fromWeb(
           request,

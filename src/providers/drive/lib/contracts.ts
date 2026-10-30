@@ -8,6 +8,11 @@ const matchesPattern = (pattern: RegExp) =>
     toJsonSchema: () => ({ pattern: pattern.source }),
   });
 
+/** maxBytes on every read: a program receives the default; only a direct call raises it. */
+const MAX_BYTES_DESCRIPTION = routeDescription(
+  (phrases) =>
+    `Serialized bytes of the whole result; defaults to 196608${phrases.program ? `, what ${phrases.program} can receive` : ""}. Raise it, to 4194304, ${phrases.onlyDirectRead}.`,
+);
 export const search_files = {
   input: Schema.Struct({
     "query": Schema.optionalKey(
@@ -55,10 +60,7 @@ export const search_files = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description": routeDescription(
-          (routes) =>
-            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
-        ),
+        "description": MAX_BYTES_DESCRIPTION,
       }),
     ),
   }),
@@ -124,10 +126,7 @@ export const list_folder_items = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description": routeDescription(
-          (routes) =>
-            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
-        ),
+        "description": MAX_BYTES_DESCRIPTION,
       }),
     ),
   }),
@@ -221,10 +220,7 @@ export const get_file_content = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description": routeDescription(
-          (routes) =>
-            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
-        ),
+        "description": MAX_BYTES_DESCRIPTION,
       }),
     ),
   }),
@@ -262,10 +258,7 @@ export const list_permissions = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description": routeDescription(
-          (routes) =>
-            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
-        ),
+        "description": MAX_BYTES_DESCRIPTION,
       }),
     ),
   }),
@@ -316,10 +309,7 @@ export const list_shared_drives = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description": routeDescription(
-          (routes) =>
-            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
-        ),
+        "description": MAX_BYTES_DESCRIPTION,
       }),
     ),
   }),

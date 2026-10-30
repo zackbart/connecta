@@ -1,4 +1,4 @@
-import { Routes } from "../../agent-routes.js";
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { asRecord, asArray } from "../_shared/json.js";
 // Tithe.ly's giving API (v1) as a kit vendor: the operations,
 // what its statuses mean, its credential, its in-band refusal, the probe, and
@@ -453,7 +453,7 @@ export const authenticate = Effect.gen(function* () {
     return yield* failed(
       new ConnectorCallError(
         "auth_required",
-        `${pair} Call ${routes.authorize} for recovery options; an operator adds the keys on this connection in the operator UI.`,
+        `${pair} ${routePhrases(routes).authorizeFor("recovery options")}; an operator adds the keys on this connection in the operator UI.`,
       ),
     );
   }

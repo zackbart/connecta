@@ -1,4 +1,4 @@
-import { routesOf } from "../../agent-routes.js";
+import { routePhrases } from "../../agent-routes.js";
 import { asRecord, asArray, compact } from "../_shared/json.js";
 import { decodeBase64url } from "../../bytes.js";
 // Google Slides named workflows on real kit schemas, with bound content continuation.
@@ -2278,9 +2278,12 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
           const bytes = jsonBytes(result);
           if (bytes <= BRIDGE_BYTES) return result;
           if (bytes <= MAX_IDS_RESULT_BYTES) {
+            // Only a surface that runs programs is told what a program can carry.
+            const { program } = routePhrases(ctx);
+            if (!program) return result;
             return {
               ...result,
-              note: `${result.note ?? ""} At ${bytes} bytes this result is more than ${routesOf(ctx).program} can carry (${BRIDGE_BYTES}): call the tool directly and page it with connecta.result.`.trim(),
+              note: `${result.note ?? ""} At ${bytes} bytes this result is more than ${program} can carry (${BRIDGE_BYTES}): call the tool directly and page it with connecta.result.`.trim(),
             };
           }
           // Past any result: the save state and how to recover the ids stay;

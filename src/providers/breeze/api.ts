@@ -1,4 +1,4 @@
-import { Routes } from "../../agent-routes.js";
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { pathWithholds } from "../_shared/rest/value-safety.js";
 import { asRecord } from "../_shared/json.js";
 // Breeze's reviewed GET-only vendor. HTTP methods do not establish safety: see tools.ts.
@@ -536,7 +536,7 @@ export const authenticate = Effect.gen(function* () {
       new Refusal({
         error: new ConnectorCallError(
           "auth_required",
-          `No Breeze API key is configured for this connector. Call ${routes.authorize} for recovery options. When available, an operator can add the key in this connection in the operator UI.`,
+          `No Breeze API key is configured for this connector. ${routePhrases(routes).authorizeFor("recovery options")}. When available, an operator can add the key in this connection in the operator UI.`,
         ),
       }),
     );

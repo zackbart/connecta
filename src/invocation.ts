@@ -1,4 +1,4 @@
-import { routesOf } from "./agent-routes.js";
+import { routePhrases } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, registerAuthMethod } from "./auth/native.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
@@ -784,7 +784,7 @@ export class InvocationService {
           if (refusal === "destructive_tool_requires_approval") {
             return framingError(
               "destructive_tool_requires_approval",
-              `Tool "${canonicalAddress}" is a write. Invoke it through ${routesOf(context).write} so the MCP host can request approval.`,
+              `Tool "${canonicalAddress}" is a write. ${routePhrases(context).writeNeedsApproval}`,
             );
           }
           // Remote MCP tools advertise their input schema in the catalog. Validate
@@ -860,14 +860,14 @@ export class InvocationService {
                   if (!connectorContext.credential) {
                     throw new ConnectorCallError(
                       "auth_required",
-                      "Operator-managed credential storage is not configured. Call " +
-                        `${routesOf(connectorContext).authorize}({ connector: "${target.connector.id}" }).`,
+                      "Operator-managed credential storage is not configured. " +
+                        routePhrases(connectorContext).authorizeCall(target.connector.id),
                     );
                   }
                   if (!(yield* Context.get(lease.services, Credentials).values)) {
                     throw new ConnectorCallError(
                       "auth_required",
-                      `Connector "${target.connector.id}" has no stored credential. Call ${routesOf(connectorContext).authorize}.`,
+                      `Connector "${target.connector.id}" has no stored credential. ${routePhrases(connectorContext).authorizeCall()}`,
                     );
                   }
                 }

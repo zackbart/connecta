@@ -2,6 +2,8 @@ import { PRIVATE_KEY } from "../../../test/fixtures/rsa.js";
 // Google Slides fixture regressions cover paging, cursor binding, result bounds,
 // translation, refusals and write outcomes. Delegation, subjects and tokens
 // are covered by test/google-workspace-delegation.test.ts.
+import { routeNames } from "../../agent-routes.js";
+import type { AgentRouteNames } from "../../types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { slides } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
@@ -883,6 +885,43 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
       expect(result.replies.at(-1).truncated).toEqual([expect.stringContaining("ids only")]);
       expect(result.note).toContain("every id is kept");
       expect(result.note).not.toContain("execute_code");
+    });
+
+    it("tells a surface that runs programs what a program can carry, and a pool without programs nothing", async () => {
+      const longId = (prefix: string, index: number) => `${prefix}${index}_${"i".repeat(1_000)}`;
+      // About 1.2 MB of ids alone: past what a program can carry, within one result.
+      const threads = Array.from({ length: 100 }, (_, index) => ({
+        commentId: longId("c", index),
+        anchorId: longId("a", index),
+        status: "OPEN",
+        headPost: { postId: longId("p", index), author: { user: `users/${longId("u", index)}` } },
+        replies: Array.from({ length: 4 }, (_, reply) => ({
+          postId: longId(`r${reply}_`, index),
+          author: { user: `users/${longId(`v${reply}_`, index)}` },
+        })),
+      }));
+      route = () => ({
+        body: {
+          presentationId: "deck1",
+          replies: threads.map((commentThread) => ({ insertComment: { commentThread } })),
+          commentUpdateState: "ALL_SAVED",
+        },
+      });
+      const note = async (routes: AgentRouteNames) =>
+        (
+          (await connection().callTool(
+            "batch_update_presentation",
+            batch(...threads.map(() => ({ insertComment: { objectId: "p", content: "x" } }))),
+            { ...context(), routes },
+          )) as { note?: string }
+        ).note ?? "";
+      const carried =
+        /At \d+ bytes this result is more than execute_code can carry \(262144\): call the tool directly and page it with connecta\.result\.$/;
+      expect(await note(routeNames("meta"))).toMatch(carried);
+      expect(await note(routeNames("native-code"))).toMatch(carried);
+      const native = await note(routeNames("native"));
+      expect(native).not.toMatch(/can carry|execute_code|connecta\.result/);
+      expect(native).toContain("every id is kept");
     });
 
     it("keeps the save state and the way back when even the ids pass any result, and never says applied", async () => {

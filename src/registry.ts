@@ -1,5 +1,5 @@
 import { wrapViewCredentials } from "./runtime/call.js";
-import { META_ROUTES, routeCatalog } from "./agent-routes.js";
+import { META_ROUTES } from "./agent-routes.js";
 import { sha256Hex } from "./bytes.js";
 import { catalogRevision } from "./catalog-revision.js";
 import { authCall, authInvoke } from "./auth/native.js";
@@ -985,18 +985,6 @@ export class Registry implements RegistryView {
       );
   }
 
-  private readonly routedCatalogs = new WeakMap<Connector, ToolDef[]>();
-
-  /** A static catalog as this deployment's route names declare it; meta catalogs as declared. */
-  private routedStaticTools(connector: Connector): ToolDef[] {
-    const tools = connector.staticTools!;
-    const routes = this.opts.routes ?? META_ROUTES;
-    if (routes === META_ROUTES) return tools;
-    let routed = this.routedCatalogs.get(connector);
-    if (!routed) this.routedCatalogs.set(connector, (routed = [...routeCatalog(tools, routes)]));
-    return routed;
-  }
-
   private loadDownstreamTools(
     id: string,
     baseUrl: string,
@@ -1007,7 +995,7 @@ export class Registry implements RegistryView {
     return Effect.gen({ self: this }, function* () {
       const connector = this.connectors.get(id);
       if (!connector) throw new Error(`Unknown connector "${id}"`);
-      if (connector.staticTools) return markCatalogFreshness(this.routedStaticTools(connector), Infinity);
+      if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
       const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
       const listed = yield* authInvoke<ToolDef[]>(connector, "listTools", [ctx]).pipe(
         Effect.catch((error) =>

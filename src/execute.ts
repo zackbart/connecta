@@ -585,6 +585,7 @@ function sandboxProvider(
     concurrency: limits.discoveryConcurrency,
     probeTimeoutMs: limits.probeTimeoutMs,
     defer: limits.defer,
+    routes: limits.routes,
   });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(1, Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS));

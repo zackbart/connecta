@@ -1,4 +1,4 @@
-import { routesOf } from "../agent-routes.js";
+import { routePhrases } from "../agent-routes.js";
 import { withStoredAuth } from "./stored-observation.js";
 import type {
   AuthorizationServerMetadata,
@@ -708,7 +708,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const authRequiredError = (ctx: ConnectorContext) =>
     new ConnectorCallError(
       "downstream_oauth_required",
-      `Connector "${id}" requires authorization — call ${routesOf(ctx).authorize}({ connector: "${id}" }) and open the returned URL.`,
+      `Connector "${id}" requires authorization — ${routePhrases(ctx).authorizeAndOpen(id)}.`,
     );
   const disconnectedMessage = `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
 

@@ -78,8 +78,8 @@ export const GET_DOCUMENT_INPUT = Schema.Struct({
   "maxChars": Schema.optionalKey(
     Integer.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1000000)).annotate({
       description: routeDescription(
-        (routes) =>
-          `Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (${routes.read}, connecta.result to page): ${routes.program} carries at most 256 KiB per result.`,
+        (phrases) =>
+          `Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, ${phrases.callDirectlyAndPage}${phrases.program ? `: ${phrases.program} carries at most 256 KiB per result` : ""}.`,
       ),
     }),
   ),

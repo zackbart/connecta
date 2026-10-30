@@ -1,4 +1,4 @@
-import { routesOf } from "../agent-routes.js";
+import { routePhrases } from "../agent-routes.js";
 import { wrapViewCredentials } from "../runtime/call.js";
 import { utf8Length } from "../bytes.js";
 import { withStoredAuth } from "../auth/stored-observation.js";
@@ -1919,7 +1919,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const authRequiredError = (ctx: ConnectorContext) =>
     new ConnectorCallError(
       isOauth ? "downstream_oauth_required" : "auth_required",
-      `Connector "${id}" requires authorization — call ${routesOf(ctx).authorize}({ connector: "${id}" }) and open the returned URL.`,
+      `Connector "${id}" requires authorization — ${routePhrases(ctx).authorizeAndOpen(id)}.`,
     );
 
   /**
@@ -2295,22 +2295,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (!ctx.credential) {
         throw new CredentialRequiredError(
           `Connector "${id}" needs an operator-managed credential, but ` +
-            `credential storage is not configured. Configure vault in deployment code and redeploy. Call ${routesOf(ctx).authorize} for recovery options.`,
+            `credential storage is not configured. Configure vault in deployment code and redeploy. ${routePhrases(ctx).authorizeFor("recovery options")}.`,
         );
       }
       const value = ((yield authInvoke(ctx.credential, "get", [])) as string | null)?.trim();
       if (!value) {
         throw new CredentialRequiredError(
-          `Connector "${id}" has no stored credential — call ` +
-            `${routesOf(ctx).authorize}({ connector: "${id}" }) and follow the ` +
-            "operator handoff it returns.",
+          `Connector "${id}" has no stored credential — ${routePhrases(ctx).authorizeAndFollow(id)}.`,
         );
       }
       if (carriesIllegalHeaderChar(value)) {
         throw new CredentialRequiredError(
           `Connector "${id}"'s stored credential contains a character a header ` +
-            "cannot carry (a line break or other control character). Call " +
-            `${routesOf(ctx).authorize} for recovery options. When available, re-enter ` +
+            "cannot carry (a line break or other control character). " +
+            `${routePhrases(ctx).authorizeFor("recovery options")}. When available, re-enter ` +
             "it in this connection in the operator UI. The value is not shown or logged.",
         );
       }
@@ -2342,7 +2340,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (quoted.some((secret) => current instanceof Error && current.message.includes(secret))) {
         return new CredentialRequiredError(
           `Connector "${id}" could not send its stored credential as a ` +
-            `header. Call ${routesOf(ctx).authorize} for recovery options. When available, ` +
+            `header. ${routePhrases(ctx).authorizeFor("recovery options")}. When available, ` +
             "re-enter it in this connection in the operator UI. " +
             "The value is not shown or logged.",
         );

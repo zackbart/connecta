@@ -1,5 +1,4 @@
-import { routeCatalog, routesOf } from "../agent-routes.js";
-import type { AgentRouteNames } from "../types.js";
+import { declaresRouteDescriptions, routePhrases } from "../agent-routes.js";
 import { wrapViewCredentials } from "../runtime/call.js";
 import { storedAuthObservation, withStoredAuth } from "../auth/stored-observation.js";
 import { Effect, Exit } from "effect";
@@ -373,7 +372,6 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
   const auth = describedApiAuth(opts);
-  const catalogs = new Map<AgentRouteNames, ToolDef[]>();
   const connector: Connector = {
     id,
     ...defined({ title: opts.title }),
@@ -417,11 +415,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       : {}),
     staticTools: defs,
     async listTools(ctx) {
-      // Declared route descriptions use the deployment's names; meta lists defs as declared.
-      const routes = routesOf(ctx);
-      let listed = catalogs.get(routes);
-      if (!listed) catalogs.set(routes, (listed = [...routeCatalog(defs, routes)]));
-      return settleOnClose(ctx, async () => redactCatalog(ctx, listed));
+      return settleOnClose(ctx, async () => redactCatalog(ctx, defs));
     },
     callTool: (name, args, ctx, options) => runEdge(core(name, args, ctx, options)),
   };
@@ -572,6 +566,8 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   // This boundary's identity in a logical call, fixed now: this object with
   // this function, never whatever the property or a copy holds by then.
   providerBoundary(connector);
+  // Its catalog is authored here, so declared route descriptions follow each request's surface.
+  declaresRouteDescriptions(connector);
   registerCallEntry(connector, core);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
@@ -580,7 +576,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       if ((await settleOnClose(ctx, () => oauth.prepareCall(ctx))).state === "auth_required") {
         throw new ConnectorCallError(
           "downstream_oauth_required",
-          `Connector "${id}" requires authorization. Call ${routesOf(ctx).authorize}.`,
+          `Connector "${id}" requires authorization. ${routePhrases(ctx).authorizeCall()}`,
         );
       }
     });

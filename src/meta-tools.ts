@@ -877,7 +877,7 @@ function metaToolsForRequest(
           registry,
           baseUrl,
           requestScope,
-          { ...opts, routes, nativeWithoutCode: opts.pagingTool === "read_result" },
+          { ...opts, routes },
           { connector },
         ]),
       ),
@@ -900,6 +900,7 @@ function metaToolsForRequest(
     requestSignal: opts.requestSignal,
     // searchRoute keeps its top-level default. In-program callers use a
     // separate CatalogService configured for connecta.search.
+    routes,
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
 

@@ -1,4 +1,4 @@
-import { Routes } from "../../agent-routes.js";
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { pathWithholds } from "../_shared/rest/value-safety.js";
 import { asRecord } from "../_shared/json.js";
 // Overflow v3: reviewed vendor declarations, derived operation index and paging contracts.
@@ -1400,7 +1400,7 @@ export const authenticate = Effect.gen(function* () {
       new Refusal({
         error: new ConnectorCallError(
           "auth_required",
-          `No Overflow client id and API key are configured for this connector. Call ${routes.authorize} for recovery options; an operator adds both fields in this connection in the operator UI.`,
+          `No Overflow client id and API key are configured for this connector. ${routePhrases(routes).authorizeFor("recovery options")}; an operator adds both fields in this connection in the operator UI.`,
         ),
       }),
     );

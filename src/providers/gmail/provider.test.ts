@@ -13,6 +13,8 @@ import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import { createMetaTools } from "../../meta-tools.js";
+import { routeNames } from "../../agent-routes.js";
+import type { AgentRouteNames } from "../../types.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -1065,6 +1067,21 @@ describe("reading carried attachments", () => {
       }),
     ).toMatchObject({ content: "a,b\n" });
     expect(path(2)).toBe("/messages/m1/attachments/csv-current");
+  });
+
+  it("words its truncation note as each surface reaches the tool, in whole phrases", async () => {
+    serve({ ...attachmentFixtures.csv, body: { size: 100, attachmentId: "text" } }, b64url("x".repeat(100)));
+    const note = (routes: AgentRouteNames) =>
+      connection()
+        .callTool("get_attachment", { messageId: "m1", partId: "1", maxChars: 10 }, { ...context(), routes })
+        .then((result) => (result as { content: string }).content.slice(10));
+    expect(await note(routeNames("meta"))).toBe(
+      "\n[… 90 more characters truncated; raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]",
+    );
+    for (const surface of ["native", "native-code"] as const)
+      expect(await note(routeNames(surface)), surface).toBe(
+        "\n[… 90 more characters truncated; raise maxChars or maxBytes when calling this tool directly, or open it in Gmail]",
+      );
   });
 
   it("pages a stashed read whose truncation note names the route, reassembling every byte", async () => {

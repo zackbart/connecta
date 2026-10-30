@@ -1,4 +1,5 @@
 import { asRecord, asArray } from "../_shared/json.js";
+import { routePhrases } from "../../agent-routes.js";
 import {
   CCB_MEDIA_TYPE,
   CCB_ENVIRONMENTS,
@@ -526,7 +527,7 @@ export const errors: VendorErrors = {
     401: () => ({
       code: "auth_required",
       words: (detail, routes) =>
-        `${detail} CCB rejected the connection's access token. Call ${routes.authorize} for this connector.`,
+        `${detail} CCB rejected the connection's access token. ${routePhrases(routes).authorizeFor("this connector")}.`,
       advice: ", then retry",
     }),
     403: () => ({

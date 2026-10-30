@@ -197,8 +197,8 @@ export const inputs = {
       Integer.check(Schema.isBetween({ minimum: 65536, maximum: 4194304 })).annotate({
         default: 196608,
         description: routeDescription(
-          (routes) =>
-            `Whole-result byte budget. Raise only for a direct ${routes.read}; ${routes.program} cannot receive large results.`,
+          (phrases) =>
+            `Whole-result byte budget. Raise only ${phrases.forDirect}${phrases.program ? `; ${phrases.program} cannot receive large results` : ""}.`,
         ),
       }),
     ),

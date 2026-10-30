@@ -3,6 +3,9 @@
 // call_tool / call_destructive_tool path. The six-tool surface stays the
 // default; its own suites cover it unchanged.
 
+import { gmail } from "../src/providers/gmail/index.js";
+import { docs } from "../src/providers/docs/index.js";
+import { PRIVATE_KEY } from "./fixtures/rsa.js";
 import { describe, expect, it } from "vitest";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { accessTokens } from "../src/access-tokens.js";
@@ -666,7 +669,7 @@ describe("native tool names", () => {
 });
 
 describe("route names per surface", () => {
-  const note = routeDescription((routes) => `Raise it only for a direct ${routes.read} read.`);
+  const note = routeDescription((phrases) => `Raise it only ${phrases.forDirect} read.`);
   const connectors = () => [
     api("crm", {
       tools: [
@@ -701,6 +704,8 @@ describe("route names per surface", () => {
       connectors: connectors(),
       agents: ["assistant"],
       pools: {
+        meta: { tools: ["crm", "service"], members: ["agent:assistant"] },
+        native: { tools: ["crm", "service"], members: ["agent:assistant"], surface: "native" },
         nocode: { tools: ["crm", "service"], members: ["agent:assistant"], surface: "native", executeCode: false },
       },
       publicUrl: BASE,
@@ -709,10 +714,89 @@ describe("route names per surface", () => {
       accessTokens: accessTokens(storage),
     });
     const token = await issueAgentToken(storage, "assistant");
-    const called = await rpc(connecta, token, "nocode", "tools/call", { name: "service__read", arguments: {} });
-    const error = envelope(called.result).error;
-    expect(error.message).toContain('Call the returned authorization handoff({ connector: "service" }).');
-    expect(JSON.stringify(error)).not.toMatch(/search_tools|call_tool|call_destructive_tool|authorize_connector/);
+    for (const pool of ["native", "nocode"]) {
+      const called = await rpc(connecta, token, pool, "tools/call", { name: "service__read", arguments: {} });
+      const error = envelope(called.result).error;
+      expect(error.message, pool).toBe(
+        "Operator-managed credential storage is not configured. Give this error's nextAction to the user or operator.",
+      );
+      expect(JSON.stringify(error), pool).not.toMatch(
+        /search_tools|call_tool|call_destructive_tool|authorize_connector/,
+      );
+    }
+    // A legacy request: the modern one would also need the address header.
+    const meta = await rpc(
+      connecta,
+      token,
+      "meta",
+      "tools/call",
+      { name: "call_tool", arguments: { address: "service.read" } },
+      false,
+    );
+    expect(envelope(meta.result).error.message).toBe(
+      'Operator-managed credential storage is not configured. Call authorize_connector({ connector: "service" }).',
+    );
+    await connecta.close();
+  });
+
+  it("lists authored schema descriptions in the serving pool's wording, with its paging", async () => {
+    const storage = memoryStorage();
+    const account = (name: string) => ({
+      purpose: "Staff",
+      serviceAccount: { clientEmail: `${name}@project.iam.gserviceaccount.com`, privateKey: PRIVATE_KEY },
+      subject: "pastor@church.example",
+    });
+    const member = { tools: ["mail", "docs"], members: ["agent:assistant"] };
+    const connecta = createTestConnecta({
+      connectors: [gmail("mail", account("mail") as never), docs("docs", account("docs") as never)],
+      agents: ["assistant"],
+      pools: {
+        meta: member,
+        native: { ...member, surface: "native" },
+        nocode: { ...member, surface: "native", executeCode: false },
+      },
+      publicUrl: BASE,
+      logger: silentLogger,
+      storage,
+      accessTokens: accessTokens(storage),
+    });
+    const token = await issueAgentToken(storage, "assistant");
+    const descriptions = async (pool: string) => {
+      const listed =
+        pool === "meta"
+          ? (
+              await rpc(connecta, token, pool, "tools/call", {
+                name: "search_tools",
+                arguments: { query: "", includeSchemas: "json", limit: 50 },
+              })
+            ).result.structuredContent
+          : (await rpc(connecta, token, pool, "tools/list", {})).result;
+      const found = new Set<string>();
+      const visit = (value: unknown): void => {
+        if (Array.isArray(value)) value.forEach(visit);
+        else if (value && typeof value === "object")
+          for (const [key, item] of Object.entries(value))
+            if (key === "description" && typeof item === "string" && /^(Whole-result|Characters of text)/.test(item))
+              found.add(item);
+            else visit(item);
+      };
+      visit(listed);
+      return [...found].sort();
+    };
+    const docsText =
+      "Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, ";
+    expect(await descriptions("meta")).toEqual([
+      `${docsText}call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result.`,
+      "Whole-result byte budget. Raise only for a direct call_tool; execute_code cannot receive large results.",
+    ]);
+    expect(await descriptions("native")).toEqual([
+      `${docsText}call this tool directly and page with connecta.result in execute_code: execute_code carries at most 256 KiB per result.`,
+      "Whole-result byte budget. Raise only when calling this tool directly; execute_code cannot receive large results.",
+    ]);
+    expect(await descriptions("nocode")).toEqual([
+      `${docsText}call this tool directly and page with read_result.`,
+      "Whole-result byte budget. Raise only when calling this tool directly.",
+    ]);
     await connecta.close();
   });
 
