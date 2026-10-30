@@ -13,8 +13,8 @@ import type { ToolDef } from "../src/types.js";
 import { ConnectorCallError } from "../src/errors.js";
 import type { RegistryView } from "../src/registry.js";
 import type { KVStorage } from "../src/types.js";
+import { d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { bindDiscoveryEndpoint } from "../src/discovery-health.js";
-import { effectiveConfigOf, registerEffectiveConfig } from "../src/connector-fingerprint.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeRegistry } from "./helpers.js";
@@ -582,34 +582,29 @@ describe("discovery health across requests", () => {
     expect(second.page.catalogErrors.find((error) => error.connector === "hung")?.message).toContain("was skipped");
   }, 15_000);
 
-  it("keeps records apart when a connector's effective configuration changes, without storing it", async () => {
-    const storage = memoryStorage();
-    const state = { healthy: false, listings: 0 };
-    // Two deployments of one connector whose described shape is identical:
-    // only a configured credential differs, which describe() leaves out.
-    const build = (token: string) => {
-      const connector = hangingConnector("hung", state);
-      registerEffectiveConfig(connector, () => ({ headers: { Authorization: `Bearer ${token}` } }));
-      return connector;
-    };
-    await searchOnce(makeRegistry([build("first-secret"), healthy], { storage }), { query: "read" });
-    expect(state.listings).toBe(1);
-    const rotated = makeRegistry([build("second-secret"), healthy], { storage });
-    await searchOnce(rotated, { query: "read" });
-    expect(state.listings).toBe(2);
-    const keys = await storage.list("connector-health:v1:hung:");
-    expect(keys).toHaveLength(2);
-    for (const key of keys) {
-      expect(key).not.toContain("secret");
-      expect(await storage.get(key)).not.toContain("secret");
-    }
-    // The real builders register their options, header values included.
+  it("INV-5: keys health by value-free configuration, so no persisted key derives from a configured secret", async () => {
+    // Two deployments of one connector differing only in a configured secret,
+    // which describe() leaves out: one key, and nothing derived from either.
     const remote = (token: string) =>
       remoteMcp("crm", {
         url: "https://crm.example/mcp",
         auth: { type: "headers", headers: { Authorization: `Bearer ${token}` } },
       });
-    expect(JSON.stringify(effectiveConfigOf(remote("one")))).not.toBe(JSON.stringify(effectiveConfigOf(remote("two"))));
+    expect(JSON.stringify(remote("api-key-0427").describe?.())).toBe(
+      JSON.stringify(remote("api-key-9999").describe?.()),
+    );
+    expect(JSON.stringify(remote("api-key-0427").describe?.())).not.toContain("api-key-0427");
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    await searchOnce(makeRegistry([hangingConnector("hung", state), healthy], { storage }), { query: "read" });
+    // A rotation in deployment code reaches the same key: the earlier record
+    // still skips until its retry time, at most one TTL.
+    const redeployed = await searchOnce(makeRegistry([hangingConnector("hung", state), healthy], { storage }), {
+      query: "read",
+    });
+    expect(state.listings).toBe(1);
+    expect(redeployed.page.catalogErrors[0]?.message).toContain("was skipped");
+    expect(await storage.list("connector-health:v1:hung:")).toHaveLength(1);
   });
 
   it("INV-4: keeps one admitted endpoint's record from skipping the connector on another", async () => {
@@ -630,29 +625,115 @@ describe("discovery health across requests", () => {
     expect(other.page.catalogErrors[0]?.message).not.toContain("was skipped");
   });
 
-  it("bounds health storage by the discovery budget, reads and settlement writes alike", async () => {
+  it("INV-7: starts no health storage after the discovery budget and finishes every operation it started", async () => {
+    // The native D1 adapter over a binding whose every round trip takes 150 ms.
+    const module = "node:sqlite";
+    const { DatabaseSync } = (await import(/* @vite-ignore */ module)) as typeof import("node:sqlite");
+    const db = new DatabaseSync(":memory:");
+    const ops: Array<{ startedAt: number; settledAt?: number }> = [];
+    const delayed = <T>(run: () => T): Promise<T> => {
+      const op: { startedAt: number; settledAt?: number } = { startedAt: Date.now() };
+      ops.push(op);
+      return new Promise<T>((resolve, reject) =>
+        setTimeout(() => {
+          try {
+            resolve(run());
+          } catch (error) {
+            reject(error);
+          } finally {
+            op.settledAt = Date.now();
+          }
+        }, 150),
+      );
+    };
+    type Bound = ReturnType<D1DatabaseBinding["prepare"]> & { sql: string; params: unknown[] };
+    const statement = (sql: string, params: unknown[] = []): Bound => ({
+      sql,
+      params,
+      bind: (...values: unknown[]) => statement(sql, values),
+      all: () => delayed(() => ({ results: db.prepare(sql).all(...(params as never[])) })),
+      run: () => delayed(() => ({ meta: { changes: Number(db.prepare(sql).run(...(params as never[])).changes) } })),
+    });
+    const binding: D1DatabaseBinding = {
+      prepare: (sql) => statement(sql),
+      batch: (list) =>
+        delayed(() => {
+          db.exec("BEGIN");
+          try {
+            const out = (list as Bound[]).map((s) => ({
+              meta: { changes: Number(db.prepare(s.sql).run(...(s.params as never[])).changes) },
+            }));
+            db.exec("COMMIT");
+            return out;
+          } catch (error) {
+            db.exec("ROLLBACK");
+            throw error;
+          }
+        }),
+    };
+    try {
+      const storage = d1Storage(binding);
+      await storage.get("warm-up");
+      const state = { healthy: false, listings: 0 };
+      const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
+      ops.length = 0;
+      // The health read and the probe fit the budget; recording the timeout
+      // starts inside it and finishes past it.
+      const started = Date.now();
+      const { page } = await searchOnce(registry, { query: "read" }, { probeTimeoutMs: 100, discoveryBudgetMs: 300 });
+      const returned = Date.now();
+      expect(page.catalogErrors).toEqual([expect.objectContaining({ connector: "hung", code: "timeout" })]);
+      expect(ops.length).toBeGreaterThanOrEqual(2);
+      for (const op of ops) {
+        expect(op.startedAt).toBeLessThan(started + 300);
+        expect(op.settledAt).toBeDefined();
+        expect(op.settledAt!).toBeLessThanOrEqual(returned);
+      }
+      expect(Math.max(...ops.map((op) => op.settledAt!))).toBeGreaterThan(started + 300);
+      // Committed before the search returned, and nothing runs afterwards.
+      expect(await storage.list("connector-health:v1:hung:")).toHaveLength(1);
+      const after = ops.length;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(ops.length).toBe(after);
+      // A budget already spent on a slow read starts nothing more.
+      ops.length = 0;
+      const slow = await searchOnce(registry, { query: "read" }, { discoveryBudgetMs: 50 });
+      expect(ops).toHaveLength(1);
+      expect(ops[0]!.settledAt!).toBeLessThanOrEqual(Date.now());
+      expect(slow.page.catalogErrors.map((error) => error.code)).toEqual(["timeout", "timeout"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("leases a claim to the end of the claimant's budget, however long the claim write takes", async () => {
     const backing = memoryStorage();
-    const slow = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-    // A plain adapter, so every health read and write pays the delay.
+    let casDelayMs = 0;
     const storage: KVStorage = {
-      capabilities: backing.capabilities,
-      get: async (key) =>
-        key.startsWith("connector-health:") ? (await slow(250), backing.get(key)) : backing.get(key),
-      set: async (key, value, opts) => {
-        if (key.startsWith("connector-health:")) await slow(250);
-        return backing.set(key, value, opts);
+      ...backing,
+      compareAndSet: async (key, expected, next, opts) => {
+        if (casDelayMs && key.startsWith("connector-health:")) await new Promise((r) => setTimeout(r, casDelayMs));
+        return backing.compareAndSet(key, expected, next, opts);
       },
-      delete: (key) => backing.delete(key),
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, opts) => backing.compareAndSet(key, expected, next, opts),
     };
     const state = { healthy: false, listings: 0 };
     const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
-    const read = await searchOnce(registry, { query: "read" }, { discoveryBudgetMs: 50 });
-    expect(read.ms).toBeLessThan(200);
-    // Reads within budget, then a timed-out probe whose write would outlast it.
-    const write = await searchOnce(registry, { query: "read" }, { probeTimeoutMs: 100, discoveryBudgetMs: 600 });
-    expect(write.ms).toBeLessThan(800);
-    expect(write.page.entries.map((entry) => entry.tool.address)).toEqual(["notes.read_note"]);
-  });
+    const options = { probeTimeoutMs: 1_000, discoveryBudgetMs: 3_000 };
+    await searchOnce(registry, { query: "read" }, options);
+    const [key] = await backing.list("connector-health:v1:hung:");
+    const record = JSON.parse((await backing.get(key!))!);
+    await backing.set(key!, JSON.stringify({ ...record, retryAt: Date.now() - 1 }), {
+      expiresAtMs: Date.now() + 60_000,
+    });
+    // A's claim write takes 2 s; its probe runs after. B arrives past where a
+    // lease sized before the write would have lapsed, while A still probes.
+    casDelayMs = 2_000;
+    const first = searchOnce(registry, { query: "read" }, options);
+    await new Promise((resolve) => setTimeout(resolve, 2_400));
+    casDelayMs = 0;
+    const second = await searchOnce(registry, { query: "read" }, options);
+    await first;
+    expect(state.listings).toBe(2);
+    expect(second.page.catalogErrors[0]?.message).toContain("was skipped");
+  }, 15_000);
 });

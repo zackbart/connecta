@@ -53,8 +53,8 @@ interface SearchProbe {
 
 /** The slice of an unscoped search's budget kept for recording what its probes saw. */
 const SETTLE_RESERVE_MS = 500;
-/** How long a probe claim outlives its probe and settlement, against clock skew. */
-const CLAIM_MARGIN_MS = 1_000;
+/** How long a probe claim outlives its request's discovery budget, for settlement and clock skew. */
+const CLAIM_MARGIN_MS = 2_000;
 
 /** A connector unscoped search skipped because its discovery failed recently. */
 class DiscoverySkipped extends Error {
@@ -882,9 +882,9 @@ export class CatalogService {
   // discovery failed recently, probes the rest under a shorter deadline, and
   // settles each record as its probe ends. One discovery budget bounds all of
   // it, health storage included: a probe that starts late gets only what
-  // remains less a slice kept for settling, and health I/O that outlasts the
-  // budget is abandoned as unknown. A lapsed record is claimed as its probe is
-  // dispatched, with a lease that outlasts the probe and its settlement.
+  // remains less a slice kept for settling, and health I/O starts only within
+  // it, then runs to its end. A lapsed record is claimed as its probe is
+  // dispatched, leased to the end of this budget plus a margin.
   // Caller cancellation and a probe the budget cut short leave health as it was.
   private searchCatalogs(
     ids: readonly string[],
@@ -894,18 +894,15 @@ export class CatalogService {
       const deadline = scoped ? this.probeTimeoutMs : Math.min(this.probeTimeoutMs, UNSCOPED_PROBE_TIMEOUT_MS);
       const budgetEnd = scoped ? Infinity : Date.now() + this.discoveryBudgetMs;
       const settleReserve = scoped ? 0 : Math.min(SETTLE_RESERVE_MS, Math.floor(this.discoveryBudgetMs / 10));
-      // Health storage under what remains of the budget and the request's
-      // signal. Running out is not a failure: health is then unknown.
+      // Health storage starts only while budget remains and the caller is
+      // here; running out is not a failure, health is then unknown. Once
+      // started, an operation is awaited to its end, never raced or detached:
+      // a storage write cannot be withdrawn once sent (INV-7). The budget
+      // bounds when health work may start, not when it finishes.
       const withinBudget = <A>(io: Effect.Effect<A>, unknown: A): Effect.Effect<A> =>
-        Effect.suspend(() => {
-          const remaining = Math.ceil(budgetEnd - Date.now());
-          if (remaining <= 0 || this.requestSignal?.aborted) return Effect.succeed(unknown);
-          return withDeadlineEffect(() => io, {
-            ...(this.requestSignal ? { signal: this.requestSignal } : {}),
-            ...(Number.isFinite(remaining) ? { timeoutMs: remaining } : {}),
-            timeoutError: new Error("Discovery health storage outlasted the discovery budget."),
-          }).pipe(Effect.catch(() => Effect.succeed(unknown)));
-        });
+        Effect.suspend(() =>
+          Date.now() >= budgetEnd || this.requestSignal?.aborted ? Effect.succeed(unknown) : Effect.uninterruptible(io),
+        );
       // A skip that has lapsed is read again, so this request can claim the probe.
       const unread = ids.filter((id) => {
         const known = this.health.get(id);
@@ -970,14 +967,19 @@ export class CatalogService {
           };
           let plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));
           if (plan.timeoutMs <= 0) return { id, result: Result.fail(plan.timeoutError) };
-          // A lapsed record: claim this probe now, as it is dispatched.
+          // A lapsed record: claim this probe now, as it is dispatched. The
+          // lease runs to an absolute time, the end of this request's
+          // discovery budget plus a margin, so however long the claim write
+          // takes, the probe the budget still allows ends inside it.
           if (skip && verdict?.slot) {
-            const leaseMs = plan.timeoutMs + settleReserve + CLAIM_MARGIN_MS;
-            const claimed = yield* withinBudget(claimDiscoveryProbe(verdict.slot, leaseMs), false);
+            const leaseUntil = budgetEnd + CLAIM_MARGIN_MS;
+            const claimed = yield* withinBudget(claimDiscoveryProbe(verdict.slot, leaseUntil), false);
             if (!claimed) {
-              const retryAt = Date.now() + leaseMs;
-              this.health.set(id, { slot: verdict.slot, skip: { code: skip.code, retryAt } });
-              return { id, result: Result.fail(new DiscoverySkipped(skip.code, leaseMs)) };
+              this.health.set(id, { slot: verdict.slot, skip: { code: skip.code, retryAt: leaseUntil } });
+              return {
+                id,
+                result: Result.fail(new DiscoverySkipped(skip.code, Math.max(1, Math.ceil(leaseUntil - Date.now())))),
+              };
             }
             this.health.set(id, { slot: verdict.slot });
             plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));

@@ -647,13 +647,16 @@ always sends a live `tools/list` that bypasses the cache in both directions.
 
 **Discovery health.** An unscoped search (`search_tools` or `connecta.search`
 without `connector`) probes each connector for at most 5,000 ms, or
-`discovery.probeTimeoutMs` when that is shorter, and the whole search, health
-storage included, ends within a 9,000 ms discovery budget. A tenth of the
-budget, at most 500 ms, is kept for recording outcomes: a probe that starts
-late gets only what remains before that slice, and one that cannot start
-reports `timeout`. Health reads, claims and writes run under what remains of
-the budget and the request's signal; one that outlasts it is abandoned as
-unknown, never finished after the response. A scoped search,
+`discovery.probeTimeoutMs` when that is shorter, and its probes end within a
+9,000 ms discovery budget. A tenth of the budget, at most 500 ms, is kept for
+recording outcomes: a probe that starts late gets only what remains before
+that slice, and one that cannot start reports `timeout`. Health reads, claims
+and writes start only while budget remains and the caller is still waiting;
+health is otherwise unknown. Once started, each is awaited to its end before
+the search returns, never raced or detached, since a storage write cannot be
+withdrawn once sent. The budget bounds when health work starts, not when it
+finishes, so slow storage can carry a search past it by one operation's
+latency. A scoped search,
 `connecta.describe`, native `tools/list` and tool calls keep the full
 `discovery.probeTimeoutMs`. A probe that times out on its own deadline, or a
 retryable failure that itself took at least one second or named its own wait,
@@ -665,12 +668,12 @@ settles. Records hold no downstream text, tools, arguments or credentials.
 Each is keyed by connector id and a digest of the catalog owner partition
 (principal, subject, caller identity and pool, origin and public URL), the
 admitted endpoint (plain `/mcp`, `/mcp/<pool>` or `/agent/<pool>`), the
-connector's described configuration, a digest of its effective options and
-the package version. The effective options include what `describe()` leaves
-out, such as configured header values and URL queries, so rotating a
-configured credential or redeploying changed options moves to a fresh record;
-only the digest reaches storage. One owner's or endpoint's record never skips
-another's search. Until its retry time an unscoped search skips that connector
+connector's value-free described configuration and the package version. No
+configured secret, and nothing derived from one, enters the key. One owner's
+or endpoint's record never skips another's search. A change `describe()`
+cannot see, such as a static header rotated in deployment code, takes effect
+on redeploy; a record written before it keeps skipping for at most its retry
+time, about 60 seconds. Until its retry time an unscoped search skips that connector
 and reports it in `catalogErrors` with the recorded code, `retryable: true`,
 `retryAfterMs`, and a fixed message that names the scoped search to try it
 now; no tools from the failed walk are ever served. A scoped search still
@@ -681,9 +684,9 @@ permission failure that shows the connector answers, clears the record this
 request saw. Caller cancellation, a probe the budget cut short, a fast
 failure, and a non-retryable failure record nothing. After its retry time a
 record lingers for 60 seconds: the request that dispatches the next probe
-claims it by compare-and-set, with a lease covering that probe's deadline, the
-settlement slice and a second; the others keep skipping until it settles or
-the lease lapses. Health reads are one `getMany` per unscoped search, made
+claims it by compare-and-set, with a lease to an absolute time, the end of
+that request's discovery budget plus two seconds, so a slow claim write cannot
+shorten it; the others keep skipping until it settles or the lease lapses. Health reads are one `getMany` per unscoped search, made
 once per request; a health storage failure is logged and never fails
 discovery.
 

@@ -699,7 +699,7 @@ to 60 seconds: its entry keeps the recorded code with `retryable: true`,
 `retryAfterMs`, and the message `Connector "X" was skipped because its catalog
 lookup failed recently (CODE). Search with connector "X" to try it now.` A
 scoped search always probes. Records are kept per owner, admitted endpoint and
-effective connector configuration. A healthy connector whose catalog always
+described connector configuration. A healthy connector whose catalog always
 takes more than 5 seconds can stay out of unscoped search; search it with
 `connector`, or let any longer-deadline operation warm its complete catalog.
 See [Discovery health](./architecture.md#storage-credentials-and-connectors).

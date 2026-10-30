@@ -1,5 +1,4 @@
 import { wrapViewCredentials } from "../runtime/call.js";
-import { registerEffectiveConfig } from "../connector-fingerprint.js";
 import { storedAuthObservation, withStoredAuth } from "../auth/stored-observation.js";
 import { Effect, Exit } from "effect";
 import { registerConnectorVocabulary } from "../operation-vocabulary.js";
@@ -581,6 +580,5 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   registerConnectorVocabulary(connector, opts.tools);
   const storedAuth = oauth && storedAuthObservation(oauth);
   if (storedAuth) withStoredAuth(connector, storedAuth);
-  registerEffectiveConfig(connector, () => opts);
   return connector;
 }

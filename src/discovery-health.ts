@@ -11,8 +11,8 @@
 //
 // Records sit beside the catalog cache, in its store and owner partition:
 // principal, subject, caller identity and pool, origin, the admitted endpoint,
-// the connector's described configuration, a digest of its effective options
-// and the package version (INV-4, INV-5). Each record
+// the connector's value-free described configuration and the package version
+// (INV-4, INV-5). Each record
 // also carries the connector's catalog invalidation generation as it was when
 // written. A credential change, OAuth connect or disconnect, or operator
 // invalidation rotates that generation, so every partition's record lapses at
@@ -38,7 +38,6 @@ import { storageCompareAndSet, storageGetMany, storageSet } from "./runtime/stor
 import { connectorHealthKeys, CONNECTOR_HEALTH_LINGER_MS, responseCacheKeys } from "./storage/keys.js";
 import type { Connector, KVStorage, Logger } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
-import { effectiveConfigOf } from "./connector-fingerprint.js";
 
 /** How long unscoped search skips a connector after a failed discovery. */
 const DISCOVERY_RETRY_MS = 60_000;
@@ -100,30 +99,23 @@ function encodeFact(fact: HealthFact): { raw: string; expiresAtMs: number } {
   return { raw: JSON.stringify(fact), expiresAtMs: Math.ceil(fact.retryAt + CONNECTOR_HEALTH_LINGER_MS) };
 }
 
-// A connector's configuration, digested once per connector object: what it
-// describes, plus its effective options with the values `describe()` leaves
-// out (configured header values, URL queries), so rotating a configured
-// credential or redeploying changed options moves every record to a new key.
-// Only the digest is kept; the options never reach storage.
+// A connector's described configuration, digested once per connector object.
+// `describe()` is value-free: no header value, URL query or other secret
+// enters it, so the key this digest joins is no verifier for one. A change it
+// cannot see, such as a static header rotated in deployment code, takes effect
+// on redeploy and leaves an earlier record to lapse within its retry time.
 const configDigests = new WeakMap<Connector, Promise<string>>();
 function configDigest(connector: Connector): Promise<string> {
   let digest = configDigests.get(connector);
   if (!digest) {
-    const read = (value: () => unknown) => {
-      try {
-        return canonicalJson(value() ?? null);
-      } catch {
-        return null;
-      }
-    };
+    let described: unknown = null;
+    try {
+      described = connector.describe?.() ?? null;
+    } catch {
+      described = null;
+    }
     digest = sha256Hex(
-      JSON.stringify([
-        CONNECTA_VERSION,
-        connector.kind ?? null,
-        connector.authScope ?? null,
-        read(() => connector.describe?.()),
-        read(() => effectiveConfigOf(connector)),
-      ]),
+      canonicalJson([CONNECTA_VERSION, connector.kind ?? null, connector.authScope ?? null, described]),
     );
     configDigests.set(connector, digest);
   }
@@ -230,15 +222,15 @@ export function readDiscoveryHealth(
 /**
  * Claim the probe of a record whose retry time has passed, as the probe is
  * dispatched: one compare-and-set against the record this request read, with
- * a lease that outlasts the probe and its settlement. Others keep skipping
- * until the lease lapses or the probe settles. False when another request
- * holds it, or the record changed.
+ * a lease to the absolute time `leaseUntil`, past the claimant's whole
+ * discovery budget. Others keep skipping until the lease lapses or the probe
+ * settles. False when another request holds it, or the record changed.
  */
-export function claimDiscoveryProbe(slot: HealthSlot, leaseMs: number): Effect.Effect<boolean> {
+export function claimDiscoveryProbe(slot: HealthSlot, leaseUntil: number): Effect.Effect<boolean> {
   return Effect.suspend(() => {
     const fact = parseFact(slot.raw);
     if (!fact) return Effect.succeed(slot.raw === null);
-    const claim = encodeFact({ ...fact, retryAt: Date.now() + leaseMs });
+    const claim = encodeFact({ ...fact, retryAt: leaseUntil });
     return storageCompareAndSet(slot.key, slot.raw, claim.raw, { expiresAtMs: claim.expiresAtMs }).pipe(
       Effect.provideService(Storage, slot.storage),
       Effect.map((claimed) => {
