@@ -113,9 +113,9 @@ export interface UiConnector {
   registrationPath?: "cimd" | "dcr" | "static";
   credential?: UiCredential;
   /**
-   * The stored last verification of this connector's credential or OAuth
-   * grant, for connectors that keep one. Absent when nothing has verified
-   * the current value. A typed outcome and a time; never vendor text.
+   * The stored last verification of this connector's operator-managed
+   * credential. Absent when nothing has verified the save stored now. A
+   * typed outcome and a time; never vendor text.
    */
   verification?: UiVerification;
   /**

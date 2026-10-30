@@ -16,14 +16,7 @@ import type { CredentialVault } from "../credential-contract.js";
 import { credentialReads } from "../credential-reads.js";
 import { credentialTestRule, describeUndeclaredCredentialFields, storedCredentialShape } from "../credential-rules.js";
 import { readVerification } from "../credential-verification.js";
-import {
-  failureRecord,
-  failureStatus,
-  logFailure,
-  ownStatus,
-  recordedToolName,
-  statusFailure,
-} from "../operator-record.js";
+import { failureRecord, failureStatus, logFailure, recordedToolName, statusFailure } from "../operator-record.js";
 import type {
   CredentialManagementCapability,
   UiConnector,
@@ -106,25 +99,22 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
     };
 
     /**
-     * The stored last verification of a credential or api() OAuth grant
+     * The stored last verification of an operator-managed credential
      * (src/credential-verification.ts). Read only, never probed (INV-10). A
-     * credential's record counts only for the save it observed, whose
-     * metadata the card's memoized vault read already holds.
+     * record counts only for the save it observed, whose revision the card's
+     * memoized vault read already holds; a vault without revisions has none
+     * to match.
      */
     const verificationFor = (c: Connector, requestScope: object): Effect.Effect<UiVerification | undefined> =>
-      c.credential || (c.kind === "api" && c.startAuth)
+      c.credential && vault
         ? attempt(async () => {
-            const storage = registry.contextFor(c.id, baseUrl, requestScope).storage;
-            if (!c.credential) return readVerification(storage);
-            const metadata = vault
-              ? await credentialReads(vault, requestReads(requestScope)).metadata(
-                  c.id,
-                  c.authScope === "personal" ? owner : undefined,
-                )
-              : null;
-            // Only a record of this very save counts; a vault without
-            // revisions has none to match.
-            return metadata?.revision ? readVerification(storage, metadata.revision) : undefined;
+            const metadata = await credentialReads(vault, requestReads(requestScope)).metadata(
+              c.id,
+              c.authScope === "personal" ? owner : undefined,
+            );
+            return metadata?.revision
+              ? readVerification(registry.contextFor(c.id, baseUrl, requestScope).storage, metadata.revision)
+              : undefined;
           }).pipe(Effect.orElseSucceed(() => undefined))
         : Effect.succeed(undefined);
 
@@ -145,19 +135,13 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         });
       }
       return Effect.gen(function* () {
-        const reported = yield* attempt(() =>
+        const status = yield* attempt(() =>
           registry.statusFor(c.id, baseUrl, requestScope, {
             signal,
             ...(options.defer ? { defer: options.defer } : {}),
           }),
         );
         const verification = yield* verificationFor(c, requestScope);
-        // An api() OAuth grant the downstream refused, even after renewal,
-        // needs a new consent: one stored grant alone does not make it ok.
-        const status =
-          verification?.outcome === "rejected" && !c.credential && reported.state === "ok"
-            ? ownStatus({ state: "auth_required" as const })
-            : reported;
         if (status.state !== "ok" || signal.aborted) {
           return { status, tools: [], catalogFailed: false, verification };
         }

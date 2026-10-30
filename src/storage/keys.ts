@@ -404,10 +404,10 @@ export const oauthConnectKeys = {
 } as const satisfies Keyed;
 
 /**
- * The last verification of a connector's credential or OAuth grant:
- * `verification:v1`, holding an outcome class, its time and, for a vault
- * credential, the `updatedAt` it observed. Payload-free and long-lived; a
- * lost record only makes status say "not verified".
+ * The last verification of a connector's operator-managed credential:
+ * `verification:v1`, holding an outcome class, its time and the vault
+ * revision of the save it observed. Payload-free and long-lived; a lost
+ * record only makes the operator page say "not verified".
  */
 export const verificationKeys = {
   family: {

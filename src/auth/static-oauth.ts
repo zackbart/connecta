@@ -15,7 +15,6 @@ import { guardedTransport, sendCredentialPost } from "../guarded-transport.js";
 import { oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { describeFailure } from "../operator-record.js";
-import { observeGrant as writeGrantObservation } from "../credential-verification.js";
 import {
   assertProviderCallOpen,
   bindProviderResponse,
@@ -511,14 +510,6 @@ class StaticOAuthProvider extends KvOAuthProvider {
   }
 }
 
-/** The grant a call observed: the epoch it bound, and no later than when it read the grant. */
-interface GrantBasis {
-  since: number;
-  epoch?: string;
-}
-
-/** How often a runtime re-records an unchanged grant outcome for one owner. */
-const GRANT_OBSERVATION_INTERVAL_MS = 10 * 60_000;
 const AUTH_REQUIRED_MESSAGE = "Authorization required — open the URL to connect.";
 
 /** Release the resource body before renewal, bounding even the facade's discarded challenge. */
@@ -588,45 +579,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const callbackProviders = new WeakMap<object, StaticOAuthProvider>();
   const rejectedScopes = new WeakSet<object>();
   const scopeOf = (ctx: ConnectorContext): object => ctx.requestScope ?? ctx;
-
-  // What real calls observed of the owner's grant, stored as its
-  // last-verified record so status can say more than "a grant exists". Each
-  // observation names the grant it was made of: the epoch the call bound and
-  // when it read the grant. An unchanged outcome is re-recorded at most once
-  // per interval per owner partition in this runtime, so a busy connector
-  // does not write per call. `null` fences: a new grant, or none, starts
-  // unverified, and no older call's observation lands after it.
-  const observedGrants = new WeakMap<object, { outcome: string | null; at: number; epoch: string | undefined }>();
-  const grantBases = new WeakMap<object, GrantBasis>();
-  const observeGrant = (
-    ctx: ConnectorContext,
-    outcome: "ok" | "rejected" | null,
-    basis?: GrantBasis,
-  ): Effect.Effect<void, unknown> => {
-    // Only a registry context names the owner partition the record lives in,
-    // and only an observation that knows its grant may be recorded.
-    const partition = oauthPartitionFor(ctx);
-    if (outcome === "rejected") rejectedScopes.add(scopeOf(ctx));
-    if (!partition || (outcome && !basis)) return Effect.void;
-    basis ??= { since: Date.now() };
-    const at = Date.now();
-    const last = observedGrants.get(partition);
-    if (
-      outcome &&
-      last?.outcome === outcome &&
-      last.epoch === basis.epoch &&
-      at - last.at < GRANT_OBSERVATION_INTERVAL_MS
-    )
-      return Effect.void;
-    observedGrants.set(partition, { outcome, at, epoch: basis.epoch });
-    // Best effort: a lost record only leaves status without a verification,
-    // and the next observation in this runtime writes again.
-    return authValue(() =>
-      writeGrantObservation(ctx.storage, outcome, basis.since, basis.epoch).catch(
-        () => void observedGrants.delete(partition),
-      ),
-    );
-  };
 
   const warnShortSecret = shortSecretWarning();
   const providerFor = (ctx: ConnectorContext, requestOwned = false) => {
@@ -869,8 +821,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * even one this request's earlier renewal produced.
    */
   const grantFor = (ctx: ConnectorContext, requestOwned = false, renewAgain = false): RenewableGrant => {
-    // The grant this call reads: no earlier than now, in the epoch it binds.
-    const basis: GrantBasis = { since: Date.now() };
     let provider: SharedRead<StaticOAuthProvider> | undefined;
     const use = authMethod(<A>(work: (provider: StaticOAuthProvider, live: ConnectorContext) => Promise<A>) => {
       return authView(
@@ -890,7 +840,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                       return authFlow<StaticOAuthProvider>(function* () {
                         const value = providerFor(live, requestOwned);
                         const epoch = (yield authInvoke(value, "beginFlow", [])) as string;
-                        basis.epoch = epoch;
                         if (value.isOperatorDisconnectedEpoch(epoch)) {
                           throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);
                         }
@@ -906,7 +855,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             } catch (error) {
               if (signal.aborted) throw signal.reason;
               if (error instanceof UnauthorizedError) {
-                yield observeGrant(ctx, "rejected", basis);
+                rejectedScopes.add(scopeOf(ctx));
                 throw authRequiredError();
               }
               throw error;
@@ -918,7 +867,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         requestOwned,
       ) as Effect.Effect<A, unknown>;
     });
-    const grant: RenewableGrant = {
+    return {
       token: authMethod(() => {
         return authCall(use, [
           authMethod((provider: StaticOAuthProvider, live: ConnectorContext) => {
@@ -968,8 +917,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         return authView(
           ctx,
           authMethod(() => {
-            return authFlow<never>(function* () {
-              yield observeGrant(ctx, "rejected", basis);
+            return authValue<never>(() => {
+              rejectedScopes.add(scopeOf(ctx));
               throw authRequiredError();
             });
           }),
@@ -977,8 +926,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         ) as Effect.Effect<never, unknown>;
       }),
     };
-    grantBases.set(grant, basis);
-    return grant;
   };
 
   /**
@@ -1089,19 +1036,15 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               });
             });
             const release = retainOAuthPartition(oauthPartitionFor(ctx));
-            let grant: RenewableGrant | undefined;
             try {
               if (signal?.aborted) throw signal.reason;
-              grant = grantFor(ctx, auxiliary);
+              const grant = grantFor(ctx, auxiliary);
               const stale = (yield authInvoke(grant, "token", [])) as string;
               const { response: first, dispatch } = (yield authCall(send, [stale])) as {
                 response: Response;
                 dispatch: ProviderRequest;
               };
-              if (first.status !== 401) {
-                if (first.ok) yield observeGrant(ctx, "ok", grantBases.get(grant!));
-                return first;
-              }
+              if (first.status !== 401) return first;
               try {
                 (yield authCall(readChallenge, [first, signal, init.method])) as void;
               } catch (error) {
@@ -1125,7 +1068,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                   renewedAfterUnauthorized(dispatch, stale, fresh);
                   if (fresh === stale) renewal = authRequiredError();
                 } catch (error) {
-                  if (error instanceof UnauthorizedError) yield observeGrant(ctx, "rejected", grantBases.get(grant!));
+                  if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
                   renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
                 }
                 throw vendorRefusal(
@@ -1140,10 +1083,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 response: Response;
                 dispatch: ProviderRequest;
               };
-              if (second.status !== 401) {
-                if (second.ok) yield observeGrant(ctx, "ok", grantBases.get(grant!));
-                return second;
-              }
+              if (second.status !== 401) return second;
               void second.body?.cancel().catch(() => {});
               return (yield authInvoke(grant, "rejected", [])) as never;
             } catch (error) {
@@ -1153,7 +1093,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               // the invocation's ledger retains the write's uncertainty and handoff.
               if (signal?.aborted) throw signal.reason;
               if (error instanceof UnauthorizedError) {
-                yield observeGrant(ctx, "rejected", grant && grantBases.get(grant));
+                rejectedScopes.add(scopeOf(ctx));
                 throw authRequiredError();
               }
               throw error;
@@ -1236,7 +1176,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         if (opts?.force || disconnected) {
           (yield authInvoke(provider, "resetAuthorization", [])) as void;
           rejectedScopes.delete(scopeOf(original));
-          yield observeGrant(ctx, null);
         } else {
           // Hand back a recent consent URL rather than overwrite the verifier
           // the operator may be mid-consent on.
@@ -1302,7 +1241,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const disconnectAuth = authMethod((ctx: ConnectorContext) => {
     return authFlow<void>(function* () {
       rejectedScopes.delete(scopeOf(ctx));
-      yield observeGrant(ctx, null);
       if (!settings.revocationEndpoint) {
         (yield authInvoke(providerFor(ctx), "resetAuthorization", [true])) as void;
         return;
@@ -1373,12 +1311,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             throw new UnauthorizedError("Failed to authorize");
           }
           rejectedScopes.delete(scopeOf(ctx));
-          // Fence for the new grant: no call made of the one it replaced is
-          // recorded after this.
-          yield observeGrant(ctx, null, {
-            since: Date.now(),
-            epoch: (yield authInvoke(provider, "flowEpoch", [])) as string,
-          });
         });
       }),
       true,

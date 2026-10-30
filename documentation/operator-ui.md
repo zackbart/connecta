@@ -680,10 +680,9 @@ failed reads, disconnect, navigation, unmount and identity reset stop the matchi
 poll; a `connector_timeout` result does not. Recovery never starts authorization. A scoped result cannot confirm identity,
 role, token slots or any other deployment-wide admission fact.
 
-A connector's `/ui/data` and `/ui/connectors/<id>` row carries
-`verification: { outcome, observedAt }` when a current record exists (see
-[last verification](./auth.md#test-then-save-and-last-verification)); an
-`api()` OAuth row whose grant was refused reads `auth_required`.
+A credential connector's `/ui/data` and `/ui/connectors/<id>` row carries
+`verification: { outcome, observedAt }` when a record of the stored save
+exists (see [last verification](./auth.md#test-then-save-and-last-verification)).
 The auth facts show it as **Last verified**: Verified, Saved without a test,
 Rejected, Missing permission, Service unreachable, Test timed out or Test
 failed, with its time. A maintainer's credential form on a testable connector

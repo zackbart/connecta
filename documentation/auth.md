@@ -175,18 +175,9 @@ credential removes the record. A custom vault records verification only when
 its `metadata` carries a per-save `revision` and, for Test, it implements
 `snapshot`; otherwise its credentials are tested but never shown verified.
 
-For `api()` OAuth, real calls record the grant's outcome: an accepted answer
-records `ok`, and a grant the API refuses even after renewal records
-`rejected`, re-recorded on change or at most every ten minutes per owner in a
-runtime. Each observation names the grant epoch the call used and when it read
-the grant, and is written by compare-and-set: a new grant, a disconnect or a
-restart writes a fence, and an observation older than the fence or from
-another epoch is refused, so a call that outlived its grant never speaks for
-the next one. A recorded `rejected` makes the operator page report the connector as
-`auth_required` (`problem: "oauth_required"`) even though a grant is stored,
-rather than `ok` because one exists. Until a call through the current grant is
-accepted, the connector is `ok` with no `verification`. Reading it is side-effect free: the page only reads this
-record, never probes the downstream or writes (INV-10).
+Reading the record is side-effect free: the operator page only reads it,
+never probes the downstream or writes (INV-10). OAuth connectors keep no
+verification record; their status is unchanged.
 
 ## Issue, rotate, or revoke an agent token
 

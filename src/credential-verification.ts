@@ -1,16 +1,15 @@
-// The last verification of a connector's credential or OAuth grant: a typed,
+// The last verification of a connector's operator-managed credential: a typed,
 // payload-free observation stored per connector and owner (the connector's
-// `ctx.storage` is already partitioned by both). Credential tests and, for
-// `api()` OAuth, real calls write it; status only reads it (INV-10).
+// `ctx.storage` is already partitioned by both). Credential tests and saves
+// write it; the operator page only reads it (INV-10).
 import { classifyCallError } from "./errors.js";
 import { verificationKeys } from "./storage/keys.js";
 import type { CredentialFailureClass, CredentialTestResult, KVStorage } from "./types.js";
 
 /**
- * Whether a connector's stored credential or OAuth grant works, as last
- * observed. `ok` and the failure classes come from a credential test or, for
- * `api()` OAuth, from real calls; `unverified` marks a credential saved
- * without a passing test.
+ * Whether a connector's stored credential works, as last observed. `ok` and
+ * the failure classes come from a credential test; `unverified` marks a
+ * credential saved without a passing test.
  */
 export interface CredentialVerification {
   outcome: "ok" | "unverified" | CredentialFailureClass;
@@ -76,31 +75,4 @@ export async function writeVerification(
   const record = { outcome, observedAt: new Date().toISOString() };
   await storage.set(verificationKeys.record, JSON.stringify({ ...record, credential }));
   return record;
-}
-
-/**
- * `api()` OAuth: record what a call observed of the grant it read at `since`
- * (epoch milliseconds) in `epoch`. Written by compare-and-set and refused once
- * the record holds a newer observation or a fence of another grant, so a
- * call that outlived its grant can never speak for its successor. `null`
- * writes that fence: a new grant (with its epoch), a reset or a disconnect.
- * A fence shows no verification.
- */
-export async function observeGrant(
-  storage: KVStorage,
-  outcome: "ok" | "rejected" | null,
-  since: number,
-  epoch?: string,
-): Promise<void> {
-  const next = JSON.stringify({ outcome, observedAt: new Date().toISOString(), credential: epoch, since });
-  if (!outcome) return storage.set(verificationKeys.record, next);
-  const raw = await storage.get(verificationKeys.record);
-  let current: { since?: number; credential?: string } | null = null;
-  try {
-    current = JSON.parse(raw ?? "null");
-  } catch {
-    /* An unreadable record is replaced like an absent one would be. */
-  }
-  if (current && !(current.since! <= since && current.credential === epoch)) return;
-  await storage.compareAndSet(verificationKeys.record, raw, next);
 }
