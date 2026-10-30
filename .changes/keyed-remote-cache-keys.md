@@ -1,5 +1,0 @@
----
-type: changed
----
-
-Remote MCP catalog-cache and negotiation-verdict partitions, and connector-health records, are now deployment-keyed. Their inputs enter stored keys through HMAC-SHA-256 under a key that is never stored. Those inputs are each connector's cache configuration, including every configured URL in full and its header values, plus operator-managed and request-resolved credentials, custom connector credential values, OAuth token responses and the described configuration. `encryptedCredentialVault()` derives that key from its credential key and exposes it through a new optional host-only vault method, `storageDigestKey()`. Without a vault, or with a custom vault that lacks the method, each process or isolate uses its own random key, so cached remote catalogs, verdicts and health records are reused within that process or isolate only. Partitioning by owner, configuration, credential, token and epoch is unchanged. After the upgrade, each remote connector refills its cache once with one handshake and catalog listing. Earlier entries are not read and expire on their own TTLs.
