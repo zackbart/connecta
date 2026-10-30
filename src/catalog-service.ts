@@ -81,7 +81,7 @@ const MAX_IDENTITY_CONNECTORS = 3;
 const MAX_DESCRIBE_SUGGESTIONS = 3;
 const MAX_API_SEARCH_POINTERS = 3;
 const MAX_API_SEARCH_ADDRESS_BYTES = 256;
-/** Fully determined operation reads one search page offers. */
+/** Fully determined operation reads one search page offers: one per connector, three connectors. */
 const MAX_READY_CALLS = 3;
 
 /** Recognize the visible standard family without importing provider implementations or indexes. */
@@ -1423,7 +1423,10 @@ export class CatalogService {
                 safety,
                 this.readOnly,
               );
-              for (const ready of vocabulary.ready) readyFound.push({ connector, ...ready });
+              // At most one ready call per connector: its first hatch's top operation.
+              const ready = vocabulary.ready[0];
+              if (ready && !readyFound.some((found) => found.connector === connector))
+                readyFound.push({ connector, ...ready });
               for (const tool of vocabulary.tools) {
                 vocabularyTools.add(tool);
                 if (!rankedTools.some((match) => match.tool === tool))

@@ -213,12 +213,14 @@ vocabulary match, through a visible read tool in the caller's view. They are
 computed offline from the construction-time index, read no account data, and
 start no authorization.
 
-A ready call must also be what the query names. Every query word other than an
-action (`list`, `get`, `count`, `show`, `create`, `update`, `delete` and their
-vocabulary aliases) must match the operation's resource identity: a path
-segment or its operationId, with singular/plural normalization and the
-provider's declared synonyms. Version segments such as `v1` never count, and a
-summary may supply only actions. A query with no object word gets no ready
+A ready call must also be what the query names. Each path segment, and the
+operationId without its action and version words, is one whole resource name:
+`event_destinations` is the name "event destination", never "event". Every
+query word other than an action (`list`, `get`, `count`, `show`, `create`,
+`update`, `delete` and their vocabulary aliases) must belong to a resource name
+whose words the query states in order, with singular/plural normalization and
+the provider's declared synonyms. Version segments such as `v1` never count, and
+a summary may supply only actions. A query with no object word gets no ready
 call. Ready calls are omitted entirely when the top result is an exact tool name
 or address, or a complete match on an authored tool, not the hatch's own search
 or read tool, whose name adds nothing to the query: each of its name words is an
@@ -226,9 +228,10 @@ action or a query word, up to plural/singular and declared synonyms. For
 example, `list teams` returns `list_teams` and no ready call, even when other
 operations mention teams in their summaries, while `list projects` still offers
 `/v10/projects` beside `list_project_env_vars`, whose name adds `env` and `vars`.
-Each hatch offers at most three, ranked by a last path segment naming the
-resource, then the fewest resource words the query did not ask for, then path
-length; a page carries at most three in connector order. Later pages carry none. A ready
+Each hatch offers only its top-ranked operation: a last path segment naming the
+resource first, then the fewest resource words the query did not ask for, then
+the shortest path. A connector offers at most one ready call and a page at most
+three, in connector order. Later pages carry none. A ready
 call keeps its read tool's `guideRequired` and `guideRequiredReasons`, and its
 connector appears in `connectors`.
 
