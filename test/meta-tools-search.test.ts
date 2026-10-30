@@ -277,8 +277,15 @@ describe("search_tools", () => {
     expect(await ready("list meetings")).toEqual(["workspace.granola_api_read /v1/notes"]);
     expect(await ready("list deployments")).toEqual(["hosting.vercel_api_read /v7/deployments"]);
     expect(await ready("list customers")).toEqual(["billing.stripe_api_read /v1/customers"]);
+    // list_project_env_vars also matches, but its name adds "env" and "vars".
+    const projects = await search("list projects");
+    expect(projects.tools[0]?.address).toBe("hosting.list_project_env_vars");
+    const projectCalls = (projects.readyCalls ?? []).map((call) => `${call.address} ${call.args.path}`);
+    expect(projectCalls[0]).toBe("hosting.vercel_api_read /v10/projects");
+    for (const call of projectCalls) expect(call).toMatch(/\/projects$/);
     // Vercel summaries mention teams for /v1/env, /v1/access-groups and CI
-    // branches; none of those is a team resource, and list_teams answers.
+    // branches; none of those is a team resource, and list_teams, whose name
+    // adds nothing to the query, answers it.
     const teams = await search("list teams");
     expect(teams.tools[0]?.address).toBe("hosting.list_teams");
     expect(teams.readyCalls).toBeUndefined();

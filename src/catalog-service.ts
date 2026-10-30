@@ -131,6 +131,8 @@ const SERVICE_NAMES = [
  * write rows within each relevance tier; writes stay on the page.
  */
 const READ_INTENT = /^(?:list|get|find|search|show|read|fetch|count)$/;
+/** Name words that state an action, never a resource. */
+const ACTION_WORD = /^(?:list|get|find|search|show|read|fetch|count|create|update|delete)$/;
 
 function normalizedPhrase(text: string): string {
   return lexicalQueryTerms(text.toLowerCase()).join(" ");
@@ -1570,14 +1572,24 @@ export class CatalogService {
           },
         };
       });
-      // An exact name, or a complete match on an authored tool rather than the
-      // hatch itself, already answers the query: offer no operation instead.
+      // An exact name already answers the query, and so does a complete match
+      // on an authored tool (not the hatch's own) whose name adds nothing to
+      // the query: each name word is an action, or a query word up to
+      // plural/singular and declared synonyms. `list_teams` answers "list
+      // teams"; `list_project_env_vars` does not answer "list projects".
       const top = matches[0];
+      const synonymsOfTop = top && searchSynonyms(top.connector);
+      const asked = queryTerms.flatMap((term) => [term, ...(synonymsOfTop?.(term) ?? [])]);
       const answered =
         top !== undefined &&
         (top.exactLookup ||
           top.exactName ||
-          (top.complete && !vocabularyTools.has(top.tool) && !readyFound.some((ready) => ready.tool === top.tool)));
+          (top.complete &&
+            !vocabularyTools.has(top.tool) &&
+            !readyFound.some((ready) => ready.tool === top.tool) &&
+            lexicalQueryTerms(top.tool.name).every(
+              (word) => ACTION_WORD.test(word) || asked.some((term) => matchesLexicalTerm(word, term)),
+            )));
       const readyCalls =
         offset === 0 && !answered
           ? readyFound.slice(0, MAX_READY_CALLS).map(({ connector, tool, path, summary }): CatalogReadyCall => {

@@ -220,9 +220,12 @@ segment or its operationId, with singular/plural normalization and the
 provider's declared synonyms. Version segments such as `v1` never count, and a
 summary may supply only actions. A query with no object word gets no ready
 call. Ready calls are omitted entirely when the top result is an exact tool name
-or address, or a complete match on an authored tool rather than the hatch's
-own search or read tool. For example, `list teams` returns `list_teams` and no
-ready call, even when other operations mention teams in their summaries.
+or address, or a complete match on an authored tool, not the hatch's own search
+or read tool, whose name adds nothing to the query: each of its name words is an
+action or a query word, up to plural/singular and declared synonyms. For
+example, `list teams` returns `list_teams` and no ready call, even when other
+operations mention teams in their summaries, while `list projects` still offers
+`/v10/projects` beside `list_project_env_vars`, whose name adds `env` and `vars`.
 Each hatch offers at most three, ranked by a last path segment naming the
 resource, then the fewest resource words the query did not ask for, then path
 length; a page carries at most three in connector order. Later pages carry none. A ready
