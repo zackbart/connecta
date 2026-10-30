@@ -296,7 +296,26 @@ export interface LexicalCorpusStatistics {
  * connector rank, so ubiquitous words contribute less than discriminative
  * ones without making any action word a stopword.
  */
-export function lexicalCorpusStatistics(toolSets: ToolDef[][], query: string): LexicalCorpusStatistics {
+/** Whole-token candidates for one term, widened by a catalog's lexical synonyms. */
+function synonymCandidates(term: string, synonyms: ((word: string) => readonly string[]) | undefined): Set<string> {
+  const own = matchingTokenCandidates(term);
+  if (!synonyms) return own;
+  const candidates = new Set(own);
+  for (const candidate of own)
+    for (const synonym of synonyms(candidate))
+      for (const variant of matchingTokenCandidates(synonym)) candidates.add(variant);
+  return candidates;
+}
+
+/**
+ * `synonymsFor` gives a catalog's lexical synonyms, word to equivalent words:
+ * a term then matches a tool through any of them, as plain whole tokens.
+ */
+export function lexicalCorpusStatistics(
+  toolSets: ToolDef[][],
+  query: string,
+  synonymsFor?: (tools: ToolDef[]) => ((word: string) => readonly string[]) | undefined,
+): LexicalCorpusStatistics {
   const terms = lexicalQueryTerms(query);
   if (terms.length === 0) {
     return {
@@ -313,7 +332,7 @@ export function lexicalCorpusStatistics(toolSets: ToolDef[][], query: string): L
     const termDescriptionMatches = new Set<ToolDef>();
     for (const tools of toolSets) {
       const index = indexFor(tools);
-      for (const candidate of matchingTokenCandidates(term)) {
+      for (const candidate of synonymCandidates(term, synonymsFor?.(tools))) {
         for (const tool of index.nameTokenDocuments.get(candidate) ?? []) {
           termNameMatches.add(tool);
         }

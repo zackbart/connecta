@@ -2808,13 +2808,13 @@ return fs;
         inputKeys: match.inputKeys,
         requiredInputKeys: match.requiredInputKeys,
         hasSchema: typeof match.inputSchema,
-        guide: match.guide,
+        guide: page.connectors.reader.guide,
         bareCarriesKeys: bare.tools.some((tool) => tool.inputKeys !== undefined)
       };
     }`,
     check(outcome) {
       const result = record(outcome);
-      expect(result.pageKeys).toEqual(["catalogErrors", "hasMore", "limit", "offset", "tools", "total"]);
+      expect(result.pageKeys).toEqual(["catalogErrors", "connectors", "hasMore", "limit", "offset", "tools", "total"]);
       expect(result.address).toBe("reader.read");
       expect(result.inputKeys).toEqual(["value"]);
       expect(result.requiredInputKeys).toEqual(["value"]);

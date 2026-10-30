@@ -35,6 +35,7 @@ import {
 } from "./errors.js";
 import { hatch, type HatchBinding, type HatchDeclaration } from "./hatch.js";
 import { takesIdempotencyKey } from "./tools.js";
+import { registerSearchSynonyms } from "../operation-vocabulary.js";
 import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import {
@@ -50,6 +51,14 @@ import { connect, operations, type Connection, type ConnectOptions, type Vendor 
 type ProbeOperation = Parameters<Connection["send"]>[0];
 
 interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<ProviderDefinition<O>, "kind" | "create"> {
+  /**
+   * Groups of interchangeable search words, each a single lowercase token,
+   * such as `[["household", "family"]]` where the vendor names a record
+   * differently from its users. Search consults them lexically for this
+   * provider's catalog and operation vocabulary only. Declare a group only
+   * where the guide or vendor contract establishes the equivalence.
+   */
+  readonly searchSynonyms?: readonly (readonly string[])[];
   /** Connection defaults; an explicit options.title still wins. */
   readonly displayTitle?: (options: Readonly<O>) => string;
   readonly description?: (options: Readonly<O>) => string;
@@ -196,8 +205,28 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     hatch: declaredHatch,
     tools,
     tagConnector,
+    searchSynonyms,
     ...metadata
   } = definition;
+  if (
+    searchSynonyms !== undefined &&
+    !(
+      Array.isArray(searchSynonyms) &&
+      searchSynonyms.length > 0 &&
+      searchSynonyms.length <= 32 &&
+      searchSynonyms.every(
+        (group) =>
+          Array.isArray(group) &&
+          group.length > 1 &&
+          group.length <= 8 &&
+          new Set(group).size === group.length &&
+          group.every((word) => /^[a-z][a-z0-9]{0,31}$/.test(word)),
+      )
+    )
+  ) {
+    throw new Error(`${metadata.title} searchSynonyms must be 1–32 groups of 2–8 distinct lowercase words.`);
+  }
+  const synonyms = searchSynonyms?.map((group) => [...group]);
   if (credential !== undefined && oauth !== undefined) {
     throw new Error(`${metadata.title} declares both credential and oauth; declare one authentication method.`);
   }
@@ -426,6 +455,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         }),
       );
       tagConnector?.(connector, options);
+      if (synonyms) registerSearchSynonyms(connector, synonyms);
       return connector;
     },
   });

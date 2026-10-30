@@ -20,6 +20,8 @@ export const granola = defineApiProvider<GranolaOptions>({
   readme: "Granola",
   options: optionsOf<GranolaOptions>()(keys("purpose", "title", "instructions", "maxResultBytes", "readOnly")),
   skill,
+  // The guide and vendor call meeting records notes.
+  searchSynonyms: [["meeting", "note"]],
   bundle: {
     baselineGzip: 360040,
     note: "./providers/granola standalone measured 360,040 B gzip with Homebrew Node 22 on 2026-10-27. This includes the shared Effect provider kit, paid once per deployment; provider entries are reported, not capped, and standalone sizes are not additive.",

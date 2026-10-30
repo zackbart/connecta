@@ -1263,7 +1263,11 @@ switched by the environment, and keep their entries under 30 lines.
 A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
 name, title, `kind: "api"`, maintained skill, closed `options` shape and a
 synchronous `create`. Common values are checked before construction and the
-factory stamps its provider name onto `describe().source.provider`. API
+factory stamps its provider name onto `describe().source.provider`. The kit's
+`defineApiProvider` also takes optional `searchSynonyms` groups (single
+lowercase words, at most 32 groups of 2–8), checks them at definition and
+attaches them to each connector for
+[lexical discovery](./meta-tools.md#lexical-discovery). API
 implementations and their contract evidence remain vendored. Hosted MCP servers
 use generic `remoteMcp()` entries; provider reviews and hosted defaults are
 removed. Legacy hosted selectors fail at construction with the generic migration

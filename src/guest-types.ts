@@ -137,13 +137,9 @@ interface CatalogSearchPage {
   };
 }
 type CatalogSearchResult = CatalogSearchPage & {
-  tools: Array<
-    CatalogSearchTool & {
-      connectorTitle?: string;
-      guide?: string;
-      guideSummary?: string;
-    }
-  >;
+  tools: CatalogSearchTool[];
+  /** Facts shared by a connector's rows, keyed by the id before the address's first dot. */
+  connectors?: Record<string, { title?: string; guide?: string; guideSummary?: string }>;
 };
 interface CatalogDescription {
   address: string;

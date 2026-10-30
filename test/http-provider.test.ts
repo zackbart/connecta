@@ -166,6 +166,11 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
       { purpose: "Support" },
     ),
   ).toThrow(/review/);
+  for (const searchSynonyms of [[], [["deal"]], [["deal", "deal"]], [["Deal", "opportunity"]], [["sales deal", "x"]]])
+    expect(() => defineApiProvider({ ...definition, searchSynonyms }), JSON.stringify(searchSynonyms)).toThrow(
+      "searchSynonyms must be",
+    );
+  defineApiProvider({ ...definition, searchSynonyms: [["deal", "opportunity"]] })("tickets", { purpose: "Support" });
   // A declared idempotency fact must match the write builders.
   expect(() => defineApiProvider({ ...definition, idempotencyKey: true })("tickets", { purpose: "Support" })).toThrow(
     /idempotencyKey/,

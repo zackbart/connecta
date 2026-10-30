@@ -42,7 +42,7 @@ import {
 } from "./discovery-health.js";
 import type { Connector, JsonSchema, ToolDef } from "./types.js";
 import { keepErrorName } from "./redaction-identity.js";
-import { operationVocabularyMatches } from "./operation-vocabulary.js";
+import { operationVocabularyMatches, searchSynonyms } from "./operation-vocabulary.js";
 
 /** One search probe's outcome, and what its health record settles from. */
 interface SearchProbe {
@@ -123,6 +123,12 @@ const SERVICE_NAMES = [
   "Google Slides",
   "Gmail",
 ];
+
+/**
+ * Leading verbs that ask to read. A query led by one ranks read rows above
+ * write rows within each relevance tier; writes stay on the page.
+ */
+const READ_INTENT = /^(?:list|get|find|search|show|read|fetch|count)$/;
 
 function normalizedPhrase(text: string): string {
   return lexicalQueryTerms(text.toLowerCase()).join(" ");
@@ -468,27 +474,33 @@ export interface CatalogSearchPage {
   };
 }
 
-/** The flat wire page shared by search_tools and connecta.search. */
+/** Connector facts shared by every row of one connector, stated once per page. */
+interface CatalogSearchConnector {
+  title?: string;
+  guide?: string;
+  guideSummary?: string;
+}
+
+/**
+ * The flat wire page shared by search_tools and connecta.search. Per-connector
+ * facts sit once in `connectors`, keyed by the connector id that prefixes each
+ * row's address; rows keep only what varies by tool.
+ */
 export type CatalogSearchResult = Omit<CatalogSearchPage, "entries"> & {
-  tools: Array<
-    CatalogSearchEntry["tool"] & {
-      connectorTitle?: string;
-      guide?: string;
-      guideSummary?: string;
-    }
-  >;
+  tools: Array<CatalogSearchEntry["tool"]>;
+  connectors?: Record<string, CatalogSearchConnector>;
 };
 
 const stringListSchema = { type: "array", items: { type: "string" } } as const;
-const guideProperties = {
-  guide: { type: "string" },
-  guideSummary: { type: "string" },
+const STRING = { type: "string" } as const;
+const guideRequiredProperties = {
   guideRequired: { const: true },
   guideRequiredReasons: {
     type: "array",
     items: { enum: ["connector_required", "approval_required", "schema_truncated"] },
   },
 };
+const guideProperties = { guide: STRING, guideSummary: STRING, ...guideRequiredProperties };
 const catalogFailureProperties = {
   code: { type: "string" },
   message: { type: "string" },
@@ -593,8 +605,16 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
           outputKeys: stringListSchema,
           annotations: { type: "object" },
           classification: { enum: ["read", "write"] },
-          ...guideProperties,
+          ...guideRequiredProperties,
         },
+      },
+    },
+    connectors: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        properties: { title: STRING, guide: STRING, guideSummary: STRING },
       },
     },
     total: { type: "integer", minimum: 0 },
@@ -1294,9 +1314,15 @@ export class CatalogService {
         complete: boolean;
       }> = [];
       let matchMode: "all" | "partial" = "all";
+      // Provider-declared synonyms widen term matching within their own catalog only.
+      const synonymsFor = (tools: ToolDef[]) => {
+        const index = searchableCatalogs.findIndex((catalog) => Result.isSuccess(catalog) && catalog.success === tools);
+        return index < 0 ? undefined : searchSynonyms(connectors[index]!);
+      };
       const statistics = lexicalCorpusStatistics(
         searchableCatalogs.flatMap((catalog) => (Result.isSuccess(catalog) ? [catalog.success] : [])),
         retrievalQuery,
+        synonymsFor,
       );
       const trimmedQuery = query.trim();
       const isBrowse = trimmedQuery.length === 0;
@@ -1328,7 +1354,7 @@ export class CatalogService {
                 : []),
             ]);
             const localStatistics = exactConnector
-              ? lexicalCorpusStatistics([catalog.success], retrievalQuery)
+              ? lexicalCorpusStatistics([catalog.success], retrievalQuery, synonymsFor)
               : undefined;
             // An exact identity is a browse even when one tool repeats that
             // identity in its name or description. Action queries still keep
@@ -1409,9 +1435,14 @@ export class CatalogService {
       if (!isBrowse && !unsearchableQuery && completeMatchCount === 0) {
         matchMode = "partial";
       }
+      // A read-intent verb leads the query once connector names are set aside.
+      const identityTerms = new Set(connectors.flatMap(connectorNames).flatMap(lexicalQueryTerms));
+      const readIntent = READ_INTENT.test(lexicalQueryTerms(query).find((term) => !identityTerms.has(term)) ?? "");
+      const readFirst = (match: (typeof matches)[number]) => Number(readIntent && match.tool.classification === "read");
       // Exact tool names precede connector identity and lexical scoring. A
       // longer name such as get_issue_status cannot beat an exact get_issue
-      // merely because its description repeats rare query terms.
+      // merely because its description repeats rare query terms. Within a
+      // tier, a read-intent query puts reads before writes.
       matches.sort((a, b) => {
         const aFirstTier = a.complete || a.exactName;
         const bFirstTier = b.complete || b.exactName;
@@ -1420,6 +1451,7 @@ export class CatalogService {
           Number(b.exactName) - Number(a.exactName) ||
           b.connectorRank - a.connectorRank ||
           Number(bFirstTier) - Number(aFirstTier) ||
+          readFirst(b) - readFirst(a) ||
           b.score - a.score ||
           a.order - b.order
         );
@@ -1935,17 +1967,22 @@ function pageTail(page: CatalogSearchPage) {
 }
 
 export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {
+  // fromEntries keeps an id such as "__proto__" an own key.
+  const connectors = new Map<string, CatalogSearchConnector>();
+  for (const { connector, guide, guideSummary } of page.entries) {
+    const title = connector.title && boundedEchoText(connector.title.replace(/\s+/g, " ").trim(), 117);
+    if (title || guide)
+      connectors.set(connector.id, {
+        ...(title ? { title } : {}),
+        ...(guide ? { guide } : {}),
+        ...(guideSummary ? { guideSummary } : {}),
+      });
+  }
   return {
     catalogErrors: page.catalogErrors,
     ...(page.absence ? { absence: page.absence } : {}),
-    tools: page.entries.map((entry) => ({
-      ...entry.tool,
-      ...(entry.connector.title
-        ? { connectorTitle: boundedEchoText(entry.connector.title.replace(/\s+/g, " ").trim(), 117) }
-        : {}),
-      ...(entry.guide ? { guide: entry.guide } : {}),
-      ...(entry.guideSummary ? { guideSummary: entry.guideSummary } : {}),
-    })),
+    tools: page.entries.map((entry) => entry.tool),
+    ...(connectors.size ? { connectors: Object.fromEntries(connectors) } : {}),
     ...pageTail(page),
   };
 }

@@ -9,6 +9,8 @@ import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, connectorIds, textOf, toolsByConnector, type SearchResult } from "./fixtures/meta-tools.js";
 import { calcConnector, makeRegistry, remoteConnector, required } from "./helpers.js";
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
+import { fixture as ccbFixture } from "../src/providers/ccb/fixtures.js";
+import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -181,6 +183,69 @@ describe("search_tools", () => {
       expect(result.isError).toBe(true);
       expect(required(result.content[0]).text).toContain("is a write");
     }
+  });
+
+  it("ranks reads above writes after a read-intent leading verb without hiding writes", async () => {
+    const hosting: Connector = connectorWith({
+      id: "hosting",
+      kind: "api",
+      staticTools: [
+        {
+          name: "update_project_settings",
+          description: "Update project settings",
+          annotations: { readOnlyHint: false },
+        },
+        {
+          name: "get_project",
+          description: "One project, including its settings summary",
+          annotations: { readOnlyHint: true },
+        },
+        { name: "delete_project_settings", annotations: { readOnlyHint: false, destructiveHint: true } },
+      ],
+      tools: [],
+      call: async (name) => name,
+    });
+    const mt = createMetaTools(makeRegistry([hosting]), BASE);
+    const ranked = async (query: string) =>
+      ((textOf(await mt.searchTools({ query })) as SearchResult).tools ?? []).map(
+        (tool) => `${tool.name}:${tool.classification}`,
+      );
+    // Lexically the write's name is the stronger match.
+    expect((await ranked("project settings"))[0]).toBe("update_project_settings:write");
+    for (const query of ["show project settings", "list project settings", "hosting show project settings"]) {
+      expect(await ranked(query), query).toEqual([
+        "get_project:read",
+        "update_project_settings:write",
+        "delete_project_settings:write",
+      ]);
+    }
+    // A non-read verb leaves lexical order alone.
+    expect((await ranked("update project settings"))[0]).toBe("update_project_settings:write");
+  });
+
+  it("matches provider-declared synonyms lexically within that provider's catalog only", async () => {
+    const other: Connector = connectorWith({
+      id: "other",
+      kind: "api",
+      staticTools: [{ name: "list_families", description: "List families", annotations: { readOnlyHint: true } }],
+      tools: [],
+      call: async () => null,
+    });
+    const mt = createMetaTools(
+      makeRegistry([ccbFixture.create("church"), granolaFixture.create("notes"), other]),
+      BASE,
+    );
+    const households = textOf(await mt.searchTools({ query: "list households" })) as SearchResult;
+    expect(households.tools[0]?.address).toBe("church.list_families");
+    expect(households.tools.map((tool) => tool.address)).not.toContain("other.list_families");
+    const person = textOf(await mt.searchTools({ connector: "church", query: "get person" })) as SearchResult;
+    expect(person.tools[0]?.address).toBe("church.get_individual");
+    // Operation vocabulary consults them too: Granola calls meetings notes.
+    const meetings = textOf(await mt.searchTools({ connector: "notes", query: "list meetings" })) as SearchResult;
+    expect(meetings.tools.map((tool) => tool.address)).toContain("notes.granola_api_search");
+    const unrelated = textOf(await mt.searchTools({ connector: "other", query: "list households" })) as SearchResult;
+    expect(unrelated.matchMode).toBe("partial");
+    expect(unrelated.queryAnalysis?.unmatchedTerms).toEqual(["households"]);
   });
 
   it("does not load unrelated catalogs for a connector-scoped search", async () => {
