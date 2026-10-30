@@ -46,7 +46,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 413000
+      "maxGzip": 414000
     },
     "./json-schema": {
       "baselineGzip": 5870,

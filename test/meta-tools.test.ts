@@ -145,7 +145,10 @@ Prefer \`notes.search\` over listing databases.
     });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const searched = textOf(await mt.searchTools({ query: "invoke", includeSchemas: "compact" })) as SearchResult;
-    expect(required(searched.tools[0]).guideSummary).toBe("Generic operation aliases and argument shapes.");
+    expect(searched.connectors?.["generic"]).toEqual({
+      guide: "connector:generic",
+      guideSummary: "Generic operation aliases and argument shapes.",
+    });
     expect(required(searched.tools[0]).guideRequired).toBe(true);
     expect(required(searched.tools[0]).guideRequiredReasons).toEqual(["connector_required", "approval_required"]);
 

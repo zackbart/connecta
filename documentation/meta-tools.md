@@ -155,9 +155,9 @@ dropped first, then optional guide pointers. Only when bare ids and required
 guide pointers still exceed it do whole entries give way, in registry order, to
 an exact `+N more` count. The inventory reads only the configured registry: no
 catalog load, no credential probe, no live status, no capability, and no
-replacement for canonical discovery or addressing. Program search results carry
-the same bounded `connectorTitle` per tool, so choosing an account or
-environment costs no provider read.
+replacement for canonical discovery or addressing. Search pages carry the same
+bounded title once per connector in `connectors[<id>].title`, so choosing an
+account or environment costs no provider read.
 
 Read-only lookup belongs in `connecta.search` inside the program; top-level
 `search_tools` stays for explicit catalog inspection and approval-required
@@ -295,9 +295,11 @@ guide's first meaningful body paragraph. `required: true` is reserved for
 generic API wrappers and cross-operation conventions a complete downstream
 schema cannot express.
 
-Search and describe results carry a `guide: "connector:<id>"` pointer and a
-`guideSummary`. A matching tool also carries `guideRequired: true` and
-`guideRequiredReasons` when Connecta can prove review is necessary:
+Describe results carry a `guide: "connector:<id>"` pointer and a
+`guideSummary`; a search page carries both once per connector in
+`connectors[<id>]`. A matching tool row or description also carries
+`guideRequired: true` and `guideRequiredReasons` when Connecta can prove review
+is necessary:
 
 | Reason               | Raised by                            | Survives exact schema expansion                          |
 | -------------------- | ------------------------------------ | -------------------------------------------------------- |
@@ -658,7 +660,7 @@ a fixed warning without storage error prose. Never repeat a write to recover out
 page. Select tool rows from `page.tools`.
 With the same schema format, schema-key option, and scoped registry, both paths
 return identical data. Top-level search omits schemas unless requested; programs
-default to JSON schemas and schema-key metadata.
+default to TypeScript signatures and schema-key metadata.
 
 ```json
 {
@@ -667,12 +669,12 @@ default to JSON schemas and schema-key metadata.
     {
       "name": "get_ticket",
       "address": "tickets.get_ticket",
-      "connectorTitle": "Tickets",
       "classification": "read",
       "schemaFormat": "json",
       "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }
     }
   ],
+  "connectors": { "tickets": { "title": "Tickets", "guide": "connector:tickets", "guideSummary": "Ticket ids and states." } },
   "total": 1,
   "offset": 0,
   "limit": 8,
@@ -704,8 +706,13 @@ takes more than 5 seconds can stay out of unscoped search; search it with
 `connector`, or let any longer-deadline operation warm its complete catalog.
 See [Discovery health](./architecture.md#storage-credentials-and-connectors).
 
-Tool rows carry the address, configured display title when present, guide and
-guide summary when available, and stored classification. Requested schemas have
+Tool rows carry the address, stored classification, and tool-specific
+`guideRequired` and `guideRequiredReasons`. Facts shared by every row of one
+connector appear once per page in `connectors`, keyed by the connector id that
+prefixes each row's address: the configured display `title` when present and
+`guide` and `guideSummary` when the connector has a guide. The map names only
+connectors with a row on this page and is omitted when none has such facts.
+Requested schemas have
 `schemaFormat: "json"` for JSON Schema values or `schemaFormat: "text"` for
 compact schema strings and TypeScript signatures. Compact schemas are text;
 `inputSchema.properties` is meaningful only in JSON mode. Pagination counts
@@ -718,7 +725,19 @@ rare domain terms above ubiquitous action terms. Exact tool names and canonical
 addresses rank first, so `get_issue` beats `get_issue_status` even when a
 connector is named `issue`. Exact configured connector IDs, full display titles,
 and recognized service names rank next. Complete lexical matches then precede
-partial matches, with score and catalog order breaking ties.
+partial matches. Within a tier, a query whose first word outside connector names
+is `list`, `get`, `find`, `search`, `show`, `read`, `fetch`, or `count` ranks
+read rows before write rows; writes stay on the page. Score and catalog order
+break the remaining ties.
+
+A maintained provider may declare `searchSynonyms`: groups of single lowercase
+words its users and its vendor use for the same record, such as `household`
+and `family` for Church Community Builder. A query word then matches that
+provider's tools and operation vocabulary through any word in its group, as an
+ordinary whole-token match ranked below the word itself. Synonyms never widen
+another connector's matches. Church Community Builder declares
+`person`/`individual` and `household`/`family`; Granola declares
+`meeting`/`note`.
 An exact connector ID or title query browses that connector's tools, even when
 individual tool names or descriptions mention that identity. Connector identity
 terms that never occur in its tools need not be repeated in every tool description.
