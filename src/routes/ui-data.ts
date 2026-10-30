@@ -122,7 +122,9 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
                   c.authScope === "personal" ? owner : undefined,
                 )
               : null;
-            return metadata ? readVerification(storage, metadata.updatedAt) : undefined;
+            // Only a record of this very save counts; a vault without
+            // revisions has none to match.
+            return metadata?.revision ? readVerification(storage, metadata.revision) : undefined;
           }).pipe(Effect.orElseSucceed(() => undefined))
         : Effect.succeed(undefined);
 

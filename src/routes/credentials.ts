@@ -1,7 +1,6 @@
 import { failureRecord, logFailure } from "../operator-record.js";
 import { Effect } from "effect";
-import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-scope.js";
-import { credentialReads } from "../credential-reads.js";
+import { claimConnectorScopeCleanup } from "../connector-scope.js";
 import { credentialTestRule, describeCredentialTestMismatch, storedCredentialShape } from "../credential-rules.js";
 import {
   credentialFailureClass,
@@ -9,7 +8,7 @@ import {
   writeVerification,
   type CredentialVerification,
 } from "../credential-verification.js";
-import { requestReads } from "../runtime/request-scope.js";
+import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
 import type { ConnectorCredentialConfig, ConnectorCredentialValues } from "../types.js";
 import { authorizedPerson, refuse, serveOperator, managementRegistry, type Answer } from "./operator.js";
@@ -139,26 +138,32 @@ function credentialRequest(
     const runTest = (mode: "single" | "multiple", values: ConnectorCredentialValues) => {
       const timeoutError = new Error("credential test timed out");
       return withDeadlineEffect(
-        (signal) =>
-          Effect.tryPromise({
+        (signal) => {
+          const ctx = registry.contextFor(connectorId, baseUrl, {}, { signal });
+          const releaseCleanup = claimConnectorScopeCleanup(ctx, connectorId);
+          return Effect.tryPromise({
             try: async () => {
-              const ctx = registry.contextFor(connectorId, baseUrl, {}, { signal });
-              const releaseCleanup = claimConnectorScopeCleanup(ctx, connectorId);
-              try {
-                const result =
-                  mode === "multiple"
-                    ? await connector.testCredentials!(values, ctx)
-                    : // The single-value shape guarantees this key.
-                      await connector.testCredential!(values.value!, ctx);
-                // A hook that turned the deadline's abort into a result still ran out of time.
-                return signal.reason === timeoutError ? "timeout" : credentialTestOutcome(result);
-              } finally {
-                releaseCleanup();
-                await closeConnectorScope(connector, ctx, context.defer);
-              }
+              const result =
+                mode === "multiple"
+                  ? await connector.testCredentials!(values, ctx)
+                  : // The single-value shape guarantees this key.
+                    await connector.testCredential!(values.value!, ctx);
+              // A hook that turned the deadline's abort into a result still ran out of time.
+              return signal.reason === timeoutError ? "timeout" : credentialTestOutcome(result);
             },
             catch: (error) => (signal.reason === timeoutError ? timeoutError : error),
-          }),
+          }).pipe(
+            // The scope closes here, once, however the test ends: a hook that
+            // never settles is interrupted by the deadline, and a cleanup in
+            // its Promise would never run (INV-7).
+            Effect.ensuring(
+              Effect.suspend(() => {
+                releaseCleanup();
+                return closeScope(connector, ctx, context.defer);
+              }),
+            ),
+          );
+        },
         { timeoutMs: opts.config.discovery.probeTimeoutMs, timeoutError },
       ).pipe(
         Effect.catch((error) => {
@@ -174,21 +179,24 @@ function credentialRequest(
       );
     };
     /**
-     * Record what was observed about the credential stored at `updatedAt`,
-     * or (`null`) forget it, in the connector's own owner-partitioned
-     * storage. Best effort: a lost record only leaves status saying the
-     * credential is not verified, so it never fails the request.
+     * Record what was observed about the save with `revision`, or (`null`)
+     * forget it, in the connector's own owner-partitioned storage. A save
+     * without a revision (a vault that keeps none) is never recorded. Best
+     * effort: a lost record only leaves status saying the credential is not
+     * verified, so it never fails the request.
      */
-    const record = (outcome: CredentialVerification["outcome"] | null, updatedAt?: string) =>
-      Effect.promise(() =>
-        writeVerification(registry.contextFor(connectorId, baseUrl).storage, outcome, updatedAt).catch(
-          (error: unknown) =>
-            void logFailure(
-              opts.config.logger,
-              "credential verification record failed",
-              failureRecord({ connector: connectorId }, error),
+    const record = (outcome: CredentialVerification["outcome"] | null, revision?: string) =>
+      Effect.promise(async () =>
+        outcome && !revision
+          ? undefined
+          : writeVerification(registry.contextFor(connectorId, baseUrl).storage, outcome, revision).catch(
+              (error: unknown) =>
+                void logFailure(
+                  opts.config.logger,
+                  "credential verification record failed",
+                  failureRecord({ connector: connectorId }, error),
+                ),
             ),
-        ),
       );
 
     if (action === "test") {
@@ -198,14 +206,14 @@ function credentialRequest(
       // that reads the shape the credential was stored in.
       const { mode, mismatch } = credentialTestRule(connector);
       if (!mode) return yield* untestable(mismatch);
-      // One envelope read gives both the values tested and the save they
-      // came from, so the record can never vouch for a later replacement.
-      const reads = credentialReads(vault, requestReads({}));
+      // One envelope read gives both the values tested and the revision of
+      // the save they came from, so the record can never vouch for another
+      // save. A vault without snapshots is tested but never recorded.
       const stored = yield* Effect.tryPromise({
-        try: async () => ({
-          values: await reads.getAll(connectorId, owner),
-          metadata: await reads.metadata(connectorId, owner),
-        }),
+        try: async () =>
+          vault.snapshot
+            ? ((await vault.snapshot(connectorId, owner)) ?? { values: null })
+            : { values: await vault.getAll(connectorId, owner) },
         catch: (error) => error,
       }).pipe(
         Effect.catch((error) => {
@@ -233,7 +241,7 @@ function credentialRequest(
         return privateJson({ error: shape.message, problem: "credential_mismatch" }, { status: 409 });
       }
       const outcome = yield* runTest(mode, stored.values!);
-      if (stored.metadata) yield* record(outcome, stored.metadata.updatedAt);
+      if ("metadata" in stored) yield* record(outcome, stored.metadata.revision);
       return privateJson(outcome === "ok" ? { ok: true } : { ok: false, failure: outcome });
     }
 
@@ -258,9 +266,11 @@ function credentialRequest(
             : vault.setAll(connectorId, input.values, updatedBy, owner),
         catch: (error) => error,
       }).pipe(Effect.catch((error) => refuse(msg(error), 400)));
-      const verification = yield* record(verify === "test" ? "ok" : "unverified", metadata.updatedAt);
+      // The write's own revision: a concurrent save cannot lend it one.
+      const { revision, ...saved } = metadata;
+      const verification = yield* record(verify === "test" ? "ok" : "unverified", revision);
       yield* Effect.promise(() => registry.invalidateStored(connectorId));
-      return privateJson({ saved: true, credential: metadata, ...(verification ? { verification } : {}) });
+      return privateJson({ saved: true, credential: saved, ...(verification ? { verification } : {}) });
     }
     if (request.method === "DELETE") {
       // Clearing nothing is refused, as testing nothing is, so the route

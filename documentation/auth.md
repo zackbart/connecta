@@ -165,19 +165,27 @@ the hook's `message` or the downstream's reply.
 
 Each test of the stored value and each save records a last-verified
 observation for that connector and owner: its outcome class, its time and the
-save it observed. The operator page's connector data reports it as
+revision of the save it observed. A Test reads the stored values and their
+revision from one envelope, and a save records the revision its own write
+sealed, so a concurrent replacement is never reported as verified. The
+operator page's connector data reports the record as
 `verification: { outcome, observedAt }` only while that save is the stored
 one, so a replacement reads as unverified until tested. Removing the
-credential removes the record.
+credential removes the record. A custom vault records verification only when
+its `metadata` carries a per-save `revision` and, for Test, it implements
+`snapshot`; otherwise its credentials are tested but never shown verified.
 
 For `api()` OAuth, real calls record the grant's outcome: an accepted answer
 records `ok`, and a grant the API refuses even after renewal records
 `rejected`, re-recorded on change or at most every ten minutes per owner in a
-runtime. A recorded `rejected` makes the operator page report the connector as
+runtime. Each observation names the grant epoch the call used and when it read
+the grant, and is written by compare-and-set: a new grant, a disconnect or a
+restart writes a fence, and an observation older than the fence or from
+another epoch is refused, so a call that outlived its grant never speaks for
+the next one. A recorded `rejected` makes the operator page report the connector as
 `auth_required` (`problem: "oauth_required"`) even though a grant is stored,
-rather than `ok` because one exists. A new grant, a disconnect or a restart
-clears the record; until a call is accepted, the connector is `ok` with no
-`verification`. Reading it is side-effect free: the page only reads this
+rather than `ok` because one exists. Until a call through the current grant is
+accepted, the connector is `ok` with no `verification`. Reading it is side-effect free: the page only reads this
 record, never probes the downstream or writes (INV-10).
 
 ## Issue, rotate, or revoke an agent token

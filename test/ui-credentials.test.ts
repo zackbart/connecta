@@ -5,6 +5,7 @@ import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js
 import { ConnectorCallError, unavailableCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { buildUiData } from "../src/ui.js";
+import { openRequest } from "../src/runtime/call.js";
 import type { ConnectorContext } from "../src/types.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
 import {
@@ -256,34 +257,58 @@ describe("status UI credential management", () => {
   });
 });
 
-it.each([false, true])("closes the credential test scope when the hook throws=%s", async (throws) => {
-  const storage = memoryStorage();
-  await new CredentialVault(storage, CREDENTIAL_KEY).set("key", "test-secret", "operator");
-  let active = 0;
-  const testCredential = vi.fn(async (_value: string, _ctx: ConnectorContext) => {
-    active++;
-    if (throws) throw new Error("test failed");
-    return { ok: true };
-  });
-  const closeScope = vi.fn(async () => {
-    active--;
-    throw new Error("cleanup failed");
-  });
-  const connector = { ...credentialConnector(), id: "key", testCredential, closeScope };
-  const connecta = createTestConnecta({
-    connectors: [connector],
-    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-    storage,
-    publicUrl: BASE,
-    vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
-  });
-  const response = await credentialRequest(connecta, "/ui/credentials/key/test", { method: "POST" });
-  expect(response.status).toBe(200);
-  expect(await response.json()).toEqual(throws ? { ok: false, failure: "failed" } : { ok: true });
-  expect(closeScope).toHaveBeenCalledTimes(1);
-  expect(closeScope).toHaveBeenCalledWith(testCredential.mock.calls[0]?.[1]);
-  expect(active).toBe(0);
-});
+it.each(["resolves", "throws", "never settles"] as const)(
+  "INV-7: closes the credential test scope once when the hook %s",
+  async (hook) => {
+    const storage = memoryStorage();
+    await new CredentialVault(storage, CREDENTIAL_KEY).set("key", "test-secret", "operator");
+    let active = 0;
+    const testCredential = vi.fn(async (_value: string, _ctx: ConnectorContext) => {
+      active++;
+      if (hook === "throws") throw new Error("test failed");
+      // A custom hook that ignores its signal: only the deadline ends it.
+      if (hook === "never settles") return new Promise<never>(() => {});
+      return { ok: true };
+    });
+    const closeScope = vi.fn(async () => {
+      active--;
+      throw new Error("cleanup failed");
+    });
+    const connector = { ...credentialConnector(), id: "key", testCredential, closeScope };
+    const connecta = createTestConnecta({
+      connectors: [connector],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      storage,
+      publicUrl: BASE,
+      discovery: { probeTimeoutMs: 100 },
+      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+    });
+    const expected: { ok: boolean; failure?: string } = {
+      resolves: { ok: true },
+      throws: { ok: false, failure: "failed" },
+      "never settles": { ok: false, failure: "timeout" },
+    }[hook];
+    const response = await credentialRequest(connecta, "/ui/credentials/key/test", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(expected);
+    // Test then save takes the same path for a candidate.
+    const saved = await credentialRequest(connecta, "/ui/credentials/key", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "candidate-secret", verify: "test" }),
+    });
+    expect(await saved.json()).toMatchObject(
+      hook === "resolves" ? { saved: true } : { saved: false, failure: expected.failure },
+    );
+    expect(closeScope).toHaveBeenCalledTimes(2);
+    for (const [index, [, ctx]] of testCredential.mock.calls.entries()) {
+      expect(closeScope.mock.calls[index]).toEqual([ctx]);
+      // The request the test ran in is closed, not merely abandoned.
+      expect(openRequest(ctx.requestScope!).signal.aborted).toBe(true);
+    }
+    expect(active).toBe(0);
+  },
+);
 
 /** The connector's operator detail row: its shown status and last verification. */
 async function detailRow(registry: Parameters<typeof buildUiData>[0], id: string, vault?: CredentialVault) {
@@ -426,6 +451,61 @@ describe("test then save", () => {
     });
     expect(refused.status).toBe(400);
     expect(await refused.text()).not.toContain(CANDIDATE);
+  });
+
+  it("a passing candidate's delayed save never verifies a concurrent untested replacement", async () => {
+    const { connecta, storage, put, stored, vault } = await bearer(async () => ({ ok: true }));
+    const key = "conn:key:credential:v1";
+    const set = storage.set.bind(storage);
+    let hold: Promise<void> | undefined;
+    let reached!: () => void;
+    const written = new Promise<void>((resolve) => (reached = resolve));
+    let release!: () => void;
+    hold = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(storage, "set").mockImplementation(async (name, value, options) => {
+      await set(name, value, options);
+      if (name !== key || !hold) return;
+      // Candidate A is stored; hold its save before it reports back.
+      const gate = hold;
+      hold = undefined;
+      reached();
+      await gate;
+    });
+    const a = put({ value: CANDIDATE, verify: "test" });
+    await written;
+    // Operator B replaces it untested while A's save is still answering.
+    const b = await put({ value: "replacement-secret-value-0000" });
+    expect(b.body).toMatchObject({ saved: true, verification: { outcome: "unverified" } });
+    release();
+    const saved = (await a).body;
+    // A reports its own save, never B's.
+    expect(saved).toMatchObject({ saved: true, credential: { lastFour: "5678" }, verification: { outcome: "ok" } });
+    expect(saved.credential).not.toHaveProperty("revision");
+    await expect(stored()).resolves.toEqual({ value: "replacement-secret-value-0000" });
+    // B was never tested, so nothing says it is verified.
+    expect((await detailRow(connecta.registry, "key", vault())).verification?.outcome).not.toBe("ok");
+  });
+
+  it("a Test of the stored value never verifies a save that replaced it mid-read", async () => {
+    const { connecta, storage, stored, vault, testCredential } = await bearer(async () => ({ ok: false }));
+    const key = "conn:key:credential:v1";
+    const get = storage.get.bind(storage);
+    let armed = true;
+    vi.spyOn(storage, "get").mockImplementation(async (name) => {
+      const raw = await get(name);
+      if (name === key && armed) {
+        armed = false;
+        // A concurrent save lands right after the Test read the stored value.
+        await vault().set("key", CANDIDATE, "operator-b");
+      }
+      return raw;
+    });
+    const test = await credentialRequest(connecta, "/ui/credentials/key/test", { method: "POST" });
+    // The value tested is the one that was read: the stored one, which passes.
+    expect(await test.json()).toEqual({ ok: true });
+    expect(testCredential.mock.calls.map(([value]) => value)).toEqual([STORED]);
+    await expect(stored()).resolves.toEqual({ value: CANDIDATE });
+    expect((await detailRow(connecta.registry, "key", vault())).verification).toBeUndefined();
   });
 
   it("tests a multi-field candidate as a set and removes its record with the credential", async () => {
