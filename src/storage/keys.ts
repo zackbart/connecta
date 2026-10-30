@@ -424,6 +424,11 @@ export const verificationKeys = {
 
 /** A bounded, credential-partitioned downstream protocol verdict. */
 export const NEGOTIATION_TTL_SECONDS = 300;
+/**
+ * A legacy verdict lives longer: a server that upgrades still answers the
+ * legacy handshake, and one that stops answering it is renegotiated at once.
+ */
+export const LEGACY_NEGOTIATION_TTL_SECONDS = 6 * 60 * 60;
 export const negotiationKeys = {
   family: {
     name: "negotiation",
@@ -431,7 +436,8 @@ export const negotiationKeys = {
     prefixes: ["negotiation:v1:"],
     version: { number: 1, in: "key" },
     codec: jsonCodec,
-    ttl: { kind: "fixed", seconds: NEGOTIATION_TTL_SECONDS },
+    // The longest verdict lifetime; a modern verdict expires sooner.
+    ttl: { kind: "fixed", seconds: LEGACY_NEGOTIATION_TTL_SECONDS },
     durable: false,
   },
   verdict: (partitionDigest: string) => validateStorageKey(`negotiation:v1:${partitionDigest}`),

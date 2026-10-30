@@ -753,10 +753,13 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
     await authConnector.closeScope?.(authRegistry.contextFor("auth_tickets", BASE));
   });
 
-  it("INV-9: control: an HTTP 4xx refusal of the tools/call stays known; a 408 is unknown", async () => {
-    for (const [status, state] of [
-      [422, "failed"],
-      [408, "unknown"],
+  it("INV-9: control: a 4xx JSON-RPC refusal of the tools/call stays known; a bare 4xx or a 408 is unknown", async () => {
+    // A bare 4xx may be a gateway's answer after the server acted; only a
+    // JSON-RPC error body proves the server refused the call.
+    for (const [status, state, body] of [
+      [422, "failed", "json-rpc"],
+      [422, "unknown", "bare"],
+      [408, "unknown", "bare"],
     ] as const) {
       let dispatched = 0;
       const downstream = httpDownstream((server) => {
@@ -767,10 +770,12 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
         );
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-        const rpc = typeof init?.body === "string" ? (JSON.parse(init.body) as { method?: string }) : {};
+        const rpc = typeof init?.body === "string" ? (JSON.parse(init.body) as { method?: string; id?: number }) : {};
         if (rpc.method === "tools/call") {
           dispatched++;
-          return new Response("refused", { status });
+          return body === "bare"
+            ? new Response("refused", { status })
+            : Response.json({ jsonrpc: "2.0", id: rpc.id, error: { code: -32602, message: "refused" } }, { status });
         }
         return downstream.fetch(String(input), init);
       });
@@ -790,14 +795,16 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       expect(classifyWriteOutcome(served)).toBe(state);
       expect(served.error.retryable).toBe(false);
       expect(dispatched).toBe(2);
-      if (status === 408) {
-        expect(served.error).toMatchObject({
-          code: "write_outcome_unknown",
-          uncertainCall: { address: "tickets.create_item" },
-        });
+      if (state === "unknown") {
+        // A timeout is reported as such; a bare 4xx keeps its code, marked unknown.
+        expect(served.error).toMatchObject(
+          status === 408
+            ? { code: "write_outcome_unknown", uncertainCall: { address: "tickets.create_item" } }
+            : { code: "connector_call_failed", writeOutcome: "unknown" },
+        );
         const program = await catchingProgram(registry, "tickets.create_item");
         expect(program.structuredContent).toMatchObject({
-          error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } },
+          error: { writes: { succeeded: 0, failed: 0, unknown: 1 } },
         });
         expect(dispatched).toBe(3);
       }

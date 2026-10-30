@@ -6,7 +6,7 @@ import { isSpecType, type PriorDiscovery } from "@modelcontextprotocol/client";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { sentSecretsForRequest } from "../sent-secrets.js";
 import { assertDownstreamOutputSafe } from "../downstream-input-context.js";
-import { negotiationKeys, NEGOTIATION_TTL_SECONDS } from "../storage/keys.js";
+import { LEGACY_NEGOTIATION_TTL_SECONDS, negotiationKeys, NEGOTIATION_TTL_SECONDS } from "../storage/keys.js";
 import { viewReads } from "../runtime/call.js";
 import type { ConnectorContext } from "../types.js";
 
@@ -55,15 +55,32 @@ const storeNegotiationNative = /* @__PURE__ */ registerAuth(
       assertDownstreamOutputSafe(ctx.requestScope ?? ctx, prior);
       const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(prior);
       if (clean.kind === "modern" && !isSpecType.DiscoverResult(clean.discover)) return;
+      const ttlSeconds = clean.kind === "legacy" ? LEGACY_NEGOTIATION_TTL_SECONDS : NEGOTIATION_TTL_SECONDS;
       try {
         (yield authStorage(ctx.storage, "set", [
           negotiationKeys.verdict(digest),
           JSON.stringify({
             prior: clean,
-            expiresAt: Date.now() + NEGOTIATION_TTL_SECONDS * 1000,
+            expiresAt: Date.now() + ttlSeconds * 1000,
           }),
-          { ttlSeconds: NEGOTIATION_TTL_SECONDS },
+          { ttlSeconds },
         ])) as void;
+      } catch (error) {
+        logFailure(ctx.logger, "negotiation cache write failed", failureRecord({}, error));
+      }
+    }),
+);
+
+/** Drop a verdict the downstream has contradicted, so the next connect negotiates. */
+export function forgetNegotiation(ctx: ConnectorContext, digest: string): Promise<void> {
+  return runEdge(authProgram<void>(forgetNegotiationNative, [ctx, digest]));
+}
+const forgetNegotiationNative = /* @__PURE__ */ registerAuth(
+  forgetNegotiation,
+  (ctx: ConnectorContext, digest: string) =>
+    authFlow<void>(function* () {
+      try {
+        (yield authStorage(ctx.storage, "delete", [negotiationKeys.verdict(digest)])) as void;
       } catch (error) {
         logFailure(ctx.logger, "negotiation cache write failed", failureRecord({}, error));
       }

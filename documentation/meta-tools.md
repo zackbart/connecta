@@ -1235,7 +1235,9 @@ its code and message for diagnostics but is `retryable: false` with
 a program's `writes.unknown`. An HTTP refusal of the call's own write stays
 known only under the refusal rules above and a complete ledger proving the
 refusal covers the whole call; its recovery advice and program accounting both
-report failure. Partial or unknown ledgers remain conservative. An auth failure after entering a write with
+report failure. A `remoteMcp()` write answered with a 4xx (other than 401, 403,
+408 or 429) whose body is not a JSON-RPC error is unknown, never a refusal: a
+gateway may have answered after the server acted. Partial or unknown ledgers remain conservative. An auth failure after entering a write with
 no call-owned dispatch reports an unknown outcome and requires reconciliation,
 including credential refusals, static-OAuth refresh failures, and `remoteMcp()`
 connect or initialize 401s before `tools/call`. A non-auth refusal before
