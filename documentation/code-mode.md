@@ -226,7 +226,7 @@ const page = await connecta.search({
   limit: 8,                         // 1–100, default 8
   offset: 0,
   fullDescriptions: false,
-  includeSchemas: "json",           // default; or "compact" / "typescript"
+  includeSchemas: "typescript",     // default; or "json" / "compact"
   includeSchemaKeys: true,          // default true in code mode
 });
 ```
@@ -243,18 +243,22 @@ query browses; non-empty input with no ASCII lexical terms returns no tools plus
 bounded no-match analysis in `queryAnalysis`; mixed input searches with its
 ASCII terms.
 
-Each entry carries `address`, `name`, the configured `connectorTitle` when
-present (normalized whitespace, at most 120 UTF-8 bytes), and — when requested —
-`description`, `inputSchema`, `outputSchema`, and `annotations`. An entry whose
-connector carries a usage guide also carries `guide` (the skill name) and a
-bounded `guideSummary`, requested or not. An output shape learned under `S9`
+Each entry carries `address`, `name`, and — when requested — `description`,
+the rendered schemas, and `annotations`. The page's `connectors` map holds each
+row's connector facts once, keyed by the id before the address's first dot: the
+configured `title` when present (normalized whitespace, at most 120 UTF-8
+bytes), and `guide` (the skill name) with a bounded `guideSummary` when the
+connector carries a usage guide, requested or not. An output shape learned under `S9`
 also carries `outputSchemaSource: "observed"`; provider declarations carry no
 source marker.
 
-Programs default to `includeSchemas: "json"`: `inputSchema` and available
-`outputSchema` are JSON Schema values, labeled `schemaFormat: "json"`.
-Explicit `includeSchemas: "compact"` returns strings labeled
-`schemaFormat: "text"`; TypeScript signatures carry the same text label.
+Programs default to `includeSchemas: "typescript"`: each row carries one
+`signature` string for its input and available output, labeled
+`schemaFormat: "text"`, with `inputKeys`, `requiredInputKeys`, and `outputKeys`
+for code to check. A signature is about half the bytes of the JSON rows.
+Explicit `includeSchemas: "json"` returns `inputSchema` and available
+`outputSchema` as JSON Schema values, labeled `schemaFormat: "json"`, and
+`includeSchemas: "compact"` returns compact strings labeled `schemaFormat: "text"`.
 Compact shapes omit property prose and put required fields first, under these
 bounds:
 

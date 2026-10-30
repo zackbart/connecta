@@ -203,7 +203,9 @@ const BUDGETS = {
   },
   outputSchema: { skills: 660, search_tools: 3_800, authorize_connector: 420, execute_code: 1_070 },
   usage: 5_700,
-  searchRow: { default: 360, compact: 630 },
+  // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
+  searchRow: { default: 240, compact: 520 },
+  searchPage: { default: 470, compact: 730 },
 } as const;
 
 function budgetFixture(readOnly: boolean) {
@@ -318,6 +320,14 @@ describe("always-loaded agent surface budgets", () => {
           expect(JSON.stringify(page.structuredContent.tools[0]).length, mode).toBeLessThanOrEqual(
             BUDGETS.searchRow[mode],
           );
+          expect(JSON.stringify(page.structuredContent).length, mode).toBeLessThanOrEqual(BUDGETS.searchPage[mode]);
+          expect(page.structuredContent.connectors, mode).toEqual({
+            crm: {
+              title: "Customer CRM",
+              guide: "connector:crm",
+              guideSummary: "Accounts are scoped by workspace. Use ISO dates.",
+            },
+          });
         }
       } finally {
         await app.close();

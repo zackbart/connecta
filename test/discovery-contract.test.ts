@@ -27,7 +27,10 @@ async function searchBoth(registry: RegistryView, args: CatalogSearchArgs) {
   const guest = required(providers.find((provider) => provider.name === "connecta"));
   const program = (await required(guest.fns.search)(args)) as SearchResult;
   expect(program).toEqual(top);
-  expect(top).not.toHaveProperty("connectors");
+  // Connector facts are hoisted once per page, only for connectors with a row on it.
+  const onPage = new Set(top.tools.map((tool) => tool.address.split(".")[0]!));
+  for (const id of Object.keys(top.connectors ?? {})) expect(onPage.has(id), id).toBe(true);
+  for (const tool of top.tools) expect(tool).not.toHaveProperty("connectorTitle");
   expect(Object.keys(top)[0]).toBe("catalogErrors");
   const validation = searchValidator.validate(top);
   expect(validation.errors).toEqual([]);
@@ -55,9 +58,9 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
       expect(first).toMatchObject({ catalogErrors: [], total: 2, offset: 0, limit: 1, hasMore: true, nextOffset: 1 });
       expect(first.tools[0]).toMatchObject({
         address: "linear.get_issue",
-        connectorTitle: "Linear Work",
         schemaFormat: includeSchemas === "json" ? "json" : "text",
       });
+      expect(first.connectors).toEqual({ linear: { title: "Linear Work" } });
       const last = await searchBoth(registry, { limit: 1, offset: required(first.nextOffset), includeSchemas });
       expect(last).toMatchObject({ total: 2, hasMore: false });
       expect(last.tools[0]).toMatchObject({ address: "posthog.get_report" });
@@ -239,13 +242,20 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
     expect(authStarts).toBe(0);
   });
 
-  it("defaults program search and describe to JSON and labels compact schemas as text", async () => {
+  it("defaults program search to TypeScript, describe to JSON, and labels compact schemas as text", async () => {
     const inputSchema = { type: "object", properties: { id: { type: "string" } }, required: ["id"] };
     const registry = makeRegistry([service("linear", [{ name: "get_issue", inputSchema }])]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
     const guest = required(providers.find((provider) => provider.name === "connecta"));
     const page = (await required(guest.fns.search)({ query: "get_issue" })) as SearchResult;
-    expect(page.tools[0]).toMatchObject({ inputSchema, schemaFormat: "json", requiredInputKeys: ["id"] });
+    expect(page.tools[0]).toMatchObject({
+      signature: "(args: { id: string }) => Promise<unknown>",
+      schemaFormat: "text",
+      requiredInputKeys: ["id"],
+    });
+    expect(page.tools[0]).not.toHaveProperty("inputSchema");
+    const exact = (await required(guest.fns.search)({ query: "get_issue", includeSchemas: "json" })) as SearchResult;
+    expect(exact.tools[0]).toMatchObject({ inputSchema, schemaFormat: "json" });
     const described = (await required(guest.fns.describe)({ address: "linear.get_issue" })) as {
       tools: { inputSchema: unknown; schemaFormat: string }[];
     };
