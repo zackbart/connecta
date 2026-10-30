@@ -300,6 +300,16 @@ links, plus marker containment in paths and queries.
 - **S6 privacy:** no `raw` or any argument that widens what value safety or
   the privacy projection drops. A sensitive set is controlled only by the
   deployment's `sensitiveFields: "drop" | "return"` option.
+- **S7 route names:** never spell a meta-tool name in provider code, and
+  never splice a tool name into a sentence other surfaces share. Choose whole
+  phrases from `RoutePhrases` in `src/agent-routes.ts`: `routePhrases(ctx)`
+  where a `ConnectorContext` is in hand, `routePhrases(yield* Routes)` inside a
+  call's Effect (an `authenticate` program), `routePhrases(routes)` with the
+  `routes` argument of a vendor table's `words(detail, routes)`, and
+  `routeDescription((phrases) => ...)` for a static schema description, whose
+  meta text is the default. Branch on `phrases.program`, undefined on a native
+  pool without programs, rather than describing a program it cannot run.
+  Comments, `SKILL.md`, `eval/` wiring and generated files may name tools.
 - **A1 argument refusals:** a tool's own argument checks (those its input
   Schema cannot express) report every problem in one `invalid_args`. Declare
   them in the tool's `check(args, problems)`, never as throws inside `run`:

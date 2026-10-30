@@ -1,3 +1,4 @@
+import { routePhrases } from "../agent-routes.js";
 import { withStoredAuth } from "./stored-observation.js";
 import type {
   AuthorizationServerMetadata,
@@ -704,10 +705,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
 
   // No cause, as in remoteMcp(): the `UnauthorizedError` class is the whole
   // verdict, and a logger rendering the chain renders whatever it says.
-  const authRequiredError = () =>
+  const authRequiredError = (ctx: ConnectorContext) =>
     new ConnectorCallError(
       "downstream_oauth_required",
-      `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
+      `Connector "${id}" requires authorization — ${routePhrases(ctx).authorizeAndOpen(id)}.`,
     );
   const disconnectedMessage = `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
 
@@ -777,7 +778,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             }),
           ])) as AuthResult) !== "AUTHORIZED"
         )
-          throw authRequiredError();
+          throw authRequiredError(ctx);
         const refreshed = (yield authCall(live, [
           authMethod(() => {
             return authInvoke(provider, "tokens", [issuerContext]) as Effect.Effect<
@@ -805,7 +806,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               issuer?: string | undefined;
             }
           | undefined;
-        if (!refreshed) throw authRequiredError();
+        if (!refreshed) throw authRequiredError(ctx);
         return refreshed.access_token;
       });
     },
@@ -828,7 +829,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         authMethod((signal: AbortSignal) => {
           return authFlow<A>(function* () {
             assertProviderCallOpen(ctx, id, requestOwned);
-            if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
+            if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError(ctx);
             const live = deriveContext(ctx, { signal });
             const release = retainOAuthPartition(oauthPartitionFor(live));
             try {
@@ -856,7 +857,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               if (signal.aborted) throw signal.reason;
               if (error instanceof UnauthorizedError) {
                 rejectedScopes.add(scopeOf(ctx));
-                throw authRequiredError();
+                throw authRequiredError(ctx);
               }
               throw error;
             } finally {
@@ -883,7 +884,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                     issuer?: string | undefined;
                   }
                 | undefined;
-              if (!tokens) throw authRequiredError();
+              if (!tokens) throw authRequiredError(ctx);
               // A token about to expire is renewed before anything is sent with it,
               // so a write never meets the 401 it could not be repeated after.
               const scope = scopeOf(ctx);
@@ -919,7 +920,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           authMethod(() => {
             return authValue<never>(() => {
               rejectedScopes.add(scopeOf(ctx));
-              throw authRequiredError();
+              throw authRequiredError(ctx);
             });
           }),
           requestOwned,
@@ -1066,10 +1067,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                   // replaced the token this request sent (Q8). The same token back
                   // renewed nothing.
                   renewedAfterUnauthorized(dispatch, stale, fresh);
-                  if (fresh === stale) renewal = authRequiredError();
+                  if (fresh === stale) renewal = authRequiredError(ctx);
                 } catch (error) {
                   if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
-                  renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
+                  renewal = error instanceof UnauthorizedError ? authRequiredError(ctx) : error;
                 }
                 throw vendorRefusal(
                   unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal, "downstream_oauth_required"),
@@ -1094,7 +1095,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               if (signal?.aborted) throw signal.reason;
               if (error instanceof UnauthorizedError) {
                 rejectedScopes.add(scopeOf(ctx));
-                throw authRequiredError();
+                throw authRequiredError(ctx);
               }
               throw error;
             } finally {

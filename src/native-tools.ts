@@ -1,4 +1,5 @@
 import { bytesToHex } from "./bytes.js";
+import { routeNames } from "./agent-routes.js";
 import { duringViewEffect } from "./runtime/call.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { Effect } from "effect";
@@ -213,6 +214,8 @@ export class NativeSurface {
       // Listing omits a read-only endpoint's writes, as search does.
       readOnly: options.readOnly,
       defer: options.defer,
+      // Declared schema descriptions read as this pool serves them.
+      routes: routeNames(options.executeCode ? "native-code" : "native"),
     });
   }
 
@@ -273,7 +276,7 @@ export class NativeSurface {
       authMethod((args: Record<string, unknown>, request: ServerContext) =>
         Effect.gen({ self: this }, function* () {
           const result = yield* authInvoke<unknown>(this, "call", [name, args ?? {}, request]);
-          return nativeRecovery(result, this.options.executeCode, name);
+          return nativeRecovery(result, name);
         }),
       ) as never,
     );

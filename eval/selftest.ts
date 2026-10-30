@@ -632,7 +632,8 @@ if (only) process.exit();
 
 // Exercise the deployed arm selector and both HTTP encodings. Six returns
 // the original server itself, so its instructions, skills and errors are bytes
-// from the normal implementation, with no adapter or serialization pass.
+// from the normal implementation, with no adapter or serialization pass. Code
+// route text is Connecta's own rendering, so the adapter leaves text unchanged.
 {
   const errors = [
     {
@@ -665,7 +666,7 @@ if (only) process.exit();
           {
             name: "execute_code",
             description:
-              "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused.",
+              "Every operation uses execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused.",
           },
         ],
       },
@@ -708,7 +709,7 @@ if (only) process.exit();
         result.tools[0].description !==
           "Every operation uses execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused."
       )
-        throw new Error("Code tool guidance differs by HTTP encoding");
+        throw new Error("The code adapter changed Connecta's tool guidance");
       if (
         result.isError &&
         (JSON.stringify(JSON.parse(result.content[0].text)) !== JSON.stringify(result.structuredContent) ||

@@ -1,3 +1,4 @@
+import { META_ROUTES } from "../agent-routes.js";
 import { bytesToHex, sha256Hex } from "../bytes.js";
 import type {
   FetchLike,
@@ -1541,7 +1542,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (this.signal?.aborted) throw aborted(this.signal);
     const failure = this.refreshFailure;
     if (failure?.kind === "contended") return this.refreshContended();
-    return new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
+    // Only the class reaches callers: remoteMcp replaces this error with its own
+    // typed auth error, so this text keeps the meta name.
+    return new UnauthorizedError(`Authorization required. Use ${META_ROUTES.authorize} or Connect to start consent.`);
   }
 
   // --- the SDK's hooks --------------------------------------------------------

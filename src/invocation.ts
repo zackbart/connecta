@@ -1,3 +1,5 @@
+import { routePhrases } from "./agent-routes.js";
+import type { AgentRouteNames } from "./types.js";
 import { authCall, registerAuthMethod } from "./auth/native.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
@@ -258,6 +260,8 @@ export interface InvocationContext<T> {
   sentSecrets?: SentSecrets;
   /** The endpoint refuses every write. Resolved by the host route; default writable. */
   readOnly?: boolean | undefined;
+  /** Route names for text this call writes, the request's surface; the registry's otherwise. */
+  routes?: AgentRouteNames | undefined;
   timeoutMs?: number;
   requestSignal?: AbortSignal;
   /** Run ended: cancel resolution/admission, but spare a dispatched write. */
@@ -780,7 +784,7 @@ export class InvocationService {
           if (refusal === "destructive_tool_requires_approval") {
             return framingError(
               "destructive_tool_requires_approval",
-              `Tool "${canonicalAddress}" is a write. Invoke it through call_destructive_tool so the MCP host can request approval.`,
+              `Tool "${canonicalAddress}" is a write. ${routePhrases(context).writeNeedsApproval}`,
             );
           }
           // Remote MCP tools advertise their input schema in the catalog. Validate
@@ -819,7 +823,12 @@ export class InvocationService {
                 target.connector.id,
                 this.catalog.baseUrl,
                 this.catalog.requestScope,
-                defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
+                defined({
+                  signal: callSignal,
+                  timeoutMs: context.timeoutMs,
+                  defer: this.catalog.defer,
+                  routes: context.routes,
+                }),
               );
               const lease = callFromContext(operationContext, write ? "write" : "read", {
                 admitted: true,
@@ -851,14 +860,14 @@ export class InvocationService {
                   if (!connectorContext.credential) {
                     throw new ConnectorCallError(
                       "auth_required",
-                      "Operator-managed credential storage is not configured. Call " +
-                        `authorize_connector({ connector: "${target.connector.id}" }).`,
+                      "Operator-managed credential storage is not configured. " +
+                        routePhrases(connectorContext).authorizeCall(target.connector.id),
                     );
                   }
                   if (!(yield* Context.get(lease.services, Credentials).values)) {
                     throw new ConnectorCallError(
                       "auth_required",
-                      `Connector "${target.connector.id}" has no stored credential. Call authorize_connector.`,
+                      `Connector "${target.connector.id}" has no stored credential. ${routePhrases(connectorContext).authorizeCall()}`,
                     );
                   }
                 }

@@ -1,3 +1,4 @@
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { pathWithholds } from "../_shared/rest/value-safety.js";
 import { asRecord } from "../_shared/json.js";
 // Breeze's reviewed GET-only vendor. HTTP methods do not establish safety: see tools.ts.
@@ -528,13 +529,14 @@ export const admit = (url: URL): Effect.Effect<void, Refusal> => {
 
 export const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
+  const routes = yield* Routes;
   const key = values?.["value"]?.trim();
   if (!key)
     return yield* Effect.fail(
       new Refusal({
         error: new ConnectorCallError(
           "auth_required",
-          "No Breeze API key is configured for this connector. Call authorize_connector for recovery options. When available, an operator can add the key in this connection in the operator UI.",
+          `No Breeze API key is configured for this connector. ${routePhrases(routes).authorizeFor("recovery options")}. When available, an operator can add the key in this connection in the operator UI.`,
         ),
       }),
     );

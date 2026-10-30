@@ -1,17 +1,18 @@
+import { META_ROUTES } from "./agent-routes.js";
 import { UNCOUNTED_GUEST_FUNCTIONS } from "./guest-functions.js";
 
 /** Self-contained content for the usage skill; independent of skill registration. */
 export const USAGE_SKILL = `---
 name: usage
-description: How to route work between one execute_code program and Connecta's explicit call, authorization, and result tools.
+description: How to route work between one ${META_ROUTES.program} program and Connecta's explicit call, authorization, and result tools.
 ---
 
 # Connecta usage
 
 ## Choose the route
 
-Route as the server instructions and execute_code's first sentence say.
-Read one account with call_tool: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
+Route as the server instructions and ${META_ROUTES.program}'s first sentence say.
+Read one account with ${META_ROUTES.read}: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
 On a read-only endpoint search omits writes (guides may name them) and each
 fails read_only_endpoint; tell the user. Unannotated tools fail closed to writes.
 Connecta classifies and routes a requested write; the host owns approval.

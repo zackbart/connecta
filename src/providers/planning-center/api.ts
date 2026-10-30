@@ -1,3 +1,4 @@
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { asArray, asRecord } from "../_shared/json.js";
 import { Effect, Schema } from "effect";
 import type { GuardedRequest } from "../../connectors/guarded-fetch.js";
@@ -66,12 +67,13 @@ const fail = (
 ) => Effect.fail(new Refusal({ error: new ConnectorCallError(code, message, options) }));
 export const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
+  const routes = yield* Routes;
   const applicationId = values?.["applicationId"]?.trim();
   const secret = values?.["secret"]?.trim();
   if (!applicationId || !secret) {
     return yield* fail(
       "auth_required",
-      "No Planning Center personal access token is configured for this connector; it needs both the Application ID and the Secret. Call authorize_connector for recovery options. When available, an operator can add the token in this connection in the operator UI.",
+      `No Planning Center personal access token is configured for this connector; it needs both the Application ID and the Secret. ${routePhrases(routes).authorizeFor("recovery options")}. When available, an operator can add the token in this connection in the operator UI.`,
     );
   }
   // HTTP Basic is `id:secret` in Latin-1 base64. A colon in the id, or any

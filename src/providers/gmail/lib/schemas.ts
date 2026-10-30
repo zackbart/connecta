@@ -1,4 +1,5 @@
 // Real Effect declarations for Gmail's curated surface. MIME interpretation stays in tools.ts.
+import { routeDescription } from "../../../agent-routes.js";
 import { Schema } from "effect";
 import { Integer, isMinChars, isMaxChars } from "../../../http/json-schema.js";
 import { StandardPage } from "../../../http/paging.js";
@@ -195,8 +196,10 @@ export const inputs = {
     maxBytes: optional(
       Integer.check(Schema.isBetween({ minimum: 65536, maximum: 4194304 })).annotate({
         default: 196608,
-        description:
-          "Whole-result byte budget. Raise only for a direct call_tool; execute_code cannot receive large results.",
+        description: routeDescription(
+          (phrases) =>
+            `Whole-result byte budget. Raise only ${phrases.forDirect}${phrases.program ? `; ${phrases.program} cannot receive large results` : ""}.`,
+        ),
       }),
     ),
   }),

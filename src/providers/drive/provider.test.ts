@@ -2,6 +2,8 @@ import { PRIVATE_KEY } from "../../../test/fixtures/rsa.js";
 // Google Drive fixture regressions cover bounded/ranged reads, cursors,
 // size guards, uploads and refusals. Delegation, subjects and tokens are covered
 // by test/google-workspace-delegation.test.ts, including both transports.
+import { routeNames } from "../../agent-routes.js";
+import type { AgentRouteNames } from "../../types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { drive } from "./index.js";
@@ -135,6 +137,29 @@ describe("reading content", () => {
     return (request) =>
       request.url.searchParams.get("fields") ? { body: { id: "f1", name: "F", ...file } } : undefined;
   }
+
+  it("words a byte-bound cut as each surface reaches the tool, in whole phrases", async () => {
+    // Two-byte characters: the result's bytes bind before maxChars does.
+    const meta = metadata({ mimeType: "text/plain", size: "300000" });
+    route = (request) => meta(request) ?? { payload: "é".repeat(150_000), contentType: "text/plain" };
+    const raise = async (routes: AgentRouteNames) => {
+      const result = await call(
+        connection(),
+        "get_file_content",
+        { fileId: "f1", maxChars: 100_000 },
+        {
+          ...context(),
+          routes,
+        },
+      );
+      return /raise (maxBytes[^\]]*) to read more\]$/.exec(result.content)?.[1];
+    };
+    expect(await raise(routeNames("meta"))).toBe("maxBytes (up to 4194304, for a direct call_tool only)");
+    for (const surface of ["native", "native-code"] as const)
+      expect(await raise(routeNames(surface)), surface).toBe(
+        "maxBytes (up to 4194304, when calling this tool directly)",
+      );
+  });
 
   it("INV-1 INV-5 INV-9: preserves Drive error facts, guarded decisions and reviewed metadata dispatch", async () => {
     installOwnedTransport();

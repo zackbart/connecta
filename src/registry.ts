@@ -1,4 +1,5 @@
 import { wrapViewCredentials } from "./runtime/call.js";
+import { META_ROUTES } from "./agent-routes.js";
 import { sha256Hex } from "./bytes.js";
 import { catalogRevision } from "./catalog-revision.js";
 import { authCall, authInvoke } from "./auth/native.js";
@@ -179,6 +180,8 @@ export interface RegistryOptions {
    */
   maxResultBytes?: number | undefined;
   results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
+  /** Route names every context carries unless a call names its own; meta by default. */
+  routes?: import("./types.js").AgentRouteNames | undefined;
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -213,7 +216,7 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     : edge;
 }
 
-export type ConnectorOperationOptions = Pick<ConnectorContext, "signal" | "timeoutMs" | "defer">;
+export type ConnectorOperationOptions = Pick<ConnectorContext, "signal" | "timeoutMs" | "defer" | "routes">;
 
 /**
  * The registry surface a per-connection MCP server consumes: every meta-tool
@@ -766,6 +769,7 @@ export class Registry implements RegistryView {
         ...(this.opts.oauthClientName !== undefined ? { oauthClientName: this.opts.oauthClientName } : {}),
         ...(credentialAccess ? { credential: credentialAccess } : {}),
         requestScope,
+        routes: this.opts.routes ?? META_ROUTES,
         ...callOptions,
       },
       scope?.caller,

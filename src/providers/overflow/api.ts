@@ -1,3 +1,4 @@
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { pathWithholds } from "../_shared/rest/value-safety.js";
 import { asRecord } from "../_shared/json.js";
 // Overflow v3: reviewed vendor declarations, derived operation index and paging contracts.
@@ -1391,6 +1392,7 @@ function detailFor(payload: unknown, status: number): string {
 /** Candidate keys are resolved afresh for each operation, never cached in a connection. */
 export const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
+  const routes = yield* Routes;
   const clientId = values?.["clientId"]?.trim();
   const apiKey = values?.["apiKey"]?.trim();
   if (!clientId || !apiKey)
@@ -1398,7 +1400,7 @@ export const authenticate = Effect.gen(function* () {
       new Refusal({
         error: new ConnectorCallError(
           "auth_required",
-          "No Overflow client id and API key are configured for this connector. Call authorize_connector for recovery options; an operator adds both fields in this connection in the operator UI.",
+          `No Overflow client id and API key are configured for this connector. ${routePhrases(routes).authorizeFor("recovery options")}; an operator adds both fields in this connection in the operator UI.`,
         ),
       }),
     );

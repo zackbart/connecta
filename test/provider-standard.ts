@@ -325,6 +325,24 @@ export function driftViolations(
   );
 }
 
+const META_TOOL_NAME = /\b(?:search_tools|call_tool|call_destructive_tool|execute_code|authorize_connector)\b/;
+
+/**
+ * S7: provider code names a route through `src/agent-routes.ts` (`routePhrases`,
+ * `Routes` or `routeDescription`), so the text matches the surface serving it. Comments, guides, eval wiring and generated files may name tools.
+ */
+export function routeNameViolations(provider: ProviderFacts): string[] {
+  const found: string[] = [];
+  for (const file of provider.files) {
+    if (!file.endsWith(".ts") || TEST_FILE.test(file) || file.endsWith(".generated.ts") || file.startsWith("eval/"))
+      continue;
+    const code = (provider.read(file) ?? "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const name = META_TOOL_NAME.exec(code)?.[0];
+    if (name) found.push(`S7: ${file} spells ${name}; build it from routePhrases, Routes or routeDescription`);
+  }
+  return found;
+}
+
 /** G: SKILL.md carries agent-facing domain guidance only, rendered by the one guide renderer. */
 /** Marks the setup skeleton `providers:generate` inserts for a provider with no providers.md section. */
 export const setupSkeleton = (name: string) => `<!-- provider-setup-skeleton: ${name} -->`;

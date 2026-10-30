@@ -1,3 +1,4 @@
+import { Routes, routePhrases } from "../../agent-routes.js";
 import { asRecord, asArray } from "../_shared/json.js";
 // Tithe.ly's giving API (v1) as a kit vendor: the operations,
 // what its statuses mean, its credential, its in-band refusal, the probe, and
@@ -446,12 +447,13 @@ function keyPairProblem(values: ConnectorCredentialValues | null): string | { pu
 /** Operator-held Basic keys, resolved per request; a mismatched pair is refused before anything leaves. */
 export const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
+  const routes = yield* Routes;
   const pair = keyPairProblem(values);
   if (typeof pair === "string") {
     return yield* failed(
       new ConnectorCallError(
         "auth_required",
-        `${pair} Call authorize_connector for recovery options; an operator adds the keys on this connection in the operator UI.`,
+        `${pair} ${routePhrases(routes).authorizeFor("recovery options")}; an operator adds the keys on this connection in the operator UI.`,
       ),
     );
   }

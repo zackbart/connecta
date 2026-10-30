@@ -1,7 +1,7 @@
 import type { ToolResult } from "./meta-tools.js";
 
 /** Adapt only Connecta error envelopes; successful downstream payloads stay untouched. */
-export function nativeRecovery(result: unknown, executeCode: boolean, wireName?: string): unknown {
+export function nativeRecovery(result: unknown, wireName?: string): unknown {
   const response = result as ToolResult;
   const body = response?.structuredContent;
   if (!response?.isError || !body || typeof body.error !== "object" || !body.error) return result;
@@ -29,27 +29,10 @@ export function nativeRecovery(result: unknown, executeCode: boolean, wireName?:
         }
       : { host: "search", purpose: action.purpose };
   }
-  // These are Connecta-authored recovery fields, never arbitrary downstream data.
-  const rewrite = (text: string) =>
-    text.replace(/authorize_connector|search_tools|call_(?:destructive_)?tool|execute_code/g, (tool) =>
-      tool === "authorize_connector"
-        ? "the returned authorization handoff"
-        : tool.startsWith("call_")
-          ? "the original native tool"
-          : tool === "execute_code" && executeCode
-            ? tool
-            : "your host's tool search",
-    );
-  for (const key of ["message", "instructions", "retry"])
-    if (typeof error[key] === "string") error[key] = rewrite(error[key]);
+  // Recovery text already uses the native wording: native pools build it with
+  // native route names. Only the address in retry text becomes the wire name.
   if (wireName && typeof error.operation === "string" && typeof error.retry === "string")
-    error.retry = error.retry.replaceAll(rewrite(error.operation), wireName);
-  if (!executeCode && typeof error.instructions === "string") {
-    error.instructions = error.instructions.replace(
-      /; connecta\.search[\s\S]*$/,
-      ". Retry the original native call after recovery.",
-    );
-  }
+    error.retry = error.retry.replaceAll(error.operation, wireName);
   return {
     ...response,
     structuredContent: { ...body, error },

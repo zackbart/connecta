@@ -1,3 +1,4 @@
+import { declaresRouteDescriptions, routePhrases } from "../agent-routes.js";
 import { wrapViewCredentials } from "../runtime/call.js";
 import { storedAuthObservation, withStoredAuth } from "../auth/stored-observation.js";
 import { Effect, Exit } from "effect";
@@ -565,6 +566,8 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   // This boundary's identity in a logical call, fixed now: this object with
   // this function, never whatever the property or a copy holds by then.
   providerBoundary(connector);
+  // Its catalog is authored here, so declared route descriptions follow each request's surface.
+  declaresRouteDescriptions(connector);
   registerCallEntry(connector, core);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
@@ -573,7 +576,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       if ((await settleOnClose(ctx, () => oauth.prepareCall(ctx))).state === "auth_required") {
         throw new ConnectorCallError(
           "downstream_oauth_required",
-          `Connector "${id}" requires authorization. Call authorize_connector.`,
+          `Connector "${id}" requires authorization. ${routePhrases(ctx).authorizeCall()}`,
         );
       }
     });

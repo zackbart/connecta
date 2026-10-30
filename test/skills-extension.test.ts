@@ -528,3 +528,43 @@ it("INV-4: a bare connector id serves that connector's guide while built-in name
   expect(guideless.content[0]?.text).toContain('Connector "quiet" has no usage guide.');
   expect((await mt.skills({ name: "nothing" })).content[0]?.text).toContain('Unknown skill "nothing".');
 });
+
+it("INV-6 INV-8: serves every guide's bytes, DEL and route-like bytes included, matching its digest", async () => {
+  const odd = `\u007frandom \u007fr${"\u007f".repeat(7)} \u007fw\u007f call_tool é\u007f`;
+  const text = `${TEXT}${odd}\n`;
+  const sha = async (value: string) =>
+    "sha256:" +
+    [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  const remote = downstream("remote", {
+    list: async () => [
+      {
+        uri: URI,
+        frontmatter: { name: "review", description: "Review changes." },
+        resources: [{ uri: URI, digest: await sha(text), size: new TextEncoder().encode(text).length }],
+      },
+    ],
+    read: async (uri) => [{ uri, mimeType: "text/markdown", text }],
+  });
+  const guide = api("notes", { usageGuide: { content: `# notes\n\n${odd}\n` }, tools: [] });
+  const c = createTestConnecta({ connectors: [remote, guide], logger: silentLogger });
+  try {
+    const listed = await rpc(c, "skills/list");
+    const resources = listed.result.skills.flatMap(
+      (skill: { resources: { uri: string; digest: string }[] }) => skill.resources,
+    );
+    const served = [];
+    for (const resource of resources) {
+      const read = await rpc(c, "resources/read", { uri: resource.uri });
+      const content = read.result.contents[0].text as string;
+      expect(await sha(content), resource.uri).toBe(resource.digest);
+      served.push(content);
+    }
+    // Both guides were served, each with its bytes intact.
+    expect(served).toContain(text);
+    expect(served.some((content) => content.includes(odd) && content.includes("# notes"))).toBe(true);
+  } finally {
+    await c.close();
+  }
+});

@@ -3116,6 +3116,46 @@ The always-loaded agent surface has fixed-cost caps of the same kind: the
 each tool description and output schema, the `usage` skill, and one default
 and one compact search row, measured on a pinned four-connector fixture.
 
+### Route names
+
+Connecta-authored agent text names a route in the wording of the surface that
+serves it, resolved when the text is built (`src/agent-routes.ts`). Nothing
+renders afterwards: no code scans or rewrites replies, program values,
+downstream results, resources, guides or caller data, so paging, previews,
+totals and offsets measure the final text.
+
+Two tables per surface. `AgentRouteNames` names the tools (`call_tool`,
+`call_destructive_tool`, `search_tools`, `execute_code`, `authorize_connector`,
+`skills` on the meta surface); a sentence uses a name only when written for a
+surface that lists that tool. `RoutePhrases` holds complete phrases for
+sentences every surface shares, such as "for a direct call_tool only" against
+"when calling this tool directly", "call directly (call_tool, connecta.result
+to page)" against "call this tool directly and page with read_result", and the
+authorization sentences, which on native pools tell the agent to give the
+error's nextAction to the user or operator. `program` is undefined on a native
+pool without `execute_code`, so text about program capacity branches on it.
+The eval code arm's phrases keep the text its comparator protocol recorded.
+
+Where each text gets its wording:
+
+| Text                                                            | Wording                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Invocation refusals, authorization handoffs, paging notices     | The request's names, from the MCP route through meta-tools, programs and native pools                                                                                                                                                                                                                                                                          |
+| Connector and provider call text                                | `routePhrases(ctx)`; inside a call's Effect, the `Routes` reference; vendor tables' `words(detail, routes)`; an `api()` connection's write-401 refusal, configured at construction, receives the call's `Routes`                                                                                                                                               |
+| Contexts the registry builds                                    | The deployment's names (meta, or the eval code arm's); a call carries its request's names                                                                                                                                                                                                                                                                      |
+| Static provider schema descriptions                             | `routeDescription(build)`: the declared meta text; each request's catalog sets them on its own copy of each `api()` tool, which keeps the tool's source classification, built for its serving surface. Description paths are cached per connector and tool name, and rendered text per declared description and surface. Downstream catalogs are never touched |
+| Meta instructions, meta-only tool descriptions, built-in guides | Meta names, built once; built-in guides keep one digest across deployments                                                                                                                                                                                                                                                                                     |
+| Native instructions, the `execute_code` description             | Built per surface                                                                                                                                                                                                                                                                                                                                              |
+| Program-return and program-call paging notes                    | Meta names; they name only `execute_code`, which every surface running programs lists                                                                                                                                                                                                                                                                          |
+| The OAuth adapter's `UnauthorizedError`                         | Meta names; only its class reaches callers, which word their own error from the call                                                                                                                                                                                                                                                                           |
+
+The provider standard's S7 check refuses a spelled-out meta-tool name in
+provider code. Remaining literals are not agent route text: `execute_code`'s own
+budget and timeout errors, operator log lines, construction errors, the
+configuration reference, the OAuth callback page and operator fix prompts. The
+eval code arm marks its configuration with `renderRoutesAsPrograms`, an internal
+hook no package entry exports; no configuration key selects it.
+
 [Decision 0019](https://github.com/zackbart/connecta/blob/main/decisions/0019-core-validation-http-boundaries.md) records the rejected Schema/HttpApi measurements.
 
 ## Where else to look

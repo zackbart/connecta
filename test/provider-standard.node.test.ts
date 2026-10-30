@@ -24,6 +24,7 @@ import {
   evidenceViolations,
   guideViolations,
   layoutViolations,
+  routeNameViolations,
   setupSkeleton,
   surfaceViolations,
   type ProviderFacts,
@@ -133,9 +134,11 @@ const folderViolations = ({ facts }: (typeof folders)[number]) =>
     (finding) => `${facts.name} ${finding}`,
   );
 const guideAndSurfaceViolations = ({ facts, tools }: (typeof folders)[number]) =>
-  [...guideViolations(facts, documentation), ...(tools ? surfaceViolations(tools) : [])].map(
-    (finding) => `${facts.name} ${finding}`,
-  );
+  [
+    ...guideViolations(facts, documentation),
+    ...routeNameViolations(facts),
+    ...(tools ? surfaceViolations(tools) : []),
+  ].map((finding) => `${facts.name} ${finding}`);
 
 describe("the provider standard (decision 0011)", () => {
   it("holds every provider to layout, evidence, drift and declared Retry-After facts", () => {
@@ -534,6 +537,25 @@ function standard(): ProviderFacts {
 }
 
 describe("the provider standard's rules", () => {
+  it("S7: flags a meta-tool name in provider code and accepts route names and comments", () => {
+    const facts = (text: string) => ({
+      ...standard(),
+      files: ["index.ts", "lib/notes.ts", "skill.generated.ts"],
+      read: (path: string) =>
+        path === "lib/notes.ts" ? text : path === "skill.generated.ts" ? "Approaching execute_code's limit" : "",
+    });
+    expect(routeNameViolations(facts('const hint = "Raise it for a direct call_tool read";'))).toEqual([
+      "S7: lib/notes.ts spells call_tool; build it from routePhrases, Routes or routeDescription",
+    ]);
+    expect(
+      routeNameViolations(
+        facts(
+          "// Programs reach execute_code's bridge.\nconst hint = `Raise it for a direct ${routePhrases(ctx).onlyDirectRead}`;",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
   it("admits complete provider-local eval wiring and nothing else under eval/", () => {
     const base = standard();
     const withFiles = (paths: string[]) => ({ ...base, files: [...base.files, ...paths].sort() });

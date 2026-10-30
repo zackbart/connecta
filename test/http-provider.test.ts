@@ -1,4 +1,5 @@
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
+import { routeNames } from "../src/agent-routes.js";
 import { Context, Effect, Schema } from "effect";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { attachCallClassification } from "../src/call-classification.js";
@@ -445,6 +446,60 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
     "A provider hook withholding vendor text failed.",
   );
 });
+
+it(
+  "INV-9: words a write's unrenewed 401 for the route the call serves, though configured at construction",
+  NODE,
+  async () => {
+    const { credential: _credential, ...withoutCredential } = definition;
+    const oauth = {
+      authorizationEndpoint: "https://tickets.example/auth",
+      tokenEndpoint: "https://tickets.example/token",
+      clientId: "fixture",
+      apiOrigins: ["https://tickets.example"],
+    };
+    const connector = defineApiProvider({
+      ...withoutCredential,
+      oauthWrite401: "grant",
+      authenticate: bearer,
+      oauth: () => oauth,
+    })("tickets", { purpose: "Support" });
+    const messages: Record<string, string> = {};
+    for (const surface of ["meta", "native", "native-code"] as const) {
+      const ctx = makeRegistry([connector]).contextFor(
+        "tickets",
+        "https://connecta.example",
+        {},
+        {
+          routes: routeNames(surface),
+        },
+      );
+      await seedGrant(ctx.storage, {
+        issuer: oauth.tokenEndpoint,
+        tokens: { access_token: "old", refresh_token: "refresh", token_type: "Bearer" },
+      });
+      // Renewal hands back the token the write already sent.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: unknown) =>
+          String(url) === oauth.tokenEndpoint
+            ? Response.json({ access_token: "old", token_type: "Bearer" })
+            : Response.json({}, { status: 401 }),
+        ),
+      );
+      messages[surface] = ((await connector.callTool("send", {}, ctx).catch((error) => error)) as Error).message;
+    }
+    expect(messages["meta"]).toContain(
+      'Connector "tickets" requires authorization — call authorize_connector({ connector: "tickets" }) and open the returned URL.',
+    );
+    for (const surface of ["native", "native-code"]) {
+      expect(messages[surface], surface).toContain(
+        'Connector "tickets" requires authorization — give this error\'s nextAction to the user or operator.',
+      );
+      expect(messages[surface], surface).not.toContain("authorize_connector");
+    }
+  },
+);
 
 it("INV-7 INV-9: binds OAuth to each call and refreshes reads while sending writes once", WORKERS, async () => {
   const { credential: _credential, ...withoutCredential } = definition;

@@ -1,4 +1,6 @@
 import { registerAuthMethod } from "./auth/native.js";
+import { META_ROUTES, routeToolInPlace } from "./agent-routes.js";
+import type { AgentRouteNames } from "./types.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
 import { retainedCatalogIdentity } from "./catalog-cache.js";
@@ -770,6 +772,7 @@ export class CatalogService {
   // This request's discovery-health verdicts, read once per connector and kept
   // current by its own probes, so repeated searches read no storage.
   private readonly health = new Map<string, HealthVerdict>();
+  private readonly routes: AgentRouteNames;
 
   constructor(
     private readonly registry: RegistryView,
@@ -791,9 +794,12 @@ export class CatalogService {
        * still finds a write, so the call that names one is refused by code.
        */
       readOnly?: boolean | undefined;
+      /** The serving surface's names: declared schema descriptions are listed in its wording. */
+      routes?: AgentRouteNames | undefined;
     } = {},
   ) {
     void CatalogService.nativePrograms;
+    this.routes = options.routes ?? META_ROUTES;
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs = normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.discoveryBudgetMs = normalizeTimeoutMs(options.discoveryBudgetMs) ?? UNSCOPED_DISCOVERY_BUDGET_MS;
@@ -867,7 +873,21 @@ export class CatalogService {
               signal,
               timeoutMs: this.probeTimeoutMs,
               ...(this.defer ? { defer: this.defer } : {}),
-            }).pipe(Effect.map((tools) => carryCatalogFreshness(tools, tools.map(cloneTool)))),
+            }).pipe(
+              Effect.map((tools) => {
+                // An authored catalog lists its declared descriptions for this request's surface.
+                const connector = this.registry.getConnector(id);
+                return carryCatalogFreshness(
+                  tools,
+                  tools.map((tool) => {
+                    // The request's own copy, which keeps the source classification.
+                    const copy = cloneTool(tool);
+                    routeToolInPlace(connector, copy, this.routes);
+                    return copy;
+                  }),
+                );
+              }),
+            ),
           (succeeded) => {
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.

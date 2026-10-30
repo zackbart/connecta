@@ -1,3 +1,4 @@
+import { routePhrases } from "../agent-routes.js";
 import { wrapViewCredentials } from "../runtime/call.js";
 import { utf8Length } from "../bytes.js";
 import { withStoredAuth } from "../auth/stored-observation.js";
@@ -1915,10 +1916,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * as cause: the class is the whole verdict, and a logger rendering the
    * chain would render whatever text the error carried.
    */
-  const authRequiredError = () =>
+  const authRequiredError = (ctx: ConnectorContext) =>
     new ConnectorCallError(
       isOauth ? "downstream_oauth_required" : "auth_required",
-      `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
+      `Connector "${id}" requires authorization — ${routePhrases(ctx).authorizeAndOpen(id)}.`,
     );
 
   /**
@@ -2053,7 +2054,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     );
     const verdict =
       isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
-        ? carryFailureFacts(err, authRequiredError())
+        ? carryFailureFacts(err, authRequiredError(ctx))
         : classified;
     if (ownAbortReasonAsSdkReports(err, signals)) {
       return attachFailureFacts(carryFailureFacts(err, withheldAs(msg(err), verdict)), facts);
@@ -2294,22 +2295,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (!ctx.credential) {
         throw new CredentialRequiredError(
           `Connector "${id}" needs an operator-managed credential, but ` +
-            "credential storage is not configured. Configure vault in deployment code and redeploy. Call authorize_connector for recovery options.",
+            `credential storage is not configured. Configure vault in deployment code and redeploy. ${routePhrases(ctx).authorizeFor("recovery options")}.`,
         );
       }
       const value = ((yield authInvoke(ctx.credential, "get", [])) as string | null)?.trim();
       if (!value) {
         throw new CredentialRequiredError(
-          `Connector "${id}" has no stored credential — call ` +
-            `authorize_connector({ connector: "${id}" }) and follow the ` +
-            "operator handoff it returns.",
+          `Connector "${id}" has no stored credential — ${routePhrases(ctx).authorizeAndFollow(id)}.`,
         );
       }
       if (carriesIllegalHeaderChar(value)) {
         throw new CredentialRequiredError(
           `Connector "${id}"'s stored credential contains a character a header ` +
-            "cannot carry (a line break or other control character). Call " +
-            "authorize_connector for recovery options. When available, re-enter " +
+            "cannot carry (a line break or other control character). " +
+            `${routePhrases(ctx).authorizeFor("recovery options")}. When available, re-enter ` +
             "it in this connection in the operator UI. The value is not shown or logged.",
         );
       }
@@ -2328,7 +2327,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * above, which is what keeps an unsendable value from reaching a transport
    * at all.
    */
-  const withoutCredential = (err: unknown, ...secrets: (string | null)[]): unknown => {
+  const withoutCredential = (ctx: ConnectorContext, err: unknown, ...secrets: (string | null)[]): unknown => {
     const quoted = secrets.filter((secret): secret is string => typeof secret === "string" && secret !== "");
     if (quoted.length === 0) return err;
     const seen = new Set<unknown>();
@@ -2341,7 +2340,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (quoted.some((secret) => current instanceof Error && current.message.includes(secret))) {
         return new CredentialRequiredError(
           `Connector "${id}" could not send its stored credential as a ` +
-            "header. Call authorize_connector for recovery options. When available, " +
+            `header. ${routePhrases(ctx).authorizeFor("recovery options")}. When available, ` +
             "re-enter it in this connection in the operator UI. " +
             "The value is not shown or logged.",
         );
@@ -2937,7 +2936,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             authValue(() => response.body?.cancel()),
             () => {},
           )) as void | undefined;
-          if (response.status === 401) throw authRequiredError();
+          if (response.status === 401) throw authRequiredError(ctx);
           throw new ConnectorCallError(
             "connector_call_failed",
             "The downstream redirected a write continuation; it was not repeated.",
@@ -2980,7 +2979,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               try {
                 return (yield authCall(trackedFetch, [input, init])) as Response;
               } catch (err) {
-                throw withoutCredential(err, credentialValue, credentialFramed);
+                throw withoutCredential(ctx, err, credentialValue, credentialFramed);
               }
             }),
           ),
@@ -3367,7 +3366,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       };
       try {
         if (state.authRequired) {
-          throw authRequiredError();
+          throw authRequiredError(ctx);
         }
         let oauthGeneration: string | undefined;
         if (isOauth && (state.client || state.connecting)) {
@@ -3699,7 +3698,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             atMcpBoundary(
               ctx,
               // First, while the runtime's text can still be read for it.
-              withoutCredential(err, credentialValue, credentialFramed),
+              withoutCredential(ctx, err, credentialValue, credentialFramed),
               "MCP handshake",
               t,
               [ctx.signal, connectionAbort.signal, handshakeAbort.signal],
@@ -3775,14 +3774,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             detach(closeConnection(held.client, held.transport, ctx.logger));
           }
           if (err instanceof UnauthorizedError) {
-            return Effect.fail(carryFailureFacts(err, authRequiredError()));
+            return Effect.fail(carryFailureFacts(err, authRequiredError(ctx)));
           }
           // Defense in depth for the one error class that can quote the
           // credential: a runtime refusing the assembled header.
           // `readCredential` already rejects a value that cannot ride one, so
           // reaching this is a gap in that check rather than a routine
           // outcome.
-          return Effect.fail(withoutCredential(err, credentialValue, credentialFramed));
+          return Effect.fail(withoutCredential(ctx, err, credentialValue, credentialFramed));
         }),
       );
     });
@@ -3850,7 +3849,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       } catch (err) {
         if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
         throw err instanceof UnauthorizedError
-          ? carryFailureFacts(err, authRequiredError())
+          ? carryFailureFacts(err, authRequiredError(ctx))
           : downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
       }
     }),
@@ -4193,7 +4192,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             const bounded = atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
             if (requiresAuthorization(bounded)) {
               if (state.client === client) state.authRequired = true;
-              if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError());
+              if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError(ctx));
             }
             throw bounded;
           } finally {
@@ -4376,13 +4375,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             const failure = ownAbort
               ? err
               : err instanceof UnauthorizedError
-                ? carryFailureFacts(err, authRequiredError())
+                ? carryFailureFacts(err, authRequiredError(ctx))
                 : downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
             if (!write) throw failure;
             const renewal = dispatch.request?.entry.renewed
               ? undefined
               : dispatch.resendRefused
-                ? authRequiredError()
+                ? authRequiredError(ctx)
                 : failure;
             const unsent = (entry: ProviderRequest | undefined) => {
               const verdict = unsentAfterUnauthorized(
@@ -4494,7 +4493,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
           if (requiresAuthorization(err)) {
             if (state.client === client) state.authRequired = true;
-            if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
+            if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError(ctx));
           }
           throw downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
         }
@@ -4966,7 +4965,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                     }
                   | undefined)
               )
-                throw authRequiredError();
+                throw authRequiredError(ctx);
               // That read decides whether the token is about to expire.
               const due = provider.renewalDue();
               if (due !== undefined) (yield authCall(renewBeforeCall, [ctx, due])) as void;

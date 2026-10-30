@@ -1,5 +1,6 @@
 import { specTypeSchemas, type ServerContext } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
+import { api } from "../src/connectors/api.js";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { bindMcpClient, type McpClientContext } from "../src/mcp-client-context.js";
 import { META_TOOL_NAMES } from "../src/meta-tool-names.js";
@@ -212,6 +213,34 @@ describe("2026-07-28 core", () => {
     } finally {
       await c.close();
     }
+  });
+
+  it("INV-6: returns a request id and downstream text carrying DEL or route-like bytes unchanged", async () => {
+    const odd = ["\u007frandom", `\u007fr${"\u007f".repeat(7)}`, "\u007fw\u007f call_tool"];
+    const app = createTestConnecta({
+      connectors: [
+        api("notes", {
+          tools: [
+            {
+              name: "read",
+              description: "Read notes",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+              handler: () => ({ odd }),
+            },
+          ],
+        }),
+      ],
+      logger: silentLogger,
+    });
+    for (const id of odd) {
+      const reply = await readJsonRpc(
+        await app.fetch(mcpRpc("tools/call", { name: "call_tool", arguments: { address: "notes.read" } }, { id })),
+      );
+      expect(reply.id).toBe(id);
+      expect(JSON.parse(reply.result.content[0].text)).toEqual({ odd });
+    }
+    await app.close();
   });
 
   it("advertises served extensions, identity, and private discovery cache hints", async () => {

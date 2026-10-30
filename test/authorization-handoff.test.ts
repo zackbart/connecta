@@ -138,7 +138,7 @@ it("INV-4 INV-5 INV-10: auth handoffs preserve management boundaries and statele
         });
       } else
         expect(authorized.message).toContain(
-          "If recovery is needed: Credential recovery needs both a vault and the optional UI",
+          "If recovery is needed: Credential recovery needs both a vault and the optional UI. Configure vault and ui in deployment code, then call authorize_connector again.",
         );
       expect(JSON.stringify(authorized)).not.toContain(secret);
     }

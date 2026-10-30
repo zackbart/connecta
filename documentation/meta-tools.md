@@ -1501,7 +1501,8 @@ never repeat a write; page a truncated result as its notice says. A pool
 **Recovery.** Repair and validation fields retain the exact constraint details.
 Discovery `nextAction` points to the host's tool search (`host: "search"`), with
 only a `query` argument. Retry actions and retry text name the native tool,
-never a meta wrapper. Auth actions carry `authorizationUrl` or `operatorUrl`;
+never a meta wrapper; a program on a native pool sees the same native wording
+in a failure it catches. An unknown name is reported as sent. Auth actions carry `authorizationUrl` or `operatorUrl`;
 give the returned URL and instructions to the user or operator. Capable modern
 clients may resume native auth and downstream form/URL input with the same
 wire name, arguments and returned `requestState`. Changed names, targets or

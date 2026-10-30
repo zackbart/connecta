@@ -1,4 +1,5 @@
 // Internal provider kit. Unreachable from src/index.ts.
+import { routePhrases, routesOf } from "../agent-routes.js";
 import { credentialFailureClass } from "../credential-verification.js";
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
@@ -316,16 +317,17 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
               oauthWrite401
                 ? {
                     challengeMaxBytes: OAUTH_CHALLENGE_MAX_BYTES,
-                    writeUnauthorized: (renewal) =>
+                    writeUnauthorized: (renewal, routes) =>
                       unsentAfterUnauthorized(
                         `Connector "${id}"'s API`,
                         renewal._tag === "Renewed"
                           ? undefined
                           : renewal._tag === "Failed"
                             ? renewal.failure
-                            : new ConnectorCallError(
+                            : // Configured with the connection, worded during the call it refuses.
+                              new ConnectorCallError(
                                 "downstream_oauth_required",
-                                `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
+                                `Connector "${id}" requires authorization — ${routePhrases(routes).authorizeAndOpen(id)}.`,
                               ),
                         "downstream_oauth_required",
                       ),
@@ -375,6 +377,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           dispatches: Context.get(lease.services, Dispatches),
           withholds: connection.safety.withholdsErrors,
           signal,
+          routes: routesOf(ctx),
         };
         return runEdge(
           probeProgram.pipe(

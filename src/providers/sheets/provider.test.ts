@@ -5,6 +5,8 @@ import { PRIVATE_KEY } from "../../../test/fixtures/rsa.js";
 // provider. Delegation, subjects, and tokens are
 // test/google-workspace-delegation.test.ts; only the no-caller refusal is
 // repeated here, because it is this connector's own front door.
+import { routeNames } from "../../agent-routes.js";
+import type { AgentRouteNames } from "../../types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { MAX_QUICKJS_HOST_RPC_BYTES } from "../../executors/quickjs-protocol.js";
@@ -331,6 +333,33 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
       };
     };
   }
+
+  it("words a row past the page budget as each surface reaches the tool, in whole phrases", async () => {
+    // Three 50,000-character two-byte cells: one row is about 300 KB.
+    route = () => ({
+      body: { valueRanges: [{ range: "Big!A1:C1", values: [Array.from({ length: 3 }, () => "é".repeat(50_000))] }] },
+    });
+    const refusal = async (routes: AgentRouteNames) => {
+      const error = await connection()
+        .callTool(
+          "get_values",
+          { spreadsheetId: ID, ranges: ["Big!A1:C1"], maxCellChars: 50_000 },
+          {
+            ...context(),
+            routes,
+          },
+        )
+        .catch((failure: Error) => failure);
+      return /, or raise maxBytes to at least \d+ (.*)$/.exec((error as Error).message)?.[1];
+    };
+    expect(await refusal(routeNames("meta"))).toBe(
+      "(above 196608, only for a direct call_tool read: execute_code cannot receive it).",
+    );
+    expect(await refusal(routeNames("native-code"))).toBe(
+      "(above 196608, only when calling this tool directly: execute_code cannot receive it).",
+    );
+    expect(await refusal(routeNames("native"))).toBe("(above 196608, only when calling this tool directly).");
+  });
 
   it("keeps every default page under the execute_code host bridge, and pages through all of it", async () => {
     // 3 × 5,000 two-byte characters is 30 KB a row: 40 rows overrun the bridge

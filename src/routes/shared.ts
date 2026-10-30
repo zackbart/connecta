@@ -1,3 +1,4 @@
+import type { AgentRouteNames } from "../types.js";
 import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
 import { isVercelAgentCredential } from "../auth/vercel-agent.js";
 import type { ActivityActor } from "../activity.js";
@@ -46,6 +47,8 @@ export interface ServerOptions {
   executorName?: string | undefined;
   /** Global FIFO boundary for all non-preflight `/mcp` requests. */
   requestAdmission: AdmissionController;
+  /** Route names agent text uses outside native pools: meta, or program form for the eval code arm only. */
+  routes: AgentRouteNames;
 }
 
 export interface RuntimeExecutionContext extends InboundAuthRuntimeContext {

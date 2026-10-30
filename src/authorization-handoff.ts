@@ -1,3 +1,5 @@
+import { routePhrases } from "./agent-routes.js";
+import type { AgentRouteNames } from "./types.js";
 import { upwardStep } from "./upward.js";
 import type { ConnectorCredentialValues } from "./types.js";
 import { authCall, authInvoke, authFlow, registerAuth } from "./auth/native.js";
@@ -13,6 +15,8 @@ interface HandoffOptions {
   credentialHandoffUrl?: string | undefined;
   oauthConnectUrl?: ((id: string, force?: boolean) => Promise<string>) | undefined;
   oauthConnectUnavailable?: string | undefined;
+  /** Route names the handoff's text uses: the request's surface. */
+  routes?: AgentRouteNames | undefined;
 }
 
 // A write whose outcome is unknown is never told to retry after recovery: it
@@ -27,8 +31,13 @@ function outcomeAware(build: (unknownWrite: boolean) => AuthorizationHandoff): A
   return handoff;
 }
 
-function oauthFollowUp(connectorId: string, unknownWrite: boolean): string {
-  return `Then ${unknownWrite ? RECONCILE : "retry the original call"}; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`;
+function oauthFollowUp(connectorId: string, unknownWrite: boolean, opts: HandoffOptions): string {
+  const then = `Then ${unknownWrite ? RECONCILE : "retry the original call"}`;
+  // Without programs, no connecta.search can confirm the catalog.
+  const { program } = routePhrases(opts.routes);
+  return program
+    ? `${then}; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside ${program} confirms the catalog now loads.`
+    : `${then}. Retry the original native call after recovery.`;
 }
 
 /** Shared with explicit authorization; errors never request a forced restart. */
@@ -73,8 +82,8 @@ const authorizationHandoffNative = /* @__PURE__ */ registerAuth(
             recovery: "unavailable",
             message:
               "Credential recovery needs both a vault and the optional UI. Configure " +
-              "vault and ui in deployment code, then call " +
-              "authorize_connector again.",
+              "vault and ui in deployment code, then " +
+              `${routePhrases(opts.routes).authorizeAgain}.`,
           };
         }
         const fields = connector.credential.fields?.map((field) => ({
@@ -125,7 +134,7 @@ const authorizationHandoffNative = /* @__PURE__ */ registerAuth(
         authorizationUrl,
         instructions:
           "Copy authorizationUrl exactly as returned; do not decode or re-encode it. Open it in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " +
-          oauthFollowUp(connector.id, unknownWrite),
+          oauthFollowUp(connector.id, unknownWrite, opts),
       }));
     });
   },
