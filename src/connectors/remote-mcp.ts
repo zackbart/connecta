@@ -132,6 +132,8 @@ import {
   downstreamWriteContinuation,
 } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
+import { credentialProbe } from "../runtime/credential-probe.js";
+import { credentialFailureClass } from "../credential-verification.js";
 import { assertKnownOptions, keys, optionsOf, strings } from "../config-schema.js";
 import type { PrincipalForwarding, RequestPrincipal, RequestToken } from "../request-token.js";
 import { requestPrincipalFor, tagPrincipalForwarding } from "../request-principal.js";
@@ -3976,42 +3978,33 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           credential: credentialConfig,
           /**
            * The honest test for a proxy is the catalog: connect with the
-           * stored value and count what the downstream serves. Nothing else
+           * given value and count what the downstream serves. Nothing else
            * here is connecta's to verify — the credential's scope, project,
-           * and mode are the provider's answer, not ours.
+           * and mode are the provider's answer, not ours. The value may be a
+           * candidate the operator has not saved: the probe's view sends it,
+           * never the stored one, and nothing about it is written.
            */
-          testCredential: authMethod((value: string, ctx: ConnectorContext) =>
-            authFlow<CredentialTestResult>(function* () {
-              try {
-                const stored = (
-                  (yield authCall<string | null | undefined>(ctx.credential?.get, [], ctx.credential)) as
-                    | string
-                    | null
-                    | undefined
-                )?.trim();
-                if (stored !== value.trim()) {
-                  return {
-                    ok: false,
-                    message:
-                      "This connector tests the credential that is currently " +
-                      "saved. Save the value first, then test it.",
-                  };
-                }
-                liveListings.add(ctx);
-                const tools = (yield authInvoke(connector, "listTools", [ctx])) as ToolDef[];
-                return {
-                  ok: true,
-                  message: `Connected — the downstream served ${tools.length} tool${tools.length === 1 ? "" : "s"}.`,
-                };
-              } catch (err) {
-                return { ok: false, message: msg(err) };
-              } finally {
-                liveListings.delete(ctx);
-                if (!connectorScopeCleanupClaimed(ctx, id))
-                  (yield authCall<void>(connector.closeScope, [ctx], connector)) as void | undefined;
-              }
-            }),
-          ),
+          testCredential: (value: string, ctx: ConnectorContext) =>
+            credentialProbe(ctx, { value }, (view) =>
+              runEdge(
+                authFlow<CredentialTestResult>(function* () {
+                  try {
+                    liveListings.add(view);
+                    const tools = (yield authInvoke(connector, "listTools", [view])) as ToolDef[];
+                    return {
+                      ok: true,
+                      message: `Connected — the downstream served ${tools.length} tool${tools.length === 1 ? "" : "s"}.`,
+                    };
+                  } catch (err) {
+                    return { ok: false, message: msg(err), failure: credentialFailureClass(err) };
+                  } finally {
+                    liveListings.delete(view);
+                    if (!connectorScopeCleanupClaimed(ctx, id))
+                      (yield authCall<void>(connector.closeScope, [view], connector)) as void | undefined;
+                  }
+                }),
+              ),
+            ),
         }
       : {}),
 

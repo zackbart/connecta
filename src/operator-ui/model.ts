@@ -53,6 +53,15 @@ interface UiCredentialField {
   updatedAt?: string;
 }
 
+/** Mirrors `CredentialVerification` in src/credential-verification.ts. */
+export interface UiVerification {
+  outcome: "ok" | "unverified" | UiCredentialFailure;
+  observedAt: string;
+}
+
+/** Why a credential test failed, as the route reports it. */
+export type UiCredentialFailure = "rejected" | "scope" | "unreachable" | "timeout" | "failed";
+
 interface UiCredential {
   label: string;
   description?: string;
@@ -103,6 +112,12 @@ export interface UiConnector {
   /** Selected downstream client identity mechanism; never a client ID or secret. */
   registrationPath?: "cimd" | "dcr" | "static";
   credential?: UiCredential;
+  /**
+   * The stored last verification of this connector's operator-managed
+   * credential. Absent when nothing has verified the save stored now. A
+   * typed outcome and a time; never vendor text.
+   */
+  verification?: UiVerification;
   /**
    * Drift the last catalog refresh saw *in this runtime*
    * ([#343](https://github.com/zackbart/connecta/issues/343)). Four counts and

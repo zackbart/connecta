@@ -490,6 +490,7 @@ export type FailureEvent =
   | "credential shape read failed"
   | "credential test failed"
   | "credential test threw"
+  | "credential verification record failed"
   | "session termination refused or failed; the downstream session may remain until its provider timeout"
   | "activity record failed"
   | "catalog drift record failed"

@@ -545,18 +545,20 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
     (response) =>
       new URL(response.url()).pathname === "/ui/credentials/vaulted" && response.request().method() === "PUT",
   );
-  await card.getByRole("button", { name: "Save", exact: true }).click();
+  // A testable connector tests the candidate before storing it.
+  await card.getByRole("button", { name: "Test and save", exact: true }).click();
   const saveResponse = await saved;
   expect(saveResponse.status()).toBe(200);
   expect(await saveResponse.text()).not.toContain(SECRET);
-  await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential saved.");
+  await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential tested and saved.");
   await expect(card.getByLabel("API token", { exact: true })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Test", exact: true })).toBeVisible();
+  await expect(page.locator('[data-verification="ok"]')).toContainText("Verified");
   const sealed = await deployment.storage.get(credentialKeys.credential("vaulted"));
   expect(JSON.parse(sealed!)).toMatchObject({ version: 1, algorithm: "AES-GCM", ciphertext: expect.any(String) });
   expect(sealed).not.toContain(SECRET);
   expect(await deployment.vault.get("vaulted")).toBe(SECRET);
-  expect(deployment.downstream).toEqual([]);
+  expect(deployment.downstream).toEqual([`Bearer ${SECRET}`]);
 
   const tested = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/ui/credentials/vaulted/test",
@@ -566,7 +568,7 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   expect(testResponse.status()).toBe(200);
   expect(await testResponse.json()).toMatchObject({ ok: true });
   await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential is valid.");
-  expect(deployment.downstream).toEqual([`Bearer ${SECRET}`]);
+  expect(deployment.downstream).toEqual([`Bearer ${SECRET}`, `Bearer ${SECRET}`]);
   await expect(page.locator("body")).not.toContainText(SECRET);
   expect(await page.content()).not.toContain(SECRET);
   expect(deployment.requests.filter((request) => request.path.startsWith("/ui/credentials/"))).toEqual([
@@ -587,8 +589,16 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   await card.getByRole("button", { name: "Replace", exact: true }).click();
   const replacement = SECRET + "-replacement";
   await card.getByLabel("API token", { exact: true }).fill(replacement);
+  // The service refuses the replacement: nothing is stored, and the form
+  // offers saving it without a test.
+  await card.getByRole("button", { name: "Test and save", exact: true }).click();
+  await expect(card.locator("#credentialNotice-vaulted")).toHaveText(
+    "Not saved. Credential test failed. The deployment log has the reason. You can save it anyway, unverified.",
+  );
+  expect(await deployment.vault.get("vaulted")).toBe(SECRET);
+  expect(deployment.downstream).toEqual([`Bearer ${SECRET}`, `Bearer ${SECRET}`, `Bearer ${replacement}`]);
   deployment.refuseSave(true);
-  await card.getByRole("button", { name: "Save", exact: true }).click();
+  await card.getByRole("button", { name: "Save without testing", exact: true }).click();
   await expect(card.locator("#credentialNotice-vaulted")).toHaveText(
     "Not saved. A value is empty or in the wrong format.",
   );
@@ -600,11 +610,18 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   await page.reload();
   await card.getByRole("button", { name: "Test", exact: true }).click();
   await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential is valid.");
-  expect(deployment.downstream).toEqual([`Bearer ${SECRET}`, `Bearer ${SECRET}`]);
+  expect(deployment.downstream).toEqual([
+    `Bearer ${SECRET}`,
+    `Bearer ${SECRET}`,
+    `Bearer ${replacement}`,
+    `Bearer ${SECRET}`,
+  ]);
   await card.getByRole("button", { name: "Replace", exact: true }).click();
   await card.getByLabel("API token", { exact: true }).fill(replacement);
-  await card.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential saved.");
+  await card.getByRole("button", { name: "Test and save", exact: true }).click();
+  await card.getByRole("button", { name: "Save without testing", exact: true }).click();
+  await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential saved without a test.");
+  await expect(page.locator('[data-verification="unverified"]')).toContainText("Saved without a test");
   expect(await deployment.vault.get("vaulted")).toBe(replacement);
   expect(deployment.credentialWrites()).toEqual(["insert", "update"]);
   await deployment.checkScope(true);

@@ -525,8 +525,9 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
             const card = page.locator("#credential-billing");
             await card.getByRole("button", { name: "Add credential", exact: true }).click();
             await card.getByLabel("API token", { exact: true }).fill(world.billingToken);
-            await card.getByRole("button", { name: "Save", exact: true }).click();
-            await expect(page.locator("#credentialNotice-billing")).toHaveText("Credential saved.");
+            // A testable connector tests the candidate before storing it.
+            await card.getByRole("button", { name: "Test and save", exact: true }).click();
+            await expect(page.locator("#credentialNotice-billing")).toHaveText("Credential tested and saved.");
             const own = await read();
             assert.equal(own.isError, false);
             assert.match(own.text, /Northwind Traders/);

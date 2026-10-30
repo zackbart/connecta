@@ -6,6 +6,7 @@ import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { buildUiData } from "../src/ui.js";
 import { oauthFlowKeys, oauthGrantKeys } from "../src/storage/keys.js";
 import type { ConnectorContext, InboundAuth } from "../src/types.js";
 import { connectorContext, deferred, spyLogger } from "./fixtures/misc.js";
@@ -467,7 +468,8 @@ describe("remoteMcp() credential auth — the Test action", () => {
         ]);
         expect(result, "cleanup must finish within the route's bounded window").toBeDefined();
         expect(result!.status).toBe(200);
-        expect(await result!.json()).toEqual({ ok });
+        // A downstream 500 is a failure connecta cannot narrow further.
+        expect(await result!.json()).toEqual(ok ? { ok } : { ok, failure: "failed" });
         expect(closeScope).toHaveBeenCalledTimes(1);
         if (ok) expect(sessionOpenAuthorizations(captured)).toEqual(["Bearer stored-secret"]);
         await expect(connector.listTools(closeScope.mock.calls[0]![0])).rejects.toThrow("scope ended");
@@ -738,5 +740,181 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
       )
     ).json()) as { connectors: Array<{ status: string; toolCount: number }> };
     expect(data.connectors[0]).toMatchObject({ status: "ok", toolCount: 1 });
+  });
+});
+
+/** The connector's operator detail row: its shown status and last verification. */
+async function detailRow(registry: Parameters<typeof buildUiData>[0], id: string, vault?: CredentialVault) {
+  const data = await buildUiData(registry, BASE, { name: "test", version: "0" }, vault);
+  return data.connectors.find((connector) => connector.id === id)!;
+}
+
+describe("remoteMcp() credential auth — test then save", () => {
+  const STORED = "stored-secret-value";
+  const CANDIDATE = "candidate-secret-value";
+
+  /**
+   * The real downstream answers the stored value; a candidate meets `mode`.
+   * `ok` serves the candidate too.
+   */
+  type Gate = "ok" | "rejected" | "scope" | "unreachable" | "timeout";
+  function serveGated(initial: Gate): { captured: Captured[]; recover: () => void } {
+    let mode = initial;
+    const captured = serveDownstream();
+    const downstream = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      if (mode === "ok" || headers.get("authorization") === `Bearer ${STORED}`) return downstream(input, init);
+      if (mode === "rejected") return new Response("bad token " + CANDIDATE, { status: 401 });
+      if (mode === "scope") return new Response("missing scope", { status: 403 });
+      if (mode === "unreachable")
+        throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      return new Promise<Response>((_, reject) =>
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+      );
+    });
+    return { captured, recover: () => (mode = "ok") };
+  }
+
+  async function deployment(versionNegotiation: "legacy" | "auto") {
+    const connector = remoteMcp("down", { url: URL_UNDER_TEST, auth: { type: "credential" }, versionNegotiation });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    await vault.set("down", STORED, "operator");
+    const logged: unknown[] = [];
+    const logger = {
+      debug: () => {},
+      info: (...args: unknown[]) => logged.push(args),
+      warn: (...args: unknown[]) => logged.push(args),
+      error: (...args: unknown[]) => logged.push(args),
+    };
+    const connecta = createTestConnecta({
+      connectors: [connector],
+      storage,
+      vault,
+      publicUrl: BASE,
+      logger,
+      discovery: { probeTimeoutMs: 200 },
+      auth: {
+        kind: "operator",
+        interactiveOperator: true,
+        activityActorNamespace: "test",
+        authorize: () => ({ ok: true, userId: "operator" }),
+      },
+      maintainers: ["operator"],
+    });
+    const put = (body: unknown) =>
+      connecta.fetch(
+        new Request(`${BASE}/ui/credentials/down`, {
+          method: "PUT",
+          headers: { Origin: BASE, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    // Every stored byte and every log line, for secret scans.
+    const everything = async () =>
+      JSON.stringify([
+        await Promise.all((await storage.list("")).map(async (key) => [key, await storage.get(key)])),
+        logged,
+      ]);
+    return { connecta, storage, vault, put, everything };
+  }
+
+  it.each([
+    ["legacy", "rejected"],
+    ["legacy", "scope"],
+    ["legacy", "unreachable"],
+    ["legacy", "timeout"],
+    ["auto", "rejected"],
+    ["auto", "scope"],
+    ["auto", "unreachable"],
+    ["auto", "timeout"],
+  ] as const)("%s: a %s candidate is never stored, and save anyway stores it unverified", async (negotiation, mode) => {
+    const gate = serveGated(mode);
+    const { connecta, vault, put, everything } = await deployment(negotiation);
+
+    const tested = await put({ value: CANDIDATE, verify: "test" });
+    expect(tested.status).toBe(200);
+    const text = await tested.text();
+    expect(JSON.parse(text)).toEqual({ saved: false, failure: mode });
+    expect(text).not.toContain(CANDIDATE);
+    await expect(vault.getAll("down")).resolves.toEqual({ value: STORED });
+    expect(await everything()).not.toContain(CANDIDATE);
+    // Nothing was recorded about a value that was never stored.
+    expect((await detailRow(connecta.registry, "down", vault)).verification).toBeUndefined();
+
+    // The vendor being down never blocks a replacement.
+    gate.recover();
+    const anyway = await put({ value: CANDIDATE, verify: "skip" });
+    const saved = (await anyway.json()) as any;
+    expect(saved).toMatchObject({ saved: true, verification: { outcome: "unverified" } });
+    expect(JSON.stringify(saved)).not.toContain(CANDIDATE);
+    await expect(vault.getAll("down")).resolves.toEqual({ value: CANDIDATE });
+    expect((await detailRow(connecta.registry, "down", vault)).verification).toEqual({
+      outcome: "unverified",
+      observedAt: saved.verification.observedAt,
+    });
+  });
+
+  it.each(["legacy", "auto"] as const)(
+    "%s: a passing candidate is stored, verified, and sent by the next call",
+    async (negotiation) => {
+      const { captured } = serveGated("ok");
+      const { connecta, vault, put } = await deployment(negotiation);
+      const response = await put({ value: CANDIDATE, verify: "test" });
+      const body = (await response.json()) as any;
+      expect(body).toMatchObject({ saved: true, verification: { outcome: "ok" } });
+      await expect(vault.getAll("down")).resolves.toEqual({ value: CANDIDATE });
+      // The test connected with the candidate, never the stored value.
+      expect(sessionOpenAuthorizations(captured)).toEqual([`Bearer ${CANDIDATE}`]);
+      expect(await detailRow(connecta.registry, "down", vault)).toMatchObject({
+        status: "ok",
+        verification: { outcome: "ok" },
+      });
+
+      // A later plain save replaces the value, and with it the verification.
+      await put({ value: "another-secret-value" });
+      expect((await detailRow(connecta.registry, "down", vault)).verification).toMatchObject({ outcome: "unverified" });
+    },
+  );
+
+  it("concurrent candidate tests do not share a connection or commit a failure", async () => {
+    const GOOD = "good-candidate-value";
+    const captured = serveDownstream();
+    const downstream = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      return headers.get("authorization") === `Bearer ${CANDIDATE}`
+        ? new Response("no", { status: 401 })
+        : downstream(input, init);
+    });
+    const { vault, put } = await deployment("legacy");
+    const [bad, good] = await Promise.all([
+      put({ value: CANDIDATE, verify: "test" }).then((r) => r.json()),
+      put({ value: GOOD, verify: "test" }).then((r) => r.json()),
+    ]);
+    expect(bad).toEqual({ saved: false, failure: "rejected" });
+    expect(good).toMatchObject({ saved: true, verification: { outcome: "ok" } });
+    await expect(vault.getAll("down")).resolves.toEqual({ value: GOOD });
+    // The refused candidate never reached the session the passing one opened.
+    expect(sessionOpenAuthorizations(captured)).toEqual([`Bearer ${GOOD}`]);
+  });
+
+  it("Test of the stored value records its outcome for status", async () => {
+    serveGated("rejected");
+    const { connecta, vault } = await deployment("legacy");
+    const test = () =>
+      connecta
+        .fetch(new Request(`${BASE}/ui/credentials/down/test`, { method: "POST", headers: { Origin: BASE } }))
+        .then((r) => r.json());
+    await expect(test()).resolves.toEqual({ ok: true });
+    expect((await detailRow(connecta.registry, "down", vault)).verification).toMatchObject({ outcome: "ok" });
+
+    // The stored value stops working: Test records the class it saw.
+    await vault.set("down", CANDIDATE, "operator");
+    expect((await detailRow(connecta.registry, "down", vault)).verification).toBeUndefined();
+    await expect(test()).resolves.toEqual({ ok: false, failure: "rejected" });
+    expect((await detailRow(connecta.registry, "down", vault)).verification).toMatchObject({ outcome: "rejected" });
   });
 });
