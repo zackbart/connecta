@@ -28,10 +28,43 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { registryProgram } from "./runtime/registry.js";
 import { SharedRead } from "./runtime/shared-read.js";
 import { duringViewEffect } from "./runtime/call.js";
-import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
+import {
+  DEFAULT_PROBE_TIMEOUT_MS,
+  normalizeTimeoutMs,
+  UNSCOPED_DISCOVERY_BUDGET_MS,
+  UNSCOPED_PROBE_TIMEOUT_MS,
+} from "./timeout.js";
+import {
+  claimDiscoveryProbe,
+  readDiscoveryHealth,
+  settleDiscoveryHealth,
+  type HealthVerdict,
+} from "./discovery-health.js";
 import type { Connector, JsonSchema, ToolDef } from "./types.js";
 import { keepErrorName } from "./redaction-identity.js";
 import { operationVocabularyMatches } from "./operation-vocabulary.js";
+
+/** One search probe's outcome, and what its health record settles from. */
+interface SearchProbe {
+  id: string;
+  result: Result.Result<ToolDef[], unknown>;
+  settle?: { timeoutError: Error; elapsedMs: number };
+}
+
+/** The slice of an unscoped search's budget kept for recording what its probes saw. */
+const SETTLE_RESERVE_MS = 500;
+/** How long a probe claim outlives its request's discovery budget, for settlement and clock skew. */
+const CLAIM_MARGIN_MS = 2_000;
+
+/** A connector unscoped search skipped because its discovery failed recently. */
+class DiscoverySkipped extends Error {
+  constructor(
+    readonly code: string,
+    readonly retryAfterMs: number,
+  ) {
+    super("Connector discovery skipped after a recent failure");
+  }
+}
 
 export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
@@ -654,6 +687,7 @@ export class CatalogService {
   readonly requestScope: object;
   readonly defer: DeferredWork | undefined;
   private readonly probeTimeoutMs: number;
+  private readonly discoveryBudgetMs: number;
   private readonly concurrency: number;
   private readonly searchRoute: SearchRoute;
   private readonly requestSignal: AbortSignal | undefined;
@@ -678,6 +712,9 @@ export class CatalogService {
   // gets new views and indexes. Each service belongs to one request and one
   // registry visibility view (caller/pool, hidden tools and classification).
   private readonly searchViews = new WeakMap<ToolDef[], Map<string, ToolDef[]>>();
+  // This request's discovery-health verdicts, read once per connector and kept
+  // current by its own probes, so repeated searches read no storage.
+  private readonly health = new Map<string, HealthVerdict>();
 
   constructor(
     private readonly registry: RegistryView,
@@ -685,6 +722,8 @@ export class CatalogService {
     options: {
       requestScope?: object | undefined;
       probeTimeoutMs?: number | undefined;
+      /** Unscoped search's whole fan-out budget. Default `UNSCOPED_DISCOVERY_BUDGET_MS`. */
+      discoveryBudgetMs?: number | undefined;
       concurrency?: number | undefined;
       /** The discovery route recovery records name. Default `search_tools`. */
       searchRoute?: SearchRoute | undefined;
@@ -702,6 +741,7 @@ export class CatalogService {
     void CatalogService.nativePrograms;
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs = normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
+    this.discoveryBudgetMs = normalizeTimeoutMs(options.discoveryBudgetMs) ?? UNSCOPED_DISCOVERY_BUDGET_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.searchRoute = options.searchRoute ?? "search_tools";
     this.requestSignal = options.requestSignal;
@@ -825,20 +865,161 @@ export class CatalogService {
       ids,
       (id) =>
         Effect.result(
-          withDeadlineEffect(
-            (signal) =>
-              Effect.map(this.catalog(id, { signal }), (tools) => this.searchView(id, tools, includeWrites, "all")),
-            {
-              ...(this.requestSignal ? { signal: this.requestSignal } : {}),
-              timeoutMs: this.probeTimeoutMs,
-              timeoutError: new ConnectorCallError(
-                "timeout",
-                `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
-              ),
-            },
+          this.probe(
+            id,
+            includeWrites,
+            this.probeTimeoutMs,
+            new ConnectorCallError("timeout", `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`),
           ),
         ),
       { concurrency: this.concurrency },
+    );
+  }
+
+  // Search's catalogs. A scoped search probes its connector under the full
+  // probe deadline, reads its health record beside the probe, and settles it
+  // after. An unscoped search reads health first, skips a connector whose
+  // discovery failed recently, probes the rest under a shorter deadline, and
+  // settles each record as its probe ends. One discovery budget bounds all of
+  // it, health storage included: a probe that starts late gets only what
+  // remains less a slice kept for settling, and health I/O starts only within
+  // it, then runs to its end. A lapsed record is claimed as its probe is
+  // dispatched, leased to the end of this budget plus a margin.
+  // Caller cancellation and a probe the budget cut short leave health as it was.
+  private searchCatalogs(
+    ids: readonly string[],
+    scoped: boolean,
+  ): Effect.Effect<Array<Result.Result<ToolDef[], unknown>>> {
+    return Effect.gen({ self: this }, function* () {
+      const deadline = scoped ? this.probeTimeoutMs : Math.min(this.probeTimeoutMs, UNSCOPED_PROBE_TIMEOUT_MS);
+      const budgetEnd = scoped ? Infinity : Date.now() + this.discoveryBudgetMs;
+      const settleReserve = scoped ? 0 : Math.min(SETTLE_RESERVE_MS, Math.floor(this.discoveryBudgetMs / 10));
+      // Health storage starts only while budget remains and the caller is
+      // here; running out is not a failure, health is then unknown. Once
+      // started, an operation is awaited to its end, never raced or detached:
+      // a storage write cannot be withdrawn once sent (INV-7). The budget
+      // bounds when health work may start, not when it finishes.
+      const withinBudget = <A>(io: Effect.Effect<A>, unknown: A): Effect.Effect<A> =>
+        Effect.suspend(() =>
+          Date.now() >= budgetEnd || this.requestSignal?.aborted ? Effect.succeed(unknown) : Effect.uninterruptible(io),
+        );
+      // A skip that has lapsed is read again, so this request can claim the probe.
+      const unread = ids.filter((id) => {
+        const known = this.health.get(id);
+        return !known || (!scoped && known.skip !== undefined && known.skip.retryAt <= Date.now());
+      });
+      const readHealth = Effect.map(
+        withinBudget(
+          readDiscoveryHealth(this.registry, unread, this.baseUrl, this.requestScope, { skip: !scoped }),
+          unread.map((): HealthVerdict => ({})),
+        ),
+        (read) => unread.forEach((id, index) => this.health.set(id, read[index]!)),
+      );
+      // Record what one probe saw, unless the caller left.
+      const settleOne = (outcome: SearchProbe): Effect.Effect<void> => {
+        const slot = this.health.get(outcome.id)?.slot;
+        const { result, settle } = outcome;
+        if (!settle || !slot || this.requestSignal?.aborted) return Effect.void;
+        return Effect.map(
+          withinBudget(
+            settleDiscoveryHealth(
+              slot,
+              Result.isSuccess(result)
+                ? { ok: true }
+                : {
+                    ok: false,
+                    failure: result.failure,
+                    timedOut: result.failure === settle.timeoutError,
+                    elapsedMs: settle.elapsedMs,
+                  },
+            ),
+            undefined,
+          ),
+          (settled) => {
+            if (settled) this.health.set(outcome.id, settled);
+          },
+        );
+      };
+      const probeOne = (id: string): Effect.Effect<SearchProbe> =>
+        Effect.gen({ self: this }, function* () {
+          const verdict = scoped ? undefined : this.health.get(id);
+          const skip = verdict?.skip;
+          if (skip && skip.retryAt > Date.now())
+            return {
+              id,
+              result: Result.fail(new DiscoverySkipped(skip.code, Math.ceil(skip.retryAt - Date.now()))),
+            };
+          const timeoutFor = (remaining: number) => {
+            const budgetCut = remaining < deadline;
+            return {
+              budgetCut,
+              timeoutMs: budgetCut ? remaining : deadline,
+              timeoutError: budgetCut
+                ? new ConnectorCallError(
+                    "timeout",
+                    `${this.searchRoute} stopped probing "${id}" at the ${this.discoveryBudgetMs}ms discovery budget`,
+                  )
+                : new ConnectorCallError(
+                    "timeout",
+                    `${this.searchRoute} probe of "${id}" timed out after ${deadline}ms`,
+                  ),
+            };
+          };
+          let plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));
+          if (plan.timeoutMs <= 0) return { id, result: Result.fail(plan.timeoutError) };
+          // A lapsed record: claim this probe now, as it is dispatched. The
+          // lease runs to an absolute time, the end of this request's
+          // discovery budget plus a margin, so however long the claim write
+          // takes, the probe the budget still allows ends inside it.
+          if (skip && verdict?.slot) {
+            const leaseUntil = budgetEnd + CLAIM_MARGIN_MS;
+            const claimed = yield* withinBudget(claimDiscoveryProbe(verdict.slot, leaseUntil), false);
+            if (!claimed) {
+              this.health.set(id, { slot: verdict.slot, skip: { code: skip.code, retryAt: leaseUntil } });
+              return {
+                id,
+                result: Result.fail(new DiscoverySkipped(skip.code, Math.max(1, Math.ceil(leaseUntil - Date.now())))),
+              };
+            }
+            this.health.set(id, { slot: verdict.slot });
+            plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));
+            if (plan.timeoutMs <= 0) return { id, result: Result.fail(plan.timeoutError) };
+          }
+          const started = Date.now();
+          const result = yield* Effect.result(this.probe(id, false, plan.timeoutMs, plan.timeoutError));
+          // Elapsed time is this probe's own, measured as it settles.
+          const elapsedMs = Date.now() - started;
+          const outcome: SearchProbe =
+            plan.budgetCut && Result.isFailure(result) && result.failure === plan.timeoutError
+              ? { id, result }
+              : { id, result, settle: { timeoutError: plan.timeoutError, elapsedMs } };
+          if (scoped) return outcome;
+          yield* settleOne(outcome);
+          return { id, result };
+        });
+      if (!scoped) {
+        yield* readHealth;
+        const probed = yield* Effect.forEach(ids, probeOne, { concurrency: this.concurrency });
+        return probed.map((outcome) => outcome.result);
+      }
+      const [, probed] = yield* Effect.all(
+        [readHealth, Effect.forEach(ids, probeOne, { concurrency: this.concurrency })],
+        { concurrency: 2 },
+      );
+      yield* Effect.forEach(probed, settleOne, { concurrency: "unbounded" });
+      return probed.map((outcome) => outcome.result);
+    });
+  }
+
+  private probe(
+    id: string,
+    includeWrites: boolean,
+    timeoutMs: number,
+    timeoutError: Error,
+  ): Effect.Effect<ToolDef[], unknown> {
+    return withDeadlineEffect(
+      (signal) => Effect.map(this.catalog(id, { signal }), (tools) => this.searchView(id, tools, includeWrites, "all")),
+      { ...(this.requestSignal ? { signal: this.requestSignal } : {}), timeoutMs, timeoutError },
     );
   }
 
@@ -979,6 +1160,15 @@ export class CatalogService {
 
   private catalogFailure(connector: Connector, failure: unknown): Effect.Effect<CatalogSearchFailure> {
     return Effect.gen({ self: this }, function* () {
+      if (failure instanceof DiscoverySkipped) {
+        return {
+          connector: connector.id,
+          code: failure.code,
+          message: `Connector "${connector.id}" was skipped because its catalog lookup failed recently (${failure.code}). Search with connector "${connector.id}" to try it now.`,
+          retryable: true,
+          retryAfterMs: failure.retryAfterMs,
+        };
+      }
       const classified = classifyCallError(failure, "catalog_lookup_failed");
       const error: CatalogSearchFailure = {
         connector: connector.id,
@@ -1085,9 +1275,9 @@ export class CatalogService {
         : undefined;
       const connectors = absence ? [] : args.connector ? (scopedConnector ? [scopedConnector] : []) : visibleConnectors;
       // Timeout messages name the route the caller used.
-      const catalogs = yield* this.discoveryCatalogs(
+      const catalogs = yield* this.searchCatalogs(
         connectors.map((connector) => connector.id),
-        this.searchRoute,
+        args.connector !== undefined,
       );
       const searchableCatalogs = catalogs.map((catalog, index) =>
         Result.map(catalog, (tools) => this.searchView(connectors[index]!.id, tools, true, safety)),

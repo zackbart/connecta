@@ -199,6 +199,29 @@ export const catalogKeys = {
     validateStorageKey(`catalog:${connectorId}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
+/** How long a connector-health record outlives its retry time, fencing the next probe's claim. */
+export const CONNECTOR_HEALTH_LINGER_MS = 60_000;
+
+/**
+ * Bounded connector health by connector id and a digest of the owner
+ * partition and described configuration. `discovery` holds the latest failed
+ * discovery's typed code, observation time, retry time and the catalog
+ * generation it saw. Values never carry downstream text, tools or credentials.
+ */
+export const connectorHealthKeys = {
+  family: {
+    name: "connector-health",
+    scope: "root",
+    prefixes: ["connector-health:v1:"],
+    version: { number: 1, in: "key" },
+    codec: jsonCodec,
+    ttl: { kind: "configured", by: "retry time plus 60 seconds" },
+    durable: false,
+  },
+  discovery: (connectorId: string, partitionDigest: string) =>
+    validateStorageKey(`connector-health:v1:${connectorId}:${partitionDigest}:discovery`),
+} as const satisfies Keyed;
+
 /** SDK catalog response cache, complete manifests published after their chunks. */
 export const responseCacheKeys = {
   family: {

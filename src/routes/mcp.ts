@@ -1,4 +1,5 @@
 import { upwardStep } from "../upward.js";
+import { bindDiscoveryEndpoint } from "../discovery-health.js";
 import { authCall, authInvoke, authFlow, authMethod } from "../auth/native.js";
 import { registryProgram } from "../runtime/registry.js";
 import { requestOwner, RequestScope } from "../runtime/request-scope.js";
@@ -737,6 +738,9 @@ export function createMcpRoute(opts: ServerOptions): {
     const requestScope = {};
     const sentSecrets = sentSecretsForRequest(requestScope, sentSecretsForRequest(request));
     const poolName = endpoint.kind === "pool" || endpoint.kind === "agent" ? endpoint.pool : undefined;
+    // Discovery health is kept per admitted endpoint: the same person and
+    // pool at `/mcp` and `/mcp/<pool>` keep separate records.
+    bindDiscoveryEndpoint(requestScope, JSON.stringify([endpoint.kind, poolName ?? null]));
     const agentEndpoint = endpoint.kind === "agent";
     // Access attaches `ctx.access` even to a path it bypasses; an agent
     // endpoint never reads it, so nothing past this point receives it.

@@ -452,6 +452,15 @@ export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSet
   setViewService(ctx, CatalogPolicy, value);
 }
 
+/** The store and owner partition this connector's catalog cache uses, for bounded facts kept beside it. */
+export function catalogOwnerPartition(ctx: ConnectorContext): { storage: KVStorage; partition: string } {
+  const policy = serviceFor(ctx, CatalogPolicy);
+  return {
+    storage: policy?.storage ?? ctx.storage,
+    partition: JSON.stringify([policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null), ctx.baseUrl, ctx.publicUrl]),
+  };
+}
+
 /** Revalidate retained reads without storage I/O or credential material. */
 export function retainedCatalogIdentity(ctx: ConnectorContext): string {
   const policy = serviceFor(ctx, CatalogPolicy);

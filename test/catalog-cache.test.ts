@@ -1124,7 +1124,9 @@ describe("SQL-backed SDK catalog cache", () => {
       let closed = false;
       let chunks = 0;
       const late: string[] = [];
-      const start = (operation: string) => {
+      // Discovery health settles in the request after its probe; it is not cache I/O.
+      const start = (operation: string, key?: string) => {
+        if (key?.startsWith("connector-health:")) return;
         if (closed || ctx?.signal?.aborted) late.push(operation);
       };
       const listTools = f.connector.listTools.bind(f.connector);
@@ -1141,19 +1143,19 @@ describe("SQL-backed SDK catalog cache", () => {
       const deletion = f.store.delete.bind(f.store);
       const cas = f.store.compareAndSet.bind(f.store);
       vi.spyOn(f.store, "get").mockImplementation((key) => {
-        start("get");
+        start("get", key);
         return get(key);
       });
       vi.spyOn(f.store, "delete").mockImplementation((key) => {
-        start("delete");
+        start("delete", key);
         return deletion(key);
       });
       const publication = vi.spyOn(f.store, "compareAndSet").mockImplementation((...args) => {
-        start("compareAndSet");
+        start("compareAndSet", args[0]);
         return cas(...args);
       });
       vi.spyOn(f.store, "set").mockImplementation(async (key, ...args) => {
-        start("set");
+        start("set", key);
         if (key.includes(":chunk:") && !key.includes(":refresh-digest:") && ++chunks === 1) {
           entered.resolve();
           await release.promise;

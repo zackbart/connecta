@@ -12,6 +12,16 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
  */
 export const DEFAULT_PROBE_TIMEOUT_MS = CONFIG_DEFAULTS.discovery.probeTimeoutMs;
 
+/**
+ * Each connector's probe deadline in an unscoped search, or
+ * `discovery.probeTimeoutMs` when that is shorter. Scoped search, describe
+ * and calls keep the full probe deadline.
+ */
+export const UNSCOPED_PROBE_TIMEOUT_MS = 5_000;
+
+/** One unscoped search's whole discovery fan-out ends within this many ms. */
+export const UNSCOPED_DISCOVERY_BUDGET_MS = 9_000;
+
 /** A finite, positive integer number of milliseconds, or undefined. */
 export function normalizeTimeoutMs(value: number | undefined): number | undefined {
   if (value === undefined || !Number.isFinite(value) || !(value > 0)) {
