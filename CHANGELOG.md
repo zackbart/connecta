@@ -8,7 +8,7 @@ This release makes Connecta faster and leaner for agents and operators on Cloudf
 
 The operator UI shows stored connector status at once, then refreshes it with a live read from the browser. Detail reads have an 8 s deadline, load eight at a time, and park a connector that doesn't respond instead of retrying it repeatedly. A credential can be tested before it is saved, and failures are reported as rejected, scope, unreachable, timeout or failed. A credential connector's status shows when it was last verified.
 
-Agents get smaller, clearer responses. The `execute_code` description declares the guest API's shapes. `invalid_args` reports every problem at once, with an example built only from the published schema, and never repeats a submitted value. Each `fields` description says where its paths start. `*_api_details` returns the operation's response fields, and catalog search can return a fully determined API read as a ready call. Search rows are smaller, program searches default to TypeScript signatures, and tests cap the size of the always-loaded surface. Meta-tool names in agent text follow the serving surface, so native pools read correctly. Remote cache partitions are keyed with the deployment's credential vault key; deployments without a vault keep exact partitions per process.
+Agents get smaller, clearer responses. The `execute_code` description declares the guest API's shapes. `invalid_args` returns bounded validation findings and a schema-generated example when available; API hatches point to operation details instead. Errors never echo submitted strings or object keys; non-sensitive numeric bounds may include the submitted number. Each `fields` description says where its paths start. `*_api_details` returns the operation's response fields, and catalog search can return a fully determined API read as a ready call. Search rows are smaller, program searches default to TypeScript signatures, and tests cap the size of the always-loaded surface. Meta-tool names in agent text follow the serving surface, so native pools read correctly. Remote cache partitions use a deployment key derived by `encryptedCredentialVault()`, or supplied by a custom vault's `storageDigestKey()`. Without that method, partitions remain exact but cached entries are reused only within one process or isolate.
 
 Breaking changes:
 - Pools must list only people or only agents. Split mixed pools before upgrading ([Split mixed pools](./documentation/pool-membership-upgrade.md)).
@@ -18,7 +18,7 @@ Breaking changes:
 - The published `GuestApi.emit` type no longer accepts a paged handle.
 - `@zackbart/connecta-eve` requires Eve `>=0.90.0 <0.91.0`; Eve apps upgrade together and remove their undici override.
 
-Plain `/mcp` now routes a person to their single pool. Each remote connector refills its catalog cache once after upgrade. Deployments that use neither native pools nor custom connectors need no configuration change beyond splitting mixed pools.
+Plain `/mcp` now routes a person to their single pool. Each remote connector refills its catalog cache once after upgrade. Before upgrading, split mixed pools, update clients that consume the changed response shapes or guest types, and upgrade Eve apps as described above. Other deployments need no configuration changes.
 
 ### Added
 
