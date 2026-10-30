@@ -1,7 +1,12 @@
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
 import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
-import { GUEST_API_DECLARATION } from "./usage-guide.js";
+import {
+  GUEST_API_DECLARATION,
+  GUEST_FUNCTIONS,
+  UNCOUNTED_GUEST_FUNCTIONS,
+  type GuestFunctionSpec,
+} from "./guest-functions.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
@@ -536,6 +541,13 @@ interface HostCalls {
 
 type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
 
+type GuestOperation = (...args: unknown[]) => Effect.Effect<unknown, unknown>;
+
+/** The host implementation of each registry function; a missing or extra binding fails typecheck. */
+type GuestBindings = {
+  [F in GuestFunctionSpec as F["name"]]: F["budget"] extends "once" ? () => void : GuestOperation;
+};
+
 /**
  * The `connecta` provider for one execution.
  *
@@ -577,7 +589,6 @@ function sandboxProvider(
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
   let emitAttempts = 0;
-  let unawaitedNotices = 0;
   const maxEmitAttempts =
     Math.max(EXECUTE_MAX_EMITTED_BLOCKS, limits.emitCollector?.maxBlocks ?? EXECUTE_MAX_EMITTED_BLOCKS) * 4;
   // A rejected bridge promise is catchable in both sandboxes. End the host
@@ -873,7 +884,11 @@ function sandboxProvider(
     const resolved = registry.resolveAddress(address);
     if (resolved) catalogDependency(resolved.connector.id, resolved.toolName);
   };
-  const operations: Record<string, (...args: unknown[]) => Effect.Effect<unknown, unknown>> = {
+  const operations: GuestBindings = {
+    // Uncounted: a failed program read a result field off an unawaited host call.
+    unawaited: () => {
+      if (limits.unawaited) limits.unawaited.read = true;
+    },
     call,
     result: (id, options, signal, onStage) =>
       Effect.tryPromise({
@@ -1095,64 +1110,59 @@ function sandboxProvider(
       const failure = boundedGuestFailure(redactAgentOutput(sentSecrets, err));
       return Effect.fail(failure);
     });
+  /** End the whole run: later bridge calls, including emit, lose host access. */
+  const endRun = (failure: InvocationFailure) => {
+    budgetFailure = failure;
+    programWrites?.close();
+    limits.dispatchController?.abort();
+    limits.onHostCallBudgetExceeded?.(failure);
+    return stopped;
+  };
   return {
     name: "connecta",
     // Trusted host code the program runs after and cannot undo.
     prelude: guestPrelude(),
-    fns: {
-      // Uncounted: a failed program read a result field off an unawaited host call.
-      // One notice per run; any further call through the bridge ends the run.
-      unawaited: () => {
-        if (budgetFailure) return stopped;
-        if (++unawaitedNotices > 1) {
-          budgetFailure = guestFailure(
-            "budget_exceeded",
-            "execute_code missing-await notice is limited to one per run.",
-          );
-          programWrites?.close();
-          limits.dispatchController?.abort();
-          limits.onHostCallBudgetExceeded?.(budgetFailure);
-          return stopped;
-        }
-        if (limits.unawaited) limits.unawaited.read = true;
-        return Promise.resolve();
-      },
-      ...Object.fromEntries(
-        Object.entries(operations).map(([name, operation]) => [
+    // One bridge function per registry entry, admitted by its budget class.
+    fns: Object.fromEntries(
+      GUEST_FUNCTIONS.map((fn) => {
+        const { name, budget } = fn;
+        const operation = operations[name] as GuestOperation;
+        const deadline = "deadline" in fn ? fn.deadline : undefined;
+        let notices = 0;
+        return [
           name,
           (...args: unknown[]) => {
             if (budgetFailure) return stopped;
+            // Uncounted: one per run; any further call through the bridge ends the run.
+            if (budget === "once") {
+              if (++notices > 1)
+                return endRun(guestFailure("budget_exceeded", `execute_code ${fn.label} is limited to one per run.`));
+              operation();
+              return Promise.resolve();
+            }
             // Invalid emits still allocate guest promises and typed rejections.
             // Bound those attempts without consuming the invocation budget or discarding identities.
-            if (name === "emit" && ++emitAttempts > maxEmitAttempts) {
-              budgetFailure = guestFailure(
-                "budget_exceeded",
-                `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`,
+            if (budget === "emission" && ++emitAttempts > maxEmitAttempts)
+              return endRun(
+                guestFailure(
+                  "budget_exceeded",
+                  `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`,
+                ),
               );
-              programWrites?.close();
-              limits.dispatchController?.abort();
-              limits.onHostCallBudgetExceeded?.(budgetFailure);
-              return stopped;
-            }
             // L4/M7: spend on entry, before even invalid arguments are checked;
-            // emit has a separate budget and never spends this one.
+            // emission has a separate budget and never spends this one.
             // Transparent transfer pages consume the already-admitted call, not guest host calls.
             const counted =
-              name !== "emit" && !(name === "result" && typeof args[0] === "string" && transfers.has(args[0]));
+              budget === "hostCall" && !(name === "result" && typeof args[0] === "string" && transfers.has(args[0]));
             if (counted && ++hostCalls.attempted > maxHostCalls) {
               hostCalls.failed++;
-              budgetFailure = new HostCallBudgetExceeded(hostCalls, maxHostCalls);
-              programWrites?.close();
-              limits.dispatchController?.abort();
-              limits.onHostCallBudgetExceeded?.(budgetFailure);
-              return stopped;
+              return endRun(new HostCallBudgetExceeded(hostCalls, maxHostCalls));
             }
             if (counted) hostCalls.admitted++;
             const started = Date.now();
-            const utility = name === "result" || name === "skill";
-            let stage: ResultReadStage | "skill lookup" = name === "result" ? "result storage" : "skill lookup";
+            let stage = deadline ?? "";
             const invoke = Effect.suspend(() => operation(...args));
-            const guarded = utility
+            const guarded = deadline
               ? withDeadlineEffect(
                   (utilitySignal) =>
                     Effect.suspend(() =>
@@ -1170,11 +1180,11 @@ function sandboxProvider(
             const settled = runEdge(
               guarded.pipe(
                 Effect.catch((error) => {
-                  if (utility && hostAccessSignal?.aborted)
+                  if (deadline && hostAccessSignal?.aborted)
                     return typedFailure(
                       guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`),
                     );
-                  if (utility && error instanceof InvocationFailure && error.code === "timeout") {
+                  if (deadline && error instanceof InvocationFailure && error.code === "timeout") {
                     const elapsedMs = Date.now() - started;
                     const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
                     return typedFailure(
@@ -1213,9 +1223,9 @@ function sandboxProvider(
             settled.catch(() => {});
             return settled;
           },
-        ]),
-      ),
-    },
+        ];
+      }),
+    ),
   };
 }
 
@@ -1867,7 +1877,7 @@ Use async () => { ... }, no arguments. No portable ambient capabilities. API:
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search and describe return objects, not arrays. Schemas default to JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except emit spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. When paging is available, an oversized program return carries resultId and nextAction.
+search and describe return objects, not arrays. Schemas default to JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. When paging is available, an oversized program return carries resultId and nextAction.
 
 Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks unchanged; an authored Block's image/audio data is base64. emit needs no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}.`;
 
