@@ -22,7 +22,12 @@ import type { KVStorage } from "../src/types.js";
 import { connectorContext as ctx, deferred, scriptedExecutor, spyLogger } from "./fixtures/misc.js";
 import { createTestConnecta, required, makeRegistry, seedCatalog, silentLogger } from "./helpers.js";
 import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
-import { McpServer, WebStandardStreamableHTTPServerTransport, createMcpHandler } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+  createMcpHandler,
+  inputRequired,
+} from "@modelcontextprotocol/server";
 import { fakeClerkAuth, readJsonRpc, mcpRpc } from "./fixtures/http.js";
 import { seedGrant } from "./fixtures/oauth.js";
 
@@ -1542,6 +1547,18 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
     const server = () => {
       const mcp = new McpServer({ name: "notes", version: "1" });
       mcp.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] }));
+      // Asks for input this client never declares: a modern server answers
+      // HTTP 400 with MissingRequiredClientCapability after dispatch.
+      mcp.registerTool("ask", { annotations: { readOnlyHint: true } }, async () =>
+        inputRequired({
+          inputRequests: {
+            name: inputRequired.elicit({
+              message: "Pick a name",
+              requestedSchema: { type: "object", properties: { name: { type: "string" } } },
+            }),
+          },
+        }),
+      );
       return mcp;
     };
     const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
@@ -1573,13 +1590,15 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
       // Modern only: the legacy handshake is refused with its supported versions.
       modern: createMcpHandler(server, { legacy: "reject" }),
     };
-    const state = { era: "legacy" as keyof typeof handlers, methods: [] as string[] };
+    const state = { era: "legacy" as keyof typeof handlers, methods: [] as string[], statuses: [] as number[] };
     const fetch: FetchLike = async (input, init) => {
       const request = new Request(input, init);
       const body =
         request.method === "POST" ? ((await request.clone().json()) as { method?: string; id?: number }) : null;
       state.methods.push(body?.method ?? request.method);
-      return handlers[state.era].fetch(request);
+      const response = await handlers[state.era].fetch(request);
+      state.statuses.push(response.status);
+      return response;
     };
     const store = memoryStorage();
     const connector = remoteMcp("notes", { url: "https://notes.test/mcp", fetch });
@@ -1606,7 +1625,7 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const d = eraDownstream();
-    expect(await d.list()).toEqual(["read"]);
+    expect(await d.list()).toEqual(["read", "ask"]);
     expect(d.state.methods.slice(0, 2)).toEqual(["server/discover", "initialize"]);
     expect(await d.verdict()).toEqual({ prior: { kind: "legacy" }, expiresAt: now + 6 * 60 * 60 * 1000 });
     // Past the old five-minute lifetime, a legacy connect still skips the probe.
@@ -1617,12 +1636,12 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
     // An upgraded server that still answers the legacy handshake keeps working on it.
     d.state.era = "dual";
     now += 60 * 60 * 1000;
-    expect(await d.list()).toEqual(["read"]);
+    expect(await d.list()).toEqual(["read", "ask"]);
     expect(d.state.methods[0]).toBe("initialize");
     // When the verdict expires the next connect probes and adopts the modern era,
     // whose verdict keeps the five-minute lifetime.
     now += 5 * 60 * 60 * 1000;
-    expect(await d.list()).toEqual(["read"]);
+    expect(await d.list()).toEqual(["read", "ask"]);
     expect(d.state.methods[0]).toBe("server/discover");
     expect(d.state.methods).not.toContain("initialize");
     expect(await d.verdict()).toMatchObject({ prior: { kind: "modern" }, expiresAt: now + 300_000 });
@@ -1633,7 +1652,7 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
     await d.list();
     expect((await d.verdict())?.prior).toEqual({ kind: "legacy" });
     d.state.era = "modern";
-    expect(await d.list()).toEqual(["read"]);
+    expect(await d.list()).toEqual(["read", "ask"]);
     // The refused handshake costs one request, then the probe selects the modern era.
     expect(d.state.methods.slice(0, 2)).toEqual(["initialize", "server/discover"]);
     expect(d.state.methods.filter((method) => method === "initialize")).toHaveLength(1);
@@ -1643,6 +1662,41 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
     expect(d.state.methods).not.toContain("initialize");
     expect(d.state.methods).not.toContain("server/discover");
     expect(d.state.methods).toContain("tools/call");
+  });
+
+  it("INV-8: a recognized modern error answered with HTTP 400 keeps the modern verdict and its connection", async () => {
+    const d = eraDownstream();
+    d.state.era = "modern";
+    await d.list();
+    const stored = await d.verdict();
+    expect(stored?.prior.kind).toBe("modern");
+    const context = { ...ctx(d.store), requestScope: {} };
+    try {
+      await d.connector.listTools(context);
+      d.state.methods.length = 0;
+      d.state.statuses.length = 0;
+      // A genuine SDK MissingRequiredClientCapability (-32021), raised after dispatch.
+      await expect(d.connector.callTool("ask", {}, context)).rejects.toThrow();
+      expect(d.state.statuses).toEqual([400]);
+      expect(await d.verdict()).toEqual(stored);
+      // The same connection serves the next call: no probe, no handshake.
+      await expect(d.connector.callTool("read", {}, context)).resolves.toMatchObject({ content: [] });
+      expect(d.state.methods).toEqual(["tools/call", "tools/call"]);
+    } finally {
+      await d.connector.closeScope!(context);
+    }
+    // Repeated modern errors never churn the verdict for later requests.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const later = { ...ctx(d.store), requestScope: {} };
+      try {
+        d.state.methods.length = 0;
+        await expect(d.connector.callTool("ask", {}, later)).rejects.toThrow();
+        expect(d.state.methods).not.toContain("server/discover");
+      } finally {
+        await d.connector.closeScope!(later);
+      }
+    }
+    expect(await d.verdict()).toEqual(stored);
   });
 
   it("INV-8 INV-9: a downgraded server forgets the modern verdict at its first refusal and fails over", async () => {
@@ -1660,7 +1714,7 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
       expect(d.state.methods).toEqual(["tools/list"]);
       expect(await d.verdict()).toBeUndefined();
       d.state.methods.length = 0;
-      expect((await d.connector.listTools(context)).map((tool) => tool.name)).toEqual(["read"]);
+      expect((await d.connector.listTools(context)).map((tool) => tool.name)).toEqual(["read", "ask"]);
       expect(d.state.methods.slice(0, 2)).toEqual(["server/discover", "initialize"]);
       await expect(d.connector.callTool("read", {}, context)).resolves.toMatchObject({ content: [] });
     } finally {

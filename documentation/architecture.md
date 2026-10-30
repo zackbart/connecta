@@ -655,11 +655,16 @@ handshake. Two signals end a verdict early:
 - A legacy-verdict handshake refused with a 4xx other than 401, 403 or 429 (a
   modern-only server answers 400 with its supported versions) is negotiated
   again at once in the same connect. The new verdict replaces the old.
-- An HTTP 400 on a connection adopted from a modern verdict deletes the
-  verdict and retires that client. A modern server answers 400 only to refuse
-  a request's protocol envelope, and a legacy server answers 400 to a request
-  without a session. The refused request fails and is never repeated. The next
-  connect, in the same request or a later one, probes again.
+- On a modern connection (adopted from the verdict or just negotiated), an
+  HTTP 400 is read through a bounded clone of its body, as the transport's
+  backward-compatibility rule requires. A modern server also answers 400 with
+  `HeaderMismatch` (-32020), `MissingRequiredClientCapability` (-32021) and
+  `UnsupportedProtocolVersion` (-32022); those recognized modern errors keep
+  the verdict and the connection. An empty body, or one that is not a
+  recognized modern error (a legacy server's sessionless refusal, a gateway's
+  page), is a legacy refusal: it deletes the verdict and retires that client.
+  The refused request fails and is never repeated. The next connect, in the
+  same request or a later one, probes again.
 
 An upgrade to a server that still answers the legacy handshake is therefore
 adopted within six hours. Losing the legacy handshake costs one refused
@@ -3104,7 +3109,10 @@ compiling and configuring the real thing.
   is a known failure only on refusal provenance recorded where the evidence is
   observed, never inferred from an error code: (a) the ledger proves it never
   left, or (b) the downstream served an HTTP refusal, a 4xx other than 408
-  (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`), under the
+  (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`); for
+  `remoteMcp()` only when that 4xx carries a JSON-RPC error body, since a bare
+  one may be a gateway's answer after the server acted (`ambiguous` on the
+  call's dispatch in `src/connectors/remote-mcp.ts`), under the
   provider's existing served classification (a write's HTTP 409 is a `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
   (b) for the ledger and for a transport outside one: a refusing status the
   provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
