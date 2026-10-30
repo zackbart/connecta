@@ -59,6 +59,14 @@ export interface CredentialVault {
    * exposes the vault or this key through a connector context or guest API.
    */
   requestStateKey?(): Promise<Uint8Array>;
+  /**
+   * Host-only HMAC-SHA-256 signing key for the secret-bearing parts of stored
+   * cache keys (downstream catalogs and negotiation verdicts), so no stored key
+   * checks a guessed secret. Must be stable across the deployment's processes,
+   * purpose-specific, and never stored. Without it, those parts use a random
+   * per-process key, and such entries are reused only within one process.
+   */
+  storageDigestKey?(): Promise<CryptoKey>;
   /** Reverse `seal` for the same connector, purpose, and owner; rejects otherwise. */
   open?(connectorId: string, purpose: string, sealed: string, owner?: string): Promise<string>;
 }

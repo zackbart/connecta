@@ -618,6 +618,31 @@ Only complete, intake-redacted tools/list, resources/list and
 resources/templates/list successes are stored. Resource payloads are not cached. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
 
+Stored catalog and negotiation keys tell credentials apart without giving
+anyone who reads the store, or a backup of it, a way to check a guessed
+secret offline. Every secret-bearing input enters a stored key only through
+HMAC-SHA-256 (`src/storage-digest.ts`), never as a plain hash: static auth
+header values, a static OAuth client's secret, the configured URL's userinfo,
+query and fragment, the operator-managed or request-resolved credential
+(joined with the forwarded principal), a custom connector's credential values,
+and the OAuth token response that fences a listing. The key is the vault's
+`storageDigestKey()`, which `encryptedCredentialVault()` derives with HKDF from
+its credential key and never stores. Without a vault, or with a custom vault
+that lacks the method, a random key held only in the process is used: the
+partitions stay exact, but another process or isolate addresses different
+entries and fills its own cache, so cross-isolate reuse of secret-bearing
+catalogs and verdicts needs a vault. A connector with no secret-bearing input
+digests nothing with a key, and its keys are the same in every process.
+Partitions are unchanged: a different header, credential, token response or
+epoch addresses a different entry at once, including a static header changed
+by redeploy, and an earlier entry is never served under the new value;
+rotating back to an earlier value within its TTL finds its entries again.
+Entries written by earlier releases, which hashed these inputs plainly, are no
+longer addressed and expire on their own TTLs
+(catalogs within `catalogMaxTtlSeconds`, refresh baselines within 48 hours,
+verdicts within six hours). Each affected partition costs one extra handshake
+and listing after the upgrade.
+
 A remote connector's `listTools` without a live connection in its request
 reads this cache before connecting. It derives the same partition a connect
 binds (the admitted principal, the caller's credential digest, or the owner's
@@ -650,7 +675,7 @@ always sends a live `tools/list` that bypasses the cache in both directions.
 
 In `"auto"` mode a remote connector stores its negotiation verdict, data only,
 in the `negotiation` key family, partitioned by connector configuration,
-credential and OAuth epoch. A later connect reuses it instead of probing with
+credential and OAuth epoch, with secret-bearing inputs keyed as above. A later connect reuses it instead of probing with
 `server/discover`. A modern verdict lasts five minutes. A legacy verdict lasts
 six hours, because a server that adds the modern era still answers the legacy
 handshake. Two signals end a verdict early:

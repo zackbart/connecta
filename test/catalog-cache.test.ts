@@ -10,6 +10,7 @@ import {
   type CompletedCatalogRefresh,
 } from "../src/catalog-cache.js";
 import { catalogIsFresh } from "../src/catalog-freshness.js";
+import { sha256Hex } from "../src/bytes.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
 import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
@@ -1416,10 +1417,16 @@ function legacyDownstream(name: string, hint: { ttlMs?: number } = {}) {
 }
 
 describe("pre-connect cached catalogs", () => {
-  async function deployment(hint: { ttlMs?: number } = {}) {
-    const store = await storage();
-    const vault = new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
-    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+  async function deployment(
+    hint: { ttlMs?: number } = {},
+    options: { store?: KVStorage; suffix?: string; vaultKey?: number; header?: string; url?: string } = {},
+  ) {
+    const store = options.store ?? (await storage());
+    const vault = new CredentialVault(
+      store,
+      btoa(String.fromCharCode(...new Uint8Array(32).fill(options.vaultKey ?? 7))),
+    );
+    const suffix = options.suffix ?? crypto.randomUUID().replaceAll("-", "").slice(0, 12);
     const shared = legacyDownstream("crm", hint);
     const keyed = legacyDownstream("tickets", hint);
     const pinned = legacyDownstream("notes", hint);
@@ -1427,9 +1434,9 @@ describe("pre-connect cached catalogs", () => {
     const connectors = [
       // Negotiates once, then reuses the stored legacy verdict.
       remoteMcp(ids.shared, {
-        url: "https://crm.test/mcp",
+        url: options.url ?? "https://crm.test/mcp",
         fetch: shared.fetch,
-        auth: { type: "headers", headers: { Authorization: `Bearer ${TOKEN_A}` } },
+        auth: { type: "headers", headers: { Authorization: `Bearer ${options.header ?? TOKEN_A}` } },
       }),
       remoteMcp(ids.keyed, { url: "https://tickets.test/mcp", fetch: keyed.fetch, auth: { type: "credential" } }),
       remoteMcp(ids.pinned, { url: "https://notes.test/mcp", fetch: pinned.fetch, versionNegotiation: "legacy" }),
@@ -1522,6 +1529,92 @@ describe("pre-connect cached catalogs", () => {
     // The new partition is now warm; the old value's entry is never consulted.
     await d.search();
     expect(d.requests()).toBe(0);
+  });
+
+  // Every stored row that addresses a downstream catalog or negotiation verdict.
+  const cacheRows = async (store: KVStorage) =>
+    Promise.all(
+      (await store.list(""))
+        .filter((key) => key.includes("response-cache:") || key.includes("negotiation:"))
+        .map(async (key) => [key, (await store.get(key)) ?? ""] as const),
+    );
+
+  it("INV-5 INV-6: secret-bearing cache keys depend on the deployment key, never on a guessable secret alone", async () => {
+    const store = await storage();
+    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+    const url = `https://crm.test/mcp?key=${TOKEN_B}`;
+    const first = await deployment({}, { store, suffix, url });
+    await first.search();
+    const before = await cacheRows(store);
+    // No row holds a configured secret, or a plain digest of a guess at one.
+    const guesses = [TOKEN_A, TOKEN_B, `Bearer ${TOKEN_A}`, `?key=${TOKEN_B}`, url];
+    const digests = await Promise.all(guesses.map((guess) => sha256Hex(guess)));
+    for (const [key, value] of before)
+      for (const needle of [...guesses, ...guesses.map(encodeURIComponent), ...digests]) {
+        expect(key).not.toContain(needle);
+        expect(value).not.toContain(needle);
+      }
+    // The same secrets under another deployment key address none of those
+    // rows: a stored key is no function of public inputs and a guessed secret.
+    const second = await deployment({}, { store, suffix, url, vaultKey: 9 });
+    await second.search();
+    const [shared, keyed, pinned] = second.downstreams;
+    expect([shared!.handshakes(), keyed!.handshakes()]).toEqual([1, 1]);
+    expect([shared!.listings(), keyed!.listings()]).toEqual([1, 1]);
+    // A connector without secret configuration keeps its keys and its cache.
+    expect(pinned!.requests).toEqual([]);
+    const secretKeys = (rows: (readonly [string, string])[]) =>
+      new Set(rows.map(([key]) => key).filter((key) => !key.includes(first.ids.pinned)));
+    const after = secretKeys(await cacheRows(store));
+    const earlier = [...secretKeys(before)].filter((key) => !key.endsWith(":generation"));
+    expect(earlier.length).toBeGreaterThan(0);
+    for (const key of earlier.filter((key) => !key.includes(":refresh-digest:")))
+      expect(after.has(key) && (await store.get(key)) !== null).toBe(true);
+    const fresh = [...after].filter((key) => !earlier.includes(key) && !key.endsWith(":generation"));
+    expect(fresh.some((key) => key.includes(first.ids.shared))).toBe(true);
+    expect(fresh.some((key) => key.includes(first.ids.keyed))).toBe(true);
+  });
+
+  it("INV-4 INV-5: a static header changed by redeploy misses the previous partition at once", async () => {
+    const store = await storage();
+    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+    await (await deployment({}, { store, suffix })).search();
+    const rotated = await deployment({}, { store, suffix, header: TOKEN_B });
+    await rotated.search();
+    const [shared, keyed, pinned] = rotated.downstreams;
+    expect([shared!.handshakes(), shared!.listings()]).toEqual([1, 1]);
+    expect([...keyed!.requests, ...pinned!.requests]).toEqual([]);
+    // Each header keeps its own partition: the earlier one is still warm.
+    const restored = await deployment({}, { store, suffix });
+    await restored.search();
+    expect(restored.requests()).toBe(0);
+  });
+
+  it("INV-5: without a vault, secret-bearing keys use a per-process key and still partition by header", async () => {
+    const store = await storage();
+    const downstream = legacyDownstream("crm");
+    const id = `crm_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const search = async (token: string) => {
+      const connector = remoteMcp(id, {
+        url: "https://crm.test/mcp",
+        fetch: downstream.fetch,
+        auth: { type: "headers", headers: { Authorization: `Bearer ${token}` } },
+      });
+      const registry = makeRegistry([connector], { storage: store });
+      const requestScope = {};
+      try {
+        return await new CatalogService(registry, BASE, { requestScope }).search({ query: "read" });
+      } finally {
+        await connector.closeScope?.(registry.contextFor(id, BASE, requestScope));
+      }
+    };
+    await search(TOKEN_A);
+    await search(TOKEN_A);
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([1, 1]);
+    await search(TOKEN_B);
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([2, 2]);
+    const digest = await sha256Hex(`Bearer ${TOKEN_A}`);
+    for (const [key, value] of await cacheRows(store)) expect(`${key}${value}`).not.toContain(digest);
   });
 
   it("INV-8: an invalidated catalog connects and lists again", async () => {

@@ -81,3 +81,20 @@ export async function deriveRequestStateKey(raw: Uint8Array): Promise<Uint8Array
     ),
   );
 }
+
+/** A non-extractable HMAC key for secret-bearing stored cache keys; nothing is stored. */
+export async function deriveStorageDigestKey(raw: Uint8Array): Promise<CryptoKey> {
+  const material = await crypto.subtle.importKey("raw", new Uint8Array(raw), "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new TextEncoder().encode("connecta:storage-digest:v1"),
+      info: new TextEncoder().encode("cache-keys"),
+    },
+    material,
+    { name: "HMAC", hash: "SHA-256", length: 256 },
+    false,
+    ["sign"],
+  );
+}

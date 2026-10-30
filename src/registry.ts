@@ -45,6 +45,7 @@ import {
 } from "./runtime/call.js";
 import { hasNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
 import { observeStorageWrites } from "./runtime/request-reads.js";
+import { attachStorageDigestKey } from "./storage-digest.js";
 import { requestReads } from "./runtime/request-scope.js";
 import { credentialReads } from "./credential-reads.js";
 import { provideRegistryPrograms, registryEdgeProgram, registryProgram } from "./runtime/registry.js";
@@ -802,6 +803,7 @@ export class Registry implements RegistryView {
           }
         : {}),
     });
+    attachStorageDigestKey(context, this.opts.credentialVault);
     sentSecretsFor(context);
     wrapViewCredentials(context);
     attachOAuthPartition(context, this.oauthPartition);
