@@ -199,11 +199,18 @@ export const WARNING_BUDGET = { chars: 512, warnings: 10, totalChars: 4096 } as 
  * ellipsis, then one count of what was omitted. Merged reviewed warnings and
  * `fields` reports share the budget.
  */
+/** At most `max` UTF-16 units, never splitting a surrogate pair. */
+function codePointSlice(text: string, max: number): string {
+  const end = max > 0 && /[\uD800-\uDBFF]/.test(text[max - 1] ?? "") ? max - 1 : max;
+  return text.slice(0, end);
+}
+
 export function boundWarnings(warnings: readonly string[]): string[] {
   const kept: string[] = [];
   let total = 0;
   for (const warning of warnings) {
-    const text = warning.length > WARNING_BUDGET.chars ? `${warning.slice(0, WARNING_BUDGET.chars - 1)}…` : warning;
+    const text =
+      warning.length > WARNING_BUDGET.chars ? `${codePointSlice(warning, WARNING_BUDGET.chars - 1)}…` : warning;
     // Leave room for the omitted count.
     if (kept.length >= WARNING_BUDGET.warnings || total + text.length > WARNING_BUDGET.totalChars - 64) break;
     kept.push(text);

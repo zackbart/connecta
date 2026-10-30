@@ -1741,6 +1741,10 @@ it("INV-5: bounds fields miss warnings and never echoes response keys", NODE, as
     ...Array.from({ length: 7 }, () => `${"w".repeat(WARNING_BUDGET.chars - 1)}…`),
     "23 more warnings omitted.",
   ]);
+  // A cut never splits a surrogate pair.
+  const [cut] = boundWarnings([`${"a".repeat(WARNING_BUDGET.chars - 2)}😀${"b".repeat(10)}`]);
+  expect(cut).toBe(`${"a".repeat(WARNING_BUDGET.chars - 2)}…`);
+  expect(cut!.isWellFormed()).toBe(true);
 });
 
 it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and one write attempt", NODE, async () => {
