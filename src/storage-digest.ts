@@ -2,9 +2,8 @@
 //
 // Some stored keys must tell credentials apart: a catalog or negotiation
 // verdict cached under one header, token or vault credential is never served
-// under another (INV-4, INV-5). A plain hash of that material would let anyone
-// who reads the store, or a backup of it, check a guessed secret offline. Each
-// such part goes through HMAC-SHA-256 under a key that never enters storage:
+// under another (INV-4, INV-5). Stored keys depend on that material only
+// through HMAC-SHA-256 under a deployment key that never enters storage:
 // the vault's storage digest key, derived from the deployment's credential
 // key, or without one a random key held only in this process. A process key
 // keeps the partitions exact; its entries are simply not found by another

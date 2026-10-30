@@ -2556,8 +2556,8 @@ non-extractable HMAC-SHA-256 signing `CryptoKey` that is stable across the
 deployment's processes, purpose-specific and never stored.
 `encryptedCredentialVault()` derives it with HKDF from its credential key.
 Remote catalog and negotiation-verdict keys digest secret-bearing inputs
-(header values, credentials, request tokens, OAuth token responses) with it, so
-no stored key checks a guessed secret. Without it they use a random
+(header values, configured URL queries, credentials, request tokens, OAuth token
+responses) with it, so their partitions are deployment-keyed. Without it they use a random
 per-process key: partitions stay exact, but each process or isolate keeps its
 own entries for those connectors.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
