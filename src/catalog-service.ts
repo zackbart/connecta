@@ -591,7 +591,6 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
         properties: {
           name: { type: "string" },
           address: { type: "string" },
-          connectorTitle: { type: "string" },
           description: { type: "string" },
           inputSchema: {},
           outputSchema: {},
