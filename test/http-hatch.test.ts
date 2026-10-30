@@ -247,6 +247,74 @@ it(
 );
 
 it(
+  "INV-1 INV-2 INV-4 INV-10: offers only fully determined reads as ready calls, through the caller's view",
+  NODE,
+  async () => {
+    const logger = { debug() {}, info() {}, warn() {}, error() {} };
+    const searchWith = async (
+      options: Parameters<typeof setup>[0] = {},
+      args: Parameters<CatalogService["search"]>[0] = { query: "list items" },
+      registryOptions: Partial<ConstructorParameters<typeof Registry>[1]> = {},
+      view: (registry: Registry) => Registry | ReturnType<Registry["scoped"]> = (registry) => registry,
+      readOnly = false,
+    ) => {
+      const { tools, authenticate, sendPath } = setup(options);
+      const registry = new Registry([apiConnector("crm", { tools })], { storage, logger, ...registryOptions });
+      const page = await new CatalogService(view(registry), "https://connecta.test", { readOnly }).search(args);
+      expect(authenticate).not.toHaveBeenCalled();
+      expect(sendPath).not.toHaveBeenCalled();
+      return page;
+    };
+    const ready = {
+      address: "crm.items_api_read",
+      args: { path: "/items" },
+      classification: "read",
+      summary: "List items",
+    };
+    const page = await searchWith();
+    expect(page.readyCalls?.map((entry) => entry.call)).toEqual([ready]);
+    // The ready call is the whole call: its args alone succeed.
+    const { call } = setup();
+    await call("read", ready.args);
+    expect(sent.map((request) => [request.method, request.url])).toEqual([["GET", "https://api.example/v1/items"]]);
+    sent.length = 0;
+    // A read-only endpoint still offers reads; a later page repeats nothing.
+    expect((await searchWith({}, undefined, {}, undefined, true)).readyCalls?.map((entry) => entry.call)).toEqual([
+      ready,
+    ]);
+    expect((await searchWith({}, { query: "list items", offset: 1 })).readyCalls).toBeUndefined();
+    for (const [label, refused] of [
+      [
+        "path template",
+        await searchWith({ verdicts: { ...VERDICTS, "GET /items/{item}": "read" } }, { query: "get item" }),
+      ],
+      ["non-GET read", await searchWith({}, { query: "query items" })],
+      ["write", await searchWith({}, { query: "touch item" })],
+      ["approvalRequired filter", await searchWith({}, { query: "list items", safety: "approvalRequired" })],
+      ["hidden read tool", await searchWith({}, undefined, { classification: { crm: { items_api_read: "hidden" } } })],
+      [
+        "ungranted read tool",
+        await searchWith({}, undefined, {}, (registry) =>
+          registry.scoped({ connectorIds: ["crm"], toolAccess: new Map([["crm", new Set(["items_api_search"])]]) }),
+        ),
+      ],
+      ["named tool", await searchWith({ named: { "GET /items": "list_items" } })],
+      [
+        "required query parameter",
+        await searchWith({
+          data: {
+            ...DATA,
+            details: DATA.details.replace('["limit","query",0,', '["limit","query",1,'),
+          },
+        }),
+      ],
+    ] as const)
+      expect(refused.readyCalls, label).toBeUndefined();
+    expect(sent).toEqual([]);
+  },
+);
+
+it(
   "INV-1 INV-10: finds a usable refund operation and explains a refused credential operation without vendor IO",
   NODE,
   async () => {

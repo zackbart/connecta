@@ -138,6 +138,15 @@ interface CatalogSearchPage {
 }
 type CatalogSearchResult = CatalogSearchPage & {
   tools: CatalogSearchTool[];
+  /** Complete operation reads: pass args unchanged to connecta.call(address, args). */
+  readyCalls?: Array<{
+    address: string;
+    args: { path: string };
+    classification: "read";
+    summary: string;
+    guideRequired?: true;
+    guideRequiredReasons?: GuideRequiredReason[];
+  }>;
   /** Facts shared by a connector's rows, keyed by the id before the address's first dot. */
   connectors?: Record<string, { title?: string; guide?: string; guideSummary?: string }>;
 };

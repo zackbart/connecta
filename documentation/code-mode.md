@@ -243,6 +243,10 @@ query browses; non-empty input with no ASCII lexical terms returns no tools plus
 bounded no-match analysis in `queryAnalysis`; mixed input searches with its
 ASCII terms.
 
+The first page may also carry `readyCalls`: complete operation reads to pass
+unchanged as `connecta.call(entry.address, entry.args)`
+([fully determined operations](./meta-tools.md#discovery-context) only).
+
 Each entry carries `address`, `name`, and — when requested — `description`,
 the rendered schemas, and `annotations`. The page's `connectors` map holds each
 row's connector facts once, keyed by the id before the address's first dot: the

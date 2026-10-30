@@ -2,7 +2,14 @@
 import { lexicalSearchContent, lexicalQueryTerms } from "./catalog.js";
 import type { Connector, ToolDef } from "./types.js";
 
-type Row = { readonly text: string; readonly route: string | undefined; readonly write: boolean };
+/** A fully determined read: its route's `{ path }` alone is the complete call. */
+type Ready = { readonly path: string; readonly summary: string };
+type Row = {
+  readonly text: string;
+  readonly route: string | undefined;
+  readonly write: boolean;
+  readonly ready?: Ready | undefined;
+};
 type Groups = readonly (readonly string[])[];
 type Vocabulary = (
   query: string,
@@ -10,7 +17,9 @@ type Vocabulary = (
   safety: string | undefined,
   readOnly: boolean,
   synonyms?: Groups,
-) => boolean;
+) => { matched: boolean; ready: Array<Ready & { route: string }> };
+/** Ready calls one vocabulary offers a search, shortest path first. */
+const MAX_READY_PER_VOCABULARY = 3;
 const tools = new WeakMap<object, Vocabulary>();
 const connectors = new WeakMap<object, ReadonlyMap<string, Vocabulary>>();
 const synonymGroups = new WeakMap<object, Groups>();
@@ -78,12 +87,13 @@ export function searchSynonyms(connector: Connector): ((word: string) => string[
 /** Register only construction-authored compact summaries; never whole request/response schemas. */
 export function registerOperationVocabulary(tool: object, rows: () => Iterable<Row>): void {
   let postings: Map<string, number[]> | undefined;
-  const routes: Array<Pick<Row, "route" | "write">> = [];
+  const routes: Array<Pick<Row, "route" | "write" | "ready">> = [];
   const cache = new Map<string, readonly number[]>();
   tools.set(tool, (query, visible, safety, readOnly, synonyms) => {
-    if (query.length > OPERATION_VOCABULARY_BOUNDS.queryChars) return false;
+    const none = { matched: false, ready: [] };
+    if (query.length > OPERATION_VOCABULARY_BOUNDS.queryChars) return none;
     const wanted = terms(query);
-    if (!wanted.length || wanted.length > OPERATION_VOCABULARY_BOUNDS.terms) return false;
+    if (!wanted.length || wanted.length > OPERATION_VOCABULARY_BOUNDS.terms) return none;
     // Each wanted word matches through itself or any declared synonym.
     const alternatives = wanted.map((word) => [word, ...(synonyms ? synonymsIn(synonyms, word, normal) : [])]);
     if (!postings) {
@@ -98,7 +108,18 @@ export function registerOperationVocabulary(tool: object, rows: () => Iterable<R
           break;
         chars += text.length;
         const id = routes.length;
-        routes.push({ route: row.route, write: row.write });
+        routes.push({
+          route: row.route,
+          write: row.write,
+          ...(row.ready
+            ? {
+                ready: {
+                  path: row.ready.path,
+                  summary: row.ready.summary.slice(0, OPERATION_VOCABULARY_BOUNDS.rowChars),
+                },
+              }
+            : {}),
+        });
         for (const word of terms(text)) {
           const hits = postings.get(word);
           if (hits) hits.push(id);
@@ -117,12 +138,24 @@ export function registerOperationVocabulary(tool: object, rows: () => Iterable<R
       if (cache.size >= OPERATION_VOCABULARY_BOUNDS.cache) cache.delete(cache.keys().next().value!);
       cache.set(key, found);
     }
-    return found.some((id) => {
+    // The same endpoint, safety and visibility checks decide both answers.
+    const admitted = found.filter((id) => {
       const row = routes[id]!;
       if (row.write && readOnly) return false;
       if ((safety === "readOnly" && row.write) || (safety === "approvalRequired" && !row.write)) return false;
       return row.route !== undefined && visible.has(row.route);
     });
+    return {
+      matched: admitted.length > 0,
+      ready: admitted
+        .flatMap((id) => {
+          const { route, write, ready } = routes[id]!;
+          return ready && !write && route ? [{ ...ready, route, id }] : [];
+        })
+        .sort((a, b) => a.path.length - b.path.length || a.id - b.id)
+        .slice(0, MAX_READY_PER_VOCABULARY)
+        .map(({ path, summary, route }) => ({ path, summary, route })),
+    };
   });
 }
 
@@ -135,20 +168,34 @@ export function registerConnectorVocabulary(connector: Connector, declarations: 
   if (entries.length) connectors.set(connector, new Map(entries));
 }
 
+/**
+ * Read tools whose operation vocabulary matches every query word, and the
+ * fully determined reads among those operations, each through a visible read
+ * tool of `catalog`: the caller's view, after endpoint, connector, hidden-tool
+ * and grant filtering.
+ */
 export function operationVocabularyMatches(
   connector: Connector,
   catalog: readonly ToolDef[],
   query: string,
   safety: string | undefined,
   readOnly: boolean,
-): ToolDef[] {
+): { tools: ToolDef[]; ready: Array<Ready & { tool: ToolDef }> } {
   const registered = connectors.get(connector);
-  if (!registered) return [];
+  const tools: ToolDef[] = [];
+  const ready: Array<Ready & { tool: ToolDef }> = [];
+  if (!registered) return { tools, ready };
   const visible = new Set(catalog.map((tool) => tool.name));
   const synonyms = groupsOf(connector);
-  return catalog.filter(
-    (tool) =>
-      tool.classification === "read" &&
-      registered.get(tool.name)?.(query, visible, safety, readOnly || connector.readOnly === true, synonyms),
-  );
+  for (const tool of catalog) {
+    const vocabulary = tool.classification === "read" ? registered.get(tool.name) : undefined;
+    const found = vocabulary?.(query, visible, safety, readOnly || connector.readOnly === true, synonyms);
+    if (!found?.matched) continue;
+    tools.push(tool);
+    for (const { route, ...call } of found.ready) {
+      const target = catalog.find((candidate) => candidate.name === route);
+      if (target?.classification === "read") ready.push({ ...call, tool: target });
+    }
+  }
+  return { tools, ready };
 }

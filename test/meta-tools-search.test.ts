@@ -243,6 +243,18 @@ describe("search_tools", () => {
     // Operation vocabulary consults them too: Granola calls meetings notes.
     const meetings = textOf(await mt.searchTools({ connector: "notes", query: "list meetings" })) as SearchResult;
     expect(meetings.tools.map((tool) => tool.address)).toContain("notes.granola_api_search");
+    // Listing notes needs no id or argument, so search hands back the whole read.
+    expect(meetings.readyCalls).toEqual([
+      {
+        address: "notes.granola_api_read",
+        args: { path: "/v1/notes" },
+        classification: "read",
+        summary: "List notes",
+        guideRequired: true,
+        guideRequiredReasons: ["connector_required"],
+      },
+    ]);
+    expect(meetings.connectors?.["notes"]?.guide).toBe("connector:notes");
     const unrelated = textOf(await mt.searchTools({ connector: "other", query: "list households" })) as SearchResult;
     expect(unrelated.matchMode).toBe("partial");
     expect(unrelated.queryAnalysis?.unmatchedTerms).toEqual(["households"]);

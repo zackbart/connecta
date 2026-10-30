@@ -1625,6 +1625,20 @@ export function hatch(
       }),
     );
   }
+  // A read search may hand back as a ready call: GET by default, no path
+  // template, no required parameter or body, and served by the read tool
+  // itself rather than a named tool. Anything an agent must choose or fill in
+  // stays behind search and details.
+  const readTool = tool("read");
+  const ready = (op: Operation) => {
+    if (op.method !== "GET" || defaultRead !== "GET" || op.path.includes("{")) return undefined;
+    const routed = route(op);
+    if (routed.tool !== readTool || routed.named) return undefined;
+    const contract = index.contract(op);
+    return contract.parameters.some((param) => param.required) || contract.body?.required
+      ? undefined
+      : { path: op.path, summary: op.summary.slice(0, SEARCH_BUDGET.summaryChars) };
+  };
   registerOperationVocabulary(tools[0]!, function* () {
     for (const op of index.ops) {
       const verdict = discoveryVerdictOf(op);
@@ -1632,6 +1646,7 @@ export function hatch(
         text: `${op.path.slice(0, 384)} ${op.operationId.slice(0, 128)} ${op.summary.slice(0, 384)} ${op.tag.slice(0, 128)}`,
         route: verdict === "refuse" ? searchTool : route(op).tool,
         write: verdict !== "read",
+        ready: verdict === "read" ? ready(op) : undefined,
       };
     }
   });
