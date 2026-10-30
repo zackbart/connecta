@@ -194,6 +194,9 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
         discoveryConcurrency: 1,
         personalCredentialOwner: authz.principalKey,
         mayManage,
+        // A live read records its observation; `?observation=stored` answers
+        // from the current one instead and leaves the live read to the browser.
+        statusObservation: context.url.searchParams.get("observation") === "stored" ? "stored" : "record",
         timeoutMs: opts.config.discovery.probeTimeoutMs,
         ...(opts.config.discovery.probeTimeoutMs > DETAIL_OBSERVE_TIMEOUT_MS
           ? { observeTimeoutMs: DETAIL_OBSERVE_TIMEOUT_MS }

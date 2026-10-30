@@ -12,7 +12,7 @@ import { connectorSummary, type ConnectorSummary } from "../config-summary.js";
 import { Catalog } from "./catalog.js";
 import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
 import { ActivityPage } from "./activity.js";
-import { AuthScopeBadge, ToolSplit } from "./connectors.js";
+import { AuthScopeBadge, StoredStatus, ToolSplit } from "./connectors.js";
 import { verdictFor } from "./problems.js";
 import { refreshConnector, stopConnectorReads } from "./store.js";
 
@@ -50,8 +50,11 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
             <div className="conn-badges">
               <code title={id}>{id}</code>
               <AuthScopeBadge scope={config.authScope} />
-              <ToolSplit tools={live.tools} />
+              <ToolSplit tools={live.tools} awaitingLive={live.observedAt !== undefined} />
             </div>
+          ) : null}
+          {live?.observedAt !== undefined ? (
+            <StoredStatus observedAt={live.observedAt} parked={live.problem === "connector_timeout"} />
           ) : null}
           {config?.description ? <p className="conn-description">{config.description}</p> : null}
         </div>
@@ -82,7 +85,16 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
               {
                 value: "tools",
                 label: "Tools",
-                content: <Catalog tools={live.tools.map((tool) => ({ ...tool, connectorId: id }))} />,
+                content:
+                  live.observedAt !== undefined && live.tools.length === 0 ? (
+                    <StateBlock busy={live.problem !== "connector_timeout"} title="Tools awaiting live read">
+                      {live.problem === "connector_timeout"
+                        ? "This status is stored. Refresh to read the connector and its tools."
+                        : "This status is stored. The tools appear when the live read answers."}
+                    </StateBlock>
+                  ) : (
+                    <Catalog tools={live.tools.map((tool) => ({ ...tool, connectorId: id }))} />
+                  ),
               },
               {
                 value: "connection",

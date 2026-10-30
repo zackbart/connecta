@@ -580,6 +580,48 @@ carries its credential card and auth permissions, so a slow connector's slot
 stays manageable. Any other failure keeps `connector_unavailable`. The
 connector renders as **Not responding**, with fixed copy, a fix prompt and
 Refresh.
+**Stored status.** Each live `GET /ui/connectors/:id` records one status
+observation for that connector and viewer partition before it answers: its
+state, problem code, tool count and observation time. Authored static catalogs
+such as `api()` connectors are recorded too, since their status still checks
+auth. The record lives in the `connector-health:v1:` family under the same
+owner partition as the catalog cache (principal, subject, caller identity and
+pool, endpoint, described configuration and package version), so a personal
+connector's observation is one person's. It also carries the catalog
+generation read before the probe, through the request's read memo that the
+catalog listing reuses. It holds no tools, schemas, status prose or
+credential facts. It expires 120 seconds after it was observed, and lapses at
+once when a credential change, OAuth connect or disconnect, or invalidation
+rotates the generation. A read that ends at the row's own deadline, including
+a configured `discovery.probeTimeoutMs` shorter than 8 seconds, records
+`connector_timeout` before it answers. An observation is written only while
+the caller is still waiting: a request its caller has already left starts no
+write. A write that has started is never raced against a deadline or
+detached, because a storage write cannot be withdrawn once sent. The request,
+whether it times out or its caller leaves meanwhile, settles only after that
+write does, bounded by the storage layer like every other awaited write, so
+nothing commits after the request ends.
+
+`GET /ui/connectors/:id?observation=stored` answers from a current observation
+without probing the downstream. The row and overlay carry `observedAgeMs`, the
+stored `status`, `problem` and `toolCount`, and `tools: []`; the tools stay in
+the catalog cache. The credential card, drift, permissions and any
+authorization link are computed fresh on every request. Without a current
+observation the route does the live read and records it, with no
+`observedAgeMs`. Nothing is refreshed after the response: no deferred work and
+no `ctx.waitUntil`.
+
+The browser asks each connector for its stored observation on the page load
+that follows admission, and fixes the observation time once as each stored
+row lands. The list card and the connector page mark a stored row the same
+way, "Stored status, checked … ago", with an age that keeps counting, and
+show its tools as awaiting the live read rather than as none. The browser then
+sends one plain live read per stored row, through the same queue of eight
+detail reads. A stored `connector_timeout` row is not read again on its own;
+its mark says to Refresh, and it waits for Refresh like a live timeout.
+Refresh, a single connector's read, recovery retries and OAuth polls always
+read live.
+
 The summary and each detail carry `viewerKey` for the principal admitted to that
 request. The browser publishes the detail and overlay atomically only when that
 key matches admission. A changed viewer key, including an Access switch between
@@ -592,7 +634,7 @@ screen. The first answer for the new viewer triggers readmission, which clears
 everything retained.
 Config observations never
 overwrite a completed detail row. Each connector opens at most one live observation
-per page load; the summary `/ui/data` performs no downstream probes.
+per page load, after its stored read; the summary `/ui/data` performs no downstream probes.
 
 `GET /ui/api/config?connector=<id>` narrows the same contract to one connector
 before status and catalog probes. For a maintainer, config, provenance, live

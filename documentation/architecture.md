@@ -119,7 +119,10 @@ across requests on Workers is a cross-request capability leak, and a promise awa
 work the runtime may already have torn down. Deferred work has one sanctioned
 channel, `ctx.waitUntil`, threaded through `fetch(request, env, ctx)` — activity
 writes and OAuth renewals from claim submission use it. Catalog listing and SQL cache
-publication finish in the requesting scope. A fresh
+publication finish in the requesting scope. The operator surface's Promise
+edge (`ui.handle`) owns the request's signal and is awaited to its end even
+when the caller leaves, so a storage write it has started, such as a stored
+status observation, settles before the request does. A fresh
 `McpServer` per request is what makes the deployment stateless: no sessions, no
 server push, no stream resumability, scope resolved rather than remembered.
 

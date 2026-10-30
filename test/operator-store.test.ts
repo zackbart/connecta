@@ -141,13 +141,22 @@ async function loadStore(
   let summary: UiData | undefined;
   let declared: string[] | undefined;
   const paths: string[] = [];
+  const storedReads: string[] = [];
   const configMock = vi.fn(async (_path: string, _init: RequestInit) =>
     Response.json(v2((declared ?? summary?.connectors.map(({ id }) => id) ?? []).map((id) => ({ id })))),
   );
-  vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
+  vi.stubGlobal("fetch", async (requested: string, init: RequestInit) => {
+    // A whole-page read asks each connector for its stored observation first.
+    // These fakes answer live rows, so the browser sends no second read; the
+    // query is recorded apart and routed as the plain detail path.
+    const path = requested.replace(/\?observation=stored$/, "");
+    if (path !== requested) storedReads.push(path);
     paths.push(path);
     if (path.startsWith("/ui/api/config")) return configMock(path, init);
-    let response = (await fetchMock(path, init)) as Response | undefined;
+    // Only a stored read passes the requested URL, so call assertions keep their arity.
+    let response = (await (path === requested ? fetchMock(path, init) : fetchMock(path, init, requested))) as
+      | Response
+      | undefined;
     if (response?.ok && (path === "/ui/data" || path.startsWith("/ui/connectors/"))) {
       try {
         response = Response.json({ viewerKey: "opaque-viewer", ...((await response.clone().json()) as object) });
@@ -183,6 +192,7 @@ async function loadStore(
     fetchMock,
     configMock,
     paths,
+    storedReads,
     windowListeners,
     window,
     /** The connectors the default contract configures, before any `/ui/data` is seen. */
@@ -1321,6 +1331,98 @@ describe("cached admission and scoped observations (#1113)", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(paths).toHaveLength(before);
     expect(paths.every((p) => p === "/ui/connectors/crm")).toBe(true);
+  });
+
+  it("shows each stored row at once, then reads it live once, leaving a stored timeout parked", async () => {
+    const loaded = await loadStore({ id: "a", getToken: async () => "token" });
+    loaded.declare(ids);
+    loaded.configMock.mockImplementation(async () => Response.json(v2(ids.map((id) => ({ id })))));
+    const live = deferred<void>();
+    const stored = (id: string) => {
+      const base = row(id, id === "notes" ? "error" : "ok");
+      const problem = id === "notes" ? { problem: "connector_timeout" } : {};
+      return {
+        ...base,
+        ...problem,
+        observedAgeMs: 4_000,
+        overlay: { ...base.overlay, ...problem, observedAgeMs: 4_000 },
+      };
+    };
+    loaded.fetchMock.mockImplementation(async (path: string, _init: RequestInit, requested?: string) => {
+      if (path === "/ui/data") return Response.json({ ...uiData("operator"), connectors: ids.map((id) => row(id)) });
+      const id = path.split("/").at(-1)!;
+      if (requested?.endsWith("?observation=stored")) return Response.json(stored(id));
+      await live.promise;
+      return Response.json(row(id));
+    });
+    await loaded.store.boot();
+    // Stored rows publish before any live read answers.
+    await vi.waitFor(() => expect(loaded.store.getState().contract?.live.connectors).toHaveLength(ids.length));
+    expect(loaded.store.getState().contract?.live.connectors.find((c) => c.id === "crm")?.observedAgeMs).toBe(4_000);
+    // The observation time is fixed once as the row lands, for both views of it.
+    const observedAt = loaded.store.getState().contract?.live.connectors.find((c) => c.id === "crm")?.observedAt;
+    expect(observedAt).toBeLessThanOrEqual(Date.now() - 4_000);
+    expect(loaded.store.getState().data?.connectors.find((c) => c.id === "crm")?.observedAt).toBe(observedAt);
+    expect(loaded.storedReads.sort()).toEqual(ids.map((id) => `/ui/connectors/${id}`).sort());
+    live.resolve();
+    // One live read each, except the stored timeout, which waits for Refresh.
+    await vi.waitFor(() =>
+      expect(
+        loaded.store.getState().contract?.live.connectors.find((c) => c.id === "crm")?.observedAgeMs,
+      ).toBeUndefined(),
+    );
+    const liveReads = loaded.paths.filter((p) => p.startsWith("/ui/connectors/")).length - loaded.storedReads.length;
+    expect(liveReads).toBe(2);
+    expect(loaded.store.getState().data?.connectors.find((c) => c.id === "notes")).toMatchObject({
+      problem: "connector_timeout",
+      observedAgeMs: 4_000,
+    });
+    // Refresh reads every connector live, the parked timeout included.
+    const storedBefore = loaded.storedReads.length;
+    loaded.paths.length = 0;
+    await loaded.store.loadOperatorContract();
+    expect(loaded.storedReads).toHaveLength(storedBefore);
+    expect(loaded.paths.filter((p) => p.startsWith("/ui/connectors/")).sort()).toEqual(
+      ids.map((id) => `/ui/connectors/${id}`).sort(),
+    );
+    await vi.waitFor(() =>
+      expect(loaded.store.getState().data?.connectors.find((c) => c.id === "notes")?.observedAgeMs).toBeUndefined(),
+    );
+  });
+
+  it("runs stored reads and their live follow-ups through one queue of eight", async () => {
+    const many = Array.from({ length: 12 }, (_, index) => `svc${index}`);
+    const loaded = await loadStore({ id: "a", getToken: async () => "token" });
+    loaded.declare(many);
+    loaded.configMock.mockImplementation(async () => Response.json(v2(many.map((id) => ({ id })))));
+    const live = deferred<void>();
+    let inFlight = 0;
+    let max = 0;
+    loaded.fetchMock.mockImplementation(async (path: string, _init: RequestInit, requested?: string) => {
+      if (path === "/ui/data") return Response.json({ ...uiData("operator"), connectors: many.map((id) => row(id)) });
+      const id = path.split("/").at(-1)!;
+      max = Math.max(max, ++inFlight);
+      try {
+        if (requested?.endsWith("?observation=stored")) {
+          const base = row(id);
+          return Response.json({ ...base, observedAgeMs: 1_000, overlay: { ...base.overlay, observedAgeMs: 1_000 } });
+        }
+        await live.promise;
+        return Response.json(row(id));
+      } finally {
+        inFlight--;
+      }
+    });
+    await loaded.store.boot();
+    await vi.waitFor(() => expect(inFlight).toBe(8));
+    expect(max).toBe(8);
+    live.resolve();
+    await vi.waitFor(() =>
+      expect(loaded.store.getState().contract?.live.connectors.every((c) => c.observedAt === undefined)).toBe(true),
+    );
+    expect(max).toBe(8);
+    expect(loaded.storedReads).toHaveLength(12);
+    expect(loaded.paths.filter((p) => p.startsWith("/ui/connectors/"))).toHaveLength(24);
   });
 
   it("parks a timed-out connector until Refresh, and keeps polling one returning from consent", async () => {

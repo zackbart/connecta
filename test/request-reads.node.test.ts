@@ -723,10 +723,10 @@ describe("request budgets", () => {
     };
     const call = async (app: Connecta, address: string) =>
       expect(await tool(app, "call_tool", { address, args: { text: "hi" } })).toContain("hi");
-    const detail = async (app: Connecta, id: string) => {
-      const response = await app.fetch(new Request(`${BASE}/ui/connectors/${id}`), undefined, runtime);
+    const detail = async (app: Connecta, id: string, query = "") => {
+      const response = await app.fetch(new Request(`${BASE}/ui/connectors/${id}${query}`), undefined, runtime);
       expect(response.status).toBe(200);
-      return (await response.json()) as { status: string };
+      return (await response.json()) as { status: string; observedAgeMs?: number };
     };
     const measure = async (label: keyof typeof BUDGETS, run: () => Promise<unknown>) => {
       await settle();
@@ -836,6 +836,12 @@ describe("request budgets", () => {
         expect(read.log.filter((line) => line.includes(":credential:")).length).toBeLessThanOrEqual(3);
       }
     }
+    // A stored read answers from the observation the live reads recorded,
+    // without the probe or the catalog listing.
+    for (const id of ["rest", "keyed", "oauth"] as const)
+      await d.measure(`UI stored detail, ${id}`, async () =>
+        expect((await d.detail(app, id, "?observation=stored")).observedAgeMs).toBeGreaterThanOrEqual(0),
+      );
   });
 });
 
@@ -862,7 +868,13 @@ const BUDGETS = {
   "api credential call, cold isolate": { downstream: 1, roundTrips: 7, statements: 10 },
   "unscoped search, warm": { downstream: 0, roundTrips: 22, statements: 22 },
   "execute_code, 5 calls": { downstream: 9, roundTrips: 11, statements: 16 },
-  "UI detail, rest": { downstream: 0, roundTrips: 3, statements: 3 },
-  "UI detail, keyed": { downstream: 4, roundTrips: 10, statements: 10 },
-  "UI detail, oauth": { downstream: 4, roundTrips: 20, statements: 20 },
+  // A live detail records its stored status observation (#1173 item 2.3):
+  // one write, batched with the expiry sweep, and, for a static api()
+  // catalog whose listing reads no generation, the generation read.
+  "UI detail, rest": { downstream: 0, roundTrips: 6, statements: 7 },
+  "UI detail, keyed": { downstream: 4, roundTrips: 12, statements: 13 },
+  "UI detail, oauth": { downstream: 4, roundTrips: 21, statements: 22 },
+  "UI stored detail, rest": { downstream: 0, roundTrips: 5, statements: 5 },
+  "UI stored detail, keyed": { downstream: 0, roundTrips: 5, statements: 5 },
+  "UI stored detail, oauth": { downstream: 0, roundTrips: 3, statements: 3 },
 };

@@ -29,6 +29,16 @@ export interface OperatorConnectorOverlay {
   catalogAgeMs: number | null;
   /** Latest visible call in the bounded activity window, or null when unknown. */
   lastCall: OperatorLastCall | null;
+  /**
+   * Age of the stored status observation this row shows, when it came from
+   * storage rather than a live read. Its tools may be empty until a live read.
+   */
+  observedAgeMs?: number;
+  /**
+   * Browser-only: when that stored observation was made, in epoch
+   * milliseconds, fixed once as the row lands so its age keeps counting.
+   */
+  observedAt?: number;
 }
 
 /** Whole connector access, or exact tool grants. `requireReadOnly` is always false since guarded grants were removed. */

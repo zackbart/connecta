@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { OperatorConnectorOverlay, OperatorTool } from "../contract.js";
 import type { ConnectorHealth } from "../health.js";
@@ -29,14 +29,21 @@ export function AuthScopeBadge({ scope }: { scope: string }) {
  * Read and write tools as one thin bar, counts beside it. The widths are SVG
  * attributes, never inline styles, so the page CSP holds.
  */
-export function ToolSplit({ tools }: { tools: readonly Pick<OperatorTool, "classification">[] }) {
+export function ToolSplit({
+  tools,
+  awaitingLive = false,
+}: {
+  tools: readonly Pick<OperatorTool, "classification">[];
+  /** A stored row: its tools come only with a live read, so none is not "No tools". */
+  awaitingLive?: boolean;
+}) {
   const write = tools.filter((tool) => tool.classification === "write").length;
   const read = tools.length - write;
   const readWidth = tools.length ? (read / tools.length) * 100 : 0;
   if (!tools.length)
     return (
       <div className="tool-split">
-        <span className="tool-split-total">No tools</span>
+        <span className="tool-split-total">{awaitingLive ? "Tools awaiting live read" : "No tools"}</span>
       </div>
     );
   return (
@@ -70,6 +77,27 @@ export function sinceLabel(iso: string, now = Date.now()): string {
   return new Date(at).toLocaleDateString(undefined, { dateStyle: "medium" });
 }
 
+/**
+ * The one mark of a stored row, on the list and the detail page alike: the
+ * status shown is an earlier observation, and when it was made. A parked
+ * timeout waits for Refresh; any other stored row has a live read on its way.
+ * The age counts from a fixed observation time and re-renders as it grows.
+ */
+export function StoredStatus({ observedAt, parked }: { observedAt: number; parked: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  const at = new Date(observedAt).toISOString();
+  return (
+    <span className="meta stored-status" title={`Stored status from ${formatDate(at)}`}>
+      Stored status, checked {sinceLabel(at, Math.max(now, Date.now())).toLowerCase()}
+      {parked ? ". Refresh to check again." : " · checking live…"}
+    </span>
+  );
+}
+
 type Row = OperatorConnectorOverlay & { title: string; authScope: string; readOnly?: boolean; description?: string };
 
 function ConnectorCard({ row, steady }: { row: Row; steady: ConnectorHealth }) {
@@ -91,7 +119,7 @@ function ConnectorCard({ row, steady }: { row: Row; steady: ConnectorHealth }) {
         <Pill status={pillStatus(health.tone)}>{health.label}</Pill>
       </div>
       {row.description ? <p className="connector-card-description">{row.description}</p> : null}
-      <ToolSplit tools={row.tools} />
+      <ToolSplit tools={row.tools} awaitingLive={row.observedAt !== undefined} />
       <div className="connector-card-foot">
         <span className="connector-card-last">
           <span className="meta">Last call</span>{" "}
@@ -105,6 +133,9 @@ function ConnectorCard({ row, steady }: { row: Row; steady: ConnectorHealth }) {
             </span>
           )}
         </span>
+        {row.observedAt !== undefined ? (
+          <StoredStatus observedAt={row.observedAt} parked={row.problem === "connector_timeout"} />
+        ) : null}
         {health.action ? <ProblemAction id={row.id} name={row.title} action={health.action} /> : null}
       </div>
     </li>

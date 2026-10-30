@@ -881,3 +881,281 @@ it("INV-7: detail scopes finish independently and carry complete schemas and cat
     await app.close();
   }
 });
+
+it("INV-6 INV-8 INV-10: answers a stored detail from the last live read at once, and lapses it on invalidation", async () => {
+  let statuses = 0;
+  const crm: Connector = {
+    id: "crm",
+    callTool: async () => null,
+    status: async () => {
+      statuses++;
+      return ownStatus({ state: "ok" });
+    },
+    listTools: async () => [{ name: "read_contact", annotations: { readOnlyHint: true } }],
+  };
+  const storage = memoryStorage();
+  const app = createTestConnecta({ connectors: [crm], storage, logger: "silent" });
+  const read = async (query = "?observation=stored") =>
+    (await (await app.fetch(new Request(`${BASE}/ui/connectors/crm${query}`))).json()) as {
+      status: string;
+      toolCount: number;
+      tools: unknown[];
+      observedAgeMs?: number;
+      permissions?: unknown;
+      overlay: { observedAgeMs?: number; tools: unknown[] };
+    };
+  try {
+    // Nothing stored yet: the stored request reads live and records it.
+    const first = await read();
+    expect(first.observedAgeMs).toBeUndefined();
+    expect(statuses).toBe(1);
+    const stored = await read();
+    expect(statuses).toBe(1);
+    expect(stored).toMatchObject({ status: "ok", toolCount: 1, permissions: { use: true } });
+    expect(stored.observedAgeMs).toBeGreaterThanOrEqual(0);
+    expect(stored.overlay.observedAgeMs).toBe(stored.observedAgeMs);
+    // The observation names a count; the tools wait for the live read (INV-8).
+    expect(stored.overlay.tools).toEqual([]);
+    const keys = (await storage.list("connector-health:v1:crm:")).filter((key) => key.endsWith(":status"));
+    expect(keys).toHaveLength(1);
+    expect(Object.keys(JSON.parse((await storage.get(keys[0]!))!)).sort()).toEqual([
+      "generation",
+      "observedAt",
+      "state",
+      "toolCount",
+      "v",
+    ]);
+    // A plain read is always live, and records again.
+    expect((await read("")).observedAgeMs).toBeUndefined();
+    expect(statuses).toBe(2);
+    // A rotated catalog generation (credential change, OAuth, invalidation) lapses it.
+    await storage.set(responseCacheKeys.generation("crm"), "rotated");
+    expect((await read()).observedAgeMs).toBeUndefined();
+    expect(statuses).toBe(3);
+  } finally {
+    await app.close();
+  }
+});
+
+describe("stored operator status", () => {
+  const counted = (overrides: Partial<Connector> = {}) => {
+    const calls = { status: 0 };
+    const connector: Connector = {
+      id: "crm",
+      callTool: async () => null,
+      status: async () => {
+        calls.status++;
+        return ownStatus({ state: "ok" });
+      },
+      listTools: async () => [{ name: "read_contact", annotations: { readOnlyHint: true } }],
+      ...overrides,
+    };
+    return { connector, calls };
+  };
+  const detail = async (
+    app: ReturnType<typeof createTestConnecta>,
+    init: RequestInit = {},
+    query = "?observation=stored",
+    id = "crm",
+  ) =>
+    (await (await app.fetch(new Request(`${BASE}/ui/connectors/${id}${query}`, init))).json()) as {
+      status: string;
+      problem?: string;
+      toolCount: number;
+      observedAgeMs?: number;
+    };
+  const statusKeys = async (storage: ReturnType<typeof memoryStorage>, id = "crm") =>
+    (await storage.list(`connector-health:v1:${id}:`)).filter((key) => key.endsWith(":status"));
+
+  it("records an authored static catalog's status, which still checks auth", async () => {
+    // An api() connector serves static tools, but its status reads credentials.
+    const tools = [{ name: "read_contact", annotations: { readOnlyHint: true } }];
+    const { connector, calls } = counted({ staticTools: tools, listTools: async () => tools });
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, logger: "silent" });
+    try {
+      expect((await detail(app)).observedAgeMs).toBeUndefined();
+      const stored = await detail(app);
+      expect(calls.status).toBe(1);
+      expect(stored).toMatchObject({ status: "ok", toolCount: 1 });
+      expect(stored.observedAgeMs).toBeGreaterThanOrEqual(0);
+      expect(await statusKeys(storage)).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records a timeout the configured row deadline ended, and parks the next stored read on it", async () => {
+    const { connector, calls } = counted({
+      status: (ctx) => {
+        calls.status++;
+        return new Promise((_, reject) => ctx.signal?.addEventListener("abort", () => reject(ctx.signal!.reason)));
+      },
+    });
+    const storage = memoryStorage();
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      discovery: { probeTimeoutMs: 40 },
+      logger: "silent",
+    });
+    try {
+      expect(await detail(app)).toMatchObject({ status: "error", problem: "connector_timeout" });
+      const stored = await detail(app);
+      expect(calls.status).toBe(1);
+      expect(stored).toMatchObject({ status: "error", problem: "connector_timeout" });
+      expect(stored.observedAgeMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  // A store whose status-observation writes wait for `release`, counting
+  // the writes started and still pending.
+  const heldStatusWrites = () => {
+    const backing = memoryStorage();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let started!: () => void;
+    const writeStarted = new Promise<void>((resolve) => (started = resolve));
+    const writes = { started: 0, pending: 0 };
+    const storage: typeof backing = {
+      ...backing,
+      set: async (key, value, opts) => {
+        if (!key.endsWith(":status")) return backing.set(key, value, opts);
+        writes.started++;
+        writes.pending++;
+        started();
+        try {
+          await held;
+          return await backing.set(key, value, opts);
+        } finally {
+          writes.pending--;
+        }
+      },
+    };
+    return { storage, backing, writes, writeStarted, release };
+  };
+  const hangingStatus = (probing?: () => void) =>
+    counted({
+      status: (ctx) => {
+        probing?.();
+        return new Promise((_, reject) => ctx.signal?.addEventListener("abort", () => reject(ctx.signal!.reason)));
+      },
+    });
+  const settles = (promise: Promise<unknown>) => {
+    const state = { settled: false };
+    void promise.finally(() => (state.settled = true));
+    return state;
+  };
+  const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("INV-7: starts no observation write for a read its caller abandoned before recording", async () => {
+    let started!: () => void;
+    const probing = new Promise<void>((resolve) => (started = resolve));
+    const { connector } = hangingStatus(started);
+    const { storage, backing, writes } = heldStatusWrites();
+    const app = createTestConnecta({ connectors: [connector], storage, logger: "silent" });
+    try {
+      const caller = new AbortController();
+      const pending = app
+        .fetch(new Request(`${BASE}/ui/connectors/crm`, { signal: caller.signal }))
+        .catch(() => undefined);
+      await probing;
+      caller.abort(new Error("caller left"));
+      await pending;
+      await tick(100);
+      expect(writes.started).toBe(0);
+      expect(await statusKeys(backing)).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-7: a timeout's observation write is awaited before the response, with no deadline of its own", async () => {
+    const { connector } = hangingStatus();
+    const { storage, backing, writes, writeStarted, release } = heldStatusWrites();
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      discovery: { probeTimeoutMs: 40 },
+      logger: "silent",
+    });
+    try {
+      const response = app.fetch(new Request(`${BASE}/ui/connectors/crm`));
+      const state = settles(response);
+      await writeStarted;
+      // Past the retired one-second write deadline, the response still waits.
+      await tick(1_200);
+      expect(state.settled).toBe(false);
+      release();
+      expect(((await (await response).json()) as { problem: string }).problem).toBe("connector_timeout");
+      expect(writes.pending).toBe(0);
+      expect(await statusKeys(backing)).toHaveLength(1);
+    } finally {
+      release();
+      await app.close();
+    }
+  });
+
+  it("INV-7: a caller who leaves during the observation write settles only after the write does", async () => {
+    const { connector } = hangingStatus();
+    const { storage, backing, writes, writeStarted, release } = heldStatusWrites();
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      discovery: { probeTimeoutMs: 40 },
+      logger: "silent",
+    });
+    try {
+      const caller = new AbortController();
+      const response = app
+        .fetch(new Request(`${BASE}/ui/connectors/crm`, { signal: caller.signal }))
+        .catch(() => undefined);
+      const state = settles(response);
+      await writeStarted;
+      caller.abort(new Error("caller left"));
+      await tick(100);
+      expect(state.settled).toBe(false);
+      expect(writes.pending).toBe(1);
+      release();
+      await response;
+      // The request ended with its write: nothing is left to commit later.
+      expect(writes.pending).toBe(0);
+      expect(writes.started).toBe(1);
+      expect(await statusKeys(backing)).toHaveLength(1);
+    } finally {
+      release();
+      await app.close();
+    }
+  });
+
+  it("INV-4 INV-5: keeps one viewer's observation of a personal connector from another viewer", async () => {
+    const { connector, calls } = counted({ authScope: "personal" });
+    const storage = memoryStorage();
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      auth: [
+        fakeClerkAuth({ token: "alice-token", userId: "user_alice" }),
+        fakeClerkAuth({ token: "bob-token", userId: "user_bob" }),
+      ],
+      logger: "silent",
+    });
+    const as = (token: string) => ({ headers: { Authorization: `Bearer ${token}` } });
+    try {
+      expect((await detail(app, as("alice-token"), "")).observedAgeMs).toBeUndefined();
+      expect(calls.status).toBe(1);
+      // Bob has no observation of his own, so his stored read probes live.
+      expect((await detail(app, as("bob-token"))).observedAgeMs).toBeUndefined();
+      expect(calls.status).toBe(2);
+      expect(await statusKeys(storage)).toHaveLength(2);
+      // Each now reads only their own.
+      expect((await detail(app, as("alice-token"))).observedAgeMs).toBeGreaterThanOrEqual(0);
+      expect((await detail(app, as("bob-token"))).observedAgeMs).toBeGreaterThanOrEqual(0);
+      expect(calls.status).toBe(2);
+    } finally {
+      await app.close();
+    }
+  });
+});

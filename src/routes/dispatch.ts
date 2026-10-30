@@ -50,7 +50,11 @@ export function createRouteDispatcher(
     (context) =>
       Effect.gen(function* () {
         const ui = context.opts.config.ui;
-        const response = ui ? yield* Effect.promise(() => ui.handle(context)) : null;
+        // The operator surface is a Promise edge that owns the request's
+        // signal: when the caller leaves, its routes stop on their own. Wait
+        // for it to settle rather than abandoning it, so writes it has
+        // already started end inside this request (INV-7).
+        const response = ui ? yield* Effect.uninterruptible(Effect.promise(() => ui.handle(context))) : null;
         if (response?.status === 401) {
           const authorizationHeader = authorizationCredential(context.request).kind;
           logFailure(

@@ -784,7 +784,10 @@ async function refreshSnapshot(
   );
   await Promise.all(
     connectors.map(async (connector) => {
-      const outcome = await coalescedConnector(connector.id, viewer, token, signal);
+      // The page load after admission takes each stored observation first.
+      // Refresh, a single connector's read, recovery and polls read live, so
+      // a parked row is re-read only when someone asks.
+      const outcome = await coalescedConnector(connector.id, viewer, token, signal, !connectorId && !!preloaded);
       if (
         !current() ||
         viewerKey !== viewer ||
@@ -830,6 +833,7 @@ async function refreshSnapshot(
         outcome.kind !== "detail" ||
         outcome.detail.status === "error" ||
         outcome.detail.credential?.problem === "credential_unreadable";
+      const storedRow = outcome.kind === "detail" && outcome.detail.observedAgeMs !== undefined;
       if (outcome.kind === "detail" && outcome.detail.problem === "connector_timeout") {
         // A downstream that did not answer would only hold a detail slot for
         // the server's deadline again. It waits for Refresh, or for a consent
@@ -838,11 +842,14 @@ async function refreshSnapshot(
       } else if (unhealthy) {
         stopOAuthPolling(connector.id);
         scheduleConnectorRecovery(connector.id);
-      } else {
+      } else if (!storedRow) {
         const retry = connectorRetries.get(connector.id);
         if (retry) clearTimeout(retry.timer);
         connectorRetries.delete(connector.id);
       }
+      // A stored row is shown at once and then read live, once, in its own
+      // bounded request. A stored timeout stays parked until Refresh.
+      if (storedRow && outcome.detail.problem !== "connector_timeout") void refreshSnapshot(connector.id);
     }),
   );
   if (!current() || connectorId) return;
@@ -884,8 +891,9 @@ async function coalescedConnector(
   viewer: string,
   token: string | null | undefined,
   signal: AbortSignal,
+  stored = false,
 ): Promise<DetailOutcome> {
-  const key = observationKey(id, viewer);
+  const key = observationKey(id, viewer) + (stored ? ":stored" : "");
   const existing = connectorReads.get(key);
   if (existing && !existing.signal.aborted) return existing.promise;
   const controller = new AbortController();
@@ -895,7 +903,7 @@ async function coalescedConnector(
     else activeConnectorReads++;
     try {
       if (combined.aborted) return { kind: "stale" } as const;
-      return await fetchConnector(id, token, combined);
+      return await fetchConnector(id, token, combined, stored);
     } finally {
       const next = connectorWaiters.shift();
       if (next) next();
@@ -913,6 +921,7 @@ async function coalescedConnector(
 
 function invalidateConnector(id: string): void {
   connectorReads.get(observationKey(id))?.controller.abort();
+  connectorReads.get(observationKey(id) + ":stored")?.controller.abort();
   connectorPublications.set(observationKey(id), { revision: ++snapshotReadRevision });
 }
 
@@ -1734,8 +1743,9 @@ async function fetchConnector(
   id: string,
   token: string | null | undefined,
   signal: AbortSignal,
+  stored = false,
 ): Promise<DetailOutcome> {
-  const sent = send(`/ui/connectors/${encodeURIComponent(id)}`, {
+  const sent = send(`/ui/connectors/${encodeURIComponent(id)}${stored ? "?observation=stored" : ""}`, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]),
     headers: requestHeaders(token),
     credentials: "same-origin",
@@ -1760,11 +1770,19 @@ async function fetchConnector(
     }
   }
   if (!response.ok) return { kind: "downstream" };
+  let detail: UiConnector;
   try {
-    return { kind: "detail", detail: (await response.json()) as UiConnector };
+    detail = (await response.json()) as UiConnector;
   } catch {
     return { kind: "downstream" };
   }
+  // A stored row's age is relative to when the server answered. Fix its
+  // observation time once, here, so every later render counts from it.
+  if (typeof detail.observedAgeMs === "number") {
+    const observedAt = Date.now() - detail.observedAgeMs;
+    detail = { ...detail, observedAt, ...(detail.overlay ? { overlay: { ...detail.overlay, observedAt } } : {}) };
+  }
+  return { kind: "detail", detail };
 }
 
 function withoutKey<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {

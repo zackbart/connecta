@@ -31,6 +31,13 @@ import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector, ConnectorStatus } from "../types.js";
 import { uiProblemFor } from "../ui.js";
 import { CONNECTA_VERSION } from "../version.js";
+import {
+  prepareStatusSlot,
+  readStatusObservation,
+  storeStatusObservation,
+  type StatusObservation,
+  type StatusSlot,
+} from "../connector-status.js";
 
 export interface UiDataOptions {
   activityContext?: import("../activity.js").ActivityRequestContext | undefined;
@@ -52,6 +59,13 @@ export interface UiDataOptions {
    */
   observeTimeoutMs?: number | undefined;
   signal?: AbortSignal | undefined;
+  /**
+   * Record what a live read observed for this viewer, before answering. With
+   * `"stored"`, answer instead from a current stored observation when there
+   * is one: its state, problem and tool count without the tools, and
+   * everything local (credential, drift, permissions, auth links) fresh.
+   */
+  statusObservation?: "record" | "stored" | undefined;
 }
 
 interface Observed {
@@ -97,6 +111,27 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         state === "auth_required" ? "info" : "warn",
       );
     };
+
+    // A stored row: the observation's state and problem, and no tools. They
+    // stay in the catalog cache (INV-8), and the browser's live read, which
+    // follows in its own request, shows them. Reading them here could connect,
+    // and the row's scope would wait for that listing to end.
+    // The credential's stored verification is local, so it is read fresh here too.
+    const observeStored = (
+      c: Connector,
+      stored: StatusObservation,
+      drift: string | undefined,
+      requestScope: object,
+    ): Effect.Effect<Observed> =>
+      drift
+        ? Effect.succeed({ status: { state: "auth_required", message: drift }, tools: [], catalogFailed: false })
+        : Effect.map(verificationFor(c, requestScope), (verification) => ({
+            status: { state: stored.state },
+            tools: [],
+            catalogFailed: stored.problem === "catalog_failed",
+            ...(stored.problem === "connector_timeout" ? { timedOut: true } : {}),
+            verification,
+          }));
 
     /**
      * The stored last verification of an operator-managed credential
@@ -287,17 +322,40 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
       );
     };
 
-    const detail = (c: Connector, signal: AbortSignal, requestScope: object) =>
+    // Where this row records what it observed. A live read prepares only the
+    // generation; a stored read looks the observation up and, finding none,
+    // records the live read it falls back to.
+    const statusLookup = (
+      c: Connector,
+      requestScope: object,
+    ): Effect.Effect<{ slot?: StatusSlot; observation?: StatusObservation }> =>
+      options.statusObservation === "stored"
+        ? readStatusObservation(registry, c.id, baseUrl, requestScope)
+        : options.statusObservation === "record"
+          ? Effect.map(prepareStatusSlot(registry, c.id, baseUrl, requestScope), (slot) => (slot ? { slot } : {}))
+          : Effect.succeed({});
+
+    const detail = (c: Connector, signal: AbortSignal, requestScope: object, recording: { slot?: StatusSlot }) =>
       Effect.gen(function* () {
-        const drift = yield* attempt(() => registry.credentialDriftFor(c.id, requestScope));
+        // The status slot is read before the probe starts, so an invalidation
+        // during it leaves the observation under the generation it replaced.
+        const [drift, stored] = yield* Effect.all(
+          [attempt(() => registry.credentialDriftFor(c.id, requestScope)), statusLookup(c, requestScope)],
+          { concurrency: 2 },
+        );
+        const observation = stored.observation;
+        const statusSlot = observation ? undefined : stored.slot;
+        // The row's own deadline may end it below; it records from here.
+        if (statusSlot) recording.slot = statusSlot;
         // One deadline covers the whole row. The status and catalog reads once
         // had a second one of the same length inside it, which could only fire
         // after this one had already ended the row.
         // The operator page's shorter observation deadline, when it has one,
         // bounds only the downstream: the credential card below is local
         // storage and still renders, so a slow vendor's slot stays fixable.
-        const { status, tools, catalogFailed, timedOut, verification } =
-          options.observeTimeoutMs === undefined
+        const { status, tools, catalogFailed, timedOut, verification } = observation
+          ? yield* observeStored(c, observation, drift, requestScope)
+          : options.observeTimeoutMs === undefined
             ? yield* observe(c, drift, signal, requestScope)
             : yield* observeWithin(c, drift, signal, requestScope, options.observeTimeoutMs);
         const credential = yield* credentialFor(c, requestScope);
@@ -308,6 +366,18 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
               credentialDrift: Boolean(drift),
               catalogFailed,
             });
+        const toolCount = observation ? observation.toolCount : tools.length;
+        // Started only while the caller is still here, then awaited to its
+        // end even if the row's deadline or the caller ends it meanwhile.
+        if (statusSlot && !signal.aborted && !options.signal?.aborted)
+          yield* Effect.uninterruptible(
+            storeStatusObservation(statusSlot, {
+              state: status.state,
+              ...(problem ? { problem } : {}),
+              toolCount,
+              observedAt: Date.now(),
+            }),
+          );
         return {
           id: c.id,
           authScope: c.authScope ?? "shared",
@@ -315,7 +385,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           ...(c.description !== undefined ? { description: c.description } : {}),
           status: status.state,
           ...(problem ? { problem } : {}),
-          toolCount: tools.length,
+          toolCount,
           tools: tools.map((tool): UiTool => ({
             name: tool.name,
             address: tool.address,
@@ -330,7 +400,9 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
             ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
             catalogAgeMs: registry.catalogAgeMs(c.id),
             lastCall: null,
+            ...(observation ? { observedAgeMs: Math.max(0, Date.now() - observation.observedAt) } : {}),
           },
+          ...(observation ? { observedAgeMs: Math.max(0, Date.now() - observation.observedAt) } : {}),
           // Counts only, and only when a refresh in this runtime produced them.
           // `Registry.withCatalogObservations` rebuilt the report through
           ...(status.catalogAccess ? { catalogAccess: status.catalogAccess } : {}),
@@ -370,6 +442,24 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         };
       });
 
+    // The row's own deadline ended the read: record that timeout before the
+    // response, so the next stored read parks this row too. A caller who has
+    // already left records nothing. Once started, the write is awaited to its
+    // end, never raced or detached: storage writes cannot be withdrawn once
+    // sent, so the request settles only after it does, bounded by the storage
+    // layer like every other awaited write (INV-7).
+    const recordRowTimeout = (slot: StatusSlot | undefined): Effect.Effect<void> =>
+      !slot || options.signal?.aborted
+        ? Effect.void
+        : Effect.uninterruptible(
+            storeStatusObservation(slot, {
+              state: "error",
+              problem: "connector_timeout",
+              toolCount: 0,
+              observedAt: Date.now(),
+            }),
+          );
+
     const row = (c: Connector): Effect.Effect<UiConnector> =>
       Effect.suspend(() => {
         // A row ends independently. Revoking its probe must not revoke a live
@@ -377,14 +467,20 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         const requestScope = {};
         if (options.activityContext) bindActivityRequest(requestScope, options.activityContext);
         const timeoutError = new Error(DETAIL_TIMED_OUT);
-        return withDeadlineEffect((signal) => detail(c, signal, requestScope), {
+        const recording: { slot?: StatusSlot } = {};
+        return withDeadlineEffect((signal) => detail(c, signal, requestScope, recording), {
           timeoutMs: options.timeoutMs ?? DETAIL_TIMEOUT_MS,
           ...(options.signal ? { signal: options.signal } : {}),
           timeoutError,
         }).pipe(
           // A hook that throws where it should reject fails its own row too.
           Effect.catchDefect((defect) => Effect.fail(defect)),
-          Effect.catch((error) => unavailable(c, error, requestScope, timeoutError)),
+          Effect.catch((error) =>
+            Effect.andThen(
+              recordRowTimeout(error === timeoutError ? recording.slot : undefined),
+              unavailable(c, error, requestScope, timeoutError),
+            ),
+          ),
           Effect.ensuring(
             Effect.suspend(() => closeScope(c, registry.contextFor(c.id, baseUrl, requestScope), options.defer)),
           ),
