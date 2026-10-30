@@ -1,5 +1,5 @@
 import { registerAuthMethod } from "./auth/native.js";
-import { META_ROUTES, routeTool } from "./agent-routes.js";
+import { META_ROUTES, routeToolInPlace } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
@@ -879,7 +879,12 @@ export class CatalogService {
                 const connector = this.registry.getConnector(id);
                 return carryCatalogFreshness(
                   tools,
-                  tools.map((tool) => cloneTool(routeTool(connector, tool, this.routes))),
+                  tools.map((tool) => {
+                    // The request's own copy, which keeps the source classification.
+                    const copy = cloneTool(tool);
+                    routeToolInPlace(connector, copy, this.routes);
+                    return copy;
+                  }),
                 );
               }),
             ),

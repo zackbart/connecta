@@ -82,7 +82,7 @@ const authorizationHandoffNative = /* @__PURE__ */ registerAuth(
             recovery: "unavailable",
             message:
               "Credential recovery needs both a vault and the optional UI. Configure " +
-              "vault and ui in deployment code, then call " +
+              "vault and ui in deployment code, then " +
               `${routePhrases(opts.routes).authorizeAgain}.`,
           };
         }

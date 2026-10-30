@@ -215,38 +215,62 @@ export function declaresRouteDescriptions(connector: object): void {
   declaringConnectors.add(connector);
 }
 
-const routedTools = new WeakMap<object, Map<RouteSurface, unknown>>();
+type Path = readonly (string | number)[];
+// Where an authored tool's declared descriptions sit, per connector and tool
+// name: api() definitions are fixed at construction, while the registry
+// publishes a fresh copy of each tool on every read.
+const descriptionPaths = new WeakMap<object, Map<string, readonly Path[]>>();
+const rendered = new Map<string, Map<RouteSurface, string>>();
+
+function at(value: unknown, path: Path): unknown {
+  let current = value;
+  for (const key of path) current = (current as Record<string | number, unknown> | undefined)?.[key];
+  return current;
+}
+
+function declaredPaths(tool: Record<string, unknown>): Path[] {
+  const found: Path[] = [];
+  const visit = (value: unknown, path: (string | number)[]): void => {
+    if (Array.isArray(value)) value.forEach((item, index) => visit(item, [...path, index]));
+    else if (value !== null && typeof value === "object")
+      for (const [key, item] of Object.entries(value)) {
+        if (key === "description" && typeof item === "string" && descriptions.has(item)) found.push([...path, key]);
+        else visit(item, [...path, key]);
+      }
+  };
+  for (const key of ["inputSchema", "outputSchema"]) visit(tool[key], [key]);
+  return found;
+}
 
 /**
- * One tool as a request on `routes` lists it: declared descriptions built for
- * that surface. Only tools of connectors Connecta authors change; downstream
- * catalogs and the meta surface are returned as given. Cached per tool object.
+ * Give a request's own copy of one tool the declared descriptions of the
+ * surface it serves, in place, so the copy keeps everything else it carries,
+ * its source classification included. Only tools of connectors Connecta
+ * authors change; downstream catalogs and the meta surface are left as given.
  */
-export function routeTool<T extends object>(connector: object | undefined, tool: T, routes: AgentRouteNames): T {
+export function routeToolInPlace(
+  connector: object | undefined,
+  tool: { readonly name: string },
+  routes: AgentRouteNames,
+): void {
   const surface = routeSurface(routes);
-  if (surface === "meta" || descriptions.size === 0 || !connector || !declaringConnectors.has(connector)) return tool;
-  let bySurface = routedTools.get(tool);
-  if (!bySurface) routedTools.set(tool, (bySurface = new Map()));
-  let routed = bySurface.get(surface) as T | undefined;
-  if (!routed) {
-    const phrases = PHRASES[surface];
-    const visit = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(visit);
-      if (value === null || typeof value !== "object") return value;
-      return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => {
-          const build = key === "description" && typeof item === "string" ? descriptions.get(item) : undefined;
-          return [key, build ? build(phrases) : visit(item)];
-        }),
-      );
-    };
-    // Only the input and output schemas carry declared descriptions.
-    const copy: Record<string, unknown> = { ...(tool as Record<string, unknown>) };
-    for (const key of ["inputSchema", "outputSchema"]) if (key in copy) copy[key] = visit(copy[key]);
-    routed = copy as T;
-    bySurface.set(surface, routed);
+  if (surface === "meta" || descriptions.size === 0 || !connector || !declaringConnectors.has(connector)) return;
+  let byName = descriptionPaths.get(connector);
+  if (!byName) descriptionPaths.set(connector, (byName = new Map()));
+  let paths = byName.get(tool.name);
+  // Recompute when a path no longer holds declared meta text.
+  if (!paths || !paths.every((path) => descriptions.has(at(tool, path) as string))) {
+    paths = declaredPaths(tool as Record<string, unknown>);
+    byName.set(tool.name, paths);
   }
-  return routed;
+  for (const path of paths) {
+    const meta = at(tool, path) as string;
+    let bySurface = rendered.get(meta);
+    if (!bySurface) rendered.set(meta, (bySurface = new Map()));
+    let text = bySurface.get(surface);
+    if (text === undefined) bySurface.set(surface, (text = descriptions.get(meta)!(PHRASES[surface])));
+    (at(tool, path.slice(0, -1)) as Record<string, unknown>)["description"] = text;
+  }
 }
 
 const programRouteConfigs = new WeakMap<object, true>();

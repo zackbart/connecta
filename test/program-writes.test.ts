@@ -4,6 +4,7 @@ import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fi
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
+import { routeDescription, routeNames } from "../src/agent-routes.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -296,6 +297,40 @@ describe("writable-endpoint programs (#706, #820)", () => {
 });
 
 describe("classification and pool endpoints (#706)", () => {
+  it("INV-9: accounts a write overridden to read on every surface, routed descriptions included", async () => {
+    // A declared description makes each non-meta surface route its own copy of the tool.
+    const note = routeDescription((phrases) => `What to save, ${phrases.forDirect}.`);
+    const accounted: Record<string, unknown> = {};
+    for (const surface of ["meta", "native-code", "code"] as const) {
+      const connector = api("notes", {
+        tools: [
+          {
+            name: "update",
+            description: "Update a note",
+            annotations: { readOnlyHint: false, destructiveHint: true },
+            inputSchema: { type: "object", properties: { text: { type: "string", description: note } } },
+            handler: async () => ({ ok: true }),
+          },
+        ],
+      });
+      const registry = makeRegistry([connector], { classification: { notes: { update: "read" } } });
+      const programs = new Map<string, Program>();
+      const code = "async () => program";
+      programs.set(code, async (connecta) => {
+        await connecta.call!("notes.update", { text: "x" });
+        throw new Error("Guest failed after its write succeeded");
+      });
+      const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
+        readOnly: false,
+        routes: routeNames(surface),
+      });
+      const error = value(await execute({ code })).error;
+      accounted[surface] = { writes: error.writes, warned: JSON.stringify(error).includes("are not undone") };
+    }
+    for (const surface of ["meta", "native-code", "code"])
+      expect(accounted[surface], surface).toEqual({ writes: { succeeded: 1, failed: 0, unknown: 0 }, warned: true });
+  });
+
   it("INV-2 INV-4: hidden tools disappear from discovery and refuse guessed calls on every surface", async () => {
     for (const [staticCatalog, reviewed, readOnly] of [
       [true, false, false],
