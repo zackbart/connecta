@@ -338,12 +338,12 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
     }),
     result: (data) => (hookDefect ? Effect.die(defect) : Effect.succeed(data)),
   })("tickets", { purpose: "Support" });
-  for (const [status, detail, hook] of [
-    [401, "Replace the candidate.", undefined],
-    [403, "Grant access.", undefined],
-    [200, "unreadable JSON", undefined],
-    [200, "A provider hook withholding vendor text failed.", "withheld"],
-    [200, defect.message, "open"],
+  for (const [status, detail, hook, failure] of [
+    [401, "Replace the candidate.", undefined, "rejected"],
+    [403, "Grant access.", undefined, "scope"],
+    [200, "unreadable JSON", undefined, "failed"],
+    [200, "A provider hook withholding vendor text failed.", "withheld", undefined],
+    [200, defect.message, "open", undefined],
   ] as const) {
     hookDefect = hook !== undefined;
     withheld = hook === "withheld";
@@ -356,11 +356,26 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
         await expect(result).rejects.not.toBeInstanceOf(ConnectorCallError);
       } else await expect(result).rejects.toBe(defect);
     } else {
-      expect(await result).toEqual({ ok: false, message: expect.stringContaining(detail) });
+      // The typed class rides beside the withheld message, never in it.
+      expect(await result).toEqual({ ok: false, message: expect.stringContaining(detail), failure });
     }
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(signal?.aborted).toBe(true);
   }
+
+  // A vendor that cannot be reached is an outage, not a refused candidate.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    }),
+  );
+  hookDefect = false;
+  expect(await connector.testCredentials!({ value: "candidate" }, connectorContext())).toEqual({
+    ok: false,
+    message: expect.any(String),
+    failure: "unreachable",
+  });
 
   // A custom probe may use a private transport, so none of these defects has
   // a kit dispatch from which the visibility policy could be recovered.

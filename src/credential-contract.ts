@@ -11,6 +11,12 @@ export interface CredentialMetadata {
   /** Backward-compatible metadata for the reserved single credential field. */
   lastFour?: string;
   updatedAt: string;
+  /**
+   * Opaque and unique to the save this metadata describes. Credential
+   * verification is recorded only against it, so a vault that omits it
+   * stores credentials that are never shown as verified.
+   */
+  revision?: string;
   /** Per-field masked metadata for named multi-value credentials. */
   fields?: Record<string, CredentialFieldMetadata>;
 }
@@ -27,6 +33,15 @@ export interface CredentialVault {
     owner?: string,
   ): Promise<CredentialMetadata>;
   delete(connectorId: string, owner?: string): Promise<void>;
+  /**
+   * The values and metadata of one save, read together so neither can come
+   * from a later save. Without it, a Test of the stored credential records
+   * no verification.
+   */
+  snapshot?(
+    connectorId: string,
+    owner?: string,
+  ): Promise<{ values: ConnectorCredentialValues; metadata: CredentialMetadata } | null>;
   /**
    * Encrypt downstream OAuth state (tokens, a registered client, a PKCE
    * verifier) before it enters storage. `purpose` is the storage key the value

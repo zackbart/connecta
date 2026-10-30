@@ -10,7 +10,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import * as d1 from "../src/d1.js";
 import * as sqlite from "../src/sqlite.js";
 import type { ConnectaConfig, RemoteMcpOptions } from "../src/index.js";
-import { GUEST_API_DECLARATION } from "../src/usage-guide.js";
+import { GUEST_API_DECLARATION, GUEST_FUNCTIONS } from "../src/guest-functions.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
@@ -366,7 +366,7 @@ describe("advertised guest API declaration", () => {
     skipLibCheck: true,
     noEmit: true,
   };
-  const methods = ["search", "describe", "call", "read", "result", "skill", "emit"];
+  const methods = GUEST_FUNCTIONS.flatMap((fn) => (fn.budget === "once" ? [] : [fn.name]));
   let previous: ts.Program | undefined;
   const diagnostics = (declaration: string): string[] => {
     const source = `import type { GuestApi } from "../src/guest-types.js";
@@ -433,6 +433,18 @@ export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ?
     },
     60_000,
   );
+
+  it("documents every registry function in code-mode's contributor table", () => {
+    const guide = readFileSync(join(ROOT, "documentation", "code-mode.md"), "utf8");
+    const section = guide.slice(guide.indexOf("### Adding a guest function"));
+    const rows = [...section.matchAll(/^\| `(\w+)` +\| `(\w+)` +\| (.+?) +\|$/gm)].map((row) => row.slice(1));
+    // Each entry's one-line JSDoc purpose, which costs the bundle nothing.
+    const source = readFileSync(join(ROOT, "src", "guest-functions.ts"), "utf8");
+    const docs = new Map(
+      [...source.matchAll(/^ {2}\/\*\* (.+) \*\/\n {2}\{\n {4}name: "(\w+)"/gm)].map((m) => [m[2], m[1]]),
+    );
+    expect(rows).toEqual(GUEST_FUNCTIONS.map((fn) => [fn.name, fn.budget, docs.get(fn.name)]));
+  });
 
   it("refuses an authored block the host would reject", () => {
     const program = (block: string) => `${GUEST_API_DECLARATION}\nconnecta.emit(${block});`;

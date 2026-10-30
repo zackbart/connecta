@@ -202,8 +202,9 @@ tabs:
   annotation badges (Destructive, Open world), filtered by search and All,
   Read and Write. A tool opens its schema in a side drawer.
 - **Connection.** An Authentication card (mode, OAuth client mechanism, who
-  manages it, OAuth actions, and the credential card with masked last four,
-  field states, and Replace, Test and Remove); a Diagnostics card of tiles
+  manages it, the last verification, OAuth actions, and the credential card
+  with masked last four, field states, and Replace, Test and Remove); a
+  Diagnostics card of tiles
   (catalog age and last call) with a fix prompt beside each
   problem; and a Configuration card. Its badges name the kind (Remote MCP,
   HTTP API or Custom), provider, auth scope, endpoint host and usage guide.
@@ -678,6 +679,18 @@ Concurrent authorizations retain independent cancellation and publication. Succe
 failed reads, disconnect, navigation, unmount and identity reset stop the matching
 poll; a `connector_timeout` result does not. Recovery never starts authorization. A scoped result cannot confirm identity,
 role, token slots or any other deployment-wide admission fact.
+
+A credential connector's `/ui/data` and `/ui/connectors/<id>` row carries
+`verification: { outcome, observedAt }` when a record of the stored save
+exists (see [last verification](./auth.md#test-then-save-and-last-verification)).
+The auth facts show it as **Last verified**: Verified, Saved without a test,
+Rejected, Missing permission, Service unreachable, Test timed out or Test
+failed, with its time. A maintainer's credential form on a testable connector
+saves through **Test and save** (`verify: "test"`). A failed test leaves the
+form open with fixed copy for its failure class, and adds **Save without
+testing**, a save without `verify`. Test shows the same per-class copy and reloads
+the connector so its last verification updates. The member page's
+credential form saves without a test and offers Test once a value is stored.
 
 Unreadable credential metadata uses `configured: null`, including named fields,
 and renders as unavailable with a retry prompt. It does not claim that the slot

@@ -1388,3 +1388,47 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 
 The surface itself is checked by `test/server.test.ts` (the exact six-tool list)
 and `test/program-writes.test.ts` (deployment policy and classification construction refusals).
+
+### Adding a guest function
+
+`src/guest-functions.ts` lists every `connecta.<name>` function once, as
+guest-safe data with no host code or imports. The guest runtime builds the
+frozen namespace from it, so the runtime source stays one self-contained string
+that QuickJS and the Worker executor evaluate unchanged. `execute.ts` admits
+each bridge call by the entry's budget class and binds it by name to a host
+implementation, and the `execute_code` description joins each entry's compact
+declaration and names the functions that spend no host call.
+
+| Function    | Budget     | Purpose                                                                    |
+| ----------- | ---------- | -------------------------------------------------------------------------- |
+| `search`    | `hostCall` | Searches the catalog and returns one flat page of `{ tools }`.             |
+| `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.                 |
+| `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.              |
+| `read`      | `hostCall` | Reads one advertised resource URI.                                         |
+| `result`    | `hostCall` | Pages a retained result by page or UTF-8 byte offset.                      |
+| `skill`     | `hostCall` | Fetches a skill's text by exact name.                                      |
+| `emit`      | `emission` | Forwards a content block to the client; needs no await.                    |
+| `unawaited` | `once`     | Tells the host a failed program read a result field off an unawaited call. |
+
+A `hostCall` function spends one host call on entry (`L4`, `M7`) and returns a
+Promise whose result fields mark an unawaited read. The runtime wraps
+`provider.<name>`, or its own local of that name when the entry is `wrapped`,
+as `call` is. An `emission` function spends none, is bounded by the emission
+collector and an attempt cap, and returns a tracked thenable. A `once`
+function accepts one call per run, ends the run on a second, and is called only
+by the runtime, never from the namespace.
+
+To add a function:
+
+1. Add its entry to `GUEST_FUNCTIONS`: name, budget class, compact
+   declaration and a one-line JSDoc purpose. A `wrapped` function also needs a
+   guest-side local of the same name in `guestInitializer`.
+2. Add the member to `GuestApi` in `src/guest-types.ts`. The package-surface
+   declaration test fails until the compact declaration and `GuestApi` agree.
+3. Bind its host implementation in `sandboxProvider`'s `operations` in
+   `src/execute.ts`. Typecheck fails while a registry entry has no binding.
+4. Add behavior cases to `test/guest-contract-cases.ts`, which run on both
+   executors. The namespace-membership and missing-await cases cover the new
+   entry without edits.
+5. Document its clause in this guide and add its row to the table above; the
+   package-surface test compares the table with the registry.
