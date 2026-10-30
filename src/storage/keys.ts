@@ -206,7 +206,9 @@ export const CONNECTOR_HEALTH_LINGER_MS = 60_000;
  * Bounded connector health by connector id and a digest of the owner
  * partition and described configuration. `discovery` holds the latest failed
  * discovery's typed code, observation time, retry time and the catalog
- * generation it saw. Values never carry downstream text, tools or credentials.
+ * generation it saw; `status` the operator page's latest status observation
+ * (state, problem code, tool count, observation time, generation). Values
+ * never carry downstream text, tools or credentials.
  */
 export const connectorHealthKeys = {
   family: {
@@ -215,11 +217,13 @@ export const connectorHealthKeys = {
     prefixes: ["connector-health:v1:"],
     version: { number: 1, in: "key" },
     codec: jsonCodec,
-    ttl: { kind: "configured", by: "retry time plus 60 seconds" },
+    ttl: { kind: "configured", by: "discovery: retry time plus 60 seconds; status: 120 seconds" },
     durable: false,
   },
   discovery: (connectorId: string, partitionDigest: string) =>
     validateStorageKey(`connector-health:v1:${connectorId}:${partitionDigest}:discovery`),
+  status: (connectorId: string, partitionDigest: string) =>
+    validateStorageKey(`connector-health:v1:${connectorId}:${partitionDigest}:status`),
 } as const satisfies Keyed;
 
 /** SDK catalog response cache, complete manifests published after their chunks. */

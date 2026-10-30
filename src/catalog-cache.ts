@@ -38,18 +38,9 @@ import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTE
 import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { responseCacheKeys } from "./storage/keys.js";
+import { CatalogPolicy, type CatalogCacheSettings } from "./catalog-policy.js";
 import type { ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } from "./types.js";
 
-interface CatalogCacheSettings {
-  storage: KVStorage;
-  partition: string;
-  credentialRevision?: () => number;
-  sharedPartition?: string;
-  defaultTtlMs: number;
-  minTtlMs: number;
-  maxTtlMs: number;
-  onCompletedCatalogRefresh?: (refresh: CompletedCatalogRefresh, ctx: ConnectorContext) => void | Promise<void>;
-}
 export interface CompletedCatalogRefresh {
   connectorId: string;
   previousDigest?: string;
@@ -445,20 +436,8 @@ export function observeCatalogExpiry(
 const STALE_FALLBACK_MS = 300_000;
 /** Catalog chunks one storage read fetches together. */
 const CHUNKS_PER_READ = 8;
-class CatalogPolicy extends Context.Service<CatalogPolicy, CatalogCacheSettings>()(
-  "connecta/operation/CatalogPolicy",
-) {}
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void {
   setViewService(ctx, CatalogPolicy, value);
-}
-
-/** The store and owner partition this connector's catalog cache uses, for bounded facts kept beside it. */
-export function catalogOwnerPartition(ctx: ConnectorContext): { storage: KVStorage; partition: string } {
-  const policy = serviceFor(ctx, CatalogPolicy);
-  return {
-    storage: policy?.storage ?? ctx.storage,
-    partition: JSON.stringify([policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null), ctx.baseUrl, ctx.publicUrl]),
-  };
 }
 
 /** Revalidate retained reads without storage I/O or credential material. */

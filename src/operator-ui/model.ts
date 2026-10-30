@@ -107,6 +107,10 @@ export interface UiConnector {
   authorizationUrl?: string;
   toolCount: number;
   tools: UiTool[];
+  /** Age of the stored status observation this row shows; absent on a live read. */
+  observedAgeMs?: number;
+  /** Browser-only: the stored observation's time, fixed as the row lands. */
+  observedAt?: number;
   /** This connector exposes manageable downstream OAuth lifecycle hooks. */
   oauth?: boolean;
   /** Selected downstream client identity mechanism; never a client ID or secret. */

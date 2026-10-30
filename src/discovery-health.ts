@@ -26,18 +26,16 @@
 // asking again costs the next search nothing. Caller cancellation and a probe cut
 // short by the discovery budget record nothing.
 import { Effect } from "effect";
-import { sha256Hex } from "./bytes.js";
-import { catalogOwnerPartition } from "./catalog-cache.js";
-import { canonicalJson } from "./canonical-json.js";
+import { healthAddress } from "./connector-health.js";
+export { bindDiscoveryEndpoint } from "./connector-health.js";
 import { classificationCode, classifyCallError, type ClassificationCode } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type { RegistryView } from "./registry.js";
 import { causeError } from "./runtime/run.js";
 import { Storage } from "./runtime/services.js";
 import { storageCompareAndSet, storageGetMany, storageSet } from "./runtime/storage.js";
-import { connectorHealthKeys, CONNECTOR_HEALTH_LINGER_MS, responseCacheKeys } from "./storage/keys.js";
-import type { Connector, KVStorage, Logger } from "./types.js";
-import { CONNECTA_VERSION } from "./version.js";
+import { connectorHealthKeys, CONNECTOR_HEALTH_LINGER_MS } from "./storage/keys.js";
+import type { KVStorage, Logger } from "./types.js";
 
 /** How long unscoped search skips a connector after a failed discovery. */
 const DISCOVERY_RETRY_MS = 60_000;
@@ -99,66 +97,6 @@ function encodeFact(fact: HealthFact): { raw: string; expiresAtMs: number } {
   return { raw: JSON.stringify(fact), expiresAtMs: Math.ceil(fact.retryAt + CONNECTOR_HEALTH_LINGER_MS) };
 }
 
-// A connector's described configuration, digested once per connector object.
-// `describe()` is value-free: no header value, URL query or other secret
-// enters it, so the key this digest joins is no verifier for one. A change it
-// cannot see, such as a static header rotated in deployment code, takes effect
-// on redeploy and leaves an earlier record to lapse within its retry time.
-const configDigests = new WeakMap<Connector, Promise<string>>();
-function configDigest(connector: Connector): Promise<string> {
-  let digest = configDigests.get(connector);
-  if (!digest) {
-    let described: unknown = null;
-    try {
-      described = connector.describe?.() ?? null;
-    } catch {
-      described = null;
-    }
-    digest = sha256Hex(
-      canonicalJson([CONNECTA_VERSION, connector.kind ?? null, connector.authScope ?? null, described]),
-    );
-    configDigests.set(connector, digest);
-  }
-  return digest;
-}
-
-// The endpoint a request was admitted at (plain `/mcp`, a pool, an agent
-// path). The same person and pool can reach one connector through several,
-// and each keeps its own records.
-const endpoints = new WeakMap<object, string>();
-/** Bind the admitted endpoint to a request scope, before any discovery runs in it. */
-export function bindDiscoveryEndpoint(requestScope: object, endpoint: string): void {
-  endpoints.set(requestScope, endpoint);
-}
-
-/** The record's address for one connector in this view's owner partition. */
-function slotAddress(
-  registry: RegistryView,
-  id: string,
-  baseUrl: string,
-  requestScope: object,
-): Effect.Effect<{ storage: KVStorage; key: string; generationKey: string; logger: Logger } | undefined> {
-  return Effect.suspend(() => {
-    const connector = registry.getConnector(id);
-    // Authored static catalogs never hang.
-    if (!connector || connector.staticTools) return Effect.succeed(undefined);
-    const ctx = registry.contextFor(id, baseUrl, requestScope);
-    const { storage, partition } = catalogOwnerPartition(ctx);
-    if (!storage) return Effect.succeed(undefined);
-    return Effect.promise(async () => {
-      const digest = await sha256Hex(
-        JSON.stringify([partition, endpoints.get(requestScope) ?? null, await configDigest(connector)]),
-      );
-      return {
-        storage,
-        key: connectorHealthKeys.discovery(id, digest),
-        generationKey: responseCacheKeys.generation(id),
-        logger: ctx.logger,
-      };
-    });
-  }).pipe(Effect.catchCause(() => Effect.succeed(undefined)));
-}
-
 /**
  * Each connector's verdict for this discovery, in `ids` order. With `skip`, a
  * record of the current generation comes back as `skip`: current until its
@@ -174,9 +112,17 @@ export function readDiscoveryHealth(
   options: { skip: boolean },
 ): Effect.Effect<HealthVerdict[]> {
   return Effect.gen(function* () {
-    const addresses = yield* Effect.forEach(ids, (id) => slotAddress(registry, id, baseUrl, requestScope), {
-      concurrency: "unbounded",
-    });
+    // Authored static catalogs never hang, so discovery keeps no health for them.
+    const addresses = yield* Effect.forEach(
+      ids,
+      (id) =>
+        registry.getConnector(id)?.staticTools
+          ? Effect.succeed(undefined)
+          : healthAddress(registry, id, baseUrl, requestScope),
+      {
+        concurrency: "unbounded",
+      },
+    );
     const verdicts: HealthVerdict[] = ids.map(() => ({}));
     // One getMany per store: every record and its generation in one round trip.
     const stores = new Map<KVStorage, number[]>();
@@ -187,7 +133,10 @@ export function readDiscoveryHealth(
       stores.set(address.storage, indexes);
     });
     for (const [storage, indexes] of stores) {
-      const keys = indexes.flatMap((index) => [addresses[index]!.key, addresses[index]!.generationKey]);
+      const keys = indexes.flatMap((index) => [
+        connectorHealthKeys.discovery(ids[index]!, addresses[index]!.digest),
+        addresses[index]!.generationKey,
+      ]);
       const values = yield* storageGetMany(keys).pipe(
         Effect.provideService(Storage, storage),
         Effect.catchCause((cause) =>
@@ -203,7 +152,7 @@ export function readDiscoveryHealth(
         const address = addresses[index]!;
         const slot: HealthSlot = {
           storage,
-          key: address.key,
+          key: keys[position * 2]!,
           logger: address.logger,
           generation: values[position * 2 + 1] ?? null,
           raw: values[position * 2] ?? null,
