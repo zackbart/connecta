@@ -14,10 +14,10 @@ import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-s
 import { errors, gmailBodyProvenance } from "./api.js";
 import { read, write } from "../../http/tools.js";
 import { boundCursor } from "../../http/paging.js";
-import { fieldsProblem, selectFields } from "../../http/fields.js";
+import { selectFields } from "../../http/fields.js";
 import { Operation } from "../../runtime/call.js";
 import { index } from "./lib/index.js";
-import { inputs, outputs, rows, type GmailToolName } from "./lib/schemas.js";
+import { fieldContracts, inputs, outputs, type GmailToolName } from "./lib/schemas.js";
 import { threadingIds } from "./lib/threading.js";
 
 interface GmailToolProgram {
@@ -1657,11 +1657,8 @@ export function gmailTools({ connection }: { connection: Connection }): ApiTool[
             return yield* Effect.die(new Error("Gmail needs its call context."));
           const ctx = active.value;
           const { fields, ...args } = supplied;
-          const problem = fieldsProblem(
-            fields,
-            new Set(Object.keys(isList ? rows[name as keyof typeof rows].fields : outputs[name].fields)),
-            isList ? "an item" : "the result",
-          );
+          const contract = fieldContracts[name as keyof typeof fieldContracts];
+          const problem = contract?.problem(fields as readonly string[] | undefined);
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           if (args["cursor"] !== undefined) args["cursor"] = yield* boundCursor.decode(name, args, args["cursor"]);
           let result = standardResult(yield* declaration.run(args, ctx), name);

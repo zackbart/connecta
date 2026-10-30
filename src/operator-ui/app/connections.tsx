@@ -9,6 +9,7 @@ import {
   problemCopy,
   problemTone,
   registrationPathLabel,
+  verificationLabel,
   safeHttpHref,
   type OperatorState,
 } from "../view.js";
@@ -160,6 +161,18 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
                   },
                 ]
               : []),
+            ...(connector.verification
+              ? [
+                  {
+                    label: "Last verified",
+                    value: (
+                      <span data-verification={connector.verification.outcome}>
+                        {verificationLabel(connector.verification)}
+                      </span>
+                    ),
+                  },
+                ]
+              : []),
             { label: "Managed by", value: <span data-managed-by>{managedBy(connector)}</span> },
           ]}
         />
@@ -201,6 +214,7 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
           connector={connector}
           credential={connector.credential}
           editing={state.credentialEditing === id}
+          untested={state.credentialUntested === id}
           busy={state.credentialBusy === id}
           confirming={confirming?.action === "credential_remove"}
           notice={state.credentialNoticeFor === id ? state.credentialNotice : null}

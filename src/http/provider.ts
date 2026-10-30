@@ -1,4 +1,5 @@
 // Internal provider kit. Unreachable from src/index.ts.
+import { credentialFailureClass } from "../credential-verification.js";
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
 import { OAUTH_CHALLENGE_MAX_BYTES } from "../auth/renewable-grant.js";
@@ -365,7 +366,15 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
             Effect.catch((failure) =>
               Effect.sync(() => {
                 const error = toConnectorCallError(failure, errors, map);
-                return probe.failure?.(error, options) ?? { ok: false, message: error.message };
+                const described = probe.failure?.(error, options);
+                // A provider's own verdict wins; a failure it leaves
+                // unclassified takes the class of the typed error behind it.
+                if (described?.ok || described?.failure) return described;
+                return {
+                  ok: false,
+                  message: described?.message ?? error.message,
+                  failure: credentialFailureClass(error),
+                };
               }),
             ),
             Effect.catchDefect((defect) => Effect.die(withheldDefect(defect, map, !!probe.run))),

@@ -1,7 +1,7 @@
 import type { AgentSlot } from "./agents.js";
 import type { OperatorPage, OperatorRole, OperatorUiContractV2 } from "./contract.js";
 import type { FixPromptKind } from "./fix-prompts.js";
-import type { UiConnector, UiData, UiProblem } from "./model.js";
+import type { UiConnector, UiCredentialFailure, UiData, UiProblem, UiVerification } from "./model.js";
 
 /**
  * Everything the operator app knows, and every rule for changing it, with no
@@ -201,14 +201,70 @@ export function oauthDoneNotice(
   return info(opened ? "Finish in the new tab." : "The new tab was blocked. Open the link here.");
 }
 
-/** A credential Test's result. `ok` is the only part of the answer it reads. */
-export function credentialTestNotice(connectorId: string, answer: { ok?: unknown } | null): Notice {
+const CREDENTIAL_FAILURES: ReadonlySet<string> = new Set<UiCredentialFailure>([
+  "rejected",
+  "scope",
+  "unreachable",
+  "timeout",
+  "failed",
+]);
+
+/** The route's failure class, checked rather than trusted; anything else is `failed`. */
+function credentialFailureOf(answer: { failure?: unknown } | null): UiCredentialFailure {
+  return typeof answer?.failure === "string" && CREDENTIAL_FAILURES.has(answer.failure)
+    ? (answer.failure as UiCredentialFailure)
+    : "failed";
+}
+
+/** What each failure class means and what to do, in the page's own words. */
+const CREDENTIAL_FAILURE_COPY: Record<UiCredentialFailure, string> = {
+  rejected:
+    "The service rejected this credential. Check that the whole value was copied and that it has not expired or been revoked.",
+  scope:
+    "The service accepted this credential, but it lacks a permission this connection needs. Grant the missing scope or access, or use a credential that has it.",
+  unreachable:
+    "Couldn't reach the service to check this credential. It may be down or limiting requests; try again shortly.",
+  timeout: "The service didn't answer before the test's deadline. Try again shortly.",
+  failed: "Credential test failed. The deployment log has the reason.",
+};
+
+/** A credential Test's result. `ok` and the failure class are the only parts it reads. */
+export function credentialTestNotice(connectorId: string, answer: { ok?: unknown; failure?: unknown } | null): Notice {
   return answer?.ok === true
     ? info("Credential is valid.")
-    : failure("Credential test failed. The deployment log has the reason.", {
+    : failure(CREDENTIAL_FAILURE_COPY[credentialFailureOf(answer)], {
         kind: "credential_test_failed",
         connectorId,
       });
+}
+
+/**
+ * A save whose candidate failed its test: nothing was stored. When the
+ * service may only be down, the copy says the value can be saved anyway.
+ */
+export function credentialSaveTestNotice(connectorId: string, answer: { failure?: unknown } | null): Notice {
+  const failed = credentialFailureOf(answer);
+  const anyway = failed === "unreachable" || failed === "timeout" || failed === "failed";
+  return failure(
+    `Not saved. ${CREDENTIAL_FAILURE_COPY[failed]}${anyway ? " You can save it anyway, unverified." : ""}`,
+    { kind: "credential_test_failed", connectorId },
+  );
+}
+
+const VERIFICATION_COPY: Record<UiVerification["outcome"], string> = {
+  ok: "Verified",
+  unverified: "Saved without a test",
+  rejected: "Rejected",
+  scope: "Missing permission",
+  unreachable: "Service unreachable",
+  timeout: "Test timed out",
+  failed: "Test failed",
+};
+
+/** "Verified · <date>": the last verification, for the connection's auth facts. */
+export function verificationLabel(verification: UiVerification): string {
+  const when = formatDate(verification.observedAt);
+  return `${VERIFICATION_COPY[verification.outcome] ?? VERIFICATION_COPY.failed}${when ? ` · ${when}` : ""}`;
 }
 
 /**
@@ -457,6 +513,11 @@ export interface OperatorState {
   credentialNoticeFor: string | null;
   /** Connector id whose credential form is open. */
   credentialEditing: string | null;
+  /**
+   * Connector id whose candidate credential just failed its test. Nothing
+   * was stored; its open form offers saving the value without a test.
+   */
+  credentialUntested: string | null;
   /** Connector id whose credential mutation is in flight. */
   credentialBusy: string | null;
   activityPhase: LoadPhase;
@@ -553,6 +614,7 @@ function identityScopedState() {
     credentialNotice: null,
     credentialNoticeFor: null,
     credentialEditing: null,
+    credentialUntested: null,
     credentialBusy: null,
     tokenPhase: "idle" as LoadPhase,
     tokenNotice: null,
@@ -602,6 +664,7 @@ export function withPage(state: OperatorState, page: OperatorPage): OperatorStat
     tokenConfirm: null,
     tokenNotice: null,
     credentialEditing: null,
+    credentialUntested: null,
     credentialNotice: null,
     credentialNoticeFor: null,
     confirming: null,

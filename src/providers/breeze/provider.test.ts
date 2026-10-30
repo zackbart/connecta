@@ -239,7 +239,20 @@ it("INV-5: calendar credentials stay removed across vendor response envelopes", 
       { path: "/events/calendars/list", ...(fields ? { fields } : {}) },
       ctx,
     );
-    expect(result).toEqual({ status: 200, data: [fields ? { id: 0 } : { id: 0, name: "Main", color: "blue" }] });
+    // Withheld credentials match nothing; the report names positions and declared properties only.
+    expect(result).toEqual({
+      status: 200,
+      data: [fields ? { id: 0 } : { id: 0, name: "Main", color: "blue" }],
+      ...(fields
+        ? {
+            warnings: [1, 2].map(
+              (index) =>
+                `fields/${index} matched nothing in this response after value safety and privacy filtering, at segment 1; declared there: id, oid, name, color, created_on, address, embed_key.`,
+            ),
+          }
+        : {}),
+    });
+    expect(JSON.stringify(result)).not.toMatch(/SECRET|AbC/);
   }
   const calendar = {
     id: "1",

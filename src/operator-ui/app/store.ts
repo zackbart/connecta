@@ -3,6 +3,7 @@ import type { UiConnector, UiData } from "../model.js";
 import {
   actionFailedNotice,
   collectionFailureCopy,
+  credentialSaveTestNotice,
   credentialTestNotice,
   failure,
   STALE_COPY,
@@ -178,6 +179,10 @@ function refuseSession(status: number): void {
 
 interface OperatorResponse {
   token?: string;
+  /** A credential save: false when its candidate failed the test and nothing was stored. */
+  saved?: boolean;
+  /** The failure class of a credential test; checked before it is shown. */
+  failure?: string;
   agent?: AgentSlot;
   agents?: AgentSlot[];
   ok?: boolean;
@@ -455,6 +460,7 @@ function memberUnavailable(): Partial<OperatorState> {
     contractPhase: "error",
     confirming: null,
     credentialEditing: null,
+    credentialUntested: null,
     focusIfLost: "memberHeading",
   };
 }
@@ -1277,7 +1283,7 @@ export function disconnectOAuth(connector: string): Promise<void> {
 
 export function editCredential(connector: string | null): void {
   if (connector && memberDispatch(connector, "save") === null) return;
-  set({ credentialEditing: connector, credentialNotice: null, credentialNoticeFor: null });
+  set({ credentialEditing: connector, credentialUntested: null, credentialNotice: null, credentialNoticeFor: null });
 }
 
 /** A form the operator has not finished. Nothing is sent, and the page says why. */
@@ -1312,17 +1318,41 @@ function credentialMutation(
   });
 }
 
+/**
+ * Save a credential. `test` tests the candidate first and stores it only if
+ * the test passes; a failure stores nothing and leaves the form open with
+ * the choice to save without a test, so an outage at the service never
+ * blocks a replacement. `skip` stores it unverified.
+ */
 export function saveCredential(
   connector: string,
   body: { value: string } | { values: Record<string, string> },
+  verify: "test" | "skip" = "skip",
 ): Promise<void> {
   const valid = memberDispatch(connector, "save");
   if (valid === null) return memberRefused(connector, "credential");
   return credentialMutation(
     connector,
     "credential_save",
-    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}`, "PUT", current, body, valid),
-    () => ({ credentialEditing: null, credentialNotice: info("Credential saved.") }),
+    (current) =>
+      // Without `verify` the route stores the value unverified, as it always has.
+      operatorRequest(
+        `/ui/credentials/${encodeURIComponent(connector)}`,
+        "PUT",
+        current,
+        verify === "test" ? { ...body, verify } : body,
+        valid,
+      ),
+    (payload) =>
+      payload?.saved === false
+        ? { credentialUntested: connector, credentialNotice: credentialSaveTestNotice(connector, payload) }
+        : {
+            credentialEditing: null,
+            credentialUntested: null,
+            credentialNotice: info(
+              verify === "test" ? "Credential tested and saved." : "Credential saved without a test.",
+            ),
+          },
   );
 }
 
@@ -1347,7 +1377,7 @@ export function testCredential(connector: string): Promise<void> {
     (current) =>
       operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}/test`, "POST", current, undefined, valid),
     (payload) => ({ credentialNotice: credentialTestNotice(connector, payload) }),
-    false,
+    // The Test records its outcome, which the connection's auth facts show.
   );
 }
 

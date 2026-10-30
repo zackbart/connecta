@@ -438,6 +438,7 @@ export type {
   ConnectorSkillResourceContents,
   DescribedEndpoint,
   ConnectorStatus,
+  CredentialFailureClass,
   CredentialTestResult,
   AdmittingExecutor,
   AdmissionSnapshot,
