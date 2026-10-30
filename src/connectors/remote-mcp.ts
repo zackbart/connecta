@@ -1,5 +1,5 @@
 import { wrapViewCredentials } from "../runtime/call.js";
-import { sha256Hex, utf8Length } from "../bytes.js";
+import { utf8Length } from "../bytes.js";
 import { withStoredAuth } from "../auth/stored-observation.js";
 import { authorizationParamsFor } from "../auth/oauth-authorization-params.js";
 import { authView } from "../auth/native-call.js";
@@ -366,16 +366,6 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
 });
 
 /** Extra headers are immutable code configuration, not another auth channel. */
-/**
- * A configured URL as stored keys may show it: origin and path, with its
- * userinfo, query and fragment set apart for the keyed digest. Undefined when
- * it has none, so the URL keys as configured.
- */
-function keyedParts(url: URL): { url: string; secrets: string[] } | undefined {
-  const secrets = [url.username, url.password, url.search, url.hash];
-  return secrets.some(Boolean) ? { url: `${url.origin}${url.pathname}`, secrets } : undefined;
-}
-
 function extraResourceHeaders(id: string, opts: RemoteMcpOptions): Readonly<Record<string, string>> | undefined {
   if (opts.headers === undefined) return undefined;
   const refuse = () =>
@@ -3226,56 +3216,29 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           clientName: ctx.oauthClientName,
         }
       : undefined;
-  // The configured values that can carry a secret: auth header values, a
-  // static client's secret, and the userinfo, query and fragment of every
-  // configured URL (the endpoint and a client metadata document). Stored keys
-  // see them only through one keyed digest and keep each URL's origin and path
-  // in the clear. A connector without them keeps its keys unchanged. The
-  // static client's issuer, the self-hosted client URL and the redirect URI
-  // admit no query, userinfo or fragment, so they carry none.
-  const configuredUrl = new URL(opts.url);
-  const endpointKey = keyedParts(configuredUrl);
-  const metadataKey = clientMetadataUrl === undefined ? undefined : keyedParts(new URL(clientMetadataUrl));
-  const configuredHeaders = opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers;
-  const configSecrets =
-    endpointKey || metadataKey || configuredHeaders !== undefined || staticClient?.clientSecret !== undefined
-      ? JSON.stringify([
-          endpointKey?.secrets ?? null,
-          configuredHeaders ?? null,
-          staticClient?.clientSecret ?? null,
-          metadataKey?.secrets ?? null,
-        ])
-      : undefined;
-  const configSecretDigest = (ctx: ConnectorContext): Promise<string | undefined> =>
-    configSecrets === undefined ? Promise.resolve(undefined) : secretDigest(ctx, configSecrets);
-  // A metadata URL excludes a static client, so the configured one is in use.
-  const keyedOAuthConfigFor = (ctx: ConnectorContext) => {
-    const config = oauthConfigFor(ctx);
-    return (
-      config && {
-        ...config,
-        client: staticClient && { ...staticClient, clientSecret: undefined },
-        clientMetadataUrl: metadataKey?.url ?? config.clientMetadataUrl,
-      }
-    );
-  };
+  // Stored keys see a connector's configuration only through the keyed digest,
+  // whole: every configured URL (endpoint, client metadata document, static
+  // client issuer, redirect URI), header values and the static client's secret.
   // The catalog cache's configuration, partition and sharing are derived the
   // same way for a connect and for a pre-connect cache read, so both address
   // exactly the same entries.
-  const catalogConfigFor = (ctx: ConnectorContext, secrets: string | undefined) =>
-    JSON.stringify({
-      url: endpointKey?.url ?? configuredUrl.href,
-      auth: opts.auth?.type ?? null,
-      headers: secrets,
-      ...(extraHeaders ? { extraHeaders } : {}),
-      credentialHeader,
-      credentialScheme,
-      authScope: opts.authScope ?? "shared",
-      redirects: opts.redirects ?? "none",
-      versionNegotiation: opts.versionNegotiation ?? "auto",
-      oauthConfig: keyedOAuthConfigFor(ctx),
-      oauthScope,
-    });
+  const catalogConfigFor = (ctx: ConnectorContext) =>
+    secretDigest(
+      ctx,
+      JSON.stringify({
+        url: new URL(opts.url).href,
+        auth: opts.auth?.type ?? null,
+        headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+        ...(extraHeaders ? { extraHeaders } : {}),
+        credentialHeader,
+        credentialScheme,
+        authScope: opts.authScope ?? "shared",
+        redirects: opts.redirects ?? "none",
+        versionNegotiation: opts.versionNegotiation ?? "auto",
+        oauthConfig: oauthConfigFor(ctx),
+        oauthScope,
+      }),
+    );
   const catalogSharing: "private" | "shared" = requestAuth || opts.authScope === "personal" ? "private" : "shared";
   const catalogIdentityFor = (ctx: ConnectorContext, provider: KvOAuthProvider) =>
     authMethod(() =>
@@ -3285,30 +3248,29 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }),
     );
 
-  // Everything that decides how this connector's handshake negotiates.
-  const negotiationInputs = (
-    ctx: ConnectorContext,
-    secrets: string | undefined,
-    credentialDigest: string | null,
-    epoch: string,
-  ) =>
-    JSON.stringify([
-      endpointKey?.url ?? opts.url,
-      opts.versionNegotiation ?? "auto",
-      opts.auth?.type,
-      secrets,
-      ...(extraHeaders ? [extraHeaders] : []),
-      credentialHeader,
-      credentialScheme,
-      opts.authScope ?? "shared",
-      opts.redirects ?? "none",
-      keyedOAuthConfigFor(ctx),
-      oauthScope,
-      credentialDigest,
-      epoch,
-      callerOf(ctx),
-      skillsEnabled === true,
-    ]);
+  // The verdict's key: everything that decides how this connector's handshake
+  // negotiates, through the keyed digest.
+  const negotiationKey = (ctx: ConnectorContext, credentialDigest: string | null, epoch: string) =>
+    secretDigest(
+      ctx,
+      JSON.stringify([
+        opts.url,
+        opts.versionNegotiation ?? "auto",
+        opts.auth?.type,
+        opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+        ...(extraHeaders ? [extraHeaders] : []),
+        credentialHeader,
+        credentialScheme,
+        opts.authScope ?? "shared",
+        opts.redirects ?? "none",
+        oauthConfigFor(ctx),
+        oauthScope,
+        credentialDigest,
+        epoch,
+        callerOf(ctx),
+        skillsEnabled === true,
+      ]),
+    );
 
   /**
    * Serve a complete, unexpired cached catalog without connecting. The read
@@ -3363,11 +3325,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             }),
           );
         }
-        const secrets = (yield authCall(configSecretDigest, [ctx])) as string | undefined;
         if (opts.versionNegotiation !== "legacy") {
-          const digest = (yield authCall(sha256Hex, [
-            negotiationInputs(ctx, secrets, credentialDigest, epoch),
-          ])) as string;
+          const digest = (yield authCall(negotiationKey, [ctx, credentialDigest, epoch])) as string;
           const prior = (yield authCall(readNegotiation, [ctx, digest])) as PriorDiscovery | undefined;
           preread.negotiation = { digest, prior };
           if (prior?.kind === "modern") return preread;
@@ -3375,7 +3334,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const cache = (yield authCall(catalogClientOptions, [
           ctx,
           id,
-          catalogConfigFor(ctx, secrets),
+          (yield authCall(catalogConfigFor, [ctx])) as string,
           JSON.stringify([epoch, credentialDigest]),
           undefined,
           cacheOwner,
@@ -3600,15 +3559,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // SDK v2 selects its validator by runtime export condition: AJV on
         // Node and @cfworker/json-schema under workerd. The Workers-safe path
         // no longer needs Connecta-specific wiring.
-        const secrets = yield* promised(
-          authMethod(() => authCall(configSecretDigest, [ctx]) as Effect.Effect<string | undefined, unknown>),
-        );
         const negotiationDigest = yield* promised(
           authMethod(
-            () =>
-              authCall(sha256Hex, [
-                negotiationInputs(ctx, secrets, state.credentialDigest, genAtStart),
-              ]) as Effect.Effect<string, unknown>,
+            () => authCall(negotiationKey, [ctx, state.credentialDigest, genAtStart]) as Effect.Effect<string, unknown>,
           ),
         );
         let prior =
@@ -3626,13 +3579,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   ),
                 );
         if (!owned()) return yield* Effect.fail(scopeEndedError());
+        const catalogConfig = yield* promised(
+          authMethod(() => authCall(catalogConfigFor, [ctx]) as Effect.Effect<string, unknown>),
+        );
         const cacheOptions = yield* promised(
           authMethod(
             () =>
               authCall(catalogClientOptions, [
                 ctx,
                 id,
-                catalogConfigFor(ctx, secrets),
+                catalogConfig,
                 JSON.stringify([genAtStart, state.credentialDigest]),
                 connectionAbort.signal,
                 cacheOwner,

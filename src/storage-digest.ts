@@ -1,13 +1,13 @@
-// Keyed digests of secret material that addresses stored entries.
+// Keyed digests of configuration and credentials that address stored entries.
 //
-// Some stored keys must tell credentials apart: a catalog or negotiation
-// verdict cached under one header, token or vault credential is never served
-// under another (INV-4, INV-5). Stored keys depend on that material only
-// through HMAC-SHA-256 under a deployment key that never enters storage:
-// the vault's storage digest key, derived from the deployment's credential
-// key, or without one a random key held only in this process. A process key
-// keeps the partitions exact; its entries are simply not found by another
-// process or isolate, and expire on their own TTLs.
+// Some stored keys must tell configurations and credentials apart: a catalog,
+// negotiation verdict or health record kept for one URL, header, token or
+// vault credential is never used for another (INV-4, INV-5). Stored keys
+// depend on those values only through HMAC-SHA-256 under a deployment key that
+// never enters storage: the vault's storage digest key, derived from the
+// deployment's credential key, or without one a random key held only in this
+// process. A process key keeps the partitions exact; its entries are simply not
+// found by another process or isolate, and expire on their own TTLs.
 import type { CredentialVault } from "./credential-contract.js";
 import { Context } from "effect";
 import { bytesToHex } from "./bytes.js";

@@ -618,31 +618,29 @@ Only complete, intake-redacted tools/list, resources/list and
 resources/templates/list successes are stored. Resource payloads are not cached. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
 
-Stored catalog and negotiation keys use deployment-keyed partitions. Every
-secret-bearing input enters a stored key only through HMAC-SHA-256
-(`src/storage-digest.ts`) under a key that never enters storage: static auth
-header values, a static OAuth client's secret, the userinfo, query and fragment
-of each configured URL (the endpoint and a client metadata document, whose
-origin and path stay readable), the operator-managed or request-resolved
-credential (joined with the forwarded principal), a custom connector's
-credential values, and the OAuth token response that fences a listing. The
-static client's issuer, the self-hosted client URL and the redirect URI admit
-no query, userinfo or fragment. The key is the vault's `storageDigestKey()`,
-which `encryptedCredentialVault()` derives with HKDF from its credential key.
-Without a vault, or with a custom vault that lacks the method, a random key
-held only in the process is used: the partitions stay exact, but another
-process or isolate addresses different entries and fills its own cache, so
-cross-isolate reuse of secret-bearing catalogs and verdicts needs a vault. A
-connector with no secret-bearing input digests nothing with a key, and its
-keys are the same in every process. A different header, URL query,
-credential, token response or epoch addresses a different entry at once,
-including a value changed by redeploy, and an earlier entry is never served
-under the new value; rotating back to an earlier value within its TTL finds
-its entries again. A new deployment key addresses new entries. Entries written
-by earlier releases are not read and expire on their own TTLs (catalogs within
-`catalogMaxTtlSeconds`, refresh baselines within 48 hours, verdicts within six
-hours), so each affected partition refills once after the upgrade with one
-handshake and listing.
+Stored catalog and negotiation keys use deployment-keyed partitions. A remote
+connector's whole cache configuration and negotiation input enter a stored key
+only through HMAC-SHA-256 (`src/storage-digest.ts`) under a key that never
+enters storage: every configured URL in full (the endpoint, a client metadata
+document, a static client's issuer and the redirect URI), static auth header
+values, resource headers, and a static OAuth client's secret. The
+operator-managed or request-resolved credential (joined with the forwarded
+principal), a custom connector's credential values, and the OAuth token
+response that fences a listing are keyed the same way. The key is the vault's
+`storageDigestKey()`, which `encryptedCredentialVault()` derives with HKDF from
+its credential key. Without a vault, or with a custom vault that lacks the
+method, a random key held only in the process is used: the partitions stay
+exact, but another process or isolate addresses different entries and fills
+its own cache, so cross-isolate reuse of remote catalogs, verdicts and health
+records needs a vault. A different URL, header, credential, token response or
+epoch addresses a different entry at once, including a value changed by
+redeploy, and an earlier entry is never served under the new value; rotating
+back to an earlier value within its TTL finds its entries again. A new
+deployment key addresses new entries. Entries written by earlier releases are
+not read and expire on their own TTLs (catalogs within `catalogMaxTtlSeconds`,
+refresh baselines within 48 hours, verdicts within six hours), so each remote
+connector's partitions refill once after the upgrade with one handshake and
+listing.
 
 A remote connector's `listTools` without a live connection in its request
 reads this cache before connecting. It derives the same partition a connect
@@ -724,11 +722,11 @@ classification code, observation time, retry time (60 seconds later, or the
 downstream's shorter named wait, at least one second), and the connector's
 catalog invalidation generation. Each probe's time is its own, measured as it
 settles. Records hold no downstream text, tools, arguments or credentials.
-Each is keyed by connector id and a digest of the catalog owner partition
-(principal, subject, caller identity and pool, origin and public URL), the
-admitted endpoint (plain `/mcp`, `/mcp/<pool>` or `/agent/<pool>`), the
-connector's value-free described configuration and the package version. No
-configured secret, and nothing derived from one, enters the key. One owner's
+Each is keyed by connector id and the deployment-keyed digest (as for the
+catalog cache above) of the catalog owner partition (principal, subject,
+caller identity and pool, origin and public URL), the admitted endpoint (plain
+`/mcp`, `/mcp/<pool>` or `/agent/<pool>`), the connector's described
+configuration, whose endpoint keeps its path, and the package version. One owner's
 or endpoint's record never skips another's search. A change `describe()`
 cannot see, such as a static header rotated in deployment code, takes effect
 on redeploy; a record written before it keeps skipping for at most its retry

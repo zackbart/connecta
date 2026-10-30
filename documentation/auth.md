@@ -2555,11 +2555,11 @@ Custom vaults may implement the host-only `storageDigestKey` method, returning a
 non-extractable HMAC-SHA-256 signing `CryptoKey` that is stable across the
 deployment's processes, purpose-specific and never stored.
 `encryptedCredentialVault()` derives it with HKDF from its credential key.
-Remote catalog and negotiation-verdict keys digest secret-bearing inputs
-(header values, configured URL queries, credentials, request tokens, OAuth token
-responses) with it, so their partitions are deployment-keyed. Without it they use a random
-per-process key: partitions stay exact, but each process or isolate keeps its
-own entries for those connectors.
+Remote catalog, negotiation-verdict and connector-health keys digest their
+inputs (configured URLs and headers, credentials, request tokens, OAuth token
+responses, described configuration) with it, so their partitions are
+deployment-keyed. Without it they use a random per-process key: partitions stay
+exact, but each process or isolate keeps its own entries.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
 deployment retains the ordinary handoff. It must return a stable,
 purpose-specific deployment key of at least 32 bytes. Only the MCP boundary
