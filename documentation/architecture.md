@@ -47,7 +47,8 @@ as the isolate — on Workers a lazy module-scope singleton, which is why both
 deployment shapes construct it outside the request handler.
 
 An OAuth connector, `remoteMcp()` or `api()` with a static grant, owns a
-runtime-local refresh completion gate in `src/auth/downstream-oauth.ts`.
+runtime-local refresh completion gate in
+`src/auth/downstream-oauth/refresh-coordinator.ts`.
 Joined scopes share the outcome while keeping their own request I/O and
 cancellation. Grant use and the caller's wait belong to the call. Renewal
 preparation is call-owned only until the first durable coordinator write
@@ -1978,8 +1979,8 @@ storage is the root's namespaced to its principal.
 | `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. Public executor methods stay Promise-shaped; registered built-in execution composes directly as an Effect under the signal and `execute.watchdogMs`. Queued acquisition retains its Promise request handoff. Each guest host call is a fiber of its own.                                                                                                                                                                     |
 | Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency; unscoped search adds the discovery budget and health record (`discovery-health.ts`).                                                                                               |
 | Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
-| Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
-| Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |
+| Remote MCP (`connectors/remote-mcp.ts`, `connectors/remote-mcp/`)      | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
+| Downstream OAuth (`auth/downstream-oauth*`, `auth/static-oauth.ts`)    | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -3292,7 +3293,7 @@ compiling and configuring the real thing.
   (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`); for
   `remoteMcp()` only when that 4xx carries a JSON-RPC error body, since a bare
   one may be a gateway's answer after the server acted (`ambiguous` on the
-  call's dispatch in `src/connectors/remote-mcp.ts`), under the
+  call's dispatch in `src/connectors/remote-mcp/transport.ts`), under the
   provider's existing served classification (a write's HTTP 409 is a `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
   (b) for the ledger and for a transport outside one: a refusing status the
   provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
@@ -3738,8 +3739,19 @@ change. All 88 declarations still exclude Effect and have complete references.
 ### Native remote MCP programs (contributor)
 
 Remote MCP connection joins, credential and epoch checks, catalog intake,
-negotiation, calls, resources, Skills, auth and status compose native programs in
-`connectors/remote-mcp.ts`. `catalog-cache.ts` owns native SDK cache reads,
+negotiation, calls, resources, Skills, auth and status compose native programs.
+`connectors/remote-mcp.ts` keeps the published options, the redirect guard and
+`remoteMcp()`, which builds one runtime from per-seam factories in
+`connectors/remote-mcp/`: `config.ts` (options and validation), `errors.ts`
+(boundary error mapping), `transport.ts` (transport and write-once dispatch),
+`connection.ts` (the per-scope connection state machine), `catalog.ts`
+(catalog intake), `resources.ts` (Skills and resource reads), `oauth.ts` (the
+OAuth surface) and `call.ts` (`callTool`); `runtime.ts` types what they share.
+`auth/downstream-oauth.ts` keeps `KvOAuthProvider`'s state and declared
+methods; `auth/downstream-oauth/` holds the refresh coordinator and, by seam,
+the provider's native method bodies (grant and epoch store, consent records,
+refresh lease and spent records, SDK hooks), installed once each by
+`authMethods`. `catalog-cache.ts` owns native SDK cache reads,
 chunked publication, generation fencing, complete refresh acceptance and listing
 serialization; `connectors/negotiation-cache.ts` owns native negotiation storage.
 The published connector, cache and SDK callback methods remain Promise shells.

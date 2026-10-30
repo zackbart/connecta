@@ -3293,6 +3293,7 @@ for credential precedence and disclosure boundaries.
 
 Downstream OAuth implementation and evidence are in
 [downstream-oauth.ts](https://github.com/zackbart/connecta/blob/main/src/auth/downstream-oauth.ts),
+its [seam modules](https://github.com/zackbart/connecta/tree/main/src/auth/downstream-oauth),
 [static-oauth.ts](https://github.com/zackbart/connecta/blob/main/src/auth/static-oauth.ts),
 [OAuth connect tests](https://github.com/zackbart/connecta/blob/main/test/oauth-connect.test.ts),
 and [API OAuth tests](https://github.com/zackbart/connecta/blob/main/test/api-oauth.test.ts).
