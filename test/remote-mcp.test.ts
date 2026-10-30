@@ -1590,13 +1590,21 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
       // Modern only: the legacy handshake is refused with its supported versions.
       modern: createMcpHandler(server, { legacy: "reject" }),
     };
-    const state = { era: "legacy" as keyof typeof handlers, methods: [] as string[], statuses: [] as number[] };
+    const state = {
+      era: "legacy" as keyof typeof handlers,
+      methods: [] as string[],
+      statuses: [] as number[],
+      /** Answers a request in place of the server when it returns a response. */
+      override: undefined as
+        | ((request: Request, body: { method?: string; id?: number } | null) => Response | undefined)
+        | undefined,
+    };
     const fetch: FetchLike = async (input, init) => {
       const request = new Request(input, init);
       const body =
         request.method === "POST" ? ((await request.clone().json()) as { method?: string; id?: number }) : null;
       state.methods.push(body?.method ?? request.method);
-      const response = await handlers[state.era].fetch(request);
+      const response = state.override?.(request, body) ?? (await handlers[state.era].fetch(request));
       state.statuses.push(response.status);
       return response;
     };
@@ -1697,6 +1705,87 @@ describe("remoteMcp() negotiation verdict lifetimes", () => {
       }
     }
     expect(await d.verdict()).toEqual(stored);
+  });
+
+  it.each([
+    ["only legacy versions supported", { supported: ["2025-11-25"], requested: "2026-07-28" }, false],
+    ["no supported list", { requested: "2026-07-28" }, false],
+    ["a malformed supported list", { supported: "2026-07-28" }, false],
+    ["the selected version still supported", { supported: ["2026-07-28"], requested: "2026-07-28" }, true],
+  ] as const)(
+    "INV-8: an UnsupportedProtocolVersion with %s ends the modern verdict unless it still accepts the selected version",
+    async (_label, data, keeps) => {
+      const d = eraDownstream();
+      d.state.era = "dual";
+      await d.list();
+      const stored = await d.verdict();
+      expect(stored?.prior.kind).toBe("modern");
+      // The server now refuses the modern revision; it still serves 2025-era requests.
+      d.state.override = (request, body) =>
+        request.headers.get("mcp-protocol-version") === "2026-07-28"
+          ? Response.json(
+              { jsonrpc: "2.0", id: body?.id ?? null, error: { code: -32022, message: "Unsupported", data } },
+              { status: 400 },
+            )
+          : undefined;
+      const context = { ...ctx(d.store), requestScope: {} };
+      try {
+        d.state.methods.length = 0;
+        // The refused call fails and is not sent again.
+        await expect(d.connector.callTool("read", {}, context)).rejects.toThrow();
+        expect(d.state.methods).toEqual(["tools/call"]);
+        if (keeps) {
+          expect(await d.verdict()).toEqual(stored);
+          return;
+        }
+        expect(await d.verdict()).toBeUndefined();
+        // The same request's next call retires the client and renegotiates the legacy era.
+        d.state.methods.length = 0;
+        await expect(d.connector.callTool("read", {}, context)).resolves.toMatchObject({ content: [] });
+        expect(d.state.methods.slice(0, 2)).toEqual(["server/discover", "initialize"]);
+      } finally {
+        await d.connector.closeScope!(context);
+      }
+      expect((await d.verdict())?.prior).toEqual({ kind: "legacy" });
+    },
+  );
+
+  it("INV-7: a never-ending 400 body read for era evidence ends with the caller's abort and releases its source", async () => {
+    const d = eraDownstream();
+    d.state.era = "modern";
+    await d.list();
+    const controller = new AbortController();
+    let reads = 0;
+    let cancelled = false;
+    d.state.override = (_request, body) =>
+      body?.method === "tools/call"
+        ? new Response(
+            new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.enqueue(new TextEncoder().encode('{"jsonrpc":"2.0","error":'));
+              },
+              pull() {
+                // The rest never comes, so the caller leaves while it is awaited.
+                if (++reads === 1) setTimeout(() => controller.abort(new Error("caller left")), 50);
+                return new Promise<void>(() => {});
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          )
+        : undefined;
+    const context = { ...ctx(d.store), requestScope: {}, signal: controller.signal };
+    try {
+      await expect(d.connector.callTool("read", {}, context)).rejects.toThrow();
+      // Both tee branches were let go, so the source itself was cancelled.
+      await vi.waitFor(() => expect(cancelled).toBe(true));
+      // No era evidence was taken from the unfinished body.
+      expect((await d.verdict())?.prior.kind).toBe("modern");
+    } finally {
+      await d.connector.closeScope!(context);
+    }
   });
 
   it("INV-8 INV-9: a downgraded server forgets the modern verdict at its first refusal and fails over", async () => {

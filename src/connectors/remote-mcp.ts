@@ -1301,13 +1301,34 @@ function wireErrorKey(code: unknown, message: unknown): string {
  * version probe restores it when the probe is done.
  */
 /** The JSON-RPC error a response body is, when it is one. */
-function jsonRpcErrorBody(text: unknown): { code: number } | undefined {
+function jsonRpcErrorBody(text: unknown): { code: number; data?: unknown } | undefined {
   if (typeof text !== "string") return undefined;
   try {
     const message = JSON.parse(text) as { jsonrpc?: unknown; error?: { code?: unknown } } | null;
-    if (message?.jsonrpc === "2.0" && Number.isInteger(message.error?.code)) return message.error as { code: number };
+    if (message?.jsonrpc === "2.0" && Number.isInteger(message.error?.code))
+      return message.error as { code: number; data?: unknown };
   } catch {}
   return undefined;
+}
+
+/**
+ * Whether a 400's recognized modern error leaves a modern verdict usable.
+ * `HeaderMismatch` (-32020) and `MissingRequiredClientCapability` (-32021)
+ * concern the request alone. `UnsupportedProtocolVersion` (-32022) keeps it
+ * only while its `supported` list, the versions the server now accepts, still
+ * names the version the request selected; a missing, malformed or other list
+ * ends the verdict. Anything else is a legacy refusal.
+ */
+function keepsModernVerdict(error: { code: number; data?: unknown } | undefined, selected: string | null): boolean {
+  if (error?.code === -32020 || error?.code === -32021) return true;
+  if (error?.code !== -32022 || selected === null) return false;
+  const supported = (error.data as { supported?: unknown } | null | undefined)?.supported;
+  return (
+    Array.isArray(supported) &&
+    supported.length <= 64 &&
+    supported.every((version) => typeof version === "string") &&
+    supported.includes(selected)
+  );
 }
 
 /** HTTP refusals with their own accounting: authorization, scope and throttling. */
@@ -1315,28 +1336,42 @@ const AUTH_OR_THROTTLE = [401, 403, 429];
 
 /**
  * A bounded clone of an error answer's body, read before the SDK reads the
- * original: `""` when longer than the bound, `undefined` for an event stream
- * or an unreadable body.
+ * original: `""` when longer than the bound, `undefined` for an event stream,
+ * an unreadable body, or a read one of `signals` ended. An abort cancels the
+ * clone's reader at once, so no read outlives the request or its scope (INV-7).
  */
-async function errorBodyText(response: Response): Promise<string | undefined> {
+async function errorBodyText(
+  response: Response,
+  signals: readonly (AbortSignal | undefined)[],
+): Promise<string | undefined> {
   if (response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return undefined;
+  const reader = response.clone().body?.getReader();
+  const stop = () => void reader?.cancel().catch(() => {});
+  const ended = () => signals.some((signal) => signal?.aborted);
+  for (const signal of signals) signal?.addEventListener("abort", stop, { once: true });
   try {
-    const reader = response.clone().body?.getReader();
     const decoder = new TextDecoder();
     let text = "";
-    for (let bytes = 0; reader;) {
+    for (let bytes = 0; reader && !ended();) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
       if (bytes > MAX_ERROR_BODY_BYTES) {
-        void reader.cancel().catch(() => {});
+        stop();
         return "";
       }
       text += decoder.decode(value, { stream: true });
     }
+    if (ended()) {
+      stop();
+      return undefined;
+    }
     return text + decoder.decode();
   } catch {
+    stop();
     return undefined;
+  } finally {
+    for (const signal of signals) signal?.removeEventListener("abort", stop);
   }
 }
 const MAX_ERROR_BODY_BYTES = 16_384;
@@ -2851,16 +2886,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           response.status !== 408 &&
           !AUTH_OR_THROTTLE.includes(response.status)
         ) {
-          const text = (yield authCall(errorBodyText, [response])) as string | undefined;
+          const lifetimes = [init?.signal ?? undefined, request?.ctx.signal, signal];
+          const text = (yield authCall(errorBodyText, [response, lifetimes])) as string | undefined;
+          const ended = lifetimes.find((lifetime) => lifetime?.aborted);
+          if (ended) {
+            // Nothing will consume the original either: release its source.
+            void response.body?.cancel().catch(() => {});
+            throw ended.reason;
+          }
           const error = jsonRpcErrorBody(text);
           // Only a JSON-RPC error proves the server refused the write.
           if (flight?.write && !error) flight.ambiguous = true;
-          // A modern server also answers 400 with HeaderMismatch (-32020),
-          // MissingRequiredClientCapability (-32021) and
-          // UnsupportedProtocolVersion (-32022); those prove the era. Per the
-          // transport's backward-compatibility rule, an empty or unrecognized
-          // body is a legacy refusal and ends the stored modern verdict.
-          if (refused && text !== undefined && (!error || ![-32020, -32021, -32022].includes(error.code)))
+          // Per the transport's backward-compatibility rule, a 400 that is no
+          // recognized modern error is a legacy refusal, and an
+          // UnsupportedProtocolVersion that drops the selected version leaves
+          // the verdict unusable; either ends it. The call itself still fails.
+          if (
+            refused &&
+            text !== undefined &&
+            !keepsModernVerdict(error, new Headers(init?.headers).get("mcp-protocol-version"))
+          )
             (yield authCall(refused, [])) as void;
         }
         if (response.status === 401 && requestToken?.invalidate && credentialValue !== null) {

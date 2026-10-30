@@ -52,6 +52,7 @@ type Answer =
   | 307
   | 308
   | "mismatch"
+  | "unsupported"
   | "resume"
   | "reset"
   | "refused"
@@ -179,6 +180,18 @@ function setup(
       answers.delete(name);
       return Response.json(
         { jsonrpc: "2.0", id: (rpc as { id?: unknown }).id, error: { code: -32020, message: "Header mismatch" } },
+        { status: 400 },
+      );
+    }
+    if (answer === "unsupported") {
+      answers.delete(name);
+      // The server now accepts only a 2025-era revision.
+      return Response.json(
+        {
+          jsonrpc: "2.0",
+          id: (rpc as { id?: unknown }).id,
+          error: { code: -32022, message: "Unsupported protocol version", data: { supported: ["2025-11-25"] } },
+        },
         { status: 400 },
       );
     }
@@ -861,6 +874,22 @@ describe("remote MCP writes after an ambiguous failure", () => {
     expect(probes().length).toBeGreaterThan(before);
     expect(flow.sent("create_item")).toHaveLength(2);
     expect(flow.applied).toEqual(["list_items", "create_item 1", "create_item 2", "list_items"]);
+  });
+
+  it("INV-9: a write refused with UnsupportedProtocolVersion is never replayed; the next call renegotiates", async () => {
+    const flow = setup({ versionNegotiation: "auto" });
+    const probes = () => flow.requests.filter((request) => request.headers.get("mcp-method") === "server/discover");
+    expect((await flow.outcome("list_items")).error).toBeUndefined();
+    expect(probes()).toHaveLength(1);
+    flow.answers.set("create_item", "unsupported");
+    const refused = await flow.outcome("create_item", { id: 1 });
+    expect(refused.error).toMatchObject({ retryable: false });
+    expect(flow.sent("create_item")).toHaveLength(1);
+    // The verdict no longer names a version the server accepts: the next call
+    // probes again, and the refused write is never sent a second time.
+    expect((await flow.outcome("list_items")).error).toBeUndefined();
+    expect(probes()).toHaveLength(2);
+    expect(flow.sent("create_item")).toHaveLength(1);
   });
 
   it("INV-9: a write whose send reports a refused connection is unknown; a read stays retryable", async () => {

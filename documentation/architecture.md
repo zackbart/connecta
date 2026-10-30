@@ -658,13 +658,18 @@ handshake. Two signals end a verdict early:
 - On a modern connection (adopted from the verdict or just negotiated), an
   HTTP 400 is read through a bounded clone of its body, as the transport's
   backward-compatibility rule requires. A modern server also answers 400 with
-  `HeaderMismatch` (-32020), `MissingRequiredClientCapability` (-32021) and
-  `UnsupportedProtocolVersion` (-32022); those recognized modern errors keep
-  the verdict and the connection. An empty body, or one that is not a
-  recognized modern error (a legacy server's sessionless refusal, a gateway's
-  page), is a legacy refusal: it deletes the verdict and retires that client.
-  The refused request fails and is never repeated. The next connect, in the
-  same request or a later one, probes again.
+  `HeaderMismatch` (-32020) and `MissingRequiredClientCapability` (-32021),
+  which concern the request alone and keep the verdict and the connection.
+  `UnsupportedProtocolVersion` (-32022) keeps them only while its
+  `data.supported` list (at most 64 strings) still names the request's
+  `MCP-Protocol-Version`; a missing, malformed or other list makes the verdict
+  unusable. Any other body, empty or not a recognized modern error (a legacy
+  server's sessionless refusal, a gateway's page), is a legacy refusal. Either
+  way the verdict is deleted and that client retired. The refused request
+  fails and is never repeated. The next connect, in the same request or a
+  later one, probes again. The clone read ends with the call, the request or
+  the connection scope: an abort cancels it, cancels the unread original and
+  takes no evidence (INV-7).
 
 An upgrade to a server that still answers the legacy handshake is therefore
 adopted within six hours. Losing the legacy handshake costs one refused
