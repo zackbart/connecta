@@ -360,6 +360,67 @@ discovery for your deployment's catalog.
 
 <!-- provider-inventory:end -->
 
+## Field selection with `fields`
+
+Every maintained read that projects a result takes an optional `fields`
+argument: up to 50 dot paths, each 1 to 200 characters, that narrow the
+returned data. Selection runs after value safety and privacy filtering, so it
+can only remove values. `a.b` and `a[].b` are equivalent; a list on the way is
+narrowed item by item.
+
+Where paths start, the anchor, depends on the tool and is stated in each
+`fields` schema description with one valid example:
+
+| Tool                                       | Paths start at                     | Example                                      |
+| ------------------------------------------ | ---------------------------------- | -------------------------------------------- |
+| A named read (`get_*` and similar)         | The result                         | `["id"]`, `["owner.name"]`                   |
+| A named list or search (`{ items, page }`) | Each item in `items`               | `["id"]`, not `["items.id"]`                 |
+| `*_api_read` and `*_api_write`             | The vendor response body in `data` | `["projects.name"]`, not `["data.projects"]` |
+
+A hatch body that is a list is narrowed item by item, so its paths start at
+each item. An enveloping vendor nests records under a root, such as
+`{ "projects": [...] }`; select `projects.name`, not `name`. Copy hatch paths
+from the operation's `*_api_details` `response.fields`, which are already in
+these coordinates. Paging, cut and recovery metadata (`page`, `truncated`)
+remain outside the selection where a tool says so.
+
+**Refused before dispatch.** A path outside the declared contract returns
+`invalid_args` before any request. Each finding names the entry position
+(`/fields/1`), the segment where the path left the contract and the properties
+declared there, never the submitted path:
+
+- Named tools check the first segment against the properties their published
+  output schema declares for the result or item. Deeper segments follow JSON
+  Schema's default: an object is closed only where the schema says
+  `additionalProperties: false`, and only such an object refuses an undeclared
+  property. Paths through other objects, open values such as GitHub
+  `search_scoped` rows' `item`, and paths past a scalar are accepted; a miss
+  there is omitted from the selection.
+- Hatch reads and writes check the first segment against the operation's
+  declared response roots. An operation that declares no response properties
+  refuses `fields`. The pinned index does not establish whether deeper levels
+  are complete, so deeper segments are not refused.
+
+**Declared but absent is not an error.** Optional values, empty lists and
+values that value safety or privacy filtering removed are ordinary. A declared
+path the current response lacks is never refused, and the selection omits it.
+
+**Hatch miss warnings.** A hatch answer adds `warnings: string[]` when a
+`fields` entry matched nothing anywhere in a nonempty response. Each warning
+names the entry position, the segment where matching stopped and the
+properties the operation's contract declares there, for example
+`fields/1 matched nothing in this response after value safety and privacy
+filtering, at segment 2; declared there: id, name.` Where the contract
+declares none, such as inside an open map, it says so. A warning never lists
+the response's own keys, which in an open map such as `metadata` are data, and
+never repeats the submitted path. A path that matched in any listed item, a
+path that runs past a scalar (selection keeps the scalar), and any path of an
+empty body (`null`, `[]` or `{}`) produce no warning. Warnings are bounded: each
+is at most 512 characters, at most 10 are kept within 4,096 characters
+together, reviewed vendor warnings included, and a final entry counts the rest
+(`3 more warnings omitted.`). Treat a warning as a repair hint for the next
+call, not as a failure.
+
 ## API operation discovery and boundaries
 
 Standard API operation search accepts resource nouns, actions and conversational

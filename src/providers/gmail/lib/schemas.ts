@@ -2,7 +2,7 @@
 import { Schema } from "effect";
 import { Integer, isMinChars, isMaxChars } from "../../../http/json-schema.js";
 import { StandardPage } from "../../../http/paging.js";
-import { fieldsInput } from "../../../http/fields.js";
+import { fieldsContract } from "../../../http/fields.js";
 const optional = Schema.optionalKey;
 const pattern = (regex: RegExp) =>
   Schema.makeFilter((value: string) => regex.test(value), { toJsonSchema: () => ({ pattern: regex.source }) });
@@ -43,68 +43,6 @@ const compose = {
   htmlBody: optional(string("Optional HTML alternative to the plain-text body.", 500000)),
   replyToMessageId: optional(id("Message to reply to; sets its thread and guarded In-Reply-To/References.")),
 };
-const resultFields = optional(fieldsInput("Dot paths to keep in the result. It only narrows the result."));
-const itemFields = optional(fieldsInput("Dot paths to keep in each item. It only narrows the projection."));
-export const inputs = {
-  search_threads: Schema.Struct({
-    query,
-    includeSpamTrash: optional(Schema.Boolean),
-    limit,
-    cursor,
-    fields: itemFields,
-  }),
-  get_thread: Schema.Struct({
-    threadId: id("Thread id from search_threads or a message."),
-    maxBodyChars: bodyChars(3000),
-    cursor,
-    fields: resultFields,
-  }),
-  get_message: Schema.Struct({
-    messageId: id("Message id from a thread or draft."),
-    maxBodyChars: bodyChars(12000),
-    fields: resultFields,
-  }),
-  get_attachment: Schema.Struct({
-    fields: resultFields,
-    messageId: id("Message carrying the attachment."),
-    partId: optional(
-      string(
-        "Immutable partId from the attachment listing, including an empty root id. Takes precedence over attachmentId.",
-        256,
-      ),
-    ),
-    attachmentId: optional(
-      string("Alternative rotating attachmentId from a fresh listing; prefer partId.", 2048, 1).check(
-        pattern(/^[A-Za-z0-9_-]+$/),
-      ),
-    ),
-    maxChars: optional(
-      Integer.check(Schema.isBetween({ minimum: 1, maximum: 100000 })).annotate({
-        default: 12000,
-        description: "Text code points kept; ignored for binaries.",
-      }),
-    ),
-    maxBytes: optional(
-      Integer.check(Schema.isBetween({ minimum: 65536, maximum: 4194304 })).annotate({
-        default: 196608,
-        description:
-          "Whole-result byte budget. Raise only for a direct call_tool; execute_code cannot receive large results.",
-      }),
-    ),
-  }),
-  list_labels: Schema.Struct({ fields: itemFields }),
-  list_drafts: Schema.Struct({ query, limit, cursor, fields: itemFields }),
-  get_draft: Schema.Struct({
-    fields: resultFields,
-    draftId: id("Stable draft id from list_drafts or create_draft."),
-    maxBodyChars: bodyChars(12000),
-  }),
-  create_draft: Schema.Struct(compose),
-  update_draft: Schema.Struct({
-    draftId: id("Draft to replace; attachments and inline images are refused."),
-    ...compose,
-  }),
-};
 const loose = <F extends Schema.Struct.Fields>(fields: F) =>
   Schema.Struct(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, optional(value)])));
 const truncated = optional(Schema.Array(Schema.String));
@@ -136,7 +74,7 @@ const messageFields = {
 };
 const Message = loose(messageFields);
 const { id: _id, ...draftFields } = messageFields;
-export const rows = {
+const rows = {
   search_threads: loose({
     id: Schema.String,
     subject: Schema.String,
@@ -204,3 +142,74 @@ export const outputs = {
   update_draft: Saved,
 };
 export type GmailToolName = keyof typeof inputs;
+/** Each read's `fields`, anchored at its result or, for a list, each item. */
+export const fieldContracts = {
+  search_threads: fieldsContract("item", rows.search_threads),
+  list_labels: fieldsContract("item", rows.list_labels),
+  list_drafts: fieldsContract("item", rows.list_drafts),
+  get_thread: fieldsContract("result", outputs.get_thread),
+  get_message: fieldsContract("result", outputs.get_message),
+  get_draft: fieldsContract("result", outputs.get_draft),
+  get_attachment: fieldsContract("result", outputs.get_attachment),
+};
+const fields = (name: keyof typeof fieldContracts) => optional(fieldContracts[name].input);
+export const inputs = {
+  search_threads: Schema.Struct({
+    query,
+    includeSpamTrash: optional(Schema.Boolean),
+    limit,
+    cursor,
+    fields: fields("search_threads"),
+  }),
+  get_thread: Schema.Struct({
+    threadId: id("Thread id from search_threads or a message."),
+    maxBodyChars: bodyChars(3000),
+    cursor,
+    fields: fields("get_thread"),
+  }),
+  get_message: Schema.Struct({
+    messageId: id("Message id from a thread or draft."),
+    maxBodyChars: bodyChars(12000),
+    fields: fields("get_message"),
+  }),
+  get_attachment: Schema.Struct({
+    fields: fields("get_attachment"),
+    messageId: id("Message carrying the attachment."),
+    partId: optional(
+      string(
+        "Immutable partId from the attachment listing, including an empty root id. Takes precedence over attachmentId.",
+        256,
+      ),
+    ),
+    attachmentId: optional(
+      string("Alternative rotating attachmentId from a fresh listing; prefer partId.", 2048, 1).check(
+        pattern(/^[A-Za-z0-9_-]+$/),
+      ),
+    ),
+    maxChars: optional(
+      Integer.check(Schema.isBetween({ minimum: 1, maximum: 100000 })).annotate({
+        default: 12000,
+        description: "Text code points kept; ignored for binaries.",
+      }),
+    ),
+    maxBytes: optional(
+      Integer.check(Schema.isBetween({ minimum: 65536, maximum: 4194304 })).annotate({
+        default: 196608,
+        description:
+          "Whole-result byte budget. Raise only for a direct call_tool; execute_code cannot receive large results.",
+      }),
+    ),
+  }),
+  list_labels: Schema.Struct({ fields: fields("list_labels") }),
+  list_drafts: Schema.Struct({ query, limit, cursor, fields: fields("list_drafts") }),
+  get_draft: Schema.Struct({
+    fields: fields("get_draft"),
+    draftId: id("Stable draft id from list_drafts or create_draft."),
+    maxBodyChars: bodyChars(12000),
+  }),
+  create_draft: Schema.Struct(compose),
+  update_draft: Schema.Struct({
+    draftId: id("Draft to replace; attachments and inline images are refused."),
+    ...compose,
+  }),
+};

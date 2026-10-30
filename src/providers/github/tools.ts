@@ -4,7 +4,7 @@ import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal } from "../../http/errors.js";
 import type { ArgumentProblems } from "../../http/argument-problems.js";
-import { fieldsInput, fieldsIssues, selectFields } from "../../http/fields.js";
+import { fieldsContract, selectFields } from "../../http/fields.js";
 import { hatch, type HatchBinding } from "../../http/hatch.js";
 import { githubPage } from "../../http/hatch-paging.js";
 import { Integer, isMinChars } from "../../http/json-schema.js";
@@ -54,10 +54,14 @@ const common = {
     }),
   ),
   cursor: Schema.optionalKey(text("Opaque page.nextCursor from this same search or scope listing.")),
-  fields: Schema.optionalKey(fieldsInput("Dot paths into each item; only narrows already-safe data.")),
 };
-const scopeNames = new Set(["org", "repo", "owner", "id", "full_name", "access", "workflows"]);
-const searchNames = new Set(["scope", "repository", "item"]);
+const SCOPE_FIELDS = fieldsContract("item", ScopeRow, "It only narrows already-safe data.");
+const SEARCH_FIELDS = fieldsContract(
+  "item",
+  SearchRow,
+  "Vendor fields are under item, e.g. item.title; it only narrows already-safe data.",
+  "an item (vendor fields are under item)",
+);
 const contextOf = Effect.gen(function* () {
   const op = yield* Effect.serviceOption(Operation);
   if (Option.isNone(op) || !op.value) return yield* Effect.die(new Error("Missing GitHub call context."));
@@ -320,10 +324,14 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
     name: "list_scopes",
     description:
       "List configured GitHub grants locally, or verified reachable repositories for one configured owner. Without owner this reads configuration without network access.",
-    input: Schema.Struct({ owner: Schema.optionalKey(text("Configured owner; omit for local grants.")), ...common }),
+    input: Schema.Struct({
+      owner: Schema.optionalKey(text("Configured owner; omit for local grants.")),
+      ...common,
+      fields: Schema.optionalKey(SCOPE_FIELDS.input),
+    }),
     output: Schema.Struct({ items: Schema.Array(ScopeRow), page: StandardPage }),
     check: (args, problems) => {
-      fieldsIssues(problems, args.fields, scopeNames, "an item");
+      SCOPE_FIELDS.issues(problems, args.fields);
       if (args.owner === undefined) return;
       try {
         policy.owner(args.owner);
@@ -430,11 +438,12 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           .annotate({ description: "Optional subset of the configured scopes." }),
       ),
       ...common,
+      fields: Schema.optionalKey(SEARCH_FIELDS.input),
     }),
     output: Schema.Struct({ items: Schema.Array(SearchRow), page: StandardPage, incomplete_results: Schema.Boolean }),
     check: (args, problems) => {
       // Rows wrap the vendor's record under item, so a vendor field is item.<field>.
-      fieldsIssues(problems, args.fields, searchNames, "an item (vendor fields are under item)");
+      SEARCH_FIELDS.issues(problems, args.fields);
       if (!SEARCH_TERMS.test(args.terms) || BOOLEAN_TERMS.test(args.terms))
         problems.add(
           "/terms",

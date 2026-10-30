@@ -57,6 +57,7 @@ import { indexedVendor } from "../src/providers/_shared/rest/kit.js";
 import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
 import { continuationKeys } from "../src/storage/keys.js";
 import { read, write, list } from "../src/http/tools.js";
+import { fieldsContract } from "../src/http/fields.js";
 import {
   connect,
   vendor,
@@ -665,6 +666,104 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     ).annotate({ identifier: "Node" });
     // The exactness walk terminates; the existing inline-only renderer refuses definitions.
     expect(() => catalogSchema(recursive, "input")).toThrow(/inline/);
+  });
+});
+
+describe("fields (decision 0011 S5)", () => {
+  it("states each anchor and refuses only paths outside the declared contract, never a declared absent one", async () => {
+    const Shape = Schema.Struct({
+      id: Schema.String,
+      owner: Schema.optionalKey(Schema.Struct({ name: Schema.String, email: Schema.optionalKey(Schema.String) })),
+      tags: Schema.optionalKey(Schema.Array(Schema.Struct({ label: Schema.String }))),
+      extra: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    });
+    let sent = 0;
+    const record = { id: "r1", owner: { name: "Alice" }, tags: [], extra: { color: "blue" } };
+    const one = read(acme(), {
+      name: "get_record",
+      description: "One record.",
+      input: Schema.Struct({}),
+      output: Shape,
+      fields: true,
+      run: () => Effect.sync(() => (sent++, record)),
+    });
+    const many = list(acme(), {
+      name: "list_records",
+      description: "Records.",
+      filters: {},
+      row: Shape,
+      limit: { default: 10, max: 10, description: "Most records." },
+      page: () => Effect.sync(() => (sent++, { rows: [record], page: { hasMore: false, nextCursor: null } })),
+    });
+    const fieldsOf = (tool: ApiTool) =>
+      (tool.inputSchema!.properties as Record<string, { description: string }>)["fields"]!.description;
+    expect(fieldsOf(one)).toBe(
+      'Dot paths to keep. Paths start at the result, e.g. ["id"]. It only narrows the result.',
+    );
+    expect(fieldsOf(many)).toBe(
+      'Dot paths to keep. Paths start at each item in items, e.g. ["id"]. It only narrows the result.',
+    );
+    const connector = apiConnector("acme", { tools: [one, many] });
+    // Declared paths the data lacks (an absent optional, an empty list's items) and paths
+    // below an open record are selections, not refusals.
+    const declared = ["owner.email", "tags.label", "tags[].label", "extra.color", "extra.anything.deeper"];
+    await expect(connector.callTool("get_record", { fields: declared }, context())).resolves.toEqual({
+      owner: {},
+      tags: [],
+      extra: { color: "blue" },
+    });
+    await expect(connector.callTool("list_records", { fields: ["owner.email"] }, context())).resolves.toMatchObject({
+      items: [{ owner: {} }],
+    });
+    expect(sent).toBe(2);
+    // Below the first segment JSON Schema's default applies: the rendered objects are open, so
+    // undeclared nested paths and paths past a scalar are selections too. The first segment is closed.
+    const nested = ["owner.zz_secret", "tags.zz_label", "id.zz_value"];
+    await expect(connector.callTool("get_record", { fields: nested }, context())).resolves.toEqual({
+      id: "r1",
+      owner: {},
+      tags: [],
+    });
+    expect(sent).toBe(3);
+    for (const name of ["get_record", "list_records"]) {
+      const of = name === "get_record" ? "the result" : "an item";
+      const failure = await connector
+        .callTool(name, { fields: ["id", "zz_root", "owner.zz_secret", "zz_other.id"] }, context())
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ConnectorCallError);
+      expect((failure as ConnectorCallError).validation?.issues).toEqual(
+        [1, 3].map((index) => ({
+          path: `/fields/${index}`,
+          expected: `a path beginning with a property of ${of}: one of id, owner, tags, extra`,
+        })),
+      );
+      // A refusal names positions and declared properties, never what was submitted.
+      expect(JSON.stringify([(failure as Error).message, (failure as ConnectorCallError).validation])).not.toMatch(
+        /zz_/,
+      );
+    }
+    // An explicitly closed object (`additionalProperties: false`) refuses an undeclared nested path.
+    const closed = fieldsContract("result", {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        owner: {
+          anyOf: [
+            { type: "object", properties: { name: { type: "string" } }, additionalProperties: false },
+            { type: "null" },
+          ],
+        },
+        meta: { type: "object", properties: { note: { type: "string" } } },
+      },
+    });
+    expect(closed.problem(["owner.name", "meta.zz_open", "id.zz_scalar"])).toBeUndefined();
+    expect(closed.problem(["owner.zz_secret"])?.validation?.issues).toEqual([
+      {
+        path: "/fields/0",
+        expected: "a declared path of the result; segment 2 names a property declared at that level: one of name",
+      },
+    ]);
+    expect(sent).toBe(3);
   });
 });
 

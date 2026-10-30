@@ -7,7 +7,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { Refusal, type HttpFailure } from "../../http/errors.js";
 import { Integer, isMinChars, isMaxChars } from "../../http/json-schema.js";
 import { RequestSecrets, Classification, type CallServices } from "../../http/services.js";
-import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { fieldsContract, selectFields } from "../../http/fields.js";
 import { read, list, write as writeTool } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
 import { type JsonRecord, READ_ENDPOINTS } from "./api.js";
@@ -244,6 +244,7 @@ const SelectedEvent = Schema.Struct(
     Object.entries(Row_list_events.fields).map(([name, schema]) => [name, Schema.optionalKey(schema)]),
   ),
 );
+const EVENT_FIELDS = fieldsContract("item", SelectedEvent);
 const Result_list_attendance = Schema.Struct({
   "attendance": Schema.Array(
     Schema.Struct({
@@ -656,7 +657,7 @@ export function breezeTools({
             default: 100,
           }),
         ),
-        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in each event item.")),
+        fields: Schema.optionalKey(EVENT_FIELDS.input),
       }),
       output: Schema.Struct({
         items: Schema.Array(SelectedEvent),
@@ -665,7 +666,7 @@ export function breezeTools({
       }),
       run: (args) =>
         Effect.gen(function* () {
-          const error = fieldsProblem(args.fields, new Set(Object.keys(Row_list_events.fields)), "an event item");
+          const error = EVENT_FIELDS.problem(args.fields);
           if (error) return yield* Effect.fail(new Refusal({ error }));
           const result = yield* load_list_events(args);
           return {

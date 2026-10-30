@@ -31,7 +31,7 @@ import {
   type HttpFailure,
 } from "./errors.js";
 import { ArgumentProblems } from "./argument-problems.js";
-import { fieldsInput, fieldsIssues, selectFields } from "./fields.js";
+import { fieldsContract, selectFields, type FieldsContract } from "./fields.js";
 import { catalogSchema, Integer } from "./json-schema.js";
 import { boundCursor, Cursor, StandardPage, type Page } from "./paging.js";
 import {
@@ -131,30 +131,24 @@ function originalOrder<A>(decoded: A, original: unknown): A {
   return copy(decoded, original) as A;
 }
 
-/** A Struct's own property names, for `fields`. */
-function propertyNames(schema: Schema.Top, what: string): ReadonlySet<string> {
-  const fields = (schema as { readonly fields?: Readonly<Record<string, unknown>> }).fields;
-  if (!fields) throw new Error(`fields needs ${what} declared as a Schema.Struct.`);
-  return new Set(Object.keys(fields));
+/** Refuse `fields` on anything but a Schema.Struct. */
+function struct(schema: Schema.Top, what: string): Schema.Top {
+  if (!(schema as { readonly fields?: unknown }).fields)
+    throw new Error(`fields needs ${what} declared as a Schema.Struct.`);
+  return schema;
 }
 
 /** A tool's own check plus every bad `fields` path, refused together before anything is sent. */
 function withFields<A extends { readonly fields?: readonly string[] }>(
-  names: ReadonlySet<string>,
-  of: string,
+  contract: FieldsContract,
   check: ((args: never, problems: ArgumentProblems) => void) | undefined,
 ) {
   return (args: A, problems: ArgumentProblems) => {
-    fieldsIssues(problems, args.fields, names, of);
+    contract.issues(problems, args.fields);
     const { fields: _fields, ...rest } = args;
     check?.(rest as never, problems);
   };
 }
-
-const fieldsExample = (names: ReadonlySet<string>) => {
-  const first = [...names][0];
-  return first === undefined ? "" : `, e.g. ["${first}"]`;
-};
 
 /**
  * A read: admitted to call_tool and programs. `fields: true` (decision 0011
@@ -168,20 +162,18 @@ export function read<I extends Input, O extends Schema.Top>(
 ): ApiTool {
   if (spec.review !== undefined && !spec.review.trim()) throw new Error("A read review must be nonempty.");
   if (spec.fields === undefined) return build(connection, spec, "read", { readOnlyHint: true }, undefined, spec.review);
-  const names = propertyNames(spec.output, "the output");
-  propertyNames(spec.input, "the input");
+  const contract = fieldsContract("result", struct(spec.output, "the output"));
+  struct(spec.input, "the input");
   const input = Schema.Struct({
     ...(spec.input as unknown as Schema.Struct<Schema.Struct.Fields>).fields,
-    fields: Schema.optionalKey(
-      fieldsInput(`Dot paths to keep in the result${fieldsExample(names)}. It only narrows the result.`),
-    ),
+    fields: Schema.optionalKey(contract.input),
   });
   return build(
     connection,
     {
       ...spec,
       input,
-      check: withFields(names, "the result", spec.check),
+      check: withFields(contract, spec.check),
       run: (args: { readonly fields?: readonly string[] }) =>
         Effect.gen(function* () {
           const { fields, ...rest } = args;
@@ -274,7 +266,7 @@ export function list(
   for (const name of ["limit", "cursor", "fields"]) {
     if (name in spec.filters) throw new Error(`${spec.name} filters cannot declare ${name}; the kit supplies it.`);
   }
-  const names = propertyNames(spec.row, "the row");
+  const contract = fieldsContract("item", struct(spec.row, "the row"));
   const input = Schema.Struct({
     ...spec.filters,
     limit: Schema.optionalKey(
@@ -284,9 +276,7 @@ export function list(
       }),
     ),
     cursor: Schema.optionalKey(Cursor),
-    fields: Schema.optionalKey(
-      fieldsInput(`Dot paths to keep in each item${fieldsExample(names)}. It only narrows the result.`),
-    ),
+    fields: Schema.optionalKey(contract.input),
   });
   return build(
     connection,
@@ -296,7 +286,7 @@ export function list(
       input,
       // `fields` narrows each item, so items render sparse; the envelope keeps items and page required.
       output: Schema.Unknown,
-      check: withFields(names, "an item", undefined),
+      check: withFields(contract, undefined),
       run: (args: Readonly<Record<string, unknown>> & { readonly fields?: readonly string[] }) =>
         Effect.gen(function* () {
           // A cursor stays valid when only the projection changes between pages.
