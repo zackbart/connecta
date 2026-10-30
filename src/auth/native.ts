@@ -55,6 +55,23 @@ export function registerAuthMethod(prototype: object, key: string, program: Prog
   entries.set(key, program);
   registerAuth(own, program);
 }
+/**
+ * Define each program once as `prototype[key]`: the native body owned
+ * programs compose by identity, and its Promise edge for SDK/custom callers,
+ * installed with a class method's name and property attributes. A class
+ * declares the edge's type with a `declare` member.
+ */
+export function authMethods(prototype: object, entries: Record<string, Program>): void {
+  for (const [key, program] of Object.entries(entries)) {
+    const edge = {
+      [key](this: unknown, ...args: any[]): Promise<unknown> {
+        return runEdge(authOwnMethod(prototype, this, key, args));
+      },
+    }[key]!;
+    Object.defineProperty(prototype, key, { value: edge, writable: true, enumerable: false, configurable: true });
+    registerAuthMethod(prototype, key, program, edge);
+  }
+}
 export function authOwnMethod<A>(
   prototype: object,
   receiver: unknown,

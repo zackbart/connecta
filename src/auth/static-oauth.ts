@@ -53,11 +53,10 @@ import {
   authFlow,
   authInvoke,
   authMethod,
-  authOwnMethod,
   authProgram,
   authValue,
   registerAuth,
-  registerAuthMethod,
+  authMethods,
 } from "./native.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
 import type { OAuthGrantBody } from "./oauth-grant.js";
@@ -344,11 +343,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
    * never written to storage, sealed or otherwise: it is deployment config,
    * not grant state, and an operator disconnect cannot delete it.
    */
-  override clientInformation(): Promise<StoredOAuthClientInformation> {
-    return runEdge(
-      authOwnMethod<StoredOAuthClientInformation>(StaticOAuthProvider.prototype, this, "clientInformation", []),
-    );
-  }
+  declare clientInformation: () => Promise<StoredOAuthClientInformation>;
 
   protected override configuredAuthorizationBinding() {
     return {
@@ -383,9 +378,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
     };
   }
 
-  override saveClientInformation(): Promise<void> {
-    return runEdge(authOwnMethod<void>(StaticOAuthProvider.prototype, this, "saveClientInformation", []));
-  }
+  declare saveClientInformation: () => Promise<void>;
 
   /**
    * Discovery as a constant. Supplying both halves keeps the SDK from
@@ -394,18 +387,12 @@ class StaticOAuthProvider extends KvOAuthProvider {
    * The metadata names no `issuer`, so the SDK binds grants to the configured
    * token endpoint and does not demand an RFC 9207 `iss` it cannot know.
    */
-  override discoveryState(): Promise<OAuthDiscoveryState> {
-    return runEdge(authOwnMethod<OAuthDiscoveryState>(StaticOAuthProvider.prototype, this, "discoveryState", []));
-  }
+  declare discoveryState: () => Promise<OAuthDiscoveryState>;
 
-  override saveDiscoveryState(): Promise<void> {
-    return runEdge(authOwnMethod<void>(StaticOAuthProvider.prototype, this, "saveDiscoveryState", []));
-  }
+  declare saveDiscoveryState: () => Promise<void>;
 
   /** No RFC 8707 `resource` parameter: a plain REST API names no resource. */
-  validateResourceURL(): Promise<URL | undefined> {
-    return runEdge(authOwnMethod<URL | undefined>(StaticOAuthProvider.prototype, this, "validateResourceURL", []));
-  }
+  declare validateResourceURL: () => Promise<URL | undefined>;
 
   /**
    * The code exchange without `code_verifier`, for a flow whose authorization
@@ -426,34 +413,18 @@ class StaticOAuthProvider extends KvOAuthProvider {
     this.exchangeCode = code;
   }
 
-  override redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    return runEdge(
-      authOwnMethod<void>(StaticOAuthProvider.prototype, this, "redirectToAuthorization", [authorizationUrl]),
-    );
-  }
+  declare redirectToAuthorization: (authorizationUrl: URL) => Promise<void>;
 
   static {
-    registerAuthMethod(
-      StaticOAuthProvider.prototype,
-      "clientInformation",
-      function (this: StaticOAuthProvider) {
+    authMethods(StaticOAuthProvider.prototype, {
+      clientInformation: function (this: StaticOAuthProvider) {
         return authValue(() => this.configuredClientInformation());
       },
-      StaticOAuthProvider.prototype.clientInformation,
-    );
-    registerAuthMethod(
-      StaticOAuthProvider.prototype,
-      "saveClientInformation",
-      function (this: StaticOAuthProvider) {
+      saveClientInformation: function (this: StaticOAuthProvider) {
         // Nothing to save: the SDK only saves a client it registered or stamped.
         return Effect.void;
       },
-      StaticOAuthProvider.prototype.saveClientInformation,
-    );
-    registerAuthMethod(
-      StaticOAuthProvider.prototype,
-      "discoveryState",
-      function (this: StaticOAuthProvider) {
+      discoveryState: function (this: StaticOAuthProvider) {
         return authValue<OAuthDiscoveryState>(() => {
           const { settings } = this;
           const metadata = {
@@ -471,31 +442,16 @@ class StaticOAuthProvider extends KvOAuthProvider {
           };
         });
       },
-      StaticOAuthProvider.prototype.discoveryState,
-    );
-    registerAuthMethod(
-      StaticOAuthProvider.prototype,
-      "saveDiscoveryState",
-      function (this: StaticOAuthProvider) {
+      saveDiscoveryState: function (this: StaticOAuthProvider) {
         // Configuration is the discovery; there is nothing to remember.
         return Effect.void;
       },
-      StaticOAuthProvider.prototype.saveDiscoveryState,
-    );
-    registerAuthMethod(
-      StaticOAuthProvider.prototype,
-      "validateResourceURL",
-      function (this: StaticOAuthProvider) {
+      validateResourceURL: function (this: StaticOAuthProvider) {
         return authValue<URL | undefined>(() => {
           return undefined;
         });
       },
-      StaticOAuthProvider.prototype.validateResourceURL,
-    );
-    registerAuthMethod(
-      StaticOAuthProvider.prototype,
-      "redirectToAuthorization",
-      function (this: StaticOAuthProvider, authorizationUrl: URL) {
+      redirectToAuthorization: function (this: StaticOAuthProvider, authorizationUrl: URL) {
         return authFlow<void>(
           function* (this: StaticOAuthProvider) {
             if (!this.settings.pkce) {
@@ -506,8 +462,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
           }.bind(this),
         );
       },
-      StaticOAuthProvider.prototype.redirectToAuthorization,
-    );
+    });
   }
 }
 
