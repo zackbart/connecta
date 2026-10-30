@@ -10,6 +10,7 @@ import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { DETAILS_BUDGET_BYTES, hatch, SEARCH_BUDGET } from "../src/http/hatch.js";
+import { boundWarnings, WARNING_BUDGET } from "../src/http/fields.js";
 import {
   googlePageToken,
   cloudflarePage,
@@ -169,6 +170,7 @@ function setup(
     data?: OpenApiData;
     context?: ReturnType<typeof connectorContext>;
     pathMatching?: "uri-template";
+    maxResponseBytes?: number;
   } = {},
 ) {
   const index = new OperationIndex(
@@ -194,7 +196,7 @@ function setup(
     guardedClient({
       provider: "Items",
       baseUrl: "https://api.example/v1",
-      maxResponseBytes: 1024,
+      maxResponseBytes: options.maxResponseBytes ?? 1024,
       admit,
       authenticate: Effect.sync(authenticate),
     }),
@@ -1722,6 +1724,25 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   expect(framedCalls).toHaveLength(3);
 });
 
+it("INV-5: bounds fields miss warnings and never echoes response keys", NODE, async () => {
+  // A 220 KB key in an open map, missed by all 50 fields entries, once produced about 11 MB of warnings.
+  const huge = `zz_${"k".repeat(220_000)}`;
+  const { call } = setup({ maxResponseBytes: 1_000_000 });
+  response = () => Response.json({ id: "i1", label: { [huge]: 1 }, nested: { [huge]: 1 } });
+  const fields = Array.from({ length: 50 }, (_, at) => (at % 2 ? "label.zz_missing" : "nested.zz_missing"));
+  const result = (await call("read", { path: "/items", fields })) as { warnings: string[] };
+  expect(result.warnings).toHaveLength(WARNING_BUDGET.warnings + 1);
+  expect(result.warnings.at(-1)).toBe(`${50 - WARNING_BUDGET.warnings} more warnings omitted.`);
+  expect(result.warnings.every((warning) => warning.length <= WARNING_BUDGET.chars)).toBe(true);
+  expect(result.warnings.join("").length).toBeLessThanOrEqual(WARNING_BUDGET.totalChars);
+  expect(JSON.stringify(result)).not.toContain("zz_k");
+  // Long warnings are cut, reviewed ones included, within the same total.
+  expect(boundWarnings(Array.from({ length: 30 }, () => "w".repeat(2_000)))).toEqual([
+    ...Array.from({ length: 7 }, () => `${"w".repeat(WARNING_BUDGET.chars - 1)}…`),
+    "23 more warnings omitted.",
+  ]);
+});
+
 it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and one write attempt", NODE, async () => {
   for (const entry of [
     { args: { path: "/items" }, deny: true, message: "Account pin", sends: 0, auth: 0 },
@@ -1742,27 +1763,28 @@ it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and o
       data: { id: "i1", email: "private" },
       expected: { id: "i1" },
       warnings: [
-        "fields/0 matched nothing in this response after value safety and privacy filtering; the body has id.",
+        "fields/0 matched nothing in this response after value safety and privacy filtering, at segment 1; declared there: id, email, token, label, nested.",
       ],
     },
     { args: { path: "/items", fields: ["id"] }, data: [], expected: [] },
-    // The pinned index declares roots only, so a nested miss is reported with the safe keys
-    // where matching stopped, never refused. A path past a scalar keeps it whole, and a path
-    // any listed item matched is no miss.
+    // The pinned index declares roots only, so a nested miss is reported with the properties the
+    // contract declares where matching stopped, never refused and never the response's own keys:
+    // in an open map those are data. A path past a scalar keeps it whole, and a path any listed
+    // item matched is no miss.
     {
       args: { path: "/items", fields: ["id.zz_deeper", "nested.zz_nope"] },
-      data: { id: "i1", nested: { id: "i2", email: "private" } },
+      data: { id: "i1", nested: { id: "i2", email: "private", zz_customer_key: "v" } },
       expected: { id: "i1", nested: {} },
       warnings: [
-        "fields/1 matched nothing in this response after value safety and privacy filtering; the values at segment 1 have id.",
+        "fields/1 matched nothing in this response after value safety and privacy filtering, at segment 2; declared there: id, email.",
       ],
     },
     {
-      args: { path: "/items", fields: ["nested.zz_nope"] },
-      data: { id: "i1", nested: {} },
-      expected: { nested: {} },
+      args: { path: "/items", fields: ["label.zz_missing"] },
+      data: { id: "i1", label: { zz_customer_key: "v", zz_other_key: "w" } },
+      expected: { label: {} },
       warnings: [
-        "fields/0 matched nothing in this response after value safety and privacy filtering; the values at segment 1 have no properties.",
+        "fields/0 matched nothing in this response after value safety and privacy filtering, at segment 2; the operation declares no properties there.",
       ],
     },
     {

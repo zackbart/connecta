@@ -27,7 +27,7 @@ import {
 import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
 import type { RestCall } from "../providers/_shared/rest/kit.js";
 import { Refusal, toConnectorCallError, type HttpFailure } from "./errors.js";
-import { fieldsDescription, fieldsInput, fieldsMisses, fieldsProblem, selectFields } from "./fields.js";
+import { boundWarnings, fieldsDescription, fieldsInput, fieldsMisses, fieldsProblem, selectFields } from "./fields.js";
 import type { HatchPageAdapter } from "./hatch-paging.js";
 import { RESPONSE_BUDGET, responseContract, type ResponseContract } from "./hatch-response.js";
 import { Integer, isMaxChars, isMinChars } from "./json-schema.js";
@@ -412,7 +412,7 @@ export function hatch(
       : {}),
     warnings: Schema.optionalKey(
       Schema.Array(Schema.String).annotate({
-        description: `${options.binding?.warnings ? "Reviewed warnings preserved after fields selection, and " : ""}fields entries that matched nothing in this nonempty response, with the keys present where matching stopped.`,
+        description: `${options.binding?.warnings ? "Reviewed warnings preserved after fields selection, and " : ""}fields entries that matched nothing in this nonempty response, with the properties declared where matching stopped. At most 10 warnings of 512 characters, then an omitted count.`,
       }),
     ),
   });
@@ -1515,10 +1515,17 @@ export function hatch(
       const answered = answer.data === undefined ? null : answer.data;
       // Roots were checked before dispatch; the pinned index cannot say whether a
       // deeper level is closed, so a nested miss is reported, never refused.
-      const warnings = [
+      const warnings = boundWarnings([
         ...(options.binding?.warnings && "warnings" in answer ? (answer.warnings ?? []) : []),
-        ...fieldsMisses(answered, args.fields),
-      ];
+        ...fieldsMisses(
+          answered,
+          args.fields,
+          index
+            .fields(op)
+            .filter((field) => field.in === "response")
+            .map((field) => field.path),
+        ),
+      ]);
       return {
         status: answer.status,
         data: selectFields(answered, args.fields),

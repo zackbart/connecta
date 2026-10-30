@@ -389,10 +389,13 @@ remain outside the selection where a tool says so.
 (`/fields/1`), the segment where the path left the contract and the properties
 declared there, never the submitted path:
 
-- Named tools check every segment against their published output schema, as
-  deep as it declares properties. Below an open value, such as a record of
-  vendor fields (GitHub `search_scoped` rows' `item`), any path is accepted.
-  A segment below a scalar is refused.
+- Named tools check the first segment against the properties their published
+  output schema declares for the result or item. Deeper segments follow JSON
+  Schema's default: an object is closed only where the schema says
+  `additionalProperties: false`, and only such an object refuses an undeclared
+  property. Paths through other objects, open values such as GitHub
+  `search_scoped` rows' `item`, and paths past a scalar are accepted; a miss
+  there is omitted from the selection.
 - Hatch reads and writes check the first segment against the operation's
   declared response roots. An operation that declares no response properties
   refuses `fields`. The pinned index does not establish whether deeper levels
@@ -404,13 +407,19 @@ path the current response lacks is never refused, and the selection omits it.
 
 **Hatch miss warnings.** A hatch answer adds `warnings: string[]` when a
 `fields` entry matched nothing anywhere in a nonempty response. Each warning
-names the entry position, the segment where matching stopped and the keys the
-filtered data has there (counted beyond 40), for example
+names the entry position, the segment where matching stopped and the
+properties the operation's contract declares there, for example
 `fields/1 matched nothing in this response after value safety and privacy
-filtering; the values at segment 1 have id, name.`. A path that matched in any
-listed item, a path that runs past a scalar (selection keeps the scalar), and
-any path of an empty body (`null`, `[]` or `{}`) produce no warning. Treat a
-warning as a repair hint for the next call, not as a failure.
+filtering, at segment 2; declared there: id, name.` Where the contract
+declares none, such as inside an open map, it says so. A warning never lists
+the response's own keys, which in an open map such as `metadata` are data, and
+never repeats the submitted path. A path that matched in any listed item, a
+path that runs past a scalar (selection keeps the scalar), and any path of an
+empty body (`null`, `[]` or `{}`) produce no warning. Warnings are bounded: each
+is at most 512 characters, at most 10 are kept within 4,096 characters
+together, reviewed vendor warnings included, and a final entry counts the rest
+(`3 more warnings omitted.`). Treat a warning as a repair hint for the next
+call, not as a failure.
 
 ## API operation discovery and boundaries
 

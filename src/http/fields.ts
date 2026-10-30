@@ -54,17 +54,21 @@ const segments = (path: string) => path.replace(/\[\](?=\.|$)/g, "").split(".");
  * `into`, false when the position is open (any key may appear: `{}`, a bare
  * object or array, a record, a reference). Arrays are transparent, as
  * selection narrows them item by item; a leaf adds nothing and stays closed.
+ * Below the first segment, JSON Schema's default applies: an object is closed
+ * only when it says `additionalProperties: false`. The first segment keeps the
+ * declared properties of the result or item as its closed set.
  */
-function propertiesAt(node: unknown, into: Map<string, unknown[]>): boolean {
+function propertiesAt(node: unknown, into: Map<string, unknown[]>, root: boolean): boolean {
   if (!record(node)) return node === false;
-  if ("$ref" in node || "allOf" in node || (node["additionalProperties"] ?? false) !== false) return false;
+  const additional = node["additionalProperties"];
+  if ("$ref" in node || "allOf" in node || (additional !== undefined && additional !== false)) return false;
   const branches = [node["anyOf"], node["oneOf"]].flatMap((value) => (Array.isArray(value) ? value : []));
-  if (!branches.every((branch) => propertiesAt(branch, into))) return false;
-  if (node["items"] !== undefined && !propertiesAt(node["items"], into)) return false;
+  if (!branches.every((branch) => propertiesAt(branch, into, root))) return false;
+  if (node["items"] !== undefined && !propertiesAt(node["items"], into, root)) return false;
   const properties = node["properties"];
   if (record(properties)) {
     for (const [name, child] of Object.entries(properties)) into.set(name, [...(into.get(name) ?? []), child]);
-    return true;
+    return root || additional === false;
   }
   if (branches.length || node["items"] !== undefined || "enum" in node || "const" in node) return true;
   const types = [node["type"]].flat();
@@ -95,7 +99,8 @@ function fieldsIssues(
     let nodes: unknown[] = [root];
     for (const [depth, name] of segments(field).entries()) {
       const at = new Map<string, unknown[]>();
-      if (!nodes.every((node) => propertiesAt(node, at))) return;
+      // Selection keeps a scalar a path runs past, so below the first segment only a closed object refuses.
+      if (!nodes.every((node) => propertiesAt(node, at, depth === 0)) || (depth > 0 && at.size === 0)) return;
       const next = at.get(name);
       if (next) {
         nodes = next;
@@ -106,9 +111,7 @@ function fieldsIssues(
         `/fields/${index}`,
         depth === 0
           ? `a path beginning with a property of ${of}: ${choices(declared)}`
-          : declared.length === 0
-            ? `a declared path of ${of}; the value at segment ${depth} has no properties, so end the path there`
-            : `a declared path of ${of}; segment ${depth + 1} names a property declared at that level: ${choices(declared)}`,
+          : `a declared path of ${of}; segment ${depth + 1} names a property declared at that level: ${choices(declared)}`,
       );
       return;
     }
@@ -151,7 +154,7 @@ export function fieldsContract(
 ): FieldsContract {
   const schema = "ast" in shape ? catalogSchema(shape as Schema.Top, "output") : shape;
   const at = new Map<string, unknown[]>();
-  propertiesAt(schema, at);
+  propertiesAt(schema, at, true);
   const example = [...at.keys()][0];
   if (example === undefined) throw new Error("fields needs a contract that declares at least one property.");
   const description = fieldsDescription(anchor, example, note);
@@ -188,40 +191,82 @@ const empty = (value: unknown) =>
   value === undefined ||
   (Array.isArray(value) ? value.length === 0 : record(value) && !Object.keys(value).length);
 
+/** Warning bounds: each warning's characters, the count kept, and every kept warning's characters together. */
+export const WARNING_BUDGET = { chars: 512, warnings: 10, totalChars: 4096 } as const;
+
+/**
+ * Keep warnings within WARNING_BUDGET in order, cutting a long one with an
+ * ellipsis, then one count of what was omitted. Merged reviewed warnings and
+ * `fields` reports share the budget.
+ */
+export function boundWarnings(warnings: readonly string[]): string[] {
+  const kept: string[] = [];
+  let total = 0;
+  for (const warning of warnings) {
+    const text = warning.length > WARNING_BUDGET.chars ? `${warning.slice(0, WARNING_BUDGET.chars - 1)}…` : warning;
+    // Leave room for the omitted count.
+    if (kept.length >= WARNING_BUDGET.warnings || total + text.length > WARNING_BUDGET.totalChars - 64) break;
+    kept.push(text);
+    total += text.length;
+  }
+  const omitted = warnings.length - kept.length;
+  return omitted ? [...kept, `${omitted} more warning${omitted === 1 ? "" : "s"} omitted.`] : kept;
+}
+
+/** Declared names listed in one warning, within its character budget. */
+function named(names: readonly string[]): string {
+  let text = "";
+  let shown = 0;
+  for (const name of names) {
+    const next = text ? `${text}, ${name}` : name;
+    if (next.length > WARNING_BUDGET.chars - 200) break;
+    text = next;
+    shown += 1;
+  }
+  return shown < names.length ? `${text}${text ? " and " : ""}${names.length - shown} more` : text;
+}
+
 /**
  * One warning per `fields` entry that matched nothing in a nonempty response,
  * for contracts that cannot refuse it in advance. It names the entry's index,
- * the segment where matching stopped and the keys the safe data has there
- * (across list items), never the submitted text. A path some item matched,
- * a path past a scalar (kept whole), or any path of an empty response, is no
- * warning.
+ * the segment where matching stopped and the properties the contract declares
+ * there, from `declared` (paths in `fields` coordinates). It never lists the
+ * response's own keys, which in an open map are data, nor the submitted text.
+ * A path some item matched, a path past a scalar (kept whole), or any path of
+ * an empty response, is no warning.
  */
-export function fieldsMisses(data: unknown, fields: readonly string[] | undefined): string[] {
+export function fieldsMisses(
+  data: unknown,
+  fields: readonly string[] | undefined,
+  declared: readonly string[] = [],
+): string[] {
   if (!fields?.length || empty(data)) return [];
   const flat = (values: readonly unknown[]): unknown[] =>
     values.flatMap((value) => (Array.isArray(value) ? flat(value) : [value]));
+  const contract = declared.map((path) => segments(path.replace(/^\[\]\.?/, "")));
   return fields.flatMap((field, index) => {
+    const path = segments(field);
     let values = flat([data]);
-    for (const [depth, name] of segments(field).entries()) {
+    for (const [depth, name] of path.entries()) {
       const holders = values.filter((value) => record(value) && Object.hasOwn(value, name));
       if (holders.length) {
         values = flat(holders.map((value) => (value as Record<string, unknown>)[name]));
         continue;
       }
       // Selection keeps a scalar or null a path runs past, so only an object lacking the key is a miss.
-      const records = values.filter(record);
-      if (!records.length) return [];
-      const keys = [...new Set(records.flatMap((value) => Object.keys(value)))];
-      const where =
-        depth > 0
-          ? `the values at segment ${depth} have`
-          : Array.isArray(data)
-            ? "the listed items have"
-            : "the body has";
-      const found =
-        keys.length === 0 ? "no properties" : keys.length <= MAX_CHOICES ? keys.join(", ") : `${keys.length} keys`;
+      if (!values.some(record)) return [];
+      const prefix = path.slice(0, depth);
+      const names = [
+        ...new Set(
+          contract
+            .filter((parts) => parts.length > depth && prefix.every((part, at) => parts[at] === part))
+            .map((parts) => parts[depth]!),
+        ),
+      ];
       return [
-        `fields/${index} matched nothing in this response after value safety and privacy filtering; ${where} ${found}.`,
+        `fields/${index} matched nothing in this response after value safety and privacy filtering, at segment ${depth + 1}; ${
+          names.length ? `declared there: ${named(names)}` : "the operation declares no properties there"
+        }.`,
       ];
     }
     return [];

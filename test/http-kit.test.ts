@@ -57,6 +57,7 @@ import { indexedVendor } from "../src/providers/_shared/rest/kit.js";
 import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
 import { continuationKeys } from "../src/storage/keys.js";
 import { read, write, list } from "../src/http/tools.js";
+import { fieldsContract } from "../src/http/fields.js";
 import {
   connect,
   vendor,
@@ -715,33 +716,54 @@ describe("fields (decision 0011 S5)", () => {
       items: [{ owner: {} }],
     });
     expect(sent).toBe(2);
+    // Below the first segment JSON Schema's default applies: the rendered objects are open, so
+    // undeclared nested paths and paths past a scalar are selections too. The first segment is closed.
+    const nested = ["owner.zz_secret", "tags.zz_label", "id.zz_value"];
+    await expect(connector.callTool("get_record", { fields: nested }, context())).resolves.toEqual({
+      id: "r1",
+      owner: {},
+      tags: [],
+    });
+    expect(sent).toBe(3);
     for (const name of ["get_record", "list_records"]) {
       const of = name === "get_record" ? "the result" : "an item";
       const failure = await connector
-        .callTool(name, { fields: ["id", "owner.zz_secret", "tags.zz_label", "id.zz_value", "zz_root"] }, context())
+        .callTool(name, { fields: ["id", "zz_root", "owner.zz_secret", "zz_other.id"] }, context())
         .catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(ConnectorCallError);
-      expect((failure as ConnectorCallError).validation?.issues).toEqual([
-        {
-          path: "/fields/1",
-          expected: `a declared path of ${of}; segment 2 names a property declared at that level: one of name, email`,
-        },
-        {
-          path: "/fields/2",
-          expected: `a declared path of ${of}; segment 2 names a property declared at that level: one of label`,
-        },
-        {
-          path: "/fields/3",
-          expected: `a declared path of ${of}; the value at segment 1 has no properties, so end the path there`,
-        },
-        { path: "/fields/4", expected: `a path beginning with a property of ${of}: one of id, owner, tags, extra` },
-      ]);
+      expect((failure as ConnectorCallError).validation?.issues).toEqual(
+        [1, 3].map((index) => ({
+          path: `/fields/${index}`,
+          expected: `a path beginning with a property of ${of}: one of id, owner, tags, extra`,
+        })),
+      );
       // A refusal names positions and declared properties, never what was submitted.
       expect(JSON.stringify([(failure as Error).message, (failure as ConnectorCallError).validation])).not.toMatch(
         /zz_/,
       );
     }
-    expect(sent).toBe(2);
+    // An explicitly closed object (`additionalProperties: false`) refuses an undeclared nested path.
+    const closed = fieldsContract("result", {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        owner: {
+          anyOf: [
+            { type: "object", properties: { name: { type: "string" } }, additionalProperties: false },
+            { type: "null" },
+          ],
+        },
+        meta: { type: "object", properties: { note: { type: "string" } } },
+      },
+    });
+    expect(closed.problem(["owner.name", "meta.zz_open", "id.zz_scalar"])).toBeUndefined();
+    expect(closed.problem(["owner.zz_secret"])?.validation?.issues).toEqual([
+      {
+        path: "/fields/0",
+        expected: "a declared path of the result; segment 2 names a property declared at that level: one of name",
+      },
+    ]);
+    expect(sent).toBe(3);
   });
 });
 

@@ -2251,16 +2251,17 @@ nonnegative safe integer and includes it on continuing and terminal pages;
 without a vendor count the property is absent. Lists without the opt-in keep
 their existing schema and result bytes. Never derive an exact total from a
 partial page or an estimate. `src/http/fields.ts` derives each `fields`
-description's anchor and example from the contract that validates it, and
-refuses a path that leaves the published output schema at any segment before
-dispatch, stopping at open values; a selected result renders against a sparse
+description's anchor and example from the contract that validates it. It
+refuses before dispatch a path whose first segment is not a declared property,
+and a deeper segment only inside an object the schema closes with
+`additionalProperties: false`; a selected result renders against a sparse
 output schema. `src/http/hatch.ts` is the
 standard hatch (`_api_search`, `_api_details`, `_api_read`, `_api_write`) over
 an `OperationIndex` with explicit verdicts. It keeps the REST family's
 argument and envelope names and validates `fields` against the operation's
 declared response roots before dispatch. A deeper miss is reported in
-`warnings`, never refused, because the pinned index declares paths only to a
-bounded depth. Search answers stay within 16 KiB
+bounded `warnings` naming declared properties only, never refused, because the
+pinned index declares paths only to a bounded depth. Search answers stay within 16 KiB
 (at most eight compact entries, long labels cut and marked, continuation by
 cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
