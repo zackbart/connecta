@@ -1431,7 +1431,8 @@ describe("api() oauth last verification", () => {
 
     // Disconnecting forgets what was observed of the grant.
     await connector.disconnectAuth!(ctx());
-    expect(await storage.get(recordKey)).toBeNull();
+    expect(JSON.parse((await storage.get(recordKey))!)).toMatchObject({ outcome: null });
+    expect(await detailRow(registry, "ccb")).not.toHaveProperty("verification");
 
     // A new grant starts unverified, and its first accepted call verifies it.
     provider.control.apiRejects = false;
@@ -1442,6 +1443,64 @@ describe("api() oauth last verification", () => {
     await connector.callTool("whoami", {}, ctx());
     expect(await detailRow(registry, "ccb")).toMatchObject({ status: "ok", verification: { outcome: "ok" } });
   });
+
+  it.each(["disconnect and reconnect", "consent again in the same epoch"] as const)(
+    "a refusal recorded late never overrides the grant of a %s",
+    async (reauthorization) => {
+      const storage = memoryStorage();
+      const provider = fakeProvider();
+      install(provider);
+      const connector = ccb();
+      const registry = makeRegistry([connector], { storage });
+      const ctx = () => registry.contextFor("ccb", BASE, {});
+      const recordKey = scopes.connector("ccb") + verificationKeys.record;
+      await authorize(connector, ctx, provider);
+
+      // The old grant is refused, but its record write is held back.
+      let reached!: () => void;
+      const held = new Promise<void>((resolve) => (reached = resolve));
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let armed = true;
+      // Hold the first touch of the record, whichever way the write begins.
+      for (const method of ["get", "set", "compareAndSet"] as const) {
+        const original = (storage[method] as (...args: unknown[]) => Promise<unknown>).bind(storage);
+        vi.spyOn(storage, method).mockImplementation((async (key: string, ...rest: unknown[]) => {
+          if (key === recordKey && armed) {
+            armed = false;
+            reached();
+            await gate;
+          }
+          return original(key, ...rest);
+        }) as never);
+      }
+      if (reauthorization === "disconnect and reconnect") provider.control.apiRejects = true;
+      else {
+        provider.expireAccess();
+        provider.control.refresh = "dead";
+      }
+      const refused = failure(connector.callTool("whoami", {}, ctx()));
+      await held;
+
+      // The operator authorizes a new grant before the old call's write lands.
+      provider.control.apiRejects = false;
+      provider.control.refresh = "rotate";
+      if (reauthorization === "disconnect and reconnect") await connector.disconnectAuth!(ctx());
+      await authorize(connector, ctx, provider);
+      release();
+      expect((await refused).classified.code).toBe("downstream_oauth_required");
+
+      expect(await detailRow(registry, "ccb")).toMatchObject({ status: "ok" });
+      expect(await detailRow(registry, "ccb")).not.toHaveProperty("verification");
+      // A fresh runtime reads the same record.
+      const fresh = makeRegistry([ccb()], { storage });
+      expect(await detailRow(fresh, "ccb")).toMatchObject({ status: "ok" });
+      expect(await detailRow(fresh, "ccb")).not.toHaveProperty("verification");
+      // The new grant's own calls still verify it.
+      await connector.callTool("whoami", {}, ctx());
+      expect(await detailRow(registry, "ccb")).toMatchObject({ status: "ok", verification: { outcome: "ok" } });
+    },
+  );
 
   it("keeps each personal owner's verification apart", async () => {
     const storage = memoryStorage();

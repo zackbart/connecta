@@ -77,3 +77,30 @@ export async function writeVerification(
   await storage.set(verificationKeys.record, JSON.stringify({ ...record, credential }));
   return record;
 }
+
+/**
+ * `api()` OAuth: record what a call observed of the grant it read at `since`
+ * (epoch milliseconds) in `epoch`. Written by compare-and-set and refused once
+ * the record holds a newer observation or a fence of another grant, so a
+ * call that outlived its grant can never speak for its successor. `null`
+ * writes that fence: a new grant (with its epoch), a reset or a disconnect.
+ * A fence shows no verification.
+ */
+export async function observeGrant(
+  storage: KVStorage,
+  outcome: "ok" | "rejected" | null,
+  since: number,
+  epoch?: string,
+): Promise<void> {
+  const next = JSON.stringify({ outcome, observedAt: new Date().toISOString(), credential: epoch, since });
+  if (!outcome) return storage.set(verificationKeys.record, next);
+  const raw = await storage.get(verificationKeys.record);
+  let current: { since?: number; credential?: string } | null = null;
+  try {
+    current = JSON.parse(raw ?? "null");
+  } catch {
+    /* An unreadable record is replaced like an absent one would be. */
+  }
+  if (current && !(current.since! <= since && current.credential === epoch)) return;
+  await storage.compareAndSet(verificationKeys.record, raw, next);
+}
