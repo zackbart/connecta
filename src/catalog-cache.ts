@@ -674,8 +674,6 @@ interface Listing {
   credentialIdentity?: string | undefined;
   /** Whether the generation was read from storage rather than newly drawn. */
   generationStored?: boolean;
-  /** Entry roots this listing read as missing and has not written since. */
-  absent: Set<string>;
 }
 interface CacheOperation {
   ctx: ConnectorContext;
@@ -1004,12 +1002,11 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             const { ctx, stopped, io } = operation;
             const root = (yield authCall(address, [key, operation])) as string | undefined;
             if (!root || stopped()) return undefined;
-            const raw = (yield authCall(io, [
-              cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
-            ])) as string | null;
-            if (raw === null) operation.listing?.absent.add(root);
-            else operation.listing?.absent.delete(root);
-            const m = manifest(raw);
+            const m = manifest(
+              (yield authCall(io, [
+                cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
+              ])) as string | null,
+            );
             if (
               stopped() ||
               !m ||
@@ -1093,11 +1090,6 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const result = JSON.parse(entry.value) as CatalogResult;
               const method = key.method as CatalogMethod;
               if (catalogTtlMs(ctx, result.ttlMs) === 0) {
-                // Removing an entry this listing just read as missing would
-                // only repeat what a concurrent publication racing ahead of
-                // that read already looks like; a catalog change rotates the
-                // generation regardless.
-                if (operation.listing?.absent.has(root)) return 0;
                 if (!stopped() && ((yield authCall(namespace, [operation])) as string | undefined) && !stopped())
                   (yield authCall(io, [
                     cacheMethod(() => authStorage(storage, "delete", [root]) as Effect.Effect<void, unknown>),
@@ -1186,7 +1178,6 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                 ])) as boolean;
                 if (stopped()) return 0;
                 if (published) {
-                  operation.listing?.absent.delete(root);
                   lastStamp = stamp;
                   return stamp;
                 }
@@ -1198,7 +1189,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           authFlow<void>(function* () {
             const operation = capture();
             const root = (yield authCall(address, [key, operation])) as string | undefined;
-            if (root && !operation.stopped() && !operation.listing?.absent.has(root))
+            if (root && !operation.stopped())
               (yield authInvoke(operation, "io", [
                 cacheMethod(() => authStorage(storage, "delete", [root]) as Effect.Effect<void, unknown>),
               ])) as void;
@@ -1222,7 +1213,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         ),
       };
       try {
-        const { stopped, io } = capture({ ctx, generation: connectionGeneration, ended: false, absent: new Set() });
+        const { stopped, io } = capture({ ctx, generation: connectionGeneration, ended: false });
         // A connectionless reader only lists, and each listing reads its own
         // generation; there are no connection-owned writes to fence.
         if (!connectionless && !stopped()) {
@@ -1253,7 +1244,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             if (listingCtx.signal?.aborted) throw listingCtx.signal.reason;
             if (policy && serviceFor(listingCtx, CatalogPolicy) === undefined)
               setViewService(listingCtx, CatalogPolicy, policy);
-            const listing: Listing = { ctx: listingCtx, generation: {}, ended: false, absent: new Set() };
+            const listing: Listing = { ctx: listingCtx, generation: {}, ended: false };
             active = listing;
             staleTools = undefined;
             const operation = capture();

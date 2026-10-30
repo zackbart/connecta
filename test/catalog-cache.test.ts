@@ -345,7 +345,7 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(baseline).not.toMatch(/old|new|inputSchema/);
   });
 
-  it("INV-6 INV-8: a modern zero-TTL catalog lists every call, writes nothing while unchanged and still records drift", async () => {
+  it("INV-6 INV-8: a modern zero-TTL catalog lists every call, writes no baseline while unchanged and still records drift", async () => {
     const store = await storage();
     const id = `modern_zero_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
     const recordChange = vi.fn();
@@ -377,6 +377,12 @@ describe("SQL-backed SDK catalog cache", () => {
       }
     };
     const writes = () => (["set", "compareAndSet", "delete"] as const).map((method) => vi.spyOn(store, method));
+    // An unchanged call only clears the zero-TTL cache slots; it writes no baseline.
+    const baselineUntouched = ([set, compareAndSet, remove]: ReturnType<typeof writes>) => {
+      expect(set).not.toHaveBeenCalled();
+      expect(compareAndSet).not.toHaveBeenCalled();
+      for (const [key] of remove!.mock.calls) expect(key).not.toContain(":refresh-digest:");
+    };
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
     expect(await call()).toEqual(["Read a record"]);
@@ -386,11 +392,11 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(baseline).toHaveLength(1);
     const written = await store.get(baseline[0]!);
 
-    // Budget: a warm unchanged call still lists, never reuses, and writes nothing.
+    // Budget: a warm unchanged call still lists, never reuses, and writes no baseline.
     let spies = writes();
     expect(await call()).toEqual(["Read a record"]);
     expect(listings).toBe(2);
-    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    baselineUntouched(spies);
     expect(await store.get(baseline[0]!)).toBe(written);
     expect(recordChange).not.toHaveBeenCalled();
     vi.restoreAllMocks();
@@ -417,7 +423,7 @@ describe("SQL-backed SDK catalog cache", () => {
     vi.spyOn(Date, "now").mockImplementation(() => now);
     spies = writes();
     await call();
-    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    baselineUntouched(spies);
     expect(recordChange).toHaveBeenCalledOnce();
     expect(listings).toBe(5);
   });
@@ -1324,6 +1330,44 @@ it("INV-9 INV-8: an explicit zero-TTL refresh removes a previous reusable listin
   await cache.responseCacheStore!.set(key, { value: JSON.stringify({ tools, ttlMs: 0 }), expiresAt: Date.now() });
   expect(await cache.responseCacheStore!.get(key)).toBeUndefined();
 });
+
+it.each(["zero-TTL write", "cleanup delete"] as const)(
+  "INV-8: a %s removes an older catalog published after the listing read the slot as missing",
+  async (removal) => {
+    const store = await storage();
+    const id = `race_${crypto.randomUUID().replaceAll("-", "")}`;
+    // One stored generation, so every instance addresses the same slot.
+    await invalidateCatalogCache(store, id);
+    const instance = async () => {
+      const ctx = connectorContext(store);
+      const cache = await catalogClientOptions(ctx, id, "configuration", "grant");
+      return { ctx, cache, store: cache.responseCacheStore! };
+    };
+    const a = await instance();
+    const b = await instance();
+    const key = { method: "tools/list", partition: JSON.stringify(["server", a.cache.cachePartition]) };
+    await a.cache.withListing(a.ctx, async () => {
+      // A reads the slot as missing and lists the downstream.
+      expect(await a.store.get(key)).toBeUndefined();
+      // B, holding an older catalog with a positive TTL, publishes into the slot.
+      await b.store.set(key, {
+        value: JSON.stringify({ tools: [{ name: "stale", inputSchema: { type: "object" } }], ttlMs: 60_000 }),
+        expiresAt: Date.now() + 60_000,
+      });
+      // A's newer answer refuses reuse; the slot must not keep B's catalog.
+      if (removal === "zero-TTL write")
+        await a.store.set(key, {
+          value: JSON.stringify({ tools: [{ name: "fresh", inputSchema: { type: "object" } }], ttlMs: 0 }),
+          expiresAt: Date.now(),
+        });
+      else await a.store.delete(key);
+    });
+    // A later request, connectionless or not, finds nothing to serve.
+    const later = await instance();
+    expect(await later.store.get(key)).toBeUndefined();
+    expect(await later.cache.cachedTools(later.ctx)).toBeUndefined();
+  },
+);
 
 /** A stateful 2025-era downstream: every connection pays initialize, initialized, a standalone GET and a DELETE. */
 function legacyDownstream(name: string, hint: { ttlMs?: number } = {}) {

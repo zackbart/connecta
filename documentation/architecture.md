@@ -673,9 +673,7 @@ publish a new catalog after invalidation without letting an older listing
 adopt its generation. A public transport observer starts a generation rotation
 before the SDK processes tool or resource list-changed notifications; its lifetime is
 the connection's, including after a successful resource read or listing ends.
-Opposite-scope cleanup only deletes its entry. A zero-TTL write and
-opposite-scope cleanup skip deleting an entry their own listing read as
-missing and has not written since. SDK listings serialize per client
+Opposite-scope cleanup only deletes its entry. SDK listings serialize per client
 because the cache store has no per-call options. Their operation binding lasts
 through the SDK's cleanup, and each cache method captures that binding before
 awaiting. Cache I/O checks cancellation and scope teardown at every await
@@ -703,8 +701,9 @@ last hour, the refresh writes nothing; an older matching baseline is rewritten
 with fresh chunks, so every refresh leaves a baseline for at least 47 hours.
 A manifest's lifetime is never extended without new chunks, so its chunks
 always outlive it. A changed digest writes the new baseline and reports drift
-against the previous one. An unchanged zero-TTL listing therefore writes
-nothing, while it still lists live every time. There is no connection-wide
+against the previous one. An unchanged zero-TTL listing therefore writes no
+baseline; it still lists live every time and deletes its cache slots, since a
+concurrent request may have published an older reusable catalog there. There is no connection-wide
 fallback baseline across partitions. Private catalog events use the admitted
 principal actor basis even for shared-auth connectors; activity disclosure
 requires that same owner and the recorded pool's grants. Ownerless private
