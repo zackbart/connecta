@@ -552,7 +552,14 @@ it("INV-5 INV-10: credential probes use candidate keys and refuse missing creden
       { ok: true, message: "Authenticated as Alice (person 7) in Example." },
     ],
     [{ data: person("7", {}) }, { ok: true, message: "Authenticated as person 7 (person 7)." }],
-    [{ data: [] }, { ok: false, message: "Planning Center answered without the person record it should return." }],
+    [
+      { data: [] },
+      {
+        ok: false,
+        message: "Planning Center answered without the person record it should return.",
+        failure: "failed",
+      },
+    ],
     [
       { data: person("7", { name: candidate.secret }) },
       { ok: true, message: "Authenticated as [redacted] (person 7)." },

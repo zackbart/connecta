@@ -36,20 +36,26 @@ export function CredentialForm({
   connector,
   credential,
   busy,
+  testable = false,
+  untested = false,
 }: {
   connector: string;
   credential: CredentialFormSlot;
   busy: boolean;
+  /** The connector can test a candidate, so Save tests it before storing it. */
+  testable?: boolean;
+  /** This form's candidate just failed its test; offer saving it without one. */
+  untested?: boolean;
 }) {
   const fields = credential.fields ?? [];
   const [values, setValues] = useState<Record<string, string>>({});
   const single = fields.length === 0;
   const inputId = `credential-input-${connector}`;
-  const submit = () => {
+  const submit = (verify: "test" | "skip") => {
     if (single) {
       const value = (values.value ?? "").trim();
       if (!value) return refuseCredential(connector, "Paste a credential before saving.");
-      return void saveCredential(connector, { value });
+      return void saveCredential(connector, { value }, verify);
     }
     const entries: Record<string, string> = {};
     for (const field of fields) {
@@ -59,7 +65,7 @@ export function CredentialForm({
       }
       entries[field.name] = value;
     }
-    void saveCredential(connector, { values: entries });
+    void saveCredential(connector, { values: entries }, verify);
   };
   return (
     <div className="credential-form" data-credential-form={connector}>
@@ -114,9 +120,25 @@ export function CredentialForm({
         </div>
       )}
       <div className="actions">
-        <button className="btn primary" type="button" disabled={busy} onClick={submit}>
-          {busy ? "Saving…" : "Save"}
+        <button
+          className="btn primary"
+          type="button"
+          disabled={busy}
+          onClick={() => submit(testable ? "test" : "skip")}
+        >
+          {busy ? (testable ? "Testing…" : "Saving…") : testable ? "Test and save" : "Save"}
         </button>
+        {testable && untested ? (
+          <button
+            className="btn"
+            type="button"
+            data-save-untested={connector}
+            disabled={busy}
+            onClick={() => submit("skip")}
+          >
+            Save without testing
+          </button>
+        ) : null}
         <button className="btn quiet" type="button" disabled={busy} onClick={() => editCredential(null)}>
           Cancel
         </button>
@@ -158,6 +180,7 @@ export function CredentialCard({
   connector,
   credential,
   editing,
+  untested = false,
   busy,
   confirming,
   notice,
@@ -165,6 +188,8 @@ export function CredentialCard({
   connector: UiConnector;
   credential: Credential;
   editing: boolean;
+  /** The open form's candidate failed its test. */
+  untested?: boolean;
   busy: boolean;
   /** Removal is waiting on its in-page confirm. */
   confirming: boolean;
@@ -255,7 +280,15 @@ export function CredentialCard({
           }
         />
       ) : null}
-      {editing ? <CredentialForm connector={connector.id} credential={credential} busy={busy} /> : null}
+      {editing ? (
+        <CredentialForm
+          connector={connector.id}
+          credential={credential}
+          busy={busy}
+          testable={credential.testable}
+          untested={untested}
+        />
+      ) : null}
       <NoticeLine id={`credentialNotice-${connector.id}`} notice={notice} />
     </section>
   );

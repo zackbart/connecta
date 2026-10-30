@@ -123,6 +123,62 @@ recovery. These changes do not change
 pool membership. Environment-backed header auth has no editable vault slot:
 rotate that secret in the deployment's secret store and restart/redeploy.
 
+### Test then save, and last verification
+
+When the connector can test its credential (`testCredential` or
+`testCredentials`, which every credential `remoteMcp()` and kit provider
+has), the Connection tab's **Test and save** tests the entered value before
+storing it. The value is tested in memory, under `discovery.probeTimeoutMs`,
+and stored only if the test passes; a failure stores nothing. If the test
+fails, **Save without testing** stores the value anyway, marked unverified,
+so an outage at the service never blocks a replacement.
+
+`PUT /ui/credentials/<id>` takes `{ "value": "…" }` (or `{ "values": {…} }`
+for a multi-field slot) and an optional `"verify"`:
+
+- `"test"`: test the candidate, then store it. A failure answers 200
+  `{ "saved": false, "failure": "<class>" }` and stores nothing.
+- `"skip"` (the default when `verify` is absent, which keeps earlier API
+  callers working): store it unverified.
+
+A stored save answers 200 `{ "saved": true, "credential": <metadata>,
+"verification": { "outcome": "ok" | "unverified", "observedAt": "…" } }`.
+`POST /ui/credentials/<id>/test` tests the stored value and answers
+`{ "ok": true }` or `{ "ok": false, "failure": "<class>" }`. A connector
+without a test hook refuses `verify: "test"` with 400, as its test route
+refuses to test.
+
+Failure classes are typed facts, never downstream text:
+
+| Class         | Meaning                                                            |
+| ------------- | ------------------------------------------------------------------ |
+| `rejected`    | The service refused the credential.                                |
+| `scope`       | It accepted the credential but refused a needed permission.        |
+| `unreachable` | The service could not be reached, was unavailable or rate limited. |
+| `timeout`     | No answer within the probe deadline.                               |
+| `failed`      | Anything else.                                                     |
+
+A custom hook may return `{ ok: false, failure: "scope" }` to name its class;
+an unclassified failure is `failed`, and a thrown error is classified from its
+`ConnectorCallError` code. Neither the response nor the log carries the value,
+the hook's `message` or the downstream's reply.
+
+Each test of the stored value and each save records a last-verified
+observation for that connector and owner: its outcome class, its time and the
+revision of the save it observed. A Test reads the stored values and their
+revision from one envelope, and a save records the revision its own write
+sealed, so a concurrent replacement is never reported as verified. The
+operator page's connector data reports the record as
+`verification: { outcome, observedAt }` only while that save is the stored
+one, so a replacement reads as unverified until tested. Removing the
+credential removes the record. A custom vault records verification only when
+its `metadata` carries a per-save `revision` and, for Test, it implements
+`snapshot`; otherwise its credentials are tested but never shown verified.
+
+Reading the record is side-effect free: the operator page only reads it,
+never probes the downstream or writes (INV-10). OAuth connectors keep no
+verification record; their status is unchanged.
+
 ## Issue, rotate, or revoke an agent token
 
 Each declared agent has exactly one token slot. Keep `accessTokens(storage)`

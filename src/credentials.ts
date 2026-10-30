@@ -24,6 +24,12 @@ interface CredentialPlaintext {
   values: ConnectorCredentialValues;
   updatedAt: string;
   updatedBy: string;
+  /**
+   * Random and unique to the save, sealed with the values. A row written
+   * before revisions existed reads its envelope's random IV instead, which
+   * is just as unique to that save and bound to it by AES-GCM.
+   */
+  revision: string;
 }
 
 /** Version tag of the compact `seal` output: `v1.<iv>.<ciphertext>`. */
@@ -75,7 +81,7 @@ function parseEnvelope(raw: string): Envelope {
   }
 }
 
-function parsePlaintext(raw: string): CredentialPlaintext {
+function parsePlaintext(raw: string, iv: string): CredentialPlaintext {
   try {
     const parsed = JSON.parse(raw) as Partial<CredentialPlaintext> & {
       value?: unknown;
@@ -97,6 +103,7 @@ function parsePlaintext(raw: string): CredentialPlaintext {
       values: { ...values },
       updatedAt: parsed.updatedAt,
       updatedBy: parsed.updatedBy,
+      revision: typeof parsed.revision === "string" ? parsed.revision : iv,
     };
   } catch {
     throw new Error("Stored credential is invalid or corrupted");
@@ -143,6 +150,7 @@ function metadataOf(credential: CredentialPlaintext | null): CredentialMetadata 
     configured: true,
     ...(single?.lastFour ? { lastFour: single.lastFour } : {}),
     updatedAt: credential.updatedAt,
+    revision: credential.revision,
     fields,
   };
 }
@@ -226,7 +234,7 @@ export class CredentialVault implements Vault {
         await this.key,
         base64ToBytes(envelope.ciphertext),
       );
-      return parsePlaintext(decoder.decode(plaintext));
+      return parsePlaintext(decoder.decode(plaintext), envelope.iv);
     } catch {
       throw new Error("Stored credential could not be decrypted");
     }
@@ -244,6 +252,15 @@ export class CredentialVault implements Vault {
 
   async metadata(connectorId: string, owner?: string): Promise<CredentialMetadata | null> {
     return metadataOf(await this.read(connectorId, owner));
+  }
+
+  /** The values and metadata of one save, from a single envelope read. */
+  async snapshot(
+    connectorId: string,
+    owner?: string,
+  ): Promise<{ values: ConnectorCredentialValues; metadata: CredentialMetadata } | null> {
+    const credential = await this.read(connectorId, owner);
+    return credential && { values: { ...credential.values }, metadata: metadataOf(credential)! };
   }
 
   async set(connectorId: string, value: string, updatedBy: string, owner?: string): Promise<CredentialMetadata> {
@@ -264,6 +281,7 @@ export class CredentialVault implements Vault {
       values: normalized,
       updatedAt: new Date().toISOString(),
       updatedBy,
+      revision: crypto.randomUUID(),
     };
     const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
     const ciphertext = await crypto.subtle.encrypt(
@@ -283,7 +301,9 @@ export class CredentialVault implements Vault {
     };
     await this.storage.set(storageKey(connectorId, owner), JSON.stringify(envelope));
     advanceCatalogRevision(this);
-    return (await this.metadata(connectorId, owner))!;
+    // What this write stored, never a re-read: a concurrent save may already
+    // have replaced it, and its revision must not be reported as this one's.
+    return metadataOf(plaintext)!;
   }
 
   async delete(connectorId: string, owner?: string): Promise<void> {

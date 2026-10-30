@@ -263,16 +263,20 @@ describe("overflow() credential probe", () => {
       ok: false,
       message:
         "No Overflow client id and API key are configured for this connector. Call authorize_connector for recovery options; an operator adds both fields in this connection in the operator UI.",
+      // An incomplete candidate is refused before anything is sent.
+      failure: "rejected",
     });
     expect(calls).toHaveLength(before);
     queue({ status: 403, body: { message: "Forbidden resource" } }, { text: "maintenance" });
     expect(await connection().testCredentials!(KEYS, context())).toMatchObject({
       ok: false,
       message: expect.stringContaining("HTTP 403"),
+      failure: "scope",
     });
     expect(await connection().testCredentials!(KEYS, context())).toEqual({
       ok: false,
       message: "Overflow returned a non-JSON body for a successful read.",
+      failure: "failed",
     });
   });
 });
