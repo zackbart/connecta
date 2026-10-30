@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+/** Provider-local eval wiring (eval/support/provider-eval.ts): file → the export it must declare. */
+export const EVAL_FILES = { "fake.ts": "evalFake", "tasks.ts": "evalTasks", "deploy.ts": "evalDeploy" };
+/** The optional dedicated `worker-<name>` smoke composition. */
+export const EVAL_WORKER = "worker.ts";
+
 // Discovery reads files only. Definitions and fixtures are loaded by consumers
 // after the generated skill modules have been computed.
 export async function discoverProviders(root = repositoryRoot) {
@@ -27,6 +32,24 @@ export async function discoverProviders(root = repositoryRoot) {
         throw new Error(`src/providers/${entry.name}: missing required file ${file}`);
       }
     }
+    let evals;
+    if (files.includes("eval")) {
+      const present = await readdir(join(folder, "eval"));
+      for (const file of present) {
+        if (!(file in EVAL_FILES) && file !== EVAL_WORKER) {
+          throw new Error(
+            `src/providers/${entry.name}/eval/${file}: eval/ holds only fake.ts, tasks.ts, deploy.ts and worker.ts`,
+          );
+        }
+      }
+      for (const file of Object.keys(EVAL_FILES)) {
+        if (!present.includes(file)) throw new Error(`src/providers/${entry.name}: eval/ requires ${file}`);
+      }
+      evals = {
+        ...Object.fromEntries(Object.keys(EVAL_FILES).map((file) => [file.slice(0, -3), join(folder, "eval", file)])),
+        ...(present.includes(EVAL_WORKER) ? { worker: join(folder, "eval", EVAL_WORKER) } : {}),
+      };
+    }
     providers.push({
       name: entry.name,
       directory: folder,
@@ -35,6 +58,7 @@ export async function discoverProviders(root = repositoryRoot) {
       skill: join(folder, "SKILL.md"),
       drift: join(folder, "drift.json"),
       test: join(folder, test),
+      ...(evals ? { eval: evals } : {}),
     });
   }
   return providers;

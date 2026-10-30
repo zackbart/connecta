@@ -26,6 +26,7 @@ import { World, type WorldOptions } from "../fakes/world.js";
 import { serveFetch } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
 import { ACTIVE_TASKS } from "./index.js";
+import { PROVIDER_EVALS } from "./providers.generated.js";
 
 function refused(action: () => unknown, message: string): void {
   try {
@@ -323,7 +324,7 @@ export async function gatewayRoutingControls() {
     "google-sheets-2",
     "github-release-once",
     "ccb-update-once",
-    "granola-workspace-journey",
+    ...PROVIDER_EVALS.flatMap(({ tasks }) => tasks.gatewayControls ?? []),
   ]) {
     const task = ACTIVE_TASKS.find((candidate) => candidate.id === id)!;
     const before = fakeTransportState().vendorHops;

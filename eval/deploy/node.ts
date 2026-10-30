@@ -104,7 +104,7 @@ export async function startNodeDeployment(
     const previousPrograms: ProgramObservation[] = [];
     // The fakes route their own credentials; see eval/fakes/transport.ts.
     const qb = connectors.find((s) => s.quickbooks);
-    const notes = connectors.find((s) => s.granola);
+    const provided = connectors.some((s) => s.provider);
     const build = () =>
       createConnecta(
         evalConfig(
@@ -140,7 +140,8 @@ export async function startNodeDeployment(
     );
     // listen() just installed Node's owned sender, which bypasses the fake
     // routing. Re-pin it in the same tick, before any request can dispatch.
-    if (qb || notes || connectors.some((spec) => spec.rest || spec.google)) releaseTransport = holdFakeKitTransport();
+    if (qb || provided || connectors.some((spec) => spec.rest || spec.google))
+      releaseTransport = holdFakeKitTransport();
     else repinFakeKitTransport();
     await once(server, "listening");
     await connectCcb(connecta, connectors, origin);
@@ -149,7 +150,7 @@ export async function startNodeDeployment(
       get programs() {
         return [...previousPrograms, ...observed.programs];
       },
-      ...(qb || notes
+      ...(qb || provided
         ? {
             restart: async (readOnly?: boolean) => {
               endpointReadOnly = readOnly ?? endpointReadOnly;

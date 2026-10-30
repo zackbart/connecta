@@ -1,5 +1,6 @@
 /** Complete fake-only grading inputs, separate from the clipped display trace. */
-import { World } from "../fakes/world.js";
+import { World, type ProviderFakeName, type ProviderFakeOf } from "../fakes/world.js";
+import { PROVIDER_FAKES } from "../fakes/providers.generated.js";
 import type { TrackerState } from "../fakes/tracker.js";
 import type { ChatState, AuditState } from "../fakes/services.js";
 import type { CallRecord } from "../fakes/service.js";
@@ -9,8 +10,8 @@ import type { AgentTrace } from "./trace.js";
 export interface SavedGradeInputs {
   version: 1;
   trace: AgentTrace;
-  world: {
-    granola?: World["granola"]["state"];
+  /** Each enabled provider-local fake's state sits under its provider name. */
+  world: { [Name in ProviderFakeName]?: ProviderFakeOf<Name>["state"] } & {
     quickbooks?: World["quickbooks"]["state"];
     google?: World["google"]["state"];
     rest?: World["rest"];
@@ -35,7 +36,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
     version: 1,
     trace,
     world: {
-      ...(world.options.granola ? { granola: world.granola.state } : {}),
+      ...Object.fromEntries(world.providerFakes().map(({ name, fake }) => [name, fake.state])),
       ...(world.options.quickbooks ? { quickbooks: world.quickbooks.state } : {}),
       ...(world.options.google ? { google: world.google.state } : {}),
       rest: world.rest,
@@ -124,18 +125,14 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
       ).length === 1,
       `ci.${run.runId}`,
     );
-  if (state.granola) {
-    requireEvidence(
-      Array.isArray(state.granola.notes) &&
-        Array.isArray(state.granola.transcript) &&
-        Array.isArray(state.granola.spaces) &&
-        Array.isArray(state.granola.folders) &&
-        state.granola.privateNote,
-      "granola",
-    );
-    Object.assign(world.granola.state, structuredClone(state.granola));
-  } else if (state.calls.some((c) => c.service === "granola"))
-    throw new Error("Incomplete saved grading evidence: granola");
+  for (const name of Object.keys(PROVIDER_FAKES) as ProviderFakeName[]) {
+    const saved = state[name];
+    if (saved) {
+      requireEvidence(PROVIDER_FAKES[name].saved(saved), name);
+      Object.assign(world.fakes[name].state, structuredClone(saved));
+    } else if (state.calls.some((c) => c.service === name))
+      throw new Error(`Incomplete saved grading evidence: ${name}`);
+  }
   if (state.quickbooks) {
     requireEvidence(state.quickbooks.companies && Array.isArray(state.quickbooks.grants), "quickbooks");
     Object.assign(world.quickbooks.state, structuredClone(state.quickbooks));
