@@ -720,7 +720,15 @@ activity write. The first complete catalog is a baseline.
 Hash-only baselines publish bounded chunks before a manifest. They store the
 catalog digest and hashes of each tool name and fact, so added, removed and changed counts require no persisted tool names or
 schemas. They use the exact host auth/config cache partition, survive catalog
-expiry and invalidation, and expire after 48 hours. There is no connection-wide
+expiry and invalidation, and expire 48 hours after they are written. A refresh
+reads the manifest first. When its digest matches a baseline written within the
+last hour, the refresh writes nothing; an older matching baseline is rewritten
+with fresh chunks, so every refresh leaves a baseline for at least 47 hours.
+A manifest's lifetime is never extended without new chunks, so its chunks
+always outlive it. A changed digest writes the new baseline and reports drift
+against the previous one. An unchanged zero-TTL listing therefore writes no
+baseline; it still lists live every time and deletes its cache slots, since a
+concurrent request may have published an older reusable catalog there. There is no connection-wide
 fallback baseline across partitions. Private catalog events use the admitted
 principal actor basis even for shared-auth connectors; activity disclosure
 requires that same owner and the recorded pool's grants. Ownerless private
@@ -2252,10 +2260,45 @@ Always fresh:
 - the credential a call sends.
 
 `test/request-reads.node.test.ts` holds the memo's contract, including a
-disconnect written by another isolate between paginated `tools/list` pages. It
-also holds D1 round-trip and statement ceilings for a warm OAuth call, an
-expired-token refresh, a refresh before expiry, a cold-isolate catalog load and
-an operator UI detail read.
+disconnect written by another isolate between paginated `tools/list` pages.
+
+### Request budgets (contributor)
+
+`test/request-reads.node.test.ts` also guards the common request shapes the way
+bundle caps guard size. Each case counts downstream HTTP requests, D1 round
+trips (`all`, `run` or `batch`) and SQL statements separately, since a batch is
+one round trip but several statements. The fixture is production-shaped: D1
+over `node:sqlite`, a sealed vault holding the API credential and the OAuth
+grant, Cloudflare Access with `accessTokens()`, a D1 activity sink settled
+through `waitUntil`, the operator UI and QuickJS standing in for Dynamic Worker
+startup. "Cold isolate" is a new deployment instance over the populated
+database. The ceilings, measured value plus about 10% D1 headroom and exact
+downstream counts, live in its `BUDGETS` table. Measured on main in October 2026:
+
+| Request                                  | Downstream | D1 round trips | SQL statements |
+| ---------------------------------------- | ---------: | -------------: | -------------: |
+| Legacy remote MCP call, warm             |          5 |              6 |              7 |
+| Legacy remote MCP call, cold isolate     |          5 |              9 |             12 |
+| Modern remote MCP call, warm             |          1 |              7 |              8 |
+| Modern remote MCP call, cold isolate     |          1 |             10 |             13 |
+| OAuth remote MCP call, warm              |          5 |             19 |             20 |
+| OAuth remote MCP call, cold isolate      |          5 |             22 |             25 |
+| OAuth call after a 401, with refresh     |          9 |             39 |             48 |
+| OAuth call with proactive refresh        |          6 |             35 |             43 |
+| `api()` credential call, warm            |          1 |              3 |              4 |
+| `api()` credential call, cold isolate    |          1 |              6 |              9 |
+| Unscoped search, warm (3 remote, 1 api)  |          0 |             20 |             20 |
+| `execute_code`, 5 calls to one connector |          9 |             10 |             15 |
+| UI connector detail, `api()` credential  |          0 |              2 |              2 |
+| UI connector detail, credential remote   |          4 |              9 |              9 |
+| UI connector detail, OAuth remote        |          4 |             18 |             18 |
+
+Header-auth calls to the legacy (session) server handshake per request:
+`initialize`, `notifications/initialized`, the SSE `GET`, the call and the
+session `DELETE`. The modern server advertises a catalog TTL, so a warm call is
+the call alone. OAuth calls read the grant fresh before every SDK message.
+Run with `D1_BUDGET_REPORT=1` to print each measurement; a failing case prints
+its request and statement log.
 
 ### Contributor provider kit
 
@@ -2275,13 +2318,18 @@ exact vendor count as `page.total` from its page callback. The kit validates a
 nonnegative safe integer and includes it on continuing and terminal pages;
 without a vendor count the property is absent. Lists without the opt-in keep
 their existing schema and result bytes. Never derive an exact total from a
-partial page or an estimate. `src/http/fields.ts` refuses an unknown first
-segment before dispatch; a selected
-result renders against a sparse output schema. `src/http/hatch.ts` is the
+partial page or an estimate. `src/http/fields.ts` derives each `fields`
+description's anchor and example from the contract that validates it. It
+refuses before dispatch a path whose first segment is not a declared property,
+and a deeper segment only inside an object the schema closes with
+`additionalProperties: false`; a selected result renders against a sparse
+output schema. `src/http/hatch.ts` is the
 standard hatch (`_api_search`, `_api_details`, `_api_read`, `_api_write`) over
 an `OperationIndex` with explicit verdicts. It keeps the REST family's
 argument and envelope names and validates `fields` against the operation's
-declared response roots before dispatch. Search answers stay within 16 KiB
+declared response roots before dispatch. A deeper miss is reported in
+bounded `warnings` naming declared properties only, never refused, because the
+pinned index declares paths only to a bounded depth. Search answers stay within 16 KiB
 (at most eight compact entries, long labels cut and marked, continuation by
 cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
@@ -2439,9 +2487,10 @@ A binding may opt into `truncated: true` to supply reviewed size-cut paths
 (such as `data.content`) in its answer. The hatch then declares and propagates
 an optional top-level `truncated: string[]` on reads and writes. Without the
 opt-in, the schemas and results are unchanged; size-cut metadata is not inferred
-from vendor booleans or added to other providers. A separate `warnings: true`
-opt-in declares and preserves reviewed `warnings: string[]` beside `data`, even
-when `fields` narrows the vendor body.
+from vendor booleans or added to other providers. Every hatch read and write
+declares an optional `warnings: string[]` for `fields` entries that matched
+nothing in a nonempty body. A separate `warnings: true` opt-in also preserves
+reviewed vendor warnings there, even when `fields` narrows the vendor body.
 
 A binding may expand deployment-owned path defaults (Cloudflare) or canonicalize
 repository contents paths (GitHub) before indexed resolution, and may prepare a

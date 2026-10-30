@@ -1,20 +1,27 @@
-// Node-only: node:sqlite stands in for D1 so every round trip and statement is counted.
+// Node-only: node:sqlite stands in for D1 so every round trip and statement is counted, and QuickJS runs programs.
 //
-// The request read memo (src/runtime/request-reads.ts), then D1 query budgets for the request shapes that repeat most: a warm OAuth
-// remoteMcp() call, a cold-isolate catalog load from D1, and an operator UI
-// detail read. A round trip is one `all`, `run` or `batch` call; a statement is
-// one SQL statement, so a batch of two is one round trip and two statements.
-// Workers Free allows 50 D1 queries per invocation. The numbers are ceilings:
-// lower is fine, higher is a regression to explain.
+// The request read memo (src/runtime/request-reads.ts), then request budgets:
+// downstream requests, D1 round trips and SQL statements for the request
+// shapes that repeat most, on a production-shaped deployment. A round trip is
+// one `all`, `run` or `batch` call; a statement is one SQL statement, so a
+// batch of two is one round trip and two statements. Workers Free allows 50 D1
+// queries per invocation. The numbers are ceilings: lower is fine, higher is a
+// regression to explain. `D1_BUDGET_REPORT=1` prints each measurement.
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { WebStandardStreamableHTTPServerTransport, McpServer } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { api } from "../src/connectors/api.js";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
-import { d1Storage, type D1DatabaseBinding } from "../src/d1.js";
+import { d1ActivityStore, d1Storage, type D1DatabaseBinding } from "../src/d1.js";
+import { accessTokens } from "../src/access-tokens.js";
+import { activityHistory } from "../src/activity.js";
+import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
+import { quickJsExecutor } from "../src/executors/quickjs.js";
+import { createConnecta, type Connecta } from "../src/index.js";
+import { operatorUi } from "../src/ui.js";
 import { Effect } from "effect";
 import { RequestReads, observeStorageWrites } from "../src/runtime/request-reads.js";
 import { requestOwner, requestReads } from "../src/runtime/request-scope.js";
@@ -24,6 +31,7 @@ import type { KVStorage } from "../src/types.js";
 import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { CLERK_OPTIONS, CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { createTestConnecta } from "./helpers.js";
 import { machineAuth } from "./helpers/machine-auth.js";
@@ -91,6 +99,7 @@ function counted() {
   return {
     count,
     storage: () => d1Storage(countingD1(db, count)),
+    binding: () => countingD1(db, count),
     reset: () => {
       count.roundTrips = 0;
       count.statements = 0;
@@ -102,7 +111,7 @@ function counted() {
 /** A stateful downstream with one read tool, behind optional OAuth. */
 function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: () => Promise<void> } = {}) {
   const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
-  const state = { token: "access-1", issued: 1, rejected: 0, pageTwo: [] as (string | null)[] };
+  const state = { token: "access-1", issued: 1, rejected: 0, expiresIn: 3600, pageTwo: [] as (string | null)[] };
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -124,7 +133,7 @@ function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: 
         return Response.json({
           access_token: state.token,
           token_type: "Bearer",
-          expires_in: 3600,
+          expires_in: state.expiresIn,
           refresh_token: `refresh-${state.issued}`,
         });
       }
@@ -197,12 +206,6 @@ function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: 
 }
 
 let rpcId = 0;
-async function callTool(app: { fetch(request: Request): Promise<Response> }, address: string) {
-  const text = await callToolText(app, address);
-  expect(text).toContain("hi");
-  expect(text).not.toMatch(/"isError":true/);
-}
-
 async function callToolText(app: { fetch(request: Request): Promise<Response> }, address: string) {
   const response = await app.fetch(
     new Request(`${BASE}/mcp`, {
@@ -571,134 +574,295 @@ describe("credential reads honor vault overrides", () => {
   });
 });
 
-describe("D1 query budgets", () => {
-  it("a warm OAuth call, an expired-token refresh and an early refresh stay within their D1 budgets", async () => {
+describe("request budgets", () => {
+  // The common request shapes against a production-shaped deployment: D1
+  // storage, a sealed vault holding the API credential and the OAuth grant,
+  // Cloudflare Access with the access-token module, a D1 activity sink settled
+  // through waitUntil, the operator UI and the QuickJS executor. Dynamic
+  // Worker startup needs workerd; QuickJS is its Node stand-in, and neither
+  // sends a downstream request or touches D1 on its own.
+  const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+  afterAll(async () => {
+    await executor.close?.();
+  });
+
+  async function production(options: { credentialRemote?: boolean } = {}) {
     installOwnedTransport();
-    const origin = "https://oauth-budget.example";
-    const remote = downstream(origin, { oauth: true });
-    vi.stubGlobal("fetch", remote.fetch);
-    const d1 = counted();
-    const storage = d1.storage();
-    await storage.set(
-      `${scopes.connector("svc")}${oauthGrantKeys.grant}`,
-      JSON.stringify({
-        connectaOAuth: 3,
-        epoch: "v3:seeded",
-        body: {
-          issuer: origin,
-          client: { value: { client_id: "client-1", token_endpoint_auth_method: "none" }, registrationPath: "dcr" },
-          tokens: { access_token: "access-1", token_type: "Bearer", refresh_token: "refresh-1", expires_in: 3600 },
-        },
-      }),
+    const origins = {
+      legacy: "https://legacy-budget.example",
+      modern: "https://modern-budget.example",
+      oauth: "https://oauth-budget.example",
+      rest: "https://rest-budget.example",
+    };
+    const legacy = downstream(origins.legacy);
+    const oauth = downstream(origins.oauth, { oauth: true });
+    const modern = httpDownstream(
+      (server) =>
+        server.registerTool(
+          "echo",
+          {
+            description: "Echo text back",
+            inputSchema: z.object({ text: z.string() }),
+            annotations: { readOnlyHint: true },
+          },
+          async ({ text }) => ({ content: [{ type: "text", text }] }),
+        ),
+      { url: `${origins.modern}/mcp`, catalogTtlMs: 300_000 },
     );
-    const app = createTestConnecta({
-      connectors: [remoteMcp("svc", { url: `${origin}/mcp`, auth: { type: "oauth" } })],
-      auth: machineAuth(TOKEN),
-      storage,
-      publicUrl: BASE,
+    const requests: string[] = [];
+    let inFlight = 0;
+    const route = async (request: Request): Promise<Response> => {
+      const url = new URL(request.url);
+      const body = request.method === "POST" ? await request.clone().text() : "";
+      const method = /"method":"([^"]+)"/.exec(body)?.[1] ?? "";
+      requests.push(`${request.method} ${url.host}${url.pathname} ${method}`.trim());
+      if (url.origin === origins.legacy) return legacy.fetch(request);
+      if (url.origin === origins.oauth) return oauth.fetch(request);
+      if (url.origin === origins.modern) return modern.fetch(request.url, request);
+      if (url.origin === origins.rest) return Response.json({ text: "hi" });
+      return new Response("unknown host", { status: 404 });
+    };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      inFlight++;
+      try {
+        return await route(new Request(input, init));
+      } finally {
+        inFlight--;
+      }
     });
-    await callTool(app, "svc.echo");
-    d1.reset();
-    await callTool(app, "svc.echo");
-    const warm = { ...d1.count, log: [...d1.count.log] };
-    report("warm OAuth call", warm, { grantReads: warm.log.filter((line) => line.includes(":oauth:grant")).length });
-    // Every grant read stays fresh, as does the catalog generation fence.
-    expect(warm.roundTrips, warm.log.join("\n")).toBeLessThanOrEqual(WARM_OAUTH.roundTrips);
-    expect(warm.statements, warm.log.join("\n")).toBeLessThanOrEqual(WARM_OAUTH.statements);
 
-    remote.state.token = "rotated-elsewhere";
-    d1.reset();
-    await callTool(app, "svc.echo");
-    const refresh = { ...d1.count, log: [...d1.count.log] };
-    report("expired-token refresh", refresh);
-    expect(remote.state.issued).toBe(2);
-    expect(refresh.statements, refresh.log.join("\n")).toBeLessThanOrEqual(OAUTH_REFRESH.statements);
-    expect(refresh.roundTrips, refresh.log.join("\n")).toBeLessThanOrEqual(OAUTH_REFRESH.roundTrips);
-
-    // The rotation stored its expiry. Within a minute of it, the call renews
-    // first and the downstream never sees the old token answer 401. The catalog
-    // is keyed by token, so one call on the rotated token lists it first.
-    await callTool(app, "svc.echo");
-    const key = `${scopes.connector("svc")}${oauthGrantKeys.grant}`;
-    const stored = JSON.parse((await storage.get(key))!) as { body: { expiresAt?: number } };
-    expect(stored.body.expiresAt).toBeGreaterThan(Date.now() + 3_500_000);
-    stored.body.expiresAt = Date.now() + 30_000;
-    await storage.set(key, JSON.stringify(stored));
-    d1.reset();
-    const rejected = remote.state.rejected;
-    await callTool(app, "svc.echo");
-    const early = { ...d1.count, log: [...d1.count.log] };
-    report("early refresh", early);
-    expect(remote.state.issued).toBe(3);
-    expect(remote.state.rejected).toBe(rejected);
-    expect(early.statements, early.log.join("\n")).toBeLessThanOrEqual(EARLY_REFRESH.statements);
-    expect(early.roundTrips, early.log.join("\n")).toBeLessThanOrEqual(EARLY_REFRESH.roundTrips);
-  });
-
-  it("a cold isolate loads a stored catalog within its D1 budget", async () => {
-    installOwnedTransport();
-    const origin = "https://catalog-budget.example";
-    vi.stubGlobal("fetch", downstream(origin).fetch);
-    const d1 = counted();
-    const storage = d1.storage();
-    const build = () =>
-      createTestConnecta({
-        connectors: [
-          remoteMcp("svc", { url: `${origin}/mcp`, auth: { type: "headers", headers: { Authorization: "Bearer k" } } }),
-        ],
-        auth: machineAuth(TOKEN),
-        storage,
-        publicUrl: BASE,
-      });
-    await callTool(build(), "svc.echo");
-    d1.reset();
-    await callTool(build(), "svc.echo");
-    const cold = d1.count;
-    report("cold catalog load", cold);
-    expect(cold.roundTrips, cold.log.join("\n")).toBeLessThanOrEqual(COLD_CATALOG.roundTrips);
-    expect(cold.statements, cold.log.join("\n")).toBeLessThanOrEqual(COLD_CATALOG.statements);
-  });
-
-  it("an operator UI detail read stays within its D1 budget", async () => {
-    installOwnedTransport();
-    const origin = "https://ui-budget.example";
-    vi.stubGlobal("fetch", downstream(origin).fetch);
     const d1 = counted();
     const storage = d1.storage();
     const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
-    await vault.set("svc", "credential-secret-value", "operator");
-    const app = createTestConnecta({
-      connectors: [remoteMcp("svc", { url: `${origin}/mcp`, auth: { type: "credential" } })],
-      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage,
-      vault,
-      publicUrl: BASE,
-    });
-    const detail = () =>
-      app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer clerk-token" } }));
-    expect((await detail()).status).toBe(200);
-    d1.reset();
-    const response = await detail();
-    expect(response.status).toBe(200);
-    expect(((await response.json()) as { status: string }).status).toBe("ok");
-    const read = d1.count;
-    const vaultReads = read.log.filter((line) => line.includes(":credential:")).length;
-    report("UI detail read", read, { vaultReads });
-    // Status, drift and the card share one memoized read; the probe's
-    // credential read stays fresh.
-    expect(vaultReads, read.log.join("\n")).toBeLessThanOrEqual(UI_DETAIL.vaultReads);
-    expect(read.roundTrips, read.log.join("\n")).toBeLessThanOrEqual(UI_DETAIL.roundTrips);
-    expect(read.statements, read.log.join("\n")).toBeLessThanOrEqual(UI_DETAIL.statements);
+    await vault.set("rest", "rest-credential-value", "operator");
+    await vault.set("keyed", "keyed-credential-value", "operator");
+    const grantKey = `${scopes.connector("oauth")}${oauthGrantKeys.grant}`;
+    await storage.set(grantKey, seededGrant(origins.oauth));
+    const headers = { type: "headers" as const, headers: { Authorization: "Bearer downstream-key" } };
+    // Each build is a fresh isolate over the same database, with its own
+    // storage, vault and activity store as a Worker isolate constructs them.
+    const build = () => {
+      const storage = d1.storage();
+      return createConnecta({
+        publicUrl: BASE,
+        storage,
+        vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+        readOnly: false,
+        executor,
+        auth: [cloudflareAccessAuth()],
+        maintainers: ["operator-1"],
+        accessTokens: accessTokens(storage),
+        activity: activityHistory({
+          store: d1ActivityStore(d1.binding(), { retentionDays: 90 }),
+          deploymentId: "budget",
+        }),
+        ui: operatorUi(),
+        logger: "silent",
+        connectors: [
+          remoteMcp("legacy", { url: `${origins.legacy}/mcp`, auth: headers }),
+          remoteMcp("modern", { url: `${origins.modern}/mcp`, auth: headers }),
+          remoteMcp("oauth", { url: `${origins.oauth}/mcp`, auth: { type: "oauth" } }),
+          ...(options.credentialRemote
+            ? [remoteMcp("keyed", { url: `${origins.legacy}/mcp`, auth: { type: "credential" } })]
+            : []),
+          api("rest", {
+            credential: { label: "API key" },
+            tools: [
+              {
+                name: "echo",
+                description: "Echo text back",
+                annotations: { readOnlyHint: true },
+                handler: async (_args, ctx) => {
+                  const key = await ctx.credential!.get();
+                  return (
+                    await ctx.fetch(`${origins.rest}/echo`, { headers: { authorization: `Bearer ${key}` } })
+                  ).json();
+                },
+              },
+            ],
+          }),
+        ],
+      });
+    };
+
+    // Cloudflare Access hands the Worker a verified identity on ctx.access.
+    const waits: Promise<unknown>[] = [];
+    const runtime = {
+      access: { aud: "connecta-budget", getIdentity: async () => ({ user_uuid: "operator-1" }) },
+      waitUntil: (promise: Promise<unknown>) => void waits.push(promise),
+    };
+    const settle = async () => {
+      // Deferred activity writes and detached session cleanup count too.
+      do {
+        await Promise.allSettled(waits.splice(0));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      } while (waits.length > 0 || inFlight > 0);
+    };
+    const tool = async (app: Connecta, name: string, args: Record<string, unknown>) => {
+      const response = await app.fetch(
+        new Request(`${BASE}/mcp`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: ++rpcId,
+            method: "tools/call",
+            params: { name, arguments: args },
+          }),
+        }),
+        undefined,
+        runtime,
+      );
+      const text = await response.text();
+      expect(text, text).not.toMatch(/"isError":true/);
+      return text;
+    };
+    const call = async (app: Connecta, address: string) =>
+      expect(await tool(app, "call_tool", { address, args: { text: "hi" } })).toContain("hi");
+    const detail = async (app: Connecta, id: string) => {
+      const response = await app.fetch(new Request(`${BASE}/ui/connectors/${id}`), undefined, runtime);
+      expect(response.status).toBe(200);
+      return (await response.json()) as { status: string };
+    };
+    const measure = async (label: keyof typeof BUDGETS, run: () => Promise<unknown>) => {
+      await settle();
+      d1.reset();
+      requests.length = 0;
+      await run();
+      await settle();
+      const measured = {
+        downstream: requests.length,
+        roundTrips: d1.count.roundTrips,
+        statements: d1.count.statements,
+      };
+      report(label, { ...d1.count }, { downstream: measured.downstream });
+      const log = [...requests, ...d1.count.log].join("\n");
+      const budget = BUDGETS[label];
+      expect(measured.downstream, `${label}: downstream\n${log}`).toBeLessThanOrEqual(budget.downstream);
+      expect(measured.roundTrips, `${label}: D1 round trips\n${log}`).toBeLessThanOrEqual(budget.roundTrips);
+      expect(measured.statements, `${label}: SQL statements\n${log}`).toBeLessThanOrEqual(budget.statements);
+      return { ...measured, log: [...d1.count.log] };
+    };
+    return { build, call, tool, detail, measure, oauth: oauth.state, storage, grantKey };
+  }
+
+  it.each(["legacy", "modern"] as const)(
+    "a header-auth call to a %s remote MCP server, warm and cold",
+    async (kind) => {
+      const d = await production();
+      const app = d.build();
+      await d.call(app, `${kind}.echo`);
+      await d.measure(`${kind} call, warm`, () => d.call(app, `${kind}.echo`));
+      await d.measure(`${kind} call, cold isolate`, () => d.call(d.build(), `${kind}.echo`));
+    },
+  );
+
+  it("OAuth calls over a sealed grant, warm, cold, after a 401 and renewed early", async () => {
+    const d = await production();
+    const app = d.build();
+    await d.call(app, "oauth.echo");
+    // The first connect sealed the seeded plaintext grant.
+    expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
+    await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
+    await d.measure("OAuth call, cold isolate", () => d.call(d.build(), "oauth.echo"));
+
+    // The rotation stores a token 75 seconds from expiry, outside the
+    // one-minute renewal window. One call lists the catalog on it, keyed by
+    // token; 20 seconds later the next call renews first, and the downstream
+    // never sees the old token answer 401.
+    d.oauth.token = "rotated-elsewhere";
+    d.oauth.expiresIn = 75;
+    await d.measure("OAuth call, 401 refresh", () => d.call(app, "oauth.echo"));
+    expect(d.oauth.issued).toBe(2);
+    await d.call(app, "oauth.echo");
+    expect(d.oauth.issued).toBe(2);
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 20_000 });
+    try {
+      const rejected = d.oauth.rejected;
+      await d.measure("OAuth call, proactive refresh", () => d.call(app, "oauth.echo"));
+      expect(d.oauth.issued).toBe(3);
+      expect(d.oauth.rejected).toBe(rejected);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an api() call with a sealed credential, warm and cold", async () => {
+    const d = await production();
+    const app = d.build();
+    await d.call(app, "rest.echo");
+    await d.measure("api credential call, warm", () => d.call(app, "rest.echo"));
+    await d.measure("api credential call, cold isolate", () => d.call(d.build(), "rest.echo"));
+  });
+
+  it("an unscoped warm search over three remote MCP connectors and one api()", async () => {
+    const d = await production();
+    const app = d.build();
+    const search = async () => {
+      const text = await d.tool(app, "search_tools", { query: "echo text" });
+      for (const address of ["legacy.echo", "modern.echo", "oauth.echo", "rest.echo"]) expect(text).toContain(address);
+    };
+    await search();
+    await d.measure("unscoped search, warm", search);
+  });
+
+  it("a program making five calls to one connector", async () => {
+    const d = await production();
+    const app = d.build();
+    await d.call(app, "legacy.echo");
+    const program = `async () => {
+      const out = [];
+      for (let i = 0; i < 5; i++) out.push(await connecta.call("legacy.echo", { text: "hi" + i }));
+      return out.length;
+    }`;
+    await d.measure("execute_code, 5 calls", async () =>
+      expect(await d.tool(app, "execute_code", { code: program })).toContain('\\"succeeded\\":5'),
+    );
+  });
+
+  it("an operator UI connector detail read", async () => {
+    const d = await production({ credentialRemote: true });
+    const app = d.build();
+    for (const id of ["rest", "keyed", "oauth"] as const) {
+      await d.detail(app, id);
+      const read = await d.measure(`UI detail, ${id}`, async () => expect((await d.detail(app, id)).status).toBe("ok"));
+      if (id === "keyed") {
+        // Status, drift and the card share one memoized credential read; the
+        // probe's read stays fresh.
+        expect(read.log.filter((line) => line.includes(":credential:")).length).toBeLessThanOrEqual(3);
+      }
+    }
   });
 });
 
-// Measured ceilings; see the suite header. Before the request read memo
-// (#1173 item 1.3) these were 21/21, 43/51, 8/8 and 12/12 with 5 vault reads.
-// OAuth grant reads are never memoized: every SDK message reads its token
-// and epoch fresh, so those two shrink only by the shared verdict and catalog
-// reads.
-const WARM_OAUTH = { roundTrips: 18, statements: 18 };
-const OAUTH_REFRESH = { roundTrips: 40, statements: 48 };
-const EARLY_REFRESH = { roundTrips: 34, statements: 41 };
-const COLD_CATALOG = { roundTrips: 5, statements: 5 };
-const UI_DETAIL = { vaultReads: 3, roundTrips: 8, statements: 8 };
+// Measured ceilings for the request budgets above, on the fixture they
+// describe. A downstream request is one HTTP request to a vendor: an MCP
+// message, OAuth discovery or token call, or session cleanup. A D1 round trip
+// is one `all`, `run` or `batch`; a SQL statement is one statement, so a batch
+// of two is one round trip and two statements. D1 ceilings carry about 10%
+// headroom (at least one); downstream ceilings are exact, since each request
+// is a protocol message. Lower is fine; tighten a ceiling when a change lowers
+// it, and explain any raise. Before the request read memo (#1184) a warm OAuth
+// call took 21 round trips and a refresh 51 statements without the vault or
+// activity sink.
+const BUDGETS = {
+  "legacy call, warm": { downstream: 5, roundTrips: 7, statements: 8 },
+  "legacy call, cold isolate": { downstream: 5, roundTrips: 10, statements: 13 },
+  "modern call, warm": { downstream: 1, roundTrips: 8, statements: 9 },
+  "modern call, cold isolate": { downstream: 1, roundTrips: 11, statements: 14 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 21, statements: 22 },
+  "OAuth call, cold isolate": { downstream: 5, roundTrips: 24, statements: 27 },
+  "OAuth call, 401 refresh": { downstream: 9, roundTrips: 42, statements: 52 },
+  "OAuth call, proactive refresh": { downstream: 6, roundTrips: 38, statements: 47 },
+  "api credential call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
+  "api credential call, cold isolate": { downstream: 1, roundTrips: 7, statements: 10 },
+  "unscoped search, warm": { downstream: 0, roundTrips: 22, statements: 22 },
+  "execute_code, 5 calls": { downstream: 9, roundTrips: 11, statements: 16 },
+  "UI detail, rest": { downstream: 0, roundTrips: 3, statements: 3 },
+  "UI detail, keyed": { downstream: 4, roundTrips: 10, statements: 10 },
+  "UI detail, oauth": { downstream: 4, roundTrips: 20, statements: 20 },
+};

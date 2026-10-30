@@ -5,7 +5,7 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { canonicalJson } from "../../canonical-json.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, type HttpFailure } from "../../http/errors.js";
-import { fieldsProblem, selectFields } from "../../http/fields.js";
+import { selectFields } from "../../http/fields.js";
 import { Recovery, type CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
 import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
@@ -636,9 +636,7 @@ export function docsTools({ connection }: { connection: Connection }): ApiTool[]
       run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const fields = isRead ? (args["fields"] as readonly string[] | undefined) : undefined;
-          const problem = isRead
-            ? fieldsProblem(fields, new Set(Object.keys(schemas.GET_DOCUMENT_OUTPUT.fields)), "the result")
-            : undefined;
+          const problem = isRead ? schemas.GET_DOCUMENT_FIELDS.problem(fields) : undefined;
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const operation = yield* Effect.serviceOption(Operation);
           if (Option.isNone(operation) || !operation.value)

@@ -1,7 +1,7 @@
 // Effect declarations are the catalog and runtime decoder for every named Docs tool.
 import { Schema } from "effect";
 import { Integer, isMinChars, isMaxChars } from "../../../http/json-schema.js";
-import { fieldsInput } from "../../../http/fields.js";
+import { fieldsContract } from "../../../http/fields.js";
 import { REQUEST_KINDS } from "./requests.js";
 const matches = (pattern: string) =>
   Schema.makeFilter((value: string) => new RegExp(pattern).test(value), {
@@ -19,43 +19,6 @@ const Request = Schema.Record(Schema.String, Schema.Record(Schema.String, Schema
     },
   ),
 );
-export const GET_DOCUMENT_INPUT = Schema.Struct({
-  "documentId": Schema.String.check(isMinChars(1), isMaxChars(256), matches("^[A-Za-z0-9_-]+$")).annotate({
-    description: "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc.",
-  }),
-  "tabId": Schema.optionalKey(
-    Schema.String.check(isMinChars(1), isMaxChars(128), matches("^[A-Za-z0-9._-]+$")).annotate({
-      description: "Render only this tab (from a previous get_document); omit for every tab.",
-    }),
-  ),
-  "maxChars": Schema.optionalKey(
-    Integer.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1000000)).annotate({
-      description:
-        "Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result.",
-    }),
-  ),
-  "withIndexes": Schema.optionalKey(
-    Schema.Boolean.annotate({
-      description:
-        "Add each tab's elements: every paragraph, table, and table of contents with UTF-16 startIndex and endIndex, 64 KiB per page (connecta's cap); page with cursor.",
-    }),
-  ),
-  "cursor": Schema.optionalKey(
-    Schema.String.check(isMinChars(1)).annotate({
-      description:
-        "Opaque page.nextCursor from the previous indexed read; keep the same arguments and document revision.",
-    }),
-  ),
-  "suggestions": Schema.optionalKey(
-    Schema.Literals(["inline", "accepted", "rejected"]).annotate({
-      description:
-        "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits).",
-    }),
-  ),
-  fields: Schema.optionalKey(
-    fieldsInput("Dot paths to keep in the result. Page and truncation metadata are always returned."),
-  ),
-});
 export const GET_DOCUMENT_OUTPUT = Schema.Struct({
   "documentId": Schema.optionalKey(Schema.String),
   "title": Schema.optionalKey(Schema.String),
@@ -96,6 +59,46 @@ export const GET_DOCUMENT_OUTPUT = Schema.Struct({
   ),
   "dropped": Schema.optionalKey(Schema.Array(Schema.String)),
   "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export const GET_DOCUMENT_FIELDS = fieldsContract(
+  "result",
+  GET_DOCUMENT_OUTPUT,
+  "Page and truncation metadata are always returned.",
+);
+export const GET_DOCUMENT_INPUT = Schema.Struct({
+  "documentId": Schema.String.check(isMinChars(1), isMaxChars(256), matches("^[A-Za-z0-9_-]+$")).annotate({
+    description: "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc.",
+  }),
+  "tabId": Schema.optionalKey(
+    Schema.String.check(isMinChars(1), isMaxChars(128), matches("^[A-Za-z0-9._-]+$")).annotate({
+      description: "Render only this tab (from a previous get_document); omit for every tab.",
+    }),
+  ),
+  "maxChars": Schema.optionalKey(
+    Integer.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1000000)).annotate({
+      description:
+        "Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result.",
+    }),
+  ),
+  "withIndexes": Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Add each tab's elements: every paragraph, table, and table of contents with UTF-16 startIndex and endIndex, 64 KiB per page (connecta's cap); page with cursor.",
+    }),
+  ),
+  "cursor": Schema.optionalKey(
+    Schema.String.check(isMinChars(1)).annotate({
+      description:
+        "Opaque page.nextCursor from the previous indexed read; keep the same arguments and document revision.",
+    }),
+  ),
+  "suggestions": Schema.optionalKey(
+    Schema.Literals(["inline", "accepted", "rejected"]).annotate({
+      description:
+        "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits).",
+    }),
+  ),
+  fields: Schema.optionalKey(GET_DOCUMENT_FIELDS.input),
 });
 export const CREATE_DOCUMENT_INPUT = Schema.Struct({
   "title": Schema.String.check(isMinChars(1), isMaxChars(1000), matches("^[^\\r\\n]*$")).annotate({

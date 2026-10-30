@@ -71,6 +71,30 @@ interface RefreshManifest {
   revision: string;
   chunkCount: number;
   fingerprint: string;
+  /** When this baseline was written; absent on baselines written before it was recorded. */
+  writtenAt?: number;
+}
+/**
+ * An unchanged refresh leaves a baseline younger than this in place instead of
+ * rewriting it, so a baseline outlives every refresh by at least the baseline
+ * TTL minus this interval.
+ */
+const BASELINE_REWRITE_AGE_MS = 60 * 60 * 1000;
+const refreshHash = (v: unknown) => typeof v === "string" && /^sha256:[0-9]+:[0-9a-f]{64}$/.test(v);
+function refreshManifest(raw: string | null): RefreshManifest | undefined {
+  if (!raw) return;
+  try {
+    const value = JSON.parse(raw) as RefreshManifest;
+    if (
+      refreshHash(value.digest) &&
+      refreshHash(value.fingerprint) &&
+      /^[0-9a-f-]{36}$/.test(value.revision) &&
+      Number.isInteger(value.chunkCount) &&
+      value.chunkCount >= 1 &&
+      value.chunkCount <= Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES)
+    )
+      return value;
+  } catch {}
 }
 /** Publish one accepted catalog refresh, with its partitioned drift baseline. */
 export function observeCompletedCatalogRefresh(ctx: ConnectorContext, refresh: CompletedCatalogRefresh): Promise<void> {
@@ -153,19 +177,9 @@ const refreshBaselineNative = /* @__PURE__ */ registerAuth(
   refreshBaseline,
   (storage: KVStorage, key: string, raw: string | null, io: CacheOperation["io"]) =>
     authFlow<RefreshBaseline | undefined>(function* () {
-      if (!raw) return;
+      const value = refreshManifest(raw);
+      if (!value) return;
       try {
-        const value = JSON.parse(raw) as RefreshManifest;
-        const hash = (v: unknown) => typeof v === "string" && /^sha256:[0-9]+:[0-9a-f]{64}$/.test(v);
-        if (
-          !hash(value.digest) ||
-          !hash(value.fingerprint) ||
-          !/^[0-9a-f-]{36}$/.test(value.revision) ||
-          !Number.isInteger(value.chunkCount) ||
-          value.chunkCount < 1 ||
-          value.chunkCount > Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES)
-        )
-          return;
         const chunks: string[] = [];
         for (let index = 0; index < value.chunkCount; index++) {
           const chunk = (yield authCall(io, [
@@ -194,7 +208,7 @@ const refreshBaselineNative = /* @__PURE__ */ registerAuth(
         if (
           Array.isArray(tools) &&
           tools.length <= MAX_CATALOG_TOOLS &&
-          tools.every((tool: CatalogToolFingerprint) => tool && hash(tool.name) && hash(tool.fact))
+          tools.every((tool: CatalogToolFingerprint) => tool && refreshHash(tool.name) && refreshHash(tool.fact))
         )
           return { digest: value.digest, tools };
       } catch {}
@@ -240,6 +254,20 @@ const acceptCatalogRefreshNative = /* @__PURE__ */ registerAuth(
     io: CacheOperation["io"],
   ) =>
     authFlow<CompletedCatalogRefresh | undefined>(function* () {
+      // An identical catalog cannot drift, and its baseline, written within
+      // the last hour, needs no rewrite: such a refresh writes nothing. The
+      // stored chunks always outlive their manifest, since a manifest is only
+      // ever written with fresh chunks.
+      const stored = (yield authCall(io, [
+        authMethod(() => authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>),
+      ])) as string | null;
+      const baseline = refreshManifest(stored);
+      if (
+        baseline?.digest === digest &&
+        baseline.writtenAt !== undefined &&
+        Date.now() - baseline.writtenAt < BASELINE_REWRITE_AGE_MS
+      )
+        return;
       const next = (yield authCall(catalogFingerprints, [tools])) as CatalogToolFingerprint[];
       const serialized = JSON.stringify(next);
       const revision = crypto.randomUUID();
@@ -264,12 +292,17 @@ const acceptCatalogRefreshNative = /* @__PURE__ */ registerAuth(
           ),
         ])) as void;
       }
-      const manifest: RefreshManifest = { digest, revision, chunkCount, fingerprint };
+      const manifest: RefreshManifest = { digest, revision, chunkCount, fingerprint, writtenAt: Date.now() };
       for (let attempt = 0; attempt < 16; attempt++) {
         if (!((yield authCall(current, [])) as boolean)) return;
-        const raw = (yield authCall(io, [
-          authMethod(() => authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>),
-        ])) as string | null;
+        // The first attempt publishes against the manifest read above; a lost
+        // compare-and-set reads it again.
+        const raw =
+          attempt === 0
+            ? stored
+            : ((yield authCall(io, [
+                authMethod(() => authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>),
+              ])) as string | null);
         const previous = (yield authCall(refreshBaseline, [storage, key, raw, io])) as RefreshBaseline | undefined;
         if (!((yield authCall(current, [])) as boolean)) return;
         const published = (yield authCall(io, [
