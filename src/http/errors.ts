@@ -31,6 +31,8 @@
 // write answered 401 stays unknown; only renewal removes its handoff, and
 // only a reviewed authentication-before-execution declaration proves refusal.
 
+import { routesOf } from "../agent-routes.js";
+import type { AgentRouteNames } from "../types.js";
 import { Data } from "effect";
 import {
   ConnectorCallError,
@@ -174,7 +176,7 @@ export interface Verdict {
    * nothing. Without it the message is the line itself. It never says to
    * send the call again: that is `advice`.
    */
-  readonly words?: (detail: string) => string;
+  readonly words?: (detail: string, routes: AgentRouteNames) => string;
   /**
    * Advice to send the call again (" Wait before retrying.", "; read the
    * reason before retrying"), attached as its own segment (`resendAdvice`).
@@ -572,6 +574,8 @@ export interface MapOptions {
   /** Whether an operation withholds vendor error text (the connection's ResultSafety). */
   readonly withholds?: (operation: OperationRef) => boolean;
   readonly signal?: AbortSignal | undefined;
+  /** Route names the verdict's words use: the call's surface; meta when absent. */
+  readonly routes?: AgentRouteNames | undefined;
 }
 
 /** Shed a defect's text and typed identity when any request withholds vendor text. */
@@ -699,7 +703,8 @@ function ok(status: number | undefined): boolean {
 function verdict(
   failure: HttpFailure,
   vendor: VendorErrors<any>,
-  options: Pick<MapOptions, "withholds" | "signal" | "dispatches"> & Partial<Pick<MapOptions, "classification">>,
+  options: Pick<MapOptions, "withholds" | "signal" | "dispatches" | "routes"> &
+    Partial<Pick<MapOptions, "classification">>,
   dispatch = options.dispatches.find((entry) => entry.failure === failure),
 ): ConnectorCallError {
   switch (failure._tag) {
@@ -738,6 +743,7 @@ function verdict(
           vendor,
           options.withholds?.(dispatch.operation ?? { method: "", template: "" }) === true,
           !dispatch.write,
+          routesOf(options),
         );
         return providerFailureMessage(mapped, failure.detail);
       }
@@ -785,6 +791,7 @@ function verdict(
         vendor,
         options.withholds?.(failure.operation) === true,
         options.dispatches.some((dispatch) => dispatch.failure === failure && !dispatch.write),
+        routesOf(options),
       );
   }
 }
@@ -794,6 +801,7 @@ function statusVerdict(
   vendor: VendorErrors<any>,
   withheld: boolean,
   read: boolean,
+  routes: AgentRouteNames,
 ): ConnectorCallError {
   const input = classificationInput(failure, vendor, withheld);
   const { headers, presence } = input;
@@ -820,7 +828,7 @@ function statusVerdict(
     withheld,
     ...(withheld ? {} : { body: failure.body }),
   });
-  const error = new ConnectorCallError(code, words ? words(detail) : detail, {
+  const error = new ConnectorCallError(code, words ? words(detail, routes) : detail, {
     ...(retryable === undefined ? {} : { retryable }),
     ...(wait === undefined ? {} : { retryAfterMs: wait }),
     ...(current ? { current } : {}),

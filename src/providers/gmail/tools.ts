@@ -1,3 +1,4 @@
+import { routesOf } from "../../agent-routes.js";
 import { asRecord, asArray, compact } from "../_shared/json.js";
 import { decodeBase64url } from "../../bytes.js";
 // Curated Gmail workflows over real Effect declarations and the standard kit boundary.
@@ -489,7 +490,7 @@ function readAttachment(
     const tooLarge = () =>
       unavailable(
         limit < MAX_ATTACHMENT_BYTES
-          ? `This binary attachment does not fit maxBytes (${maxBytes}), which holds ${limit} attachment bytes. Raise maxBytes, up to ${MAX_ATTACHMENT_RESULT_BYTES} for a direct call_tool only, to read up to ${MAX_ATTACHMENT_BYTES} bytes. No content is returned.`
+          ? `This binary attachment does not fit maxBytes (${maxBytes}), which holds ${limit} attachment bytes. Raise maxBytes, up to ${MAX_ATTACHMENT_RESULT_BYTES} for a direct ${routesOf(ctx).read} only, to read up to ${MAX_ATTACHMENT_BYTES} bytes. No content is returned.`
           : `This attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte download and inline cap. No content is returned; open it in Gmail.`,
       );
     // Declared size is checked before downloading, but actual bytes are checked
@@ -534,7 +535,7 @@ function readAttachment(
     if (decoded.length > maxChars || jsonBytes(decoded) > maxBytes) decoded = redactBeforeCut(ctx, decoded);
     const characters = Array.from(decoded);
     const marker = (dropped: number) =>
-      `\n[… ${dropped} more characters truncated; raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]`;
+      `\n[… ${dropped} more characters truncated; raise maxChars or maxBytes for a direct ${routesOf(ctx).read}, or open it in Gmail]`;
     const byChars =
       characters.length > maxChars
         ? characters.slice(0, maxChars).join("") + marker(characters.length - maxChars)

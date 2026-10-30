@@ -268,6 +268,14 @@ which binds the grant to configured API origins and manages authentication.
 [Downstream OAuth on api()](./auth.md#downstream-oauth-on-api) owns a concrete
 HTTP example and the client setup contract.
 
+Text a handler writes for the agent that names a Connecta route, such as "call
+authorize_connector" in an auth error, uses `ctx.routes` (`ctx.routes.authorize`,
+`ctx.routes.read`, `ctx.routes.write`, `ctx.routes.search`, `ctx.routes.program`,
+`ctx.routes.skills`). Connecta sets it on every context it builds to the names of
+the surface serving the call: the meta-tool names on the default surface, and
+the native contract's wording on a native pool. It is optional in the type, so
+fall back to the meta names for a context built elsewhere.
+
 Mark every side-effecting tool `readOnlyHint: false`. On a writable endpoint
 writes use `call_destructive_tool` or a program, within the caller's grants; a
 `readOnly` endpoint refuses them and omits them from search. Client approval is independent of

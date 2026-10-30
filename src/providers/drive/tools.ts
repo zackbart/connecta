@@ -1,3 +1,4 @@
+import { routesOf } from "../../agent-routes.js";
 import { asRecord, asArray, compact } from "../_shared/json.js";
 import { decodeBase64, decodeBase64url } from "../../bytes.js";
 // Google Drive named workflows, bounded projections and bound continuation on the provider kit.
@@ -526,7 +527,7 @@ function capped(
   const byChars = cut(Math.min(total, max), `maxChars (up to ${MAX_CONTENT_CHARS})`);
   if (fits(byChars)) return { content: byChars, contentTruncated: true };
   // The bytes bind first: the most characters that fit, by binary search.
-  const raise = `maxBytes (up to ${MAX_RESULT_BYTES}, for a direct call_tool only)`;
+  const raise = `maxBytes (up to ${MAX_RESULT_BYTES}, for a direct ${routesOf(ctx).read} only)`;
   let low = 0;
   let high = Math.min(total, max);
   while (low < high) {
@@ -708,7 +709,7 @@ function readContent(
       contentTruncated: false,
       note:
         limit < BINARY_INLINE_BYTES
-          ? `A binary file of ${bytes} does not fit this result's maxBytes (${maxBytes}), which holds ${limit} bytes of file; no content is returned. Raise maxBytes, up to ${MAX_RESULT_BYTES} for a direct call_tool only, to read up to ${BINARY_INLINE_BYTES} bytes, or open webViewLink.`
+          ? `A binary file of ${bytes} does not fit this result's maxBytes (${maxBytes}), which holds ${limit} bytes of file; no content is returned. Raise maxBytes, up to ${MAX_RESULT_BYTES} for a direct ${routesOf(ctx).read} only, to read up to ${BINARY_INLINE_BYTES} bytes, or open webViewLink.`
           : `A binary file of ${bytes} is past this connection's ${BINARY_INLINE_BYTES}-byte inline cap; no content is returned. Open webViewLink.`,
     });
     // Metadata that already says too large saves the download; metadata that
@@ -1433,7 +1434,7 @@ function guarded(tool: DriveTool): DriveTool {
         throw new ConnectorCallError(
           "connector_call_failed",
           tool.annotations.readOnlyHint
-            ? `This ${tool.name} result serializes to ${bytes} bytes, past ${raisable ? `this call's maxBytes of ${budget}` : `the ${budget} bytes one result may carry`}; nothing is returned. ${raisable ? `Raise maxBytes (up to ${MAX_RESULT_BYTES}, for a direct call_tool only), or narrow the request.` : "Read the item in Drive instead."}`
+            ? `This ${tool.name} result serializes to ${bytes} bytes, past ${raisable ? `this call's maxBytes of ${budget}` : `the ${budget} bytes one result may carry`}; nothing is returned. ${raisable ? `Raise maxBytes (up to ${MAX_RESULT_BYTES}, for a direct ${routesOf(ctx).read} only), or narrow the request.` : "Read the item in Drive instead."}`
             : `${tool.name} applied, but its result serializes to ${bytes} bytes, past the ${budget} bytes one result may carry, so it is not returned. Re-read the item with get_file; do not repeat the write.`,
           { retryable: false },
         );

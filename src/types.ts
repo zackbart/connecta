@@ -225,6 +225,21 @@ export interface CredentialTestResult {
   failure?: CredentialFailureClass;
 }
 
+/**
+ * How agent-facing text names Connecta's routes on the surface serving an
+ * operation: `call_tool`, `call_destructive_tool`, `search_tools`,
+ * `execute_code`, `authorize_connector` and `skills` on the six-tool surface,
+ * and other wording where those tools are not listed.
+ */
+export interface AgentRouteNames {
+  readonly search: string;
+  readonly read: string;
+  readonly write: string;
+  readonly program: string;
+  readonly authorize: string;
+  readonly skills: string;
+}
+
 export interface ConnectorContext {
   /** Explicit downstream consent initiation, never set by status/catalog/calls. */
   allowAuthorization?: boolean;
@@ -259,6 +274,12 @@ export interface ConnectorContext {
   defer?: (promise: Promise<unknown>) => void;
   /** Requested connector-operation deadline in milliseconds. */
   timeoutMs?: number;
+  /**
+   * Route names for text this operation writes for the agent, such as "call
+   * authorize_connector" in an auth error. Connecta sets it on every context
+   * it builds; build such text from it rather than spelling a tool name.
+   */
+  routes?: AgentRouteNames;
 }
 
 type ConnectorStatusState = "ok" | "per_caller" | "auth_required" | "credential_required" | "error";

@@ -1,3 +1,4 @@
+import { META_ROUTES, routeNames } from "./agent-routes.js";
 import { bytesToHex, utf8Length } from "./bytes.js";
 import { duringViewEffect } from "./runtime/call.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
@@ -21,10 +22,10 @@ import type { RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
 import type { Connector, ConnectorContext, ConnectorSkill, ConnectorSkillResourceContents } from "./types.js";
 
-const ROUTE =
-  "Choose a route before discovery. One known-address read uses call_tool; one known-address write uses call_destructive_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
-const RECOVERY =
-  'When an auth error includes a handoff, give it to the user or operator. Use authorize_connector for a fresh link. Page resultId notices and format:"paged" handles with connecta.result(handleOrId, { page? }). Missing guidance/repair only: skills tool "usage" or connecta.skill("usage").';
+// The meta instructions and built-in guides use the meta names: built-in guides
+// are byte-identical across deployments, and the eval code arm replaces usage.
+const ROUTE = `Choose a route before discovery. One known-address read uses ${META_ROUTES.read}; one known-address write uses ${META_ROUTES.write}. Unknown-address read-only work starts with ${META_ROUTES.program} to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.`;
+const RECOVERY = `When an auth error includes a handoff, give it to the user or operator. Use ${META_ROUTES.authorize} for a fresh link. Page resultId notices and format:"paged" handles with connecta.result(handleOrId, { page? }). Missing guidance/repair only: skills tool "usage" or connecta.skill("usage").`;
 
 /**
  * The always-loaded MCP `instructions` string. An endpoint is writable or
@@ -32,7 +33,7 @@ const RECOVERY =
  * and the client owns approval; a read-only one omits write tools from search
  * and describe and refuses every write call. Guides may still name them.
  */
-export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and call_destructive_tool may write. On a read-only endpoint, search omits write tools and every write call is refused; guides may still name them. The execute_code description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
+export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and ${META_ROUTES.write} may write. On a read-only endpoint, search omits write tools and every write call is refused; guides may still name them. The ${META_ROUTES.program} description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
 
 /**
  * The instructions one endpoint serves: {@link CONNECTA_INSTRUCTIONS}, then
@@ -48,7 +49,8 @@ export function endpointInstructions(description?: string, native?: { executeCod
 
 /** Instructions for pools whose host searches the listed native tools. */
 export function nativeInstructions(executeCode: boolean): string {
-  return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? "combine work in execute_code using the program addresses in tool descriptions." : "find tools with your host's search."} Read-only endpoints omit and refuse writes. Never repeat a write for output. Give auth handoffs to the user/operator. Follow nextAction to page with ${executeCode ? "connecta.result in execute_code" : "read_result"}. skills lists guidance.`;
+  const routes = routeNames(executeCode ? "native-code" : "native");
+  return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? `combine work in ${routes.program} using the program addresses in tool descriptions.` : "find tools with your host's search."} Read-only endpoints omit and refuse writes. Never repeat a write for output. Give auth handoffs to the user/operator. Follow nextAction to page with ${executeCode ? `connecta.result in ${routes.program}` : "read_result"}. ${routes.skills} lists guidance.`;
 }
 
 /** True when at least one of `connectors` carries a usage guide. */
@@ -86,7 +88,7 @@ Start from the user's question and the evidence that would answer it. Select the
 
 Establish capability limits early. A partial search is not proof that a tool is absent, and an unavailable catalog is not an empty dataset. Try a scoped search for the missing operation, inspect its guide when relevant, and distinguish unsupported work from missing data or authorization. If the required evidence is unavailable, return what was verified and the specific gap instead of approximating a different question through repeated calls.
 
-A host transport error that requires reconnecting this MCP server cannot be repaired by a downstream tool. Reconnect in the host; do not repeatedly call \`authorize_connector\` through the failed connection.
+A host transport error that requires reconnecting this MCP server cannot be repaired by a downstream tool. Reconnect in the host; do not repeatedly call \`${META_ROUTES.authorize}\` through the failed connection.
 
 Return the answer first, then the evidence and any unresolved gap. Include the account or environment, time window, and source ids or links needed to check it. Separate observed facts from inferences. Stop when the requested evidence is sufficient.
 `;
@@ -94,8 +96,7 @@ Return the answer first, then the evidence and any unresolved gap. Include the a
 const AVAILABLE_SKILLS = [
   {
     name: "usage",
-    description:
-      "How to route work between one execute_code program and Connecta's explicit call, authorization, and result tools.",
+    description: `How to route work between one ${META_ROUTES.program} program and Connecta's explicit call, authorization, and result tools.`,
     content: usageSkill,
   },
   {

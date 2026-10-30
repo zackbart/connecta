@@ -412,10 +412,15 @@ and `authorize_connector`. Calls to `call_tool`, `call_destructive_tool` and
 tool until its program replacement exists.
 
 The code arm is an eval-only adapter in [deploy/code-surface.ts](deploy/code-surface.ts).
-It wraps the fake Node deployment's real MCP responses to change the tool list,
-server instructions, execute description, usage skill and recovery hints. The
-observed QuickJS bridge translates errors and skill text before programs see
-them, including errors a program catches. A write on a read-only endpoint
+It marks the deployment's configuration so Connecta builds its route text in
+program form (`connecta.call inside execute_code`, `connecta.search inside
+execute_code`) wherever it writes that text: tool and error text, the
+`execute_code` description, program-call results including errors a program
+catches, and declared provider schema descriptions. The adapter then narrows the tool
+list, replaces the server instructions and usage skill, and adapts recovery
+actions; it rewrites no text. Replacing the former regex rewrite changed
+the harness hash, so a #765 comparison pairs both arms run on this harness;
+Connecta-authored text served to each arm is unchanged. A write on a read-only endpoint
 returns terminal `read_only_endpoint`, `retryable: false`, with no `nextAction`. Search
 recovery uses a program. Authentication still uses the real boundary and its
 handoffs. No product source, public option or normal configuration enables this

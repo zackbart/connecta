@@ -1,3 +1,5 @@
+import { META_ROUTES, routeNames } from "./agent-routes.js";
+import type { AgentRouteNames } from "./types.js";
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
 import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
@@ -479,6 +481,8 @@ export async function buildSandboxProviders(
 }
 
 interface SandboxLimits {
+  /** Route names for text the program's calls write: the request's surface. */
+  routes?: AgentRouteNames | undefined;
   resultDependencies?: ProgramResultDependency[];
   sentSecrets?: SentSecrets;
   defaultToolTimeoutMs?: number | undefined;
@@ -623,6 +627,7 @@ function sandboxProvider(
     source: "execute_code" as const,
     sentSecrets,
     timeoutMs,
+    ...(limits.routes ? { routes: limits.routes } : {}),
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
@@ -1377,6 +1382,8 @@ interface RunnerConfig {
   maxWrites?: number | undefined;
   /** Serialized characters a program may return, shared with emitted text. Default 24_000. */
   maxResultChars?: number | undefined;
+  /** Route names for text the program's calls write: the request's surface. */
+  routes?: AgentRouteNames | undefined;
 }
 
 /** Runs one `execute_code` program and answers as the tool does. */
@@ -1485,6 +1492,7 @@ export function createExecuteTool(
                 defer: config.defer,
                 readOnly: config.readOnly,
                 maxWrites: config.maxWrites,
+                routes: config.routes,
                 programWrites,
                 resultDependencies,
                 dispatchController,
@@ -1870,7 +1878,9 @@ const executeDescription = (
   maxWrites: number,
   readOnly: boolean,
   native = false,
-) => `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}.
+  routes: AgentRouteNames = META_ROUTES,
+) =>
+  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
@@ -1936,6 +1946,8 @@ export function registerExecuteTool(
     maxResultChars?: number | undefined;
     /** A native pool: the lead sentence names direct tool calls instead of call_tool. */
     native?: boolean | undefined;
+    /** Route names for the description and program text: the request's surface. */
+    routes?: AgentRouteNames | undefined;
   },
 ): void {
   // Resolved once so the description and the collector cannot disagree about
@@ -1966,6 +1978,7 @@ export function registerExecuteTool(
     maxWrites,
     maxResultChars: ctx.maxResultChars,
     requestScope: ctx.requestScope,
+    routes: ctx.routes,
   });
   server.registerTool(
     "execute_code",
@@ -1982,6 +1995,7 @@ export function registerExecuteTool(
         maxWrites,
         ctx.readOnly === true,
         ctx.native === true,
+        ctx.routes,
       ),
       inputSchema: EXECUTE_INPUT,
       outputSchema: EXECUTE_OUTPUT,
@@ -2025,7 +2039,7 @@ export function registerExecuteTool(
               ["execute_code", args, extra, run],
             )
           : authCall(run, []);
-        return ctx.native ? (nativeRecovery(result, true) as typeof result) : result;
+        return ctx.native ? (nativeRecovery(result) as typeof result) : result;
       }),
     ),
   );

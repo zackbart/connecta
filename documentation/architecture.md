@@ -3116,6 +3116,37 @@ The always-loaded agent surface has fixed-cost caps of the same kind: the
 each tool description and output schema, the `usage` skill, and one default
 and one compact search row, measured on a pinned four-connector fixture.
 
+### Route names
+
+Connecta-authored agent text names a route with the names of the surface that
+serves it, resolved when the text is built (`src/agent-routes.ts`): `call_tool`,
+`call_destructive_tool`, `search_tools`, `execute_code`, `authorize_connector`
+and `skills` on the meta surface, the native contract's recovery wording on
+native pools, and in-program wording for the eval code arm. Nothing renders
+afterwards: no code scans or rewrites replies, program values, downstream
+results, resources, guides or caller data, so paging, previews, totals and
+offsets measure the final text.
+
+Where each text gets its names:
+
+| Text                                                                                                        | Names                                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Invocation refusals, authorization handoffs, paging notices                                                 | The request's names, from the MCP route through meta-tools, programs and native pools                                         |
+| Connector and provider call text                                                                            | `routesOf(ctx)`; inside a call's Effect, the `Routes` reference; vendor tables' `words(detail, routes)`                       |
+| Contexts the registry builds                                                                                | The deployment's names (meta, or the eval code arm's); a call carries its request's names                                     |
+| Static provider schema descriptions                                                                         | `routeDescription(build)`: the declared meta text, which `api()` and static catalogs list as built for the deployment's names |
+| Meta instructions, meta-only tool descriptions, built-in guides                                             | Meta names, built once; built-in guides keep one digest across deployments                                                    |
+| Native instructions, the `execute_code` description                                                         | Built per surface                                                                                                             |
+| Program-return and program-call paging notes                                                                | Meta names; they name only `execute_code`, which every surface running programs lists                                         |
+| Text outside any call (a connection's write-401 refusal, the OAuth adapter's discarded `UnauthorizedError`) | Meta names                                                                                                                    |
+
+The provider standard's S7 check refuses a spelled-out meta-tool name in
+provider code. Remaining literals are not agent route text: `execute_code`'s own
+budget and timeout errors, operator log lines, construction errors, the
+configuration reference, the OAuth callback page and operator fix prompts. The
+eval code arm marks its configuration with `renderRoutesAsPrograms`, an internal
+hook no package entry exports; no configuration key selects it.
+
 [Decision 0019](https://github.com/zackbart/connecta/blob/main/decisions/0019-core-validation-http-boundaries.md) records the rejected Schema/HttpApi measurements.
 
 ## Where else to look

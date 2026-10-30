@@ -13,6 +13,7 @@
 // argument validation, sent-secret redaction, withheld handler text. Its
 // boundary also decides every write's outcome, from the core ledger the kit's
 // transport records into, so a kit connector declares `tracksEveryRequest`.
+import { routesOf } from "../agent-routes.js";
 import { Context, Effect, Schema } from "effect";
 import { inLogicalCall } from "../provider-call.js";
 import { registerToolEntry } from "../runtime/call-entry.js";
@@ -508,7 +509,13 @@ function build<I extends Input, O extends Schema.Top>(
       const lease = fromConnectorContext(ctx, verdict);
       const classification = Context.get(lease.services, Classification);
       const dispatches = Context.get(lease.services, Dispatches);
-      const map = { classification, dispatches, withholds: connection.safety.withholdsErrors, signal: ctx.signal };
+      const map = {
+        classification,
+        dispatches,
+        withholds: connection.safety.withholdsErrors,
+        signal: ctx.signal,
+        routes: routesOf(ctx),
+      };
       return Effect.try({
         try: () => {
           if (verdict === "write" || classification === "write") refuseWithheldValues(args, spec.name);

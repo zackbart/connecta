@@ -1,3 +1,5 @@
+import { META_ROUTES } from "./agent-routes.js";
+import type { AgentRouteNames } from "./types.js";
 import { toolError } from "./tool-error.js";
 import { upwardStep } from "./upward.js";
 import type { InputRequiredResult } from "@modelcontextprotocol/server";
@@ -225,6 +227,8 @@ function base64Of(bytes: Uint8Array): string {
  */
 interface ResultStash {
   secrets?: SentSecrets;
+  /** Route names the notice's text uses: the request's surface. */
+  routes: AgentRouteNames;
   set: RegistryView["stashResult"];
   binding: ResultBinding;
   warn: () => void;
@@ -288,8 +292,8 @@ type PreviewShape = { kind: "prefix"; bytes: number } | { kind: "text-of-envelop
  * reported the decoy near the top instead. A write never gets this: repeating
  * it is the one thing its notice forbids.
  */
-const READ_REDUCE_FIRST =
-  "To find something specific, repeat this read inside execute_code with connecta.call and filter or search the result there, returning only what matters";
+const readReduceFirst = (routes: AgentRouteNames) =>
+  `To find something specific, repeat this read inside ${routes.program} with connecta.call and filter or search the result there, returning only what matters`;
 
 function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewShape): string {
   if (results.pagingTool === "read_result") {
@@ -303,14 +307,14 @@ function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewSh
   }
   if (!results.write) {
     if (results.binding.program)
-      return "filter/map/slice data inside execute_code and return only what you need; page this completed return with connecta.result using nextAction.";
+      return `filter/map/slice data inside ${results.routes.program} and return only what you need; page this completed return with connecta.result using nextAction.`;
     const [shown, full] =
       preview.kind === "prefix"
         ? [`Bytes 0-${preview.bytes} of ${totalBytes} follow.`, "to read it in full, page the rest"]
         : preview.kind === "text-of-envelope"
           ? ["Its text follows.", `to read the full ${totalBytes}-byte content array as JSON, page it`]
           : [`The result is ${totalBytes} bytes.`, "to read it in full, page it"];
-    return `${shown} ${READ_REDUCE_FIRST}; ${full} with connecta.result using nextAction.`;
+    return `${shown} ${readReduceFirst(results.routes)}; ${full} with connecta.result using nextAction.`;
   }
   const body =
     preview.kind === "prefix"
@@ -395,7 +399,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
           ? `Paging is unavailable. ${WRITE_ALREADY_RAN}`
           : results.pagingTool
             ? "Paging is unavailable."
-            : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
+            : `Paging is unavailable. Use ${results.routes.program} to reduce read-only results before returning them.`,
       };
     }
     return {
@@ -458,6 +462,8 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
         stashResult(
           bytes,
           {
+            // Program-call pages name only execute_code, listed wherever programs run.
+            routes: META_ROUTES,
             binding: {
               identity: registry.resultIdentity(),
               baseUrl,
@@ -548,6 +554,8 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
       );
       const results: ResultStash = {
         secrets,
+        // A program return names only execute_code, which every surface running programs lists.
+        routes: META_ROUTES,
         binding: {
           identity: registry.resultIdentity(),
           baseUrl,
@@ -843,6 +851,8 @@ function metaToolsForRequest(
     downstreamInput?: boolean;
     /** A native endpoint without execute_code: truncation notices page with read_result. */
     pagingTool?: "read_result" | undefined;
+    /** Route names this request's text uses; meta by default. */
+    routes?: AgentRouteNames | undefined;
     /** `execute.maxResultChars`, which sizes the pages truncation notices ask programs to read. */
     maxProgramResultChars?: number | undefined;
     activitySource?: "native" | undefined;
@@ -858,6 +868,7 @@ function metaToolsForRequest(
   // identity lets remote connectors reuse one downstream client inside that
   // request without leaking request-bound I/O into the next one.
   const requestScope = opts.requestScope ?? {};
+  const routes = opts.routes ?? META_ROUTES;
   if (opts.canManageAuth || opts.oauthConnectUrl || opts.credentialHandoffUrl || opts.oauthConnectUnavailable) {
     bindAuthorizationHandoffs(
       requestScope,
@@ -866,7 +877,7 @@ function metaToolsForRequest(
           registry,
           baseUrl,
           requestScope,
-          opts,
+          { ...opts, routes, nativeWithoutCode: opts.pagingTool === "read_result" },
           { connector },
         ]),
       ),
@@ -928,6 +939,7 @@ function metaToolsForRequest(
             activitySource: opts.activitySource,
             sentSecrets,
             readOnly: opts.readOnly,
+            routes,
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
             ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
             unwrapResult: call.resultMode === "value",
@@ -963,6 +975,7 @@ function metaToolsForRequest(
                   const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, globalCap);
                   const results: ResultStash = {
                     secrets,
+                    routes,
                     binding: {
                       identity: registry.resultIdentity(),
                       baseUrl,
@@ -1441,15 +1454,15 @@ function metaToolsForRequest(
 // Each description states only its own tool's scope; the full routing rule
 // lives once in the server instructions. A client that drops instructions
 // still routes correctly from these scopes plus execute_code's terse lead.
+// Only the meta surface lists these tools, so they use its names.
 const SEARCH_DESC = (readOnly: boolean) =>
-  `${readOnly ? "Catalog inspection; this read-only endpoint omits write tools." : "Catalog inspection, or finding a write before call_destructive_tool."} For read work, search inside one execute_code program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement; neither grants authority. Empty query browses. Read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+  `${readOnly ? "Catalog inspection; this read-only endpoint omits write tools." : `Catalog inspection, or finding a write before ${META_ROUTES.write}.`} For read work, search inside one ${META_ROUTES.program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement; neither grants authority. Empty query browses. Read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
 const CALL_DESC = (readOnly: boolean) =>
-  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: execute_code. ${readOnly ? "This endpoint is read-only and refuses every write." : "Unannotated or write-capable tools fail closed to call_destructive_tool."} A truncated result carries a connecta.result action.`;
+  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${META_ROUTES.program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries a connecta.result action.`;
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
-const CALL_DESTRUCTIVE_READ_ONLY_DESC =
-  "This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer call_tool or execute_code for them.";
+const CALL_DESTRUCTIVE_READ_ONLY_DESC = `This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer ${META_ROUTES.read} or ${META_ROUTES.program} for them.`;
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed with an authentication or operator-configuration error, give the retained handoff to the operator; otherwise proceed with the call. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =
@@ -1586,10 +1599,13 @@ export function registerMetaTools(
      * has no execute_code, and return the route native tool calls take.
      */
     native?: { executeCode: boolean; catalogErrors: string[] } | undefined;
+    /** Route names this request's text uses; meta by default. */
+    routes?: AgentRouteNames | undefined;
   },
 ): NativeCallRoute | undefined {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxProgramResultChars: ctx.maxProgramResultChars,
+    routes: ctx.routes,
     ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
     ...(ctx.native ? { activitySource: "native" as const } : {}),
     downstreamInput: Boolean(ctx.authElicitation),

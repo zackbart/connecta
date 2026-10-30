@@ -525,8 +525,8 @@ export const errors: VendorErrors = {
   statuses: {
     401: () => ({
       code: "auth_required",
-      words: (detail) =>
-        `${detail} CCB rejected the connection's access token. Call authorize_connector for this connector.`,
+      words: (detail, routes) =>
+        `${detail} CCB rejected the connection's access token. Call ${routes.authorize} for this connector.`,
       advice: ", then retry",
     }),
     403: () => ({

@@ -13,7 +13,10 @@ import { NATIVE_NAME_MAX, nativeToolName } from "../src/native-tools.js";
 import { CONNECTA_INSTRUCTIONS, nativeInstructions } from "../src/skills.js";
 import type { JsonSchema } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { fakeClerkAuth, readJsonRpc } from "./fixtures/http.js";
+import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { renderRoutesAsPrograms, routeDescription } from "../src/agent-routes.js";
+import { createConnecta, customExecutor } from "../src/index.js";
+import type { Connector } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 
@@ -368,7 +371,6 @@ describe("native tool surface", () => {
           isError: true,
           structuredContent: { error: { operation: `crm.${tool}`, retry: `Retry crm.${tool}.` } },
         },
-        false,
         `crm__${tool}`,
       ) as { content: Array<{ text: string }> };
       expect(envelope(recovery).error.retry).toBe(`Retry crm__${tool}.`);
@@ -660,5 +662,97 @@ describe("native tool names", () => {
     for (const name of [await nativeToolName("1pass", "get"), await nativeToolName("crm", "é")]) {
       expect(name).toMatch(/^[A-Za-z][A-Za-z0-9_-]*$/);
     }
+  });
+});
+
+describe("route names per surface", () => {
+  const note = routeDescription((routes) => `Raise it only for a direct ${routes.read} read.`);
+  const connectors = () => [
+    api("crm", {
+      tools: [
+        {
+          name: "get_person",
+          description: "Get a person",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object", properties: { maxBytes: { type: "integer", description: note } } },
+          handler: async () => ({ ok: true }),
+        },
+        {
+          name: "create_person",
+          description: "Create a person",
+          annotations: { readOnlyHint: false },
+          inputSchema: { type: "object" },
+          handler: async () => ({ ok: true }),
+        },
+      ],
+    }),
+    {
+      id: "service",
+      kind: "api",
+      credential: { label: "Service token" },
+      listTools: async () => [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+      callTool: async () => ({ ok: true }),
+    } as Connector,
+  ];
+
+  it("builds native recovery text with the native contract's wording", async () => {
+    const storage = memoryStorage();
+    const connecta = createTestConnecta({
+      connectors: connectors(),
+      agents: ["assistant"],
+      pools: {
+        nocode: { tools: ["crm", "service"], members: ["agent:assistant"], surface: "native", executeCode: false },
+      },
+      publicUrl: BASE,
+      logger: silentLogger,
+      storage,
+      accessTokens: accessTokens(storage),
+    });
+    const token = await issueAgentToken(storage, "assistant");
+    const called = await rpc(connecta, token, "nocode", "tools/call", { name: "service__read", arguments: {} });
+    const error = envelope(called.result).error;
+    expect(error.message).toContain('Call the returned authorization handoff({ connector: "service" }).');
+    expect(JSON.stringify(error)).not.toMatch(/search_tools|call_tool|call_destructive_tool|authorize_connector/);
+    await connecta.close();
+  });
+
+  it("serves the eval code arm's text, schemas included, in program form", async () => {
+    const config = {
+      connectors: connectors(),
+      publicUrl: BASE,
+      logger: silentLogger,
+      readOnly: false,
+      executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
+    };
+    // The mark is on this object, so it goes to createConnecta as it is.
+    renderRoutesAsPrograms(config);
+    const coded = createConnecta(config);
+    const plain = createTestConnecta({ connectors: connectors(), publicUrl: BASE, logger: silentLogger });
+    const send = async (c: Fetcher, method: string, params: object) =>
+      readJsonRpc(await c.fetch(mcpRpc(method, params)));
+    const listed = await send(coded, "tools/list", {});
+    expect(listed.result.tools.find((t: { name: string }) => t.name === "execute_code").description).toMatch(
+      /^Every operation uses execute_code\. /,
+    );
+    const refusal = async (c: Fetcher) =>
+      envelope(
+        (
+          await send(c, "tools/call", {
+            name: "call_tool",
+            arguments: { address: "crm.create_person" },
+          })
+        ).result,
+      ).error.message;
+    expect(await refusal(coded)).toContain("Invoke it through connecta.call inside execute_code so");
+    expect(await refusal(plain)).toContain("Invoke it through call_destructive_tool so");
+    const schema = async (c: Fetcher) =>
+      JSON.stringify(
+        (await send(c, "tools/call", { name: "search_tools", arguments: { connector: "crm", includeSchemas: "json" } }))
+          .result.structuredContent,
+      );
+    expect(await schema(coded)).toContain("Raise it only for a direct connecta.call inside execute_code read.");
+    expect(await schema(plain)).toContain("Raise it only for a direct call_tool read.");
+    await coded.close();
+    await plain.close();
   });
 });

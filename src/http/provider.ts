@@ -1,4 +1,5 @@
 // Internal provider kit. Unreachable from src/index.ts.
+import { META_ROUTES, routesOf } from "../agent-routes.js";
 import { credentialFailureClass } from "../credential-verification.js";
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
@@ -323,9 +324,10 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                           ? undefined
                           : renewal._tag === "Failed"
                             ? renewal.failure
-                            : new ConnectorCallError(
+                            : // Built with the connection, outside any call: meta names.
+                              new ConnectorCallError(
                                 "downstream_oauth_required",
-                                `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
+                                `Connector "${id}" requires authorization — call ${META_ROUTES.authorize}({ connector: "${id}" }) and open the returned URL.`,
                               ),
                         "downstream_oauth_required",
                       ),
@@ -375,6 +377,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           dispatches: Context.get(lease.services, Dispatches),
           withholds: connection.safety.withholdsErrors,
           signal,
+          routes: routesOf(ctx),
         };
         return runEdge(
           probeProgram.pipe(

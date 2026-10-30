@@ -273,7 +273,7 @@ export class NativeSurface {
       authMethod((args: Record<string, unknown>, request: ServerContext) =>
         Effect.gen({ self: this }, function* () {
           const result = yield* authInvoke<unknown>(this, "call", [name, args ?? {}, request]);
-          return nativeRecovery(result, this.options.executeCode, name);
+          return nativeRecovery(result, name);
         }),
       ) as never,
     );

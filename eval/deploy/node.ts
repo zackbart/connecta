@@ -11,7 +11,7 @@ import { connectCcb, evalConfig, evalMcpPath, presetCredentials } from "./compos
  * API, and it only uses published entry points. When the config surface
  * changes, this adapter changes; the tasks and graders do not.
  */
-import { forSurface } from "./code-surface.js";
+import { codeConfig, forSurface } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -107,25 +107,28 @@ export async function startNodeDeployment(
     const provided = connectors.some((s) => s.provider);
     const build = () =>
       createConnecta(
-        evalConfig(
-          {
-            connectors,
-            extra,
-            fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
-            readOnly: endpointReadOnly,
-            everyPool,
-          },
-          {
-            storage,
-            accessTokens: accessTokens(storage),
-            publicUrl: origin,
-            executor: observed.executor,
-            vault,
-            ui: operatorUi(),
-            ...(oauth
-              ? { auth: { auth: oauth.inbound(), maintainers: ["eval-human"] }, oauthConnector: oauth.connector() }
-              : {}),
-          },
+        codeConfig(
+          evalConfig(
+            {
+              connectors,
+              extra,
+              fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
+              readOnly: endpointReadOnly,
+              everyPool,
+            },
+            {
+              storage,
+              accessTokens: accessTokens(storage),
+              publicUrl: origin,
+              executor: observed.executor,
+              vault,
+              ui: operatorUi(),
+              ...(oauth
+                ? { auth: { auth: oauth.inbound(), maintainers: ["eval-human"] }, oauthConnector: oauth.connector() }
+                : {}),
+            },
+          ),
+          surface,
         ),
       );
     connecta = build();

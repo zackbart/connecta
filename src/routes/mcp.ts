@@ -1,3 +1,4 @@
+import { routeNames } from "../agent-routes.js";
 import { upwardStep } from "../upward.js";
 import { bindDiscoveryEndpoint } from "../discovery-health.js";
 import { authCall, authInvoke, authFlow, authMethod } from "../auth/native.js";
@@ -488,8 +489,11 @@ function serveMcp(
         ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       });
       const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
+      // A native pool's text uses the native contract's wording.
+      const routes = native ? routeNames(native.executeCode ? "native-code" : "native") : opts.routes;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,
+        routes,
         authElicitation,
         client,
         baseUrl,
@@ -524,6 +528,7 @@ function serveMcp(
           ...executeLimits(opts.config),
           readOnly,
           native: native !== undefined,
+          routes,
         });
       }
       if (native && nativeRoute && hint) {

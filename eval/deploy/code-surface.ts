@@ -1,5 +1,11 @@
-/** Eval-only A/B adapter. No shipped option or configuration can enable it. */
-import type { Connecta } from "@zackbart/connecta";
+/**
+ * Eval-only A/B adapter. No public option or configuration can enable it.
+ * Connecta builds its route text in program form for a configuration marked
+ * with renderRoutesAsPrograms; this adapter only narrows the tool list,
+ * replaces the instructions and usage guide, and adapts recovery actions.
+ */
+import type { Connecta, ConnectaConfig } from "@zackbart/connecta";
+import { renderRoutesAsPrograms } from "../../src/agent-routes.js";
 import { CODE_TOOLS } from "../agent/surface.js";
 
 export const CODE_INSTRUCTIONS =
@@ -30,14 +36,13 @@ async () => {
 }
 `;
 
-const HIDDEN = /\b(call_destructive_tool|call_tool|search_tools)\b/g;
-function guidance(text: string): string {
-  return text.replace(HIDDEN, (name) =>
-    name === "search_tools" ? "connecta.search inside execute_code" : "connecta.call inside execute_code",
-  );
+/** Mark a deployment's configuration so Connecta renders its route text in program form. */
+export function codeConfig<T extends ConnectaConfig>(config: T, surface: "six" | "code"): T {
+  if (surface === "code") renderRoutesAsPrograms(config);
+  return config;
 }
 
-/** Also used before the QuickJS bridge, so caught errors cannot leak old routes. */
+/** Recovery actions a program can follow. Also used before the QuickJS bridge, for caught errors. */
 export function codeValue(value: unknown): unknown {
   if (typeof value === "string") {
     if (/^\s*[[{]/.test(value)) {
@@ -47,7 +52,7 @@ export function codeValue(value: unknown): unknown {
         /* Plain text, not a JSON envelope. */
       }
     }
-    return guidance(value);
+    return value;
   }
   if (Array.isArray(value)) return value.map(codeValue);
   if (!value || typeof value !== "object") return value;
@@ -136,8 +141,7 @@ function withCodeSurface(connecta: Connecta): Connecta {
       if (!response.ok) return response;
       const type = response.headers.get("content-type") ?? "";
       if (!type.includes("application/json") && !type.includes("text/event-stream")) return response;
-      // Hash the exact transformed resource bytes, including non-usage guides
-      // whose hidden route names change. Never retain the original manifest.
+      // Hash the exact served resource bytes. Never retain the original manifest.
       const files = new Map<string, Promise<{ digest: string; size: number }>>();
       const fileMetadata = (uri: string) => {
         let pending = files.get(uri);
@@ -181,9 +185,9 @@ function withCodeSurface(connecta: Connecta): Connecta {
             const content = payload?.result?.contents;
             if (!read.ok || payload?.error || content?.length !== 1)
               throw new Error(`Cannot establish eval skill integrity for ${uri}`);
-            const served = isUsage(uri)
+            const served: { text?: string; blob?: string } = isUsage(uri)
               ? { ...content[0], text: CODE_USAGE }
-              : (codeValue(content[0]) as { text?: string; blob?: string });
+              : content[0];
             const bytes =
               typeof served.text === "string"
                 ? new TextEncoder().encode(served.text)
@@ -215,13 +219,6 @@ function withCodeSurface(connecta: Connecta): Connecta {
           reply.result.tools = reply.result.tools.filter((t: { name: string }) =>
             CODE_TOOLS.includes(t.name as (typeof CODE_TOOLS)[number]),
           );
-          for (const tool of reply.result.tools) {
-            if (tool.name === "execute_code")
-              tool.description = tool.description.replace(
-                /^One known read:[\s\S]*?Everything else: execute_code\. /,
-                "Every operation uses execute_code. ",
-              );
-          }
         }
         // Resolve the skill identity from the request, before rewriting either
         // host representation. Resource aliases and guest skills use this guide too.

@@ -1,5 +1,6 @@
 // Operation and call services. Only the Promise view bridge is keyed on a
 // context object; authority lives in Context values, shared by derived views.
+import { Routes, routesOf } from "../agent-routes.js";
 import { Context, Effect } from "effect";
 import type { ConnectorCaller } from "../connector-caller.js";
 import { ConnectorCallError } from "../errors.js";
@@ -322,6 +323,7 @@ function openCall(inputs: CallInputs): CallLease {
     Context.add(CallMemo, new Map()),
     Context.add(ProviderLedger, inputs.providerLedger),
     Context.add(LogicalLedger, inputs.operation ? serviceFor(inputs.operation, LogicalLedger) : undefined),
+    Context.add(Routes, routesOf(inputs.operation)),
   );
   const lease: CallLease = {
     get services() {

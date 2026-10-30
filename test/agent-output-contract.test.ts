@@ -6,7 +6,9 @@ import { createExecuteTool } from "../src/execute.js";
 import type { ToolResult } from "../src/meta-tools.js";
 import { ProgramWrites } from "../src/program-writes.js";
 import { runEdge } from "../src/runtime/run.js";
-import { registerMetaTools } from "../src/meta-tools.js";
+import { createMetaTools, registerMetaTools } from "../src/meta-tools.js";
+import { routeNames } from "../src/agent-routes.js";
+import type { AgentRouteNames } from "../src/types.js";
 import type { Executor } from "../src/types.js";
 import type { McpClientContext } from "../src/mcp-client-context.js";
 import { SentSecrets, sentSecretsForRequest } from "../src/sent-secrets.js";
@@ -657,3 +659,58 @@ it.each(["promise", "native"] as const)(
     }
   },
 );
+
+it("INV-6: caller and downstream values carrying DEL or route-like bytes reach the agent unchanged", async () => {
+  // These spelled the retired route tokens, partial ones and a literal name.
+  const odd = ["\u007frandom", `\u007fr${"\u007f".repeat(7)}`, "\u007fw\u007f call_tool", "é\u007fk"];
+  const registry = makeRegistry([
+    {
+      id: "notes",
+      kind: "api",
+      listTools: async () => [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+      callTool: async (_name, args) => ({ echo: args, odd }),
+    },
+  ]);
+  const expected = { echo: { value: odd }, odd };
+  const direct = await createMetaTools(registry, "https://connecta.test").callTool({
+    address: "notes.read",
+    args: { value: odd },
+  });
+  expect(JSON.parse(direct.content[0]!.type === "text" ? direct.content[0]!.text : "")).toEqual(expected);
+  const handler = createExecuteTool(
+    registry,
+    "https://connecta.test",
+    {
+      execute: async (_code, providers) => ({
+        result: await providers[0]!.fns.call!("notes.read", { value: odd }),
+      }),
+    },
+    silentLogger,
+  );
+  const program = await handler({ code: "async () => null" });
+  expect((program.structuredContent as { result: { data: unknown } }).result.data).toEqual(expected);
+});
+
+it("builds route text with the names of the surface serving it", async () => {
+  const registry = makeRegistry([
+    {
+      id: "notes",
+      kind: "api",
+      listTools: async () => [{ name: "write", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } }],
+      callTool: async () => ({ ok: true }),
+    },
+  ]);
+  const refusal = async (routes?: AgentRouteNames) =>
+    JSON.parse(
+      (
+        (
+          await createMetaTools(registry, "https://connecta.test", routes ? { routes } : {}).callTool({
+            address: "notes.write",
+          })
+        ).content[0] as { text: string }
+      ).text,
+    ).error.message as string;
+  expect(await refusal()).toContain("Invoke it through call_destructive_tool so the MCP host");
+  expect(await refusal(routeNames("code"))).toContain("Invoke it through connecta.call inside execute_code so");
+  expect(await refusal(routeNames("native"))).toContain("Invoke it through the original native tool so");
+});

@@ -13,7 +13,7 @@ let rpcId = 0;
 
 type RpcOptions = {
   baseUrl?: string;
-  id?: number;
+  id?: number | string;
   /** A named pool: the request goes to `/mcp/<pool>`. */
   pool?: string;
   /** A named pool's agent endpoint: the request goes to `/agent/<pool>`. */

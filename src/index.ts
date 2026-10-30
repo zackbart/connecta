@@ -1,3 +1,4 @@
+import { deploymentRoutes } from "./agent-routes.js";
 import { describeConfigSources } from "./config-value-sources.js";
 import { credentialTestRule, describeCredentialTestMismatch } from "./credential-rules.js";
 import { Registry } from "./registry.js";
@@ -262,6 +263,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   // Every structural check runs here, before any work: what comes back is the
   // configuration the deployment runs with, defaults applied once.
   const { input, resolved } = readConfig(config);
+  const routes = deploymentRoutes(config);
   const { logger } = resolved;
   const storage = resolved.storage;
   const registry = new Registry([...resolved.connectors], {
@@ -285,6 +287,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     maxResultBytes: resolved.calls.maxResultBytes,
     results: resolved.results,
     classification: resolved.classification,
+    routes,
   });
   const members = memberContext(resolved.auth, resolved.agents);
   const maintainers = resolveMaintainers(
@@ -334,6 +337,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     executor,
     executorName: configuredExecutorName,
     requestAdmission,
+    routes,
   });
   let closePromise: Promise<void> | undefined;
   return {
@@ -429,6 +433,7 @@ export type {
   ConnectorCredentialConfig,
   ConnectorCredentialFieldConfig,
   ConnectorCredentialValues,
+  AgentRouteNames,
   ConnectorContext,
   ConnectorAuthDescription,
   ConnectorDescription,

@@ -1,3 +1,4 @@
+import type { AgentRouteNames } from "../src/types.js";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 // The Effect provider kit (decision 0010, src/http/): the guarded
@@ -409,7 +410,10 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       expectTypeOf<Classified>().not.toHaveProperty("body");
       expectTypeOf<Classified>().not.toHaveProperty("detail");
       expectTypeOf<Parameters<StatusRule>[0]>().toEqualTypeOf<Classified>();
-      expectTypeOf<NonNullable<Verdict["words"]>>().toEqualTypeOf<(detail: string) => string>();
+      // Words receive the redacted detail line and route names, never facts or the body.
+      expectTypeOf<NonNullable<Verdict["words"]>>().toEqualTypeOf<
+        (detail: string, routes: AgentRouteNames) => string
+      >();
       // @ts-expect-error Vendor-specific auth statuses must be declared.
       const incomplete: VendorErrors["statuses"] = { 401: () => ({ code: "auth_required" }) };
       expect(incomplete).not.toHaveProperty("404");

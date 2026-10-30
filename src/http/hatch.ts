@@ -8,6 +8,7 @@
 // entries (8 at most, 16 KiB of JSON at most, with an explicit continuation
 // cursor) and details return at most 32 KiB, cutting only optional parts and
 // listing them in `truncated`; a required parameter or body field is never cut.
+import { Routes } from "../agent-routes.js";
 import { Effect, Schema } from "effect";
 import { lexicalSearchContent } from "../catalog.js";
 import { registerOperationVocabulary } from "../operation-vocabulary.js";
@@ -1461,6 +1462,7 @@ export function hatch(
               dispatches,
               withholds: connection.safety.withholdsErrors,
               signal: yield* Signal,
+              routes: yield* Routes,
             });
             const diagnostic = providerFailureMessage(error, `${error.message} ${idempotency!.header}: ${key}.`);
             return yield* Effect.fail(

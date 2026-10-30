@@ -12,6 +12,7 @@ import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
+import { createMetaTools } from "../../meta-tools.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -1064,6 +1065,39 @@ describe("reading carried attachments", () => {
       }),
     ).toMatchObject({ content: "a,b\n" });
     expect(path(2)).toBe("/messages/m1/attachments/csv-current");
+  });
+
+  it("pages a stashed read whose truncation note names the route, reassembling every byte", async () => {
+    const content = "abcdefghij".repeat(400);
+    serve({ ...attachmentFixtures.csv, body: { size: content.length, attachmentId: "text" } }, b64url(content));
+    const connector = connection();
+    // A cap under the result stashes it; native paging reads it back in byte pages.
+    const tools = createMetaTools(makeRegistry([connector], { maxResultBytes: 1_000 }), "https://connecta.test", {
+      pagingTool: "read_result",
+    });
+    const called = await tools.callTool({
+      address: "mail.get_attachment",
+      args: { messageId: "m1", partId: "1", maxChars: 1_500 },
+    });
+    const notice = JSON.parse((called.content[0] as { text: string }).text.split("\n")[0]!);
+    expect(notice).toMatchObject({ truncated: true, nextAction: { tool: "read_result" } });
+    const pages: string[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = (await tools.readResult({ id: notice.resultId, offset, maxBytes: 3 })).structuredContent as {
+        text: string;
+        hasMore: boolean;
+        nextOffset?: number;
+      };
+      pages.push(page.text);
+      if (!page.hasMore) break;
+      offset = page.nextOffset!;
+    }
+    const whole = pages.join("");
+    expect(new TextEncoder().encode(whole).length).toBe(notice.totalBytes);
+    const result = JSON.parse(whole);
+    expect(result.content).toContain("raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]");
+    expect(result.content.startsWith(content.slice(0, 1_500))).toBe(true);
   });
 
   it("keeps JSON-escaped text and long metadata inside the whole result budget", async () => {

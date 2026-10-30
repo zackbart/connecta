@@ -1,3 +1,4 @@
+import { META_ROUTES } from "./agent-routes.js";
 import type { ExecuteResult } from "./types.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { msg } from "./errors.js";
@@ -11,7 +12,8 @@ export function serializeResultText(value: unknown): string {
   return serialized === undefined ? String(value) : serialized;
 }
 
-const TRUNCATION_HINT = "filter/map/slice data inside execute_code and return only what you need";
+// Only program returns carry it, and every surface running programs lists execute_code.
+const TRUNCATION_HINT = `filter/map/slice data inside ${META_ROUTES.program} and return only what you need`;
 
 /**
  * Shape the over-cap notice so the **serialized envelope** fits the same cap

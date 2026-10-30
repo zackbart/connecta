@@ -1,3 +1,5 @@
+import { routeCatalog, routesOf } from "../agent-routes.js";
+import type { AgentRouteNames } from "../types.js";
 import { wrapViewCredentials } from "../runtime/call.js";
 import { storedAuthObservation, withStoredAuth } from "../auth/stored-observation.js";
 import { Effect, Exit } from "effect";
@@ -371,6 +373,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
   const auth = describedApiAuth(opts);
+  const catalogs = new Map<AgentRouteNames, ToolDef[]>();
   const connector: Connector = {
     id,
     ...defined({ title: opts.title }),
@@ -414,7 +417,11 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       : {}),
     staticTools: defs,
     async listTools(ctx) {
-      return settleOnClose(ctx, async () => redactCatalog(ctx, defs));
+      // Declared route descriptions use the deployment's names; meta lists defs as declared.
+      const routes = routesOf(ctx);
+      let listed = catalogs.get(routes);
+      if (!listed) catalogs.set(routes, (listed = [...routeCatalog(defs, routes)]));
+      return settleOnClose(ctx, async () => redactCatalog(ctx, listed));
     },
     callTool: (name, args, ctx, options) => runEdge(core(name, args, ctx, options)),
   };
@@ -573,7 +580,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       if ((await settleOnClose(ctx, () => oauth.prepareCall(ctx))).state === "auth_required") {
         throw new ConnectorCallError(
           "downstream_oauth_required",
-          `Connector "${id}" requires authorization. Call authorize_connector.`,
+          `Connector "${id}" requires authorization. Call ${routesOf(ctx).authorize}.`,
         );
       }
     });

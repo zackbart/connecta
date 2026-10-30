@@ -1,4 +1,5 @@
 // Effect declarations are the catalog and runtime decoder for every named Docs tool.
+import { routeDescription } from "../../../agent-routes.js";
 import { Schema } from "effect";
 import { Integer, isMinChars, isMaxChars } from "../../../http/json-schema.js";
 import { fieldsContract } from "../../../http/fields.js";
@@ -76,8 +77,10 @@ export const GET_DOCUMENT_INPUT = Schema.Struct({
   ),
   "maxChars": Schema.optionalKey(
     Integer.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1000000)).annotate({
-      description:
-        "Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result.",
+      description: routeDescription(
+        (routes) =>
+          `Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (${routes.read}, connecta.result to page): ${routes.program} carries at most 256 KiB per result.`,
+      ),
     }),
   ),
   "withIndexes": Schema.optionalKey(

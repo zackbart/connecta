@@ -1,3 +1,5 @@
+import { routesOf } from "../../agent-routes.js";
+import type { AgentRouteNames } from "../../types.js";
 import { asRecord, asArray, compact } from "../_shared/json.js";
 // Google Sheets named projections, bounded cell reads and guarded writes.
 import { Effect, Option, Schema } from "effect";
@@ -176,26 +178,32 @@ function cappedCell(ctx: ConnectorContext, whole: unknown, max: number, cut: { c
 }
 
 /** Refuse a row no page of `budget` bytes can hold, rather than overrun the cap. */
-function rowTooLarge(range: string, row: number, needed: number, budget: number): ConnectorCallError {
+function rowTooLarge(
+  range: string,
+  row: number,
+  needed: number,
+  budget: number,
+  routes: AgentRouteNames,
+): ConnectorCallError {
   return new ConnectorCallError(
     "invalid_args",
-    `Row ${row} of ${range} needs a page of ${needed} bytes with the page's own fields, more than this page's maxBytes of ${budget}; narrow the range's columns or lower maxCellChars${raiseBytes(needed)}.`,
+    `Row ${row} of ${range} needs a page of ${needed} bytes with the page's own fields, more than this page's maxBytes of ${budget}; narrow the range's columns or lower maxCellChars${raiseBytes(needed, routes)}.`,
   );
 }
 
 /** Refuse a page too small for even one range's own fields. */
-function pageTooSmall(range: string, needed: number, budget: number): ConnectorCallError {
+function pageTooSmall(range: string, needed: number, budget: number, routes: AgentRouteNames): ConnectorCallError {
   return new ConnectorCallError(
     "invalid_args",
-    `A page reporting ${range} needs ${needed} bytes before any of its rows, more than this page's maxBytes of ${budget}; shorten the range${raiseBytes(needed)}.`,
+    `A page reporting ${range} needs ${needed} bytes before any of its rows, more than this page's maxBytes of ${budget}; shorten the range${raiseBytes(needed, routes)}.`,
   );
 }
 
-function raiseBytes(needed: number): string {
+function raiseBytes(needed: number, routes: AgentRouteNames): string {
   if (needed > MAX_PAGE_BYTES) return "";
   return needed <= DEFAULT_PAGE_BYTES
     ? `, or raise maxBytes to at least ${needed}`
-    : `, or raise maxBytes to at least ${needed} (above ${DEFAULT_PAGE_BYTES}, only for a direct call_tool read: execute_code cannot receive it)`;
+    : `, or raise maxBytes to at least ${needed} (above ${DEFAULT_PAGE_BYTES}, only for a direct ${routes.read} read: ${routes.program} cannot receive it)`;
 }
 
 /** Refuse a row no page of `budget` cells can hold, rather than overrun the cap. */
@@ -524,7 +532,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
                 }),
               ) + 1;
             if (bytes + fields > byteBudget) {
-              if (valueRanges.length === 0) throw pageTooSmall(echoed, bytes + fields, byteBudget);
+              if (valueRanges.length === 0) throw pageTooSmall(echoed, bytes + fields, byteBudget, routesOf(ctx));
               next = { i: resume.i + index, s: before };
               break;
             }
@@ -543,7 +551,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
               // The row as serialized, plus the comma before it.
               const size = jsonBytes(capped) + 1;
               if (bytes + size > byteBudget) {
-                if (empty) throw rowTooLarge(echoed, dropped + 1, bytes + size, byteBudget);
+                if (empty) throw rowTooLarge(echoed, dropped + 1, bytes + size, byteBudget, routesOf(ctx));
                 break;
               }
               cells += width;

@@ -1,4 +1,5 @@
 // Drive named tool contracts, kept separate from the workflow programs.
+import { routeDescription } from "../../../agent-routes.js";
 import { Schema } from "effect";
 import { Integer, isMinChars, isMaxChars } from "../../../http/json-schema.js";
 const matchesPattern = (pattern: RegExp) =>
@@ -54,8 +55,10 @@ export const search_files = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description":
-          "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read.",
+        "description": routeDescription(
+          (routes) =>
+            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
+        ),
       }),
     ),
   }),
@@ -121,8 +124,10 @@ export const list_folder_items = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description":
-          "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read.",
+        "description": routeDescription(
+          (routes) =>
+            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
+        ),
       }),
     ),
   }),
@@ -216,8 +221,10 @@ export const get_file_content = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description":
-          "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read.",
+        "description": routeDescription(
+          (routes) =>
+            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
+        ),
       }),
     ),
   }),
@@ -255,8 +262,10 @@ export const list_permissions = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description":
-          "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read.",
+        "description": routeDescription(
+          (routes) =>
+            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
+        ),
       }),
     ),
   }),
@@ -307,8 +316,10 @@ export const list_shared_drives = {
     ),
     "maxBytes": Schema.optionalKey(
       Integer.check(Schema.isGreaterThanOrEqualTo(65536), Schema.isLessThanOrEqualTo(4194304)).annotate({
-        "description":
-          "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read.",
+        "description": routeDescription(
+          (routes) =>
+            `Serialized bytes of the whole result; defaults to 196608, what ${routes.program} can receive. Raise it, to 4194304, only for a direct ${routes.read} read.`,
+        ),
       }),
     ),
   }),
