@@ -173,6 +173,15 @@ describe("provider folder generation", () => {
     expect(read(root, "README.md")).toContain("Vendor alpha, and Vendor beta");
     expect(read(root, "README.md")).toContain("Unrelated text.");
     expect(run(root, true).status).toBe(0);
+    // A provider without a setup section gets a mechanical skeleton the standard suite still flags (G7).
+    const docs = read(root, "documentation/providers.md");
+    write(root, "documentation/providers.md", docs.replace("\n## Vendor beta\n\nSetup for operators.\n", ""));
+    expect(run(root, true).stderr).toContain("documentation/providers.md");
+    expect(run(root).status).toBe(0);
+    expect(read(root, "documentation/providers.md")).toContain(
+      '## Vendor beta\n\n<!-- provider-setup-skeleton: beta --> Replace this line with the construction example\'s purpose and options, the credential, vendor prerequisites and limits.\n\n```ts\nimport { factory } from "@zackbart/connecta/providers/beta";\n```\n',
+    );
+    expect(run(root, true).status).toBe(0);
     // Run the bundled fixtures with fake installed subpaths. Their factory is
     // deliberately different from the source factory: bundling that source
     // accidentally would make this fail even though the import smoke passed.
@@ -207,6 +216,50 @@ describe("provider folder generation", () => {
       { cwd: root, encoding: "utf8", timeout: 10_000 },
     );
     expect(packed.status, packed.stderr).toBe(0);
+  });
+
+  it("registers provider-local eval wiring with the eval harness and leaves the workerd suites alone", () => {
+    const root = repository();
+    for (const role of ["fakes", "tasks", "deploy"]) mkdirSync(join(root, "eval", role), { recursive: true });
+    write(root, "vitest.config.ts", 'const WORKERS_SUITES = ["test/storage-sql-d1.test.ts"];\n');
+    const wiring = {
+      "eval/fake.ts": "export const evalFake = {};\n",
+      "eval/tasks.ts": "export const evalTasks = { tasks: [], checkKinds: {} };\n",
+      "eval/deploy.ts": "export const evalDeploy = {};\n",
+    };
+    for (const name of ["alpha", "gamma"]) mkdirSync(join(root, "src/providers", name, "eval"), { recursive: true });
+    standardProvider(root, "alpha", { files: { ...wiring, "eval/worker.ts": "export default {};\n" } });
+    standardProvider(root, "beta");
+    standardProvider(root, "gamma", { files: wiring });
+    const result = run(root);
+    expect(result.status, result.stderr).toBe(0);
+    const fakes = read(root, "eval/fakes/providers.generated.ts");
+    expect(fakes).toContain('import { evalFake as fake0 } from "../../src/providers/alpha/eval/fake.js";');
+    expect(fakes).toContain('import { evalFake as fake1 } from "../../src/providers/gamma/eval/fake.js";');
+    expect(fakes).toContain('  "alpha": fake0,\n  "gamma": fake1,\n');
+    expect(read(root, "eval/deploy/providers.generated.ts")).toContain(
+      'import { evalDeploy as deploy1 } from "../../src/providers/gamma/eval/deploy.js";',
+    );
+    const tasks = read(root, "eval/tasks/providers.generated.ts");
+    expect(tasks).toContain('{ name: "alpha", worker: "src/providers/alpha/eval/worker.ts", tasks: tasks0 }');
+    expect(tasks).toContain('{ name: "gamma", tasks: tasks1 }');
+    expect(fakes + tasks).not.toContain("beta");
+    // Generated wiring never enrolls a provider suite in workerd.
+    expect(read(root, "vitest.config.ts")).toBe('const WORKERS_SUITES = ["test/storage-sql-d1.test.ts"];\n');
+    expect(run(root, true).status).toBe(0);
+
+    write(root, "src/providers/gamma/eval/deploy.ts", "export const deploy = {};\n");
+    let before = snapshot(root);
+    const unexported = run(root);
+    expect(unexported.status).toBe(1);
+    expect(unexported.stderr).toContain("providers/gamma: eval/deploy.ts must export const evalDeploy");
+    expect(snapshot(root)).toEqual(before);
+    unlinkSync(join(root, "src/providers/gamma/eval/deploy.ts"));
+    before = snapshot(root);
+    const incomplete = run(root);
+    expect(incomplete.status).toBe(1);
+    expect(incomplete.stderr).toContain("src/providers/gamma: eval/ requires deploy.ts");
+    expect(snapshot(root)).toEqual(before);
   });
 
   it.each(["index.ts", "drift.json"])("rejects a missing required %s with a provider-specific error", (file) => {

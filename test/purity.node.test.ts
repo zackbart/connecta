@@ -1,6 +1,6 @@
 // Node-only: walks the source import graph with Node filesystem APIs.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -167,7 +167,13 @@ describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }
     // Import positions only: the name also appears in doc comments and in
     // error messages that tell a deployment which subpath to reach for.
     const selfImports = [/^\s*(?:import|export)[^;]*?["']@zackbart\/connecta/m, /\bimport\(\s*["']@zackbart\/connecta/];
-    for (const file of walk(SRC)) {
+    // Provider-local eval wiring is eval harness code that never ships; like
+    // eval/, it deploys connecta by its published names.
+    const harness = (path: string) => {
+      const [top, , folder] = relative(SRC, path).split(sep);
+      return top === "providers" && folder === "eval";
+    };
+    for (const file of walk(SRC).filter((path) => !harness(path))) {
       const source = readFileSync(file, "utf8");
       for (const pattern of selfImports) {
         expect(pattern.test(source), `${file} imports @zackbart/connecta instead of a relative path`).toBe(false);

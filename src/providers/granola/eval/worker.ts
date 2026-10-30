@@ -5,8 +5,14 @@ import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access
 import { workerExecutor } from "@zackbart/connecta/worker";
 import { d1Storage } from "@zackbart/connecta/d1";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
-import { interceptGranola } from "./granola.js";
-import { injectedConnectors, injectedD1, presetInjected, withInjectedPools, type InjectedEnv } from "./injected.js";
+import { interceptGranola } from "./deploy.js";
+import {
+  injectedConnectors,
+  injectedD1,
+  presetInjected,
+  withInjectedPools,
+  type InjectedEnv,
+} from "../../../../eval/deploy/injected.js";
 
 interface Env extends InjectedEnv {
   CONNECTA_DB: D1Database;

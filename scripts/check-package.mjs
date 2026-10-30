@@ -288,6 +288,9 @@ try {
       throw new Error(`Packed package ships repository-only ${excluded}`);
     }
   }
+  // Provider-local eval wiring (src/providers/<name>/eval/) is harness code.
+  const harness = [...paths].find((path) => /^dist\/providers\/[^/]+\/eval\//.test(path));
+  if (harness) throw new Error(`Packed package ships provider eval wiring ${harness}`);
 
   for (const required of [
     "README.md",

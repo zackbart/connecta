@@ -1,6 +1,6 @@
 import { QUICKBOOKS_WRITE_TASK } from "./quickbooks-writes.js";
 import { QUICKBOOKS_TASK } from "./quickbooks.js";
-import { GRANOLA_TASK } from "./granola.js";
+import { PROVIDER_EVALS } from "./providers.generated.js";
 import { GOOGLE_TASKS } from "./google.js";
 import { BASELINE_TASKS } from "./baseline.js";
 import { PLANNED_TASKS } from "./planned.js";
@@ -24,7 +24,7 @@ export const COMPARISON_TASKS: ActiveTask[] = [
   ...P5_TASKS,
 ];
 export const ACTIVE_TASKS: ActiveTask[] = [
-  GRANOLA_TASK,
+  ...PROVIDER_EVALS.flatMap(({ tasks }) => tasks.tasks),
   QUICKBOOKS_TASK,
   QUICKBOOKS_WRITE_TASK,
   ...COMPARISON_TASKS,

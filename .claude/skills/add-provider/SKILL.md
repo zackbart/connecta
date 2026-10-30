@@ -53,21 +53,26 @@ must never silently select an API credential.
 
 ## The folder (L)
 
-| Path                                         | Kinds | Holds                                                                                                                                                                                                      |
-| -------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`                                   | `api` | One `defineProvider` (directly or through the kit's `defineApiProvider`): options, kind, guide context, wiring                                                                                             |
-| `api.ts`                                     | `api` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch verdicts                                                                                                         |
-| `tools.ts`                                   | `api` | Kit tools and projections; it may import area modules from `lib/`                                                                                                                                          |
-| `safety.ts`                                  | `api` | Optional: the reviewed value-safety table, its `absent` acknowledgements, the embedded-URL review                                                                                                          |
-| `SKILL.md`                                   | `api` | Agent-facing domain guidance (G)                                                                                                                                                                           |
-| `drift.json`                                 | `api` | Version 2 (D)                                                                                                                                                                                              |
-| `evidence/`                                  | `api` | Fixed names (E)                                                                                                                                                                                            |
-| `fixtures.ts`                                | `api` | `fixture`: name, credential-free options, mode cases, `create()`, and convention data (allowed verbs, justified nested-description exceptions, auth category); runs on Node and against the packed tarball |
-| `provider.test.ts`                           | `api` | Focused provider-specific logic/fault regressions; use shared stateful outcome journeys for workflows. `provider.node.test.ts` only when Node is required                                                  |
-| `provider.<topic>.test.ts`                   | `api` | Optional further suites, such as `provider.safety.node.test.ts`                                                                                                                                            |
-| `skill.generated.ts`, `openapi.generated.ts` |       | Generated; never edit                                                                                                                                                                                      |
-| `lib/*.ts`                                   | `api` | Any other implementation module                                                                                                                                                                            |
+| Path                                              | Kinds | Holds                                                                                                                                                                                                      |
+| ------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`                                        | `api` | One `defineProvider` (directly or through the kit's `defineApiProvider`): options, kind, guide context, wiring                                                                                             |
+| `api.ts`                                          | `api` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch verdicts                                                                                                         |
+| `tools.ts`                                        | `api` | Kit tools and projections; it may import area modules from `lib/`                                                                                                                                          |
+| `safety.ts`                                       | `api` | Optional: the reviewed value-safety table, its `absent` acknowledgements, the embedded-URL review                                                                                                          |
+| `SKILL.md`                                        | `api` | Agent-facing domain guidance (G)                                                                                                                                                                           |
+| `drift.json`                                      | `api` | Version 2 (D)                                                                                                                                                                                              |
+| `evidence/`                                       | `api` | Fixed names (E)                                                                                                                                                                                            |
+| `fixtures.ts`                                     | `api` | `fixture`: name, credential-free options, mode cases, `create()`, and convention data (allowed verbs, justified nested-description exceptions, auth category); runs on Node and against the packed tarball |
+| `provider.test.ts`                                | `api` | Focused provider-specific logic/fault regressions; use shared stateful outcome journeys for workflows. `provider.node.test.ts` only when Node is required                                                  |
+| `provider.<topic>.test.ts`                        | `api` | Optional further suites, such as `provider.safety.node.test.ts`                                                                                                                                            |
+| `skill.generated.ts`, `openapi.generated.ts`      |       | Generated; never edit                                                                                                                                                                                      |
+| `lib/*.ts`                                        | `api` | Any other implementation module                                                                                                                                                                            |
+| `eval/fake.ts`, `eval/tasks.ts`, `eval/deploy.ts` | `api` | Optional, together: unshipped eval wiring (the fake vendor, its tasks and outcome/smoke enrollment, its Node-free connector). See [Eval wiring](#eval-wiring)                                              |
+| `eval/worker.ts`                                  | `api` | Optional: the dedicated `worker-<name>` smoke composition                                                                                                                                                  |
 
+- `eval/` holds only the four names above and never ships: the build
+  excludes it and the package smoke refuses it. Eval files import connecta by
+  its published names, like `eval/`; nothing else in the folder may.
 - `index.ts` never uses `asProviderFactory`, defines a tool, calls
   `remoteMcp()`, or builds guide text. Preserve the public
   `@zackbart/connecta/providers/<name>` import. Imports stay relative.
@@ -519,8 +524,9 @@ These hold on every path.
 
 Run `pnpm run providers:generate`. Folder discovery derives provider exports,
 Knip entries, bundle membership and baselines, packed smoke fixtures, portable
-convention imports, the bounded README inventory, `skill.generated.ts` with
-its Conventions, and `drift.json`'s `generated` block. It refuses D and G
+convention imports, the bounded README inventory, a missing setup section's
+skeleton, the eval registrations, `skill.generated.ts` with its Conventions,
+and `drift.json`'s `generated` block. It refuses D and G
 violations in every provider before writing anything, using the shared checks
 in `test/provider-standard.ts`. Do not
 hand-edit generated membership lists. Knip generation owns provider entrypoints;
@@ -531,12 +537,50 @@ the evidence digests follow the files.
 writing. Adding a folder must require no central provider list edit. Public
 export names and non-provider entries must remain unchanged.
 
+## Eval wiring
+
+Give a new provider its stateful fake, tasks and deployment wiring in its own
+`eval/` folder; [eval/README.md](../../../eval/README.md#provider-local-eval-wiring)
+and the contract in `eval/support/provider-eval.ts` define each export
+(`evalFake`, `evalTasks`, `evalDeploy`). `providers:generate` registers them
+with the world, saved grading inputs, Node and workerd compositions, the task
+index, grading, `eval:outcomes`, the `node-<name>`/`worker-<name>` smoke
+targets and the gateway control. Do not edit those shared eval files for a new
+provider. The fake routes its own credentials through
+`eval/fakes/transport.ts` (`routeFakeVendor`) and records ledger calls under
+`service: "<name>"`. Granola is the reference; providers whose eval wiring
+predates the layout stay hand-wired in `eval/` until they move.
+
+Never enroll a provider suite in `WORKERS_SUITES` (`vitest.config.ts`) for
+fetch, stream, timer or Web Crypto parity; generation does not touch that list.
+Only a suite that needs real Workers bindings or isolates qualifies, by a
+deliberate hand edit.
+
+A new provider touches these files outside its folder:
+
+- Hand-written: its `.changes/` fragment, and the setup prose of its
+  `## <display name>` section in `documentation/providers.md`.
+  `providers:generate` appends a skeleton (heading and construction import)
+  when the section is missing; G7 fails until the setup replaces its marker.
+- Generated by `providers:generate`, never hand-edited: `package.json`
+  exports, `knip.jsonc`, `scripts/bundle-budget.json`, `README.md`,
+  `documentation/providers.md` (inventory and skeleton),
+  `test/providers.generated.ts`, `scripts/provider-smoke.generated.mjs`, and
+  `eval/{fakes,tasks,deploy}/providers.generated.ts`.
+
+Granola's original change (#1082) touched 22 files outside its folder, 16 of
+them by hand: 11 eval harness files, `vitest.config.ts`, the eval README,
+architecture, providers.md and the fragment. The same provider now needs 2
+hand edits outside its folder; the rest are generated.
+
 ## Verification
 
 Run provider-local tests, `test/provider-standard.node.test.ts`, conventions,
 registry, purity and package-boundary suites on Node. Reuse the existing
 stateful fake vendors, deployment adapters and outcome tasks for affected
-behavior; `pnpm run eval:outcomes` checks representative real workflows.
+behavior; `pnpm run eval:outcomes` checks representative real workflows, and
+`pnpm run eval:smoke --targets node-<name>,worker-<name>` runs a provider's
+smoke journeys.
 Follow [AGENTS.md](../../../AGENTS.md#tests) for Node/workerd selection and
 focused-probe conventions.
 
