@@ -11,7 +11,7 @@ import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-s
 import { Integer, isMaxChars, isMinChars } from "../../http/json-schema.js";
 import { boundCursor, StandardPage } from "../../http/paging.js";
 import { read, write } from "../../http/tools.js";
-import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { fieldsContract, selectFields } from "../../http/fields.js";
 import { Refusal } from "../../http/errors.js";
 import { Operation } from "../../runtime/call.js";
 import { formsIndex, FORMS_REQUEST_KINDS } from "./lib/hatch.js";
@@ -644,6 +644,9 @@ const BatchRecord = optional({
   replyCount: Integer,
   createdItemCount: Integer,
 });
+const FORM_FIELDS = fieldsContract("result", FormRecord, "Page and cut metadata are preserved.");
+const RESPONSE_FIELDS = fieldsContract("result", ResponseRecord, "Cut and recovery metadata are preserved.");
+const RESPONSE_ITEM_FIELDS = fieldsContract("item", ResponseRecord, "It only narrows safe data.");
 const contextOf = Effect.gen(function* () {
   const operation = yield* Effect.serviceOption(Operation);
   if (Option.isNone(operation) || !operation.value) return yield* Effect.die(new Error("Missing Forms call context."));
@@ -705,13 +708,13 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
       input: Schema.Struct({
         formId,
         cursor,
-        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in the form; page and cut metadata is preserved.")),
+        fields: Schema.optionalKey(FORM_FIELDS.input),
       }),
       output: FormRecord,
       run: (args) =>
         Effect.gen(function* () {
           const ctx = yield* contextOf;
-          const problem = fieldsProblem(args.fields, new Set(Object.keys(FormRecord.fields)), "the form");
+          const problem = FORM_FIELDS.problem(args.fields);
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const formId: string = args["formId"];
           const form = yield* readForm(formId);
@@ -886,7 +889,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
       description:
         "List a Google Form's submitted responses, each answer labeled with its question's title in form order. Long answers are cut; get_response reads one whole.",
       input: Schema.Struct({
-        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in each response item; only narrows safe data.")),
+        fields: Schema.optionalKey(RESPONSE_ITEM_FIELDS.input),
         formId,
         submittedAfter: Schema.optionalKey(
           Schema.String.check(pattern("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$")).annotate({
@@ -910,7 +913,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
       run: (args) =>
         Effect.gen(function* () {
           const ctx = yield* contextOf;
-          const problem = fieldsProblem(args.fields, new Set(Object.keys(ResponseRecord.fields)), "a response item");
+          const problem = RESPONSE_ITEM_FIELDS.problem(args.fields);
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const formId: string = args["formId"];
           const limit: number = args["limit"] ?? DEFAULT_PAGE_SIZE;
@@ -1093,16 +1096,14 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
             .check(Schema.isMinLength(1), Schema.isMaxLength(MAX_QUESTION_IDS), Schema.isUnique())
             .annotate({ description: "Return only these questions for a large response." }),
         ),
-        fields: Schema.optionalKey(
-          fieldsInput("Dot paths to keep in the response; cut and recovery metadata is preserved."),
-        ),
+        fields: Schema.optionalKey(RESPONSE_FIELDS.input),
       }),
       output: ResponseRecord,
       writeSteps: pairedReads,
       run: (args) =>
         Effect.gen(function* () {
           const ctx = yield* contextOf;
-          const problem = fieldsProblem(args.fields, new Set(Object.keys(ResponseRecord.fields)), "the response");
+          const problem = RESPONSE_FIELDS.problem(args.fields);
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const formId: string = args["formId"];
           const [form, response] = yield* Effect.all(

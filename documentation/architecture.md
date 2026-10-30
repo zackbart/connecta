@@ -2293,13 +2293,18 @@ exact vendor count as `page.total` from its page callback. The kit validates a
 nonnegative safe integer and includes it on continuing and terminal pages;
 without a vendor count the property is absent. Lists without the opt-in keep
 their existing schema and result bytes. Never derive an exact total from a
-partial page or an estimate. `src/http/fields.ts` refuses an unknown first
-segment before dispatch; a selected
-result renders against a sparse output schema. `src/http/hatch.ts` is the
+partial page or an estimate. `src/http/fields.ts` derives each `fields`
+description's anchor and example from the contract that validates it. It
+refuses before dispatch a path whose first segment is not a declared property,
+and a deeper segment only inside an object the schema closes with
+`additionalProperties: false`; a selected result renders against a sparse
+output schema. `src/http/hatch.ts` is the
 standard hatch (`_api_search`, `_api_details`, `_api_read`, `_api_write`) over
 an `OperationIndex` with explicit verdicts. It keeps the REST family's
 argument and envelope names and validates `fields` against the operation's
-declared response roots before dispatch. Search answers stay within 16 KiB
+declared response roots before dispatch. A deeper miss is reported in
+bounded `warnings` naming declared properties only, never refused, because the
+pinned index declares paths only to a bounded depth. Search answers stay within 16 KiB
 (at most eight compact entries, long labels cut and marked, continuation by
 cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
@@ -2457,9 +2462,10 @@ A binding may opt into `truncated: true` to supply reviewed size-cut paths
 (such as `data.content`) in its answer. The hatch then declares and propagates
 an optional top-level `truncated: string[]` on reads and writes. Without the
 opt-in, the schemas and results are unchanged; size-cut metadata is not inferred
-from vendor booleans or added to other providers. A separate `warnings: true`
-opt-in declares and preserves reviewed `warnings: string[]` beside `data`, even
-when `fields` narrows the vendor body.
+from vendor booleans or added to other providers. Every hatch read and write
+declares an optional `warnings: string[]` for `fields` entries that matched
+nothing in a nonempty body. A separate `warnings: true` opt-in also preserves
+reviewed vendor warnings there, even when `fields` narrows the vendor body.
 
 A binding may expand deployment-owned path defaults (Cloudflare) or canonicalize
 repository contents paths (GitHub) before indexed resolution, and may prepare a
