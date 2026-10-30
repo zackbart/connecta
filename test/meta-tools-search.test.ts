@@ -11,6 +11,8 @@ import { calcConnector, makeRegistry, remoteConnector, required } from "./helper
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
 import { fixture as ccbFixture } from "../src/providers/ccb/fixtures.js";
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
+import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
+import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -243,9 +245,68 @@ describe("search_tools", () => {
     // Operation vocabulary consults them too: Granola calls meetings notes.
     const meetings = textOf(await mt.searchTools({ connector: "notes", query: "list meetings" })) as SearchResult;
     expect(meetings.tools.map((tool) => tool.address)).toContain("notes.granola_api_search");
+    // Listing notes needs no id or argument, so search hands back the whole read.
+    expect(meetings.readyCalls).toEqual([
+      {
+        address: "notes.granola_api_read",
+        args: { path: "/v1/notes" },
+        classification: "read",
+        summary: "List notes",
+        guideRequired: true,
+        guideRequiredReasons: ["connector_required"],
+      },
+    ]);
+    expect(meetings.connectors?.["notes"]?.guide).toBe("connector:notes");
     const unrelated = textOf(await mt.searchTools({ connector: "other", query: "list households" })) as SearchResult;
     expect(unrelated.matchMode).toBe("partial");
     expect(unrelated.queryAnalysis?.unmatchedTerms).toEqual(["households"]);
+  });
+
+  it("offers a ready call only when its resource is what the query names and no authored tool answers", async () => {
+    const mt = createMetaTools(
+      makeRegistry([
+        granolaFixture.create("workspace"),
+        vercelFixture.create("hosting"),
+        stripeFixture.create("billing"),
+      ]),
+      BASE,
+    );
+    const search = async (query: string) => textOf(await mt.searchTools({ query })) as SearchResult;
+    const ready = async (query: string) =>
+      ((await search(query)).readyCalls ?? []).map((call) => `${call.address} ${call.args.path}`);
+    expect(await ready("list meetings")).toEqual(["workspace.granola_api_read /v1/notes"]);
+    expect(await ready("list deployments")).toEqual(["hosting.vercel_api_read /v7/deployments"]);
+    expect(await ready("list customers")).toEqual(["billing.stripe_api_read /v1/customers"]);
+    // list_project_env_vars also matches, but its name adds "env" and "vars".
+    const projects = await search("list projects");
+    expect(projects.tools[0]?.address).toBe("hosting.list_project_env_vars");
+    expect(projects.readyCalls?.map((call) => `${call.address} ${call.args.path}`)).toEqual([
+      "hosting.vercel_api_read /v10/projects",
+    ]);
+    // One top-ranked call per connector, and a word inside a compound segment
+    // such as event_destinations never names that resource.
+    const scoped = async (query: string, connector: string) =>
+      ((textOf(await mt.searchTools({ query, connector })) as SearchResult).readyCalls ?? []).map(
+        (call) => `${call.address} ${call.args.path}`,
+      );
+    for (const query of ["list events", "get events"]) {
+      expect(await scoped(query, "billing"), query).toEqual(["billing.stripe_api_read /v1/events"]);
+      // Unscoped, another connector's own events resource may join: still one per connector.
+      const unscoped = await ready(query);
+      expect(unscoped, query).toContain("billing.stripe_api_read /v1/events");
+      expect(new Set(unscoped.map((call) => call.split(".")[0])).size, query).toBe(unscoped.length);
+      expect(unscoped.join(" "), query).not.toContain("event_destinations");
+    }
+    expect(await scoped("list event destinations", "billing")).toEqual([
+      "billing.stripe_api_read /v2/core/event_destinations",
+    ]);
+    // Vercel summaries mention teams for /v1/env, /v1/access-groups and CI
+    // branches; none of those is a team resource, and list_teams, whose name
+    // adds nothing to the query, answers it.
+    const teams = await search("list teams");
+    expect(teams.tools[0]?.address).toBe("hosting.list_teams");
+    expect(teams.readyCalls).toBeUndefined();
+    expect(await ready("get team")).toEqual([]);
   });
 
   it("does not load unrelated catalogs for a connector-scoped search", async () => {

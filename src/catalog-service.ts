@@ -81,6 +81,8 @@ const MAX_IDENTITY_CONNECTORS = 3;
 const MAX_DESCRIBE_SUGGESTIONS = 3;
 const MAX_API_SEARCH_POINTERS = 3;
 const MAX_API_SEARCH_ADDRESS_BYTES = 256;
+/** Fully determined operation reads one search page offers: one per connector, three connectors. */
+const MAX_READY_CALLS = 3;
 
 /** Recognize the visible standard family without importing provider implementations or indexes. */
 function apiSearchTools(tools: readonly ToolDef[]): ToolDef[] {
@@ -129,6 +131,8 @@ const SERVICE_NAMES = [
  * write rows within each relevance tier; writes stay on the page.
  */
 const READ_INTENT = /^(?:list|get|find|search|show|read|fetch|count)$/;
+/** Name words that state an action, never a resource. */
+const ACTION_WORD = /^(?:list|get|find|search|show|read|fetch|count|create|update|delete)$/;
 
 function normalizedPhrase(text: string): string {
   return lexicalQueryTerms(text.toLowerCase()).join(" ");
@@ -440,8 +444,25 @@ interface CatalogSearchFailure extends CatalogFailureDetail {
   retry?: string;
 }
 
+/** A complete read call search found in offline operation vocabulary. */
+interface CatalogReadyCall {
+  connector: Connector;
+  call: {
+    address: string;
+    args: { path: string };
+    classification: "read";
+    summary: string;
+    guideRequired?: true;
+    guideRequiredReasons?: GuideRequiredReason[];
+  };
+  guide?: string;
+  guideSummary?: string;
+}
+
 export interface CatalogSearchPage {
   entries: CatalogSearchEntry[];
+  /** First page only: fully determined operation reads, at most three. */
+  readyCalls?: CatalogReadyCall[];
   /** Failures from visible catalogs, with credential failures first. */
   catalogErrors: CatalogSearchFailure[];
   absence?: {
@@ -486,19 +507,18 @@ interface CatalogSearchConnector {
  * facts sit once in `connectors`, keyed by the connector id that prefixes each
  * row's address; rows keep only what varies by tool.
  */
-export type CatalogSearchResult = Omit<CatalogSearchPage, "entries"> & {
+export type CatalogSearchResult = Omit<CatalogSearchPage, "entries" | "readyCalls"> & {
   tools: Array<CatalogSearchEntry["tool"]>;
+  readyCalls?: Array<CatalogReadyCall["call"]>;
   connectors?: Record<string, CatalogSearchConnector>;
 };
 
 const stringListSchema = { type: "array", items: { type: "string" } } as const;
 const STRING = { type: "string" } as const;
+// The reasons enum is stated once under `$defs` and referenced from each field.
 const guideRequiredProperties = {
   guideRequired: { const: true },
-  guideRequiredReasons: {
-    type: "array",
-    items: { enum: ["connector_required", "approval_required", "schema_truncated"] },
-  },
+  guideRequiredReasons: { $ref: "#/$defs/reasons" },
 };
 const guideProperties = { guide: STRING, guideSummary: STRING, ...guideRequiredProperties };
 const catalogFailureProperties = {
@@ -561,6 +581,7 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
   required: ["catalogErrors", "tools", "total", "offset", "limit", "hasMore"],
   additionalProperties: false,
   $defs: {
+    reasons: { type: "array", items: { enum: ["connector_required", "approval_required", "schema_truncated"] } },
     failure: {
       type: "object",
       required: ["code", "message", "retryable"],
@@ -604,6 +625,21 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
           outputKeys: stringListSchema,
           annotations: { type: "object" },
           classification: { enum: ["read", "write"] },
+          ...guideRequiredProperties,
+        },
+      },
+    },
+    readyCalls: {
+      type: "array",
+      maxItems: MAX_READY_CALLS,
+      items: {
+        type: "object",
+        required: ["address", "args", "classification", "summary"],
+        properties: {
+          address: STRING,
+          args: { type: "object", required: ["path"], additionalProperties: false, properties: { path: STRING } },
+          classification: { const: "read" },
+          summary: STRING,
           ...guideRequiredProperties,
         },
       },
@@ -1335,8 +1371,10 @@ export class CatalogService {
       const queryMetadataTruncated =
         analysisTerms.length > analyzedTerms.length || analyzedTerms.some((term) => boundedQueryTerm(term).truncated);
       const vocabularyTools = new Set<ToolDef>();
+      const readyFound: Array<{ connector: Connector; tool: ToolDef; path: string; summary: string }> = [];
       const collectMatches = (mode: "all" | "partial") => {
         const collected: typeof matches = [];
+        readyFound.length = 0;
         let orderBase = 0;
         searchableCatalogs.forEach((catalog, connectorIndex) => {
           const connector = connectors[connectorIndex];
@@ -1378,13 +1416,18 @@ export class CatalogService {
             const rankedTools = rankTools(catalog.success, toolQuery, mode, statistics, query);
             const original = catalogs[connectorIndex]!;
             if (!isBrowse && query.length <= 200 && queryTerms.length <= 8 && Result.isSuccess(original)) {
-              for (const tool of operationVocabularyMatches(
+              const vocabulary = operationVocabularyMatches(
                 connector,
                 original.success,
                 toolTerms.filter((term) => !connectorTerms.has(term)).join(" "),
                 safety,
                 this.readOnly,
-              )) {
+              );
+              // At most one ready call per connector: its first hatch's top operation.
+              const ready = vocabulary.ready[0];
+              if (ready && !readyFound.some((found) => found.connector === connector))
+                readyFound.push({ connector, ...ready });
+              for (const tool of vocabulary.tools) {
                 vocabularyTools.add(tool);
                 if (!rankedTools.some((match) => match.tool === tool))
                   rankedTools.push({
@@ -1532,6 +1575,44 @@ export class CatalogService {
           },
         };
       });
+      // An exact name already answers the query, and so does a complete match
+      // on an authored tool (not the hatch's own) whose name adds nothing to
+      // the query: each name word is an action, or a query word up to
+      // plural/singular and declared synonyms. `list_teams` answers "list
+      // teams"; `list_project_env_vars` does not answer "list projects".
+      const top = matches[0];
+      const synonymsOfTop = top && searchSynonyms(top.connector);
+      const asked = queryTerms.flatMap((term) => [term, ...(synonymsOfTop?.(term) ?? [])]);
+      const answered =
+        top !== undefined &&
+        (top.exactLookup ||
+          top.exactName ||
+          (top.complete &&
+            !vocabularyTools.has(top.tool) &&
+            !readyFound.some((ready) => ready.tool === top.tool) &&
+            lexicalQueryTerms(top.tool.name).every(
+              (word) => ACTION_WORD.test(word) || asked.some((term) => matchesLexicalTerm(word, term)),
+            )));
+      const readyCalls =
+        offset === 0 && !answered
+          ? readyFound.slice(0, MAX_READY_CALLS).map(({ connector, tool, path, summary }): CatalogReadyCall => {
+              const reasons = guideRequiredReasons(connector, tool, false);
+              const guideSummary = connectorGuideSummary(connector);
+              return {
+                connector,
+                call: {
+                  address: `${connector.id}.${tool.name}`,
+                  args: { path },
+                  classification: "read",
+                  summary,
+                  ...(reasons ? { guideRequired: true as const, guideRequiredReasons: reasons } : {}),
+                },
+                ...(connectorGuide(connector)
+                  ? { guide: connectorSkillName(connector.id), ...(guideSummary ? { guideSummary } : {}) }
+                  : {}),
+              };
+            })
+          : [];
       const nextOffset = offset + entries.length < matches.length ? offset + entries.length : undefined;
       const pageTools = new Set(pageMatches.map((match) => match.tool));
       const matchingTools = (term: string) =>
@@ -1730,6 +1811,8 @@ export class CatalogService {
       // connector's contribution. Keep provenance host-only.
       for (const connector of connectors) onCatalogReference?.(connector.id);
       for (const entry of entries) onCatalogReference?.(entry.connector.id, entry.tool.name);
+      for (const { connector, call } of readyCalls)
+        onCatalogReference?.(connector.id, call.address.slice(connector.id.length + 1));
       for (const pointer of apiSearchPointers) onCatalogReference?.(pointer.connector, pointer.tool);
       for (const connector of absence?.configuredConnectors ?? []) onCatalogReference?.(connector);
       // An unknown scope's guidance lists the visible roster without searching it.
@@ -1739,6 +1822,7 @@ export class CatalogService {
         catalogErrors,
         ...(absence ? { absence } : {}),
         entries,
+        ...(readyCalls.length ? { readyCalls } : {}),
         total: matches.length,
         offset,
         limit,
@@ -1968,7 +2052,7 @@ function pageTail(page: CatalogSearchPage) {
 export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {
   // fromEntries keeps an id such as "__proto__" an own key.
   const connectors = new Map<string, CatalogSearchConnector>();
-  for (const { connector, guide, guideSummary } of page.entries) {
+  for (const { connector, guide, guideSummary } of [...page.entries, ...(page.readyCalls ?? [])]) {
     const title = connector.title && boundedEchoText(connector.title.replace(/\s+/g, " ").trim(), 117);
     if (title || guide)
       connectors.set(connector.id, {
@@ -1981,6 +2065,7 @@ export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {
     catalogErrors: page.catalogErrors,
     ...(page.absence ? { absence: page.absence } : {}),
     tools: page.entries.map((entry) => entry.tool),
+    ...(page.readyCalls ? { readyCalls: page.readyCalls.map((ready) => ready.call) } : {}),
     ...(connectors.size ? { connectors: Object.fromEntries(connectors) } : {}),
     ...pageTail(page),
   };

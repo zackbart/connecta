@@ -185,6 +185,56 @@ read/write filter. On `approvalRequired` searches the returned discovery tool
 is still a read. Hidden tools, missing grants and read-only restrictions remain
 in force. Browsing does not consult operation vocabulary.
 
+When a matched operation's call is fully determined, the first page also
+carries it in `readyCalls`, so a program can call it without operation search or
+details:
+
+```json
+{
+  "readyCalls": [
+    {
+      "address": "notes.notes_api_read",
+      "args": { "path": "/v1/notes" },
+      "classification": "read",
+      "summary": "List notes"
+    }
+  ]
+}
+```
+
+Pass `args` unchanged to `connecta.call(address, args)` or `call_tool`. An
+operation is fully determined only when it is a reviewed read served by the
+hatch's `_api_read` tool itself (no named tool), uses GET, the read tool's
+default method, and declares no path template, required parameter or required
+body. Anything needing an id, a method choice or an argument the agent must
+fill in stays behind `_api_search` and `_api_details`. Ready calls pass the same
+endpoint, connector read-only, safety, hidden-tool and grant checks as the
+vocabulary match, through a visible read tool in the caller's view. They are
+computed offline from the construction-time index, read no account data, and
+start no authorization.
+
+A ready call must also be what the query names. Each path segment, and the
+operationId without its action and version words, is one whole resource name:
+`event_destinations` is the name "event destination", never "event". Every
+query word other than an action (`list`, `get`, `count`, `show`, `create`,
+`update`, `delete` and their vocabulary aliases) must belong to a resource name
+whose words the query states in order, with singular/plural normalization and
+the provider's declared synonyms. Version segments such as `v1` never count, and
+a summary may supply only actions. A query with no object word gets no ready
+call. Ready calls are omitted entirely when the top result is an exact tool name
+or address, or a complete match on an authored tool, not the hatch's own search
+or read tool, whose name adds nothing to the query: each of its name words is an
+action or a query word, up to plural/singular and declared synonyms. For
+example, `list teams` returns `list_teams` and no ready call, even when other
+operations mention teams in their summaries, while `list projects` still offers
+`/v10/projects` beside `list_project_env_vars`, whose name adds `env` and `vars`.
+Each hatch offers only its top-ranked operation: a last path segment naming the
+resource first, then the fewest resource words the query did not ask for, then
+the shortest path. A connector offers at most one ready call and a page at most
+three, in connector order. Later pages carry none. A ready
+call keeps its read tool's `guideRequired` and `guideRequiredReasons`, and its
+connector appears in `connectors`.
+
 Vocabulary is bounded: queries at most 200 characters and eight terms; each
 hatch caches at most 8,192 rows and 2,097,152 characters, with at most 1,024
 characters per row and 128 query intersections. Longer queries and vocabulary
@@ -711,7 +761,8 @@ Tool rows carry the address, stored classification, and tool-specific
 connector appear once per page in `connectors`, keyed by the connector id that
 prefixes each row's address: the configured display `title` when present and
 `guide` and `guideSummary` when the connector has a guide. The map names only
-connectors with a row on this page and is omitted when none has such facts.
+connectors with a row or ready call on this page and is omitted when none has
+such facts.
 Requested schemas have
 `schemaFormat: "json"` for JSON Schema values or `schemaFormat: "text"` for
 compact schema strings and TypeScript signatures. Compact schemas are text;
