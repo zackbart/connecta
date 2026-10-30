@@ -645,6 +645,36 @@ status probe connects: a legacy downstream answers a handshake, while a modern
 downstream with a stored verdict connects without a request. A credential test
 always sends a live `tools/list` that bypasses the cache in both directions.
 
+In `"auto"` mode a remote connector stores its negotiation verdict, data only,
+in the `negotiation` key family, partitioned by connector configuration,
+credential and OAuth epoch. A later connect reuses it instead of probing with
+`server/discover`. A modern verdict lasts five minutes. A legacy verdict lasts
+six hours, because a server that adds the modern era still answers the legacy
+handshake. Two signals end a verdict early:
+
+- A legacy-verdict handshake refused with a 4xx other than 401, 403 or 429 (a
+  modern-only server answers 400 with its supported versions) is negotiated
+  again at once in the same connect. The new verdict replaces the old.
+- On a modern connection (adopted from the verdict or just negotiated), an
+  HTTP 400 is read through a bounded clone of its body, as the transport's
+  backward-compatibility rule requires. A modern server also answers 400 with
+  `HeaderMismatch` (-32020) and `MissingRequiredClientCapability` (-32021),
+  which concern the request alone and keep the verdict and the connection.
+  `UnsupportedProtocolVersion` (-32022) keeps them only while its
+  `data.supported` list (at most 64 strings) still names the request's
+  `MCP-Protocol-Version`; a missing, malformed or other list makes the verdict
+  unusable. Any other body, empty or not a recognized modern error (a legacy
+  server's sessionless refusal, a gateway's page), is a legacy refusal. Either
+  way the verdict is deleted and that client retired. The refused request
+  fails and is never repeated. The next connect, in the same request or a
+  later one, probes again. The clone read ends with the call, the request or
+  the connection scope: an abort cancels it, cancels the unread original and
+  takes no evidence (INV-7).
+
+An upgrade to a server that still answers the legacy handshake is therefore
+adopted within six hours. Losing the legacy handshake costs one refused
+request, and a downgrade costs the one request that met the refusal.
+
 **Discovery health.** An unscoped search (`search_tools` or `connecta.search`
 without `connector`) probes each connector for at most 5,000 ms, or
 `discovery.probeTimeoutMs` when that is shorter, and its probes end within a
@@ -1645,7 +1675,10 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   Node/SQLite/QuickJS and native Workers/D1. It covers transcript-too-large
   recovery, empty intermediate pages, selected fields, withheld photo/credential
   values and shared-vault reuse after application reconstruction. No-op,
-  fabricated-read and erased-delivery controls must fail.
+  fabricated-read and erased-delivery controls must fail. Its fake, tasks and
+  deployment wiring live in `src/providers/granola/eval/`, unshipped;
+  `providers:generate` registers a provider's `eval/` wiring with the harness
+  (`eval/README.md`, provider-local eval wiring).
 - `test/identity-write-journey.node.test.ts` uses the existing Node deployment
   adapter, stateful MCP fake, SQLite vault and QuickJS to grade admitted human
   and machine identities, pool isolation, fail-closed discovery, endpoint and
@@ -3185,7 +3218,10 @@ compiling and configuring the real thing.
   is a known failure only on refusal provenance recorded where the evidence is
   observed, never inferred from an error code: (a) the ledger proves it never
   left, or (b) the downstream served an HTTP refusal, a 4xx other than 408
-  (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`), under the
+  (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`); for
+  `remoteMcp()` only when that 4xx carries a JSON-RPC error body, since a bare
+  one may be a gateway's answer after the server acted (`ambiguous` on the
+  call's dispatch in `src/connectors/remote-mcp.ts`), under the
   provider's existing served classification (a write's HTTP 409 is a `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
   (b) for the ledger and for a transport outside one: a refusing status the
   provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so

@@ -24,6 +24,7 @@ import {
   evidenceViolations,
   guideViolations,
   layoutViolations,
+  setupSkeleton,
   surfaceViolations,
   type ProviderFacts,
   type ToolFacts,
@@ -533,6 +534,22 @@ function standard(): ProviderFacts {
 }
 
 describe("the provider standard's rules", () => {
+  it("admits complete provider-local eval wiring and nothing else under eval/", () => {
+    const base = standard();
+    const withFiles = (paths: string[]) => ({ ...base, files: [...base.files, ...paths].sort() });
+    const complete = ["eval/fake.ts", "eval/tasks.ts", "eval/deploy.ts"];
+    expect(layoutViolations(base)).toEqual([]);
+    expect(layoutViolations(withFiles(complete))).toEqual([]);
+    expect(layoutViolations(withFiles([...complete, "eval/worker.ts"]))).toEqual([]);
+    expect(layoutViolations(withFiles(["eval/fake.ts", "eval/tasks.ts"]))).toEqual([
+      "L1: eval/ needs fake.ts, tasks.ts and deploy.ts together",
+    ]);
+    for (const stray of ["eval/helpers.ts", "eval/lib/fake.ts"])
+      expect(layoutViolations(withFiles([...complete, stray]))).toEqual([
+        `L1: ${stray}: eval/ holds only fake.ts, tasks.ts, deploy.ts and worker.ts`,
+      ]);
+  });
+
   it("validates composed and Discovery evidence against its pins", () => {
     const base = standard();
     for (const [label, source, pin] of [
@@ -621,6 +638,20 @@ describe("the provider standard's rules", () => {
       "G2: SKILL.md when-blocks must open and close in turn, unnested",
     );
     expect(guide("\n## Ids\n", { kind: "api", blockKeys: [] })).toEqual([]);
+  });
+
+  it("holds the generated setup skeleton to G7 until the section is written", () => {
+    const guide = '---\n{ "name": "acme", "instructionsHeading": "Acme" }\n---\n\n## Ids\n';
+    const folder = { ...standard(), read: (path: string) => (path === "SKILL.md" ? guide : undefined) };
+    const skeleton = `## Acme\n\n${setupSkeleton("acme")} Replace this line.\n`;
+    expect(guideViolations(folder, "# Providers\n")).toEqual([
+      'G7: documentation/providers.md has no "## Acme" section',
+    ]);
+    expect(guideViolations(folder, skeleton)).toEqual([
+      'G7: documentation/providers.md "## Acme" is still the generated setup skeleton',
+    ]);
+    expect(guideViolations(folder, skeleton, { skeleton: true })).toEqual([]);
+    expect(guideViolations(folder, "## Acme\n\nSetup for operators.\n")).toEqual([]);
   });
 
   it.each([

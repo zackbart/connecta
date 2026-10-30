@@ -1,3 +1,5 @@
+import { GUEST_FUNCTIONS } from "./guest-functions.js";
+
 /** Capture the single-use runner before evaluating the guest expression. */
 export function wrapGuestProgram(code: string): string {
   return `async () => globalThis.__connecta_run()(async (connecta) => await (\n${code}\n)())`;
@@ -64,6 +66,34 @@ export function guestPromiseInitializer(): string {
   Object.freeze(NativePromise.prototype);
 })()`;
 }
+
+/**
+ * The frozen namespace, joined from the registry. A `wrapped` or `emission`
+ * function uses the initializer's local of the same name; an alias shares one
+ * function object. Only guest source enters this string.
+ */
+const GUEST_NAMESPACE = (() => {
+  const before: string[] = [];
+  const entries = ["__proto__: null"];
+  for (const fn of GUEST_FUNCTIONS) {
+    if (fn.budget === "once") continue;
+    if (fn.budget === "emission") {
+      entries.push(`${fn.name}(block) {
+      const ref = block && typeof block === "object" ? weakGet(nativeRefs, block) : undefined;
+      return trackEmission(${fn.name}(ref || block));
+    }`);
+      continue;
+    }
+    const value = `hosted(${"wrapped" in fn ? fn.name : `provider.${fn.name}`})`;
+    if (!("alias" in fn)) {
+      entries.push(`${fn.name}: ${value}`);
+      continue;
+    }
+    before.push(`  const ${fn.name} = ${value};\n`);
+    entries.push(fn.name, `// Undeclared alias: ${fn.alias.note}\n    ${fn.alias.name}: ${fn.name}`);
+  }
+  return `${before.join("")}  const namespace = freeze({\n    ${entries.join(",\n    ")}\n  });`;
+})();
 
 /** Capture a private initializer before a Worker evaluates its guest module. */
 export function guestInitializer(): string {
@@ -165,22 +195,7 @@ export function guestInitializer(): string {
     if (promise && typeof promise === "object") defineProperties(promise, fields);
     return promise;
   };
-  const skill = hosted(provider.skill);
-  const namespace = freeze({
-    __proto__: null,
-    search: hosted(provider.search),
-    describe: hosted(provider.describe),
-    call: hosted(call),
-    read: hosted(provider.read),
-    result: hosted(provider.result),
-    skill,
-    // Undeclared alias: models write connecta.skills, the top-level tool's name.
-    skills: skill,
-    emit(block) {
-      const ref = block && typeof block === "object" ? weakGet(nativeRefs, block) : undefined;
-      return trackEmission(emit(ref || block));
-    }
-  });
+${GUEST_NAMESPACE}
   globalThis.connecta = namespace;
   defineProperties(globalThis, {
     Error: { value: NativeError, writable: false, configurable: false },

@@ -57,7 +57,9 @@ committed save per owner.
 `connecta init` Node template with its agent token from `rotate-token` and
 `connecta doctor --pool local-machine`, the Node eval deployment, the
 unmodified Worker example, the Worker example's composition over loopback
-fakes, the two QuickBooks compositions described below, and two Granola compositions. The Worker targets run natively in workerd under `wrangler dev`, with the
+fakes, the two QuickBooks compositions described below, and two Granola compositions.
+Each provider-local `smoke` enrollment adds `node-<name>` and, with its
+`eval/worker.ts`, `worker-<name>` to the default targets. The Worker targets run natively in workerd under `wrangler dev`, with the
 compatibility date, flags and bindings read from `examples/worker/wrangler.jsonc`;
 the original two Worker entries use a local Access stand-in. The original four targets check
 `/health`, MCP initialize, the six-tool list, an `execute_code` read and the
@@ -563,10 +565,37 @@ actor/requester distinction. Without that mapping both runners would lose two
 export trials to redaction. Other redactions and unavailable legacy observations
 retain the existing partial-evidence rules.
 
+## Provider-local eval wiring
+
+A maintained provider keeps its eval wiring in its own folder, never shipped
+(the build and package smoke exclude it):
+
+| `src/providers/<name>/eval/` | Export       | Holds                                                                                                                                                                                                                                                      |
+| ---------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fake.ts`                    | `evalFake`   | The stateful fake vendor: `create(ledger)`, its connector `specs`, and whether saved grading state is complete. It records ledger calls under `service: "<name>"` and routes its own credentials through the shared fake transport (`fakes/transport.ts`). |
+| `tasks.ts`                   | `evalTasks`  | Active tasks, their check classification, `eval:outcomes` scenarios and no-false-pass controls, `eval:smoke` journeys, and worker-gateway selftest tasks.                                                                                                  |
+| `deploy.ts`                  | `evalDeploy` | The published connector for one fake spec. Node-free: the agent Worker bundles it into workerd.                                                                                                                                                            |
+| `worker.ts`                  | (default)    | Optional. The dedicated `worker-<name>` smoke composition that `wrangler dev` loads.                                                                                                                                                                       |
+
+The contract is [support/provider-eval.ts](support/provider-eval.ts).
+`pnpm run providers:generate` discovers these files and writes
+`fakes/providers.generated.ts`, `tasks/providers.generated.ts` and
+`deploy/providers.generated.ts`. A task enables a fake with
+`world: { <name>: true }` and grades `world.fakes.<name>`. Saved grading inputs
+keep its state under the provider name. The world, saved inputs, Node and
+workerd compositions, task index, grading, `eval:outcomes`, `eval:smoke`
+targets and the gateway control read those registrations, so adding a provider
+edits no shared eval file. The fake transport, the worker vendor gateway and
+latency/fault injection apply to these fakes unchanged. Generation never enrolls
+a suite in workerd: `WORKERS_SUITES` stays hand-curated for suites that need real
+Workers bindings or isolates. Granola uses this layout; the other providers'
+eval wiring remains hand-wired here until it moves.
+
 ## Tasks and correctness
 
-Every downstream is a deterministic fake under `fakes/`; no task requires a
-real RevenueCat, Supabase, GitHub or other third-party account.
+Every downstream is a deterministic fake under `fakes/` or a provider's
+`eval/fake.ts`; no task requires a real RevenueCat, Supabase, GitHub or other
+third-party account.
 The existing five retained tasks keep their state/outcome checks and now require source
 calls and final-answer facts. Thirteen additional active tasks cover:
 

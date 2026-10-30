@@ -6,7 +6,7 @@
  * differ: storage, executor, vault key and, on Workers, Access.
  */
 import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
-import { granola } from "@zackbart/connecta/providers/granola";
+import { PROVIDER_DEPLOYS } from "./providers.generated.js";
 import { gmail } from "@zackbart/connecta/providers/gmail";
 import { drive } from "@zackbart/connecta/providers/drive";
 import { docs } from "@zackbart/connecta/providers/docs";
@@ -112,7 +112,11 @@ export function evalConfig(
 
 function evalConnector(spec: ConnectorSpec, fixtures: EvalFixtures) {
   const options = { purpose: spec.description };
-  if (spec.granola) return granola(spec.id, options);
+  if (spec.provider) {
+    const deploy = PROVIDER_DEPLOYS[spec.provider];
+    if (!deploy) throw new Error(`No provider-local eval deploy for ${spec.provider}`);
+    return deploy.connector(spec, options);
+  }
   if (spec.google) {
     const factory = { gmail, drive, docs, sheets, slides, forms }[spec.google.product];
     return factory(spec.id, {

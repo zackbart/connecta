@@ -1,7 +1,8 @@
 import { playReference } from "./agent/reference.js";
 import { QUICKBOOKS_WRITE_TASK } from "./tasks/quickbooks-writes.js";
 import { QUICKBOOKS_TASK } from "./tasks/quickbooks.js";
-import { GRANOLA_TASK } from "./tasks/granola.js";
+import { PROVIDER_EVALS } from "./tasks/providers.generated.js";
+import type { ActiveTask } from "./tasks/types.js";
 /**
  * `pnpm run eval:smoke [--targets a,b] [--no-build] [--out path]` — boot both
  * deployment shapes from this checkout and drive them over MCP and a browser.
@@ -12,6 +13,10 @@ import { GRANOLA_TASK } from "./tasks/granola.js";
  *   node-fakes      the Node shape the agent evals use, over loopback fakes
  *   worker-example  examples/worker, unmodified, natively under `wrangler dev`
  *   worker-fakes    the Worker example's composition over loopback fakes
+ *   node-<provider>, worker-<provider>
+ *                   provider journeys: QuickBooks, plus each provider-local
+ *                   `smoke` enrollment (src/providers/<name>/eval/tasks.ts), on
+ *                   Node and, with eval/worker.ts, its dedicated Worker
  *
  * Each target: /health, MCP initialize, the exact six-tool list, a read
  * through execute_code, one call_destructive_tool write verified in the fake's
@@ -58,9 +63,53 @@ const SIX = META_TOOLS;
 
 const args = flags(process.argv.slice(2));
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `smoke-${stamp()}.json`));
+/** A provider's actual-provider journey: the same tasks and graders on Node and, given `worker`, workerd. */
+interface Journey {
+  description: string;
+  tasks: ActiveTask[];
+  worker?: { name: string; main: string; vars(world: World, task: ActiveTask): string[] };
+}
+
+const JOURNEYS: Record<string, Journey> = {
+  quickbooks: {
+    description: "Actual QuickBooks provider accounting and durable OAuth journey",
+    tasks: [QUICKBOOKS_TASK, QUICKBOOKS_WRITE_TASK],
+    worker: {
+      name: "connecta-qb-smoke",
+      main: join(ROOT, "eval/deploy/worker-quickbooks.ts"),
+      vars: (world, task) => [
+        `QUICKBOOKS_URL:${world.quickbooks.url}`,
+        `QUICKBOOKS_CLIENT:${world.quickbooks.clientId}`,
+        `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
+      ],
+    },
+  },
+  ...Object.fromEntries(
+    PROVIDER_EVALS.flatMap(({ name, worker, tasks: { smoke } }) => {
+      if (!smoke) return [];
+      if (!smoke.worker !== !worker)
+        throw new Error(`providers/${name}: a smoke Worker needs both smoke.worker and eval/worker.ts`);
+      const journey: Journey = {
+        description: smoke.description,
+        tasks: smoke.tasks,
+        ...(smoke.worker && worker
+          ? { worker: { name: smoke.worker.name, main: join(ROOT, worker), vars: smoke.worker.vars } }
+          : {}),
+      };
+      return [[name, journey]];
+    }),
+  ),
+};
+
 const selected = (
   args.get("targets") ??
-  "node-template,node-fakes,worker-example,worker-fakes,node-quickbooks,worker-quickbooks,node-granola,worker-granola"
+  [
+    "node-template,node-fakes,worker-example,worker-fakes",
+    ...Object.entries(JOURNEYS).flatMap(([name, journey]) => [
+      `node-${name}`,
+      ...(journey.worker ? [`worker-${name}`] : []),
+    ]),
+  ].join(",")
 ).split(",");
 
 const injection = parseInjection(args);
@@ -591,40 +640,25 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
 }
 
 /** The same task and independent grader run against both real executors/stores. */
-async function providerJourney(
-  kind: "node-quickbooks" | "worker-quickbooks" | "node-granola" | "worker-granola",
-): Promise<SmokeTarget> {
-  const notes = kind.endsWith("granola");
+async function providerJourney(kind: string, journey: Journey): Promise<SmokeTarget> {
   const checks: SmokeCheck[] = [];
-  const target: SmokeTarget = {
-    target: kind,
-    description: notes
-      ? "Actual Granola workspace meeting and shared-vault journey"
-      : "Actual QuickBooks provider accounting and durable OAuth journey",
-    status: "fail",
-    checks,
-  };
-  for (const task of notes ? [GRANOLA_TASK] : [QUICKBOOKS_TASK, QUICKBOOKS_WRITE_TASK])
+  const target: SmokeTarget = { target: kind, description: journey.description, status: "fail", checks };
+  const worker = kind.startsWith("worker-") ? journey.worker : undefined;
+  for (const task of journey.tasks)
     await step(checks, task.title, async () => {
       await playReference(
         task,
         {
           mode: "reference",
           injection,
-          ...(kind.startsWith("worker-")
+          ...(worker
             ? {
                 deploy: async (world: World) => {
                   const dev = await wranglerDev({
-                    name: notes ? "connecta-granola-smoke" : "connecta-qb-smoke",
-                    main: join(ROOT, notes ? "eval/deploy/worker-granola.ts" : "eval/deploy/worker-quickbooks.ts"),
+                    name: worker.name,
+                    main: worker.main,
                     vars: injectedVars(world),
-                    cliVars: notes
-                      ? [`GRANOLA_URL:${world.granola.url}`, `GRANOLA_KEY:${world.granola.key}`]
-                      : [
-                          `QUICKBOOKS_URL:${world.quickbooks.url}`,
-                          `QUICKBOOKS_CLIENT:${world.quickbooks.clientId}`,
-                          `QUICKBOOKS_WRITES:${task.deployment?.quickbooksWrites === true}`,
-                        ],
+                    cliVars: worker.vars(world, task),
                     secrets: { CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64") },
                     publicUrlVar: true,
                   });
@@ -682,10 +716,12 @@ if (!args.has("no-build")) {
   if (built.status !== 0) throw new Error("pnpm run build failed");
 }
 const runners: Record<string, () => Promise<SmokeTarget>> = {
-  "node-quickbooks": () => providerJourney("node-quickbooks"),
-  "worker-quickbooks": () => providerJourney("worker-quickbooks"),
-  "node-granola": () => providerJourney("node-granola"),
-  "worker-granola": () => providerJourney("worker-granola"),
+  ...Object.fromEntries(
+    Object.entries(JOURNEYS).flatMap(([name, journey]) => [
+      [`node-${name}`, () => providerJourney(`node-${name}`, journey)],
+      ...(journey.worker ? [[`worker-${name}`, () => providerJourney(`worker-${name}`, journey)]] : []),
+    ]),
+  ),
   "node-template": nodeTemplate,
   "node-fakes": nodeFakes,
   "worker-example": () => worker("worker-example"),

@@ -1,11 +1,12 @@
 /** Same meeting outcome and independent grader on Node/SQLite and native Workers/D1. */
 import { isDeepStrictEqual as same } from "node:util";
-import { GRANOLA_KEY, GRANOLA_PHOTO, GRANOLA_NOTE, GRANOLA_FOLDER, GRANOLA_SPACE } from "../fakes/granola.js";
-import { deliveredValues } from "./correctness.js";
-import { check } from "./baseline.js";
-import type { ActiveTask } from "./types.js";
+import { GRANOLA_KEY, GRANOLA_PHOTO, GRANOLA_NOTE, GRANOLA_FOLDER, GRANOLA_SPACE } from "./fake.js";
+import { deliveredValues } from "../../../../eval/tasks/correctness.js";
+import { check } from "../../../../eval/tasks/baseline.js";
+import type { ActiveTask } from "../../../../eval/tasks/types.js";
+import type { ProviderTasks } from "../../../../eval/support/provider-eval.js";
 
-export const GRANOLA_TASK: ActiveTask = {
+const GRANOLA_TASK: ActiveTask = {
   status: "active",
   id: "granola-workspace-journey",
   title: "Granola workspace meeting dossier",
@@ -70,7 +71,7 @@ export const GRANOLA_TASK: ActiveTask = {
     } catch {
       /* Missing answer fails. */
     }
-    const state = world.granola.state;
+    const state = world.fakes.granola.state;
     const calls = world.ledger.calls.filter((c) => c.service === "granola");
     const reads = calls.filter((c) => c.kind === "read" && c.outcome === "ok");
     const delivered = deliveredValues(trace);
@@ -130,4 +131,25 @@ export const GRANOLA_TASK: ActiveTask = {
       ),
     ];
   },
+};
+
+export const evalTasks: ProviderTasks = {
+  tasks: [GRANOLA_TASK],
+  checkKinds: { "granola-workspace-journey": { route: [], outcome: ["delivered-data", "privacy", "read-only"] } },
+  outcomes: {
+    "granola-workspace-journey": {
+      scenario: "complete accessible meeting dossier, transcript fallback, privacy and shared-vault restart",
+      withoutCalls: "Granola dossier",
+      withoutDeliveredFacts: true,
+    },
+  },
+  smoke: {
+    description: "Actual Granola workspace meeting and shared-vault journey",
+    tasks: [GRANOLA_TASK],
+    worker: {
+      name: "connecta-granola-smoke",
+      vars: (world) => [`GRANOLA_URL:${world.fakes.granola.url}`, `GRANOLA_KEY:${world.fakes.granola.key}`],
+    },
+  },
+  gatewayControls: ["granola-workspace-journey"],
 };

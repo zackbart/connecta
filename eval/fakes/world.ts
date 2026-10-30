@@ -1,5 +1,6 @@
 import { FakeQuickBooks } from "./quickbooks.js";
-import { FakeGranola } from "./granola.js";
+import { PROVIDER_FAKES } from "./providers.generated.js";
+import type { ProviderFake, ProviderFakeWorld } from "../support/provider-eval.js";
 import { FakeGoogle, type GoogleOptions } from "./google.js";
 /**
  * A world is one trial's downstream universe: six fake services sharing one
@@ -49,7 +50,8 @@ export type ServiceId =
  * changes one adapter rather than every task.
  */
 export interface ConnectorSpec {
-  granola?: boolean;
+  /** A provider-local fake's connector, built by that provider's eval/deploy.ts. */
+  provider?: string;
   id: string;
   title: string;
   description: string;
@@ -68,8 +70,13 @@ export interface ConnectorSpec {
   credential?: { label: string; value?: string };
 }
 
-export interface WorldOptions {
-  granola?: boolean;
+type ProviderFakes = typeof PROVIDER_FAKES;
+/** A provider-local fake (src/providers/<name>/eval/fake.ts), by provider name. */
+export type ProviderFakeName = keyof ProviderFakes;
+export type ProviderFakeOf<Name extends ProviderFakeName> = ReturnType<ProviderFakes[Name]["create"]>;
+
+/** `<name>: true` starts that provider-local fake and serves only its connectors. */
+export interface WorldOptions extends Partial<Record<ProviderFakeName, boolean>> {
   quickbooks?: boolean;
   google?: GoogleOptions;
   restVendor?: RestVendor;
@@ -132,7 +139,10 @@ export class World {
   readonly billingToken = BILLING_TOKEN;
   readonly oauth = new FakeOAuth(this.ledger);
   readonly quickbooks = new FakeQuickBooks(this.ledger);
-  readonly granola = new FakeGranola(this.ledger);
+  /** Every provider-local fake, created for every world and started only when enabled. */
+  readonly fakes = Object.fromEntries(
+    Object.entries(PROVIDER_FAKES).map(([name, fake]) => [name, fake.create(this.ledger)]),
+  ) as { readonly [Name in ProviderFakeName]: ProviderFakeOf<Name> };
   /** Host-observed guest calls, never inferred from model source text. */
   programs: ProgramObservation[] = [];
 
@@ -203,8 +213,15 @@ export class World {
     return this.services.get(id)!;
   }
 
+  /** The enabled provider-local fakes, in folder order. */
+  providerFakes(): { name: ProviderFakeName; definition: ProviderFake; fake: ProviderFakeWorld }[] {
+    return (Object.keys(PROVIDER_FAKES) as ProviderFakeName[])
+      .filter((name) => this.options[name])
+      .map((name) => ({ name, definition: PROVIDER_FAKES[name], fake: this.fakes[name] }));
+  }
+
   async start(): Promise<void> {
-    if (this.options.granola) await this.granola.start();
+    for (const { fake } of this.providerFakes()) await fake.start();
     if (this.options.quickbooks) await this.quickbooks.start();
     if (this.options.google) await this.google.start();
     await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
@@ -212,7 +229,7 @@ export class World {
     if (this.injection.latencyMs) {
       const served = [
         ...[...this.services.values(), ...this.restServices].map((service) => service.url),
-        ...(this.options.granola ? [this.granola.url] : []),
+        ...this.providerFakes().map(({ fake }) => fake.url),
         ...(this.options.quickbooks ? [this.quickbooks.url] : []),
       ];
       this.releaseLatency = served.map((url) => delayServed(url, this.injection.latencyMs));
@@ -224,7 +241,7 @@ export class World {
   async stop(): Promise<void> {
     for (const release of this.releaseLatency.splice(0)) release();
     await this.injected.stop();
-    if (this.options.granola) await this.granola.stop();
+    for (const { fake } of this.providerFakes()) await fake.stop();
     if (this.options.quickbooks) await this.quickbooks.stop();
     if (this.options.google) await this.google.stop();
     await Promise.allSettled([...this.services.values(), ...this.restServices].map((service) => service.stop()));
@@ -236,17 +253,10 @@ export class World {
   }
 
   private taskSpecs(): ConnectorSpec[] {
-    if (this.options.granola)
-      return [
-        {
-          id: "granola",
-          title: "Granola",
-          description: "Workspace meetings",
-          url: this.granola.url,
-          granola: true,
-          credential: { label: "Workspace API key", value: this.granola.key },
-        },
-      ];
+    const provided = this.providerFakes().flatMap(({ name, definition, fake }) =>
+      definition.specs(fake).map((spec) => ({ ...spec, provider: name })),
+    );
+    if (provided.length) return provided;
     if (this.options.quickbooks)
       return [
         {

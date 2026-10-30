@@ -25,6 +25,8 @@
     "src/operator-ui/setup-commands.ts",
     "src/operator-ui/view.ts",
     "src/providers/**/*.test.ts",
-    "src/providers/*/fixtures.ts"
+    "src/providers/*/fixtures.ts",
+    // Provider-local eval wiring belongs to the eval harness and never ships.
+    "src/providers/*/eval"
   ]
 }
