@@ -695,7 +695,15 @@ activity write. The first complete catalog is a baseline.
 Hash-only baselines publish bounded chunks before a manifest. They store the
 catalog digest and hashes of each tool name and fact, so added, removed and changed counts require no persisted tool names or
 schemas. They use the exact host auth/config cache partition, survive catalog
-expiry and invalidation, and expire after 48 hours. There is no connection-wide
+expiry and invalidation, and expire 48 hours after they are written. A refresh
+reads the manifest first. When its digest matches a baseline written within the
+last hour, the refresh writes nothing; an older matching baseline is rewritten
+with fresh chunks, so every refresh leaves a baseline for at least 47 hours.
+A manifest's lifetime is never extended without new chunks, so its chunks
+always outlive it. A changed digest writes the new baseline and reports drift
+against the previous one. An unchanged zero-TTL listing therefore writes no
+baseline; it still lists live every time and deletes its cache slots, since a
+concurrent request may have published an older reusable catalog there. There is no connection-wide
 fallback baseline across partitions. Private catalog events use the admitted
 principal actor basis even for shared-auth connectors; activity disclosure
 requires that same owner and the recorded pool's grants. Ownerless private

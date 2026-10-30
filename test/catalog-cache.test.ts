@@ -345,6 +345,89 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(baseline).not.toMatch(/old|new|inputSchema/);
   });
 
+  it("INV-6 INV-8: a modern zero-TTL catalog lists every call, writes no baseline while unchanged and still records drift", async () => {
+    const store = await storage();
+    const id = `modern_zero_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const recordChange = vi.fn();
+    let description = "Read a record";
+    let listings = 0;
+    // The SDK server's default catalog hint is `ttlMs: 0`.
+    const downstream = httpDownstream(
+      (mcp) =>
+        mcp.registerTool("read", { description, annotations: { readOnlyHint: true } }, async () => ({ content: [] })),
+      {
+        capture: async (request) => {
+          if (request.method !== "POST") return;
+          if (((await request.json()) as { method?: string }).method === "tools/list") listings++;
+        },
+      },
+    );
+    const connector = remoteMcp(id, { url: downstream.url, fetch: downstream.fetch });
+    const call = async () => {
+      const registry = new Registry([connector], {
+        storage: store,
+        logger: silentLogger,
+        catalogDriftActivity: { recordChange, sink: { record: () => {} }, serverInfo: { name: "test", version: "1" } },
+      });
+      const ctx = registry.contextFor(id, BASE, {});
+      try {
+        return (await connector.listTools(ctx)).map((tool) => tool.description);
+      } finally {
+        await connector.closeScope!(ctx);
+      }
+    };
+    const writes = () => (["set", "compareAndSet", "delete"] as const).map((method) => vi.spyOn(store, method));
+    // An unchanged call only clears the zero-TTL cache slots; it writes no baseline.
+    const baselineUntouched = ([set, compareAndSet, remove]: ReturnType<typeof writes>) => {
+      expect(set).not.toHaveBeenCalled();
+      expect(compareAndSet).not.toHaveBeenCalled();
+      for (const [key] of remove!.mock.calls) expect(key).not.toContain(":refresh-digest:");
+    };
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    expect(await call()).toEqual(["Read a record"]);
+    const baseline = (await store.list(responseCacheKeys.prefix(id))).filter(
+      (key) => key.includes(":refresh-digest:") && !key.includes(":chunk:"),
+    );
+    expect(baseline).toHaveLength(1);
+    const written = await store.get(baseline[0]!);
+
+    // Budget: a warm unchanged call still lists, never reuses, and writes no baseline.
+    let spies = writes();
+    expect(await call()).toEqual(["Read a record"]);
+    expect(listings).toBe(2);
+    baselineUntouched(spies);
+    expect(await store.get(baseline[0]!)).toBe(written);
+    expect(recordChange).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+
+    // An hour on, the unchanged baseline is rewritten once and reports no drift.
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    now += 60 * 60 * 1000;
+    await call();
+    expect(await store.get(baseline[0]!)).not.toBe(written);
+    expect(recordChange).not.toHaveBeenCalled();
+
+    // A changed catalog writes its baseline and records drift once.
+    description = "Read one record";
+    spies = writes();
+    expect(await call()).toEqual(["Read one record"]);
+    expect(spies[0]).toHaveBeenCalled();
+    expect(spies[1]).toHaveBeenCalled();
+    expect(recordChange).toHaveBeenCalledOnce();
+    expect(recordChange.mock.calls[0]![1]).toMatchObject({
+      connectorId: id,
+      drift: { kind: "catalog_changed", addedTools: 0, removedTools: 0, changedTools: 1 },
+    });
+    vi.restoreAllMocks();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    spies = writes();
+    await call();
+    baselineUntouched(spies);
+    expect(recordChange).toHaveBeenCalledOnce();
+    expect(listings).toBe(5);
+  });
+
   it.each([0])(
     "INV-7 INV-8: closing temporary instance %s preserves another instance with the same connector id and request scope",
     async (closing) => {
@@ -1247,6 +1330,44 @@ it("INV-9 INV-8: an explicit zero-TTL refresh removes a previous reusable listin
   await cache.responseCacheStore!.set(key, { value: JSON.stringify({ tools, ttlMs: 0 }), expiresAt: Date.now() });
   expect(await cache.responseCacheStore!.get(key)).toBeUndefined();
 });
+
+it.each(["zero-TTL write", "cleanup delete"] as const)(
+  "INV-8: a %s removes an older catalog published after the listing read the slot as missing",
+  async (removal) => {
+    const store = await storage();
+    const id = `race_${crypto.randomUUID().replaceAll("-", "")}`;
+    // One stored generation, so every instance addresses the same slot.
+    await invalidateCatalogCache(store, id);
+    const instance = async () => {
+      const ctx = connectorContext(store);
+      const cache = await catalogClientOptions(ctx, id, "configuration", "grant");
+      return { ctx, cache, store: cache.responseCacheStore! };
+    };
+    const a = await instance();
+    const b = await instance();
+    const key = { method: "tools/list", partition: JSON.stringify(["server", a.cache.cachePartition]) };
+    await a.cache.withListing(a.ctx, async () => {
+      // A reads the slot as missing and lists the downstream.
+      expect(await a.store.get(key)).toBeUndefined();
+      // B, holding an older catalog with a positive TTL, publishes into the slot.
+      await b.store.set(key, {
+        value: JSON.stringify({ tools: [{ name: "stale", inputSchema: { type: "object" } }], ttlMs: 60_000 }),
+        expiresAt: Date.now() + 60_000,
+      });
+      // A's newer answer refuses reuse; the slot must not keep B's catalog.
+      if (removal === "zero-TTL write")
+        await a.store.set(key, {
+          value: JSON.stringify({ tools: [{ name: "fresh", inputSchema: { type: "object" } }], ttlMs: 0 }),
+          expiresAt: Date.now(),
+        });
+      else await a.store.delete(key);
+    });
+    // A later request, connectionless or not, finds nothing to serve.
+    const later = await instance();
+    expect(await later.store.get(key)).toBeUndefined();
+    expect(await later.cache.cachedTools(later.ctx)).toBeUndefined();
+  },
+);
 
 /** A stateful 2025-era downstream: every connection pays initialize, initialized, a standalone GET and a DELETE. */
 function legacyDownstream(name: string, hint: { ttlMs?: number } = {}) {
