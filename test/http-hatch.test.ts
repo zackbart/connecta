@@ -289,6 +289,8 @@ it(
         await searchWith({ verdicts: { ...VERDICTS, "GET /items/{item}": "read" } }, { query: "get item" }),
       ],
       ["non-GET read", await searchWith({}, { query: "query items" })],
+      // "item" appears only in /elsewhere's summary, never in its path or operationId.
+      ["summary-only resource", await searchWith({}, { query: "other item server" })],
       ["write", await searchWith({}, { query: "touch item" })],
       ["approvalRequired filter", await searchWith({}, { query: "list items", safety: "approvalRequired" })],
       ["hidden read tool", await searchWith({}, undefined, { classification: { crm: { items_api_read: "hidden" } } })],

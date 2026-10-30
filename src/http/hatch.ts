@@ -1637,7 +1637,7 @@ export function hatch(
     const contract = index.contract(op);
     return contract.parameters.some((param) => param.required) || contract.body?.required
       ? undefined
-      : { path: op.path, summary: op.summary.slice(0, SEARCH_BUDGET.summaryChars) };
+      : { path: op.path, summary: op.summary.slice(0, SEARCH_BUDGET.summaryChars), operationId: op.operationId };
   };
   registerOperationVocabulary(tools[0]!, function* () {
     for (const op of index.ops) {

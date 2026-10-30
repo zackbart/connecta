@@ -11,6 +11,8 @@ import { calcConnector, makeRegistry, remoteConnector, required } from "./helper
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
 import { fixture as ccbFixture } from "../src/providers/ccb/fixtures.js";
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
+import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
+import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -258,6 +260,29 @@ describe("search_tools", () => {
     const unrelated = textOf(await mt.searchTools({ connector: "other", query: "list households" })) as SearchResult;
     expect(unrelated.matchMode).toBe("partial");
     expect(unrelated.queryAnalysis?.unmatchedTerms).toEqual(["households"]);
+  });
+
+  it("offers a ready call only when its resource is what the query names and no authored tool answers", async () => {
+    const mt = createMetaTools(
+      makeRegistry([
+        granolaFixture.create("workspace"),
+        vercelFixture.create("hosting"),
+        stripeFixture.create("billing"),
+      ]),
+      BASE,
+    );
+    const search = async (query: string) => textOf(await mt.searchTools({ query })) as SearchResult;
+    const ready = async (query: string) =>
+      ((await search(query)).readyCalls ?? []).map((call) => `${call.address} ${call.args.path}`);
+    expect(await ready("list meetings")).toEqual(["workspace.granola_api_read /v1/notes"]);
+    expect(await ready("list deployments")).toEqual(["hosting.vercel_api_read /v7/deployments"]);
+    expect(await ready("list customers")).toEqual(["billing.stripe_api_read /v1/customers"]);
+    // Vercel summaries mention teams for /v1/env, /v1/access-groups and CI
+    // branches; none of those is a team resource, and list_teams answers.
+    const teams = await search("list teams");
+    expect(teams.tools[0]?.address).toBe("hosting.list_teams");
+    expect(teams.readyCalls).toBeUndefined();
+    expect(await ready("get team")).toEqual([]);
   });
 
   it("does not load unrelated catalogs for a connector-scoped search", async () => {

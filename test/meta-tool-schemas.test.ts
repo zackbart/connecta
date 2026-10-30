@@ -1,4 +1,6 @@
-import { CATALOG_SEARCH_RESULT_SCHEMA } from "../src/catalog-service.js";
+import { CATALOG_SEARCH_RESULT_SCHEMA, CatalogService, flatSearchResult } from "../src/catalog-service.js";
+import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
+import { makeRegistry } from "./helpers.js";
 import { SEARCH_OUTPUT } from "../src/meta-output.js";
 // Golden: the input schema of every meta-tool exactly as `tools/list` renders
 // it today, from the zod definitions in meta-tools.ts and execute.ts.
@@ -254,6 +256,29 @@ async function callTool(app: ReturnType<typeof makeDeployment>, name: string, ar
 }
 
 describe("search_tools output schema", () => {
+  it("describes ready calls exactly and refuses malformed ones under every host draft", async () => {
+    const page = flatSearchResult(
+      await new CatalogService(makeRegistry([granolaFixture.create("notes")]), "https://connecta.test").search({
+        query: "list meetings",
+      }),
+    );
+    const ready = page.readyCalls![0]!;
+    expect(ready).toMatchObject({ address: "notes.granola_api_read", args: { path: "/v1/notes" } });
+    const malformed = [
+      { ...ready, args: {} },
+      { ...ready, args: { path: "/v1/notes", method: "POST" } },
+      { address: ready.address, args: ready.args, summary: ready.summary },
+      { address: ready.address, args: ready.args, classification: "read" },
+      { ...ready, classification: "write" },
+    ].map((call) => ({ ...page, readyCalls: [call] }));
+    malformed.push({ ...page, readyCalls: [ready, ready, ready, ready] });
+    for (const draft of ["2020-12", "2019-09", "7", "4"] as const) {
+      const validator = new Validator(CATALOG_SEARCH_RESULT_SCHEMA as never, draft);
+      expect(validator.validate(page).errors, draft).toEqual([]);
+      for (const bad of malformed) expect(validator.validate(bad).valid, JSON.stringify(bad.readyCalls)).toBe(false);
+    }
+  });
+
   it.each([
     ["oauth", {}],
     ["operator credential", { credential: true }],

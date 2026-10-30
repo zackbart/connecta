@@ -8,8 +8,11 @@ type Row = {
   readonly text: string;
   readonly route: string | undefined;
   readonly write: boolean;
-  readonly ready?: Ready | undefined;
+  /** `operationId` names the resource with the path; the summary never does. */
+  readonly ready?: (Ready & { readonly operationId: string }) | undefined;
 };
+/** A ready row's resource identity: path segment and operationId terms, and the last segment's. */
+type Resource = { readonly terms: ReadonlySet<string>; readonly last: ReadonlySet<string> };
 type Groups = readonly (readonly string[])[];
 type Vocabulary = (
   query: string,
@@ -18,8 +21,15 @@ type Vocabulary = (
   readOnly: boolean,
   synonyms?: Groups,
 ) => { matched: boolean; ready: Array<Ready & { route: string }> };
-/** Ready calls one vocabulary offers a search, shortest path first. */
+/** Ready calls one vocabulary offers a search, most specific first. */
 const MAX_READY_PER_VOCABULARY = 3;
+/**
+ * Normalized action words. A summary may supply these; every other query word
+ * names an object and must match the operation's resource identity.
+ */
+const ACTIONS = new Set(["get", "list", "count", "show", "create", "update", "delete"]);
+/** Path tokens that version an API rather than name a resource. */
+const VERSION = /^v?\d+$/;
 const tools = new WeakMap<object, Vocabulary>();
 const connectors = new WeakMap<object, ReadonlyMap<string, Vocabulary>>();
 const synonymGroups = new WeakMap<object, Groups>();
@@ -53,6 +63,8 @@ const aliases: Readonly<Record<string, string>> = {
 };
 const normal = (word: string) => aliases[word] ?? token(word);
 const terms = (text: string) => [...new Set(lexicalQueryTerms(lexicalSearchContent(text)).map(normal))];
+/** Resource words of a path or operation id, without version segments. */
+const identity = (text: string) => terms(text).filter((word) => !VERSION.test(word));
 
 /**
  * Attach a maintained provider's lexical synonym groups to its connector. Each
@@ -87,7 +99,7 @@ export function searchSynonyms(connector: Connector): ((word: string) => string[
 /** Register only construction-authored compact summaries; never whole request/response schemas. */
 export function registerOperationVocabulary(tool: object, rows: () => Iterable<Row>): void {
   let postings: Map<string, number[]> | undefined;
-  const routes: Array<Pick<Row, "route" | "write" | "ready">> = [];
+  const routes: Array<Pick<Row, "route" | "write"> & { ready?: Ready & Resource }> = [];
   const cache = new Map<string, readonly number[]>();
   tools.set(tool, (query, visible, safety, readOnly, synonyms) => {
     const none = { matched: false, ready: [] };
@@ -116,6 +128,12 @@ export function registerOperationVocabulary(tool: object, rows: () => Iterable<R
                 ready: {
                   path: row.ready.path,
                   summary: row.ready.summary.slice(0, OPERATION_VOCABULARY_BOUNDS.rowChars),
+                  terms: new Set(
+                    identity(
+                      `${row.ready.path} ${row.ready.operationId}`.slice(0, OPERATION_VOCABULARY_BOUNDS.rowChars),
+                    ),
+                  ),
+                  last: new Set(identity(row.ready.path.split("/").at(-1) ?? "")),
                 },
               }
             : {}),
@@ -145,16 +163,37 @@ export function registerOperationVocabulary(tool: object, rows: () => Iterable<R
       if ((safety === "readOnly" && row.write) || (safety === "approvalRequired" && !row.write)) return false;
       return row.route !== undefined && visible.has(row.route);
     });
+    // A ready call must name what the query asks for: every object word, or a
+    // declared synonym, among its path segments or operationId. A word met
+    // only in a summary can route a search, never stand in for the resource.
+    const objects = alternatives.filter((words) => !ACTIONS.has(words[0]!));
+    const named = (resource: ReadonlySet<string>) => (words: readonly string[]) =>
+      words.some((word) => resource.has(word));
+    const asked = new Set(alternatives.flat());
     return {
       matched: admitted.length > 0,
-      ready: admitted
-        .flatMap((id) => {
-          const { route, write, ready } = routes[id]!;
-          return ready && !write && route ? [{ ...ready, route, id }] : [];
-        })
-        .sort((a, b) => a.path.length - b.path.length || a.id - b.id)
-        .slice(0, MAX_READY_PER_VOCABULARY)
-        .map(({ path, summary, route }) => ({ path, summary, route })),
+      ready: objects.length
+        ? admitted
+            .flatMap((id) => {
+              const { route, write, ready } = routes[id]!;
+              if (!ready || write || !route || !objects.every(named(ready.terms))) return [];
+              return [
+                {
+                  path: ready.path,
+                  summary: ready.summary,
+                  route,
+                  id,
+                  // Relevance first: the last segment names the resource asked
+                  // for, then the fewest resource words the query did not ask for.
+                  last: Number(objects.some(named(ready.last))),
+                  extra: [...ready.terms].filter((word) => !asked.has(word) && !ACTIONS.has(word)).length,
+                },
+              ];
+            })
+            .sort((a, b) => b.last - a.last || a.extra - b.extra || a.path.length - b.path.length || a.id - b.id)
+            .slice(0, MAX_READY_PER_VOCABULARY)
+            .map(({ path, summary, route }) => ({ path, summary, route }))
+        : [],
     };
   });
 }

@@ -629,12 +629,13 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
     },
     readyCalls: {
       type: "array",
+      maxItems: MAX_READY_CALLS,
       items: {
         type: "object",
-        required: ["address", "args"],
+        required: ["address", "args", "classification", "summary"],
         properties: {
           address: STRING,
-          args: { type: "object", properties: { path: STRING } },
+          args: { type: "object", required: ["path"], additionalProperties: false, properties: { path: STRING } },
           classification: { const: "read" },
           summary: STRING,
           ...guideRequiredProperties,
@@ -1569,8 +1570,16 @@ export class CatalogService {
           },
         };
       });
+      // An exact name, or a complete match on an authored tool rather than the
+      // hatch itself, already answers the query: offer no operation instead.
+      const top = matches[0];
+      const answered =
+        top !== undefined &&
+        (top.exactLookup ||
+          top.exactName ||
+          (top.complete && !vocabularyTools.has(top.tool) && !readyFound.some((ready) => ready.tool === top.tool)));
       const readyCalls =
-        offset === 0
+        offset === 0 && !answered
           ? readyFound.slice(0, MAX_READY_CALLS).map(({ connector, tool, path, summary }): CatalogReadyCall => {
               const reasons = guideRequiredReasons(connector, tool, false);
               const guideSummary = connectorGuideSummary(connector);
