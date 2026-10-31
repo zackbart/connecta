@@ -5,7 +5,7 @@ packages:
 sharedWorkspaceLockfile: false
 
 minimumReleaseAgeExclude:
-  - eve@0.90.0
+  - eve@1.0.0-rc.1
 
 allowBuilds:
   esbuild: true

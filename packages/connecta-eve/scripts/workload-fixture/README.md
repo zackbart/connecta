@@ -1,7 +1,7 @@
 # Disposable workload validation (contributor recipe)
 
 This reuses the small endpoint, proof and local RSA/JWKS runner from the original
-workload validation. It adds Eve 0.90 instruction evaluation, a real SDK audience
+workload validation. It adds Eve instruction evaluation, a real SDK audience
 exchange, and correlated cancellation receipts. It is a fixture, not another
 supported deployment template. No cloud action belongs to local preparation.
 
@@ -17,7 +17,7 @@ pnpm run check
 ```
 
 The output directory must not exist. The command packs the built packages,
-installs those archives with real Eve 0.90.0, `@vercel/oidc` 4.0.3 and
+installs those archives with real Eve 1.0.0-rc.1, `@vercel/oidc` 4.0.3 and
 `@vercel/functions` 3.10.3, and applies a Zod 4.6.6 override for
 `@vercel/cli-config` 0.3.3's older pin. Audit the generated consumer
 with `pnpm audit --audit-level moderate` before approving a live deployment. Preserve

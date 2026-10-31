@@ -4,15 +4,16 @@ Connect an Eve agent to a Connecta agent pool and load its endpoint instructions
 once per turn. The helper runs in the Eve app; the Connecta server
 runs separately. No `@zackbart/connecta` dependency is installed by this package.
 
-Requires **Node 24+** and **Eve >=0.90.0 <0.91.0**. Development and consumer
-checks use real Eve 0.90.0. The range covers its patch line; newer minor releases
-need a compatibility check. Helper releases share Connecta's version and tag;
-choose the helper version matching your server release.
+Requires **Node 24+** and **Eve 1.0.0-rc.1**. Development and consumer
+checks use that exact release candidate. The peer stays pinned during the RC
+period; later candidates and stable 1.0 need a compatibility check. Helper
+releases share Connecta's version and tag; choose the helper version matching
+your server release.
 
 ## Install and add two files
 
 ```sh
-npm install @zackbart/connecta-eve eve@0.90.0
+npm install @zackbart/connecta-eve eve@1.0.0-rc.1
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -88,6 +89,26 @@ app-owned policy data.
 Each selected name must match `[a-z0-9_-]+`. A throwing selector or an invalid
 name fails the turn, even when guidance is cached. Handle lookup failures in
 your selector if it should fall back to a least-privileged pool.
+
+## Upgrading to Eve 1.0 RC
+
+Update the app to `eve@1.0.0-rc.1` and reinstall to refresh its lockfile.
+The helper's connection, dynamic pool, instructions and approval APIs use Eve's
+stable entry points and require no authoring changes for this RC. Eve's
+[1.0 stability policy](https://eve.dev/docs/reference/typescript-api#stability-policy)
+does not cover `experimental` fields or internal modules.
+
+From 0.90, review the intervening
+[release notes](https://github.com/vercel/eve/blob/eve%401.0.0-rc.1/packages/eve/CHANGELOG.md):
+`session.clear()` now cancels running turns and tasks, and object-form connection
+approvals are now preserved at runtime. RC.1 also requires `@vercel/connect`
+`^2.7.0` when that optional integration is installed; older Connect releases
+reject the prerelease Eve peer.
+
+For older apps, follow Eve's [Upgrade to 1.0](https://eve.dev/docs/guides/upgrade)
+guide for event consumers, saved history, extensions and client APIs.
+Build and test the app before deploying it. The helper does not migrate those
+app-owned surfaces.
 
 ## Upgrading from Eve 0.86
 
@@ -182,7 +203,7 @@ custom audience, even when Vercel signed them.
 
 In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
-on Node 24. This boots real Eve 0.90.0 with a packed, installed helper against
+on Node 24. This boots real Eve 1.0.0-rc.1 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
 meta, native, and native-plus-code surfaces. Native listings include two
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must
