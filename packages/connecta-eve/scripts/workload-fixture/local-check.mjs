@@ -1,7 +1,7 @@
 // Same ephemeral RSA/JWKS substitution as the original #1040 local runner.
 // These signatures are local controls, never evidence of Vercel issuance.
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { exchangeVercelOidcToken } from "@vercel/oidc";
 import { endpoint } from "./endpoint.mjs";
 import { handle } from "./handler.mjs";
@@ -161,7 +161,7 @@ try {
     keyFetches,
     exchanges,
     runtime: process.version,
-    eve: "0.90.0",
+    eve: JSON.parse(await readFile("package.json", "utf8")).dependencies.eve,
     oidc: "4.0.3",
     trust: "Local RSA, intercepted JWKS/exchange and in-process Request.signal; no live platform or paid model",
   };

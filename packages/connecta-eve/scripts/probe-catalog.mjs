@@ -506,6 +506,8 @@ if (option("cell")) {
   const work = await mkdtemp(join(tmpdir(), "connecta-eve-catalog-"));
   try {
     const helper = join(root, "packages/connecta-eve");
+    const manifest = JSON.parse(await readFile(join(helper, "package.json"), "utf8"));
+    const eveVersion = manifest.devDependencies.eve;
     const packed = JSON.parse(run("pnpm", ["pack", "--ignore-scripts", "--pack-destination", work, "--json"], helper));
     const archive = resolve(helper, packed.filename);
     const corePacked = JSON.parse(run("pnpm", ["pack", "--ignore-scripts", "--pack-destination", work, "--json"]));
@@ -516,14 +518,14 @@ if (option("cell")) {
         private: true,
         type: "module",
         dependencies: {
-          eve: "0.90.0",
+          eve: eveVersion,
           "@zackbart/connecta-eve": `file:${archive}`,
           "@zackbart/connecta": `file:${coreArchive}`,
           "quickjs-emscripten": "0.32.0",
         },
       }),
     );
-    await writeFile(join(work, "pnpm-workspace.yaml"), "minimumReleaseAgeExclude:\n  - eve@0.90.0\n");
+    await writeFile(join(work, "pnpm-workspace.yaml"), `minimumReleaseAgeExclude:\n  - eve@${eveVersion}\n`);
     run("pnpm", ["install", "--prefer-offline", "--ignore-scripts"], work);
     await writeFile(join(output, "consumer-pnpm-lock.yaml"), await readFile(join(work, "pnpm-lock.yaml")));
     await writeFile(join(output, "consumer-package.json"), await readFile(join(work, "package.json")));
@@ -564,7 +566,6 @@ if (option("cell")) {
         console.log(`${surface} ${count}: passed`);
       }
     }
-    const manifest = JSON.parse(await readFile(join(helper, "package.json"), "utf8"));
     await save("catalog-results.json", {
       recordedAt: new Date().toISOString(),
       source: run("git", ["rev-parse", "HEAD"]).trim(),
@@ -572,7 +573,7 @@ if (option("cell")) {
       dirty: run("git", ["status", "--porcelain"]).trim(),
       node: process.version,
       pnpm: run("pnpm", ["--version"]).trim(),
-      eve: "0.90.0",
+      eve: eveVersion,
       helper: manifest.version,
       helperArchiveSha256: hash(await readFile(archive)),
       coreArchiveSha256: hash(await readFile(coreArchive)),
