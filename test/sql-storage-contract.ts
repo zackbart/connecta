@@ -1,3 +1,6 @@
+import { AccessTokenManager } from "../src/access-tokens.js";
+import { agentAdmissionFixture } from "./helpers/agent-tokens.js";
+import { accessTokenKeys, agentObservationKeys } from "../src/storage/keys.js";
 import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
 import { INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
@@ -643,4 +646,97 @@ function event(index: number, overrides: Partial<ToolCallActivityEvent> = {}): T
     serverVersion: "0.29.0",
     ...overrides,
   };
+}
+
+/** Same token authority probes on native SQLite and D1. */
+export function sqlAgentAdmissionContract(open: () => Promise<SqlFixture>): void {
+  it("INV-4 INV-10: fresh admission refuses rotated, revoked and wrong-pool tokens without recording them", async () => {
+    const f = await open();
+    const storage = f.storage();
+    const manager = new AccessTokenManager(f.storage(), { agents: ["assistant", "other"] });
+    const { app, ping } = agentAdmissionFixture(storage);
+    try {
+      const first = (await manager.rotate("assistant")).token;
+      const other = (await manager.rotate("other")).token;
+      expect((await ping(first)).status).toBe(200);
+      expect((await ping(other)).status).toBe(404);
+      expect(await storage.get(agentObservationKeys.agent("other"))).toBeNull();
+      // Keep this isolate and app warm, mutate through another store: no
+      // request-local memo or process cache may hide the authoritative slot.
+      await storage.delete(agentObservationKeys.agent("assistant"));
+      const second = (await manager.rotate("assistant")).token;
+      expect((await ping(first)).status).toBe(401);
+      expect(await storage.get(agentObservationKeys.agent("assistant"))).toBeNull();
+      expect((await ping(second)).status).toBe(200);
+      await storage.delete(agentObservationKeys.agent("assistant"));
+      await manager.revoke("assistant");
+      expect((await ping(second)).status).toBe(401);
+      expect(await storage.get(agentObservationKeys.agent("assistant"))).toBeNull();
+      expect((await ping(other, "other")).status).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-4: replacing a built-in get cannot be bypassed by the native token snapshot", async () => {
+    const f = await open();
+    const storage = f.storage();
+    const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant")).token;
+    const { app, ping } = agentAdmissionFixture(storage);
+    try {
+      expect((await ping(token)).status).toBe(200);
+      const selected = getNativeStorage(storage)!.accessToken!("0".repeat(64));
+      storage.get = vi.fn(async () => null);
+      expect(await runEdge(selected)).toBeUndefined();
+      expect((await ping(token)).status).toBe(401);
+      expect(storage.get).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each(["lookup", "record", "slot"] as const)(
+    "INV-4: an expired %s cannot admit from the SQL snapshot",
+    async (part) => {
+      const f = await open();
+      const storage = f.storage();
+      const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
+      const token = (await manager.rotate("assistant")).token;
+      const slotKey = accessTokenKeys.agent("assistant");
+      const id = JSON.parse((await storage.get(slotKey))!).tokenId;
+      const key =
+        part === "slot"
+          ? slotKey
+          : part === "record"
+            ? accessTokenKeys.record(id)
+            : (await storage.list("access-token:v1:lookup:"))[0]!;
+      await f.exec("UPDATE connecta_kv SET expires_at_ms = 1 WHERE key = ?", key);
+      const { app, ping } = agentAdmissionFixture(storage);
+      try {
+        expect((await ping(token)).status).toBe(401);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it("INV-4: malformed JSON and duplicate link fields fail closed", async () => {
+    const f = await open();
+    const storage = f.storage();
+    const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant")).token;
+    const slot = JSON.parse((await storage.get(accessTokenKeys.agent("assistant")))!);
+    const key = accessTokenKeys.record(slot.tokenId);
+    const raw = (await storage.get(key))!;
+    const { app, ping } = agentAdmissionFixture(storage);
+    try {
+      for (const damaged of ["{broken", raw.slice(0, -1) + ',"agent":"other"}', raw + "\0"]) {
+        await storage.set(key, damaged);
+        expect((await ping(token)).status).toBe(401);
+      }
+      await storage.set(key, raw);
+      expect((await ping(token)).status).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
 }

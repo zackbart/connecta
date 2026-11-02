@@ -1,11 +1,14 @@
 // SQL contracts against native workerd D1 and separate Worker requests.
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it, vi } from "vitest";
+import { AccessTokenManager } from "../src/access-tokens.js";
+import { agentAdmissionFixture } from "./helpers/agent-tokens.js";
 import { d1ActivityStore, d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
 import {
+  sqlAgentAdmissionContract,
   sqlActivityRollbackContract,
   sqlBatchRollbackContract,
   sqlCasExpiryContract,
@@ -86,10 +89,17 @@ describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {
 });
 
 /** Only the structural members connecta declares; nothing else is reachable. */
-function structural(db: D1Database, hooks: { onBatch?: () => void; onRun?: (sql: string) => void; calls: string[] }) {
+function structural(
+  db: D1Database,
+  hooks: { onBatch?: () => void; onRun?: (sql: string) => void; onAll?: () => Promise<void>; calls: string[] },
+) {
   const wrap = (sql: string, statement: D1PreparedStatement): ReturnType<D1DatabaseBinding["prepare"]> => ({
     bind: (...values: unknown[]) => wrapBound(sql, statement.bind(...values)),
-    all: () => statement.all(),
+    all: async () => {
+      hooks.calls.push("all");
+      await hooks.onAll?.();
+      return statement.all();
+    },
     run: () => {
       hooks.calls.push(`run:${sql.slice(0, 24)}`);
       const pending = statement.run();
@@ -228,5 +238,42 @@ describe.skipIf(!bindings)("native SQL service request ownership", () => {
         expect.objectContaining({ requestId: "request-2" }),
       ]),
     });
+  });
+});
+
+describe.skipIf(!bindings)("agent admission over native Workers D1", () => {
+  sqlAgentAdmissionContract(open);
+});
+
+describe.skipIf(!bindings)("agent D1 round trips with injected latency", () => {
+  it("halves warm admission + observation reads at 100 ms per D1 read", async () => {
+    const db = await fresh();
+    const hooks = { calls: [] as string[], onAll: async () => {} };
+    const storage = d1Storage(structural(db, hooks));
+    const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant")).token;
+    for (const [mode, expected] of [
+      ["sequential", 4],
+      ["snapshot", 2],
+    ] as const) {
+      // A plain adapter exercises the pre-optimization three-get algorithm
+      // against the same native D1, including its separate observation read.
+      const { app, ping } = agentAdmissionFixture(mode === "sequential" ? { ...storage } : storage);
+      try {
+        expect((await ping(token)).status).toBe(200); // warm schema and sample
+        hooks.onAll = () => new Promise((resolve) => setTimeout(resolve, 100));
+        const elapsed: number[] = [];
+        for (let i = 0; i < 5; i++) {
+          hooks.calls.length = 0;
+          const start = performance.now();
+          expect((await ping(token)).status).toBe(200);
+          elapsed.push(Math.round(performance.now() - start));
+          expect(hooks.calls).toEqual(Array.from({ length: expected }, () => "all"));
+        }
+        console.log(JSON.stringify({ mode, injectedReadLatencyMs: 100, reads: expected, elapsedMs: elapsed }));
+      } finally {
+        hooks.onAll = async () => {};
+        await app.close();
+      }
+    }
   });
 });

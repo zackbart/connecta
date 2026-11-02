@@ -1,5 +1,6 @@
 {
   "notes": [
+    "Agent admission (#1226), same-toolchain origin/main b864736e comparison on Node 26.13.0, esbuild 0.28.2 and system zlib gzip-9: examples/worker grows from 799,538 B to 799,721 B (+183 B) for one fresh SQL lookup/record/slot snapshot instead of three round trips. Root grows 22 B (415,841 to 415,863 B); ./ui is unchanged at 346,344 B. All three already exceed their caps locally with this zlib; CI remains authoritative. Raise only examples/worker from 796,500 to 797,000 B (+500 B) to cover the measured admission optimization and compression variation over its 73 B CI headroom; leave root and UI caps unchanged.",
     "Gzip-9 measurements cover each Web-facing entry. Caps move only with an explicit rationale; standalone provider graphs include the shared Effect core and are reported, not capped.",
     "The root cap covers the Effect core, routing, bounded transport, OAuth coordination, request ownership and validation.",
     "./json-schema keeps schema validation and rendering available through an optional entry.",
@@ -132,7 +133,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 796750
+      "maxGzip": 797000
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
