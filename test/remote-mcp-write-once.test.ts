@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { z } from "zod";
 import { attachCallClassification } from "../src/call-classification.js";
+import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
@@ -271,15 +272,15 @@ function setup(
       };
     };
   };
-  /** Run a program that sends one write, catching its failure or not. */
-  const program = async (caught: boolean, count = 1) => {
+  /** Run a program that calls one tool, catching its failure or not. */
+  const program = async (caught: boolean, count = 1, tool = "create_item") => {
     const execute = createExecuteTool(
       registry,
       BASE,
       scriptedExecutor(async (fns) => {
         for (let id = 1; id <= count; id++) {
           try {
-            await required(fns.call)("svc.create_item", { id });
+            await required(fns.call)(`svc.${tool}`, tool === "create_item" ? { id } : {});
           } catch (error) {
             if (!caught) throw error;
           }
@@ -369,6 +370,212 @@ async function authRecoveryRow(surface: "program" | "call_tool") {
     await app.close();
   }
 }
+
+it.each(["auto", "legacy"] as const)(
+  "requires OAuth on the catalog path when tokens disappear before a replacement provider binds (%s)",
+  async (versionNegotiation) => {
+    const flow = setup({ oauth: true, versionNegotiation });
+    await flow.seedOAuth();
+    const observed = new Set<KvOAuthProvider>();
+    const observe = KvOAuthProvider.prototype.observe;
+    vi.spyOn(KvOAuthProvider.prototype, "observe").mockImplementation(function (this: KvOAuthProvider, grant) {
+      observe.call(this, grant);
+      if (grant.body.tokens) observed.add(this);
+    });
+    const begin = KvOAuthProvider.prototype.beginFlow;
+    let removed = false;
+    vi.spyOn(KvOAuthProvider.prototype, "beginFlow").mockImplementation(async function (this: KvOAuthProvider, epoch) {
+      if (!removed) {
+        expect([...observed].some((provider) => provider !== this)).toBe(true);
+        expect(observed.has(this)).toBe(false);
+        removed = true;
+        const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
+        await other.tokens();
+        await other.invalidateCredentials("tokens");
+      }
+      return begin.call(this, epoch);
+    });
+    await expect(flow.connector.listTools(flow.context())).rejects.toMatchObject({ code: "downstream_oauth_required" });
+    expect(removed).toBe(true);
+    expect(flow.requests).toEqual([]);
+  },
+);
+
+it.each([false, true])(
+  "a refused handshake before any request proves a warm-catalog write unsent (program: %s)",
+  async (program) => {
+    const flow = setup({ oauth: true, versionNegotiation: "legacy" });
+    await flow.seedOAuth();
+    await flow.outcome("list_items");
+    flow.requests.length = 0;
+    const begin = KvOAuthProvider.prototype.beginFlow;
+    let removed = false;
+    vi.spyOn(KvOAuthProvider.prototype, "beginFlow").mockImplementation(async function (this: KvOAuthProvider, epoch) {
+      if (!removed) {
+        removed = true;
+        const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
+        await other.tokens();
+        await other.invalidateCredentials("tokens");
+      }
+      return begin.call(this, epoch);
+    });
+    const result = program ? await flow.program(false) : await flow.outcome("create_item", { id: 1 });
+    expect(removed).toBe(true);
+    expect(flow.requests).toEqual([]);
+    expect(flow.sent("create_item")).toEqual([]);
+    expect(result.error).toMatchObject({ code: "downstream_oauth_required" });
+    expect(result.error).not.toHaveProperty("writeOutcome");
+    expect(result.error).not.toHaveProperty("reconciliationRequired", true);
+    if (program) expect(result.error.writes).toEqual({ succeeded: 0, failed: 1, unknown: 0 });
+  },
+);
+
+describe.each(["removed", "wrong issuer"] as const)(
+  "remote MCP OAuth credentials at send time (#1230): %s",
+  (fault) => {
+    it.each(
+      (
+        [
+          ["auto", false],
+          ["auto", true],
+          ["legacy", false],
+          ["legacy", true],
+        ] as const
+      ).flatMap(([version, program]) =>
+        (["create_item", "list_items"] as const).map((tool) => [version, program, tool] as const),
+      ),
+    )("refuses a tool send (%s, program: %s, tool: %s)", async (versionNegotiation, program, tool) => {
+      const flow = setup({ oauth: true, versionNegotiation });
+      await flow.seedOAuth();
+      await flow.outcome("list_items");
+      flow.requests.length = 0;
+      flow.applied.length = 0;
+      const priorSends = flow.sent(tool).length;
+      const send = StreamableHTTPClientTransport.prototype.send;
+      const tokens = KvOAuthProvider.prototype.tokens;
+      let dispatching = false;
+      let removed = false;
+      let requestsBeforeRemoval = 0;
+      vi.spyOn(StreamableHTTPClientTransport.prototype, "send").mockImplementation(function (
+        this: StreamableHTTPClientTransport,
+        message,
+        options,
+      ) {
+        if (!Array.isArray(message) && "method" in message && message.method === "tools/call") dispatching = true;
+        return send.call(this, message, options);
+      });
+      vi.spyOn(KvOAuthProvider.prototype, "tokens").mockImplementation(async function (this: KvOAuthProvider, ctx) {
+        if (dispatching && !removed) {
+          removed = true;
+          requestsBeforeRemoval = flow.requests.length;
+          if (fault === "wrong issuer") return tokens.call(this, { issuer: "https://other-issuer.test" });
+          const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
+          await tokens.call(other);
+          await other.invalidateCredentials("tokens");
+        }
+        return tokens.call(this, ctx);
+      });
+
+      const result = program
+        ? await flow.program(false, 1, tool)
+        : await flow.outcome(tool, tool === "create_item" ? { id: 1 } : {});
+
+      expect(removed).toBe(true);
+      expect(result.error).toMatchObject({ code: "downstream_oauth_required" });
+      expect(JSON.stringify(result)).not.toContain(STALE);
+      expect(flow.sent(tool).slice(priorSends)).toEqual([]);
+      expect(flow.applied).toEqual([]);
+      expect(flow.requests.slice(requestsBeforeRemoval)).toEqual([]);
+      expect(flow.refreshes()).toBe(0);
+      expect(result.error).not.toHaveProperty("writeOutcome");
+      expect(result.error).not.toHaveProperty("reconciliationRequired", true);
+      expect(result.error).not.toHaveProperty("uncertainCall");
+      if (program && tool === "create_item") {
+        expect(result.error.writes).toEqual({ succeeded: 0, failed: 1, unknown: 0 });
+        expect(result.error.message).not.toContain("after it left");
+      }
+    });
+
+    it.each([
+      ["auto", false],
+      ["auto", true],
+      ["legacy", false],
+      ["legacy", true],
+    ] as const)(
+      "never replays a dispatched write after a token miss (%s, program: %s)",
+      async (versionNegotiation, program) => {
+        const flow = setup({ oauth: true, versionNegotiation });
+        await flow.seedOAuth();
+        flow.answers.set("create_item", 401);
+        const tokens = KvOAuthProvider.prototype.tokens;
+        let removed = false;
+        vi.spyOn(KvOAuthProvider.prototype, "tokens").mockImplementation(async function (this: KvOAuthProvider, ctx) {
+          if (!removed && flow.sent("create_item").length) {
+            removed = true;
+            if (fault === "wrong issuer") return tokens.call(this, { issuer: "https://other-issuer.test" });
+            const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
+            await tokens.call(other);
+            await other.invalidateCredentials("tokens");
+          }
+          return tokens.call(this, ctx);
+        });
+        const result = program ? await flow.program(false) : await flow.outcome("create_item", { id: 1 });
+        expect(removed).toBe(true);
+        expect(result.error).toMatchObject({
+          code: "downstream_oauth_required",
+          retryable: false,
+          writeOutcome: "unknown",
+        });
+        expect(flow.sent("create_item")).toEqual([{ name: "create_item", authorization: `Bearer ${STALE}` }]);
+        expect(flow.applied).toEqual([]);
+        expect(flow.refreshes()).toBe(0);
+      },
+    );
+
+    it.each([
+      ["auto", false],
+      ["legacy", false],
+      ["auto", true],
+      ["legacy", true],
+    ] as const)(
+      "refuses an authenticated catalog send with no SDK token (%s, after handshake: %s)",
+      async (versionNegotiation, afterHandshake) => {
+        const flow = setup({ oauth: true, versionNegotiation });
+        await flow.seedOAuth();
+        const tokens = KvOAuthProvider.prototype.tokens;
+        let removed = false;
+        let requestsBeforeRemoval = 0;
+        let listing = !afterHandshake;
+        const send = StreamableHTTPClientTransport.prototype.send;
+        vi.spyOn(StreamableHTTPClientTransport.prototype, "send").mockImplementation(function (
+          this: StreamableHTTPClientTransport,
+          message,
+          options,
+        ) {
+          if (!Array.isArray(message) && "method" in message && message.method === "tools/list") listing = true;
+          return send.call(this, message, options);
+        });
+        vi.spyOn(KvOAuthProvider.prototype, "tokens").mockImplementation(async function (this: KvOAuthProvider, ctx) {
+          if (listing && !removed && !ctx) {
+            removed = true;
+            requestsBeforeRemoval = flow.requests.length;
+            if (fault === "wrong issuer") return tokens.call(this, { issuer: "https://other-issuer.test" });
+            const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
+            await tokens.call(other);
+            await other.invalidateCredentials("tokens");
+          }
+          return tokens.call(this, ctx);
+        });
+        await expect(flow.connector.listTools(flow.context())).rejects.toMatchObject({
+          code: "downstream_oauth_required",
+        });
+        expect(removed).toBe(true);
+        expect(flow.requests.slice(requestsBeforeRemoval)).toEqual([]);
+        expect(flow.refreshes()).toBe(0);
+      },
+    );
+  },
+);
 
 describe("remote MCP OAuth writes after a 401", () => {
   it("INV-4 INV-9: write-to-read overrides never replay source writes through recovery and settle every dispatched failure", async () => {

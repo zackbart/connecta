@@ -221,7 +221,7 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
       }
       expect(server.counts).toEqual({ register: 0, token: 0, refresh: 0 });
       expect(await storage.list(oauthFlowKeys.prefix)).toEqual([]);
-      expect(server.calls()).toHaveLength(operation === "call" ? 1 : 0);
+      expect(server.calls()).toHaveLength(0);
 
       const started = await c.startAuth!(ctx);
 
@@ -236,7 +236,7 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
           c.callTool("ping", {}, ctx, { definition: { name: "ping", annotations: { readOnlyHint: true } } }),
         );
         expect(failure.classified.code).toBe("downstream_oauth_required");
-        expect(server.calls()).toHaveLength(1);
+        expect(server.calls()).toHaveLength(0);
         expect(server.counts).toEqual({ register: 1, token: 0, refresh: 0 });
         expect(await storedGrant(storage)).toEqual(grant);
         expect(await storage.list(oauthFlowKeys.prefix)).toEqual(flows);
@@ -272,7 +272,7 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
     ["start after call", "grant read"],
   ] as const)("fails %s superseded by Restart during post-handshake %s (#1120)", async (operation, pause) => {
     const server = openListing();
-    const backing = memoryStorage();
+    const backing = operation === "status" ? await carriedGrant() : memoryStorage();
     const reached = deferred<void>();
     const resume = deferred<void>();
     let hold = true;
@@ -344,15 +344,15 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
     const storage = memoryStorage();
     const c = connector();
 
-    // The downstream lists its tools to anyone; that is no grant.
+    // Even a public catalog cannot bypass a configured OAuth requirement.
     const listing = scope(storage, seal);
-    await expect(c.listTools(listing)).resolves.toMatchObject([{ name: "ping" }]);
+    await expect(c.listTools(listing)).rejects.toMatchObject({ code: "downstream_oauth_required" });
     await c.closeScope?.(listing);
     expect(await c.status!(scope(storage, seal))).toMatchObject({ state: "auth_required" });
-    // A call meets the per-tool challenge; a call never starts consent.
+    // A call without a grant is refused locally; only an explicit start begins consent.
     const refused = await failureOf(ping(c, storage, seal));
     expect(refused.classified).toMatchObject({ code: "downstream_oauth_required" });
-    expect(server.calls()).toEqual([{ method: "POST", rpc: "tools/call", authorization: null }]);
+    expect(server.mcp).toEqual([]);
     expect(await reader(storage, seal).pendingAuthorizationUrl()).toBeUndefined();
     const challenged = server.metadata.length;
 
@@ -366,7 +366,7 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
     expect(consentUrl.searchParams.get("redirect_uri")).toBe(REDIRECT);
     // Discovery used the resource's own well-known metadata; no tool was called.
     expect(server.metadata.slice(challenged)).toEqual([resourceMetadataUrl]);
-    expect(server.calls()).toHaveLength(1);
+    expect(server.calls()).toHaveLength(0);
     expect(server.counts.token).toBe(0);
 
     await consent(c, storage, started.authorizationUrl, seal);
@@ -379,7 +379,7 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
 
     expect(await c.status!(scope(storage, seal))).toMatchObject({ state: "ok" });
     await expect(ping(c, storage, seal)).resolves.toMatchObject({ content: [{ type: "text", text: "pong" }] });
-    expect(server.calls().slice(1)).toEqual([{ method: "POST", rpc: "tools/call", authorization: "Bearer access-1" }]);
+    expect(server.calls()).toEqual([{ method: "POST", rpc: "tools/call", authorization: "Bearer access-1" }]);
   });
 
   it("reports an existing grant ok without starting a new flow", async () => {

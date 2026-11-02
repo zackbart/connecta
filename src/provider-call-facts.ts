@@ -187,8 +187,12 @@ export function refusalRequest(error: unknown): ProviderRequest | undefined {
   return error !== null && typeof error === "object" ? refusals.get(error) : undefined;
 }
 
-export function knownProviderFailure<T>(error: T): T {
-  if (error !== null && typeof error === "object") knownFailures.add(error);
+/** A local refusal may additionally name the physical request it prevented. */
+export function knownProviderFailure<T>(error: T, unsent?: ProviderRequest): T {
+  if (error !== null && typeof error === "object") {
+    knownFailures.add(error);
+    if (unsent && !unsent.dispatched) refusals.set(error, unsent);
+  }
   return error;
 }
 

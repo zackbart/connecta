@@ -29,6 +29,7 @@ import { guardedTransport, sendGuarded, sendCredentialPost } from "../../guarded
 import {
   dispatchProviderRequest,
   recordProviderResponse,
+  knownProviderFailure,
   providerRequest,
   renewedAfterUnauthorized,
   type ProviderRequest,
@@ -392,6 +393,20 @@ export function remoteMcpTransport(
         if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
         const credentialPost =
           isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
+        // OAuth discovery, registration and exchange share this fetch, but do
+        // not use the resource credential. Guard the assembled MCP request,
+        // after the SDK token read and before dispatch bookkeeping or fetch.
+        // OAuth is required on passive paths regardless of which provider
+        // read the grant. Only an explicit authorization start may probe the
+        // resource anonymously for an SDK challenge, never a tools/call.
+        if (isOauth && !credentialPost && new URL(input).href === url.href) {
+          const authorization = new Headers(init?.headers).get("authorization");
+          if ((provider?.allowAuthorization !== true || toolCall) && !authorization)
+            throw knownProviderFailure(
+              rt.authRequiredError(ctx),
+              flight?.sent ? undefined : (flight?.request?.entry ?? providerRequest(ctx, true, id)),
+            );
+        }
         // A custom transport reaches only the configured origin; redirects are
         // already same-origin, and OAuth cannot be combined with it.
         if (customFetch && new URL(input instanceof Request ? input.url : String(input)).origin !== destination.origin)
@@ -571,7 +586,7 @@ export function remoteMcpTransport(
           ),
     );
     if (opts.auth?.type === "oauth") {
-      const oauthProvider = provider ?? rt.newProvider(ctx, undefined, signal);
+      const oauthProvider = (provider ??= rt.newProvider(ctx, undefined, signal));
       // The session/provider belong to the request. A renewal belongs to the
       // exact call whose HTTP response challenged it, until claim submission.
       // Carry that ownership on the response the SDK passes to onUnauthorized;

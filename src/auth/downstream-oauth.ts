@@ -127,6 +127,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * never from the later save, which a slow answer would push past expiry.
    */
   tokenRequestSent: number | undefined;
+
   /**
    * The tokens of the grant this provider last opened or wrote, as facts
    * only: no credential beyond the access token it already handed out.

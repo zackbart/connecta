@@ -46,6 +46,7 @@ import {
   isSettledWrite,
   keyProtectsCall,
   knownCallFailure,
+  refusalRequest,
   onlyAuxiliaryRequests,
   type LogicalCall,
   knownProviderFailure,
@@ -475,11 +476,14 @@ export class InvocationService {
         if (
           mayHaveWritten &&
           (error.code === "auth_required" || error.code === "downstream_oauth_required") &&
-          !logicalCall?.sent.some((request) => request.dispatched)
+          !logicalCall?.sent.some((request) => request.dispatched) &&
+          !(answered && refusalRequest(error)?.dispatched === false)
         ) {
           // An empty resource ledger cannot settle this auth failure. Keep
           // actual resource-refusal provenance, but withdraw an empty ledger's
           // known mark before composing advice and counting program writes.
+          // A boundary-owned physical pre-dispatch refusal is positive proof;
+          // its private provenance cannot be supplied by error fields.
           answered = false;
           forgetProviderFailure(error);
         }

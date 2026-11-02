@@ -1725,10 +1725,11 @@ describe("pre-connect cached catalogs", () => {
     await search();
     expect([downstream.handshakes(), downstream.listings()]).toEqual([1, 1]);
     downstream.requests.length = 0;
-    // A grant without tokens is never served from the cache; the connect decides.
+    // A grant without tokens can neither reuse the cache nor connect anonymously.
     await seedGrant(store, { issuer: "https://calendar.test" }, "v3:reauthorized", scopes.connector(id));
-    await search();
-    expect(downstream.handshakes()).toBe(1);
+    expect(names(await search())).toEqual([]);
+    expect([downstream.handshakes(), downstream.listings()]).toEqual([0, 0]);
+    expect(downstream.requests).toEqual([]);
   });
 
   /** One OAuth connector over a legacy downstream, searched by a fresh registry per request. */
@@ -1782,12 +1783,14 @@ describe("pre-connect cached catalogs", () => {
         await d.search();
         return d.downstream;
       };
-      await seedGrant(
-        store,
-        { issuer: "https://calendar.test", tokens: { access_token: "access-1", token_type: "Bearer" } },
-        "v3:seeded",
-        scopes.connector(id),
-      );
+      const seed = () =>
+        seedGrant(
+          store,
+          { issuer: "https://calendar.test", tokens: { access_token: "access-1", token_type: "Bearer" } },
+          "v3:seeded",
+          scopes.connector(id),
+        );
+      await seed();
       // The configuration digest each catalog namespace is stored under.
       const configs = async () =>
         new Set(
@@ -1829,10 +1832,14 @@ describe("pre-connect cached catalogs", () => {
       // digest, and addresses none of the earlier entries; the original key
       // finds them again.
       const before = await configs();
+      // Reconnect under each key: a grant sealed by the previous deployment
+      // cannot authorize an anonymous catalog read after key rotation.
+      await seed();
       expect((await search(TOKEN_A, 9)).listings()).toBe(1);
       const rotated = [...(await configs())].filter((config) => !before.has(config));
       expect(rotated).toHaveLength(1);
       expect(first.has(rotated[0]!)).toBe(false);
+      await seed();
       expect((await search(TOKEN_A, 7)).requests).toEqual([]);
     },
   );

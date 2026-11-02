@@ -255,12 +255,19 @@ describe("a refused client registration", () => {
   });
 });
 
+/** Give live-call error probes a resource credential without pre-registering a client. */
+async function credential(context: ConnectorContext): Promise<void> {
+  const provider = new KvOAuthProvider("svc", context.storage, REDIRECT);
+  if (!(await provider.tokens()))
+    await provider.saveTokens({ access_token: "access-fixture", token_type: "Bearer" }, { issuer: ISSUER });
+}
+
 describe("an OAuth flow on a live client", () => {
   const modes = ["legacy", "auto"] as const;
 
   /**
-   * Connect without credentials, which the live downstream allows, then call
-   * a tool in an explicitly authorized fixture: its 401 reaches the OAuth
+   * Call with a resource credential in an explicitly authorized fixture:
+   * its 401 reaches the OAuth
    * failure boundary under test on the connected client.
    */
   async function liveFailure(
@@ -277,7 +284,7 @@ describe("an OAuth flow on a live client", () => {
       requestScope: {},
       allowAuthorization: true,
     });
-    // The call connects the client without a grant, which this downstream allows.
+    await credential(context);
     const error = await connector.callTool("read", {}, context).then(
       () => null,
       (err: unknown) => err,
@@ -370,7 +377,7 @@ describe("an OAuth flow on a live client", () => {
       requestScope: {},
       allowAuthorization: true,
     });
-    // The call connects the client without a grant, which this downstream allows.
+    await credential(context);
     const first = connector
       .callTool("read", {}, context, {
         definition: { name: "read", annotations: { readOnlyHint: true } },
@@ -483,7 +490,7 @@ describe("the SDK seams OAuth flows are bounded at", () => {
       );
       const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: mode });
       const context = { ...scope(), allowAuthorization: true };
-      // The call connects the client without a grant, which this downstream allows.
+      await credential(context);
       try {
         const errors = await Promise.all(
           [0, 1].map(() => connector.callTool("write", {}, context).catch((error: unknown) => error)),
@@ -988,6 +995,7 @@ describe("SDK failure facts", () => {
       });
       const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation });
       const context = scope();
+      await credential(context);
       try {
         const error = await connector.callTool("write", {}, context).catch((error: unknown) => error);
         expect(classifyCallError(error)).toMatchObject({ code: "provider_permission_denied", retryable: false });

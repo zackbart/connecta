@@ -1350,6 +1350,16 @@ code, so `remoteMcp()` refuses it as personal at construction.
 
 ## Downstream OAuth state at rest
 
+An OAuth remote MCP connector requires an access token on passive MCP requests,
+including handshakes, catalog requests, and tool dispatches, even if the server
+accepts anonymous requests. This requirement survives provider replacement.
+If the SDK cannot obtain a token at send time, Connecta returns OAuth recovery
+before sending. A locally refused write counts as failed, without reconciliation;
+a write that may already have left remains unknown and is never replayed.
+Only an explicit authorization start may probe the MCP endpoint without a token
+for the SDK's challenge, never to call a tool. Authorization-server discovery,
+client registration, token exchange, and refresh retain their OAuth flows.
+
 Each owner of an OAuth connector (the deployment when shared, each principal
 when personal) has one **grant record**, `oauth:grant` in the connector's
 namespace: the live **epoch**, the latest consent's state digest, and one
@@ -1437,7 +1447,7 @@ with the gate a call passes:
 | Stored grant        | Status                                                      | Start (Connect, Continue, Restart, `authorize_connector`)                                                                                                                                                                                                                          |
 | ------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Disconnected        | `auth_required`; the downstream is not asked                | Replaces the epoch, then proceeds as for no tokens                                                                                                                                                                                                                                 |
-| No tokens           | Connects; `auth_required` even when the downstream answers  | Connects first, so a 401's `resource_metadata` starts consent as before. A downstream that answers without credentials still gets consent, discovered from RFC 9728 metadata at the configured URL's well-known locations. The start answers `auth_required` with the consent URL. |
+| No tokens           | `auth_required`; tokenless MCP requests are refused locally | Connects first, so a 401's `resource_metadata` starts consent as before. A downstream that answers without credentials still gets consent, discovered from RFC 9728 metadata at the configured URL's well-known locations. The start answers `auth_required` with the consent URL. |
 | Tokens (any expiry) | Connects; `ok`, or `auth_required` when a 401 needs consent | Connects; `ok` without starting a flow when healthy                                                                                                                                                                                                                                |
 
 A start without a challenge runs the same SDK flow as a 401 without
