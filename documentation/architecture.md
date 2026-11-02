@@ -340,7 +340,7 @@ without storage reads, decryption or hashing. Catalog invalidation (including
 operator refresh and OAuth connect/disconnect/restart) advances a counter for the
 registry's cache store; built-in vault set/clear advances a counter for that vault.
 These weakly held counters contain no catalogs, credentials or caller identity;
-catalogs and derived views remain request-local. A moved fence replaces the
+registry catalogs and derived views remain request-local. A moved fence replaces the
 retained read and its search views, and prevents joining an older registry flight.
 Changes made through another process/isolate or directly in storage need not be
 observed mid-request; the next request uses the durable generation and auth checks.
@@ -618,6 +618,18 @@ so closing a temporary client does not end another instance with the same id.
 Only complete, intake-redacted tools/list, resources/list and
 resources/templates/list successes are stored. Resource payloads are not cached. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
+
+A warm isolate retains at most four validated stored JSON catalogs, with a
+combined accounting budget of 8 MiB (twice serialized input bytes, key bytes and
+64 bytes per object property/array slot; larger entries bypass reuse).
+These deeply frozen facts contain no request context, transport, signal,
+callback or promise, and require neither weak references nor cleanup timers.
+Reuse follows the same manifest TTL checks, complete chunk reads, recomputed
+SHA-256 fingerprint and fresh generation/credential acceptance fence as a cold
+read. Its key binds the stored entry, current private owner/deployment partition
+(even for public entries), and chunk fingerprint. Request-specific credential
+redaction and TTL intake still run every time. Eviction affects performance
+only; SQL remains authoritative.
 
 Stored catalog and negotiation keys use deployment-keyed partitions. A remote
 connector's whole cache configuration and negotiation input enter a stored key
