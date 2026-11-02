@@ -6,6 +6,8 @@ import type { ActivityPage, ActivityStore, ToolCallActivityEvent } from "../acti
 
 export interface NativeStorage {
   get(key: string): Effect.Effect<string | null, unknown>;
+  /** Fresh lookup → record → authoritative slot in one SQL snapshot; never memoized. */
+  accessToken?: ((hash: string) => Effect.Effect<Map<string, string | null> | undefined, unknown>) | undefined;
   /** Several keys in one round trip, each as `get` would read it. */
   getMany?(keys: readonly string[]): Effect.Effect<(string | null)[], unknown>;
   set(key: string, value: string, options?: Parameters<KVStorage["set"]>[2]): Effect.Effect<void, unknown>;
@@ -58,6 +60,9 @@ export function registerNativeStorage(edge: KVStorage, native: NativeStorage): K
   storageMethods.set(edge, own);
   const getMany = native.getMany;
   storage.set(edge, {
+    accessToken: native.accessToken
+      ? (hash) => typed(() => (getNativeStorage(edge) ? native.accessToken!(hash) : Effect.succeed(undefined)))
+      : undefined,
     get: (key) => current(edge, "get", own.get, [key], () => native.get(key)),
     // A replaced `get` answers each key itself, in order, as before.
     ...(getMany

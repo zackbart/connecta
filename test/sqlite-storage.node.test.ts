@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Registry } from "../src/registry.js";
 import { openSqlite, sqliteActivityStore, sqliteStorage } from "../src/sqlite.js";
 import { silentLogger } from "./helpers.js";
-import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
+import { sqlAgentAdmissionContract, sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
 
 const directories: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -49,6 +49,7 @@ function fixture(db: DatabaseSync): SqlFixture {
 // what an in-memory database cannot: permissions, restarts, and processes.
 describe("sqliteStorage in memory", () => {
   sqlStorageContract(async () => fixture(track(openSqlite(":memory:"))));
+  sqlAgentAdmissionContract(async () => fixture(track(openSqlite(":memory:"))));
 });
 
 describe("sqliteStorage in a file", () => {
