@@ -20,6 +20,7 @@ export const AUTH_PROGRAM = `async () => {
 
 export function handoffFixture(options: {
   catalogAuth?: boolean;
+  native?: boolean;
   credential?: boolean;
   manage?: boolean;
   authScope?: "personal" | "shared";
@@ -77,11 +78,11 @@ export function handoffFixture(options: {
     },
   };
   const app = createTestConnecta({
-    connectors: [connector], storage, vault, publicUrl: HANDOFF_BASE, logger: "silent", executor,
+    connectors: [connector, ...(options.native ? [{ ...connector, id: "outside" }] : [])], storage, vault, publicUrl: HANDOFF_BASE, logger: "silent", executor,
     auth: ["alice", "bob"].map(user => fakeClerkAuth({ token: user, userId: user })),
     // Without management alice is only a pool member; bob stays the maintainer.
     ...(options.manage === false ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
-    pools: { team: { tools: ["service"], members: [{ namespace: "https://clerk.example.test", id: "alice" }], readOnly: true } },
+    pools: { team: { tools: ["service"], members: [{ namespace: "https://clerk.example.test", id: "alice" }], readOnly: true, ...(options.native ? { surface: "native" as const, executeCode: false } : {}) } },
   });
   const rpc = async (name: string, args: Record<string, unknown>, pool = "team") => {
     const request = mcpRpc("tools/call", { name, arguments: args }, { token: "alice" });
@@ -99,7 +100,8 @@ export function handoffFixture(options: {
     expect((await browser(start.href)).status).toBe(400);
     const callback = await browser(`${HANDOFF_BASE}/oauth/callback/service?code=test&state=${state}`);
     expect(callback.status).toBe(200);
-    expect((await rpc("call_tool", { address: "service.read", resultMode: "value" })).structuredContent.data).toEqual({ connected: true });
+    if (options.native) expect((await rpc("service__read", {})).content[0].text).toBe(JSON.stringify({ connected: true }));
+    else expect((await rpc("call_tool", { address: "service.read", resultMode: "value" })).structuredContent.data).toEqual({ connected: true });
   };
   return { app, rpc, browser, complete, vault, sign, connector };
 }

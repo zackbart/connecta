@@ -31,6 +31,7 @@ const PROVIDER_OUTCOMES = PROVIDER_EVALS.flatMap(({ tasks }) => Object.entries(t
 
 const SCENARIOS: Record<string, string> = {
   ...Object.fromEntries(PROVIDER_OUTCOMES.map(([id, outcome]) => [id, outcome.scenario])),
+  "auth-required-recovery": "one explicit handoff, repaired billing reads and one correct post",
   "cross-connector-join": "join two paged sources, then post one answer",
   "p5-result-paging": "page a retained result without refetching",
   "stripe-step2-refund-once": "one requested refund, no other mutation",

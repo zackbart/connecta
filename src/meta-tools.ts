@@ -1596,7 +1596,7 @@ export function registerMetaTools(
     /** `execute.maxResultChars`: sizes the pages truncation notices ask programs to read. */
     maxProgramResultChars?: number | undefined;
     /**
-     * A native pool: register only `skills`, plus `read_result` when the pool
+     * A native pool: register `authorize_connector` and `skills`, plus `read_result` when the pool
      * has no execute_code, and return the route native tool calls take.
      */
     native?: { executeCode: boolean; catalogErrors: string[] } | undefined;
@@ -1642,6 +1642,46 @@ export function registerMetaTools(
       authFlow<ToolResult>(function* () {
         bindRequest(request);
         return yield* upwardStep(authInvoke<ToolResult>(mt, "skills", [args as SkillArgs]));
+      }),
+    ),
+  );
+
+  server.registerTool(
+    "authorize_connector",
+    {
+      description: ctx.native
+        ? AUTHORIZE_DESC +
+          " If a connector’s tools are missing, request its handoff here, then refresh the host tool list after the operator repairs authorization. Granted connectors: " +
+          registry
+            .listConnectors()
+            .map((connector) => connector.id)
+            .join(", ") +
+          "."
+        : AUTHORIZE_DESC,
+      inputSchema: AUTHORIZE_INPUT,
+      outputSchema: AUTHORIZE_OUTPUT,
+      // Starts (or with force, resets) a downstream OAuth flow — it changes
+      // stored connector auth state, so it is deliberately not read-only.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    authMethod((args: { connector: string; force?: boolean | undefined }, request: ServerContext) =>
+      authFlow<InputRequiredResult | ToolResult>(function* () {
+        bindRequest(request);
+        const run = authMethod(() => authInvoke<ToolResult>(mt, "authorizeConnector", [args as AuthorizeArgs]));
+        return yield* upwardStep(
+          ctx.authElicitation
+            ? authInvoke<InputRequiredResult | ToolResult>(ctx.authElicitation, "run", [
+                "authorize_connector",
+                args,
+                request,
+                run,
+              ])
+            : authCall(run, []),
+        );
       }),
     ),
   );
@@ -1791,36 +1831,5 @@ export function registerMetaTools(
     ),
   );
 
-  server.registerTool(
-    "authorize_connector",
-    {
-      description: AUTHORIZE_DESC,
-      inputSchema: AUTHORIZE_INPUT,
-      outputSchema: AUTHORIZE_OUTPUT,
-      // Starts (or with force, resets) a downstream OAuth flow — it changes
-      // stored connector auth state, so it is deliberately not read-only.
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        openWorldHint: true,
-      },
-    },
-    authMethod((args: { connector: string; force?: boolean | undefined }, request: ServerContext) =>
-      authFlow<InputRequiredResult | ToolResult>(function* () {
-        bindRequest(request);
-        const run = authMethod(() => authInvoke<ToolResult>(mt, "authorizeConnector", [args as AuthorizeArgs]));
-        return yield* upwardStep(
-          ctx.authElicitation
-            ? authInvoke<InputRequiredResult | ToolResult>(ctx.authElicitation, "run", [
-                "authorize_connector",
-                args,
-                request,
-                run,
-              ])
-            : authCall(run, []),
-        );
-      }),
-    ),
-  );
   return undefined;
 }

@@ -144,3 +144,34 @@ it("INV-4 INV-5 INV-10: auth handoffs preserve management boundaries and statele
     }
   }
 });
+
+it("INV-4 INV-8 INV-10: native without code discovers recovery, completes consent and lists the repaired catalog", async () => {
+  const flow = setup({ native: true, catalogAuth: true });
+  const list = async () =>
+    (
+      await readJsonRpc(
+        await flow.app.fetch(new Request(`${HANDOFF_BASE}/mcp/team`, mcpRpc("tools/list", {}, { token: "alice" }))),
+      )
+    ).result.tools;
+  const before = await list();
+  expect(before.map((tool: { name: string }) => tool.name).sort()).toEqual([
+    "authorize_connector",
+    "read_result",
+    "skills",
+  ]);
+  expect(before.find((tool: { name: string }) => tool.name === "authorize_connector").description).toContain(
+    "Granted connectors: service.",
+  );
+  expect(JSON.stringify(before)).not.toContain("outside");
+  expect(flow.sign).not.toHaveBeenCalled();
+  expect(flow.connector.startAuth).not.toHaveBeenCalled();
+  const denied = await flow.rpc("authorize_connector", { connector: "outside" });
+  expect(JSON.stringify(denied)).not.toContain("authorizationUrl");
+  expect(flow.sign).not.toHaveBeenCalled();
+  const handoff = (await flow.rpc("authorize_connector", { connector: "service" })).structuredContent;
+  expect(handoff).toMatchObject({ recovery: "oauth", authorizationUrl: expect.stringContaining("/connect/service") });
+  expect(flow.sign).toHaveBeenCalledOnce();
+  expect(flow.connector.startAuth).not.toHaveBeenCalled();
+  await flow.complete(handoff.authorizationUrl);
+  expect((await list()).map((tool: { name: string }) => tool.name)).toContain("service__read");
+});

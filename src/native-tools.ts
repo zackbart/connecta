@@ -51,7 +51,7 @@ const PLAIN_TOOL = /^[A-Za-z0-9-](?:[A-Za-z0-9-]|_(?!_))*$/;
 const NATIVE_NAME = new RegExp(`^[A-Za-z][A-Za-z0-9_-]{0,${NATIVE_NAME_MAX - 1}}$`);
 
 /** Connecta's own tools on a native endpoint. Their names never contain `__`. */
-const NATIVE_OWN_TOOLS: readonly string[] = ["execute_code", "skills", "read_result"];
+const NATIVE_OWN_TOOLS: readonly string[] = ["execute_code", "skills", "read_result", "authorize_connector"];
 
 const enc = new TextEncoder();
 
