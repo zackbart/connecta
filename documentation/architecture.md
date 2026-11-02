@@ -658,9 +658,17 @@ listing.
 Warm remote resolution batches the negotiation verdict and locating generation
 when their physical keys share an observed SQL store. Private and public
 manifest probes share a `getMany` statement; their normal precedence and public
-scope check still apply. These batches contain only reads. Chunk verification
-is followed by a separate fresh generation read. OAuth identity, rotation,
-disconnect and dispatch checks remain fresh; no credential read is prefetched.
+scope check still apply. These batches contain only reads. Catalog addresses
+use the listing's pinned OAuth identity and locating generation; they authorize
+nothing. After chunk verification, acceptance re-reads the OAuth identity and
+generation separately and refuses a changed epoch or token digest. The invocation
+gate checks disconnect first, then reads tokens separately to refuse absent
+credentials and observe current expiry and the invalidation fingerprint. Token
+removal, expiry, scope and replacement can change without advancing the epoch;
+epoch fences alone cannot protect these values. The SDK's later token read may
+return no tokens and omit Authorization, so it does not replace invocation's
+token-presence refusal. Connection reuse and SDK dispatch retain their fresh
+epoch or token reads; no credential read is prefetched.
 Stores with replaced methods or separate backing stores retain individual reads.
 
 A remote connector's `listTools` without a live connection in its request
