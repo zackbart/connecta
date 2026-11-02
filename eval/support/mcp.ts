@@ -16,6 +16,8 @@ export interface ListedTool {
   name: string;
   readOnly: boolean;
   description?: string;
+  address?: string | undefined;
+  inputSchema?: unknown;
 }
 
 export interface McpSession {
@@ -40,6 +42,9 @@ export async function connectMcp(url: string, headers: Record<string, string>): 
       const listed = await client.listTools();
       return listed.tools.map((tool) => ({
         name: tool.name,
+        address:
+          typeof tool._meta?.["dev.connecta/address"] === "string" ? tool._meta["dev.connecta/address"] : undefined,
+        inputSchema: tool.inputSchema,
         ...(tool.description ? { description: tool.description } : {}),
         readOnly: tool.annotations?.readOnlyHint === true,
       }));

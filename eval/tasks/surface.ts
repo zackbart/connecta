@@ -4,6 +4,24 @@ import type { ActiveTask, ReferenceContext } from "./types.js";
 
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   if (surface === "six") return task;
+  if (surface === "native" || surface === "native-no-code") {
+    let prompt = task.prompt;
+    if (task.id === "p5-result-paging")
+      prompt =
+        surface === "native"
+          ? "Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using connecta.result inside programs, and identify the actual failing test and HTTP status."
+          : "Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using read_result, and identify the actual failing test and HTTP status.";
+    if (surface === "native-no-code") {
+      if (task.id === "p5-trusted-program-write")
+        prompt =
+          "In this writable pool, close tracker issue WEB-105 using tracker__close_issue and confirm its resulting status.";
+      if (task.id === "p5-read-only-program-refusal") prompt = task.prompt.replace("a program", "tracker__close_issue");
+      if (task.id === "p5-program-image")
+        prompt =
+          "Read assets.get_badge_image using assets__get_badge_image, preserve its image and caption, and confirm the badge approval and revision.";
+    }
+    return { ...task, prompt, ...(task.id === "p5-read-only-program-refusal" ? { approvals: {} } : {}) };
+  }
   let prompt = task.prompt;
   if (task.id === "p5-result-paging")
     prompt =

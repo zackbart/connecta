@@ -1180,3 +1180,45 @@ skills-tool or guest skill requests. Guide fetch rate is trials with at least
 one fetch divided by completed trials. Missing trials, interrupted conversations,
 fabricated answers and duplicate writes retain the existing fail-closed controls;
 never count an unavailable trial as a pass.
+### Worker native/code experiment
+
+`--surface native` configures every trial pool with `surface: "native"` and
+code enabled. `--surface native-no-code` uses that same product pool setting
+with `executeCode: false`. Both run on `--target worker`; neither uses the
+Node-only code adapter. `six` and Node `code` retain their existing behavior.
+Result files and individual trials retain the explicit surface arm.
+
+`worker-comparison-plan.ts` freezes the task roster, categories, large-catalog
+labels and decision rule before trials. Use outcome grading. Keep every
+Worker-eligible comparison task, plus the seven Planning Center workflows.
+The OAuth-host tasks remain refused by the Worker target. The no-code arm
+cannot test a guest host-call budget or `connecta.read` resource access; retain
+those rows and identify their capability mismatch when interpreting scores.
+Do not count their mechanically code-dependent outcomes as evidence for code's
+benefit on ordinary tool work.
+
+`pnpm run eval:selftest --native-only` checks real Worker arm inventories,
+wrong-arm rejection, an observed known read and its grader, paging, physical
+writes and read-only refusal. The existing selftests remain available for
+state, duplicate-write and delivered-fact counterexamples.
+
+Native calls retain their wire names and inputs in saved evidence. The grader
+uses the actual listed `dev.connecta/address` and read-only annotation to
+present them to existing wrapper-aware outcome checks. It never derives a
+hashed tool address from the wire spelling. `read_result` remains an explicit
+pager and contributes delivered log facts. The read-only refusal fixture also
+recognizes a guessed `tracker__close_issue`, which is intentionally absent
+from the read-only inventory.
+
+Prompt adaptations: `p5-result-paging` names `ci__get_run_log` and the arm's
+pager. In native without code, `p5-trusted-program-write` names the native write,
+`p5-read-only-program-refusal` names the guessed native write, and
+`p5-program-image` asks for direct image/caption delivery. Other prompts remain
+identical. The fake billing credential uses opaque characters to avoid sharing
+an eight-character secret fragment with public native tool names.
+
+`codex-fidelity.ts` is an unpaid diagnostic. It connects the real pinned CLI to
+a local rejecting model endpoint and records model-request bodies. Its fake
+API key is not a real credential. An inventory alone does not establish model
+context, deferred search or definition-token cost; a failed capture must be
+reported as a fidelity limitation, not interpreted as zero cost.

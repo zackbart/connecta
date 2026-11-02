@@ -5,6 +5,7 @@
  * `eval/deploy/node.ts` serves it with `listen()`. Only the platform slots
  * differ: storage, executor, vault key and, on Workers, Access.
  */
+import type { Surface } from "../agent/surface.js";
 import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
 import { PROVIDER_DEPLOYS } from "./providers.generated.js";
 import { gmail } from "@zackbart/connecta/providers/gmail";
@@ -41,6 +42,7 @@ interface EvalFixtures {
 const QUIET = { debug() {}, info() {}, warn() {}, error() {} };
 
 export interface EvalComposition {
+  surface?: Surface;
   connectors: ConnectorSpec[];
   /** The task's untyped `deployment` passthrough. */
   extra: Record<string, unknown>;
@@ -72,7 +74,7 @@ export function evalConfig(
     Object.fromEntries(
       Object.entries(pools).map(([id, pool]) => [id, { ...pool, tools: [...new Set([...pool.tools, ...everyPool])] }]),
     );
-  return {
+  const config = {
     readOnly: composition.readOnly,
     storage: slots.storage,
     agents: ["eval-machine"],
@@ -108,6 +110,19 @@ export function evalConfig(
       : {}),
     ...(passthrough as Partial<Config>),
   } as Config;
+  if (composition.surface === "native" || composition.surface === "native-no-code") {
+    config.pools = Object.fromEntries(
+      Object.entries(config.pools ?? {}).map(([id, pool]) => [
+        id,
+        {
+          ...pool,
+          surface: "native",
+          executeCode: composition.surface === "native",
+        },
+      ]),
+    );
+  }
+  return config;
 }
 
 function evalConnector(spec: ConnectorSpec, fixtures: EvalFixtures) {

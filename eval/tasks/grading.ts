@@ -268,6 +268,24 @@ export function gradeTask(
   surface: Surface = "six",
   grading: Grading = "route",
 ): Check[] {
+  // Presentation normalization for existing route-sensitive graders only.
+  // Saved trace and physical downstream ledger retain their original names.
+  if (surface === "native" || surface === "native-no-code") {
+    context = {
+      ...context,
+      trace: {
+        ...context.trace,
+        toolUses: context.trace.toolUses.map((use) => {
+          if (!use.native) return use;
+          return {
+            ...use,
+            tool: use.native.readOnly ? "call_tool" : "call_destructive_tool",
+            input: { address: use.native.address, args: use.input },
+          };
+        }),
+      },
+    };
+  }
   const duplicateWrites = downstreamMetrics(context.world.ledger.calls, []).duplicateWrites;
   return classifyChecks(task.id, [
     ...task.grade({ ...context, surface, grading }),

@@ -52,7 +52,7 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
               try {
                 const original = guidanceValue(await fn(...args));
                 const result =
-                  surface === "six"
+                  surface !== "code"
                     ? original
                     : call.name === "connecta.skill"
                       ? codeSkill(args[0], original)
@@ -61,7 +61,7 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
                 call.result = result;
                 return result;
               } catch (original) {
-                const error = surface === "six" ? original : codeError(original);
+                const error = surface !== "code" ? original : codeError(original);
                 call.outcome = "error";
                 if (error && typeof error === "object" && "code" in error) call.errorCode = String(error.code);
                 throw error;

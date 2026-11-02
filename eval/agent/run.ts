@@ -256,6 +256,10 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     });
     world.programs = await observedPrograms(deployment);
     const trace = parseTrace(run.events, run.turnStarts, prompts);
+    for (const use of trace.toolUses) {
+      const listed = surface.find((tool) => tool.name === use.tool);
+      if (listed?.address) use.native = { address: listed.address, readOnly: listed.readOnly };
+    }
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     for (const note of notes) {
       const at = trace.transcript.findIndex((entry) => entry.kind === "user" && entry.turn === note.beforeTurn);

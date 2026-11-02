@@ -22,6 +22,7 @@ export type TranscriptEntry =
   | { kind: "turn_end"; turn: number; subtype: string; isError: boolean; numTurns?: number; durationMs?: number };
 
 export interface ToolUse {
+  native?: { address: string; readOnly: boolean };
   resultBlocks?: Record<string, unknown>[];
   id: string;
   turn: number;

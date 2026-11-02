@@ -107,6 +107,11 @@ const runtimeControl = spawnSync(process.execPath, ["--test", "scripts/eval-runt
 assert.equal(runtimeControl.status, 0, "Runtime lock collision/crash controls failed");
 await portCollisionControls();
 console.log("ok   startup collisions recover before serving; failed join reads stop before posting");
+if (process.argv.includes("--native-only")) {
+  await import("./native-controls.js");
+  process.exit(0);
+}
+
 await gatewayControls();
 await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");

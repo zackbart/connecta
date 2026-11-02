@@ -100,7 +100,7 @@ export interface WorldOptions extends Partial<Record<ProviderFakeName, boolean>>
   billingCredential?: "preset" | "missing";
 }
 
-const BILLING_TOKEN = "sk_eval_billing_7f3a91";
+const BILLING_TOKEN = "sk_eval_7f3a91c82d6049e5";
 
 const META: Record<ServiceId, { title: string; description: string }> = {
   revenuecat: { title: "RevenueCat", description: "Production subscription access" },

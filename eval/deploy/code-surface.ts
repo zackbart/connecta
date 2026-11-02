@@ -6,7 +6,7 @@
  */
 import type { Connecta, ConnectaConfig } from "@zackbart/connecta";
 import { renderRoutesAsPrograms } from "../../src/agent-routes.js";
-import { CODE_TOOLS } from "../agent/surface.js";
+import { CODE_TOOLS, type Surface } from "../agent/surface.js";
 
 export const CODE_INSTRUCTIONS =
   'Use execute_code for every operation: known reads, discovery, reductions and writes. Pass async () => { ... } with the connecta global and no arguments. Discover with connecta.search, inspect schemas with connecta.describe, call with connecta.call, page retained results with connecta.result, and deliver text/images/audio with connecta.emit. Keep discovery and calls together when schemas suffice. Programs write only on a writable endpoint. On a read-only endpoint search omits write tools, guides may still name them, and read_only_endpoint is a terminal refusal with no retry. Never repeat a write for its output. After auth_required or downstream_oauth_required use authorize_connector, give its handoff to the operator, and wait before retrying. host_auth_required needs host connection repair. Fetch skills({ name: "usage" }) when instructions are insufficient or a program needs repair.';
@@ -37,7 +37,7 @@ async () => {
 `;
 
 /** Mark a deployment's configuration so Connecta renders its route text in program form. */
-export function codeConfig<T extends ConnectaConfig>(config: T, surface: "six" | "code"): T {
+export function codeConfig<T extends ConnectaConfig>(config: T, surface: Surface): T {
   if (surface === "code") renderRoutesAsPrograms(config);
   return config;
 }
@@ -94,8 +94,8 @@ function isUsage(name: unknown): boolean {
   return ["usage", "skill://connecta/usage", "skill://connecta/usage/SKILL.md"].includes(String(name));
 }
 
-export function forSurface(connecta: Connecta, surface: "six" | "code"): Connecta {
-  return surface === "six" ? connecta : withCodeSurface(connecta);
+export function forSurface(connecta: Connecta, surface: Surface): Connecta {
+  return surface === "code" ? withCodeSurface(connecta) : connecta;
 }
 
 /** Preserve authentication, transport and execution; change only eval replies. */

@@ -116,6 +116,16 @@ export async function playReference<T>(
               });
               probe.on("error", reject);
             });
+}
+          let native;
+          if (
+            (surface === "native" || surface === "native-no-code") &&
+            ["call_tool", "call_destructive_tool"].includes(tool)
+          ) {
+            native = (await live.listTools()).find((listed) => listed.address === args.address);
+            if (!native) throw new Error(`Reference native tool is unavailable: ${String(args.address)}`);
+            tool = native.name;
+            args = args.args as Record<string, unknown>;
           }
           const result = await live.call(tool, args);
           toolUses.push({
@@ -123,6 +133,7 @@ export async function playReference<T>(
             turn,
             tool,
             input: args,
+            ...(native?.address ? { native: { address: native.address, readOnly: native.readOnly } } : {}),
             isError: result.isError,
             resultText: result.text,
             resultBlocks: result.content,
