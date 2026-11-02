@@ -3,8 +3,8 @@
 // served without connecting (INV-10).
 import { routePhrases } from "../../agent-routes.js";
 import { authView } from "../../auth/native-call.js";
-import { authFlow, authCall, authInvoke, authMethod } from "../../auth/native.js";
-import { openRequest, viewServices, viewSignal } from "../../runtime/call.js";
+import { authFlow, authCall, authInvoke, authMethod, authStorageMany } from "../../auth/native.js";
+import { openRequest, viewServices, viewSignal, viewReads, serviceFor } from "../../runtime/call.js";
 import { secretDigest } from "../../storage-digest.js";
 import {
   downstreamClientMetadata,
@@ -30,6 +30,8 @@ import { detach, runEdge } from "../../runtime/run.js";
 import type { RequestPrincipal } from "../../request-token.js";
 import { requestPrincipalFor } from "../../request-principal.js";
 import { callerOf } from "../../connector-caller.js";
+import { CatalogPolicy } from "../../catalog-policy.js";
+import { negotiationKeys, responseCacheKeys } from "../../storage/keys.js";
 import { forgetNegotiation, readNegotiation, storeNegotiation } from "../negotiation-cache.js";
 import type { ConnectorContext } from "../../types.js";
 import type { CallDispatch } from "./transport.js";
@@ -461,6 +463,18 @@ export function remoteMcpConnection(
         }
         if (opts.versionNegotiation !== "legacy") {
           const digest = (yield authCall(negotiationKey, [ctx, credentialDigest, epoch])) as string;
+          // Both reads only locate cached data. Acceptance and dispatch keep
+          // their fresh generation and credential checks.
+          yield viewReads(ctx).prefetch(
+            [
+              { storage: ctx.storage, key: negotiationKeys.verdict(digest) },
+              {
+                storage: serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage,
+                key: responseCacheKeys.generation(id),
+              },
+            ],
+            (storage, keys) => authStorageMany(storage, keys),
+          );
           const prior = (yield authCall(readNegotiation, [ctx, digest])) as PriorDiscovery | undefined;
           preread.negotiation = { digest, prior };
           if (prior?.kind === "modern") return preread;
