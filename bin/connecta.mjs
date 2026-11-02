@@ -258,18 +258,14 @@ async function doctor() {
         `Native catalogs unavailable: ${surface.catalogErrors.join(", ")}. Inspect connector status and authentication.`,
       );
     const expected = native
-      ? ["skills", executeCode ? "execute_code" : "read_result"].sort()
+      ? ["authorize_connector", "skills", executeCode ? "execute_code" : "read_result"].sort()
       : [...META_TOOL_NAMES].sort();
     if (
       native
         ? expected.some((name) => !actual.includes(name)) ||
-          [
-            "search_tools",
-            "call_tool",
-            "call_destructive_tool",
-            "authorize_connector",
-            executeCode ? "read_result" : "execute_code",
-          ].some((name) => actual.includes(name))
+          ["search_tools", "call_tool", "call_destructive_tool", executeCode ? "read_result" : "execute_code"].some(
+            (name) => actual.includes(name),
+          )
         : JSON.stringify(actual) !== JSON.stringify(expected)
     ) {
       throw new Error(

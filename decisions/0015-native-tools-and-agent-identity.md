@@ -189,6 +189,9 @@ ten targeted mutations fail as intended. Independent second-round acceptance
 is pending; passing prototype tests alone does not settle that review. No live
 project-token end-to-end check has been performed.
 
+The exclusion of `authorize_connector` from native pools is superseded by
+[0020](./0020-native-authorization-recovery.md) for recovery when catalogs fail.
+
 ## Consequences
 
 Native with code is the recommended setup for bounded Eve pools after

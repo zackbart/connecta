@@ -205,7 +205,7 @@ In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
 on Node 24. This boots real Eve 1.0.0-rc.1 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
-meta, native, and native-plus-code surfaces. Native listings include two
+meta, native, and native-plus-code surfaces. Native listings include three
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must
 refuse listing. `--counts 40,1000` selects a smaller matrix.
 

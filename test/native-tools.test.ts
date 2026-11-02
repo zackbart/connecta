@@ -201,6 +201,7 @@ describe("native tool surface", () => {
           "crm__get_person",
           await nativeToolName("crm", "export.all"),
           "execute_code",
+          "authorize_connector",
           "skills",
         ].sort(),
       );

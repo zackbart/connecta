@@ -50,7 +50,7 @@ export function endpointInstructions(description?: string, native?: { executeCod
 /** Instructions for pools whose host searches the listed native tools. */
 export function nativeInstructions(executeCode: boolean): string {
   const routes = routeNames(executeCode ? "native-code" : "native");
-  return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? `combine work in ${routes.program} using the program addresses in tool descriptions.` : "find tools with your host's search."} Read-only endpoints omit and refuse writes. Never repeat a write for output. Give auth handoffs to the user/operator. Follow nextAction to page with ${executeCode ? `connecta.result in ${routes.program}` : "read_result"}. ${routes.skills} lists guidance.`;
+  return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? `combine work in ${routes.program} using the program addresses in tool descriptions.` : "find tools with your host's search."} Read-only endpoints omit and refuse writes. Never repeat a write for output. Give auth handoffs to the user/operator. Tools missing? Call authorize_connector; after repair, reconnect to refresh your list. Follow nextAction to page with ${executeCode ? `connecta.result in ${routes.program}` : "read_result"}. ${routes.skills} lists guidance.`;
 }
 
 /** True when at least one of `connectors` carries a usage guide. */

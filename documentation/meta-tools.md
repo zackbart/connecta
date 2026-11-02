@@ -905,6 +905,16 @@ fulfill downstream input.
 
 ## Authorization recovery
 
+Every native pool lists `authorize_connector`, including pools without code.
+If a connector’s tools are missing, use its id from that tool’s granted-connector
+list to request a typed handoff. Give the URL and instructions to the operator;
+after repair the host must refresh its tool list before it can call the repaired
+tools (the cache hint is 300 seconds). A host that keeps its first list needs a
+reconnect or a new conversation; on a pool with `execute_code`, a program can call
+them by address without one.
+Listing never creates a handoff. Authorization accepts only connectors already
+granted to this request; it cannot enable a connector or expand pool scope.
+
 On MCP 2026-07-28, a host declaring `elicitation.url` receives
 `resultType: "input_required"` when an eligible call or program needs recoverable
 connector authentication and the admitted identity may manage that connector.
@@ -1437,10 +1447,10 @@ pool's surface.
 | Each visible downstream tool | Named `<connector>__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address           |
 | `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes           |
 | `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks |
+| `authorize_connector`        | Always; requests the existing typed authorization handoff for a granted connector                                                                                 |
 | `skills`                     | Always                                                                                                                                                            |
 
-`search_tools`, `call_tool`, `call_destructive_tool`, and `authorize_connector`
-are not listed. Auth failures still carry their handoff in the error envelope.
+`search_tools`, `call_tool`, and `call_destructive_tool` are not listed. Auth failures still carry their handoff in the error envelope.
 
 **Names.** A name is a pure function of the connector id and downstream tool
 name, so it survives catalog refreshes. It is `<connector>__<tool>` when the
@@ -1498,7 +1508,14 @@ reduced calls; write tools are absent and refused on a read-only endpoint;
 never repeat a write; page a truncated result as its notice says. A pool
 `description` is appended as on meta endpoints.
 
-**Recovery.** Repair and validation fields retain the exact constraint details.
+**Recovery.** `authorize_connector` remains listed even when a catalog fails.
+Its description lists all granted connector ids independently of catalog health.
+Use it for a missing connector, then refresh the host tool list after repair.
+Endpoint instructions carry the same recovery rule for hosts that fetch them
+separately. A cached list retains the recovery tool; a refreshed list restores
+the repaired connector’s whole catalog.
+
+Repair and validation fields retain the exact constraint details.
 Discovery `nextAction` points to the host's tool search (`host: "search"`), with
 only a `query` argument. Retry actions and retry text name the native tool,
 never a meta wrapper; a program on a native pool sees the same native wording
