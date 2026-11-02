@@ -1350,6 +1350,14 @@ code, so `remoteMcp()` refuses it as personal at construction.
 
 ## Downstream OAuth state at rest
 
+An OAuth remote MCP tool dispatch requires an access token. Once a connection
+has a grant, its MCP requests, including catalog requests, must carry that
+credential or be refused before sending. If the SDK cannot obtain a token at
+send time, Connecta returns the existing OAuth recovery; it never falls back
+to anonymous execution or replays a dispatched write. Initial unauthenticated
+MCP discovery and authorization challenges, authorization-server discovery,
+client registration, token exchange, and refresh retain their OAuth flows.
+
 Each owner of an OAuth connector (the deployment when shared, each principal
 when personal) has one **grant record**, `oauth:grant` in the connector's
 namespace: the live **epoch**, the latest consent's state digest, and one

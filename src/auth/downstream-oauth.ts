@@ -127,6 +127,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * never from the later save, which a slow answer would push past expiry.
    */
   tokenRequestSent: number | undefined;
+  /** A resource send must not downgrade this flow after any grant read found tokens. */
+  credentialObserved = false;
+
   /**
    * The tokens of the grant this provider last opened or wrote, as facts
    * only: no credential beyond the access token it already handed out.
@@ -192,6 +195,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   observe(grant: Grant): void {
     const { tokens, expiresAt } = grant.body;
+    this.credentialObserved ||= Boolean(tokens);
     this.observed = tokens
       ? {
           epoch: grant.epoch,
