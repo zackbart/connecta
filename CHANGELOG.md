@@ -2,6 +2,34 @@
 
 All notable changes to this package are documented here.
 
+## 0.40.0 — 2026-11-02
+
+This release makes warm Connecta calls on Workers cheaper in storage and closes a credential gap on OAuth remote MCP connectors. Deployments need no configuration change or migration, unless they use the Eve helper.
+
+**Eve helper:** `@zackbart/connecta-eve` now requires exactly Eve 1.0.0-rc.1. Eve 0.90 apps must upgrade Eve together with the helper and, when installed, upgrade `@vercel/connect` to `^2.7.0`. The core package and non-Eve deployments are not affected by this change.
+
+**Security:** an OAuth remote MCP connector no longer sends a passive handshake, catalog request or tool call without a credential if its tokens are removed mid-request. It returns OAuth recovery before sending instead. Before this, a server accepting anonymous requests could receive that request without the connector's credential.
+
+**Native pools:** native pools now always list `authorize_connector`, so an agent on a pool without `execute_code` can get the operator a handoff for a connector that needs authorization. On those pools the repaired connector's tools appear only after the host refreshes its tool list, usually by reconnecting; pools with `execute_code` can reach them from a program straight away. Anything that compares a native pool's tool list exactly will see one more tool. Meta endpoints keep the same six tools.
+
+**Storage work per call:** warm remote MCP catalog resolution now takes four D1 round trips instead of six on modern servers and five on legacy ones. Warm agent admission takes two reads instead of four. Warm OAuth calls read the grant 9 times instead of 11 on modern servers and 12 instead of 13 on legacy ones. A warm isolate reuses a stored catalog it has already validated, after the same freshness and partition checks. These reductions were measured with injected latency on local workerd, not in production.
+
+### Changed
+
+- Read agent token admission state in one fresh D1 or SQLite statement, reducing warm admission and last-seen observation from four reads to two while preserving next-request rotation and revocation enforcement.
+- **Breaking:** `@zackbart/connecta-eve` now requires exactly Eve 1.0.0-rc.1; Eve 0.90 apps must upgrade Eve together with the helper and, when installed, upgrade `@vercel/connect` to `^2.7.0`. Align installed-consumer probes and upgrade guidance with the tested release candidate. Later candidates and stable 1.0 require a compatibility check.
+- Reduce grant reads on warm OAuth remote MCP calls while retaining fresh catalog acceptance, disconnect, token rotation and dispatch checks. Keep the separate invocation token read so same-epoch invalidation refuses writes with OAuth recovery before dispatch, and expiry changes are observed before early renewal.
+- Reuse validated stored catalogs within a warm isolate after checking stored chunks, partition identity, expiry and the fresh generation fence. Retained facts are immutable and bounded; credential redaction still runs per request.
+
+### Fixed
+
+- Reduce warm remote MCP catalog storage round trips by batching locating reads and private/public manifest probes while preserving fresh generation and OAuth credential acceptance checks.
+- Keep authorization recovery available on native pools without code by listing authorize_connector with the granted connector ids, even when a connector's catalog cannot load.
+
+### Security
+
+- Require a credential on passive OAuth remote MCP sends, including handshakes, catalog requests and tool dispatches, regardless of provider replacement. Return OAuth recovery before sending when the SDK cannot obtain one, and count a verified unsent write as failed without reconciliation. Explicit authorization flows retain their challenges; writes that may already have left remain unknown.
+
 ## 0.39.0 — 2026-10-30
 
 This release makes Connecta faster and leaner for agents and operators on Cloudflare Workers. A warm search over remote MCP connectors with cached catalogs no longer reconnects to them: an all-legacy warm search makes no downstream requests. Repeated storage reads are memoized per request, and catalog chunks are read in batches. OAuth tokens refresh before they expire instead of failing the first write after expiry. Legacy negotiation verdicts last six hours, with bounded recovery when a server changes protocol era. A connector that recently hung or failed slowly is reported in `catalogErrors` and skipped by unscoped search for about a minute, and unscoped discovery has a total budget. With one hung connector, three consecutive searches went from 30 s each to 5 s, 11 ms and 8 ms.
