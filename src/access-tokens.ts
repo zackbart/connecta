@@ -12,6 +12,7 @@ import { keepErrorName } from "./redaction-identity.js";
 import { agentConfig, type AgentConfig } from "./agent-config.js";
 
 import {
+  authAccessToken,
   authCall,
   authCatch,
   authFlow,
@@ -910,15 +911,18 @@ export class AccessTokenManager {
                     signal.throwIfAborted();
                     const hash = (yield authCall(hashToken, [token])) as string;
                     signal.throwIfAborted();
-                    const lookupRaw = (yield authStorage(this.storage, "get", [lookupKey(hash)])) as string | null;
+                    const snapshot = (yield authAccessToken(this.storage, hash)) as
+                      | Map<string, string | null>
+                      | undefined;
+                    const read = (key: string) =>
+                      snapshot ? (snapshot.get(key) ?? null) : authStorage<string | null>(this.storage, "get", [key]);
+                    const lookupRaw = (yield authCall(read, [lookupKey(hash)])) as string | null;
                     signal.throwIfAborted();
                     if (!lookupRaw) return unauthorized();
                     const lookup = parseLookup(lookupRaw);
                     if (!lookup) return unauthorized();
                     const recordRaw = ID_RE.test(lookup.id)
-                      ? ((yield authStorage<string | null>(this.storage, "get", [recordKey(lookup.id)])) as
-                          | string
-                          | null)
+                      ? ((yield authCall(read, [recordKey(lookup.id)])) as string | null)
                       : null;
                     const record = recordRaw ? parseRecord(recordRaw) : null;
                     if (record && record.id !== lookup.id) throw new Error("Stored access token id mismatch");
@@ -936,9 +940,7 @@ export class AccessTokenManager {
                     // code, refuse exactly as an unknown token does.
                     if (record.principal || record.agent === undefined || !this.agents.has(record.agent))
                       return unauthorized();
-                    const slotRaw = (yield authStorage<string | null>(this.storage, "get", [slotKey(record.agent)])) as
-                      | string
-                      | null;
+                    const slotRaw = (yield authCall(read, [slotKey(record.agent)])) as string | null;
                     const slot = slotRaw === null ? null : parseSlot(slotRaw, record.agent);
                     signal.throwIfAborted();
                     if (slot?.state !== "issued" || slot.tokenId !== record.id) return unauthorized();

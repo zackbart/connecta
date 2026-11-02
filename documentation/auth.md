@@ -651,6 +651,11 @@ agent's slot is `issued` naming exactly that record. Nothing else counts: a
 lookup or record the slot does not name is inert garbage. Every mutation
 commits by one `compareAndSet` on the slot and only moves forward; no security
 outcome depends on cleanup or on undoing a write.
+Admission reads this state afresh on every request; successful token verdicts
+are never cached. D1 and SQLite read the lookup, record, and slot in one
+statement, with the same validation and expiry checks. Custom storage adapters
+retain the sequential reads. Rotation and revocation therefore retain their
+next-request refusal bound.
 
 - **Rotate** writes the new record and its lookup (inert), checks the
   request's signal, then compare-and-sets the slot from what it read to
