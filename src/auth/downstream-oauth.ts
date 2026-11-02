@@ -237,11 +237,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
   declare private openGrant: (raw: string | null, signal?: AbortSignal | null | undefined) => Promise<Grant>;
 
   /**
-   * @internal The current grant record. A plaintext
+   * The current grant record. A plaintext
    * body, written before the vault could seal, is sealed where it lies by
    * compare-and-set; a failure leaves it readable for the next write to seal.
    */
-  declare readGrant: (signal?: AbortSignal | null | undefined) => Promise<{
+  declare private readGrant: (signal?: AbortSignal | null | undefined) => Promise<{
     raw: string | null;
     grant: Grant;
   }>;

@@ -5,8 +5,7 @@ import { authFlow, authCall, authInvoke, authValue, authMethod, authCatch } from
 import { viewServices, viewSignal } from "../runtime/call.js";
 import { declareSelfHostedClient, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import { Client, isInputRequiredResult } from "@modelcontextprotocol/client";
-import type { KvOAuthProvider } from "../auth/downstream-oauth.js";
-import type { FetchLike, Transport } from "@modelcontextprotocol/client";
+import type { FetchLike, OAuthTokens, Transport } from "@modelcontextprotocol/client";
 import { Duration, Effect, Exit, Scope } from "effect";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactSentSecrets, requestSentSecrets, sentSecretsFor } from "../sent-secrets.js";
@@ -814,18 +813,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           authMethod((ctx: ConnectorContext) =>
             authFlow<void>(function* () {
               const provider = newProvider(ctx, stateFor(ctx));
-              // One fresh snapshot decides disconnect, presence and expiry. The
-              // SDK still reads tokens again for every physical dispatch.
-              const { grant } = (yield authInvoke(provider, "readGrant", [])) as Awaited<
-                ReturnType<KvOAuthProvider["readGrant"]>
-              >;
-              if (provider.isOperatorDisconnectedEpoch(grant.epoch)) throw operatorDisconnectedError();
-              if (provider.bound && grant.epoch !== provider.epoch) throw provider.flowSuperseded();
-              const tokens = grant.body.tokens;
-              if (!tokens) throw authRequiredError(ctx);
-              // Preserve the issuer-less tokens hook's invalidation observation.
-              provider.seen.tokens = JSON.stringify(tokens);
-              // That read decides whether the token is about to expire.
+              if ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean)
+                throw operatorDisconnectedError();
+              // Keep this separate from the disconnect read: invalidation and
+              // refresh can remove or replace tokens without changing the epoch.
+              // The SDK may otherwise send anonymously when its tokens() is empty.
+              if (!((yield authInvoke(provider, "tokens", [])) as OAuthTokens | undefined))
+                throw authRequiredError(ctx);
+              // That read also decides whether the token is about to expire.
               const due = provider.renewalDue();
               if (due !== undefined) (yield authCall(renewBeforeCall, [ctx, due])) as void;
             }),

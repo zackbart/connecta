@@ -116,9 +116,19 @@ function counted() {
 }
 
 /** A stateful downstream with one read tool, behind optional OAuth. */
-function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: () => Promise<void> } = {}) {
+function downstream(
+  origin: string,
+  options: { oauth?: boolean; beforePageTwo?: () => Promise<void>; writeProbe?: boolean } = {},
+) {
   const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
-  const state = { token: "access-1", issued: 1, rejected: 0, expiresIn: 3600, pageTwo: [] as (string | null)[] };
+  const state = {
+    token: "access-1",
+    issued: 1,
+    rejected: 0,
+    expiresIn: 3600,
+    pageTwo: [] as (string | null)[],
+    mutations: [] as string[],
+  };
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -144,7 +154,10 @@ function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: 
           refresh_token: `refresh-${state.issued}`,
         });
       }
-      if (request.headers.get("authorization") !== `Bearer ${state.token}`) {
+      if (
+        request.headers.get("authorization") !== `Bearer ${state.token}` &&
+        !(options.writeProbe && !request.headers.has("authorization"))
+      ) {
         state.rejected++;
         return new Response("{}", {
           status: 401,
@@ -202,9 +215,12 @@ function downstream(origin: string, options: { oauth?: boolean; beforePageTwo?: 
       {
         description: "Echo text back",
         inputSchema: z.object({ text: z.string() }),
-        annotations: { readOnlyHint: true },
+        annotations: { readOnlyHint: !options.writeProbe },
       },
-      async ({ text }) => ({ content: [{ type: "text", text }] }),
+      async ({ text }) => {
+        if (options.writeProbe) state.mutations.push(text);
+        return { content: [{ type: "text", text }] };
+      },
     );
     await server.connect(transport);
     return transport.handleRequest(request);
@@ -646,7 +662,9 @@ describe("request budgets", () => {
     await executor.close?.();
   });
 
-  async function production(options: { credentialRemote?: boolean; oauthModern?: boolean } = {}) {
+  async function production(
+    options: { credentialRemote?: boolean; oauthModern?: boolean; oauthWriteProbe?: boolean } = {},
+  ) {
     installOwnedTransport();
     const origins = {
       legacy: "https://legacy-budget.example",
@@ -655,7 +673,7 @@ describe("request budgets", () => {
       rest: "https://rest-budget.example",
     };
     const legacy = downstream(origins.legacy);
-    const oauth = downstream(origins.oauth, { oauth: true });
+    const oauth = downstream(origins.oauth, { oauth: true, writeProbe: options.oauthWriteProbe ?? false });
     const modern = httpDownstream(
       (server) =>
         server.registerTool(
@@ -663,9 +681,12 @@ describe("request budgets", () => {
           {
             description: "Echo text back",
             inputSchema: z.object({ text: z.string() }),
-            annotations: { readOnlyHint: true },
+            annotations: { readOnlyHint: !options.oauthWriteProbe },
           },
-          async ({ text }) => ({ content: [{ type: "text", text }] }),
+          async ({ text }) => {
+            if (options.oauthWriteProbe) oauth.state.mutations.push(text);
+            return { content: [{ type: "text", text }] };
+          },
         ),
       { url: `${origins.modern}/mcp`, catalogTtlMs: 300_000 },
     );
@@ -680,8 +701,11 @@ describe("request budgets", () => {
       if (url.origin === origins.legacy) return legacy.fetch(request);
       if (url.origin === origins.oauth) {
         oauthRequests.push({ method: method || request.method, token: request.headers.get("authorization") });
-        if (options.oauthModern) {
-          if (request.headers.get("authorization") !== `Bearer ${oauth.state.token}`)
+        if (options.oauthModern && url.pathname === "/mcp") {
+          if (
+            request.headers.get("authorization") !== `Bearer ${oauth.state.token}` &&
+            !(options.oauthWriteProbe && !request.headers.has("authorization"))
+          )
             return new Response(null, { status: 401 });
           return modern.fetch(request.url, request);
         }
@@ -767,7 +791,12 @@ describe("request budgets", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       } while (waits.length > 0 || inFlight > 0);
     };
-    const tool = async (app: Connecta, name: string, args: Record<string, unknown>, expectError = false) => {
+    const tool = async (
+      app: Connecta,
+      name: string,
+      args: Record<string, unknown>,
+      expectError: boolean | null = false,
+    ) => {
       const response = await app.fetch(
         new Request(`${BASE}/mcp`, {
           method: "POST",
@@ -787,7 +816,7 @@ describe("request budgets", () => {
         runtime,
       );
       const text = await response.text();
-      expect(/"isError":true/.test(text), text).toBe(expectError);
+      if (expectError !== null) expect(/"isError":true/.test(text), text).toBe(expectError);
       return text;
     };
     const call = async (app: Connecta, address: string) =>
@@ -880,15 +909,15 @@ describe("request budgets", () => {
     // The first connect sealed the seeded plaintext grant.
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
     const warm = await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
-    expect([warm.roundTrips, warm.statements]).toEqual([16, 17]);
+    expect([warm.roundTrips, warm.statements]).toEqual([17, 18]);
     const program = await d.measure("OAuth call, warm", () =>
       d.tool(app, "execute_code", {
         code: 'async () => connecta.call("oauth.echo", { text: "hi" })',
       }),
     );
-    expect([program.roundTrips, program.statements]).toEqual([16, 17]);
-    expect(warm.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(11);
-    expect(program.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(11);
+    expect([program.roundTrips, program.statements]).toEqual([17, 18]);
+    expect(warm.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
+    expect(program.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
     await d.measure("OAuth call, cold isolate", () => d.call(d.build(), "oauth.echo"));
 
     // The rotation stores a token 75 seconds from expiry, outside the
@@ -922,9 +951,9 @@ describe("request budgets", () => {
           ? d.call(app, "oauth.echo")
           : d.tool(app, "execute_code", { code: 'async () => connecta.call("oauth.echo", { text: "hi" })' }),
       );
-      expect(measured.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(8);
+      expect(measured.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(9);
       expect(measured.downstream).toBe(1);
-      expect([measured.roundTrips, measured.statements]).toEqual([13, 14]);
+      expect([measured.roundTrips, measured.statements]).toEqual([14, 15]);
     }
   });
 
@@ -947,7 +976,8 @@ describe("request budgets", () => {
         const chunk = params.some((key) => typeof key === "string" && key.includes(":chunk:"));
         if (chunk) pastChunks = true;
         if (pastChunks && params.includes(d.grantKey)) grantReads++;
-        // The second grant read after chunks is the invocation gate's snapshot.
+        // The second grant read after chunks checks disconnect; the separate
+        // invocation tokens() read follows it, even when the epoch is unchanged.
         // Publish after its SELECT captured the old value; dispatch must read again.
         if (boundary === "chunks" ? !chunk : grantReads !== 2) return;
         d.afterRead(undefined);
@@ -979,7 +1009,13 @@ describe("request budgets", () => {
       await d.settle();
       expect(changed, change).toBe(true);
       if (change === "disconnect") {
-        expect(text).toMatch(/disconnected|authorization changed/);
+        const error = JSON.parse(text).result.structuredContent.error;
+        if (oauthModern && boundary === "chunks") {
+          expect(error).toMatchObject({ code: "unavailable", retryable: true });
+          expect(error.message).toContain("authorization changed");
+        } else {
+          expect(error).toMatchObject({ code: "downstream_oauth_required", status: "auth_required", retryable: false });
+        }
         expect(d.oauthRequests).toEqual([]);
         expect(await d.otherProvider().tokens()).toBeUndefined();
       } else {
@@ -1004,6 +1040,119 @@ describe("request budgets", () => {
         expect(d.oauth.issued).toBe(1);
       }
     }
+  });
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])("OAuth write refuses same-epoch token invalidation modern=%s program=%s", async (oauthModern, program) => {
+    // Adapted from the independent #1227 write probe: this downstream accepts
+    // anonymous writes, so its physical ledger catches a missing bearer header.
+    const d = await production({ oauthModern, oauthWriteProbe: true });
+    const app = d.build();
+    await d.tool(app, "call_destructive_tool", { address: "oauth.echo", args: { text: "warmup" } });
+    await d.settle();
+    expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
+    d.oauthRequests.length = 0;
+    d.oauth.mutations.length = 0;
+    let pastChunks = false;
+    let grantReads = 0;
+    let changed = false;
+    d.afterRead(async (params) => {
+      if (params.some((key) => typeof key === "string" && key.includes(":chunk:"))) pastChunks = true;
+      // Invalidate after the disconnect SELECT captured valid tokens, where
+      // the combined invocation snapshot used to admit this call.
+      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== 2) return;
+      d.afterRead(undefined);
+      changed = true;
+      const other = d.otherProvider();
+      expect(await other.tokens()).toBeDefined();
+      await other.invalidateCredentials("tokens");
+      expect(await other.liveEpoch()).toBe("v3:seeded");
+    });
+    const text = program
+      ? await d.tool(
+          app,
+          "execute_code",
+          { code: 'async () => connecta.call("oauth.echo", { text: "mutation" })' },
+          null,
+        )
+      : await d.tool(app, "call_destructive_tool", { address: "oauth.echo", args: { text: "mutation" } }, null);
+    await d.settle();
+    expect(changed).toBe(true);
+    expect(d.oauth.mutations).toEqual([]);
+    // No handshake, tool call, anonymous leg, refresh or replay is sent.
+    expect(d.oauthRequests).toEqual([]);
+    expect(await d.otherProvider().tokens()).toBeUndefined();
+    const result = JSON.parse(text).result;
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toMatchObject({
+      code: "downstream_oauth_required",
+      recovery: "oauth",
+      status: "auth_required",
+      retryable: false,
+      nextAction: { tool: "authorize_connector", arguments: { connector: "oauth" } },
+    });
+    if (program) {
+      expect(result.structuredContent.error.writes).toEqual({ succeeded: 0, failed: 1, unknown: 0 });
+      expect(result.structuredContent.hostCalls).toMatchObject({ attempted: 1, failed: 1 });
+    } else expect(result.structuredContent.attempts).toBe(1);
+  });
+
+  it.each([
+    [false, "expiry"],
+    [true, "expiry"],
+    [false, "scope"],
+    [true, "scope"],
+    [false, "replacement"],
+    [true, "replacement"],
+  ] as const)("OAuth modern=%s observes same-epoch %s before invocation", async (oauthModern, change) => {
+    const d = await production({ oauthModern });
+    const app = d.build();
+    await d.call(app, "oauth.echo");
+    await d.settle();
+    const old = (await d.otherProvider().tokens())!;
+    d.oauthRequests.length = 0;
+    let pastChunks = false;
+    let grantReads = 0;
+    let changed = false;
+    d.afterRead(async (params) => {
+      if (params.some((key) => typeof key === "string" && key.includes(":chunk:"))) pastChunks = true;
+      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== 2) return;
+      d.afterRead(undefined);
+      changed = true;
+      const tokens = {
+        ...old,
+        ...(change === "expiry" ? { expires_in: 1 } : {}),
+        ...(change === "scope" ? { scope: "notes:write" } : {}),
+        ...(change === "replacement" ? { access_token: "replaced-access", refresh_token: "replaced-refresh" } : {}),
+      };
+      const other = d.otherProvider();
+      expect(
+        await other.storeRefresh("v3:seeded", old.refresh_token!, tokens, "https://oauth-budget.example"),
+      ).toMatchObject(tokens);
+      expect(await other.liveEpoch()).toBe("v3:seeded");
+      d.oauth.token = tokens.access_token;
+    });
+    await d.call(app, "oauth.echo");
+    await d.settle();
+    expect(changed).toBe(true);
+    const calls = d.oauthRequests.filter(({ method }) => method === "tools/call");
+    const expectedToken =
+      change === "expiry" ? "access-2" : change === "replacement" ? "replaced-access" : old.access_token;
+    expect(calls).toEqual([{ method: "tools/call", token: `Bearer ${expectedToken}` }]);
+    // The fresh admission read, rather than a later SDK read, must observe a
+    // shortened expiry in time to renew without sending the stale access token.
+    expect(d.oauth.issued).toBe(change === "expiry" ? 2 : 1);
+    expect(d.oauth.rejected).toBe(0);
+    const stored = await d.otherProvider().tokens();
+    expect(stored?.access_token).toBe(expectedToken);
+    if (change === "scope") expect(stored?.scope).toBe("notes:write");
+    if (change === "replacement") expect(stored?.refresh_token).toBe("replaced-refresh");
+    await d.call(app, "oauth.echo");
+    expect(d.oauth.issued).toBe(change === "expiry" ? 2 : 1);
   });
 
   it("an api() call with a sealed credential, warm and cold", async () => {
@@ -1077,7 +1226,7 @@ const BUDGETS = {
   "legacy call, cold isolate": { downstream: 5, roundTrips: 10, statements: 13 },
   "modern call, warm": { downstream: 1, roundTrips: 5, statements: 6 },
   "modern call, cold isolate": { downstream: 1, roundTrips: 11, statements: 14 },
-  "OAuth call, warm": { downstream: 5, roundTrips: 16, statements: 17 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 17, statements: 18 },
   "OAuth call, cold isolate": { downstream: 5, roundTrips: 24, statements: 27 },
   "OAuth call, 401 refresh": { downstream: 9, roundTrips: 42, statements: 52 },
   "OAuth call, proactive refresh": { downstream: 6, roundTrips: 38, statements: 47 },

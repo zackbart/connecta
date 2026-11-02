@@ -650,9 +650,13 @@ scope check still apply. These batches contain only reads. Catalog addresses
 use the listing's pinned OAuth identity and locating generation; they authorize
 nothing. After chunk verification, acceptance re-reads the OAuth identity and
 generation separately and refuses a changed epoch or token digest. The invocation
-gate decides disconnect, token presence and early renewal from one fresh grant
-snapshot. Connection reuse and each SDK dispatch keep their fresh epoch or token
-reads; no credential read is prefetched.
+gate checks disconnect first, then reads tokens separately to refuse absent
+credentials and observe current expiry and the invalidation fingerprint. Token
+removal, expiry, scope and replacement can change without advancing the epoch;
+epoch fences alone cannot protect these values. The SDK's later token read may
+return no tokens and omit Authorization, so it does not replace invocation's
+token-presence refusal. Connection reuse and SDK dispatch retain their fresh
+epoch or token reads; no credential read is prefetched.
 Stores with replaced methods or separate backing stores retain individual reads.
 
 A remote connector's `listTools` without a live connection in its request
