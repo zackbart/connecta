@@ -404,9 +404,7 @@ export function remoteMcpTransport(
           if ((provider?.allowAuthorization !== true || toolCall) && !authorization)
             throw knownProviderFailure(
               rt.authRequiredError(ctx),
-              flight?.sent
-                ? undefined
-                : (flight?.request?.entry ?? providerRequest(ctx, true, `Connector "${id}"'s MCP server`)),
+              flight?.sent ? undefined : (flight?.request?.entry ?? providerRequest(ctx, true, id)),
             );
         }
         // A custom transport reaches only the configured origin; redirects are
