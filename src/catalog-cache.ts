@@ -844,6 +844,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         authFlow<string | undefined>(function* () {
           const { stopped, generation, io } = operation;
           if (
+            !memoized &&
             resolveCredentialIdentity &&
             ((yield authCall(io, [resolveCredentialIdentity])) as string) !== operation.credentialIdentity
           )
@@ -872,7 +873,9 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             (pair[1] !== partition && (pair[1] !== "" || sharing !== "shared"))
           )
             return undefined;
-          // Locating only: get's fence and set's publication re-check fresh.
+          // Locate with the listing's pinned identity and generation. Neither
+          // authorizes acceptance: get's post-chunk fence and set's publication
+          // re-read both, so rotation or disconnect during I/O refuses the entry.
           const prefix = (yield authCall(namespace, [operation, true])) as string | undefined;
           if (!prefix || stopped()) return undefined;
           const digest = (

@@ -12,6 +12,9 @@ import { DatabaseSync } from "node:sqlite";
 import { WebStandardStreamableHTTPServerTransport, McpServer } from "@modelcontextprotocol/server";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { vaultOAuthSealer } from "../src/oauth-sealing.js";
+import { silentLogger } from "./helpers.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { api } from "../src/connectors/api.js";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
@@ -43,6 +46,7 @@ interface Count {
   roundTrips: number;
   statements: number;
   log: string[];
+  afterRead?: ((params: unknown[]) => Promise<void>) | undefined;
 }
 
 /** A structural D1 binding over one in-memory SQLite database, counting. */
@@ -56,7 +60,9 @@ function countingD1(db: DatabaseSync, count: Count): D1DatabaseBinding {
       count.roundTrips++;
       count.statements++;
       count.log.push(`all ${JSON.stringify(params)}`);
-      return { results: db.prepare(sql).all(...(params as never[])) };
+      const results = db.prepare(sql).all(...(params as never[]));
+      await count.afterRead?.(params);
+      return { results };
     },
     run: async () => {
       count.roundTrips++;
@@ -663,6 +669,7 @@ describe("request budgets", () => {
       { url: `${origins.modern}/mcp`, catalogTtlMs: 300_000 },
     );
     const requests: string[] = [];
+    const oauthRequests: { method: string; token: string | null }[] = [];
     let inFlight = 0;
     const route = async (request: Request): Promise<Response> => {
       const url = new URL(request.url);
@@ -671,6 +678,7 @@ describe("request budgets", () => {
       requests.push(`${request.method} ${url.host}${url.pathname} ${method}`.trim());
       if (url.origin === origins.legacy) return legacy.fetch(request);
       if (url.origin === origins.oauth) {
+        oauthRequests.push({ method: method || request.method, token: request.headers.get("authorization") });
         if (options.oauthModern) {
           if (request.headers.get("authorization") !== `Bearer ${oauth.state.token}`)
             return new Response(null, { status: 401 });
@@ -758,7 +766,7 @@ describe("request budgets", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       } while (waits.length > 0 || inFlight > 0);
     };
-    const tool = async (app: Connecta, name: string, args: Record<string, unknown>) => {
+    const tool = async (app: Connecta, name: string, args: Record<string, unknown>, expectError = false) => {
       const response = await app.fetch(
         new Request(`${BASE}/mcp`, {
           method: "POST",
@@ -778,7 +786,7 @@ describe("request budgets", () => {
         runtime,
       );
       const text = await response.text();
-      expect(text, text).not.toMatch(/"isError":true/);
+      expect(/"isError":true/.test(text), text).toBe(expectError);
       return text;
     };
     const call = async (app: Connecta, address: string) =>
@@ -818,7 +826,32 @@ describe("request budgets", () => {
       expect(measured.statements, `${label}: SQL statements\n${log}`).toBeLessThanOrEqual(budget.statements);
       return { ...measured, log: [...d1.count.log] };
     };
-    return { build, call, tool, detail, measure, oauth: oauth.state, storage, grantKey };
+    const otherStorage = d1.storage();
+    const otherProvider = () =>
+      new KvOAuthProvider(
+        "oauth",
+        view(otherStorage, scopes.connector("oauth")),
+        `${BASE}/oauth/callback/oauth`,
+        undefined,
+        false,
+        vaultOAuthSealer(encryptedCredentialVault(otherStorage, CREDENTIAL_KEY), "oauth", undefined, silentLogger),
+      );
+    return {
+      build,
+      call,
+      tool,
+      detail,
+      measure,
+      oauth: oauth.state,
+      storage,
+      grantKey,
+      oauthRequests,
+      otherProvider,
+      settle,
+      afterRead: (hook: Count["afterRead"]) => {
+        d1.count.afterRead = hook;
+      },
+    };
   }
 
   it.each(["legacy", "modern"] as const)(
@@ -846,13 +879,15 @@ describe("request budgets", () => {
     // The first connect sealed the seeded plaintext grant.
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
     const warm = await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
-    expect([warm.roundTrips, warm.statements]).toEqual([18, 19]);
+    expect([warm.roundTrips, warm.statements]).toEqual([16, 17]);
     const program = await d.measure("OAuth call, warm", () =>
       d.tool(app, "execute_code", {
         code: 'async () => connecta.call("oauth.echo", { text: "hi" })',
       }),
     );
-    expect([program.roundTrips, program.statements]).toEqual([18, 19]);
+    expect([program.roundTrips, program.statements]).toEqual([16, 17]);
+    expect(warm.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(11);
+    expect(program.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(11);
     await d.measure("OAuth call, cold isolate", () => d.call(d.build(), "oauth.echo"));
 
     // The rotation stores a token 75 seconds from expiry, outside the
@@ -886,8 +921,87 @@ describe("request budgets", () => {
           ? d.call(app, "oauth.echo")
           : d.tool(app, "execute_code", { code: 'async () => connecta.call("oauth.echo", { text: "hi" })' }),
       );
+      expect(measured.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(8);
       expect(measured.downstream).toBe(1);
-      expect([measured.roundTrips, measured.statements]).toEqual([16, 17]);
+      expect([measured.roundTrips, measured.statements]).toEqual([13, 14]);
+    }
+  });
+
+  it.each([
+    [false, "chunks"],
+    [true, "chunks"],
+    [false, "invocation"],
+    [true, "invocation"],
+  ] as const)("OAuth modern=%s preserves rotation, disconnect and refresh across %s", async (oauthModern, boundary) => {
+    for (const change of ["rotation", "disconnect", "refresh"] as const) {
+      const d = await production({ oauthModern });
+      const app = d.build();
+      await d.call(app, "oauth.echo");
+      await d.settle();
+      d.oauthRequests.length = 0;
+      let pastChunks = false;
+      let grantReads = 0;
+      let changed = false;
+      d.afterRead(async (params) => {
+        const chunk = params.some((key) => typeof key === "string" && key.includes(":chunk:"));
+        if (chunk) pastChunks = true;
+        if (pastChunks && params.includes(d.grantKey)) grantReads++;
+        // The second grant read after chunks is the invocation gate's snapshot.
+        // Publish after its SELECT captured the old value; dispatch must read again.
+        if (boundary === "chunks" ? !chunk : grantReads !== 2) return;
+        d.afterRead(undefined);
+        changed = true;
+        // A separate provider and SQL storage instance publishes between reads,
+        // without notifying this request's storage memo.
+        const other = d.otherProvider();
+        if (change === "disconnect") await other.resetAuthorization(true);
+        else {
+          const tokens = {
+            access_token: "access-2",
+            token_type: "Bearer",
+            refresh_token: "refresh-2",
+            expires_in: 3600,
+          };
+          if (change === "rotation") {
+            await other.resetAuthorization();
+            await other.saveTokens(tokens, { issuer: "https://oauth-budget.example" });
+          } else {
+            expect(
+              await other.storeRefresh("v3:seeded", "refresh-1", tokens, "https://oauth-budget.example"),
+            ).toMatchObject(tokens);
+          }
+          d.oauth.token = tokens.access_token;
+        }
+      });
+      const refused = change === "disconnect" || (oauthModern && boundary === "chunks" && change === "rotation");
+      const text = await d.tool(app, "call_tool", { address: "oauth.echo", args: { text: "hi" } }, refused);
+      await d.settle();
+      expect(changed, change).toBe(true);
+      if (change === "disconnect") {
+        expect(text).toMatch(/disconnected|authorization changed/);
+        expect(d.oauthRequests).toEqual([]);
+        expect(await d.otherProvider().tokens()).toBeUndefined();
+      } else {
+        if (refused) {
+          expect(text).toContain("authorization changed");
+          expect(d.oauthRequests).toEqual([]);
+        } else {
+          expect(text).toContain("hi");
+          if (boundary === "chunks")
+            expect(
+              d.oauthRequests.some(({ method }) => method === "tools/list"),
+              change,
+            ).toBe(true);
+        }
+        for (const request of d.oauthRequests) expect(request.token).toBe("Bearer access-2");
+        expect(await d.otherProvider().tokens()).toMatchObject({
+          access_token: "access-2",
+          refresh_token: "refresh-2",
+        });
+        // A later call retains the committed refresh and never redeems it again.
+        await d.call(app, "oauth.echo");
+        expect(d.oauth.issued).toBe(1);
+      }
     }
   });
 
@@ -962,7 +1076,7 @@ const BUDGETS = {
   "legacy call, cold isolate": { downstream: 5, roundTrips: 10, statements: 13 },
   "modern call, warm": { downstream: 1, roundTrips: 5, statements: 6 },
   "modern call, cold isolate": { downstream: 1, roundTrips: 11, statements: 14 },
-  "OAuth call, warm": { downstream: 5, roundTrips: 18, statements: 19 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 16, statements: 17 },
   "OAuth call, cold isolate": { downstream: 5, roundTrips: 24, statements: 27 },
   "OAuth call, 401 refresh": { downstream: 9, roundTrips: 42, statements: 52 },
   "OAuth call, proactive refresh": { downstream: 6, roundTrips: 38, statements: 47 },
