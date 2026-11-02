@@ -401,6 +401,35 @@ it.each(["auto", "legacy"] as const)(
   },
 );
 
+it.each([false, true])(
+  "a refused handshake before any request proves a warm-catalog write unsent (program: %s)",
+  async (program) => {
+    const flow = setup({ oauth: true, versionNegotiation: "legacy" });
+    await flow.seedOAuth();
+    await flow.outcome("list_items");
+    flow.requests.length = 0;
+    const begin = KvOAuthProvider.prototype.beginFlow;
+    let removed = false;
+    vi.spyOn(KvOAuthProvider.prototype, "beginFlow").mockImplementation(async function (this: KvOAuthProvider, epoch) {
+      if (!removed) {
+        removed = true;
+        const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
+        await other.tokens();
+        await other.invalidateCredentials("tokens");
+      }
+      return begin.call(this, epoch);
+    });
+    const result = program ? await flow.program(false) : await flow.outcome("create_item", { id: 1 });
+    expect(removed).toBe(true);
+    expect(flow.requests).toEqual([]);
+    expect(flow.sent("create_item")).toEqual([]);
+    expect(result.error).toMatchObject({ code: "downstream_oauth_required" });
+    expect(result.error).not.toHaveProperty("writeOutcome");
+    expect(result.error).not.toHaveProperty("reconciliationRequired", true);
+    if (program) expect(result.error.writes).toEqual({ succeeded: 0, failed: 1, unknown: 0 });
+  },
+);
+
 describe.each(["removed", "wrong issuer"] as const)(
   "remote MCP OAuth credentials at send time (#1230): %s",
   (fault) => {

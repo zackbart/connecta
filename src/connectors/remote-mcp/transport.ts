@@ -402,7 +402,12 @@ export function remoteMcpTransport(
         if (isOauth && !credentialPost && new URL(input).href === url.href) {
           const authorization = new Headers(init?.headers).get("authorization");
           if ((provider?.allowAuthorization !== true || toolCall) && !authorization)
-            throw knownProviderFailure(rt.authRequiredError(ctx), flight?.sent ? undefined : flight?.request?.entry);
+            throw knownProviderFailure(
+              rt.authRequiredError(ctx),
+              flight?.sent
+                ? undefined
+                : (flight?.request?.entry ?? providerRequest(ctx, true, `Connector "${id}"'s MCP server`)),
+            );
         }
         // A custom transport reaches only the configured origin; redirects are
         // already same-origin, and OAuth cannot be combined with it.
