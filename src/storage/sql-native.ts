@@ -37,7 +37,7 @@ import {
 import { assertKnownOptions, ConfigError, keys, optionsOf } from "../config-schema.js";
 import { agentFrictionForCode } from "../activity-friction.js";
 import type { KVStorage } from "../types.js";
-import { validateStorageKey } from "./keys.js";
+import { accessTokenKeys, validateStorageKey } from "./keys.js";
 type SqlValue = string | number | null;
 const sql = (text: string, ...params: SqlValue[]): SqlStatement => ({
   sql: text,
@@ -130,6 +130,40 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
         validateStorageKey(key);
         yield* ensure();
         return yield* current(key);
+      });
+    },
+    accessToken(hash) {
+      return Effect.gen(function* () {
+        const key = accessTokenKeys.lookup(hash);
+        yield* ensure();
+        // The links select candidate rows only. Admission still parses every
+        // raw value and addresses it by its physical key, so JSON extraction
+        // differences (e.g. duplicate fields) cannot substitute another slot.
+        // json_valid guards malformed stored JSON; expiry uses the DB clock.
+        const rows = yield* driver.all<{ key: string; value: string; value_bytes: TextBytes | null }>(
+          sql(
+            `WITH lookup AS (
+            SELECT key, value FROM connecta_kv WHERE key = ? AND ${live}
+          ), record AS (
+            SELECT key, value FROM connecta_kv WHERE key = ? ||
+              (SELECT CASE WHEN json_valid(value) THEN json_extract(value, '$.id') END FROM lookup)
+              AND ${live}
+          ), slot AS (
+            SELECT key, value FROM connecta_kv WHERE key = ? ||
+              (SELECT CASE WHEN json_valid(value) THEN json_extract(value, '$.agent') END FROM record)
+              AND ${live}
+          )
+          SELECT key, ${textColumn("value")} FROM lookup
+          UNION ALL SELECT key, ${textColumn("value")} FROM record
+          UNION ALL SELECT key, ${textColumn("value")} FROM slot`,
+            key,
+            accessTokenKeys.recordPrefix,
+            accessTokenKeys.agent(""),
+          ),
+        );
+        return new Map(
+          rows.map((row) => [row.key, textOf(row.value, row.value_bytes, "Stored access token metadata")]),
+        );
       });
     },
     getMany(keys) {

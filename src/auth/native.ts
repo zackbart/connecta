@@ -154,6 +154,21 @@ export function authStorage<A = any>(
   });
 }
 
+/** Optional fresh token snapshot, with the same request ownership as an auth storage read. */
+export function authAccessToken(
+  storage: KVStorage,
+  hash: string,
+): Effect.Effect<Map<string, string | null> | undefined, unknown> {
+  return Effect.suspend(() => {
+    const read = getNativeStorage(storage)?.accessToken;
+    if (!read) return Effect.succeed(undefined);
+    const operation = authValue(() => read(hash));
+    return Effect.flatMap(Effect.serviceOption(AuthenticationWork), (work) =>
+      work._tag === "Some" ? authDetached(operation) : operation,
+    );
+  });
+}
+
 /** Several keys in one round trip when the store can, else one `get` at a time. */
 export function authStorageMany(
   storage: KVStorage,
