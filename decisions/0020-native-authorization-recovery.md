@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-11-02
+issues: [1219]
+amends: [0015-native-tools-and-agent-identity.md]
+supersedes: []
+---
+
 # Native authorization recovery
 
 Supersedes decision 0015's exclusion of `authorize_connector` from native pools.
