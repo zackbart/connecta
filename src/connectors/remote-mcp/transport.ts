@@ -29,6 +29,7 @@ import { guardedTransport, sendGuarded, sendCredentialPost } from "../../guarded
 import {
   dispatchProviderRequest,
   recordProviderResponse,
+  knownProviderFailure,
   providerRequest,
   renewedAfterUnauthorized,
   type ProviderRequest,
@@ -395,9 +396,13 @@ export function remoteMcpTransport(
         // OAuth discovery, registration and exchange share this fetch, but do
         // not use the resource credential. Guard the assembled MCP request,
         // after the SDK token read and before dispatch bookkeeping or fetch.
+        // OAuth is required on passive paths regardless of which provider
+        // read the grant. Only an explicit authorization start may probe the
+        // resource anonymously for an SDK challenge, never a tools/call.
         if (isOauth && !credentialPost && new URL(input).href === url.href) {
           const authorization = new Headers(init?.headers).get("authorization");
-          if ((provider?.credentialObserved || toolCall) && !authorization) throw rt.authRequiredError(ctx);
+          if ((provider?.allowAuthorization !== true || toolCall) && !authorization)
+            throw knownProviderFailure(rt.authRequiredError(ctx), flight?.sent ? undefined : flight?.request?.entry);
         }
         // A custom transport reaches only the configured origin; redirects are
         // already same-origin, and OAuth cannot be combined with it.

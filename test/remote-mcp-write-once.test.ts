@@ -372,23 +372,28 @@ async function authRecoveryRow(surface: "program" | "call_tool") {
 }
 
 it.each(["auto", "legacy"] as const)(
-  "keeps the authenticated catalog path across an empty grant read before transport construction (%s)",
+  "requires OAuth on the catalog path when tokens disappear before a replacement provider binds (%s)",
   async (versionNegotiation) => {
     const flow = setup({ oauth: true, versionNegotiation });
     await flow.seedOAuth();
+    const observed = new Set<KvOAuthProvider>();
+    const observe = KvOAuthProvider.prototype.observe;
+    vi.spyOn(KvOAuthProvider.prototype, "observe").mockImplementation(function (this: KvOAuthProvider, grant) {
+      observe.call(this, grant);
+      if (grant.body.tokens) observed.add(this);
+    });
     const begin = KvOAuthProvider.prototype.beginFlow;
     let removed = false;
     vi.spyOn(KvOAuthProvider.prototype, "beginFlow").mockImplementation(async function (this: KvOAuthProvider, epoch) {
-      const current = await begin.call(this, epoch);
       if (!removed) {
+        expect([...observed].some((provider) => provider !== this)).toBe(true);
+        expect(observed.has(this)).toBe(false);
         removed = true;
         const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
         await other.tokens();
         await other.invalidateCredentials("tokens");
-        await this.liveEpoch();
-        expect(this.observed).toBeUndefined();
       }
-      return current;
+      return begin.call(this, epoch);
     });
     await expect(flow.connector.listTools(flow.context())).rejects.toMatchObject({ code: "downstream_oauth_required" });
     expect(removed).toBe(true);
@@ -453,6 +458,13 @@ describe.each(["removed", "wrong issuer"] as const)(
       expect(flow.applied).toEqual([]);
       expect(flow.requests.slice(requestsBeforeRemoval)).toEqual([]);
       expect(flow.refreshes()).toBe(0);
+      expect(result.error).not.toHaveProperty("writeOutcome");
+      expect(result.error).not.toHaveProperty("reconciliationRequired", true);
+      expect(result.error).not.toHaveProperty("uncertainCall");
+      if (program && tool === "create_item") {
+        expect(result.error.writes).toEqual({ succeeded: 0, failed: 1, unknown: 0 });
+        expect(result.error.message).not.toContain("after it left");
+      }
     });
 
     it.each([

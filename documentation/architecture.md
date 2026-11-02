@@ -667,7 +667,13 @@ credentials and observe current expiry and the invalidation fingerprint. Token
 removal, expiry, scope and replacement can change without advancing the epoch;
 epoch fences alone cannot protect these values. The SDK's later token read may
 return no tokens and omit Authorization, so it does not replace invocation's
-token-presence refusal. Connection reuse and SDK dispatch retain their fresh
+token-presence refusal. The transport also refuses tokenless MCP requests on
+passive OAuth paths, regardless of provider history; an explicit authorization
+start may probe for the SDK's challenge. A refused tool send binds its private
+failure provenance to the undispatched physical request. Invocation accepts it
+only for the owning boundary and whole logical call; error fields, copied
+connectors, and refusals after a send cannot supply that proof.
+Connection reuse and SDK dispatch retain their fresh
 epoch or token reads; no credential read is prefetched.
 Stores with replaced methods or separate backing stores retain individual reads.
 

@@ -566,6 +566,9 @@ export function remoteMcpOAuth(
         authFlow<ConnectorStatus>(function* () {
           ctx = authorizingContext(ctx);
           const state = rt.stateFor(ctx);
+          // A passive tokenless handshake was refused locally. An explicit
+          // start gets its own challenge-capable connection attempt.
+          if (state.authRequired && !state.client) rt.closeHalf(state);
           state.provider = null;
           const p = rt.newProvider(ctx, state);
           if (ctx.signal?.aborted) throw ctx.signal.reason;

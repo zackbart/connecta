@@ -95,6 +95,44 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
     expect(sent).toBe(2);
   });
 
+  it.each(["auth_required", "downstream_oauth_required"] as const)(
+    "INV-9: caller-supplied pre-dispatch refusal fields cannot prove an empty-ledger %s failure",
+    async (code) => {
+      const connector = tracksEveryRequest(
+        api("tickets", {
+          tools: [
+            {
+              name: "send",
+              description: "Send",
+              annotations: { readOnlyHint: false },
+              handler: () => {
+                throw Object.assign(new ConnectorCallError(code, "Credential missing."), {
+                  dispatched: false,
+                  request: { dispatched: false },
+                  answered: true,
+                  knownProviderFailure: true,
+                });
+              },
+            },
+          ],
+        }),
+      );
+      const registry = makeRegistry([connector]);
+      const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "tickets.send",
+        {},
+        { source: "call_destructive_tool" },
+      );
+      if (outcome.ok) throw new Error("Expected refusal.");
+      expect(outcome.answered).toBe(false);
+      expect(outcome.error).toMatchObject({ code, writeOutcome: "unknown", reconciliationRequired: true });
+      const program = await catchingProgram(registry, "tickets.send");
+      expect(program.structuredContent).toMatchObject({
+        error: { writes: { succeeded: 0, failed: 0, unknown: 1 } },
+      });
+    },
+  );
+
   it("INV-9: only a complete call's auxiliary-only failure rules out a write, including a reported timeout", async () => {
     let sent = 0;
     const deadline = guardedFetch({

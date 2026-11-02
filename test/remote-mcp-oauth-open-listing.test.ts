@@ -272,7 +272,7 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
     ["start after call", "grant read"],
   ] as const)("fails %s superseded by Restart during post-handshake %s (#1120)", async (operation, pause) => {
     const server = openListing();
-    const backing = memoryStorage();
+    const backing = operation === "status" ? await carriedGrant() : memoryStorage();
     const reached = deferred<void>();
     const resume = deferred<void>();
     let hold = true;
@@ -344,15 +344,15 @@ describe("remoteMcp() OAuth when the downstream lists without authorization (#11
     const storage = memoryStorage();
     const c = connector();
 
-    // The downstream lists its tools to anyone; that is no grant.
+    // Even a public catalog cannot bypass a configured OAuth requirement.
     const listing = scope(storage, seal);
-    await expect(c.listTools(listing)).resolves.toMatchObject([{ name: "ping" }]);
+    await expect(c.listTools(listing)).rejects.toMatchObject({ code: "downstream_oauth_required" });
     await c.closeScope?.(listing);
     expect(await c.status!(scope(storage, seal))).toMatchObject({ state: "auth_required" });
     // A call without a grant is refused locally; only an explicit start begins consent.
     const refused = await failureOf(ping(c, storage, seal));
     expect(refused.classified).toMatchObject({ code: "downstream_oauth_required" });
-    expect(server.calls()).toEqual([]);
+    expect(server.mcp).toEqual([]);
     expect(await reader(storage, seal).pendingAuthorizationUrl()).toBeUndefined();
     const challenged = server.metadata.length;
 
