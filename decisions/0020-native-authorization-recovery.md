@@ -23,7 +23,10 @@ scope enforcement. Keep the meta surface's six tools unchanged.
 An always-present tool survives a host's cached list (300-second hint); adding it
 only on catalog failure would strand a host holding an earlier healthy list.
 Putting handoffs in `skills` would turn discovery into authorization, violating
-INV-10. A typed tool result alone cannot help when no callable tool survives;
+INV-10. Listing unavailable connectors through `skills` without handoffs could
+remain pure, but would add a status schema and catalog lookup before the same
+explicit authorization call. The granted roster avoids that extra discovery
+state and works even from a cached healthy list. A typed tool result alone cannot help when no callable tool survives;
 the existing authorization result already supplies that type. No new discovery
 API or catalog probe is needed. The roster names granted connectors, not auth
 state; calling the explicit tool establishes the recovery available for one.
