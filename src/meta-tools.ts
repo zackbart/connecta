@@ -1651,7 +1651,7 @@ export function registerMetaTools(
     {
       description: ctx.native
         ? AUTHORIZE_DESC +
-          " If a connector’s tools are missing, request its handoff here, then refresh the host tool list after the operator repairs authorization. Granted connectors: " +
+          " Use when a connector’s tools are missing. Granted: " +
           registry
             .listConnectors()
             .map((connector) => connector.id)

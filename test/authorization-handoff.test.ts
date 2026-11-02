@@ -160,7 +160,7 @@ it("INV-4 INV-8 INV-10: native without code discovers recovery, completes consen
     "skills",
   ]);
   expect(before.find((tool: { name: string }) => tool.name === "authorize_connector").description).toContain(
-    "Granted connectors: service.",
+    "Granted: service.",
   );
   expect(JSON.stringify(before)).not.toContain("outside");
   expect(flow.sign).not.toHaveBeenCalled();

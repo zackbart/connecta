@@ -908,7 +908,10 @@ fulfill downstream input.
 Every native pool lists `authorize_connector`, including pools without code.
 If a connector’s tools are missing, use its id from that tool’s granted-connector
 list to request a typed handoff. Give the URL and instructions to the operator;
-after repair refresh the host tool list (its cache hint is 300 seconds).
+after repair the host must refresh its tool list before it can call the repaired
+tools (the cache hint is 300 seconds). A host that keeps its first list needs a
+reconnect or a new conversation; on a pool with `execute_code`, a program can call
+them by address without one.
 Listing never creates a handoff. Authorization accepts only connectors already
 granted to this request; it cannot enable a connector or expand pool scope.
 

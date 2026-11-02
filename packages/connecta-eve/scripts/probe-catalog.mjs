@@ -263,7 +263,7 @@ async function cell(consumer, count, surface) {
       return { count, surface, capRefused: true };
     }
     assert.ok(!listed.error);
-    assert.equal(listed.result.tools.length, surface === "meta" ? 6 : count + 2);
+    assert.equal(listed.result.tools.length, surface === "meta" ? 6 : count + 3);
     const native = listed.result.tools.filter((entry) => entry._meta?.["dev.connecta/address"]);
     if (surface !== "meta")
       assert.equal(new Set(native.map((entry) => entry._meta["dev.connecta/address"])).size, count);

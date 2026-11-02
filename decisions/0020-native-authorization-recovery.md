@@ -33,5 +33,8 @@ state; calling the explicit tool establishes the recovery available for one.
 
 Listing remains side-effect free, failed catalogs remain omitted whole, and
 arguments cannot grant connectors or change credential ownership. After operator
-repair the host must refresh its list before calling newly available tools.
+repair the host must refresh its list before calling newly available tools. Codex
+and Claude Code kept their first list in real-agent runs, so without code the
+conversation could not finish until the host reconnected. A program on a pool with
+code could call the repaired tools by address without one.
 Existing native call and program error handoffs are unchanged.
