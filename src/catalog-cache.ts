@@ -663,6 +663,7 @@ interface Listing {
   credentialIdentity?: string | undefined;
   /** Whether the generation was read from storage rather than newly drawn. */
   generationStored?: boolean;
+  manifests?: Map<string, string | null>;
 }
 interface CacheOperation {
   ctx: ConnectorContext;
@@ -991,10 +992,37 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             const { ctx, stopped, io } = operation;
             const root = (yield authCall(address, [key, operation])) as string | undefined;
             if (!root || stopped()) return undefined;
+            // The SDK probes private, then public. Derive both addresses from
+            // the already-bound locating generation and identity, and fetch
+            // them in one statement. The post-chunk namespace check stays fresh.
+            const listing = operation.listing;
+            if (listing && !listing.manifests?.has(root)) {
+              const slots = sharing === "shared" ? [partition, sharedPartition] : [partition];
+              const roots: string[] = [];
+              for (const slot of slots) {
+                const { fingerprint } = (yield authCall(fingerprintSerializedCatalog, [
+                  JSON.stringify([key.method, slot, operation.credentialIdentity ?? null]),
+                ])) as { fingerprint: string };
+                roots.push(
+                  responseCacheKeys.entry(
+                    responseCacheKeys.namespace(connectorId, configHash, operation.generation.value!),
+                    fingerprint,
+                  ),
+                );
+              }
+              const values = (yield authCall(io, [cacheMethod(() => authStorageMany(storage, roots))])) as (
+                | string
+                | null
+              )[];
+              listing.manifests ??= new Map();
+              roots.forEach((root, i) => listing.manifests!.set(root, values[i] ?? null));
+            }
             const m = manifest(
-              (yield authCall(io, [
-                cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
-              ])) as string | null,
+              listing?.manifests?.has(root)
+                ? listing.manifests.get(root)!
+                : ((yield authCall(io, [
+                    cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
+                  ])) as string | null),
             );
             if (
               stopped() ||
@@ -1076,6 +1104,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const { ctx, stopped, io } = operation;
               const root = (yield authCall(address, [key, operation])) as string | undefined;
               if (!root || stopped()) return 0;
+              operation.listing?.manifests?.delete(root);
               const result = JSON.parse(entry.value) as CatalogResult;
               const method = key.method as CatalogMethod;
               if (catalogTtlMs(ctx, result.ttlMs) === 0) {
@@ -1178,10 +1207,12 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           authFlow<void>(function* () {
             const operation = capture();
             const root = (yield authCall(address, [key, operation])) as string | undefined;
-            if (root && !operation.stopped())
+            if (root && !operation.stopped()) {
+              operation.listing?.manifests?.delete(root);
               (yield authInvoke(operation, "io", [
                 cacheMethod(() => authStorage(storage, "delete", [root]) as Effect.Effect<void, unknown>),
               ])) as void;
+            }
           }),
         ),
         evict: cacheMethod((method: string) =>

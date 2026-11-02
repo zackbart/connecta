@@ -311,6 +311,59 @@ describe("request read memo", () => {
     expect(loads).toEqual(["k", "other", "k", "k", "k", "k"]);
   });
 
+  it("batches physical keys across views and preserves fresh and overlapping-write observations", async () => {
+    const d1 = counted();
+    const storage = d1.storage();
+    const scoped = view(storage, "owner:");
+    await storage.set("owner:a", "old");
+    await storage.set("b", "old");
+    const reads = new RequestReads();
+    const { authStorageMany } = await import("../src/auth/native.js");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pending = runEdge(
+      reads.prefetch(
+        [
+          { storage: scoped, key: "a" },
+          { storage, key: "b" },
+        ],
+        (root, keys) =>
+          Effect.flatMap(authStorageMany(root, keys), (values) =>
+            Effect.promise(async () => {
+              started();
+              await gate;
+              return values;
+            }),
+          ),
+      ),
+    );
+    await entered;
+    await scoped.set("a", "new");
+    await storage.set("b", "fresh");
+    // The fresh read started after prefetch wins even if prefetch settles last.
+    expect(
+      await runEdge(
+        reads.read(
+          storage,
+          "b",
+          Effect.promise(() => storage.get("b")),
+          true,
+        ),
+      ),
+    ).toBe("fresh");
+    release();
+    await pending;
+    expect(await reads.readPromise(scoped, "a", () => scoped.get("a"))).toBe("new");
+    expect(await reads.readPromise(storage, "b", () => storage.get("b"))).toBe("fresh");
+    reads.close();
+  });
+
   it("never records a read that a write overlapped", async () => {
     const storage = memoryStorage();
     await storage.set("k", "old");
@@ -586,7 +639,7 @@ describe("request budgets", () => {
     await executor.close?.();
   });
 
-  async function production(options: { credentialRemote?: boolean } = {}) {
+  async function production(options: { credentialRemote?: boolean; oauthModern?: boolean } = {}) {
     installOwnedTransport();
     const origins = {
       legacy: "https://legacy-budget.example",
@@ -617,7 +670,14 @@ describe("request budgets", () => {
       const method = /"method":"([^"]+)"/.exec(body)?.[1] ?? "";
       requests.push(`${request.method} ${url.host}${url.pathname} ${method}`.trim());
       if (url.origin === origins.legacy) return legacy.fetch(request);
-      if (url.origin === origins.oauth) return oauth.fetch(request);
+      if (url.origin === origins.oauth) {
+        if (options.oauthModern) {
+          if (request.headers.get("authorization") !== `Bearer ${oauth.state.token}`)
+            return new Response(null, { status: 401 });
+          return modern.fetch(request.url, request);
+        }
+        return oauth.fetch(request);
+      }
       if (url.origin === origins.modern) return modern.fetch(request.url, request);
       if (url.origin === origins.rest) return Response.json({ text: "hi" });
       return new Response("unknown host", { status: 404 });
@@ -740,7 +800,18 @@ describe("request budgets", () => {
         statements: d1.count.statements,
       };
       report(label, { ...d1.count }, { downstream: measured.downstream });
+
       const log = [...requests, ...d1.count.log].join("\n");
+      if (["legacy call, warm", "modern call, warm", "OAuth call, warm"].includes(label)) {
+        const catalog = d1.count.log.filter((line) => line.includes("response-cache:"));
+        expect(catalog).toHaveLength(4);
+        expect(catalog[0]).toContain("negotiation:");
+        expect(catalog[0]).toContain(":generation");
+        expect(catalog[1]).not.toContain(":chunk:");
+        expect(catalog[2]).toContain(":chunk:");
+        // This SELECT must follow the chunks, separate from the locating batch.
+        expect(catalog[3]).toMatch(/^all \["response-cache:.*:generation"\]$/);
+      }
       const budget = BUDGETS[label];
       expect(measured.downstream, `${label}: downstream\n${log}`).toBeLessThanOrEqual(budget.downstream);
       expect(measured.roundTrips, `${label}: D1 round trips\n${log}`).toBeLessThanOrEqual(budget.roundTrips);
@@ -756,7 +827,14 @@ describe("request budgets", () => {
       const d = await production();
       const app = d.build();
       await d.call(app, `${kind}.echo`);
-      await d.measure(`${kind} call, warm`, () => d.call(app, `${kind}.echo`));
+      const warm = await d.measure(`${kind} call, warm`, () => d.call(app, `${kind}.echo`));
+      expect([warm.roundTrips, warm.statements]).toEqual([5, 6]);
+      const program = await d.measure(`${kind} call, warm`, () =>
+        d.tool(app, "execute_code", {
+          code: `async () => connecta.call("${kind}.echo", { text: "hi" })`,
+        }),
+      );
+      expect([program.roundTrips, program.statements]).toEqual([5, 6]);
       await d.measure(`${kind} call, cold isolate`, () => d.call(d.build(), `${kind}.echo`));
     },
   );
@@ -767,7 +845,14 @@ describe("request budgets", () => {
     await d.call(app, "oauth.echo");
     // The first connect sealed the seeded plaintext grant.
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
-    await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
+    const warm = await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
+    expect([warm.roundTrips, warm.statements]).toEqual([18, 19]);
+    const program = await d.measure("OAuth call, warm", () =>
+      d.tool(app, "execute_code", {
+        code: 'async () => connecta.call("oauth.echo", { text: "hi" })',
+      }),
+    );
+    expect([program.roundTrips, program.statements]).toEqual([18, 19]);
     await d.measure("OAuth call, cold isolate", () => d.call(d.build(), "oauth.echo"));
 
     // The rotation stores a token 75 seconds from expiry, outside the
@@ -788,6 +873,21 @@ describe("request budgets", () => {
       expect(d.oauth.rejected).toBe(rejected);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("a warm modern OAuth catalog avoids re-listing on both routes", async () => {
+    const d = await production({ oauthModern: true });
+    const app = d.build();
+    await d.call(app, "oauth.echo");
+    for (const route of ["direct", "program"]) {
+      const measured = await d.measure("OAuth call, warm", () =>
+        route === "direct"
+          ? d.call(app, "oauth.echo")
+          : d.tool(app, "execute_code", { code: 'async () => connecta.call("oauth.echo", { text: "hi" })' }),
+      );
+      expect(measured.downstream).toBe(1);
+      expect([measured.roundTrips, measured.statements]).toEqual([16, 17]);
     }
   });
 
@@ -852,15 +952,17 @@ describe("request budgets", () => {
 // of two is one round trip and two statements. D1 ceilings carry about 10%
 // headroom (at least one); downstream ceilings are exact, since each request
 // is a protocol message. Lower is fine; tighten a ceiling when a change lowers
-// it, and explain any raise. Before the request read memo (#1184) a warm OAuth
+// it, and explain any raise. Warm calls additionally pin exact counts and
+// the separate post-chunk fence, for both direct and one-call programs.
+// Before the request read memo (#1184) a warm OAuth
 // call took 21 round trips and a refresh 51 statements without the vault or
 // activity sink.
 const BUDGETS = {
-  "legacy call, warm": { downstream: 5, roundTrips: 7, statements: 8 },
+  "legacy call, warm": { downstream: 5, roundTrips: 5, statements: 6 },
   "legacy call, cold isolate": { downstream: 5, roundTrips: 10, statements: 13 },
-  "modern call, warm": { downstream: 1, roundTrips: 8, statements: 9 },
+  "modern call, warm": { downstream: 1, roundTrips: 5, statements: 6 },
   "modern call, cold isolate": { downstream: 1, roundTrips: 11, statements: 14 },
-  "OAuth call, warm": { downstream: 5, roundTrips: 21, statements: 22 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 18, statements: 19 },
   "OAuth call, cold isolate": { downstream: 5, roundTrips: 24, statements: 27 },
   "OAuth call, 401 refresh": { downstream: 9, roundTrips: 42, statements: 52 },
   "OAuth call, proactive refresh": { downstream: 6, roundTrips: 38, statements: 47 },

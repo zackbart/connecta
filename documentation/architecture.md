@@ -643,6 +643,14 @@ refresh baselines within 48 hours, verdicts within six hours), so each remote
 connector's partitions refill once after the upgrade with one handshake and
 listing.
 
+Warm remote resolution batches the negotiation verdict and locating generation
+when their physical keys share an observed SQL store. Private and public
+manifest probes share a `getMany` statement; their normal precedence and public
+scope check still apply. These batches contain only reads. Chunk verification
+is followed by a separate fresh generation read. OAuth identity, rotation,
+disconnect and dispatch checks remain fresh; no credential read is prefetched.
+Stores with replaced methods or separate backing stores retain individual reads.
+
 A remote connector's `listTools` without a live connection in its request
 reads this cache before connecting. It derives the same partition a connect
 binds (the admitted principal, the caller's credential digest, or the owner's

@@ -43,6 +43,7 @@ export type StoreIdentity = object;
 
 type StorageMethods = Pick<KVStorage, "get" | "set" | "delete" | "list" | "compareAndSet">;
 type Layer = { root: StoreIdentity } | { storage: KVStorage; prefix: string };
+const roots = new WeakMap<StoreIdentity, KVStorage>();
 const observed = new WeakMap<KVStorage, { own: StorageMethods; layer: Layer }>();
 /**
  * Open memos holding or reading entries of each store. Weak, so a request
@@ -84,6 +85,7 @@ export function observedWrite<A, E, R>(
  * one is.
  */
 export function observeStorageWrites(storage: KVStorage, layer: Layer): KVStorage {
+  if ("root" in layer) roots.set(layer.root, storage);
   observed.set(storage, {
     own: {
       get: storage.get,
@@ -190,6 +192,35 @@ export class RequestReads {
       if (!found) return load;
       if (found.hit) return Effect.succeed(found.value);
       return Effect.tap(load, (value) => Effect.sync(() => found.record(value)));
+    });
+  }
+
+  /** Prefetch only keys whose callers already permit request-local staleness. */
+  prefetch<E, R>(
+    requests: readonly { storage: KVStorage; key: string }[],
+    load: (storage: KVStorage, keys: readonly string[]) => Effect.Effect<(string | null)[], E, R>,
+  ): Effect.Effect<void, E, R> {
+    return Effect.suspend(() => {
+      const pending = requests.map(({ storage, key }) => ({
+        address: physical(storage, key),
+        found: this.lookup(storage, key, false),
+      }));
+      const root = pending[0]?.address?.store;
+      const storage = root && roots.get(root);
+      if (!storage || pending.some(({ address, found }) => !found || address?.store !== root)) return Effect.void;
+      const misses = pending.filter(({ found }) => found && !found.hit);
+      if (!misses.length) return Effect.void;
+      return Effect.map(
+        load(
+          storage,
+          misses.map(({ address }) => address!.key),
+        ),
+        (values) => {
+          misses.forEach(({ found }, i) => {
+            if (found && !found.hit) found.record(values[i] ?? null);
+          });
+        },
+      );
     });
   }
 
