@@ -656,6 +656,38 @@ interface Manifest {
   fingerprint: string;
 }
 
+// Only detached JSON facts cross requests: no context, storage, promises or
+// callbacks. FIFO bounds retained partitions, JSON/key text (UTF-16 worst
+// case) and structural slots. No WeakRef or timers required.
+const catalogStores = new WeakMap<KVStorage, string>();
+const validatedCatalogs = new Map<string, { value: CatalogResult; bytes: number }>();
+let validatedBytes = 0;
+const VALIDATED_BYTES = 8 * 1024 * 1024;
+function rememberValidated(key: string, value: CatalogResult, bytes: number): void {
+  bytes = bytes * 2 + key.length * 2;
+  if (bytes > VALIDATED_BYTES || validatedCatalogs.has(key)) return;
+  const pending: unknown[] = [value];
+  while (pending.length) {
+    const item = pending.pop();
+    if (!item || typeof item !== "object" || Object.isFrozen(item)) continue;
+    Object.freeze(item);
+    for (const child of Object.values(item)) {
+      // Charge structural overhead too: tiny JSON objects/arrays can occupy
+      // much more heap than their serialized bytes alone suggest.
+      bytes += 64;
+      if (bytes > VALIDATED_BYTES) return;
+      pending.push(child);
+    }
+  }
+  while (validatedCatalogs.size >= 4 || validatedBytes + bytes > VALIDATED_BYTES) {
+    const oldest = validatedCatalogs.keys().next().value!;
+    validatedBytes -= validatedCatalogs.get(oldest)!.bytes;
+    validatedCatalogs.delete(oldest);
+  }
+  validatedCatalogs.set(key, { value, bytes });
+  validatedBytes += bytes;
+}
+
 interface Listing {
   ctx: ConnectorContext;
   generation: { value?: string };
@@ -762,6 +794,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         authPartition,
       ]);
       const storage = policy?.storage ?? ctx.storage;
+      let storeIdentity = catalogStores.get(storage);
+      if (!storeIdentity) catalogStores.set(storage, (storeIdentity = crypto.randomUUID()));
       const configHash = (
         (yield authCall(fingerprintSerializedCatalog, [
           JSON.stringify([
@@ -1063,23 +1097,32 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               stopped()
             )
               return undefined;
-            const result = JSON.parse(value) as CatalogResult;
             const method = key.method as CatalogMethod;
-            const items = catalogItems(method, result);
-            if (
-              !Array.isArray(items) ||
-              items.length > MAX_CATALOG_TOOLS ||
-              "nextCursor" in result ||
-              (result.resultType !== undefined && result.resultType !== "complete")
-            )
-              return undefined;
-            const validated = (yield authInvoke(catalogSchema(method)["~standard"], "validate", [result])) as
-              | StandardSchemaV1.FailureResult
-              | StandardSchemaV1.SuccessResult<ListToolsResult>
-              | StandardSchemaV1.SuccessResult<ListResourceTemplatesResult>
-              | StandardSchemaV1.SuccessResult<ListResourcesResult>;
-            if (stopped() || validated.issues) return undefined;
-            const clean = intake(ctx, method, validated.value);
+            // root binds connector/config/generation/scope/credential; partition
+            // also binds the current owner/deployment even for public entries.
+            // Hash the chunks again above, never trust the manifest alone.
+            const reuseKey = JSON.stringify([storeIdentity, root, partition, m.fingerprint]);
+            let accepted = validatedCatalogs.get(reuseKey)?.value;
+            if (!accepted) {
+              const result = JSON.parse(value) as CatalogResult;
+              const items = catalogItems(method, result);
+              if (
+                !Array.isArray(items) ||
+                items.length > MAX_CATALOG_TOOLS ||
+                "nextCursor" in result ||
+                (result.resultType !== undefined && result.resultType !== "complete")
+              )
+                return undefined;
+              const validated = (yield authInvoke(catalogSchema(method)["~standard"], "validate", [result])) as
+                | StandardSchemaV1.FailureResult
+                | StandardSchemaV1.SuccessResult<CatalogResult>;
+              if (stopped() || validated.issues) return undefined;
+              accepted = validated.value;
+            }
+            // Redaction depends on this request's sent credentials. It must
+            // still run, and returns detached objects from the frozen facts.
+            const clean = intake(ctx, method, accepted);
+            rememberValidated(reuseKey, accepted, fingerprint.byteLength);
             if (m.expiresAt <= Date.now()) {
               if (method === "tools/list" && (!staleTools || staleTools.manifest.fetchedAt < m.fetchedAt))
                 staleTools = { result: clean as ListToolsResult, manifest: m };

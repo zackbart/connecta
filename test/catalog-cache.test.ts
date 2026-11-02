@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Client, InMemoryTransport, specTypeSchemas } from "@modelcontextprotocol/client";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import {
   catalogClientOptions,
@@ -1973,4 +1973,130 @@ describe("pre-connect cached catalogs", () => {
     expect(await connector.testCredential!(TOKEN_A, ctx)).toMatchObject({ ok: true });
     expect(d.downstreams[1]!.handshakes()).toBe(1);
   });
+});
+
+it("reuses only frozen validated JSON after fresh storage checks, without WeakRef", async () => {
+  const store = await storage();
+  const id = `reuse_${crypto.randomUUID().replaceAll("-", "")}`;
+  const open = () => catalogClientOptions(connectorContext(store), id, "configuration", "grant");
+  const writer = await open();
+  const key = { method: "tools/list", params: "", partition: JSON.stringify(["server", writer.cachePartition]) };
+  const value = JSON.stringify({
+    tools: [{ name: id, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+    ttlMs: 60_000,
+  });
+  await writer.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000 });
+  const validate = vi.spyOn(specTypeSchemas.ListToolsResult["~standard"], "validate");
+  const parse = vi.spyOn(JSON, "parse");
+  const read = async () => (await open()).responseCacheStore!.get(key);
+  const first = await read();
+  expect(first).toBeDefined();
+  expect(validate).toHaveBeenCalledTimes(1);
+  const validated = await validate.mock.results[0]!.value;
+  expect(Object.isFrozen(validated.value.tools[0].inputSchema)).toBe(true);
+  const parses = () => parse.mock.calls.filter(([raw]) => raw.includes(`"name":"${id}"`)).length;
+  expect(parses()).toBe(1);
+  // Separate request, no weak references: neither catalog parse nor validation.
+  expect(await read()).toEqual(first);
+  expect(validate).toHaveBeenCalledTimes(1);
+  expect(parses()).toBe(1);
+  const copy = JSON.parse(first!.value);
+  copy.tools[0].annotations.readOnlyHint = false;
+  expect(JSON.parse((await read())!.value).tools[0].annotations.readOnlyHint).toBe(true);
+
+  vi.restoreAllMocks();
+  vi.stubGlobal("WeakRef", undefined);
+  vi.stubGlobal("FinalizationRegistry", undefined);
+  let withoutWeakRefs;
+  try {
+    withoutWeakRefs = await read();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  expect(withoutWeakRefs).toEqual(first);
+
+  // A missing chunk is still a miss even with an already validated object.
+  const keys = await store.list("");
+  const chunk = keys.find((entry) => entry.includes(id) && entry.includes(":chunk:"));
+  expect(chunk).toBeDefined();
+  await store.delete(chunk!);
+  expect(await read()).toBeUndefined();
+});
+
+it("never accepts warm facts when the generation rotates during the chunk read", async () => {
+  const backing = await storage();
+  const id = `rotation_${crypto.randomUUID().replaceAll("-", "")}`;
+  let rotate = false;
+  let rotated = false;
+  const store: KVStorage = {
+    ...backing,
+    async get(key) {
+      const value = await backing.get(key);
+      if (rotate && key.includes(":chunk:")) {
+        rotated = true;
+        await invalidateCatalogCache(backing, id);
+      }
+      return value;
+    },
+  };
+  const open = () => catalogClientOptions(connectorContext(store), id, "configuration", "grant");
+  const writer = await open();
+  const key = { method: "tools/list", params: "", partition: JSON.stringify(["server", writer.cachePartition]) };
+  await writer.responseCacheStore!.set(key, {
+    value: JSON.stringify({ tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs: 60_000 }),
+    expiresAt: Date.now() + 60_000,
+  });
+  expect(await (await open()).responseCacheStore!.get(key)).toBeDefined();
+  rotate = true;
+  expect(await (await open()).responseCacheStore!.get(key)).toBeUndefined();
+  expect(rotated).toBe(true);
+  rotate = false;
+  const replacement = await open();
+  await replacement.responseCacheStore!.set(key, {
+    value: JSON.stringify({
+      tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { destructiveHint: true } }],
+      ttlMs: 60_000,
+    }),
+    expiresAt: Date.now() + 60_000,
+  });
+  const current = await (await open()).responseCacheStore!.get(key);
+  expect(JSON.parse(current!.value).tools[0].annotations).toEqual({ destructiveHint: true });
+});
+
+it("bounds warm partitions and does not reuse public facts across owners", async () => {
+  const store = await storage();
+  const id = `bounded_${crypto.randomUUID().replaceAll("-", "")}`;
+  const open = (owner: string) => {
+    const ctx = connectorContext(store);
+    attachCatalogCache(ctx, {
+      storage: store,
+      partition: owner,
+      sharedPartition: "deployment",
+      defaultTtlMs: 60_000,
+      minTtlMs: 0,
+      maxTtlMs: 60_000,
+    });
+    return catalogClientOptions(ctx, id, "configuration", "grant", undefined, undefined, "shared");
+  };
+  const writer = await open("alice");
+  const key = { method: "tools/list", params: "", partition: JSON.stringify(["server", ""]) };
+  await writer.responseCacheStore!.set(key, {
+    value: JSON.stringify({
+      tools: [{ name: "read", inputSchema: { type: "object" } }],
+      ttlMs: 60_000,
+      cacheScope: "public",
+    }),
+    expiresAt: Date.now() + 60_000,
+    scope: "public",
+  });
+  const validate = vi.spyOn(specTypeSchemas.ListToolsResult["~standard"], "validate");
+  const read = async (owner: string) => (await open(owner)).responseCacheStore!.get(key);
+  for (const owner of ["alice", "bob", "carol", "dave", "erin"]) {
+    expect(await read(owner)).toBeDefined();
+    expect(await read(owner)).toBeDefined();
+  }
+  expect(validate).toHaveBeenCalledTimes(5);
+  // The fifth partition evicted the first; SQL still supplies a valid catalog.
+  expect(await read("alice")).toBeDefined();
+  expect(validate).toHaveBeenCalledTimes(6);
 });
