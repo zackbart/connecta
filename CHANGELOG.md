@@ -12,7 +12,7 @@ This release makes warm Connecta calls on Workers cheaper in storage and closes 
 
 **Native pools:** native pools now always list `authorize_connector`, so an agent on a pool without `execute_code` can get the operator a handoff for a connector that needs authorization. On those pools the repaired connector's tools appear only after the host refreshes its tool list, usually by reconnecting; pools with `execute_code` can reach them from a program straight away. Anything that compares a native pool's tool list exactly will see one more tool. Meta endpoints keep the same six tools.
 
-**Storage work per call:** warm remote MCP catalog resolution now takes four D1 round trips instead of six on modern servers and five on legacy ones. Warm agent admission takes two reads instead of four. Warm OAuth calls read the grant 9 times instead of 11 on modern servers and 12 instead of 13 on legacy ones. A warm isolate reuses a stored catalog it has already validated, after the same freshness and partition checks. These reductions were measured with injected latency on local workerd, not in production.
+**Storage work per call:** warm remote MCP catalog resolution now takes four D1 round trips instead of six on modern servers and five on legacy ones. Warm agent admission takes two reads instead of four. Warm OAuth calls read the grant 9 times instead of 11 on modern servers and 12 instead of 13 on legacy ones. A warm isolate reuses a stored catalog it has already validated, after the same freshness and partition checks. The catalog and admission round trips were measured with injected latency on local workerd, and the OAuth counts come from request-budget tests. None of this has been measured in production.
 
 ### Changed
 
