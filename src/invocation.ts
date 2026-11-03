@@ -68,7 +68,6 @@ import {
   assertDownstreamOutputSafe,
   type DownstreamInputResult,
 } from "./downstream-input-context.js";
-import { keepErrorName } from "./redaction-identity.js";
 
 function defined<T extends object>(values: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as {
@@ -297,32 +296,7 @@ export interface InvocationContext<T> {
   beforeWrite?: (target: ResolvedCatalogTool, args: unknown) => Effect.Effect<WriteDecision>;
 }
 
-export class InvocationFailure extends Error {
-  readonly code: string;
-  readonly retryable: boolean;
-  readonly retryAfterMs: number | undefined;
-  readonly connector: string | undefined;
-  readonly operation: string | undefined;
-  readonly recovery: CallErrorDetails["recovery"];
-  readonly nextAction: CallErrorDetails["nextAction"];
-  readonly retry: string | undefined;
-  readonly data: CallErrorDetails;
-
-  constructor(readonly details: CallErrorDetails) {
-    super(details.message);
-    this.name = "InvocationFailure";
-    this.code = details.code;
-    this.retryable = details.retryable;
-    this.retryAfterMs = details.retryAfterMs;
-    this.connector = details.connector;
-    this.operation = details.operation;
-    this.recovery = details.recovery;
-    this.nextAction = details.nextAction;
-    this.retry = details.retry;
-    this.data = details;
-  }
-}
-keepErrorName(InvocationFailure, "InvocationFailure");
+export { InvocationFailure } from "./invocation-failure.js";
 
 const withoutExample = ({ example: _example, ...stated }: NonNullable<CallErrorDetails["validation"]>) => stated;
 

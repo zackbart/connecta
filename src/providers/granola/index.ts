@@ -58,7 +58,7 @@ export const granola = defineApiProvider<GranolaOptions>({
   probe,
   guide: (options) => ({
     heading: "Granola usage",
-    summary: "Read workspace notes and transcripts; discover accessible spaces and folders before filtering.",
+    summary: "Load for workspace notes and transcripts; discover accessible spaces and folders before filtering.",
     context: [
       `Workspace purpose: ${options.purpose}`,
       "One shared workspace API key over REST. This connection exposes only reviewed reads.",

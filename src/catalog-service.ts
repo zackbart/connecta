@@ -1,15 +1,18 @@
 import { traceFor } from "./timing-trace.js";
 import { utf8Length } from "./bytes.js";
+import { catalogOwnerPartition } from "./catalog-policy.js";
 import { registerAuthMethod } from "./auth/native.js";
 import { META_ROUTES, routeToolInPlace } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
-import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
+import { carryCatalogFreshness, catalogIsFresh, catalogGenerationFor } from "./catalog-freshness.js";
 import { retainedCatalogIdentity } from "./catalog-cache.js";
 import { cloneTool } from "./tool-safety.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { Effect, Result } from "effect";
 import {
+  prepareLexicalCatalog,
+  carryLexicalCatalog,
   compactDiscoverySchema,
   compactDescriptionSchema,
   lexicalCorpusStatistics,
@@ -57,6 +60,8 @@ interface SearchProbe {
 
 /** The slice of an unscoped search's budget kept for recording what its probes saw. */
 const SETTLE_RESERVE_MS = 500;
+const lexicalStores = new WeakMap<object, number>();
+let nextLexicalStore = 0;
 /** How long a probe claim outlives its request's discovery budget, for settlement and clock skew. */
 const CLAIM_MARGIN_MS = 2_000;
 
@@ -930,6 +935,7 @@ export class CatalogService {
     let view = views.get(key);
     if (!view) {
       view = toolsForSafety(readOnly ? tools.filter((tool) => tool.classification === "read") : tools, safety ?? "all");
+      carryLexicalCatalog(tools, view);
       views.set(key, view);
     }
     return view;
@@ -1365,7 +1371,24 @@ export class CatalogService {
         args.connector !== undefined,
       );
       const searchableCatalogs = catalogs.map((catalog, index) =>
-        Result.map(catalog, (tools) => this.searchView(connectors[index]!.id, tools, true, safety)),
+        Result.map(catalog, (tools) => {
+          const id = connectors[index]!.id;
+          const ctx = this.registry.contextFor(id, this.baseUrl, this.requestScope);
+          const { storage, partition } = catalogOwnerPartition(ctx);
+          let store = lexicalStores.get(storage);
+          if (store === undefined) lexicalStores.set(storage, (store = ++nextLexicalStore));
+          prepareLexicalCatalog(
+            tools,
+            JSON.stringify([
+              store,
+              id,
+              partition,
+              retainedCatalogIdentity(ctx),
+              catalogGenerationFor(this.requestScope, id),
+            ]),
+          );
+          return this.searchView(id, tools, true, safety);
+        }),
       );
       const matches: Array<{
         connector: Connector;
