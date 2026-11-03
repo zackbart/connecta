@@ -7,8 +7,11 @@
 const ROUND_TRIPS = new Set(["all", "run", "first", "raw"]);
 const INNER = Symbol("inner statement");
 
-export function withD1Latency(db: D1Database, ms: number): D1Database {
-  const wait = () => new Promise<void>((resolve) => setTimeout(resolve, ms));
+export function withD1Latency(
+  db: D1Database,
+  ms: number,
+  wait: () => Promise<void> = () => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+): D1Database {
   const statement = (inner: D1PreparedStatement): D1PreparedStatement =>
     new Proxy(inner, {
       get(target, property) {
