@@ -568,3 +568,22 @@ it("INV-6 INV-8: serves every guide's bytes, DEL and route-like bytes included, 
     await c.close();
   }
 });
+
+it("advertises private local TTLs without crossing caller catalogs", async () => {
+  const alice = new SkillsRegistry(makeRegistry([guided("notes-alice")]), BASE);
+  const bob = new SkillsRegistry(makeRegistry([guided("notes-bob")]), BASE);
+  for (const registry of [alice, bob]) {
+    const listed = await registry.list();
+    expect(listed).toMatchObject({ ttlMs: 300_000, cacheScope: "private" });
+    expect(await registry.get(listed.skills[0]!.uri)).toMatchObject({ ttlMs: 300_000, cacheScope: "private" });
+    expect(await registry.read(listed.skills[0]!.uri)).toMatchObject({ ttlMs: 300_000, cacheScope: "private" });
+    expect(await registry.resources()).toMatchObject({ ttlMs: 300_000, cacheScope: "private" });
+  }
+  expect(JSON.stringify(await alice.list())).not.toContain("notes-bob");
+  expect(JSON.stringify(await bob.list())).not.toContain("notes-alice");
+  const remote = new SkillsRegistry(makeRegistry([downstream()]), BASE);
+  expect(await remote.list()).toMatchObject({ ttlMs: 0, cacheScope: "private" });
+  expect(await remote.get("usage")).toMatchObject({ ttlMs: 0 });
+  expect(await remote.resources()).toMatchObject({ ttlMs: 0 });
+  expect(await remote.read("usage")).toMatchObject({ ttlMs: 0 });
+});

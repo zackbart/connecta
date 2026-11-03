@@ -422,7 +422,11 @@ the short conditional guide pointers in its tool definitions.
 Connecta declares `resources: {}` and `io.modelcontextprotocol/skills`, then
 serves `skills/list`, `skills/get`, `resources/list` and `resources/read` from
 the same registry as `skills` and `connecta.skill`. These methods return
-`resultType: "complete"`, `ttlMs: 0` and `cacheScope: "private"`. Listing pages
+`resultType: "complete"` and `cacheScope: "private"`. Local-only caller views
+advertise `ttlMs: 300000` (five minutes); any visible downstream skill source
+keeps `ttlMs: 0`, including reads of local guides on that view. Clients must key
+private caches by endpoint and authenticated caller. No request-bound catalog or
+digest promise is retained across requests. Listing pages
 contain at most five complete skills: usage first, required connector guides
 next, other connector guides, downstream skills, then the investigation guide.
 Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.

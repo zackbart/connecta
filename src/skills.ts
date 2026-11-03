@@ -563,6 +563,7 @@ export interface SkillsRegistryOptions {
  */
 export class SkillsRegistry {
   private readonly scope: object;
+  private readonly cacheHints: typeof PRIVATE;
   private readonly local: Effect.Effect<SkillRecord[], unknown>;
   private snapshot: Effect.Effect<SkillRecord[], unknown> | undefined;
 
@@ -573,6 +574,10 @@ export class SkillsRegistry {
   ) {
     void SkillsRegistry.nativePrograms;
     this.scope = options.requestScope ?? {};
+    this.cacheHints = {
+      ...PRIVATE,
+      ttlMs: registry.listConnectors().some((connector) => connector.downstreamSkills !== undefined) ? 0 : 300_000,
+    };
     this.local = authCall<SkillRecord[]>(localRecords, [registry.listConnectors()]);
   }
 
@@ -774,7 +779,7 @@ export class SkillsRegistry {
                 const text = record.connector
                   ? sentSecretsForRequest(self.scope).redact(record.content!)
                   : record.content!;
-                return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text }] };
+                return { ...self.cacheHints, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text }] };
               }
               if (!uri.startsWith("skill://downstream/")) throw self.missing(uri);
               const record = (yield* upwardStep(authInvoke<SkillRecord[]>(self, "records", []))).find((record) =>
@@ -814,7 +819,7 @@ export class SkillsRegistry {
               self.options.onRead?.(record.connector, "downstream");
               // Downstream file contents take the request's full payload rules before any reader sees them.
               const clean = sentSecretsForRequest(self.scope).redact(content);
-              return { ...PRIVATE, contents: [{ ...clean, uri } as ConnectorSkillResourceContents] };
+              return { ...self.cacheHints, contents: [{ ...clean, uri } as ConnectorSkillResourceContents] };
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as SkillsRegistry).scope)));
       },
@@ -845,7 +850,7 @@ export class SkillsRegistry {
                 }>(self, "list", [cursor]),
               );
               return {
-                ...PRIVATE,
+                ...self.cacheHints,
                 resources: page.skills.flatMap((skill) =>
                   (skill.resources === "dynamic" ? [{ uri: skill.uri }] : skill.resources).map((file) => ({
                     uri: file.uri,
@@ -876,7 +881,10 @@ export class SkillsRegistry {
           () =>
             authFlow<{ skill: ConnectorSkill; resultType: "complete"; ttlMs: number; cacheScope: "private" }>(
               function* () {
-                return { ...PRIVATE, skill: (yield* upwardStep(authInvoke<SkillRecord>(self, "lookup", [uri]))).entry };
+                return {
+                  ...self.cacheHints,
+                  skill: (yield* upwardStep(authInvoke<SkillRecord>(self, "lookup", [uri]))).entry,
+                };
               },
             ),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as SkillsRegistry).scope)));
@@ -904,7 +912,7 @@ export class SkillsRegistry {
               if (!Number.isSafeInteger(offset) || offset % SKILL_PAGE_SIZE !== 0 || offset >= records.length)
                 throw new ConnectorCallError("invalid_args", "Invalid skills cursor.");
               return {
-                ...PRIVATE,
+                ...self.cacheHints,
                 skills: records.slice(offset, offset + SKILL_PAGE_SIZE).map((record) => record.entry),
                 ...(offset + SKILL_PAGE_SIZE < records.length
                   ? { nextCursor: `skills:${offset + SKILL_PAGE_SIZE}` }
