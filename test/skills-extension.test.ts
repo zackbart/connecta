@@ -597,6 +597,8 @@ it("keeps old hash names and URIs resolvable after readable slug naming", async 
   const entry = (await registry.list()).skills[1]!;
   expect(entry.frontmatter.name).toBe(`crm-alice-${hash.slice(0, 12)}`);
   for (const alias of [
+    String(entry.frontmatter.name),
+    entry.uri,
     `connector-${hash.slice(0, 48)}`,
     `skill://connecta/connectors/connector-${hash.slice(0, 48)}`,
     `skill://connecta/connectors/connector-${hash.slice(0, 48)}/SKILL.md`,
@@ -604,5 +606,67 @@ it("keeps old hash names and URIs resolvable after readable slug naming", async 
     id,
   ]) {
     expect((await registry.get(alias)).skill.uri).toBe(entry.uri);
+  }
+});
+
+it("reserves configured IDs and canonical identities before compatibility aliases", async () => {
+  const id = "crm_alice";
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(id))), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  const readable = `crm-alice-${digest.slice(0, 12)}`;
+  const legacy = `connector-${digest.slice(0, 48)}`;
+  for (const ids of [
+    [id, readable, legacy],
+    [legacy, readable, id],
+  ]) {
+    const connectors = ids.map((value) => guided(value));
+    const root = makeRegistry(connectors);
+    const registry = new SkillsRegistry(root, BASE);
+    const entries = (await registry.list()).skills;
+    expect(new Set(entries.map((entry) => entry.uri)).size).toBe(5);
+    expect((await registry.get("usage")).skill.frontmatter.name).toBe("usage");
+    const c = createTestConnecta({ connectors, logger: silentLogger });
+    try {
+      for (const key of [readable, legacy, "crm-alice-" + digest.slice(0, 12) + "-1"]) {
+        const entry = entries.find((entry) => entry.frontmatter.name === key)!;
+        expect(entry).toBeDefined();
+        const text = (await registry.read(entry.uri)).contents[0]!.text;
+        expect(await registry.text(key)).toBe(text);
+        expect((await createMetaTools(root, BASE).skills({ name: key })).content[0]?.text).toBe(text);
+        const guest = (await buildSandboxProviders(root, BASE, silentLogger))[0]!.fns;
+        expect(((await guest.skill!(key)) as { text: string }).text).toBe(text);
+        expect((await rpc(c, "skills/get", { uri: entry.uri })).result.skill.uri).toBe(entry.uri);
+        expect((await rpc(c, "resources/read", { uri: entry.uri })).result.contents[0].text).toBe(text);
+      }
+    } finally {
+      await c.close();
+    }
+  }
+});
+
+it("rejects ambiguous compatibility aliases without losing canonical guides", async () => {
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  const spy = vi.spyOn(crypto.subtle, "digest").mockImplementation((algorithm, data) => {
+    const id = new TextDecoder().decode(data);
+    return digest(algorithm, ["crm_alice", "crm__alice"].includes(id) ? new TextEncoder().encode("shared") : data);
+  });
+  try {
+    const registry = new SkillsRegistry(makeRegistry([guided("crm_alice"), guided("crm__alice")]), BASE);
+    const entries = (await registry.list()).skills;
+    const hash = Array.from(new Uint8Array(await digest("SHA-256", new TextEncoder().encode("shared"))), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+    for (const alias of [
+      `connector-${hash.slice(0, 48)}`,
+      `skill://connecta/connectors/connector-${hash.slice(0, 48)}/SKILL.md`,
+    ]) {
+      await expect(registry.get(alias)).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(registry.text(alias)).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(registry.read(alias)).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    for (const entry of entries) expect((await registry.get(entry.uri)).skill.uri).toBe(entry.uri);
+  } finally {
+    spy.mockRestore();
   }
 });

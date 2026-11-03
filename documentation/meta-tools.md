@@ -373,7 +373,7 @@ even when a connector has that id, whose guide stays at `connector:usage` or
 `Connector "<id>" has no usage guide.`; any other unknown name fails as an
 unknown skill. Names containing `:`, including URIs, never fall back to a bare
 id. MCP `skills/get` resolves names the same way; `resources/read` accepts only
-document URIs.
+document URIs. Canonical names and document/root URIs take priority over compatibility aliases. An alias shared by multiple guides fails as ambiguous; use the canonical URI.
 
 A connector-scoped lexical miss keeps that connector's guide metadata under
 `queryAnalysis`. This matters for generic wrappers whose broad tool name
@@ -439,7 +439,9 @@ Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.
 
 The local document URIs are `skill://connecta/usage/SKILL.md` and
 `skill://connecta/connectors/<slug>/SKILL.md`. A valid Agent Skills connector ID
-is its slug; other IDs use a readable normalized ID slug plus a 12-character SHA-256 suffix.
+is its slug; other IDs use a readable normalized ID slug plus a 12-character
+SHA-256 suffix. Generated slugs reserve every configured connector ID and append
+a deterministic numeric suffix on collision.
 The former `connector-<48-character-hash>` names, roots and file URIs remain
 resolvable aliases. Construction warns, without rejecting a guide, when its
 summary has no English task verb or operation noun from the advisory heuristic
