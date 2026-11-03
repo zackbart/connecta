@@ -1,3 +1,4 @@
+import { connectorGuide, connectorSkillName } from "./skills.js";
 import { bytesToHex } from "./bytes.js";
 import { routeNames } from "./agent-routes.js";
 import { duringViewEffect } from "./runtime/call.js";
@@ -171,6 +172,11 @@ function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJS
 function describe(entry: NativeTool, executeCode: boolean): string {
   const lines = [entry.tool.description?.trim() || entry.tool.title || entry.tool.name];
   if (executeCode) lines.push(`Program address: ${entry.connector.id}.${entry.tool.name}`);
+  if (connectorGuide(entry.connector)) {
+    const routes = routeNames(executeCode ? "native-code" : "native");
+    const pointer = `Guide: ${routes.skills}({name:${JSON.stringify(connectorSkillName(entry.connector.id))}}).`;
+    lines.push(pointer.length <= 160 ? pointer : `Guide: ${routes.skills} lists this connector’s guidance.`);
+  }
   return lines.join("\n\n");
 }
 

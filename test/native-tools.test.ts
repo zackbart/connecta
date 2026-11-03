@@ -227,6 +227,39 @@ describe("native tool surface", () => {
     expect(meta.result.ttlMs).toBe(3_600_000);
   });
 
+  it("points guided native tools at the serving skills route with bounded overhead", async () => {
+    const storage = memoryStorage();
+    const app = createTestConnecta({
+      storage,
+      accessTokens: accessTokens(storage),
+      agents: ["assistant"],
+      connectors: [
+        {
+          id: "crm",
+          usageGuide: "Use stable person ids.",
+          listTools: async () => [{ name: "read", description: "Read person", annotations: { readOnlyHint: true } }],
+          callTool: async () => ({}),
+        },
+      ],
+      pools: {
+        native: { tools: ["crm"], members: ["agent:assistant"], surface: "native", executeCode: true },
+        nocode: { tools: ["crm"], members: ["agent:assistant"], surface: "native", executeCode: false },
+      },
+    });
+    try {
+      const token = await issueAgentToken(storage, "assistant");
+      for (const pool of ["native", "nocode"]) {
+        const listed = await rpc(app, token, pool, "tools/list", {});
+        const description = listed.result.tools.find((t: { name: string }) => t.name === "crm__read").description;
+        expect(description).toContain('Guide: skills({name:"connector:crm"}).');
+        expect(description.split("Guide: ")[1].length).toBeLessThan(64);
+        expect(description).not.toContain("search_tools");
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   it("INV-1: annotates a tool the deployment reclassifies as a write as destructive", async () => {
     const deployed = deployment({ classification: { crm: { get_person: "write" } } });
     const token = await issueAgentToken(deployed.storage, "assistant");

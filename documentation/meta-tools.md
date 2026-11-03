@@ -1622,3 +1622,6 @@ repeat with `sep-2640-skills-manifest` and `sep-2640-skills-directory`.
 Stop the fixture when done. `--force` selects extension scenarios outside the
 base protocol timeline. This remains an optional contributor check: the
 separately installed runner and dependency graph are not pinned in Connecta CI.
+
+Native tool descriptions append a short `skills({name:"connector:crm"})` guide
+pointer when their connector declares guidance. Guide-free descriptions are unchanged.
