@@ -75,6 +75,9 @@ afterEach(async () => {
 
 const scope = (storage: KVStorage, sealer?: ReturnType<typeof vaultOAuthSealer>): ConnectorContext =>
   attachOAuthSealer({ ...ctx(storage), requestScope: {} }, sealer);
+/** A pending consent's URL is stored only sealed, so Continue needs a sealing vault. */
+const flowSealer = () =>
+  vaultOAuthSealer(new CredentialVault(memoryStorage(), CREDENTIAL_KEY), "svc", undefined, silentLogger);
 const connector = () => remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
 const clientOf = (url: string | undefined) => new URL(required(url)).searchParams.get("client_id");
 const stateOf = (url: string | undefined) => required(new URL(required(url)).searchParams.get("state") ?? undefined);
@@ -607,18 +610,41 @@ describe("remoteMcp() continue and restart starts", () => {
       .length;
   };
 
+  it("continue mints a fresh consent without a vault, and the earlier link still completes", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      const first = await c.startAuth!(scope(storage));
+      const epoch = await epochOf(storage);
+      const second = await c.startAuth!(scope(storage));
+      expect(second.state).toBe("auth_required");
+      expect(second.authorizationReused).toBeUndefined();
+      expect(second.authorizationUrl).not.toBe(first.authorizationUrl);
+      // No consent URL is stored, and no second registration was needed.
+      for (const key of await storage.list(oauthFlowKeys.prefix)) {
+        expect(JSON.parse(required((await storage.get(key)) ?? undefined))).not.toHaveProperty("url");
+      }
+      expect(server.counts.register).toBe(1);
+      expect(await epochOf(storage)).toBe(epoch);
+      await consent(c, storage, first.authorizationUrl);
+      expect(server.counts.token).toBe(1);
+      expect(await new KvOAuthProvider("svc", storage, REDIRECT).tokens()).toBeDefined();
+    });
+  });
+
   it("continue reuses a recent pending URL without touching the network", async () => {
     await withServer(async (server) => {
       const storage = memoryStorage();
       const c = connector();
-      const restarted = await c.startAuth!(scope(storage), { force: true });
+      const seal = flowSealer();
+      const restarted = await c.startAuth!(scope(storage, seal), { force: true });
       expect(restarted.state).toBe("auth_required");
       expect(restarted.authorizationReused).toBeUndefined();
       expect(server.counts.register).toBe(1);
       const fetches = server.counts.fetches;
       const epoch = await epochOf(storage);
 
-      const continued = await c.startAuth!(scope(storage), { force: false });
+      const continued = await c.startAuth!(scope(storage, seal), { force: false });
 
       expect(continued).toMatchObject({
         state: "auth_required",
@@ -940,11 +966,12 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
       },
     };
     const c = connector();
+    const seal = flowSealer();
 
-    const startA = c.startAuth!(scope(storage), { force: false });
+    const startA = c.startAuth!(scope(storage, seal), { force: false });
     await reached.promise;
 
-    const startB = await c.startAuth!(scope(storage), { force: true });
+    const startB = await c.startAuth!(scope(storage, seal), { force: true });
     const urlB = required(startB.authorizationUrl);
 
     resume.resolve();
@@ -954,7 +981,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
     // A's late consent was removed, and B's is still the one Continue hands back.
     expect(await backing.list(oauthFlowKeys.prefix)).toEqual([await consentKey(stateOf(urlB))]);
-    const continued = await c.startAuth!(scope(storage), { force: false });
+    const continued = await c.startAuth!(scope(storage, seal), { force: false });
     expect(continued).toMatchObject({ authorizationUrl: urlB, authorizationReused: true });
   });
 });

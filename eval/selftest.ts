@@ -1,3 +1,19 @@
+import { guidanceSelftest } from "./guidance-selftest.js";
+import { GUIDANCE_ARMS, guidanceValue } from "./deploy/guidance.js";
+import assert from "node:assert/strict";
+for (const arm of GUIDANCE_ARMS) {
+  const served = guidanceValue(
+    { guide: "connector:supabase", guideSummary: "Resolve projects.", instructions: "Base" },
+    arm,
+  ) as Record<string, unknown>;
+  assert.equal(served.guide, "connector:supabase");
+  assert.equal("guideSummary" in served, arm === "summary" || arm === "inline");
+  assert.equal("guideConvention" in served, false);
+  assert.equal(String(served.instructions).includes("Before working"), arm === "instruction-fetch");
+  const guest = guidanceValue(JSON.stringify({ tools: [served] }), arm) as string;
+  assert.equal(JSON.parse(guest).tools[0].guide, "connector:supabase");
+}
+console.log("ok   deterministic guidance delivery arms preserve pointers and vary only claimed context");
 import { googleBoundaryControls, googleTransportControls } from "./tasks/google-controls.js";
 /**
  * `pnpm run eval:selftest` — the harness checking itself, with no LLM.
@@ -628,6 +644,7 @@ if (failures) {
   console.error(`${failures} task(s) have a broken grader or reference.`);
   process.exitCode = 1;
 }
+await guidanceSelftest();
 if (only) process.exit();
 
 // Exercise the deployed arm selector and both HTTP encodings. Six returns

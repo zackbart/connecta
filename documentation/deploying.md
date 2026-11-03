@@ -210,7 +210,9 @@ and `describeConfig()`, and [optional modules](./architecture.md#optional-deploy
 owns their composition contracts.
 
 Enable `encryptedCredentialVault(storage, key)` before persisting downstream
-OAuth credentials. Without a sealing vault, OAuth grants are stored as plaintext.
+OAuth credentials. With no vault, OAuth grants are stored as plaintext. A
+configured vault without `seal` and `open` refuses construction when any connector
+uses OAuth.
 The platform templates describe the base64 32-byte encryption key. Keep it
 outside the database and source control, and preserve it across upgrades.
 [OAuth state at rest](./auth.md#downstream-oauth-state-at-rest) owns sealing and
@@ -312,6 +314,17 @@ paste a token or raw downstream failure body into a committed diagnostic log.
 Bump the exact package pin, read the [changelog](../CHANGELOG.md) for every
 intervening release, and apply the relevant migration before startup. `init`
 does not merge changes into an existing deployment.
+
+A custom vault without `seal` and `open` now refuses construction when any
+connector has OAuth. Before upgrading, add both methods or switch to
+`encryptedCredentialVault(storage, key)`. Existing plaintext grants are sealed on
+first read; see [OAuth state at rest](./auth.md#downstream-oauth-state-at-rest).
+
+A deployment using `clerkAuth` must set a fixed URL before upgrading:
+`ConnectaConfig.publicUrl`, or `clerkAuth({ publicUrl })`. Startup otherwise fails
+with a configuration error. Use the origin clients reach, because tokens' `resource`
+must match it exactly; see
+[Clerk OAuth tokens](./auth.md#clerk-oauth-tokens-and-operator-sessions).
 
 Before upgrading past 0.37.1 with pre-0.29 state, follow
 [Retired layout migrations](./migration-retired-layouts.md). Version 0.37.1 is

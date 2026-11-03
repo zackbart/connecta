@@ -9,6 +9,7 @@ const app = createConnecta({
   readOnly: true, logger: "silent", connectors: [],
   maintainers: [{ namespace: "clerk", id: "alice" }],
   executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
+  publicUrl: "https://connecta.example",
   auth: clerkAuth({ publishableKey: `pk_test_${btoa("clerk.example.test$")}`, secretKey: "sk_test_fake" }),
 });
 export default {

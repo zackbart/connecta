@@ -26,6 +26,7 @@ it.each(["body", "oauth-jwks", "handshake"])(
           connectors: [],
           logger: "silent",
           maintainers: [{ namespace: "clerk", id: "alice" }],
+          publicUrl: "https://connecta.example",
           auth: clerkAuth({ publishableKey: `pk_test_${btoa("clerk.example.test$")}`, secretKey: "sk_test_fake" }),
         });
     // Use the real Node TCP fetch, only redirecting the SDK's destination. No

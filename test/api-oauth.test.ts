@@ -22,6 +22,7 @@ import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
 import { PUBLIC_TOKEN_REQUEST_HEADERS } from "../src/auth/static-oauth.js";
@@ -477,10 +478,29 @@ describe("api() oauth authorization start", () => {
     expect(url.href).not.toContain("church-secret");
     expect(fetchSpy).not.toHaveBeenCalled();
 
-    // A continue hands back the same URL rather than overwrite its verifier.
+    // No vault stores no consent URL: a continue mints a fresh, equally valid one.
+    const again = await connector.startAuth!(registry.contextFor("ccb", BASE));
+    expect(again.authorizationReused).toBeUndefined();
+    expect(again.authorizationUrl).not.toBe(started.authorizationUrl);
+    // A restart starts a fresh flow.
+    const restarted = await connector.startAuth!(registry.contextFor("ccb", BASE), { force: true });
+    expect(restarted.authorizationUrl).not.toBe(started.authorizationUrl);
+  });
+
+  it("hands a pending consent back when a vault seals it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 599 })),
+    );
+    const connector = api("ccb", { oauth: OAUTH, tools: [] });
+    const storage = memoryStorage();
+    const registry = makeRegistry([connector], {
+      storage,
+      credentialVault: new CredentialVault(storage, CREDENTIAL_KEY),
+    });
+    const started = await connector.startAuth!(registry.contextFor("ccb", BASE));
     const again = await connector.startAuth!(registry.contextFor("ccb", BASE));
     expect(again).toMatchObject({ authorizationUrl: started.authorizationUrl, authorizationReused: true });
-    // A restart starts a fresh flow.
     const restarted = await connector.startAuth!(registry.contextFor("ccb", BASE), { force: true });
     expect(restarted.authorizationUrl).not.toBe(started.authorizationUrl);
   });
