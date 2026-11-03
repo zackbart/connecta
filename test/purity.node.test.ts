@@ -397,3 +397,19 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     }
   });
 });
+
+// The child runs no server orchestration: only IPC, error identity and the guest.
+describe("QuickJS child import purity", () => {
+  it("keeps Effect and server orchestration out of the emitted child graph", () => {
+    const graph = importGraph(join(SRC, "executors", "quickjs-child.ts"));
+    for (const file of graph) {
+      expect(allSpecifiers(codeOnly(file)).some(isEffectSpecifier), file).toBe(false);
+      expect(
+        allSpecifiers(codeOnly(file)).some((s) => s.startsWith("@modelcontextprotocol/")),
+        file,
+      ).toBe(false);
+      for (const forbidden of ["invocation.ts", "agent-routes.ts", "server.ts", "registry.ts", "catalog-service.ts"])
+        expect(graph.has(join(SRC, forbidden)), forbidden).toBe(false);
+    }
+  });
+});
