@@ -34,7 +34,7 @@ import { readRequest, renewedAfterUnauthorized, type ProviderRequest } from "../
 import { renewableGrantFor } from "../auth/renewable-grant.js";
 import type { ApiOAuthAccess } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
-import { responseRequest, type GuardedClient } from "./client.js";
+import { failedResponseRequest, responseRequest, type GuardedClient } from "./client.js";
 import { Refusal, RequestRefused, type HttpFailure } from "./errors.js";
 import { Dispatches, Signal, duringCall, type CallServices } from "./services.js";
 
@@ -153,7 +153,15 @@ export function refreshOnce(
     });
   const execute = (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
+      const grant = yield* Grant;
+      const observeOversized = (failure: object) => {
+        const sent = failedResponseRequest(failure);
+        return responseRequest(failure)?.status === 401 && sent && grant.observe
+          ? grant.observe(sentToken(sent), "refused")
+          : Effect.void;
+      };
       const response = yield* inner.execute(request).pipe(
+        Effect.tapErrorTag("ResponseTooLarge", observeOversized),
         Effect.catchTag("ResponseTooLarge", (failure): Effect.Effect<never, HttpFailure, CallServices> => {
           const entry = responseRequest(failure);
           return options?.challengeMaxBytes !== undefined && entry?.status === 401
@@ -161,7 +169,6 @@ export function refreshOnce(
             : Effect.fail(failure);
         }),
       );
-      const grant = yield* Grant;
       if (grant.observe && (response.status === 401 || (response.status >= 200 && response.status < 300)))
         yield* grant.observe(sentToken(response.request), response.status === 401 ? "refused" : "accepted");
       if (response.status !== 401) return response;
@@ -224,15 +231,14 @@ export function refreshOnce(
         );
       renewedAfterUnauthorized(entry, stale, fresh);
       // `authenticate` runs again on the replay and reads the renewed token.
-      const replay = yield* inner
-        .execute(request)
-        .pipe(
-          Effect.catchTag("ResponseTooLarge", (failure) =>
-            options?.challengeMaxBytes !== undefined && responseRequest(failure)?.status === 401
-              ? grant.rejected
-              : Effect.fail(failure),
-          ),
-        );
+      const replay = yield* inner.execute(request).pipe(
+        Effect.tapErrorTag("ResponseTooLarge", observeOversized),
+        Effect.catchTag("ResponseTooLarge", (failure) =>
+          options?.challengeMaxBytes !== undefined && responseRequest(failure)?.status === 401
+            ? grant.rejected
+            : Effect.fail(failure),
+        ),
+      );
       if (grant.observe && (replay.status === 401 || (replay.status >= 200 && replay.status < 300)))
         yield* grant.observe(sentToken(replay.request), replay.status === 401 ? "refused" : "accepted");
       if (replay.status !== 401) return replay;

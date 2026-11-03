@@ -2999,7 +2999,10 @@ Call observations carry the epoch and revision read with their token and are
 accepted only while both still match the live grant. No wall clock orders
 observations. Reconsent with an identical token still advances the revision.
 The observation stores only its revision and the `accepted`/`refused` enum;
-arguments, response bodies, code and error text are excluded. An observation
+arguments, response bodies, code and error text are excluded. A declared oversized
+401 records refusal without reading its body, including on a replay. Normal Connect
+resets only while the refused epoch, revision and outcome it read still match;
+a concurrently recovered grant is preserved. An observation
 storage failure does not replace the already received API response. `oauth` and
 `credential` are exclusive per connector, giving `auth_required` one recovery.
 For providers offering both, deployment config chooses; handlers check `ctx.oauth`.

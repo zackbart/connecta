@@ -550,10 +550,16 @@ export const grantStoreMethods = {
     this: KvOAuthProvider,
     operatorDisconnected: boolean = false,
     preserveClient: boolean = false,
+    refused?: { epoch: string; revision: number },
   ) {
     return authFlow<void>(
       function* (this: KvOAuthProvider) {
-        const operation = authInvoke<void>(this, "performReset", [operatorDisconnected, preserveClient]);
+        const operation = authInvoke<void>(this, "performReset", [
+          operatorDisconnected,
+          preserveClient,
+          undefined,
+          refused,
+        ]);
         if (!this.onReset) return (yield operation) as void;
         const reset = runEdge(operation);
         this.onReset?.(reset);
@@ -577,6 +583,7 @@ export const grantStoreMethods = {
     operatorDisconnected: boolean,
     preserveClient: boolean,
     revoke?: FetchLike,
+    refused?: { epoch: string; revision: number },
   ) {
     return authFlow<void>(
       function* (this: KvOAuthProvider) {
@@ -586,6 +593,15 @@ export const grantStoreMethods = {
             raw: string | null;
             grant: Grant;
           };
+          // Compare again on every CAS attempt: recovery may have changed the
+          // epoch, token revision, or observation since Connect read it.
+          if (
+            refused &&
+            (grant.epoch !== refused.epoch ||
+              (grant.tokenRevision ?? 0) !== refused.revision ||
+              grant.observation?.outcome !== "refused")
+          )
+            return;
           const carried = preserveClient && !operatorDisconnected ? this.carriableClient(grant) : undefined;
           const encoded = (yield authInvoke(this, "encodeGrant", [{ epoch, body: carried ?? {} }, null])) as string;
           let written: boolean;

@@ -722,7 +722,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * Then the old epochs' consents are removed; that is hygiene, since their
    * callbacks fail the epoch check anyway and the records expire.
    */
-  declare resetAuthorization: (operatorDisconnected?: boolean, preserveClient?: boolean) => Promise<void>;
+  declare resetAuthorization: (
+    operatorDisconnected?: boolean,
+    preserveClient?: boolean,
+    refused?: { epoch: string; revision: number },
+  ) => Promise<void>;
 
   /** Remove the local grant before a bounded, best-effort RFC 7009 request. */
   declare disconnectAuthorization: (send: FetchLike) => Promise<void>;
@@ -736,6 +740,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     operatorDisconnected: boolean,
     preserveClient: boolean,
     revoke?: FetchLike,
+    refused?: { epoch: string; revision: number },
   ) => Promise<void>;
 
   /**

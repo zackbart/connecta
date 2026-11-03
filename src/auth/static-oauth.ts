@@ -1153,11 +1153,16 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           ? false
           : ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean);
         if (ctx.signal?.aborted) throw ctx.signal.reason;
-        const refused =
-          ((yield authInvoke(provider, "peekGrant", [])) as Awaited<ReturnType<StaticOAuthProvider["peekGrant"]>>)
-            .observation?.outcome === "refused";
+        const observed = (yield authInvoke(provider, "peekGrant", [])) as Awaited<
+          ReturnType<StaticOAuthProvider["peekGrant"]>
+        >;
+        const refused = observed.observation?.outcome === "refused";
         if (opts?.force || disconnected || refused || rejectedScopes.has(scopeOf(original))) {
-          (yield authInvoke(provider, "resetAuthorization", [])) as void;
+          const fence =
+            !opts?.force && !disconnected && refused
+              ? { epoch: observed.epoch, revision: observed.observation!.revision }
+              : undefined;
+          (yield authInvoke(provider, "resetAuthorization", [false, false, fence])) as void;
           rejectedScopes.delete(scopeOf(original));
         } else {
           // Hand back a recent consent URL rather than overwrite the verifier

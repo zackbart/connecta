@@ -2169,3 +2169,39 @@ it("API refresh commits advance the revision and fence the superseded token's ob
   expect(after.tokenRevision).toBe(before.tokenRevision + 1);
   expect(after.observation).toEqual({ revision: after.tokenRevision, outcome: "accepted" });
 });
+
+it.each(["call", "consent"])("ordinary Connect preserves a grant recovered by %s", async (recovery) => {
+  const provider = fakeProvider();
+  install(provider);
+  const connector = ccb();
+  const storage = memoryStorage();
+  const registry = makeRegistry([connector], { storage });
+  const ctx = () => registry.contextFor("ccb", BASE);
+  await authorize(connector, ctx, provider);
+  provider.control.apiRejects = true;
+  await expect(connector.callTool("whoami", {}, ctx())).rejects.toBeDefined();
+  const key = `${scopes.connector("ccb")}${oauthGrantKeys.grant}`;
+  const captured = deferred<void>();
+  const release = deferred<void>();
+  const get = storage.get.bind(storage);
+  let n = 0;
+  vi.spyOn(storage, "get").mockImplementation(async (k) => {
+    const raw = await get(k);
+    if (k === key && ++n === 2) {
+      captured.resolve();
+      await release.promise;
+    }
+    return raw;
+  });
+  const connect = connector.startAuth!(ctx());
+  await captured.promise;
+  provider.control.apiRejects = false;
+  if (recovery === "consent") await authorize(connector, ctx, provider);
+  await connector.callTool("whoami", {}, ctx());
+  expect((await connector.status!(ctx())).state).toBe("ok");
+  const recovered = await get(key);
+  release.resolve();
+  await connect;
+  expect(await get(key)).toBe(recovered);
+  expect((await connector.status!(ctx())).state).toBe("ok");
+});

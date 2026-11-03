@@ -119,6 +119,12 @@ export interface GuardedClient<R = CallServices> {
 
 const decoder = new TextDecoder();
 const responseEntries = new WeakMap<object, ProviderRequest>();
+// Private request identity for middleware observing a rejected response. Never
+// attach headers or body to the failure or its payload-free ledger entry.
+const failedRequests = new WeakMap<object, HttpClientRequest.HttpClientRequest>();
+export function failedResponseRequest(failure: object): HttpClientRequest.HttpClientRequest | undefined {
+  return failedRequests.get(failure);
+}
 
 /** The core's physical request, also available to direct HttpClient middleware. */
 export function responseRequest(response: object): ProviderRequest | undefined {
@@ -324,6 +330,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         const refused = (failure: HttpFailure) => {
           dispatch.failure = failure;
           responseEntries.set(failure, entry);
+          failedRequests.set(failure, request);
           return Effect.fail(failure);
         };
         const response = yield* Effect.tryPromise({
