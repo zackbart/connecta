@@ -1452,7 +1452,9 @@ export function hatch(
       const send = options.binding
         ? options.binding.send(call(), sendOptions)
         : connection.sendPath(request!, sendOptions);
-      const answer = yield* send.pipe(
+      // Both send paths share the binding result contract. Keep its optional
+      // metadata typed even when the plain HTTP branch omits those properties.
+      const answer: Effect.Success<ReturnType<HatchBinding["send"]>> = yield* send.pipe(
         Effect.catch((failure) =>
           Effect.gen(function* () {
             if (!key || args.idempotencyKey) return yield* Effect.fail(failure);
