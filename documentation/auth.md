@@ -295,7 +295,7 @@ It has no queue and no configuration option. When full, a request receives HTTP
 `error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true }`.
 The operator log records only the checked `authentication_busy` reason, never
 credentials or identity-provider diagnostics. Retry after the indicated delay;
-Connecta does not automatically retry the authentication.
+Connecta does not automatically retry authentication, except for one rejected Cloudflare Access identity lookup inside its existing deadline (see [Access on Workers](#cloudflare-access-on-workers)).
 
 Underlying work stays charged until it settles, including cancellation cleanup.
 A caller leaving alone never releases capacity. After an authorization's hard
@@ -2253,7 +2253,9 @@ the first request on a fresh instance. It grants no identity and never falls
 back to another provider. Missing context without an assertion still returns 401. An unusable trusted AUD returns retryable 503 with
 `problem: "access_audience_invalid"`; it never proceeds to identity lookup.
 A rejected human identity, including a service identity or an unusable user
-id, returns 403. A thrown identity lookup or its five-second deadline returns retryable
+id, returns 403. A thrown identity lookup gets one retry after 100–250 ms of
+jitter, within the original five-second deadline. A hanging lookup is never
+retried concurrently. The second rejection or the deadline returns retryable
 503 with `problem: "identity_unavailable"` and `Retry-After: 1`. Every refusal
 carries `Cache-Control: no-store`; every unavailable-verification 503 carries
 `Retry-After: 1` and no `WWW-Authenticate` challenge. None of these failures admits an identity,
@@ -2271,8 +2273,21 @@ identifies the generic route fallthrough, `authorization_header_invalid` a
 malformed header, and `authentication_failed` an unclassified provider refusal.
 Access verification 503s emit `[connecta] Cloudflare Access verification unavailable`
 with the same facts and `access_context_unavailable`, `access_audience_invalid`,
-or `access_identity_unavailable`. These records contain no header values,
+or `access_identity_unavailable`. Identity lookup failures additionally carry
+checked `identityLookup` facts: `outcome` (`timeout` or `rejected`), `durationMs`,
+`cold` (whether this was the isolate's first identity lookup), and `inFlight`
+(the isolate's other active lookup attempts when the failure was recorded).
+These records contain no header values,
 assertions, cookies, identities, URLs, response bodies, or exception text.
+
+Identity lookups stay request-owned: Connecta neither coalesces them across
+requests nor caches identity results. A caller-supplied assertion header is
+not an identity cache key. Failed identity lookups always refuse admission.
+
+After an authorized release, validate this mitigation with about 20 concurrent
+sessions. Count runs containing `identity_unavailable`, targeting fewer than
+1% of runs; distinguish `timeout` from `rejected` in the checked lookup facts.
+A passing local concurrency fixture does not establish production acceptance.
 
 Protect the Worker with a Worker-level Access application whose destination is
 `{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
