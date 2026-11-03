@@ -303,6 +303,16 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       );
     const traceText = JSON.stringify(trace);
     const delivered = deliveredValues(trace);
+    const refusedCalls = [
+      ...trace.toolUses
+        .filter((use) => use.isError && typeof use.input.address === "string")
+        .map((use) => ({ address: use.input.address, error: use.resultText ?? "" })),
+      ...world.programs.flatMap((program) =>
+        program.calls
+          .filter((call) => call.name === "connecta.call" && call.errorCode)
+          .map((call) => ({ address: call.args[0], error: call.errorCode! })),
+      ),
+    ];
     return [
       check(
         "correct-destination",
@@ -539,9 +549,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
               ["POST", "invoice"],
             ],
           ) &&
-          trace.toolUses.some(
-            (u) =>
-              u.input.address === "qb_budget_1.create_invoice" && u.isError && /rate_limited/.test(u.resultText ?? ""),
+          refusedCalls.some(
+            (call) => call.address === "qb_budget_1.create_invoice" && /rate_limited/.test(call.error),
           ) &&
           answer.budgetInvoice?.Id === "65" &&
           answer.budgetInvoice?.TotalAmt === 21.75,
@@ -564,14 +573,14 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       check(
         "refusal",
         "Read-only, arbitrary writes, malformed and preflight inputs cannot POST",
-        trace.toolUses.filter((u) => u.isError).length >= 20 &&
+        refusedCalls.length >= 20 &&
           [
             "qb_readonly_0.create_customer",
             "qb_readonly_1.create_customer",
             "qb_alice.quickbooks_api_write",
             "qb_alice.update_invoice",
-          ].every((address) => trace.toolUses.some((u) => u.input.address === address && u.isError)) &&
-          trace.toolUses.filter((u) => /read_only_endpoint/.test(u.resultText ?? "")).length >= 5 &&
+          ].every((address) => refusedCalls.some((call) => call.address === address)) &&
+          refusedCalls.filter((call) => /read_only_endpoint/.test(call.error)).length >= 5 &&
           calls.filter((c) => c.args.method === "GET" && String(c.args.path).endsWith("/item/7")).length === 5,
       ),
       check(
