@@ -1,3 +1,4 @@
+import { startTimingTrace } from "../timing-trace.js";
 import { routeNames } from "../agent-routes.js";
 import { upwardStep } from "../upward.js";
 import { bindDiscoveryEndpoint } from "../discovery-health.js";
@@ -774,12 +775,14 @@ export function createMcpRoute(opts: ServerOptions): {
     const onCallerAbort = () => localAbort.abort(request.signal.reason);
     request.signal.addEventListener("abort", onCallerAbort, { once: true });
     if (request.signal.aborted) onCallerAbort();
+    const finishTiming = startTimingTrace(requestScope, opts.config.timingTraceSampleRate, opts.config.logger);
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     return scopedToBody(
       Effect.gen(function* () {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             requestOwner(requestScope).close();
+            finishTiming?.();
             if (!localAbort.signal.aborted) {
               localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
             }

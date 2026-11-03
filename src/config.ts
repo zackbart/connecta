@@ -572,6 +572,14 @@ const connectaConfig = {
    * saturation.
    */
   admission: object(admission),
+  /** Payload-free request timing logs; 0 disables tracing, 1 samples every MCP request. */
+  timingTraceSampleRate: opaque<number, number>({
+    check: (value, path) => {
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1)
+        throw new ConfigError(`${path} must be a finite number between 0 and 1.`);
+    },
+    resolve: (value) => value ?? 0,
+  }),
   /** Diagnostic output. Use "silent" to disable all diagnostic logging. */
   logger: opaque<Logger | "silent", Logger>({
     check: (value, path) => {

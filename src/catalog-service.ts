@@ -1,3 +1,5 @@
+import { traceFor } from "./timing-trace.js";
+import { utf8Length } from "./bytes.js";
 import { registerAuthMethod } from "./auth/native.js";
 import { META_ROUTES, routeToolInPlace } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
@@ -875,6 +877,14 @@ export class CatalogService {
               ...(this.defer ? { defer: this.defer } : {}),
             }).pipe(
               Effect.map((tools) => {
+                traceFor(this.requestScope)?.record(
+                  "catalog.accepted",
+                  0,
+                  utf8Length(JSON.stringify(tools)),
+                  0,
+                  0,
+                  tools.length,
+                );
                 // An authored catalog lists its declared descriptions for this request's surface.
                 const connector = this.registry.getConnector(id);
                 return carryCatalogFreshness(
