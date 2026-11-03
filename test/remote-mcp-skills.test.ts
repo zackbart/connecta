@@ -271,7 +271,12 @@ describe("remote MCP Skills transport", () => {
     30_000,
   );
 
-  it.each([{}, { resources: {}, extensions: { [EXTENSION]: { directoryRead: "yes" } } }])(
+  it.each([
+    {},
+    { resources: {}, extensions: { [EXTENSION]: { directoryRead: "yes" } } },
+    { resources: {}, extensions: { [EXTENSION]: { revision: "future" } } },
+    { resources: {}, extensions: { [EXTENSION]: { revision: 1 } } },
+  ])(
     "INV-8 INV-10: refuses an undeclared or invalid Skills extension before sending list/read %#",
     async (capabilities) => {
       const f = fixture(() => complete({ skills: [] }), { capabilities });
