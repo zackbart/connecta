@@ -30,7 +30,7 @@ export interface ResolvedPool {
   members: readonly Member[];
   /** Trimmed `owner`: the Workspace address agents in this pool act as. */
   owner?: string;
-  /** Trimmed `description`, appended to this pool's MCP instructions. */
+  /** Trimmed `description`, placed before this pool's MCP routing instructions. */
   description?: string;
   /** Present for a native pool; absent is the six meta-tools. */
   native?: { executeCode: boolean };
