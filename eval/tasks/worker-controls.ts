@@ -191,6 +191,51 @@ export async function workerdProcessControls() {
   try {
     const main = join(dir, "worker.js");
     await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
+    const address = Object.values(networkInterfaces())
+      .flat()
+      .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address;
+    if (!address) throw new Error("Native isolation control requires a non-loopback IPv4 interface");
+    let received = 0;
+    const sink = createNetServer((socket) => {
+      received++;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => sink.listen(0, address, resolve));
+    const sinkPort = (sink.address() as AddressInfo).port;
+    try {
+      await new Promise<void>((resolve, reject) =>
+        connectNet(sinkPort, address)
+          .once("connect", function (this: Socket) {
+            this.destroy();
+            resolve();
+          })
+          .once("error", reject),
+      );
+      if (received !== 1) throw new Error("Native sink is not reachable without isolation");
+      received = 0;
+      await writeFile(
+        main,
+        `import { connect } from "cloudflare:sockets";
+export default { async fetch(request) {
+ if (new URL(request.url).pathname === "/health") return new Response("ok");
+ try { const socket = connect({hostname: ${JSON.stringify(address)}, port: ${sinkPort}}); await socket.opened; await socket.close(); return new Response("escaped"); }
+ catch { return new Response("refused"); }
+} };`,
+      );
+      const dev = await wranglerDev({ name: "connecta-native-isolation", main });
+      try {
+        const response = await fetch(dev.origin + "/probe");
+        if ((await response.text()) !== "refused" || received !== 0)
+          throw new Error("Native workerd escaped TCP isolation");
+        if (!dev.process().output().includes("Landlock ABI="))
+          throw new Error("Native workerd lacks isolation evidence");
+      } finally {
+        await dev.close();
+      }
+    } finally {
+      await new Promise<void>((resolve) => sink.close(() => resolve()));
+    }
+    await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
     for (const cleanup of ["close", "killAll"] as const) {
       const dev = await wranglerDev({ name: "connecta-workerd-control", main, bootMs: 60_000 });
       const pgid = dev.process().child.pid!;

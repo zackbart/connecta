@@ -45,6 +45,12 @@ import {
 } from "./tasks/worker-controls.js";
 import { fakeTransportInterleaving, fakeTransportRedirects, restTransportControls } from "./tasks/rest-controls.js";
 
+if (process.argv.includes("--workerd-isolation-only")) {
+  await workerdProcessControls();
+  console.log("ok   native workerd Landlock isolation and lifecycle");
+  process.exit(0);
+}
+
 await gatewayControls();
 await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");
