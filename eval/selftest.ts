@@ -7,8 +7,8 @@ for (const arm of GUIDANCE_ARMS) {
     arm,
   ) as Record<string, unknown>;
   assert.equal(served.guide, "connector:supabase");
-  assert.equal("guideSummary" in served, arm === "summary");
-  assert.equal("guideConvention" in served, arm === "inline");
+  assert.equal("guideSummary" in served, arm === "summary" || arm === "inline");
+  assert.equal("guideConvention" in served, false);
   assert.equal(String(served.instructions).includes("Before working"), arm === "instruction-fetch");
   const guest = guidanceValue(JSON.stringify({ tools: [served] }), arm) as string;
   assert.equal(JSON.parse(guest).tools[0].guide, "connector:supabase");

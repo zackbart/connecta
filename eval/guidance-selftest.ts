@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { GUIDANCE_ARMS } from "./deploy/guidance.js";
 import { startNodeDeployment } from "./deploy/node.js";
+import { PREREQUISITE_GUIDES } from "./fakes/prerequisites.js";
 import { World } from "./fakes/world.js";
 import { connectMcp } from "./support/mcp.js";
 
@@ -17,6 +18,7 @@ export async function guidanceSelftest() {
         const client = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
         try {
           assert.equal(client.instructions?.includes("Before working with revenuecat"), arm === "instruction-fetch");
+          assert.ok((await client.listTools()).some((tool) => tool.name === "search_tools"));
           for (const [tool, args] of [
             ["search_tools", { query: "", connector: "supabase" }],
             ["execute_code", { code: 'async () => await connecta.search({query:"",connector:"supabase"})' }],
@@ -24,8 +26,9 @@ export async function guidanceSelftest() {
             const result = await client.call(tool, args);
             assert.equal(result.isError, false, `${arm}/${tool}: ${result.text}`);
             assert.ok(result.text.includes("connector:supabase"));
-            assert.equal(result.text.includes("guideSummary"), arm === "summary");
-            assert.equal(result.text.includes("guideConvention"), arm === "inline");
+            assert.equal(result.text.includes("guideSummary"), arm === "summary" || arm === "inline");
+            assert.equal(result.text.includes("guideConvention"), false);
+            assert.equal(result.text.includes(PREREQUISITE_GUIDES.supabase), arm === "inline");
           }
           const fetched = await client.call("skills", { name: "connector:supabase" });
           assert.equal(fetched.isError, false);

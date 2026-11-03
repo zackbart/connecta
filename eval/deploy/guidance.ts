@@ -28,7 +28,7 @@ export function guidanceValue(value: unknown, arm = guidanceArm()): unknown {
   const row = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, guidanceValue(item, arm)]));
   if (typeof row.guide === "string" && guides[row.guide]) {
     if (arm !== "summary") delete row.guideSummary;
-    if (arm === "inline") row.guideConvention = guides[row.guide];
+    if (arm === "inline") row.guideSummary = guides[row.guide];
   }
   if (arm === "instruction-fetch" && typeof row.instructions === "string") {
     row.instructions +=
