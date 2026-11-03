@@ -221,7 +221,7 @@ For example, query a ten-minute window for a neutral Worker `assistant` (replace
 the millisecond timestamps with the window you need):
 
 ```sh
-cf --profile onemany o11y telemetry query \
+cf --profile assistant o11y telemetry query \
   --query-id 00000000-0000-4000-8000-000000000001 \
   --view events --limit 100 \
   --timeframe-from 1793700000000 --timeframe-to 1793700600000 \
