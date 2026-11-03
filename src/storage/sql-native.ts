@@ -37,7 +37,7 @@ import {
 import { assertKnownOptions, ConfigError, keys, optionsOf } from "../config-schema.js";
 import { agentFrictionForCode } from "../activity-friction.js";
 import type { KVStorage } from "../types.js";
-import { accessTokenKeys, validateStorageKey } from "./keys.js";
+import { accessTokenKeys, responseCacheKeys, validateStorageKey } from "./keys.js";
 type SqlValue = string | number | null;
 const sql = (text: string, ...params: SqlValue[]): SqlStatement => ({
   sql: text,
@@ -170,7 +170,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
       return Effect.gen(function* () {
         if (keys.length < 1 || keys.length > 4 || suffixes.length > 2)
           throw new RangeError("Catalog locator exceeds bounds");
-        for (const key of [...keys, generationKey, prefix]) validateStorageKey(key);
+        for (const key of [...keys, generationKey, prefix, ...suffixes]) validateStorageKey(key);
         yield* ensure();
         const rows = yield* driver.all<{ key: string; value: string; value_bytes: TextBytes | null }>(
           sql(
@@ -178,13 +178,14 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
             SELECT key, value FROM connecta_kv WHERE key IN (${keys.map(() => "?").join(",")}) AND ${live}
           ), suffixes(suffix) AS (VALUES ${suffixes.map(() => "(?)").join(",") || "(NULL)"}), wanted(key) AS (
             SELECT key FROM initial UNION ALL
-            SELECT ? || (SELECT value FROM initial WHERE key = ?) || ':' || suffix FROM suffixes
+            SELECT ? || (SELECT value FROM initial WHERE key = ?) || ? || suffix FROM suffixes
           ) SELECT key, ${textColumn("value")} FROM connecta_kv
             WHERE key IN (SELECT key FROM wanted) AND ${live}`,
             ...keys,
             ...suffixes,
             prefix,
             generationKey,
+            responseCacheKeys.locatorSeparator,
           ),
         );
         const values = new Map(
@@ -194,7 +195,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
         const generation = values.get(generationKey);
         if (generation)
           for (const suffix of suffixes) {
-            const key = prefix + generation + ":" + suffix;
+            const key = responseCacheKeys.locatedEntry(prefix, generation, suffix);
             if (!values.has(key)) values.set(key, null);
           }
         return values;

@@ -7,6 +7,7 @@ import {
   oauthFlowKeys,
   oauthHandoffKeys,
   resultKeys,
+  responseCacheKeys,
   scopes,
 } from "../src/storage/keys.js";
 
@@ -33,5 +34,18 @@ it("rejects NUL in every unencoded key component, including identity scopes", ()
   ];
   for (const build of builders) {
     expect(build).toThrow(/U\+0000 \(NUL\)/);
+  }
+});
+
+it("locates the same response cache entries as namespace plus entry", () => {
+  for (const [id, config, generation, partition] of [
+    ["crm", "config", "generation", "private"],
+    ["crm:%_?'", "config::%_?'", "gen:%_?'", "owner:%_?'"],
+    ["", "", "", ""],
+  ] as const) {
+    const prefix = responseCacheKeys.locatorPrefix(id, config);
+    const expected = responseCacheKeys.entry(responseCacheKeys.namespace(id, config, generation), partition);
+    expect(responseCacheKeys.locatedEntry(prefix, generation, partition)).toBe(expected);
+    expect(prefix + generation + responseCacheKeys.locatorSeparator + partition).toBe(expected);
   }
 });

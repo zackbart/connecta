@@ -917,10 +917,8 @@ describe("request budgets", () => {
       const elapsedMs = Math.round(performance.now() - start);
       const reads = d.d1.count.log.filter((line) => line.startsWith("all "));
       const observationReads = reads.filter((line) => line.includes("agent-observation:")).length;
-      // This PR is independent of #1249. Its one redundant telemetry SELECT
-      // disappears when that item lands; admission and catalog are pinned here.
-      expect(reads.length - observationReads, reads.join("\n")).toBe(expected);
-      expect(observationReads).toBeLessThanOrEqual(1);
+      expect(reads, reads.join("\n")).toHaveLength(expected);
+      expect(observationReads).toBe(0);
       console.log(
         JSON.stringify({ route: name, injectedD1LatencyMs: 25, reads: reads.length, observationReads, elapsedMs }),
       );

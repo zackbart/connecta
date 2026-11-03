@@ -772,7 +772,7 @@ export const prefetchCatalog = authMethod(
         {
           storage,
           generationKey: responseCacheKeys.generation(connectorId),
-          prefix: responseCacheKeys.namespace(connectorId, configHash, "").slice(0, -1),
+          prefix: responseCacheKeys.locatorPrefix(connectorId, configHash),
           suffixes,
         },
       );

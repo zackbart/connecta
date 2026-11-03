@@ -214,8 +214,8 @@ export class RequestReads {
       const storage = root && roots.get(root);
       if (!storage || pending.some(({ address, found }) => !found || address?.store !== root)) return Effect.void;
       if (pending.every(({ found }) => found?.hit)) return Effect.void;
-      const generation = linked && physical(linked.storage, linked.generationKey);
-      const prefix = linked && physical(linked.storage, linked.prefix);
+      const generation = linked && physicalStorageAddress(linked.storage, linked.generationKey);
+      const prefix = linked && physicalStorageAddress(linked.storage, linked.prefix);
       const snapshot = getNativeStorage(storage)?.catalogSnapshot;
       if (linked && snapshot && generation?.store === root && prefix?.store === root) {
         // Candidates only locate entries. An intervening external write can make
