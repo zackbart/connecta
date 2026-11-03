@@ -7,6 +7,7 @@
 // batch of two is one round trip and two statements. Workers Free allows 50 D1
 // queries per invocation. The numbers are ceilings: lower is fine, higher is a
 // regression to explain. `D1_BUDGET_REPORT=1` prints each measurement.
+import { Registry } from "../src/registry.js";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { WebStandardStreamableHTTPServerTransport, McpServer } from "@modelcontextprotocol/server";
@@ -32,7 +33,7 @@ import { requestOwner, requestReads } from "../src/runtime/request-scope.js";
 import { runEdge } from "../src/runtime/run.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { KVStorage } from "../src/types.js";
-import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, resultKeys, scopes } from "../src/storage/keys.js";
 import { CLERK_OPTIONS, CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -105,6 +106,7 @@ function counted() {
   const count: Count = { roundTrips: 0, statements: 0, log: [] };
   return {
     count,
+    db,
     storage: () => d1Storage(countingD1(db, count)),
     binding: () => countingD1(db, count),
     reset: () => {
@@ -114,6 +116,60 @@ function counted() {
     },
   };
 }
+
+describe("SQL stash batch budgets and faults", () => {
+  it("publishes 32 chunks in six trips with one trailing-chunk sweep", async () => {
+    const d1 = counted();
+    const storage = d1.storage();
+    await storage.get("warm");
+    d1.reset();
+    const registry = new Registry([], { storage, logger: silentLogger });
+    expect(
+      await registry.stashResult(
+        "budget",
+        Array.from({ length: 32 }, () => "x"),
+        900,
+      ),
+    ).toBe(true);
+    report("32 chunk stash", d1.count);
+    expect(d1.count.roundTrips).toBe(6);
+    expect(d1.count.statements).toBe(40);
+    expect(d1.count.log.filter((line) => line.startsWith("batch(32)"))).toHaveLength(1);
+    d1.db.close();
+  });
+
+  it.each(["partial", "ambiguous", "ambiguous header"])(
+    "refuses %s trailing publication and recovers",
+    async (mode) => {
+      const d1 = counted();
+      const binding = d1.binding();
+      const batch = binding.batch.bind(binding);
+      let fail = true;
+      binding.batch = async (statements) => {
+        const header = statements.some((statement) =>
+          (statement as unknown as { params: unknown[] }).params.includes("header"),
+        );
+        if (fail && (mode === "ambiguous header" ? header : statements.length === 3)) {
+          fail = false;
+          if (mode === "partial") await batch(statements.slice(0, 2));
+          else await batch(statements);
+          throw new Error("lost batch response");
+        }
+        return batch(statements);
+      };
+      const storage = d1Storage(binding);
+      await storage.get("warm");
+      const registry = new Registry([], { storage, logger: silentLogger });
+      await expect(registry.stashResult("failed", ["header", "one", "two"], 900)).rejects.toThrow(
+        "lost batch response",
+      );
+      expect(await storage.get(scopes.results + resultKeys.chunk("failed", 0))).toBeNull();
+      expect(d1.count.log.some((line) => line.includes('"header"'))).toBe(mode === "ambiguous header");
+      expect(await registry.stashResult("recovered", ["header", "one", "two"], 900)).toBe(true);
+      d1.db.close();
+    },
+  );
+});
 
 /** A stateful downstream with one read tool, behind optional OAuth. */
 function downstream(
