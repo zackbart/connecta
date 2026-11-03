@@ -403,11 +403,13 @@ it("front-loads configured scope and guidance within the instructions budget", a
         },
       });
       await app.close();
-      const instructions = endpointInstructions(description, native);
-      expect(instructions.slice(0, 512)).toContain(description);
-      expect(instructions.slice(0, 512)).toContain("Use skills.");
-      expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
-      expect(endpointInstructions(description, native)).toBe(instructions);
+      for (const readOnly of [false, true]) {
+        const instructions = endpointInstructions(description, native, readOnly);
+        expect(instructions.slice(0, 512)).toContain(description);
+        expect(instructions.slice(0, 512)).toContain("Use skills.");
+        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
+        expect(endpointInstructions(description, native, readOnly)).toBe(instructions);
+      }
     }
   }
   for (const description of ["😀".repeat(251), "😀".repeat(500)]) {
