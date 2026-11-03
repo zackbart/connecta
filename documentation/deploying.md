@@ -320,6 +320,12 @@ connector has OAuth. Before upgrading, add both methods or switch to
 `encryptedCredentialVault(storage, key)`. Existing plaintext grants are sealed on
 first read; see [OAuth state at rest](./auth.md#downstream-oauth-state-at-rest).
 
+A deployment using `clerkAuth` must set a fixed URL before upgrading:
+`ConnectaConfig.publicUrl`, or `clerkAuth({ publicUrl })`. Startup otherwise fails
+with a configuration error. Use the origin clients reach, because tokens' `resource`
+must match it exactly; see
+[Clerk OAuth tokens](./auth.md#clerk-oauth-tokens-and-operator-sessions).
+
 Before upgrading past 0.37.1 with pre-0.29 state, follow
 [Retired layout migrations](./migration-retired-layouts.md). Version 0.37.1 is
 the last bridge for KV → D1, JSON → SQLite, and OAuth layout-2 conversions.

@@ -1,3 +1,4 @@
+import { guidanceSurface } from "./guidance.js";
 import { ALICE } from "../fakes/google.js";
 import { holdFakeKitTransport, repinFakeKitTransport } from "../fakes/transport.js";
 import { connectCcb, evalConfig, evalMcpPath, presetCredentials } from "./compose.js";
@@ -131,7 +132,7 @@ export async function startNodeDeployment(
           surface,
         ),
       );
-    connecta = build();
+    connecta = guidanceSurface(build());
     await presetCredentials(vault, connectors);
     server = listen(
       { ...connecta, fetch: (...args) => forSurface(connecta!, surface).fetch(...args) },
@@ -160,7 +161,7 @@ export async function startNodeDeployment(
               await connecta!.close();
               previousPrograms.push(...observed.programs);
               observed = cleanupExecutor = observedExecutor(surface);
-              connecta = build();
+              connecta = guidanceSurface(build());
             },
           }
         : {}),
