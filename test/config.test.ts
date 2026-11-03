@@ -316,3 +316,14 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(resolved.pools?.["toString"]).toBeUndefined();
   });
 });
+
+describe("timing trace configuration", () => {
+  it.each([-1, 1.1, Number.NaN, Number.POSITIVE_INFINITY, "1"])(
+    "rejects invalid sample rate %s at construction",
+    (rate) => {
+      expect(() =>
+        unsafeCreateConnecta({ connectors: [], executor, storage: memoryStorage(), timingTraceSampleRate: rate }),
+      ).toThrow(/timingTraceSampleRate/);
+    },
+  );
+});
