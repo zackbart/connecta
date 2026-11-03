@@ -128,8 +128,7 @@ export const breeze = defineApiProvider<BreezeOptions>({
         ? [`Paged lists return ${options.defaultPageSize} items by default on this connection.`]
         : []),
     ],
-    summary:
-      "Church records: profile-field decoding, occurrence/person joins, decimal giving, and archival API caveats.",
+    summary: "Load for Breeze people, giving records, paging and guarded updates.",
     required: true,
   }),
   hatch: {

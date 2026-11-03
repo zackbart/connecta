@@ -63,7 +63,7 @@ import {
   storageList,
 } from "./runtime/storage.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest } from "./sent-secrets.js";
-import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
+import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary, connectorGuide, connectorGuideSummary } from "./skills.js";
 import {
   jsonCodec,
   OAUTH_HANDOFF_TTL_SECONDS,
@@ -514,6 +514,19 @@ export class Registry implements RegistryView {
             `${configuredGuideSummary.length} characters after whitespace ` +
             `normalization; the discovery bound is ${GUIDE_SUMMARY_LENGTH}. ` +
             "Shorten it or omit it to derive one.",
+        );
+      }
+      // Advisory English-language heuristic: a task verb or operation noun
+      // distinguishes actionable guidance from credential/scope facts. Never
+      // log guide text, which may contain deployment-private information.
+      if (
+        connectorGuide(c) !== undefined &&
+        !/\b(load|use|when|read|reads|write|writes|search|query|inspect|resolve|list|review|edit|create|update|deploy|paging|reconciliation|accounting)\b/i.test(
+          connectorGuideSummary(c) ?? "",
+        )
+      ) {
+        opts.logger.warn(
+          `Connector "${c.id}" guide needs an actionable summary; say when to load it with usageGuide.summary.`,
         );
       }
       this.connectors.set(c.id, c);
