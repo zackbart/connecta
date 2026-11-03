@@ -8,6 +8,7 @@ import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition
 import { stepProjection } from "../node_modules/eve/dist/src/harness/session-machine/current.js";
 import { changedSinceOffered } from "../node_modules/eve/dist/src/harness/approval-outcome.js";
 import { dynamicConnectionVersions } from "../node_modules/eve/dist/src/reactions/kinds/connection.js";
+import { dynamicSkillManifest } from "../node_modules/eve/dist/src/reactions/kinds/skill.js";
 import { dynamicInstructionMessages } from "../node_modules/eve/dist/src/reactions/kinds/instructions.js";
 import { evaluateValues, ReactionFailedError } from "../node_modules/eve/dist/src/reactions/runner.js";
 import { slotsOf } from "../node_modules/eve/dist/src/reactions/state.js";
@@ -17,6 +18,7 @@ import type { ResolvedConnectionDefinition } from "../node_modules/eve/dist/src/
 import {
   connectaConnection,
   connectaInstructions,
+  connectaSkill,
   gateConnectaWrites,
   type ConnectaPoolSelector,
 } from "../src/index.js";
@@ -25,7 +27,11 @@ afterEach(() => vi.useRealTimers());
 
 // Only the authored module rows are fixtures. Eve itself builds the reactions,
 // session frames, memo scopes, installed slots and parked-call versions.
-function eveSession(definitions: { connection?: DynamicSentinel; instructions?: DynamicSentinel }) {
+function eveSession(definitions: {
+  connection?: DynamicSentinel;
+  instructions?: DynamicSentinel;
+  skill?: DynamicSentinel;
+}) {
   const ctx = new ContextContainer();
   ctx.set(SessionIdKey, randomUUID());
   const resolver = (kind: string, definition: DynamicSentinel) => ({
@@ -40,7 +46,7 @@ function eveSession(definitions: { connection?: DynamicSentinel; instructions?: 
       hooks: [],
       memories: [],
       dynamicToolResolvers: [],
-      dynamicSkillResolvers: [],
+      dynamicSkillResolvers: definitions.skill ? [resolver("skills", definitions.skill)] : [],
       dynamicConnectionResolvers: definitions.connection ? [resolver("connections", definitions.connection)] : [],
       dynamicInstructionsResolvers: definitions.instructions
         ? [resolver("instructions", definitions.instructions)]
@@ -65,6 +71,9 @@ function eveSession(definitions: { connection?: DynamicSentinel; instructions?: 
       return dynamicInstructionMessages(ctx)
         .map((message) => message.content)
         .join("\n");
+    },
+    skills() {
+      return dynamicSkillManifest(ctx);
     },
     connection() {
       const [connection] = (slotsOf(ctx, "connection")[0]?.live ?? []) as readonly ResolvedConnectionDefinition[];
@@ -385,4 +394,95 @@ it("removes a gated connection on false or a throwing policy and restores it on 
   await session.evaluate();
   expect(session.connection().url).toBe(`${url}/agent/assistant`);
   expect(pool).toHaveBeenCalledTimes(2);
+});
+
+it.each(["rejection", "malformed", "timeout"] as const)(
+  "omits a skill after %s through real Eve and retries on a new turn",
+  async (failure) => {
+    let failing = true;
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      if (failing) {
+        if (failure === "malformed") return new Response("{invalid");
+        throw new DOMException("Unavailable", failure === "timeout" ? "TimeoutError" : "NetworkError");
+      }
+      return Response.json({ result: { content: [{ type: "text", text: "Recovered guide" }] } });
+    });
+    const session = eveSession({
+      skill: connectaSkill({
+        url,
+        name: "connector:crm",
+        description: "CRM conventions",
+        getToken: () => "cta_agent",
+        fetch: fetcher,
+      }),
+    });
+    await session.evaluate();
+    expect(session.skills()).toEqual({});
+    failing = false;
+    await session.evaluate();
+    expect(session.skills()).toEqual({});
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await session.evaluate("turn_2");
+    expect(JSON.stringify(session.skills())).toContain("Recovered guide");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("retains a successful skill only within its turn memo and removes it after a failed new-turn fetch", async () => {
+  let failing = false;
+  const fetcher = vi.fn<typeof fetch>(async () => {
+    if (failing) throw new Error("Offline");
+    return Response.json({ result: { content: [{ type: "text", text: "Original guide" }] } });
+  });
+  const session = eveSession({
+    skill: connectaSkill({
+      url,
+      name: "connector:crm",
+      description: "CRM conventions",
+      getToken: () => "cta_agent",
+      fetch: fetcher,
+    }),
+  });
+  await session.evaluate();
+  expect(JSON.stringify(session.skills())).toContain("Original guide");
+  failing = true;
+  await session.evaluate();
+  expect(JSON.stringify(session.skills())).toContain("Original guide");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await session.evaluate("turn_2");
+  expect(session.skills()).toEqual({});
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("preserves real Eve turn cancellation while fetching a skill", async () => {
+  let started: () => void = () => {};
+  const inFlight = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let fetches = 0;
+  const session = eveSession({
+    skill: connectaSkill({
+      url,
+      name: "connector:crm",
+      description: "CRM conventions",
+      getToken: () => "cta_agent",
+      fetch: async (_endpoint, init) => {
+        if (++fetches === 1) {
+          started();
+          await new Promise((_, reject) =>
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }),
+          );
+        }
+        return Response.json({ result: { content: [{ type: "text", text: "Recovered guide" }] } });
+      },
+    }),
+  });
+  const controller = new AbortController();
+  const evaluating = session.evaluate("turn_1", controller.signal);
+  await inFlight;
+  controller.abort(new DOMException("Cancelled", "AbortError"));
+  await expect(evaluating).rejects.toThrow("Cancelled");
+  await session.evaluate();
+  expect(JSON.stringify(session.skills())).toContain("Recovered guide");
+  expect(fetches).toBe(2);
 });

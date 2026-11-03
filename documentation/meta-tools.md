@@ -120,9 +120,11 @@ read-only endpoint nothing writes: `search_tools`, `connecta.search`, and
 `connecta.describe` omit write tools as if the connector lacked them, and
 every write call through `call_tool`, `call_destructive_tool`, or a program is
 refused before validation or dispatch with `read_only_endpoint`,
-`retryable: false`, and no `nextAction`. Connector guides are not filtered and
-may still name such a write. No route on that endpoint writes; the agent
-reports it. Connecta
+`retryable: false`, and an explicit statement that no write route exists here.
+Bootstrap instructions state the serving endpoint’s actual write policy. Connector
+guides preserve their authored Markdown and prepend the effective read-only
+endpoint or connection restriction: steps that change data will be refused.
+The agent reports the limitation and can ask the operator for a writable connection. Connecta
 never pauses, replays, or approves a program.
 
 Both search routes return the flat page specified under
@@ -405,7 +407,9 @@ connector inventory, budgets, the endpoint's read-only setting, and whether any
 visible connector has a guide. No catalog outcome, call, authorization state,
 or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
-The instructions are the same on every endpoint except one addition: at
+Instructions reflect the surface and endpoint write policy, subject to connector
+restrictions. When all admitted connectors are read-only, instructions state that
+writes are unavailable. They also include pool scope: at
 `/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
 [`description`](./auth.md#pools) has it placed first after `Use skills. `, so
 the model learns that endpoint's scope, for example
@@ -1171,6 +1175,17 @@ large to return inline is the one exception: it is friction
 (`result_too_large`) on a call whose `outcome` is still `"success"`, so it
 carries no `errorCode`.
 
+## Recovery limits
+
+Typed `invalid_args` failures without validation findings point to scoped schema
+inspection. `not_found` asks the caller to verify the resource id, account and
+visibility. `unavailable` asks the operator to restore connector availability.
+These use `nextAction` for an executable action and `retry` for explicit limits.
+An uncertain write has no safe replay action: read its target to reconcile its
+outcome before deciding on any fresh operation. Host authentication requires
+reconnecting the host; downstream authorization handoffs repair credentials;
+provider permission denial requires the resource owner to grant access.
+
 ## Argument recovery
 
 Standard API hatches refuse marker containment in request paths and query
@@ -1488,6 +1503,13 @@ pool's surface.
 | `skills`                     | Always                                                                                                                                                            |
 
 `search_tools`, `call_tool`, and `call_destructive_tool` are not listed. Auth failures still carry their handoff in the error envelope.
+
+Native tool descriptions append `Guide: skills <name>` when their connector has
+guidance. Call `skills` with `{name:"<name>"}` to read it. The name is the same
+allocated readable name listed by `skills`, including collision suffixes; a
+name reserved for a built-in guide uses its canonical connector skill URI. This
+compact pointer repeats on each tool so host search results retain it; connectors
+without guides add nothing. It depends only on the admitted connector roster.
 
 **Names.** A name is a pure function of the connector id and downstream tool
 name, so it survives catalog refreshes. It is `<connector>__<tool>` when the

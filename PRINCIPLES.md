@@ -62,7 +62,9 @@ links the executable checks.
   membership, pool tools, and pool owners come from admitted auth and
   deployment code, never arguments.
 - **INV-5: Credentials stay home.** Encrypt stored downstream credentials,
-  partition them by connector and owner, and render them nowhere.
+  partition them by connector and owner, and render them nowhere. A configured
+  vault must seal downstream OAuth state. A deployment with no vault opts out of
+  encryption at rest and stores the least a pending flow needs.
 - **INV-6: Payload-free records.** Activity, logs, and status carry no
   arguments, results, code, or raw downstream error text. A failure reaches
   them only as typed facts the sink itself checks.

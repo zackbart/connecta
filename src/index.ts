@@ -150,15 +150,17 @@ function warnInsecureConfig(config: ResolvedConfig): void {
     );
   }
 
-  // Unset publicUrl with OAuth connectors: the downstream redirect_uri is
-  // derived per-request from the attacker-influenced inbound Host header.
-  if (oauthConnectors.length > 0 && !config.publicUrl) {
+  // Unset publicUrl: everything built from the deployment's own URL follows the
+  // inbound request, whose Host (and X-Forwarded-Proto on Node) the caller
+  // chooses. Clerk without any publicUrl has already refused construction.
+  if (!config.publicUrl && (oauthConnectors.length > 0 || inboundAuth.length > 0)) {
     logger.warn(
-      "[connecta] publicUrl is unset while OAuth connectors are configured: " +
-        "the downstream OAuth redirect_uri is derived per-request from the " +
-        "inbound Host header, so an attacker who controls that header can point " +
-        "it at their own host and capture the authorization code. Set " +
-        "`publicUrl` to a fixed https origin.",
+      "[connecta] publicUrl is unset: the URLs this deployment hands out, including " +
+        "protected-resource metadata, authorization handoffs and the downstream OAuth " +
+        "redirect_uri, are derived per-request from the inbound Host header (and " +
+        "X-Forwarded-Proto on Node). A caller who controls those can point them at " +
+        "their own host and, with OAuth connectors, capture the authorization code. " +
+        "Set `publicUrl` to a fixed https origin.",
     );
   }
 
@@ -226,21 +228,6 @@ function warnInsecureConfig(config: ResolvedConfig): void {
         `action and POST /ui/credentials/${connector.id}/test answers 400 ` +
         "until the matching hook is implemented.",
     );
-  }
-
-  // A vault written before seal/open existed encrypts credentials but cannot
-  // seal downstream OAuth state, so tokens stay plaintext at rest beside them.
-  const vault = config.vault;
-  if (vault && (typeof vault.seal !== "function" || typeof vault.open !== "function")) {
-    for (const connector of config.connectors) {
-      if (!connector.startAuth) continue;
-      logger.warn(
-        `[connecta] connector "${connector.id}" stores its downstream OAuth ` +
-          "tokens, client registration, and PKCE verifier as plaintext: the " +
-          "configured vault implements no `seal`/`open`. Use " +
-          "encryptedCredentialVault(...) or add both methods to seal them.",
-      );
-    }
   }
 
   // OAuth connectors whose callback cannot perform a state/CSRF check. The

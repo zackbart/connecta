@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ConnectorCallError } from "../src/errors.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { InvocationService } from "../src/invocation.js";
@@ -37,6 +38,26 @@ function pageOf(result: { content: { text: string }[] }): {
 }
 
 describe("call_tool", () => {
+  it.each(["invalid_args", "not_found", "unavailable"] as const)(
+    "gives safe recovery for typed %s without vendor text",
+    async (code) => {
+      const connector: Connector = {
+        id: "crm",
+        listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+        callTool: async () => {
+          throw new ConnectorCallError(code, "Operation failed.");
+        },
+      };
+      const mt = createMetaTools(makeRegistry([connector]), BASE);
+      const result = await mt.callTool({ address: "crm.read", args: {} });
+      const error = result.structuredContent!.error as { code: string; nextAction?: unknown; retry?: string };
+      expect(error.code).toBe(code);
+      if (code === "invalid_args") expect(error.nextAction).toMatchObject({ tool: "search_tools" });
+      else expect(error.retry).toContain("No ");
+      expect(JSON.stringify(error)).not.toContain("call_destructive_tool");
+    },
+  );
+
   it("JSON-wraps an api connector's return value", async () => {
     const mt = createMetaTools(registry(), BASE);
     const result = await mt.callTool({

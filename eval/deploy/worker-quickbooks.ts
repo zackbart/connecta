@@ -6,7 +6,14 @@ import { d1Storage } from "@zackbart/connecta/d1";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { operatorUi } from "@zackbart/connecta/ui";
 import { interceptQuickBooks, quickbooksAuth, quickbooksConnectors, quickbooksPools } from "./quickbooks.js";
-import { injectedConnectors, injectedD1, presetInjected, withInjectedPools, type InjectedEnv } from "./injected.js";
+import {
+  installFakeAttribution,
+  injectedConnectors,
+  injectedD1,
+  presetInjected,
+  withInjectedPools,
+  type InjectedEnv,
+} from "./injected.js";
 
 interface Env extends InjectedEnv {
   CONNECTA_DB: D1Database;
@@ -23,6 +30,7 @@ let installed = false;
 let endpointReadOnly = false;
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    installFakeAttribution(env);
     const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
     const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
     if (!installed) {

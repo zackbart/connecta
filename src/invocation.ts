@@ -467,7 +467,17 @@ export class InvocationService {
         // retryable, and no advice below may tell the agent to retry it.
         const unknownWrite =
           mayHaveWritten && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
-        if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
+        if (unknownWrite)
+          error = {
+            ...error,
+            retryable: false,
+            writeOutcome: "unknown",
+            ...(!recovery && error.retry === undefined
+              ? {
+                  retry: "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
+                }
+              : {}),
+          };
         // The failure's advice to send it again was kept apart until now, and
         // joins its message only where the outcome allows it: never on a write
         // whose outcome is unknown, whatever redaction did to the message.
@@ -573,7 +583,15 @@ export class InvocationService {
                 "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access.",
             };
           case "invalid_args":
-            if (!error.validation || error.writeOutcome === "unknown") return error;
+            if (error.writeOutcome === "unknown") return error;
+            if (!error.validation)
+              return {
+                ...error,
+                nextAction: this.catalog.searchRecovery(
+                  { query: target.toolName, connector: target.connector.id },
+                  "Inspect the current input schema and correct the arguments before a fresh call.",
+                ),
+              };
             return {
               ...error,
               // An example comes only from the published schema, never a connector's copy of the
@@ -594,6 +612,32 @@ export class InvocationService {
                 "Inspect the current input shape if the validation findings are not sufficient.",
               ),
               retry: `Correct the listed arguments and retry ` + `${target.connector.id}.${target.toolName}.`,
+            };
+          case "not_found":
+            if (unknownWrite) return error;
+            return {
+              ...error,
+              retry:
+                "No automatic retry action exists. Verify the resource id, account and visibility with a read before a fresh call.",
+            };
+          case "unavailable":
+          case "catalog_lookup_failed":
+            if (unknownWrite) return error;
+            // The continuation nonce is spent. Let the input boundary supply
+            // its fresh-call action instead of generic availability advice.
+            if (
+              context.source !== "execute_code" &&
+              downstreamContinuation(
+                this.catalog.requestScope,
+                target.connector.id,
+                `${target.connector.id}.${target.toolName}`,
+              )
+            )
+              return error;
+            return {
+              ...error,
+              retry:
+                "No immediate repair action exists on this endpoint. Ask the operator to check connector availability; a read can be tried again after recovery.",
             };
           default:
             return error;
@@ -764,7 +808,7 @@ export class InvocationService {
           if (refusal === "read_only_endpoint") {
             return framingError(
               "read_only_endpoint",
-              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. Nothing here can send it.`,
+              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. No write route exists ${connectorReadOnly ? "for this connection" : "on this endpoint"}. Ask the operator for a writable connection if writes are required.`,
             );
           }
           if (refusal === "destructive_tool_requires_approval") {

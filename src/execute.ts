@@ -972,6 +972,7 @@ function sandboxProvider(
               'Use connecta.skill("usage") or connecta.skill("connector:<id>") with an exact skill name; the skills tool lists names.',
             );
           const skills = new SkillsRegistry(registry, baseUrl, {
+            readOnly: limits.readOnly,
             requestScope,
             requestSignal: (utilitySignal as AbortSignal | undefined) ?? hostAccessSignal,
             onRead: (connector, source) =>

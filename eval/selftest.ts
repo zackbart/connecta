@@ -1,3 +1,19 @@
+import { guidanceSelftest } from "./guidance-selftest.js";
+import { GUIDANCE_ARMS, guidanceValue } from "./deploy/guidance.js";
+import assert from "node:assert/strict";
+for (const arm of GUIDANCE_ARMS) {
+  const served = guidanceValue(
+    { guide: "connector:supabase", guideSummary: "Resolve projects.", instructions: "Base" },
+    arm,
+  ) as Record<string, unknown>;
+  assert.equal(served.guide, "connector:supabase");
+  assert.equal("guideSummary" in served, arm === "summary" || arm === "inline");
+  assert.equal("guideConvention" in served, false);
+  assert.equal(String(served.instructions).includes("Before working"), arm === "instruction-fetch");
+  const guest = guidanceValue(JSON.stringify({ tools: [served] }), arm) as string;
+  assert.equal(JSON.parse(guest).tools[0].guide, "connector:supabase");
+}
+console.log("ok   deterministic guidance delivery arms preserve pointers and vary only claimed context");
 import { googleBoundaryControls, googleTransportControls } from "./tasks/google-controls.js";
 /**
  * `pnpm run eval:selftest` — the harness checking itself, with no LLM.
@@ -43,7 +59,12 @@ import {
   gatewayRoutingControls,
   workerdProcessControls,
 } from "./tasks/worker-controls.js";
-import { fakeTransportInterleaving, fakeTransportRedirects, restTransportControls } from "./tasks/rest-controls.js";
+import {
+  attributionControls,
+  fakeTransportInterleaving,
+  fakeTransportRedirects,
+  restTransportControls,
+} from "./tasks/rest-controls.js";
 
 await gatewayControls();
 await gatewayRedirectControls();
@@ -61,6 +82,7 @@ console.log("ok   injection: latency delivery, pool membership, hung-server clea
 await googleTransportControls();
 await googleBoundaryControls();
 console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools, read-only and native reads");
+await attributionControls();
 await restTransportControls();
 console.log("ok   fake vendor transport: concurrent worlds, credential/host refusals and cleanup");
 await fakeTransportInterleaving();
@@ -628,6 +650,7 @@ if (failures) {
   console.error(`${failures} task(s) have a broken grader or reference.`);
   process.exitCode = 1;
 }
+await guidanceSelftest();
 if (only) process.exit();
 
 // Exercise the deployed arm selector and both HTTP encodings. Six returns

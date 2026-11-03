@@ -886,6 +886,7 @@ function metaToolsForRequest(
   }
   const sentSecrets = sentSecretsForRequest(requestScope);
   const skills = new SkillsRegistry(registry, baseUrl, {
+    readOnly: opts.readOnly,
     requestScope,
     requestSignal: opts.requestSignal,
     probeTimeoutMs,

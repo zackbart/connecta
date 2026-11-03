@@ -71,6 +71,7 @@ export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "s
   it("rolls back trailing multi-set rows and sweep, then recovers", async () => {
     const { db, storage, rows } = await setup();
     const native = getNativeStorage(storage)!;
+    await db.exec("INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, ?)", "expired", "old", 1);
     await db.exec(`CREATE TRIGGER fail_multi BEFORE INSERT ON connecta_kv
       WHEN NEW.key = 'last' BEGIN SELECT RAISE(ABORT, 'injected multi failure'); END`);
     const before = await rows();
@@ -82,6 +83,7 @@ export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "s
     expect(await rows()).toEqual(before);
     await db.exec("DROP TRIGGER fail_multi");
     await runEdge(native.setMany!(entries));
+    expect(await rows()).not.toContainEqual({ key: "expired", value: "old", expires_at_ms: 1 });
     expect(await storage.get("first")).toBe("one");
     expect(await storage.get("last")).toBe("two");
     await expect(runEdge(native.setMany!(Array.from({ length: 65 }, () => ["extra", "x"] as const)))).rejects.toThrow(

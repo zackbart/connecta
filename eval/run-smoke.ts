@@ -1,3 +1,4 @@
+import { servedMarkers } from "./support/serve.js";
 import { playReference } from "./agent/reference.js";
 import { QUICKBOOKS_WRITE_TASK } from "./tasks/quickbooks-writes.js";
 import { QUICKBOOKS_TASK } from "./tasks/quickbooks.js";
@@ -125,6 +126,7 @@ function injectionSkip(target: string): string | undefined {
 /** Injected connectors and D1 latency for a Worker composition's vars. */
 function injectedVars(world: World): Record<string, string> {
   return {
+    EVAL_TRANSPORT_MARKERS: JSON.stringify(servedMarkers()),
     ...(world.injected.ids().length ? { EVAL_INJECTED: JSON.stringify(world.injected.specs()) } : {}),
     ...(injection.d1LatencyMs ? { EVAL_D1_LATENCY_MS: String(injection.d1LatencyMs) } : {}),
   };
