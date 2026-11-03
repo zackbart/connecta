@@ -1382,9 +1382,13 @@ under a rotated key) reads as absent: `auth_required` and a logged warning.
 The epoch, consent URL, and state digest stay plaintext and authenticate
 nothing. A plaintext body written before the vault could seal is sealed where
 it lies on first read, by compare-and-set. An [`api()` OAuth
-connector](#downstream-oauth-on-api) stores no client. A vault without the
-optional `seal`/`open` members keeps the body plaintext with a startup
-warning; no vault, plaintext as always.
+connector](#downstream-oauth-on-api) stores no client.
+
+`createConnecta` throws when a configured vault lacks `seal` or `open` and any
+connector has `startAuth`. A vault without them still works for deployments with
+no OAuth connector. To migrate, use `encryptedCredentialVault(storage, key)` or
+add both methods; grants stored plaintext are then sealed on first read as above.
+With no vault at all, OAuth state stays plaintext.
 
 The body also holds `expiresAt`, the epoch milliseconds the stored access token
 expires: its `expires_in`, counted from just before the request that issued it
