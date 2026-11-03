@@ -67,6 +67,8 @@ import {
   restTransportControls,
 } from "./tasks/rest-controls.js";
 
+const runtimeControl = spawnSync(process.execPath, ["--test", "scripts/eval-runtime.test.mjs"], { stdio: "inherit" });
+assert.equal(runtimeControl.status, 0, "Runtime lock collision/crash controls failed");
 await portCollisionControls();
 console.log("ok   startup collisions recover before serving; failed join reads stop before posting");
 await gatewayControls();

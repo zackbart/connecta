@@ -1,11 +1,14 @@
 # Agent evaluations
 
-Eval commands acquire a checkout-local runtime lock before importing the package.
-Builds and same-checkout eval commands wait for the active run to finish so builds cannot replace
-`dist/` beneath another eval. Use separate checkouts for parallel runs. Nested builds reuse the owning eval
-lease; independent builds wait for it. After a hard kill,
-check the PID in `node_modules/.cache/connecta-eval-runtime.lock/owner` before
-removing a stale lock. Node and fake listeners bind port 0. Child deployments
+Eval commands hold shared checkout-local OS locks before importing the package.
+Independent evals in the same checkout run concurrently. Builds take an exclusive
+lock and wait for active evals: child deployments, lazy imports and Worker bundling
+may read `dist/` throughout a run, so it must remain stable until the run exits.
+Smoke, Worker-agent and missing-build selftest builds run before acquiring the shared lock. Separate
+checkouts have independent locks. Install the `flock` CLI with Homebrew
+(`brew install flock`) where unavailable. The OS releases locks when holders exit,
+including SIGKILL; never delete the persistent `.flock` file (that would split the
+lock). No stale owner directory or PID recovery is needed. Node and fake listeners bind port 0. Child deployments
 that need a public URL before startup retry bind collisions at most three times,
 only during initial startup. Wrangler assigns its inspector port itself.
 

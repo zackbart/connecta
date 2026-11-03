@@ -235,11 +235,6 @@ export function holdFakeKitTransport(): () => void {
   };
 }
 
-/** After a `listen()` that serves no fake vendor, restore the pin other live worlds hold. */
-export function repinFakeKitTransport(): void {
-  if (holds > 0) configureGuardedTransport(routedSender);
-}
-
 /**
  * Keep the routed fetch installed with no route of its own, so a caller that
  * dispatches through `globalThis.fetch` (the workerd vendor gateway) fails
