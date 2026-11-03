@@ -197,14 +197,16 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
+          # Fetch first: a later page's failure can still print valid partial
+          # JSON, and a pipe would keep only jq's exit status.
           gh api --paginate --slurp \
-            "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" |
-            jq -e '
-              [.[].jobs[]] as $jobs |
-              all(["build (static)", "build (package)", "node (1)", "node (2)"][];
-                . as $name |
-                [$jobs[] | select(.name == $name)] |
-                (map(.run_attempt) | max) as $attempt |
-                map(select(.run_attempt == $attempt)) |
-                length == 1 and all(.[]; .status == "completed" and .conclusion == "success"))
-            '
+            "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" > "$RUNNER_TEMP/jobs.json"
+          jq -e '
+            [.[].jobs[]] as $jobs |
+            all(["build (static)", "build (package)", "node (1)", "node (2)"][];
+              . as $name |
+              [$jobs[] | select(.name == $name)] |
+              (map(.run_attempt) | max) as $attempt |
+              map(select(.run_attempt == $attempt)) |
+              length == 1 and all(.[]; .status == "completed" and .conclusion == "success"))
+          ' "$RUNNER_TEMP/jobs.json"
