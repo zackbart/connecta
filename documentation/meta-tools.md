@@ -373,7 +373,7 @@ even when a connector has that id, whose guide stays at `connector:usage` or
 `Connector "<id>" has no usage guide.`; any other unknown name fails as an
 unknown skill. Names containing `:`, including URIs, never fall back to a bare
 id. MCP `skills/get` resolves names the same way; `resources/read` accepts only
-document URIs.
+document URIs. Canonical names and document/root URIs take priority over compatibility aliases. An alias shared by multiple guides fails as ambiguous; use the canonical URI.
 
 A connector-scoped lexical miss keeps that connector's guide metadata under
 `queryAnalysis`. This matters for generic wrappers whose broad tool name
@@ -407,10 +407,12 @@ or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
 The instructions are the same on every endpoint except one addition: at
 `/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
-[`description`](./auth.md#pools) has it appended after `This endpoint: `, so
+[`description`](./auth.md#pools) has it placed first after `Use skills. `, so
 the model learns that endpoint's scope, for example
-`This endpoint: Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
-Plain `/mcp` never carries one. The description changes no tool or tool
+`Use skills. Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
+The guide pointer precedes the scope so both appear in the first 512 characters
+for a description of up to 500 characters. The routing rules follow. Meta instructions use compact equivalent routing rules
+when a scope is present. Plain `/mcp` never carries one. The description changes no tool or tool
 description, and `initialize` and `server/discover` stay `cacheScope: "private"`,
 so a client keeps what it learned per endpoint. Connector
 guides stay scoped to the deployment that listed them even when two deployments
@@ -439,7 +441,16 @@ Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.
 
 The local document URIs are `skill://connecta/usage/SKILL.md` and
 `skill://connecta/connectors/<slug>/SKILL.md`. A valid Agent Skills connector ID
-is its slug; other IDs use `connector-` followed by a stable SHA-256 prefix.
+is its slug; other IDs use a readable normalized ID slug plus a 12-character
+SHA-256 suffix. Generated slugs reserve every configured connector ID and append
+a deterministic numeric suffix on collision. Avoid a connector ID equal to another
+connector's generated name: allocation depends on the IDs a catalog can see, so
+adding one moves the other guide to a suffixed name.
+The former `connector-<48-character-hash>` names, roots and file URIs remain
+resolvable aliases. Construction warns, without rejecting a guide, when its
+summary has no English task verb or operation noun from the advisory heuristic
+(for example, a credential-only scope statement). Set `usageGuide.summary`
+to say when to load it; non-English prose may produce a false-positive warning.
 The suffix makes each
 document a valid Agent Skills file; the roots `skill://connecta/usage` and
 `skill://connecta/connectors/<connector-id>` also resolve. Provider guides are

@@ -707,6 +707,79 @@ interface CacheOperation {
   io: <T>(read: () => Promise<T>) => Promise<T>;
 }
 
+const catalogLocation = authMethod((ctx: ConnectorContext, config: string, authPartition: string) =>
+  authFlow<{ partition: string; sharedPartition: string; configHash: string }>(function* () {
+    const policy = serviceFor(ctx, CatalogPolicy);
+    const partition = JSON.stringify([
+      policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
+      ctx.baseUrl,
+      ctx.publicUrl,
+      authPartition,
+    ]);
+    const sharedPartition = JSON.stringify([
+      "host-shared",
+      policy?.sharedPartition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)?.pool]),
+      authPartition,
+    ]);
+    const configHash = (
+      (yield authCall(fingerprintSerializedCatalog, [
+        JSON.stringify([
+          config,
+          policy?.defaultTtlMs ?? 300000,
+          policy?.minTtlMs ?? 0,
+          policy?.maxTtlMs ?? MAX_CACHE_TTL_MS,
+        ]),
+      ])) as {
+        fingerprint: string;
+        byteLength: number;
+      }
+    ).fingerprint;
+    return { partition, sharedPartition, configHash };
+  }),
+);
+
+/** Prefetch candidates only; authority, identity and acceptance stay fresh. */
+export const prefetchCatalog = authMethod(
+  (
+    ctx: ConnectorContext,
+    connectorId: string,
+    config: string,
+    authPartition: string,
+    sharing: "private" | "shared",
+    credentialIdentity: string | undefined,
+    negotiationKey: string,
+  ) =>
+    authFlow<void>(function* () {
+      const { partition, sharedPartition, configHash } = yield authCall<{
+        partition: string;
+        sharedPartition: string;
+        configHash: string;
+      }>(catalogLocation, [ctx, config, authPartition]);
+      const slots = sharing === "shared" ? [partition, sharedPartition] : [partition];
+      const suffixes: string[] = [];
+      for (const slot of slots)
+        suffixes.push(
+          (yield authCall<{ fingerprint: string }>(fingerprintSerializedCatalog, [
+            JSON.stringify(["tools/list", slot, credentialIdentity ?? null]),
+          ])).fingerprint,
+        );
+      const storage = serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage;
+      yield ownerReads(Context.get(viewServices(ctx), RequestScope)).prefetch(
+        [
+          { storage: ctx.storage, key: negotiationKey },
+          { storage, key: responseCacheKeys.generation(connectorId) },
+        ],
+        (storage, keys) => authStorageMany(storage, keys),
+        {
+          storage,
+          generationKey: responseCacheKeys.generation(connectorId),
+          prefix: responseCacheKeys.locatorPrefix(connectorId, configHash),
+          suffixes,
+        },
+      );
+    }),
+);
+
 /** Keys ignore self-reported serverInfo and bind the configured connector instead. */
 export function catalogClientOptions(
   ctx: ConnectorContext,
@@ -783,33 +856,14 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
       const cacheMethod = <Args extends unknown[], A>(program: (...args: Args) => Effect.Effect<A, unknown>) =>
         authMethod((...args: Args) => program(...args).pipe(Effect.provideService(RequestScope, request)));
       const policy = serviceFor(ctx, CatalogPolicy);
-      const partition = JSON.stringify([
-        policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
-        ctx.baseUrl,
-        ctx.publicUrl,
-        authPartition,
-      ]);
-      const sharedPartition = JSON.stringify([
-        "host-shared",
-        policy?.sharedPartition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)?.pool]),
-        authPartition,
-      ]);
+      const { partition, sharedPartition, configHash } = yield authCall<{
+        partition: string;
+        sharedPartition: string;
+        configHash: string;
+      }>(catalogLocation, [ctx, config, authPartition]);
       const storage = policy?.storage ?? ctx.storage;
       let storeIdentity = catalogStores.get(storage);
       if (!storeIdentity) catalogStores.set(storage, (storeIdentity = crypto.randomUUID()));
-      const configHash = (
-        (yield authCall(fingerprintSerializedCatalog, [
-          JSON.stringify([
-            config,
-            policy?.defaultTtlMs ?? 300000,
-            policy?.minTtlMs ?? 0,
-            policy?.maxTtlMs ?? MAX_CACHE_TTL_MS,
-          ]),
-        ])) as {
-          fingerprint: string;
-          byteLength: number;
-        }
-      ).fingerprint;
       const scope = cacheScope(ctx, connectorId, owner);
       let unavailable = false;
       const connectionGeneration: Listing["generation"] = {};
@@ -1048,10 +1102,19 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                   ),
                 );
               }
-              const values = (yield authCall(io, [cacheMethod(() => authStorageMany(storage, roots))])) as (
-                | string
-                | null
-              )[];
+              yield reads.prefetch(
+                roots.map((key) => ({ storage, key })),
+                (storage, keys) => authStorageMany(storage, keys),
+              );
+              const values: (string | null)[] = [];
+              for (const root of roots)
+                values.push(
+                  yield reads.read(
+                    storage,
+                    root,
+                    authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>,
+                  ),
+                );
               listing.manifests ??= new Map();
               roots.forEach((root, i) => listing.manifests!.set(root, values[i] ?? null));
             }

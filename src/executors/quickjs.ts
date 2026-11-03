@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { Deferred, Duration, Effect, Exit, Schedule, Scope } from "effect";
 import { AdmissionController, ExecutorAdmissionError, ExecutorExecutionError } from "../executor-admission.js";
 import { msg } from "../errors.js";
-import { InvocationFailure } from "../invocation.js";
+import { InvocationFailure } from "../invocation-failure.js";
 import { brandExecutor } from "../executor-contract.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { admit } from "../runtime/admission.js";

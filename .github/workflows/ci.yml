@@ -20,6 +20,10 @@ concurrency:
 # and Eve compatibility checks. `check` is the only required status.
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [static, package]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -30,16 +34,24 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
-      - run: pnpm run check:static
-      - run: pnpm run check:build
-      - run: pnpm run check:examples
+      - if: matrix.phase == 'static'
+        run: pnpm run check:static
+      - if: matrix.phase == 'package'
+        run: pnpm run check:build
+      - if: matrix.phase == 'package'
+        run: pnpm run check:examples
       - name: Verify installed consumers and Docker deployment
+        if: matrix.phase == 'package'
         env:
           CONNECTA_REQUIRE_DOCKER: "1"
         run: pnpm run check:package
 
   # Retained fault probes complement deployed behavior journeys.
   node:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -52,7 +64,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
-      - run: pnpm run test:node
+      - run: pnpm run check:node-shards
+      - run: pnpm run test:node --shard=${{ matrix.shard }}/2
 
   # workerd runs only the suites vitest.config.ts lists for it.
   workers:
@@ -158,7 +171,11 @@ jobs:
 
   # Branch protection requires this name. Every job must finish successfully;
   # failures, cancellations, missing jobs and unexpected skips fail the gate.
+  # Matrix results are rolled up by GitHub. Check each concrete job conclusion
+  # too: a sibling success must never hide a failed, cancelled or skipped leg.
   check:
+    permissions:
+      actions: read
     needs: [build, node, workers, behavior, browser, audit, eve]
     if: always()
     runs-on: ubuntu-latest
@@ -174,3 +191,22 @@ jobs:
             all(["build", "node", "workers", "behavior", "browser", "audit", "eve"][];
               $jobs[.].result == "success")
           ' <<< "$NEEDS" > /dev/null
+      - name: Require every matrix leg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Fetch first: a later page's failure can still print valid partial
+          # JSON, and a pipe would keep only jq's exit status.
+          gh api --paginate --slurp \
+            "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" > "$RUNNER_TEMP/jobs.json"
+          jq -e '
+            [.[].jobs[]] as $jobs |
+            all(["build (static)", "build (package)", "node (1)", "node (2)"][];
+              . as $name |
+              [$jobs[] | select(.name == $name)] |
+              (map(.run_attempt) | max) as $attempt |
+              map(select(.run_attempt == $attempt)) |
+              length == 1 and all(.[]; .status == "completed" and .conclusion == "success"))
+          ' "$RUNNER_TEMP/jobs.json"

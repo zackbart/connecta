@@ -37,15 +37,19 @@ const RECOVERY = `When an auth error includes a handoff, give it to the user or 
 export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and ${META_ROUTES.write} may write. On a read-only endpoint, search omits write tools and every write call is refused; guides may still name them. The ${META_ROUTES.program} description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
 
 /**
- * The instructions one endpoint serves: {@link CONNECTA_INSTRUCTIONS}, then
- * the admitted pool's `description` after a fixed lead-in. Plain `/mcp` and a
+ * The instructions one endpoint serves: pool scope and guide pointer first,
+ * then stable routing rules. Plain `/mcp` and a
  * pool without a description serve the constant unchanged. The description
  * comes from deployment config for the pool the request was admitted through;
  * nothing a request sends reaches it.
  */
 export function endpointInstructions(description?: string, native?: { executeCode: boolean }): string {
   const instructions = native ? nativeInstructions(native.executeCode) : CONNECTA_INSTRUCTIONS;
-  return description === undefined ? instructions : `${instructions} This endpoint: ${description}`;
+  if (description === undefined) return instructions;
+  const routing = native
+    ? instructions
+    : `Known read: ${META_ROUTES.read}; known write: ${META_ROUTES.write}. Unknown reads, reductions, joins, loops and dependent calls: ${META_ROUTES.program}; discover and call together, return answers, sample unfamiliar reads. Programs may write only on writable endpoints; read-only endpoints hide writes and refuse every write. See ${META_ROUTES.program} for endpoint mode. Never repeat writes for output. Give auth handoffs to user/operator; ${META_ROUTES.authorize} refreshes links. Page resultId/format:"paged" with connecta.result(handleOrId,{page?}).`;
+  return `Use skills. ${description} ${routing}`;
 }
 
 /** Instructions for pools whose host searches the listed native tools. */
@@ -393,6 +397,7 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (
         `skill://connecta/${skill.name}`,
       ]),
     );
+    const allocated = new Set(connectors.map((connector) => connector.id));
     const guides = yield* upwardStep(
       Effect.forEach(
         connectors
@@ -410,28 +415,48 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (
             content?: string;
             files?: Map<string, string>;
           }>(function* () {
-            const name = validSkillName(connector.id)
-              ? connector.id
-              : `connector-${bytesToHex(
+            const digest = validSkillName(connector.id)
+              ? ""
+              : bytesToHex(
                   new Uint8Array(
                     yield* upwardStep(
                       authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", encoder.encode(connector.id)]),
                     ),
                   ),
-                ).slice(0, 48)}`;
+                );
+            const legacy = `connector-${digest.slice(0, 48)}`;
+            const slug =
+              connector.id
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-|-$/g, "")
+                .slice(0, 42)
+                .replace(/-$/g, "") || "connector";
+            let name = connector.id;
+            if (!validSkillName(name)) {
+              const base = `${slug}-${digest.slice(0, 12)}`;
+              name = base;
+              let suffix = 1;
+              while (allocated.has(name)) name = `${base}-${suffix++}`;
+              allocated.add(name);
+            }
             const description = connectorGuideSummary(connector)!;
             const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
             const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${connectorGuide(connector)!}`;
             return {
               ...localRecord(name, `${root}/SKILL.md`, description, content, [
                 connectorSkillName(connector.id),
+                ...(connector.id.includes(":") ? [] : [connector.id]),
+                ...(name !== connector.id
+                  ? [legacy, `skill://connecta/connectors/${legacy}`, `skill://connecta/connectors/${legacy}/SKILL.md`]
+                  : []),
                 `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
                 root,
               ]),
               connector,
             };
           }),
-        { concurrency: "unbounded" },
+        { concurrency: 1 },
       ),
     );
     if (new Set(guides.map((guide) => guide.entry.uri)).size !== guides.length)
@@ -440,11 +465,25 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (
   });
 });
 
-/** `granola` names connector granola's guide; built-in names and URIs never do. */
-function bareConnectorGuide(records: readonly SkillRecord[], name: string): SkillRecord | undefined {
-  if (name.includes(":") || AVAILABLE_SKILLS.some((skill) => skill.name === name)) return undefined;
-  const alias = connectorSkillName(name);
-  return records.find((record) => record.connector !== undefined && record.aliases.includes(alias));
+/** Canonical identities win; an alias shared by different guides is ambiguous. */
+function localLookup(records: readonly SkillRecord[], key: string): SkillRecord | undefined {
+  const canonical = new Map<string, SkillRecord>();
+  for (const record of records) {
+    canonical.set(record.entry.uri, record);
+    canonical.set(record.entry.uri.slice(0, -"/SKILL.md".length), record);
+    const name = record.entry.frontmatter.name as string;
+    if (!record.connector || !AVAILABLE_SKILLS.some((skill) => skill.name === name)) canonical.set(name, record);
+  }
+  const aliases = new Map<string, SkillRecord | null>();
+  for (const record of records) {
+    for (const alias of record.aliases) {
+      if (canonical.has(alias)) continue;
+      aliases.set(alias, aliases.has(alias) && aliases.get(alias) !== record ? null : record);
+    }
+  }
+  const result = canonical.get(key) ?? aliases.get(key);
+  if (result === null) throw new ConnectorCallError("invalid_args", "Ambiguous skill alias; use its canonical URI.");
+  return result;
 }
 
 /** Keep the downstream path tree, so relative supporting-file references still resolve. */
@@ -775,9 +814,7 @@ export class SkillsRegistry {
               ttlMs: number;
               cacheScope: "private";
             }>(function* () {
-              const local = (yield* upwardStep(self.local)).find(
-                (record) => record.entry.uri === uri || record.aliases.includes(uri),
-              );
+              const local = localLookup(yield* upwardStep(self.local), uri);
               if (local) {
                 const record = yield* upwardStep(authCall<SkillRecord>(withManifest, [local]));
                 self.assertSafe([record]);
@@ -940,9 +977,7 @@ export class SkillsRegistry {
           () =>
             authFlow<SkillRecord>(function* () {
               const records = yield* upwardStep(self.local);
-              const local =
-                records.find((record) => record.entry.uri === uri || record.aliases.includes(uri)) ??
-                bareConnectorGuide(records, uri);
+              const local = localLookup(records, uri);
               if (local) {
                 const record = yield* upwardStep(authCall<SkillRecord>(withManifest, [local]));
                 self.assertSafe([record]);

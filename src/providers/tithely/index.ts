@@ -153,7 +153,7 @@ function usageGuide(options: Readonly<TithelyOptions>): ProviderGuideInput {
         ? [`List tools return ${options.defaultPageSize} rows by default on this connection.`]
         : []),
     ],
-    summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, ids that join, and the approval-gated write hatch.`,
+    summary: "Load for giving records, donor joins, cents, ISO dates and guarded writes.",
     // Required: the reduction rule for donor data and the id joins live only
     // in the guide. No schema can carry either.
     required: true,

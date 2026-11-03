@@ -391,3 +391,32 @@ describe("always-loaded agent surface budgets", () => {
     }
   });
 });
+
+it("front-loads configured scope and guidance within the instructions budget", async () => {
+  const { endpointInstructions, CONNECTA_INSTRUCTIONS } = await import("../src/skills.js");
+  expect(endpointInstructions()).toBe(CONNECTA_INSTRUCTIONS);
+  for (const native of [undefined, { executeCode: true }, { executeCode: false }]) {
+    for (const description of ["x".repeat(500), "😀".repeat(250), "a😀".repeat(166) + "ab"]) {
+      const app = makeDeployment({
+        pools: {
+          team: { tools: ["calc"], members: [{ namespace: "https://clerk.example.test", id: "alice" }], description },
+        },
+      });
+      await app.close();
+      const instructions = endpointInstructions(description, native);
+      expect(instructions.slice(0, 512)).toContain(description);
+      expect(instructions.slice(0, 512)).toContain("Use skills.");
+      expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
+      expect(endpointInstructions(description, native)).toBe(instructions);
+    }
+  }
+  for (const description of ["😀".repeat(251), "😀".repeat(500)]) {
+    expect(() =>
+      makeDeployment({
+        pools: {
+          team: { tools: ["calc"], members: [{ namespace: "https://clerk.example.test", id: "alice" }], description },
+        },
+      }),
+    ).toThrow(/500 UTF-16 code units/);
+  }
+});
