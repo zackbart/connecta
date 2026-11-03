@@ -132,6 +132,14 @@ Missing, duplicated, skipped, errored, timed-out, interrupted and stopped
 trials fail the batch, and a cached `pass` status cannot override failing
 checks or runner observations. Each problem is printed with the results path.
 
+Run every eligible scripted reference against isolated native workerd, without
+models, with `pnpm run eval:selftest --worker-references-only` after building.
+This checks the six-tool surface with outcome grading, writes each task's
+result and refusal/skip reason to `eval/results/worker-references-<time>.json`,
+and exits nonzero on failed grades or execution errors. OAuth/host tasks and
+non-serializable deployments retain the Worker target's explicit refusal;
+opt-in skipped tasks remain excluded.
+
 ## Historical baselines
 
 The final 0.29 baselines for #709 item 1 are
@@ -320,10 +328,12 @@ because the Worker imports the package by name from `dist/`.
     fresh launch. The Node guard and authenticated gateway remain required.
     A native `cloudflare:sockets` control bypasses the fetch wrapper and targets
     a reachable non-loopback sink on a disallowed port; no connection arrives.
+    A second, explicitly named allowed-port address-limit case asserts a raw connection reaches a non-loopback sink on an allowed
+    port.
     **Remaining limits:** Landlock filters ports, not addresses. A remote host
     on an allowed port remains reachable by raw native code. ABI 4–9 do not
-    restrict UDP; this helper claims no UDP isolation. This is TCP containment,
-    not a complete address-based network sandbox. See the
+    restrict UDP; this helper claims no UDP isolation. This is TCP port
+    hardening. The #1197 boundary of only the trial's own fakes and gateway remains unimplemented. See the
     [kernel contract](https://docs.kernel.org/userspace-api/landlock.html).
 - **Secrets stay hidden.** The gateway credential and the vault key reach the
   Worker through a `.dev.vars` file (mode 0600) in the trial directory.

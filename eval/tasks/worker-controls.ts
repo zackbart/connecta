@@ -207,6 +207,16 @@ export async function workerdProcessControls() {
     });
     await new Promise<void>((resolve) => sink.listen(0, address, resolve));
     const sinkPort = (sink.address() as AddressInfo).port;
+    // Known limit: a loopback listener authorizes this port at every address.
+    let allowedReceived = 0;
+    const allowedLoopback = createNetServer((socket) => socket.destroy());
+    await new Promise<void>((resolve) => allowedLoopback.listen(0, "127.0.0.1", resolve));
+    const allowedPort = (allowedLoopback.address() as AddressInfo).port;
+    const allowedRemote = createNetServer((socket) => {
+      allowedReceived++;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => allowedRemote.listen(allowedPort, address, resolve));
     try {
       await new Promise<void>((resolve, reject) =>
         connectNet(sinkPort, address)
@@ -223,7 +233,8 @@ export async function workerdProcessControls() {
         `import { connect } from "cloudflare:sockets";
 export default { async fetch(request) {
  if (new URL(request.url).pathname === "/health") return new Response("ok");
- try { const socket = connect({hostname: ${JSON.stringify(address)}, port: ${sinkPort}}); await socket.opened; await socket.close(); return new Response("escaped"); }
+ const port = new URL(request.url).pathname === "/allowed-port-address-limit" ? ${allowedPort} : ${sinkPort};
+ try { const socket = connect({hostname: ${JSON.stringify(address)}, port}); await socket.opened; await socket.close(); return new Response("escaped"); }
  catch { return new Response("refused"); }
 } };`,
       );
@@ -231,7 +242,11 @@ export default { async fetch(request) {
       try {
         const response = await fetch(dev.origin + "/probe");
         if ((await response.text()) !== "refused" || received !== 0)
-          throw new Error("Native workerd escaped TCP isolation");
+          throw new Error("Native workerd reached a disallowed TCP port");
+        const limit = await fetch(dev.origin + "/allowed-port-address-limit");
+        if ((await limit.text()) !== "escaped" || allowedReceived !== 1)
+          throw new Error("Allowed-port address limit changed: expected one non-loopback connection");
+        console.log("ok   known limit: allowed TCP ports permit non-loopback addresses");
         console.log(
           dev
             .process()
@@ -246,7 +261,11 @@ export default { async fetch(request) {
         await dev.close();
       }
     } finally {
-      await new Promise<void>((resolve) => sink.close(() => resolve()));
+      await Promise.all(
+        [sink, allowedLoopback, allowedRemote].map(
+          (server) => new Promise<void>((resolve) => server.close(() => resolve())),
+        ),
+      );
     }
     await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
     for (const cleanup of ["close", "killAll"] as const) {
