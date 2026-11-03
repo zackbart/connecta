@@ -622,6 +622,17 @@ export class InvocationService {
           case "unavailable":
           case "catalog_lookup_failed":
             if (unknownWrite) return error;
+            // The continuation nonce is spent. Let the input boundary supply
+            // its fresh-call action instead of generic availability advice.
+            if (
+              context.source !== "execute_code" &&
+              downstreamContinuation(
+                this.catalog.requestScope,
+                target.connector.id,
+                `${target.connector.id}.${target.toolName}`,
+              )
+            )
+              return error;
             return {
               ...error,
               retry:

@@ -1168,6 +1168,17 @@ large to return inline is the one exception: it is friction
 (`result_too_large`) on a call whose `outcome` is still `"success"`, so it
 carries no `errorCode`.
 
+## Recovery limits
+
+Typed `invalid_args` failures without validation findings point to scoped schema
+inspection. `not_found` asks the caller to verify the resource id, account and
+visibility. `unavailable` asks the operator to restore connector availability.
+These use `nextAction` for an executable action and `retry` for explicit limits.
+An uncertain write has no safe replay action: read its target to reconcile its
+outcome before deciding on any fresh operation. Host authentication requires
+reconnecting the host; downstream authorization handoffs repair credentials;
+provider permission denial requires the resource owner to grant access.
+
 ## Argument recovery
 
 Standard API hatches refuse marker containment in request paths and query
@@ -1631,14 +1642,3 @@ repeat with `sep-2640-skills-manifest` and `sep-2640-skills-directory`.
 Stop the fixture when done. `--force` selects extension scenarios outside the
 base protocol timeline. This remains an optional contributor check: the
 separately installed runner and dependency graph are not pinned in Connecta CI.
-
-### Recovery limits
-
-Typed `invalid_args` failures without validation findings point to scoped schema
-inspection. `not_found` asks the caller to verify the resource id, account and
-visibility. `unavailable` asks the operator to restore connector availability.
-These use `nextAction` for an executable action and `retry` for explicit limits.
-An uncertain write has no safe replay action: read its target to reconcile its
-outcome before deciding on any fresh operation. Host authentication requires
-reconnecting the host; downstream authorization handoffs repair credentials;
-provider permission denial requires the resource owner to grant access.
