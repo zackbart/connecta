@@ -204,7 +204,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
         const expiry = expiryOptions(opts);
         if (!entries.length) return;
         yield* ensure();
-        yield* driver.batch([
+        const changes = yield* driver.batch([
           expirySweep(),
           ...entries.map(([key, value]) =>
             sql(
@@ -216,6 +216,8 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
             ),
           ),
         ]);
+        if (changes.length !== entries.length + 1 || changes.slice(1).some((changed) => changed !== 1))
+          throw new Error("SQL multi-set confirmation is incomplete");
       });
     },
     set(key, value, opts) {

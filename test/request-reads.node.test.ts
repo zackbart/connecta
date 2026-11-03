@@ -138,29 +138,37 @@ describe("SQL stash batch budgets and faults", () => {
     d1.db.close();
   });
 
-  it.each(["partial", "ambiguous"])("refuses %s trailing publication and recovers", async (mode) => {
-    const d1 = counted();
-    const binding = d1.binding();
-    const batch = binding.batch.bind(binding);
-    let fail = true;
-    binding.batch = async (statements) => {
-      if (fail && statements.length === 3) {
-        fail = false;
-        if (mode === "partial") await batch(statements.slice(0, 2));
-        else await batch(statements);
-        throw new Error("lost batch response");
-      }
-      return batch(statements);
-    };
-    const storage = d1Storage(binding);
-    await storage.get("warm");
-    const registry = new Registry([], { storage, logger: silentLogger });
-    await expect(registry.stashResult("failed", ["header", "one", "two"], 900)).rejects.toThrow("lost batch response");
-    expect(await storage.get(scopes.results + resultKeys.chunk("failed", 0))).toBeNull();
-    expect(d1.count.log.some((line) => line.includes('"header"'))).toBe(false);
-    expect(await registry.stashResult("recovered", ["header", "one", "two"], 900)).toBe(true);
-    d1.db.close();
-  });
+  it.each(["partial", "ambiguous", "ambiguous header"])(
+    "refuses %s trailing publication and recovers",
+    async (mode) => {
+      const d1 = counted();
+      const binding = d1.binding();
+      const batch = binding.batch.bind(binding);
+      let fail = true;
+      binding.batch = async (statements) => {
+        const header = statements.some((statement) =>
+          (statement as unknown as { params: unknown[] }).params.includes("header"),
+        );
+        if (fail && (mode === "ambiguous header" ? header : statements.length === 3)) {
+          fail = false;
+          if (mode === "partial") await batch(statements.slice(0, 2));
+          else await batch(statements);
+          throw new Error("lost batch response");
+        }
+        return batch(statements);
+      };
+      const storage = d1Storage(binding);
+      await storage.get("warm");
+      const registry = new Registry([], { storage, logger: silentLogger });
+      await expect(registry.stashResult("failed", ["header", "one", "two"], 900)).rejects.toThrow(
+        "lost batch response",
+      );
+      expect(await storage.get(scopes.results + resultKeys.chunk("failed", 0))).toBeNull();
+      expect(d1.count.log.some((line) => line.includes('"header"'))).toBe(mode === "ambiguous header");
+      expect(await registry.stashResult("recovered", ["header", "one", "two"], 900)).toBe(true);
+      d1.db.close();
+    },
+  );
 });
 
 /** A stateful downstream with one read tool, behind optional OAuth. */
