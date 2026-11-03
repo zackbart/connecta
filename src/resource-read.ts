@@ -4,6 +4,7 @@ import { InvocationFailure, timed } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import { withDeadlineEffect } from "./runtime/run.js";
 import { sentSecretsFor, type SentSecrets } from "./sent-secrets.js";
+import { downstreamOrigin, isSkillResource } from "./skill-origin.js";
 import { hasControlCharacters } from "./tool-name.js";
 import type { Connector } from "./types.js";
 
@@ -33,6 +34,20 @@ function resourceTarget(registry: RegistryView, raw: unknown): { connector: Conn
     });
   }
   return { connector, uri };
+}
+
+/** Frame skill text for a program; native resources/read keeps exact bytes and never comes here. */
+function labelSkillText(contents: unknown, connectorId: string, uri: string): unknown {
+  const items = (contents as { contents?: unknown } | null)?.contents;
+  if (!Array.isArray(items)) return contents;
+  return {
+    ...(contents as object),
+    contents: items.map((item) =>
+      typeof item?.text === "string" && (isSkillResource(uri) || isSkillResource(String(item.uri ?? "")))
+        ? { ...item, text: `${downstreamOrigin(connectorId)}\n\n${item.text}` }
+        : item,
+    ),
+  };
 }
 
 /** A protocol read, under the same request scope, call permit and deadline as tools. */
@@ -101,7 +116,7 @@ export function readResource(
               catch: (error) => error,
             }),
           );
-          return options.sentSecrets.redact(contents);
+          return labelSkillText(options.sentSecrets.redact(contents), target.connector.id, target.uri);
         }),
       ),
     {

@@ -469,6 +469,19 @@ from skill manifests; neither skill catalogs nor file bodies enter its response
 cache. A failed or malformed opted-in listing fails the entire skills catalog,
 with no partial cache. Known local guides remain readable during an outage.
 
+On `skills` and program `connecta.skill` reads, downstream text is prefixed with
+a fixed third-party origin sentence naming the connector (bounded to 128 ID
+characters). This prefix has no closing delimiter. `skills` listings carry the
+same sentence before each downstream description, collapsed to one line, in text
+and structured output. Program `connecta.read` applies it to text contents whose
+URI uses the `skill:` scheme or ends in `SKILL.md`; a downstream's other resources
+are returned as ordinary data, and binary contents are not labeled. Maintained and
+deployment guides remain unlabeled. Native `skills/get` metadata and `resources/read`
+contents stay unchanged so original manifest digests remain verifiable; adding a
+label there would break integrity checks. A native host must attach its own origin
+label when it loads verified content into model context, as the Skills extension
+requires.
+
 Downstream files are proxied byte-exact, including CRLF and binary supporting
 files, within 512 files and 16 MiB per skill. Catalog metadata is bounded to
 1,024 entries and 8 MiB. The existing request-scoped agent boundary redacts

@@ -3933,6 +3933,11 @@ are request-local hints with exact config, owner and credential partitions.
 Complete chunk verification and a separate later primary generation and identity
 fence decide acceptance. OAuth invocation and dispatch reads stay separate.
 
+SQL result stashes write at most 64 trailing rows per awaited transaction, with one
+expiry sweep per batch. Header publication follows confirmed trailing writes in a
+separate transaction; uncertain writes retain their ledger charge until expiry.
+Custom storage keeps sequential writes.
+
 Admission observation sampling retains at most 256 scalar deadlines per live
 physical storage identity in an isolate. Only a recent valid stored timestamp
 or confirmed CAS populates it, for at most one minute. This telemetry cache

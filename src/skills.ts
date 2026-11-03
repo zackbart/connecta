@@ -13,6 +13,7 @@ import {
   authOwnMethod,
 } from "./auth/native.js";
 import { USAGE_SKILL } from "./usage-guide.js";
+import { downstreamOrigin, labeledDownstreamDescription } from "./skill-origin.js";
 import { boundedEchoText, ConnectorCallError } from "./errors.js";
 import { Effect } from "effect";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -716,7 +717,9 @@ export class SkillsRegistry {
               return (yield* upwardStep(authInvoke<SkillRecord[]>(self, "records", []))).map((record) => ({
                 name: record.aliases[0] ?? record.entry.uri,
                 uri: record.entry.uri,
-                description: String(record.entry.frontmatter.description),
+                description: record.files
+                  ? labeledDownstreamDescription(record.connector!.id, String(record.entry.frontmatter.description))
+                  : String(record.entry.frontmatter.description),
               }));
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as SkillsRegistry).scope)));
@@ -741,10 +744,14 @@ export class SkillsRegistry {
                   cacheScope: "private";
                 }>(self, "read", [record.entry.uri]),
               )).contents[0]!;
-              if (typeof content.text === "string") return content.text;
+              const origin = record.files ? `${downstreamOrigin(record.connector!.id)}\n\n` : "";
+              if (typeof content.text === "string") return origin + content.text;
               try {
-                return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-                  Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
+                return (
+                  origin +
+                  new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+                    Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
+                  )
                 );
               } catch {
                 throw new ConnectorCallError("unavailable", "Skill instructions are not UTF-8 text.");
