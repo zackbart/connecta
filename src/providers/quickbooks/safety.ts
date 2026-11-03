@@ -216,11 +216,13 @@ function recordPath(path: readonly string[]): Kept {
   const picked =
     head === "MetaData"
       ? ["CreateTime", "LastUpdatedTime"]
-      : head === "LinkedTxn"
-        ? ["TxnId", "TxnType", "TxnLineId"]
-        : (references as readonly string[]).includes(head)
-          ? ["value", "name", "type"]
-          : undefined;
+      : head === "DeliveryInfo"
+        ? ["DeliveryType", "DeliveryTime"]
+        : head === "LinkedTxn"
+          ? ["TxnId", "TxnType", "TxnLineId"]
+          : (references as readonly string[]).includes(head)
+            ? ["value", "name", "type"]
+            : undefined;
   if (!picked) return "dropped";
   if (rest.length === 0) return "trimmed";
   return rest.length === 1 && picked.includes(rest[0]!) ? "whole" : "dropped";

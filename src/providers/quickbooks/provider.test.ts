@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { fixture } from "./fixtures.js";
+import { quickbooksSafety } from "./safety.js";
 
 beforeEach(() => {
   installOwnedTransport();
@@ -303,4 +304,15 @@ it("INV-9 INV-5: a Fault beside plausible customer data is not a confirmed succe
     message: expect.not.stringContaining("private"),
   });
   expect(world.sends).toHaveLength(1);
+});
+
+it("the withheld hint agrees with DeliveryInfo's closed projection", () => {
+  const options = { realmId: "1" } as Parameters<typeof quickbooksSafety>[0];
+  const operation = { template: "/invoice/{id}" } as Parameters<
+    NonNullable<NonNullable<ReturnType<typeof quickbooksSafety>["reviewed"]>["withholds"]>
+  >[0];
+  const withholds = quickbooksSafety(options).reviewed?.withholds?.(operation);
+  expect(withholds?.(["Invoice", "DeliveryInfo", "DeliveryType"])).toBe(false);
+  expect(withholds?.(["Invoice", "DeliveryInfo", "DeliveryTime"])).toBe(false);
+  expect(withholds?.(["Invoice", "DeliveryInfo", "DeliveryAddress"])).toBe(true);
 });
