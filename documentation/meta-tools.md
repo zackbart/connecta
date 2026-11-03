@@ -443,7 +443,9 @@ The local document URIs are `skill://connecta/usage/SKILL.md` and
 `skill://connecta/connectors/<slug>/SKILL.md`. A valid Agent Skills connector ID
 is its slug; other IDs use a readable normalized ID slug plus a 12-character
 SHA-256 suffix. Generated slugs reserve every configured connector ID and append
-a deterministic numeric suffix on collision.
+a deterministic numeric suffix on collision. Avoid a connector ID equal to another
+connector's generated name: allocation depends on the IDs a catalog can see, so
+adding one moves the other guide to a suffixed name.
 The former `connector-<48-character-hash>` names, roots and file URIs remain
 resolvable aliases. Construction warns, without rejecting a guide, when its
 summary has no English task verb or operation noun from the advisory heuristic
