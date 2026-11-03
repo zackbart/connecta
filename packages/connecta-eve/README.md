@@ -90,6 +90,28 @@ Each selected name must match `[a-z0-9_-]+`. A throwing selector or an invalid
 name fails the turn, even when guidance is cached. Handle lookup failures in
 your selector if it should fall back to a least-privileged pool.
 
+## Gating guidance and connections
+
+Pass `when(ctx)` to load guidance only for eligible callers or turns. The helper
+runs this predicate inside Eve's dynamic definition before selecting a pool,
+reading a token, or using cached guidance. False or a thrown/rejected predicate
+returns no guidance and performs no guidance fetch. It is evaluated before
+every model call, including repeated evaluations within a turn.
+
+```ts
+export default connectaInstructions({
+  pool: "assistant",
+  when: (ctx) => ctx.session.auth.current?.principalId === "alice",
+});
+```
+
+`connectaConnection` accepts the same predicate and returns a dynamic connection
+when it is provided. False or a policy failure removes that connection for the
+current evaluation. The two factories evaluate their predicates independently;
+use consistent trusted policy data as with a dynamic pool selector. This policy
+controls what the app offers; Connecta still enforces endpoint authorization.
+No Eve dynamic-value unwrapping is required.
+
 ## Upgrading to Eve 1.0 RC
 
 Update the app to `eve@1.0.0-rc.1` and reinstall to refresh its lockfile.

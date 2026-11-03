@@ -318,3 +318,61 @@ it("propagates Eve cancellation without caching a failed refresh or starting bac
   expect(await session.evaluate()).toContain("Recovered");
   expect(fetches).toBe(2);
 });
+
+it("gates guidance on every evaluation before token, pool and cached guidance access", async () => {
+  let allowed = false;
+  let fail = false;
+  const fetch = vi.fn(async () => Response.json({ result: { instructions: "Allowed guidance" } }));
+  const pool = vi.fn(() => "assistant");
+  const getToken = vi.fn(() => "cta_agent");
+  const when = vi.fn(async () => {
+    if (fail) throw new Error("Policy unavailable");
+    return allowed;
+  });
+  const session = eveSession({ instructions: connectaInstructions({ url, pool, getToken, fetch, when }) });
+  expect(await session.evaluate()).toBe("");
+  expect(pool).not.toHaveBeenCalled();
+  expect(getToken).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+  allowed = true;
+  expect(await session.evaluate()).toBe("Connecta guidance:\nAllowed guidance");
+  allowed = false;
+  expect(await session.evaluate()).toBe("");
+  allowed = true;
+  fail = true;
+  expect(await session.evaluate()).toBe("");
+  fail = false;
+  expect(await session.evaluate()).toBe("Connecta guidance:\nAllowed guidance");
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(when).toHaveBeenCalledTimes(5);
+});
+
+it("removes a gated connection on false or a throwing policy and restores it on true", async () => {
+  let allowed = true;
+  let fail = false;
+  const pool = vi.fn(() => "assistant");
+  const session = eveSession({
+    connection: connectaConnection({
+      url,
+      description: "Notes",
+      pool,
+      when: () => {
+        if (fail) throw new Error("Policy unavailable");
+        return allowed;
+      },
+    }),
+  });
+  await session.evaluate();
+  expect(session.connection().url).toBe(`${url}/agent/assistant`);
+  allowed = false;
+  await session.evaluate();
+  expect(() => session.connection()).toThrow("Missing installed connection");
+  allowed = true;
+  fail = true;
+  await session.evaluate();
+  expect(() => session.connection()).toThrow("Missing installed connection");
+  fail = false;
+  await session.evaluate();
+  expect(session.connection().url).toBe(`${url}/agent/assistant`);
+  expect(pool).toHaveBeenCalledTimes(2);
+});
