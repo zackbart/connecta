@@ -246,3 +246,27 @@ checkout. Its preparation command packs and installs the current core/helper,
 checks local signed controls and cancellation, and creates no live resources.
 Live execution requires separate owner authorization for the concrete account,
 project, bounds, cost ceiling and cleanup. Keep its evidence outside the checkout.
+
+### Deferred connector guide (opt-in)
+
+In `agent/skills/crm.ts`:
+
+```ts
+import { connectaSkill } from "@zackbart/connecta-eve";
+
+export default connectaSkill({
+  pool: "crm",
+  name: "connector:crm",
+  description: "Use when working with CRM person identifiers and conventions.",
+  when: (ctx) => ctx.session.auth !== null,
+});
+```
+
+This uses the pinned Eve 1.0.0-rc.1 public `defineSkill` and `defineDynamic`
+APIs. Eve's deferred discovery searches the description; loading adds only
+instructions. It never installs tools. Use the same caller predicate and pool
+selector as the connection. A false or throwing predicate skips selection,
+token resolution and fetching. The public API accepts content rather than a
+load callback, so fetching happens once per endpoint/guide/turn through Eve's
+session memo; inclusion in model context is lazy. Failed responses omit the
+skill. The guide must already be visible through that endpoint's `skills` tool.

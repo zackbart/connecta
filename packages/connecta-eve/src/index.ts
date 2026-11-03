@@ -1,3 +1,4 @@
+import { defineDynamic as defineDynamicSkill, defineSkill } from "eve/skills";
 import {
   defineDynamic as defineDynamicConnection,
   defineMcpClientConnection,
@@ -268,5 +269,80 @@ export function connectaInstructions(options: ConnectaInstructionsOptions = {}) 
       current(endpoint, abortSignal),
     );
     return content ? defineInstructions({ content: `Connecta guidance:\n${content}` }) : null;
+  });
+}
+
+/** One explicitly selected Connecta guide projected as a deferred Eve skill. */
+export interface ConnectaSkillOptions extends ConnectaInstructionsOptions {
+  /** Exact skills-tool name, for example `connector:crm`. */
+  name: string;
+  /** Short task selector Eve can search without loading the guide. */
+  description: string;
+}
+
+/**
+ * Opt-in deferred instructions, installed from an agent/skills module.
+ * Resolves only after caller policy, with no tools added by loading the skill.
+ * Eve's public API takes content, not a load callback: fetching is per turn;
+ * only model-context inclusion is lazy.
+ */
+export function connectaSkill(options: ConnectaSkillOptions) {
+  if (!options.name.trim() || !options.description.trim()) throw new Error("A skill needs a name and description.");
+  return defineDynamicSkill(async (ctx) => {
+    if (!(await enabled(options.when, ctx))) return null;
+    const { pool, ...endpointOptions } = options;
+    const selected = typeof pool === "function" ? await pool(ctx) : pool;
+    if (typeof options.pool === "function") validatePool(selected!);
+    const endpoint = connectaEndpoint({ ...endpointOptions, ...(selected === undefined ? {} : { pool: selected }) });
+    const content = await ctx.memo(
+      ["connecta-skill", endpoint, options.name, ctx.turn?.id ?? null],
+      async ({ abortSignal }) => {
+        const response = await (options.fetch ?? fetch)(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${await tokenFor(options)}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/call",
+            "Mcp-Name": "skills",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "skills",
+              arguments: { name: options.name },
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            },
+          }),
+          signal: AbortSignal.any([abortSignal, AbortSignal.timeout(5_000)]),
+        });
+        if (!response.ok) return null;
+        const text = await response.text();
+        const json = text.trimStart().startsWith("{")
+          ? text
+          : text
+              .split("\n")
+              .find((line) => line.startsWith("data:"))
+              ?.slice(5);
+        if (!json) return null;
+        const reply = JSON.parse(json) as {
+          result?: { isError?: boolean; content?: { type: string; text?: string }[] };
+        };
+        if (!reply.result || reply.result.isError) return null;
+        return (
+          reply.result.content
+            ?.filter((block) => block.type === "text")
+            .map((block) => block.text ?? "")
+            .join("\n") || null
+        );
+      },
+    );
+    return content ? defineSkill({ description: options.description, content, deferred: true }) : null;
   });
 }
