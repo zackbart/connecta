@@ -121,6 +121,20 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
       // The SDK prepares its source/dispatchers against this inert loader.
       // Actual Loader and RPC acquisition belongs to the native program below.
       let prepared: { load: () => object; args?: unknown[] | undefined } | undefined;
+      // Upstream 0.5.5+ answers every host call that settles after its
+      // evaluate() with a late-call error. Its inert evaluate stays pending
+      // until the native evaluation ends, so the SDK's gate stays open for the
+      // whole run and closes once the run is over or the lease is released.
+      let evaluating: (() => void) | undefined;
+      const evaluated = new Promise<void>((resolve) => {
+        evaluating = resolve;
+      });
+      let settleUpstream: (() => void) | undefined;
+      const endUpstream = () => {
+        const settle = settleUpstream;
+        settleUpstream = undefined;
+        settle?.();
+      };
       const dispose = (resource: object) =>
         Effect.sync(() => {
           try {
@@ -350,7 +364,10 @@ const {
                 getEntrypoint: () => ({
                   evaluate: (...evaluateArgs: unknown[]) => {
                     acquisition.args = evaluateArgs;
-                    return Promise.resolve({ result: undefined });
+                    return new Promise<ExecuteResult>((resolve) => {
+                      settleUpstream = () => resolve({ result: undefined });
+                      evaluating?.();
+                    });
                   },
                 }),
               };
@@ -381,15 +398,20 @@ const {
             const started = Date.now();
             const operation = Effect.gen(function* () {
               const setup = yield* Effect.tryPromise({
-                try: () =>
-                  new DynamicWorkerExecutor({
+                try: () => {
+                  const upstream = new DynamicWorkerExecutor({
                     loader,
                     ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
-                  }).execute(code, detached),
+                  }).execute(code, detached);
+                  // The SDK's own result, which settles only after endUpstream(),
+                  // carries nothing; the native evaluation below owns the outcome.
+                  upstream.catch(() => undefined);
+                  return Promise.race([upstream, evaluated.then(() => undefined)]);
+                },
                 catch: (error) => error,
               });
               // Provider validation can return before the SDK reaches its loader.
-              if (!prepared) return setup;
+              if (setup !== undefined || !prepared) return setup ?? { result: undefined };
               const load = prepared.load;
               const args = prepared.args;
               const open = () =>
@@ -427,7 +449,7 @@ const {
                     ) as Promise<WorkerRunResult>,
                   catch: (error) => error,
                 });
-              }).pipe(Scope.provide(resources));
+              }).pipe(Scope.provide(resources), Effect.ensuring(Effect.sync(endUpstream)));
               const result = yield* evaluation;
               const outcome: WorkerRunResult = result;
               if (outcome.failure) {
@@ -474,6 +496,7 @@ const {
             Effect.ensuring(
               Effect.sync(() => {
                 runEnded = true;
+                endUpstream();
                 hostProviders = undefined;
                 prepared = undefined;
                 hostFailures.clear();
@@ -492,6 +515,7 @@ const {
         release() {
           if (released) return;
           released = true;
+          endUpstream();
           hostProviders = undefined;
           prepared = undefined;
           hostFailures.clear();
