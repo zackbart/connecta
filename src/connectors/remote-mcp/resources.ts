@@ -390,7 +390,7 @@ export function remoteMcpResources(
             (extension.directoryRead !== undefined && typeof extension.directoryRead !== "boolean")
           ) {
             throw new ConnectorCallError(
-              "connector_call_failed",
+              "unsupported_capability",
               "The downstream did not declare a valid Skills extension and resources capability.",
             );
           }
@@ -481,7 +481,8 @@ export function remoteMcpResources(
         const options = rt.requestOptions(ctx) ?? {};
         rt.listingContexts.set(options, ctx);
         try {
-          if (!client.getServerCapabilities()?.resources) throw unadvertisedResource();
+          if (!client.getServerCapabilities()?.resources)
+            throw new ConnectorCallError("unsupported_capability", "The downstream did not declare resources support.");
           const resources = (yield authInvoke(client, "listResources", [undefined, options])) as ListResourcesResult;
           const templates = (yield authInvoke(client, "listResourceTemplates", [
             undefined,

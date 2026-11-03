@@ -1,3 +1,5 @@
+import { SkillLookupError } from "./skills.js";
+import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { toolError } from "./tool-error.js";
@@ -83,6 +85,10 @@ export function jsonResult(obj: unknown, text = JSON.stringify(obj)): ToolResult
 
 function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
+}
+
+function resultError(message: string): ToolResult {
+  return toolError(utilityRecovery("invalid_args", message));
 }
 
 function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
@@ -1131,7 +1137,14 @@ function metaToolsForRequest(
           const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
           return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
         } catch (error) {
-          return errorResult(error instanceof ConnectorCallError ? error.message : "Skills are unavailable.");
+          if (error instanceof SkillLookupError) return toolError(skillLookupRecovery(error.message));
+          return toolError(
+            utilityRecovery(
+              error instanceof ConnectorCallError ? error.code : "unavailable",
+              "Skills are unavailable.",
+              error instanceof ConnectorCallError && error.retryable,
+            ),
+          );
         }
       }),
     ),
@@ -1190,13 +1203,13 @@ function metaToolsForRequest(
           // Defense for in-process callers too: guest paging validates these domains
           // before calling here, while internal consumers may call readResult directly.
           if (args.maxBytes !== undefined && !isValidMaxResultBytes(args.maxBytes)) {
-            return errorResult(
+            return resultError(
               `Invalid maxBytes ${args.maxBytes}: must be a whole number of bytes ` +
                 `>= ${MIN_MAX_RESULT_BYTES}. Omit it to use the deployment default.`,
             );
           }
           if (args.offset !== undefined && !isValidResultOffset(args.offset)) {
-            return errorResult(
+            return resultError(
               `Invalid offset ${args.offset}: must be a whole number of bytes ` +
                 `>= ${MIN_RESULT_OFFSET}. Omit it to start at the beginning.`,
             );
@@ -1205,16 +1218,12 @@ function metaToolsForRequest(
             args.page !== undefined &&
             (!Number.isSafeInteger(args.page) || args.page < 0 || args.offset !== undefined)
           ) {
-            return errorResult("Use a whole page >= 0, without offset.");
+            return resultError("Use a whole page >= 0, without offset.");
           }
           const results = registry.resultsStorage();
           const unavailableResult = () => ({
             ...jsonResult({
-              error: {
-                code: "unavailable",
-                message: "Result paging storage is unavailable.",
-                retryable: true,
-              },
+              error: utilityRecovery("unavailable", "Result paging storage is unavailable.", true),
             }),
             isError: true,
           });
@@ -1240,9 +1249,12 @@ function metaToolsForRequest(
           const stored = yield* upwardStep(authCall<string | false | null>(read, [resultKeys.chunk(args.id, 0)]));
           if (stored === false) return unavailableResult();
           if (stored === null) {
-            return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+            return toolError(
+              utilityRecovery("not_found", `Unknown or expired result id "${boundedEchoText(args.id, 96)}"`),
+            );
           }
-          const denied = () => errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+          const denied = () =>
+            toolError(utilityRecovery("not_found", `Unknown or expired result id "${boundedEchoText(args.id, 96)}"`));
           const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
           if (!header) return denied();
           let binding: ResultBinding;
@@ -1383,7 +1395,9 @@ function metaToolsForRequest(
               if (encoded === null) {
                 // A chunk expired or was evicted under its own header; the id can no
                 // longer serve this range, and inventing U+0000 filler would be worse.
-                return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+                return toolError(
+                  utilityRecovery("not_found", `Unknown or expired result id "${boundedEchoText(args.id, 96)}"`),
+                );
               }
               const chunkStart = index * chunkBytes;
               // Both bounds are chunk-local. `from` inherits `start`'s three-byte

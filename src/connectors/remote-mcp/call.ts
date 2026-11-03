@@ -102,7 +102,7 @@ export function remoteMcpCall(rt: RemoteMcpRuntime): Pick<RemoteMcpShared, "call
                   : state.toolDefinitions.get(name);
                 if (toolDefinition?.execution?.taskSupport === "required") {
                   throw new ConnectorCallError(
-                    "connector_call_failed",
+                    "unsupported_capability",
                     `Tool "${name}" requires task-based execution, which Connecta does not support.`,
                   );
                 }

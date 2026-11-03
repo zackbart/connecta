@@ -748,6 +748,11 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       { source: "call_destructive_tool" },
     );
     if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.error).toMatchObject({
+      code: "unsupported_capability",
+      retryable: false,
+      nextAction: { action: "inspect_capabilities" },
+    });
     expect(served.error.writeOutcome).toBeUndefined();
     expect(classifyWriteOutcome(served)).toBe("failed");
     expect(calls).not.toContain("tools/call");

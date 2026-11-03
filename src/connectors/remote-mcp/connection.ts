@@ -54,6 +54,10 @@ export interface ConnectionState {
    * would have no owner left to close it.
    */
   scope: Scope.Closeable;
+  /** Shared settlement survives Scope becoming Closed before its finalizers finish. */
+  closing: Promise<void> | null;
+  readonly cleanup: Set<Promise<void>>;
+  readonly defer: ConnectorContext["defer"];
   /**
    * The live connection's lifetime, a child of `scope`, taken out when its
    * provider reads storage or a transport is built. Closing it cancels the
@@ -97,6 +101,34 @@ export interface ConnectionState {
    * else.
    */
   credentialDigest: string | null;
+}
+
+/** Retain every abandoned lease release until the final scope close joins it. */
+export function retainCleanup(state: ConnectionState, release: Effect.Effect<unknown, unknown>): Promise<void> {
+  const pending = detach(release);
+  state.cleanup.add(pending);
+  if (state.closing) state.closing = Promise.all([state.closing, pending]).then(() => {});
+  // Register at the release itself as well: a late connect can acquire a
+  // session after the owner's first close has already settled.
+  try {
+    state.defer?.(pending);
+  } catch {
+    // Runtime hooks are best-effort; the bounded cleanup is already running.
+  }
+  void pending.then(() => state.cleanup.delete(pending));
+  return pending;
+}
+
+/** Scope.closeUnsafe returns nothing on a second close, even during release. */
+export function closeConnectionScope(state: ConnectionState): Promise<void> {
+  if (!state.closing) {
+    const release = Scope.closeUnsafe(state.scope, Exit.void);
+    if (release) retainCleanup(state, release);
+    state.closing = (async () => {
+      while (state.cleanup.size) await Promise.all(state.cleanup);
+    })();
+  }
+  return state.closing;
 }
 
 /** One connector's connection states, credential reads and connect attempts. */
@@ -227,6 +259,9 @@ export function remoteMcpConnection(
     if (!state) {
       state = {
         scope: Scope.makeUnsafe(),
+        closing: null,
+        cleanup: new Set(),
+        defer: ctx.defer,
         lease: null,
         client: null,
         transport: null,
@@ -242,9 +277,8 @@ export function remoteMcpConnection(
       states.set(key, state);
       const owned = state;
       owner.own(() => {
-        const closing = Scope.closeUnsafe(owned.scope, Exit.void);
+        void closeConnectionScope(owned);
         reset(owned);
-        if (closing) detach(closing);
       });
     }
     return state;
@@ -336,7 +370,7 @@ export function remoteMcpConnection(
     const lease = state.lease;
     reset(state);
     const release = lease && Scope.closeUnsafe(lease, Exit.void);
-    if (release) detach(release);
+    if (release) retainCleanup(state, release);
   };
 
   const waitForConnection = (attempt: Deferred.Deferred<Client, unknown>, signal?: AbortSignal): Promise<Client> =>
@@ -915,12 +949,12 @@ export function remoteMcpConnection(
             // not "auth_required".
             if (requiresAuthorization(err)) state.authRequired = true;
             const release = Scope.closeUnsafe(lease, Exit.void);
-            if (release) detach(release);
+            if (release) retainCleanup(state, release);
           } else {
             // Whoever abandoned this attempt closed the lease already, while
             // the connect was in flight. A session it acquired after that
             // close still owes its DELETE.
-            detach(rt.closeConnection(held.client, held.transport, ctx.logger));
+            retainCleanup(state, rt.closeConnection(held.client, held.transport, ctx.logger));
           }
           if (err instanceof UnauthorizedError) {
             return Effect.fail(carryFailureFacts(err, rt.authRequiredError(ctx)));

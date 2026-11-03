@@ -25,7 +25,13 @@ import { RequestScope } from "../../runtime/request-scope.js";
 import { Context } from "effect";
 import { downstreamWriteContinuation } from "../../downstream-input-context.js";
 import type { RequestPrincipal } from "../../request-token.js";
-import { guardedTransport, sendGuarded, sendCredentialPost } from "../../guarded-transport.js";
+import {
+  learnedDestination,
+  type LearnedRequestInit,
+  guardedTransport,
+  sendGuarded,
+  sendCredentialPost,
+} from "../../guarded-transport.js";
 import {
   dispatchProviderRequest,
   recordProviderResponse,
@@ -183,11 +189,26 @@ labelErrorClass(RemoteMcpDestinationError, "RemoteMcpDestinationError");
 export function learnedUrlSafeFetch(connectorId: string, configured: URL, baseFetch: FetchLike): FetchLike {
   return authMethod((input: string | URL, init: RequestInit | undefined) =>
     authFlow<Response>(function* () {
-      const reason = learnedUrlRefusal(configured, new URL(input));
-      if (reason !== undefined) {
-        throw new RemoteMcpDestinationError(connectorId, reason);
+      let target = new URL(input);
+      for (let hop = 0; hop < 10; hop++) {
+        const reason = learnedUrlRefusal(configured, target);
+        if (reason !== undefined) throw new RemoteMcpDestinationError(connectorId, reason);
+        const marked: LearnedRequestInit = { ...init, redirect: "manual", [learnedDestination]: configured };
+        const response = (yield authCall(baseFetch, [target, marked])) as Response;
+        if (
+          !REDIRECT_STATUSES.has(response.status) ||
+          !response.headers.has("location") ||
+          (init?.method ?? "GET").toUpperCase() !== "GET"
+        )
+          return byteReadResponse(response);
+        const location = response.headers.get("location")!;
+        void response.body?.cancel().catch(() => {});
+        const redirected = new URL(location, target);
+        if (redirected.origin !== target.origin)
+          throw new RemoteMcpDestinationError(connectorId, "cross-origin redirect refused");
+        target = redirected;
       }
-      return byteReadResponse((yield authCall(baseFetch, [input, init])) as Response);
+      throw new RemoteMcpDestinationError(connectorId, "redirect limit exceeded");
     }),
   );
 }
@@ -416,7 +437,11 @@ export function remoteMcpTransport(
             { retryable: false },
           );
         // The deployment's fetch owns the wire: each write is handed over once.
-        const sender = flight?.write ? (customSender ?? guardedTransport(true)) : undefined;
+        const sender = flight?.write
+          ? (customSender ?? guardedTransport(true))
+          : (init as LearnedRequestInit | undefined)?.[learnedDestination]
+            ? guardedTransport(false)
+            : undefined;
         if (flight?.write) {
           if (flight.sent) {
             if (flight.request && flight.authorization)

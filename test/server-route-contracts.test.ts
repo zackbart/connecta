@@ -66,7 +66,7 @@ function expectMcpCors(response: Response): void {
   expectGlobalSecurityHeaders(response);
   expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
   expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
-    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version, Connecta-Error-Code, Connecta-Recovery",
+    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version, Connecta-Error-Code, Connecta-Recovery, Connecta-Next-Action",
   );
   expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
     "Content-Type, Authorization, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name",
