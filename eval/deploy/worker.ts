@@ -151,7 +151,6 @@ export async function startWorkerDeployment(
   const secrets = {
     CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
     EVAL_GATEWAY_TOKEN: gateway.token,
-    EVAL_TRANSPORT_MARKERS: JSON.stringify(servedMarkers()),
   };
   let dev: Awaited<ReturnType<typeof wranglerDev>> | undefined;
   let closed = false;
@@ -178,6 +177,7 @@ export async function startWorkerDeployment(
       vars: {
         EVAL_COMPOSITION: JSON.stringify(composition),
         EVAL_GATEWAY: gateway.url,
+        EVAL_TRANSPORT_MARKERS: JSON.stringify(servedMarkers()),
         EVAL_D1_LATENCY_MS: String(d1LatencyMs),
       },
       // Bound as hidden secrets: never echoed in wrangler's output or its log.
