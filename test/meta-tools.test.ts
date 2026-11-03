@@ -6,7 +6,7 @@ import { STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR } from "../src/credential-rules.
 import { CredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools as buildMetaTools } from "../src/meta-tools.js";
-import { GUIDE_SUMMARY_LENGTH } from "../src/skills.js";
+import { endpointInstructions, GUIDE_SUMMARY_LENGTH } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -71,6 +71,19 @@ Prefer \`notes.search\` over listing databases.
     return required(result.content[0]).text;
   }
 
+  it("states one actual write policy on every serving surface", () => {
+    for (const native of [undefined, { executeCode: false }, { executeCode: true }]) {
+      const reads = endpointInstructions(undefined, native, true);
+      expect(reads).toContain("No write route exists on this endpoint");
+      expect(reads).not.toContain("call_destructive_tool");
+      expect(reads).not.toContain("permits writes");
+      const writes = endpointInstructions(undefined, native, false);
+      expect(writes).toContain("permits writes");
+      expect(writes).not.toContain("can't perform writes");
+      if (native) expect(writes).not.toContain("call_destructive_tool");
+    }
+  });
+
   it("lists the built-in usage guide plus one entry per guided connector", async () => {
     const mt = createMetaTools(makeRegistry([guided("notes", NOTES_GUIDE), guided("plain")]), BASE);
     const listed = textFrom(await mt.skills({}));
@@ -84,6 +97,15 @@ Prefer \`notes.search\` over listing databases.
     const fetched = await mt.skills({ name: "connector:notes" });
     expect(fetched.isError).toBeFalsy();
     expect(textFrom(fetched)).toContain(NOTES_GUIDE);
+  });
+
+  it("states the effective read-only endpoint policy without editing guide procedures", async () => {
+    const mt = createMetaTools(makeRegistry([guided("notes", NOTES_GUIDE)]), BASE, { readOnly: true });
+    const fetched = textFrom(await mt.skills({ name: "connector:notes" }));
+    expect(fetched).toContain("This endpoint can't perform writes");
+    expect(fetched).toContain("No write route exists on this endpoint.");
+    expect(fetched).toContain(NOTES_GUIDE);
+    expect(fetched).not.toContain("call_destructive_tool");
   });
 
   it("rejects an explicit summary over budget at registry construction", () => {

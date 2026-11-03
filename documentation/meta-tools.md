@@ -120,9 +120,11 @@ read-only endpoint nothing writes: `search_tools`, `connecta.search`, and
 `connecta.describe` omit write tools as if the connector lacked them, and
 every write call through `call_tool`, `call_destructive_tool`, or a program is
 refused before validation or dispatch with `read_only_endpoint`,
-`retryable: false`, and no `nextAction`. Connector guides are not filtered and
-may still name such a write. No route on that endpoint writes; the agent
-reports it. Connecta
+`retryable: false`, and an explicit statement that no write route exists here.
+Bootstrap instructions state the serving endpoint’s actual write policy. Connector
+guides preserve their authored Markdown and prepend the effective read-only
+endpoint or connection restriction: steps that change data will be refused.
+The agent reports the limitation and can ask the operator for a writable connection. Connecta
 never pauses, replays, or approves a program.
 
 Both search routes return the flat page specified under
@@ -405,7 +407,9 @@ connector inventory, budgets, the endpoint's read-only setting, and whether any
 visible connector has a guide. No catalog outcome, call, authorization state,
 or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
-The instructions are the same on every endpoint except one addition: at
+Instructions reflect the surface and endpoint write policy, subject to connector
+restrictions. When all admitted connectors are read-only, instructions state that
+writes are unavailable. They also include pool scope: at
 `/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
 [`description`](./auth.md#pools) has it placed first after `Use skills. `, so
 the model learns that endpoint's scope, for example
