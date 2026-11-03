@@ -799,7 +799,9 @@ export function createMcpRoute(opts: ServerOptions): {
         // modern listen goes without a permit; trusting the header alone would
         // let a legacy tools/call bypass the pool, so anything else takes one
         // after classification. Every other request takes its permit here,
-        // before auth, and no body is read before auth on any path.
+        // before auth, and this route reads no body before auth on any path.
+        // The Node adapter has already buffered up to its own pre-auth cap
+        // (`listen`'s `maxBodyBytes`) before a request reaches core.
         const startedAt = Date.now();
         const maxDurationMs = opts.requestAdmission.maxDurationMs;
         const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
