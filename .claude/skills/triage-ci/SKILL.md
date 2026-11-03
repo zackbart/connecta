@@ -11,6 +11,14 @@ Read [AGENTS.md's verification policy](../../../AGENTS.md#verification) for
 CI jobs, the aggregate gate and advisory workflows. Inspect the newest head's
 run; [ci.yml](../../../.github/workflows/ci.yml) is the executable definition.
 
+`build` has `static` and `package` matrix legs; `node` has shards `1` and `2`.
+Inspect every leg. `check` requires all seven job results and uses the Actions
+jobs API for the current run to require exactly one completed success in each
+expected matrix leg's latest attempt, including when only failures are rerun. Missing, duplicated, cancelled, failed or skipped
+legs fail even if GitHub rolls the matrix up as success. An API/auth failure
+also fails closed; only the gate receives `actions: read`. Run `pnpm run check:node-shards` for missing/duplicate membership;
+`vitest list --shard` is not a membership check on Vitest 5.0.4.
+
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
 ## Known failure shapes
