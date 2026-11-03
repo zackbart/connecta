@@ -182,23 +182,26 @@ function observe(
     connector,
     scope,
     (signal) =>
-      Effect.map(observed(context, registry, connector, scope, signal), ({ status, drift, tools, catalogFailed }) => {
-        const problem = uiProblemFor(connector, status.state, { credentialDrift: drift, catalogFailed });
-        return {
-          id,
-          status: status.state,
-          ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
-          ...(problem ? { problem } : {}),
-          // Catalog metadata is allowed for authenticated maintainers. Only the
-          // name and its derived address are withheld when they fail the record grammar.
-          tools: describedTools(tools).map((tool) => {
-            const name = recordedToolName(tool);
-            return { ...tool, name, address: `${id}.${name}`, classification: classified(tool) };
-          }),
-          catalogAgeMs: registry.catalogAgeMs(id),
-          lastCall: null,
-        };
-      }),
+      Effect.map(
+        observed(context, registry, connector, scope, signal),
+        ({ status, drift, tools, catalogFailed }): OperatorConnectorOverlay => {
+          const problem = uiProblemFor(connector, status.state, { credentialDrift: drift, catalogFailed });
+          return {
+            id,
+            status: status.state,
+            ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
+            ...(problem ? { problem } : {}),
+            // Catalog metadata is allowed for authenticated maintainers. Only the
+            // name and its derived address are withheld when they fail the record grammar.
+            tools: describedTools(tools).map((tool) => {
+              const name = recordedToolName(tool);
+              return { ...tool, name, address: `${id}.${name}`, classification: classified(tool) };
+            }),
+            catalogAgeMs: registry.catalogAgeMs(id),
+            lastCall: null,
+          };
+        },
+      ),
     (): OperatorConnectorOverlay => ({
       id,
       status: "error",
