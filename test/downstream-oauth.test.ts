@@ -511,6 +511,57 @@ describe("KvOAuthProvider pending flow without a vault", () => {
     expect(await late.verifyState(next.state)).toBe(true);
     await expect(late.consumeAuthError()).rejects.toMatchObject({ code: expect.any(String) });
   });
+  it.each([
+    "https://user:legacy-secret@auth.example/token",
+    "https://auth.example/token?key=legacy-secret",
+    "https://auth.example/token#legacy-secret",
+  ])("requires fresh consent for a no-vault 0.40.0 discovery URL: %s", async (endpoint) => {
+    const storage = memoryStorage();
+    const previousDiscovery = metadata(endpoint);
+    const p = provider(storage);
+    await p.saveDiscoveryState(previousDiscovery);
+    await p.saveClientInformation(client, ctxA);
+    const { state, url } = await publish(p, "legacy-verifier");
+    const key = await consentKey(state);
+    const { epoch, at } = JSON.parse(required((await storage.get(key)) ?? undefined)) as { epoch: string; at: number };
+    // The previous no-vault encoder stored the URL, full discovery hash and
+    // plaintext verifier. Preserve that shape to exercise the upgrade fence.
+    const raw = JSON.stringify({
+      connectaOAuthFlow: 1,
+      epoch,
+      at,
+      url,
+      binding: {
+        issuer: ISSUER,
+        tokenEndpoint: endpoint,
+        clientId: client.client_id,
+        discovery: await oauthStateDigest(JSON.stringify(previousDiscovery)),
+      },
+      verifier: "legacy-verifier",
+    });
+    await storage.set(key, raw);
+    const callback = provider(storage);
+    expect(await callback.verifyState(state)).toBe(true);
+    callback.validateCallbackIssuer(ISSUER);
+    const error = await rejection(callback.bindFlow());
+    expectSuperseded(error);
+    expect(String(error)).not.toContain("legacy-secret");
+    expect(await storage.get(key)).toBe(raw); // no claim or exchange on refusal
+    expect(await callback.tokens()).toBeUndefined();
+
+    await provider(storage).resetAuthorization();
+    expect(await provider(storage).verifyState(state)).toBe(false);
+    const restarted = provider(storage);
+    await restarted.saveDiscoveryState(previousDiscovery);
+    await restarted.saveClientInformation(client, ctxA);
+    const fresh = await publish(restarted, "fresh-verifier");
+    const renewed = provider(storage);
+    expect(await renewed.verifyState(fresh.state)).toBe(true);
+    renewed.validateCallbackIssuer(ISSUER);
+    await renewed.bindFlow();
+    expect(await renewed.codeVerifier()).toBe("fresh-verifier");
+    await expect(renewed.claimCodeExchange()).resolves.toBeUndefined();
+  });
 });
 
 // Tokens, client registration, and discovery (the grant body) and the pending
@@ -571,15 +622,28 @@ describe("KvOAuthProvider sealed state", () => {
     expect(await unsealed.pendingAuthorizationUrl()).toBeUndefined();
   });
 
-  it("still completes a consent written before the whole flow was sealed", async () => {
+  it("completes and spends a sealed 0.40.0 consent after upgrade", async () => {
     const storage = memoryStorage();
     const sealer = sealerFor();
     const p = provider(storage, { sealer });
-    await p.saveDiscoveryState(discovery);
+    const previousDiscovery: OAuthDiscoveryState = {
+      authorizationServerUrl: ISSUER,
+      authorizationServerMetadata: {
+        issuer: ISSUER,
+        authorization_endpoint: `${ISSUER}/authorize`,
+        token_endpoint: `${ISSUER}/token?key=discovery-secret`,
+        response_types_supported: ["code"],
+        authorization_response_iss_parameter_supported: true,
+      },
+    };
+    await p.saveDiscoveryState(previousDiscovery);
     await p.saveClientInformation(client, ctxA);
     const { state, url } = await publish(p, "secret-verifier");
     const key = await consentKey(state);
     const { epoch, at } = JSON.parse(required((await storage.get(key)) ?? undefined)) as { epoch: string; at: number };
+    // 1d8a8695 (0.40.0), consent.ts: discoveryBinding + redirectToAuthorization
+    // + encodeFlow. Only the verifier was sealed, under key:epoch; the full
+    // discovery JSON was hashed, including URL secrets. Do not use today's encoder.
     await storage.set(
       key,
       JSON.stringify({
@@ -587,7 +651,13 @@ describe("KvOAuthProvider sealed state", () => {
         epoch,
         at,
         url,
-        binding: { issuer: ISSUER, clientId: "dcr-client" },
+        binding: {
+          issuer: ISSUER,
+          tokenEndpoint: previousDiscovery.authorizationServerMetadata!.token_endpoint,
+          issRequired: true,
+          discovery: await oauthStateDigest(JSON.stringify(previousDiscovery)),
+          clientId: client.client_id,
+        },
         verifier: await sealer.seal(`${key}:${epoch}`, "secret-verifier"),
         sealed: true,
       }),
@@ -595,7 +665,26 @@ describe("KvOAuthProvider sealed state", () => {
     const reader = provider(storage, { sealer: sealerFor() });
     expect(await reader.pendingAuthorizationUrl()).toBe(url);
     expect(await reader.verifyState(state)).toBe(true);
+    expect(() => reader.validateCallbackIssuer(null)).toThrow(/issuer does not match/);
+    expect(() => reader.validateCallbackIssuer("https://other.example")).toThrow(/issuer does not match/);
+    reader.validateCallbackIssuer(ISSUER);
+    await reader.bindFlow();
     expect(await reader.codeVerifier()).toBe("secret-verifier");
+    await expect(reader.claimCodeExchange()).resolves.toBeUndefined();
+    expect(JSON.parse(required((await storage.get(key)) ?? undefined))).toEqual({
+      connectaOAuthFlow: 1,
+      epoch,
+      at,
+      consumed: true,
+    });
+    const send = vi.fn(async () => new Response(JSON.stringify(tokens)));
+    const response = await reader.dispatchCodeExchange(send, `${ISSUER}/token?key=discovery-secret`);
+    expect(await response.json()).toEqual(tokens);
+    await reader.saveTokens(tokens, ctxA);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await provider(storage, { sealer: sealerFor() }).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
+    expect(await provider(storage, { sealer: sealerFor() }).verifyState(state)).toBe(false);
+    await expect(reader.claimCodeExchange()).rejects.toThrow(/already used/);
   });
 
   it("does not open a sealed verifier moved into the record slot, or a record into the verifier slot", async () => {
