@@ -31,6 +31,7 @@ type Deployment = {
   restart(): Promise<void>;
   checkScope(connected: boolean): Promise<void>;
   credentialWrites(): string[];
+  recordProgramOperation(): Promise<void>;
   refuseSave(refuse: boolean): void;
   vault: ReturnType<typeof encryptedCredentialVault>;
   requests: RequestFact[];
@@ -334,6 +335,33 @@ const test = base.extend<{ deployment: Deployment }>({
           } finally {
             await client.close();
           }
+        },
+        async recordProgramOperation() {
+          await sqliteActivityStore(database).record({
+            schemaVersion: 1,
+            id: crypto.randomUUID(),
+            requestId: crypto.randomUUID(),
+            occurredAt: new Date().toISOString(),
+            kind: "operation",
+            operation: {
+              name: "program",
+              connectors: ["vaulted"],
+              personal: false,
+              hostCalls: { attempted: 4, admitted: 4, succeeded: 3, failed: 1 },
+            },
+            connectorId: "vaulted",
+            toolName: "program",
+            address: "vaulted.program",
+            actor: { kind: "access_token", id: "assistant" },
+            source: "execute_code",
+            outcome: "error",
+            errorCode: "invalid_args",
+            friction: "schema_retry",
+            durationMs: 20,
+            attempts: 1,
+            serverName: "connecta",
+            serverVersion: "0.1.0",
+          });
         },
         async restart() {
           await app.close();
@@ -664,4 +692,13 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   await expect(page.locator("#activityView")).not.toContainText(replacement);
   await deployment.checkScope(false);
   expect(dialogs).toEqual([]);
+});
+
+test("operation rows render separately without inflating calls or friction", async ({ page, deployment }) => {
+  await deployment.recordProgramOperation();
+  await openShell(page, deployment, "/activity");
+  await expect(page.getByText("Connecta · Program", { exact: true })).toBeVisible();
+  await expect(page.locator("#activitySummary")).toHaveText("0 loaded calls · 0 failed · 0 tools · 1 operation");
+  await page.getByText("Connecta · Program", { exact: true }).click();
+  await expect(page.getByText("Operation · 4 host calls", { exact: true })).toBeVisible();
 });

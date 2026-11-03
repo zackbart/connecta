@@ -1167,7 +1167,10 @@ Activity records each of these refusals with the coarse `friction` class derived
 from its typed error code — `tool_not_found`, `schema_retry`,
 `destructive_reroute`, `auth_required` — and clamps the caller-authored
 `connectorId`, `toolName`, and `address` it keeps, both under
-[code mode](./code-mode.md#activity)'s `V2` and `V3`. A `call_tool` result too
+[code mode](./code-mode.md#activity)'s `V2` and `V3`. Optional
+[operation history](./operator-ui.md#opt-in-to-operation-history) records
+search, skill and result reads with fixed names, without arguments or payloads;
+it is off by default and separate from downstream-call counts. A `call_tool` result too
 large to return inline is the one exception: it is friction
 (`result_too_large`) on a call whose `outcome` is still `"success"`, so it
 carries no `errorCode`.

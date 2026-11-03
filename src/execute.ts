@@ -1,3 +1,4 @@
+import { operationActivity } from "./operation-activity.js";
 import { SkillLookupError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
@@ -1198,8 +1199,12 @@ function sandboxProvider(
                   },
                 )
               : invoke;
+            const operationEffect =
+              activity?.recordOperation && ["search", "describe", "result", "skill"].includes(name)
+                ? operationActivity(activity, registry, name as "search" | "describe" | "result" | "skill", guarded)
+                : guarded;
             const settled = runEdge(
-              guarded.pipe(
+              operationEffect.pipe(
                 Effect.catch((error) => {
                   if (deadline && hostAccessSignal?.aborted)
                     return typedFailure(
@@ -1653,21 +1658,27 @@ export function createExecuteTool(
             programWrites,
           );
         });
-        return response.pipe(
-          Effect.provideService(RequestScope, owner),
-          Effect.map((unfinished) => {
-            // Every response, including intake refusals, crosses accounting and
-            // exactly one envelope check at this operation boundary.
-            const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
-            // Calls abandoned by the guest are failed when the run cancels them.
-            // Connecta attaches its own integers after the envelope check.
-            const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-            result.structuredContent = { ...result.structuredContent, hostCalls: counts };
-            if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
-            return result;
-          }),
-          Effect.catchDefect(Effect.fail),
-          Effect.mapError((error) => redactAgentOutput(sentSecrets, error)),
+        return operationActivity(
+          activity,
+          registry,
+          "program",
+          response.pipe(
+            Effect.provideService(RequestScope, owner),
+            Effect.map((unfinished) => {
+              // Every response, including intake refusals, crosses accounting and
+              // exactly one envelope check at this operation boundary.
+              const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
+              // Calls abandoned by the guest are failed when the run cancels them.
+              // Connecta attaches its own integers after the envelope check.
+              const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
+              result.structuredContent = { ...result.structuredContent, hostCalls: counts };
+              if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
+              return result;
+            }),
+            Effect.catchDefect(Effect.fail),
+            Effect.mapError((error) => redactAgentOutput(sentSecrets, error)),
+          ),
+          () => ({ ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded }),
         );
       }),
   );

@@ -476,6 +476,7 @@ function serveMcp(
         ? {
             sink: opts.config.activity?.store,
             recordTool: opts.config.activity?.recordTool,
+            recordOperation: opts.config.activity?.recordOperation,
             actor,
             ...(principalActor ? { principalActor } : {}),
             requestId: crypto.randomUUID(),

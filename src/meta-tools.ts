@@ -1,3 +1,4 @@
+import { operationActivity } from "./operation-activity.js";
 import { SkillLookupError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES } from "./agent-routes.js";
@@ -1114,7 +1115,7 @@ function metaToolsForRequest(
     });
   });
 
-  return {
+  const methods = {
     skills: authMethod((args: SkillArgs = {}) =>
       authFlow<ToolResult>(function* () {
         try {
@@ -1464,6 +1465,15 @@ function metaToolsForRequest(
         }
       }),
     ),
+  };
+  if (!opts.activity?.recordOperation) return methods;
+  const track = <P extends unknown[], A>(name: "search" | "skill" | "result", method: (...args: P) => Promise<A>) =>
+    authMethod((...args: P) => operationActivity(opts.activity, registry, name, authCall<A>(method, args)));
+  return {
+    ...methods,
+    skills: track("skill", methods.skills),
+    searchTools: track("search", methods.searchTools),
+    readResult: track("result", methods.readResult),
   };
 }
 

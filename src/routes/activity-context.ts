@@ -11,6 +11,7 @@ export function operatorActivityContext(context: RouteContext, authz: Authorized
   return {
     sink: activity.store,
     recordTool: activity.recordTool,
+    recordOperation: activity.recordOperation,
     actor: authz.actor,
     ...(principal
       ? { principalActor: { kind: authz.actor.kind, id: principal.id, namespace: principal.namespace } }

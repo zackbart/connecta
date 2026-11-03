@@ -287,7 +287,7 @@ stack each row into a card.
 
 ### Activity
 
-Counts for the loaded history (calls, failed, tools, catalog changes), also
+Counts for the loaded history (calls, failed, tools, catalog changes, and opt-in operations), also
 in its accessible summary, and a strip of calls over time with failures in
 red when the calls span more than a minute.
 
@@ -304,7 +304,9 @@ red when the calls span more than a minute.
   row lists what was recorded: result, how it ran, classification, exact
   duration and size, caller, stable caller id, request id, client, and
   connecta version. Unrecorded fields are left out. Catalog changes are rows
-  with added, removed and changed counts.
+  with added, removed and changed counts. Opt-in operation rows use fixed names
+  (Search, Describe, Result page, Skill read, Program) and an Operation detail;
+  they do not count as calls, failed calls, friction, tools or last calls.
 - **Empty.** "No calls yet" with Refresh, or "No matches" with Clear filters.
 
 ### Navigation, gates and recovery
@@ -766,6 +768,53 @@ id and typed actor when available, otherwise a fresh id and system actor. No
 names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
+
+### Opt in to operation history
+
+Set `operations: true` on the existing activity module, for example
+`activity: activityHistory({ store, operations: true })`, where `store` is the
+configured platform activity store. The default is off: existing deployments
+emit no operation rows. Each admitted search, describe, result page, skill read
+and whole program adds one event through the existing detached sink. Workers
+attach its promise to `waitUntil`; Node does not await it in the response path.
+This adds storage writes and retention cleanup work for every operation.
+
+Rows use `kind: "operation"`, `source: "execute_code"`, and a fixed operation
+name. They contain duration, outcome, a checked error code, returned page
+byte count when already measured, and host-call counts for a program. No query, tool
+address supplied by a caller, skill name, result ID, code, arguments, result
+contents or raw error text enters the row. Custom history readers must exclude
+operation rows from call/friction counts. The public kind union adds
+`"operation"`; exhaustive consumers may need a new case even when their
+runtime configuration leaves recording off.
+
+Operation disclosure is deliberately conservative:
+
+- The existing maintainer permission and optional `readGate` still apply.
+- Scope means every connector visible to the admitted endpoint, rather than
+  just the connectors named by a particular argument. A single-connector scope
+  uses that connector ID; other scopes use a reserved operation ID internally.
+- Every connector in that scope must still be visible through a whole-connector
+  grant to both the reader and the recorded pool. Address-only grants do not
+  disclose operations. Removed pools/connectors or invalid scope metadata
+  withhold the entire row.
+- All human operations are owner-only. Scopes containing personal auth,
+  caller-bound auth or a dynamically discovered catalog are also owner-only,
+  since static configuration cannot prove the catalog public. Owner-only rows
+  require the recorded principal basis and an exact match to the reader's
+  admitted principal ID and namespace. An agent without a provable admitted
+  human owner has those rows withheld.
+- Shared machine operations over statically declared catalogs are visible to
+  maintainers only when the complete scope passes those checks. This policy
+  can withhold single-connector work performed on a mixed endpoint.
+
+Existing D1 and SQLite activity tables need no new columns. The existing
+kind-tagged metadata text slot stores the checked operation scope and counts;
+legacy tool and catalog-change rows keep their format. The timeline shows
+operations separately and excludes them from call totals, friction, tool
+counts, call strips and last-call overlays.
+
+### Activity actor labels
 
 Activity label resolvers receive an optional `AbortSignal`. Pass it to user-directory
 fetches and stop work when it aborts: the reader has left or the label lookup

@@ -40,7 +40,7 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
 };
 
 function failedCall(event: UiActivityEvent): boolean {
-  return event.kind !== "catalog_drift" && OUTCOME_CLASSES.failed!.includes(activityOutcomeClass(event.outcome));
+  return event.kind === undefined && OUTCOME_CLASSES.failed!.includes(activityOutcomeClass(event.outcome));
 }
 
 function outcomeMatches(event: UiActivityEvent, outcome: string): boolean {
@@ -87,7 +87,7 @@ function ChipGroup({
  */
 function CallStrip({ events }: { events: UiActivityEvent[] }) {
   const calls = events
-    .filter((event) => event.kind !== "catalog_drift")
+    .filter((event) => event.kind === undefined)
     .map((event) => ({ at: Date.parse(event.occurredAt), failed: failedCall(event) }))
     .filter((call) => Number.isFinite(call.at));
   if (calls.length < 2) return null;
@@ -134,10 +134,11 @@ function CallStrip({ events }: { events: UiActivityEvent[] }) {
 }
 
 function Stats({ events }: { events: UiActivityEvent[] }) {
-  const calls = events.filter((event) => event.kind !== "catalog_drift");
+  const calls = events.filter((event) => event.kind === undefined);
   const failed = calls.filter(failedCall).length;
   const tools = new Set(calls.map((event) => event.address)).size;
-  const changes = events.length - calls.length;
+  const changes = events.filter((event) => event.kind === "catalog_drift").length;
+  const operations = events.filter((event) => event.kind === "operation").length;
   const stat = (value: number, one: string, many: string, tone?: string) => (
     <div className={tone ? `activity-stat ${tone}` : "activity-stat"}>
       <strong>{value}</strong>
@@ -155,6 +156,7 @@ function Stats({ events }: { events: UiActivityEvent[] }) {
         {stat(failed, "failed", "failed", failed ? "danger" : undefined)}
         {stat(tools, "tool", "tools")}
         {changes ? stat(changes, "catalog change", "catalog changes") : null}
+        {operations ? stat(operations, "operation", "operations") : null}
       </div>
       <CallStrip events={events} />
     </div>
@@ -183,6 +185,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
   const failed = state.activityPhase === "error";
   const connectors = state.contract?.config?.connectors ?? data?.connectors ?? [];
   const titles = new Map(connectors.map((c) => [c.id, c.title ?? c.id]));
+  titles.set("$operation", "Connecta");
   // A connector's tab is that connector's history; the page is all of it.
   const scoped = connectorId
     ? state.activityEvents.filter((event) => event.connectorId === connectorId)

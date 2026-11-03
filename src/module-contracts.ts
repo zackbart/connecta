@@ -1,5 +1,11 @@
 import type { ConnectaBranding } from "./types.js";
-import type { ActivityStore, ActivityReadGate, recordToolActivity, recordCatalogChangeActivity } from "./activity.js";
+import type {
+  ActivityStore,
+  ActivityReadGate,
+  recordToolActivity,
+  recordCatalogChangeActivity,
+  recordOperationActivity,
+} from "./activity.js";
 import type { RouteContext } from "./routes/shared.js";
 /** Construction-time UI contract. Core never imports the implementation. */
 export interface OperatorSurface {
@@ -10,6 +16,8 @@ export interface OperatorSurface {
 }
 /** Optional recording and reading callbacks supplied by /activity. */
 export interface ActivityModule {
+  readonly operations?: boolean;
+  readonly recordOperation?: typeof recordOperationActivity;
   readonly store: ActivityStore;
   readonly deploymentId?: string;
   readonly readGate?: ActivityReadGate;
