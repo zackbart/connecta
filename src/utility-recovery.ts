@@ -24,3 +24,17 @@ export function utilityRecovery(
     },
   };
 }
+
+/** Missing skill names need local discovery, never service restoration or result recovery. */
+export function skillLookupRecovery(message: string): CallErrorDetails {
+  return {
+    code: "not_found",
+    message,
+    retryable: false,
+    nextAction: {
+      tool: "skills",
+      arguments: {},
+      purpose: "List available skills, then fetch an exact name from that list.",
+    },
+  };
+}

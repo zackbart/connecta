@@ -1,3 +1,5 @@
+import { createMetaTools } from "../src/meta-tools.js";
+import { makeRegistry } from "./helpers.js";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp, type RemoteMcpOptions } from "../src/connectors/remote-mcp.js";
@@ -281,12 +283,18 @@ describe("remote MCP Skills transport", () => {
     async (capabilities) => {
       const f = fixture(() => complete({ skills: [] }), { capabilities });
       const ctx = f.context();
+      const result = await createMetaTools(makeRegistry([f.connector]), "https://connecta.test").skills({});
+      expect(result.structuredContent?.error).toMatchObject({
+        code: "unsupported_capability",
+        retryable: false,
+        nextAction: { action: "inspect_capabilities" },
+      });
       await expect(f.downstream.list(ctx)).rejects.toMatchObject({ code: "unsupported_capability", retryable: false });
       await expect(f.downstream.read(skill().uri, ctx)).rejects.toMatchObject({
         code: "unsupported_capability",
         retryable: false,
       });
-      expect(f.requests.map(({ rpc }) => rpc.method)).toEqual(["server/discover"]);
+      expect(f.requests.map(({ rpc }) => rpc.method)).toEqual(["server/discover", "server/discover"]);
     },
   );
 

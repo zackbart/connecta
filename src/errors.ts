@@ -676,6 +676,7 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
   writeOutcome?: "unknown";
   /** The single model-facing entry point for every credential class. */
   nextAction?:
+    | { tool: "skills"; arguments: Record<string, never>; purpose: string }
     | {
         action: "reconnect_host" | "contact_operator" | "inspect_capabilities" | "recover_result";
         purpose: string;

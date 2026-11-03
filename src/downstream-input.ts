@@ -510,6 +510,7 @@ export class DownstreamElicitation {
               const recoveryError = { ...error };
               const freshRead =
                 state.tool === "call_tool" &&
+                error.code !== "provider_permission_denied" &&
                 error.nextAction === undefined &&
                 error.recovery === undefined &&
                 error.writeOutcome !== "unknown" &&

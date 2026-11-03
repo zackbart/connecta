@@ -528,11 +528,29 @@ it("INV-4: a bare connector id serves that connector's guide while built-in name
   // Namespaced and URI-shaped names never fall back to a bare id.
   const unknown = await mt.skills({ name: "connector:missing" });
   expect(unknown.isError).toBe(true);
-  expect(unknown.content[0]?.text).toContain('Unknown connector "missing".');
+  expect(unknown.structuredContent?.error).toMatchObject({
+    code: "not_found",
+    retryable: false,
+    nextAction: { tool: "skills", arguments: {} },
+  });
+  await expect(guest.skill!("connector:missing")).rejects.toMatchObject({
+    details: {
+      code: "not_found",
+      message: expect.stringContaining('Unknown connector "missing".'),
+      nextAction: { tool: "skills" },
+    },
+  });
+  expect(unknown.structuredContent?.error).toMatchObject({
+    message: expect.stringContaining('Unknown connector "missing".'),
+  });
   const guideless = await mt.skills({ name: "quiet" });
   expect(guideless.isError).toBe(true);
-  expect(guideless.content[0]?.text).toContain('Connector "quiet" has no usage guide.');
-  expect((await mt.skills({ name: "nothing" })).content[0]?.text).toContain('Unknown skill "nothing".');
+  expect(guideless.structuredContent?.error).toMatchObject({
+    message: expect.stringContaining('Connector "quiet" has no usage guide.'),
+  });
+  expect((await mt.skills({ name: "nothing" })).structuredContent?.error).toMatchObject({
+    message: expect.stringContaining('Unknown skill "nothing".'),
+  });
 });
 
 it("INV-6 INV-8: serves every guide's bytes, DEL and route-like bytes included, matching its digest", async () => {

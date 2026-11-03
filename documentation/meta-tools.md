@@ -1180,8 +1180,14 @@ connector OAuth), `contact_operator` reports catalog or utility availability,
 Unsupported task, Skills, and resource capabilities use the non-retryable
 `unsupported_capability` code with `inspect_capabilities`. Missing or expired handles have `code: not_found`; storage outages retain
 `code: unavailable`. Neither action authorizes anything or replays writes.
+Unknown skill names and connectors without a guide retain their local lookup
+diagnostic with `code: not_found` and a `nextAction` calling `skills` with no
+name to discover available names. They do not request service restoration.
+The search output schema describes action discriminators compactly; action
+advice is additive, while catalog error and authorization handoff fields retain
+their detailed contracts.
 A spent read continuation's fresh-call action takes precedence over generic
-retry advice, while auth prerequisites and unknown-write reconciliation remain
+retry advice, while auth and provider permission repair prerequisites and unknown-write reconciliation remain
 in force. HTTP 401/403 responses preserve the adapter status and challenge. JSON responses
 carry the host recovery envelope. Custom non-JSON responses preserve their body
 and lifetime, with the same typed facts in `Connecta-Error-Code`,

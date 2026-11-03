@@ -1156,6 +1156,20 @@ describe("downstream input relay", { tags: ["node"] }, () => {
     expect(flow.continuationSend).toHaveBeenCalledOnce();
   });
 
+  it("preserves permission repair instructions after a read continuation receives HTTP 403", async () => {
+    const flow = setup({ failureStatus: 403 });
+    const first = (await flow.rpc()).result;
+    const result = (
+      await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })
+    ).result;
+    expect(result.structuredContent.error).toMatchObject({
+      code: "provider_permission_denied",
+      retryable: false,
+      retry: expect.stringContaining("grant the required permission or scope"),
+    });
+    expect(result.structuredContent.error).not.toHaveProperty("nextAction");
+  });
+
   it.each([429, 503])("INV-9: preserves first-call retryability after HTTP %s", async (failureStatus) => {
     const flow = setup();
     const fetch = globalThis.fetch;

@@ -560,33 +560,18 @@ const catalogFailureProperties = {
     },
   },
   retry: { type: "string" },
+  // Handoff fields above carry the detailed authorization contract. Keep
+  // additive action advice compact in the always-loaded search schema.
   nextAction: {
-    anyOf: [
-      {
-        type: "object",
-        required: ["tool", "arguments", "operatorHandoff"],
-        additionalProperties: false,
-        properties: {
-          tool: { const: "authorize_connector" },
-          arguments: {
-            type: "object",
-            required: ["connector"],
-            additionalProperties: false,
-            properties: { connector: { type: "string" } },
-          },
-          operatorHandoff: { type: "string" },
-        },
-      },
-      {
-        type: "object",
-        required: ["action", "purpose"],
-        additionalProperties: false,
-        properties: {
-          action: { enum: ["contact_operator", "inspect_capabilities", "recover_result", "reconnect_host"] },
-          purpose: { type: "string" },
-        },
-      },
-    ],
+    type: "object",
+    anyOf: [{ required: ["tool"] }, { required: ["action"] }],
+    properties: {
+      tool: { const: "authorize_connector" },
+      action: { enum: ["contact_operator", "inspect_capabilities"] },
+      purpose: STRING,
+      operatorHandoff: STRING,
+      arguments: { type: "object", properties: { connector: STRING } },
+    },
   },
 };
 

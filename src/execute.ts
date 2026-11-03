@@ -1,4 +1,5 @@
-import { utilityRecovery } from "./utility-recovery.js";
+import { SkillLookupError } from "./skills.js";
+import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
@@ -995,9 +996,11 @@ function sandboxProvider(
           return { name: skillName, format: "text", text: await skills.text(skillName) };
         },
         catch: (err) =>
-          err instanceof ConnectorCallError
-            ? guestFailure(err.code, "Skills are unavailable.", err.code === "unavailable")
-            : err,
+          err instanceof SkillLookupError
+            ? new InvocationFailure(skillLookupRecovery(err.message))
+            : err instanceof ConnectorCallError
+              ? guestFailure(err.code, "Skills are unavailable.", err.retryable)
+              : err,
       }),
     read: (uri) =>
       Effect.suspend(() => {

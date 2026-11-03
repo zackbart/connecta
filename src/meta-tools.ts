@@ -1,4 +1,5 @@
-import { utilityRecovery } from "./utility-recovery.js";
+import { SkillLookupError } from "./skills.js";
+import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { toolError } from "./tool-error.js";
@@ -1136,9 +1137,10 @@ function metaToolsForRequest(
           const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
           return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
         } catch (error) {
+          if (error instanceof SkillLookupError) return toolError(skillLookupRecovery(error.message));
           return toolError(
             utilityRecovery(
-              error instanceof ConnectorCallError && error.code !== "not_found" ? error.code : "unavailable",
+              error instanceof ConnectorCallError ? error.code : "unavailable",
               "Skills are unavailable.",
               error instanceof ConnectorCallError && error.retryable,
             ),
