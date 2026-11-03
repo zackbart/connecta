@@ -767,6 +767,7 @@ describe("request budgets", () => {
     options: {
       credentialRemote?: boolean;
       oauthModern?: boolean;
+      beforeOAuthDelete?: () => Promise<void>;
       oauthWriteProbe?: boolean;
       trace?: boolean;
       agent?: boolean;
@@ -801,6 +802,11 @@ describe("request budgets", () => {
     );
     const requests: string[] = [];
     const oauthRequests: { method: string; token: string | null }[] = [];
+    const oauthSessions = new Set<string>();
+    let cleanupFinished!: () => void;
+    const oauthCleanup = new Promise<void>((resolve) => {
+      cleanupFinished = resolve;
+    });
     let inFlight = 0;
     const route = async (request: Request): Promise<Response> => {
       const url = new URL(request.url);
@@ -818,16 +824,28 @@ describe("request budgets", () => {
             return new Response(null, { status: 401 });
           return modern.fetch(request.url, request);
         }
-        return oauth.fetch(request);
+        const response = await oauth.fetch(request);
+        if (response.headers.has("mcp-session-id")) oauthSessions.add(response.headers.get("mcp-session-id")!);
+        return response;
       }
       if (url.origin === origins.modern) return modern.fetch(request.url, request);
       if (url.origin === origins.rest) return Response.json({ text: "hi" });
       return new Response("unknown host", { status: 404 });
     };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const oauthDelete =
+        new URL(request.url).origin === origins.oauth &&
+        request.method === "DELETE" &&
+        oauthSessions.has(request.headers.get("mcp-session-id") ?? "");
+      if (oauthDelete) await options.beforeOAuthDelete?.();
       inFlight++;
       try {
-        return await route(new Request(input, init));
+        try {
+          return await route(request);
+        } finally {
+          if (oauthDelete) cleanupFinished();
+        }
       } finally {
         inFlight--;
       }
@@ -999,6 +1017,7 @@ describe("request budgets", () => {
       storage,
       grantKey,
       oauthRequests,
+      oauthCleanup,
       otherProvider,
       otherStorage,
       d1,
@@ -1180,89 +1199,135 @@ describe("request budgets", () => {
   });
 
   it.each([
-    [false, "chunks"],
-    [true, "chunks"],
-    [false, "invocation"],
-    [true, "invocation"],
-  ] as const)("OAuth modern=%s preserves rotation, disconnect and refresh across %s", async (oauthModern, boundary) => {
-    for (const change of ["rotation", "disconnect", "refresh"] as const) {
-      const d = await production({ oauthModern });
-      const app = d.build();
-      await d.call(app, "oauth.echo");
-      await d.settle();
-      d.oauthRequests.length = 0;
-      let pastChunks = false;
-      let grantReads = 0;
-      let changed = false;
-      d.afterRead(async (params) => {
-        const chunk = params.some((key) => typeof key === "string" && key.includes(":chunk:"));
-        if (chunk) pastChunks = true;
-        if (pastChunks && params.includes(d.grantKey)) grantReads++;
-        // The second grant read after chunks checks disconnect; the separate
-        // invocation tokens() read follows it, even when the epoch is unchanged.
-        // Publish after its SELECT captured the old value; dispatch must read again.
-        if (boundary === "chunks" ? !chunk : grantReads !== 2) return;
-        d.afterRead(undefined);
-        changed = true;
-        // A separate provider and SQL storage instance publishes between reads,
-        // without notifying this request's storage memo.
-        const other = d.otherProvider();
-        if (change === "disconnect") await other.resetAuthorization(true);
-        else {
-          const tokens = {
-            access_token: "access-2",
-            token_type: "Bearer",
-            refresh_token: "refresh-2",
-            expires_in: 3600,
-          };
-          if (change === "rotation") {
-            await other.resetAuthorization();
-            await other.saveTokens(tokens, { issuer: "https://oauth-budget.example" });
-          } else {
-            expect(
-              await other.storeRefresh("v3:seeded", "refresh-1", tokens, "https://oauth-budget.example"),
-            ).toMatchObject(tokens);
-          }
-          d.oauth.token = tokens.access_token;
-        }
-      });
-      const refused = change === "disconnect" || (oauthModern && boundary === "chunks" && change === "rotation");
-      const text = await d.tool(app, "call_tool", { address: "oauth.echo", args: { text: "hi" } }, refused);
-      await d.settle();
-      expect(changed, change).toBe(true);
-      if (change === "disconnect") {
-        const error = JSON.parse(text).result.structuredContent.error;
-        if (oauthModern && boundary === "chunks") {
-          expect(error).toMatchObject({ code: "unavailable", retryable: true });
-          expect(error.message).toContain("authorization changed");
-        } else {
-          expect(error).toMatchObject({ code: "downstream_oauth_required", status: "auth_required", retryable: false });
-        }
-        expect(d.oauthRequests).toEqual([]);
-        expect(await d.otherProvider().tokens()).toBeUndefined();
-      } else {
-        if (refused) {
-          expect(text).toContain("authorization changed");
-          expect(d.oauthRequests).toEqual([]);
-        } else {
-          expect(text).toContain("hi");
-          if (boundary === "chunks")
-            expect(
-              d.oauthRequests.some(({ method }) => method === "tools/list"),
-              change,
-            ).toBe(true);
-        }
-        for (const request of d.oauthRequests) expect(request.token).toBe("Bearer access-2");
-        expect(await d.otherProvider().tokens()).toMatchObject({
-          access_token: "access-2",
-          refresh_token: "refresh-2",
+    [false, "chunks", false],
+    [true, "chunks", false],
+    [false, "invocation", false],
+    [true, "invocation", false],
+    [false, "chunks", true],
+    [false, "invocation", true],
+  ] as const)(
+    "OAuth modern=%s preserves rotation, disconnect and refresh across %s gated=%s",
+    async (oauthModern, boundary, gated) => {
+      for (const change of ["rotation", "disconnect", "refresh"] as const) {
+        let release!: () => void;
+        let entered!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
         });
-        // A later call retains the committed refresh and never redeems it again.
+        const deleting = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const d = await production({
+          oauthModern,
+          ...(gated
+            ? {
+                beforeOAuthDelete: async () => {
+                  entered();
+                  await gate;
+                },
+              }
+            : {}),
+        });
+        const app = d.build();
         await d.call(app, "oauth.echo");
-        expect(d.oauth.issued).toBe(1);
+        if (gated) {
+          await deleting;
+          let finished = false;
+          void d.oauthCleanup.then(() => {
+            finished = true;
+          });
+          await Promise.resolve();
+          expect(finished).toBe(false);
+          release();
+        }
+        // Legacy session DELETE has an explicit completion signal; idle samples
+        // cannot prove that teardown has even entered the counted fetch shim.
+        if (!oauthModern) await d.oauthCleanup;
+        await d.settle();
+        d.oauthRequests.length = 0;
+        let pastChunks = false;
+        let grantReads = 0;
+        let changed = false;
+        d.afterRead(async (params) => {
+          const chunk = params.some((key) => typeof key === "string" && key.includes(":chunk:"));
+          if (chunk) pastChunks = true;
+          if (pastChunks && params.includes(d.grantKey)) grantReads++;
+          // The second grant read after chunks checks disconnect; the separate
+          // invocation tokens() read follows it, even when the epoch is unchanged.
+          // Publish after its SELECT captured the old value; dispatch must read again.
+          if (boundary === "chunks" ? !chunk : grantReads !== 2) return;
+          d.afterRead(undefined);
+          changed = true;
+          // A separate provider and SQL storage instance publishes between reads,
+          // without notifying this request's storage memo.
+          const other = d.otherProvider();
+          if (change === "disconnect") await other.resetAuthorization(true);
+          else {
+            const tokens = {
+              access_token: "access-2",
+              token_type: "Bearer",
+              refresh_token: "refresh-2",
+              expires_in: 3600,
+            };
+            if (change === "rotation") {
+              await other.resetAuthorization();
+              await other.saveTokens(tokens, { issuer: "https://oauth-budget.example" });
+            } else {
+              expect(
+                await other.storeRefresh("v3:seeded", "refresh-1", tokens, "https://oauth-budget.example"),
+              ).toMatchObject(tokens);
+            }
+            d.oauth.token = tokens.access_token;
+          }
+          for (const request of d.oauthRequests) expect(request.method).toBe("DELETE");
+          d.oauthRequests.length = 0;
+        });
+        const refused = change === "disconnect" || (oauthModern && boundary === "chunks" && change === "rotation");
+        const text = await d.tool(app, "call_tool", { address: "oauth.echo", args: { text: "hi" } }, refused);
+        await d.settle();
+        expect(changed, change).toBe(true);
+        if (change === "disconnect") {
+          const error = JSON.parse(text).result.structuredContent.error;
+          if (oauthModern && boundary === "chunks") {
+            expect(error).toMatchObject({ code: "unavailable", retryable: true });
+            expect(error.message).toContain("authorization changed");
+          } else {
+            expect(error).toMatchObject({
+              code: "downstream_oauth_required",
+              status: "auth_required",
+              retryable: false,
+            });
+          }
+          expect(d.oauthRequests).toEqual([]);
+          expect(await d.otherProvider().tokens()).toBeUndefined();
+        } else {
+          if (refused) {
+            expect(text).toContain("authorization changed");
+            expect(d.oauthRequests).toEqual([]);
+          } else {
+            expect(text).toContain("hi");
+            if (boundary === "chunks")
+              expect(
+                d.oauthRequests.some(({ method }) => method === "tools/list"),
+                change,
+              ).toBe(true);
+          }
+          for (const request of d.oauthRequests)
+            expect(request.token, JSON.stringify({ change, boundary, oauthModern, requests: d.oauthRequests })).toBe(
+              "Bearer access-2",
+            );
+          expect(await d.otherProvider().tokens()).toMatchObject({
+            access_token: "access-2",
+            refresh_token: "refresh-2",
+          });
+          // A later call retains the committed refresh and never redeems it again.
+          await d.call(app, "oauth.echo");
+          await d.settle();
+          expect(d.oauth.issued).toBe(1);
+        }
       }
-    }
-  });
+    },
+  );
 
   it.each([
     [false, false],
@@ -1275,6 +1340,7 @@ describe("request budgets", () => {
     const d = await production({ oauthModern, oauthWriteProbe: true });
     const app = d.build();
     await d.tool(app, "call_destructive_tool", { address: "oauth.echo", args: { text: "warmup" } });
+    if (!oauthModern) await d.oauthCleanup;
     await d.settle();
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
     d.oauthRequests.length = 0;
@@ -1334,6 +1400,7 @@ describe("request budgets", () => {
     const d = await production({ oauthModern });
     const app = d.build();
     await d.call(app, "oauth.echo");
+    if (!oauthModern) await d.oauthCleanup;
     await d.settle();
     const old = (await d.otherProvider().tokens())!;
     d.oauthRequests.length = 0;
@@ -1368,12 +1435,13 @@ describe("request budgets", () => {
     // The fresh admission read, rather than a later SDK read, must observe a
     // shortened expiry in time to renew without sending the stale access token.
     expect(d.oauth.issued).toBe(change === "expiry" ? 2 : 1);
-    expect(d.oauth.rejected).toBe(0);
+    expect(d.oauth.rejected, JSON.stringify(d.oauthRequests)).toBe(0);
     const stored = await d.otherProvider().tokens();
     expect(stored?.access_token).toBe(expectedToken);
     if (change === "scope") expect(stored?.scope).toBe("notes:write");
     if (change === "replacement") expect(stored?.refresh_token).toBe("replaced-refresh");
     await d.call(app, "oauth.echo");
+    await d.settle();
     expect(d.oauth.issued).toBe(change === "expiry" ? 2 : 1);
   });
 

@@ -164,7 +164,7 @@ function withMcpCors(response: Response, request: Request, allowedOrigin: string
   }
   headers.set(
     "Access-Control-Expose-Headers",
-    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version, Connecta-Error-Code, Connecta-Recovery",
+    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version, Connecta-Error-Code, Connecta-Recovery, Connecta-Next-Action",
   );
   const wrapped = new Response(response.body, {
     status: response.status,
@@ -921,8 +921,16 @@ export function createMcpRoute(opts: ServerOptions): {
             const headers = new Headers(response.headers);
             headers.set("Connecta-Error-Code", "host_auth_required");
             headers.set("Connecta-Recovery", "host_connection");
-            // Custom adapters may own a streaming or non-JSON response. Preserve
-            // that body and its request lifetime, and carry recovery in headers.
+            headers.set(
+              "Connecta-Next-Action",
+              JSON.stringify({
+                action: "reconnect_host",
+                purpose:
+                  "Reconnect the host with valid inbound credentials and endpoint grants; downstream OAuth cannot repair this connection.",
+              }),
+            );
+            // Custom adapters own their response stream and request lifetime.
+            // Their typed recovery is carried in headers instead of replacing it.
             if (!response.headers.get("Content-Type")?.includes("application/json")) {
               return cors(new Response(response.body, { status: response.status, headers }));
             }
@@ -939,6 +947,11 @@ export function createMcpRoute(opts: ServerOptions): {
                         "The host is not authorized to connect to this endpoint. Sign in or update the host's connecta access token and endpoint grants.",
                       retryable: false,
                       recovery: "host_connection",
+                      nextAction: {
+                        action: "reconnect_host",
+                        purpose:
+                          "Reconnect this host to Connecta with valid inbound credentials and endpoint grants. Downstream connector authorization cannot repair the host connection.",
+                      },
                     },
                   }),
                 ),

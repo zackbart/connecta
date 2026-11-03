@@ -338,6 +338,71 @@ describe("repairing error envelopes", () => {
     expect(call).not.toHaveBeenCalled();
   });
 
+  it.each(["unavailable", "catalog_lookup_failed"])(
+    "pre-resolution %s has a payload-free operator action",
+    async (code) => {
+      const registry = makeRegistry([
+        connectorWith({
+          id: "notes",
+          tools: async () => {
+            if (code === "unavailable") throw new ConnectorCallError("unavailable", "raw-downstream-marker");
+            throw new Error("raw-downstream-marker");
+          },
+        }),
+      ]);
+      const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "notes.read",
+        {},
+        { source: "call_tool" },
+      );
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.error.nextAction).toMatchObject({ action: "contact_operator" });
+      }
+      const search = await new CatalogService(registry, BASE).search({ connector: "notes" });
+      expect(JSON.stringify(search)).not.toContain("raw-downstream-marker");
+    },
+  );
+
+  it("result-handle failures have matching text and typed actions", async () => {
+    const registry = makeRegistry([]);
+    const result = await createMetaTools(registry, BASE).readResult({ id: "missing" });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "not_found",
+        retryable: false,
+        nextAction: { action: "recover_result", purpose: expect.stringContaining("never repeat a write") },
+      },
+    });
+    expect(JSON.parse(result.content[0]!.text!)).toEqual(result.structuredContent);
+  });
+
+  it("custom host auth streams retain their body and expose typed recovery", async () => {
+    const app = createTestConnecta({
+      connectors: [],
+      publicUrl: BASE,
+      logger: silentLogger,
+      maintainers: [{ namespace: "fixture", id: "alice" }],
+      auth: {
+        kind: "custom",
+        authorize: () => ({
+          ok: false,
+          response: new Response("custom challenge", { status: 401, headers: { "WWW-Authenticate": "Bearer" } }),
+        }),
+      },
+    });
+    try {
+      const response = await app.fetch(new Request(`${BASE}/mcp`));
+      expect(await response.text()).toBe("custom challenge");
+      expect(response.headers.get("Connecta-Error-Code")).toBe("host_auth_required");
+      expect(response.headers.get("Connecta-Recovery")).toBe("host_connection");
+      expect(JSON.parse(response.headers.get("Connecta-Next-Action")!)).toMatchObject({ action: "reconnect_host" });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("INV-4: host authentication carries its own code and preserves the HTTP challenge", async () => {
     const connecta = createTestConnecta({
       connectors: [],
@@ -354,6 +419,7 @@ describe("repairing error envelopes", () => {
         message: expect.stringContaining("host"),
         retryable: false,
         recovery: "host_connection",
+        nextAction: { action: "reconnect_host", purpose: expect.stringContaining("Downstream") },
       },
     });
     await connecta.close();

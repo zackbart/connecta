@@ -187,9 +187,86 @@ export async function gatewayRedirectControls() {
  * wrangler Node process runs with the egress guard and no update banner.
  */
 export async function workerdProcessControls() {
+  const unavailable = spawnSync(join(ROOT, "eval", "support", "workerd-landlock.py"), ["--version"], {
+    env: { PATH: process.env.PATH },
+  });
+  if (unavailable.status !== 125 || !String(unavailable.stderr).includes("REFUSED"))
+    throw new Error("Isolation helper did not fail closed before exec");
   const dir = await mkdtemp(join(tmpdir(), "connecta-workerd-control-"));
   try {
     const main = join(dir, "worker.js");
+    await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
+    const address = Object.values(networkInterfaces())
+      .flat()
+      .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address;
+    if (!address) throw new Error("Native isolation control requires a non-loopback IPv4 interface");
+    let received = 0;
+    const sink = createNetServer((socket) => {
+      received++;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => sink.listen(0, address, resolve));
+    const sinkPort = (sink.address() as AddressInfo).port;
+    // Known limit: a loopback listener authorizes this port at every address.
+    let allowedReceived = 0;
+    const allowedLoopback = createNetServer((socket) => socket.destroy());
+    await new Promise<void>((resolve) => allowedLoopback.listen(0, "127.0.0.1", resolve));
+    const allowedPort = (allowedLoopback.address() as AddressInfo).port;
+    const allowedRemote = createNetServer((socket) => {
+      allowedReceived++;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => allowedRemote.listen(allowedPort, address, resolve));
+    try {
+      await new Promise<void>((resolve, reject) =>
+        connectNet(sinkPort, address)
+          .once("connect", function (this: Socket) {
+            this.destroy();
+            resolve();
+          })
+          .once("error", reject),
+      );
+      if (received !== 1) throw new Error("Native sink is not reachable without isolation");
+      received = 0;
+      await writeFile(
+        main,
+        `import { connect } from "cloudflare:sockets";
+export default { async fetch(request) {
+ if (new URL(request.url).pathname === "/health") return new Response("ok");
+ const port = new URL(request.url).pathname === "/allowed-port-address-limit" ? ${allowedPort} : ${sinkPort};
+ try { const socket = connect({hostname: ${JSON.stringify(address)}, port}); await socket.opened; await socket.close(); return new Response("escaped"); }
+ catch { return new Response("refused"); }
+} };`,
+      );
+      const dev = await wranglerDev({ name: "connecta-native-isolation", main });
+      try {
+        const response = await fetch(dev.origin + "/probe");
+        if ((await response.text()) !== "refused" || received !== 0)
+          throw new Error("Native workerd reached a disallowed TCP port");
+        const limit = await fetch(dev.origin + "/allowed-port-address-limit");
+        if ((await limit.text()) !== "escaped" || allowedReceived !== 1)
+          throw new Error("Allowed-port address limit changed: expected one non-loopback connection");
+        console.log("ok   known limit: allowed TCP ports permit non-loopback addresses");
+        console.log(
+          dev
+            .process()
+            .output()
+            .split("\n")
+            .filter((line) => line.startsWith("[eval isolation]"))
+            .join("\n"),
+        );
+        if (!dev.process().output().includes("Landlock ABI="))
+          throw new Error("Native workerd lacks isolation evidence");
+      } finally {
+        await dev.close();
+      }
+    } finally {
+      await Promise.all(
+        [sink, allowedLoopback, allowedRemote].map(
+          (server) => new Promise<void>((resolve) => server.close(() => resolve())),
+        ),
+      );
+    }
     await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
     for (const cleanup of ["close", "killAll"] as const) {
       const dev = await wranglerDev({ name: "connecta-workerd-control", main, bootMs: 60_000 });

@@ -1,10 +1,71 @@
 // Node-only: owned undici dispatcher and Node stream adapters, reached via /node.
+import { Resolver } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
+import { learnedDestination, type LearnedRequestInit } from "../guarded-transport.js";
+import { learnedUrlRefusal } from "../url-safety.js";
+import { OAuthRequestNotSentError } from "../auth/oauth-request-not-sent.js";
 import { Readable } from "node:stream";
 import { isIP } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Client, ProxyAgent, type Dispatcher, type buildConnector } from "undici";
 import { ConnectorCallError } from "../errors.js";
 import type { GuardedTransport } from "../guarded-transport.js";
+
+/** Each lookup owns its DNS channels; cancellation closes them before returning. */
+async function resolveAddresses(hostname: string, signal: AbortSignal): Promise<readonly LookupAddress[]> {
+  const resolver = new Resolver();
+  const cancel = () => resolver.cancel();
+  signal.throwIfAborted();
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    const results = await Promise.allSettled([resolver.resolve4(hostname), resolver.resolve6(hostname)]);
+    signal.throwIfAborted();
+    for (const result of results) {
+      if (result.status === "rejected" && !["ENODATA", "ENOTFOUND"].includes(result.reason?.code)) throw result.reason;
+    }
+    return results.flatMap((result, index) =>
+      result.status === "fulfilled" ? result.value.map((address) => ({ address, family: index === 0 ? 4 : 6 })) : [],
+    );
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    resolver.cancel();
+  }
+}
+
+/** Observe even a misbehaving injected resolver, without holding the request open. */
+async function boundedLookup(
+  lookup: (hostname: string, signal: AbortSignal) => Promise<readonly LookupAddress[]>,
+  hostname: string,
+  requestSignal?: AbortSignal | null,
+) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(requestSignal?.reason);
+  const timer = setTimeout(() => controller.abort(new Error("DNS resolution timed out.")), 10_000);
+  requestSignal?.addEventListener("abort", abort, { once: true });
+  let onAbort: (() => void) | undefined;
+  let resolution: Promise<readonly LookupAddress[]> | undefined;
+  try {
+    if (requestSignal?.aborted) abort();
+    controller.signal.throwIfAborted();
+    resolution = lookup(hostname, controller.signal);
+    return await Promise.race([
+      resolution,
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(controller.signal.reason);
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        if (controller.signal.aborted) onAbort();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    requestSignal?.removeEventListener("abort", abort);
+    if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+    controller.abort();
+    // Drain the owned resolver after cancelling its channels (INV-7). Test
+    // injections may ignore cancellation, but cannot hold send() open.
+    if (lookup === resolveAddresses) await resolution?.catch(() => {});
+  }
+}
 
 /** Pull-based bridge: Node 22's Readable.toWeb can enqueue after Web cancellation. */
 function responseBody(body: Readable, signal: AbortSignal): ReadableStream<Uint8Array> {
@@ -41,7 +102,10 @@ function responseBody(body: Readable, signal: AbortSignal): ReadableStream<Uint8
  * HTTP/2 REFUSED_STREAM and pipeline recovery paths, for every method.
  * The response/abort owns the client until the body ends or is cancelled.
  */
-export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
+export function createNodeGuardedTransport(
+  proxy?: string,
+  lookup: (hostname: string, signal: AbortSignal) => Promise<readonly LookupAddress[]> = resolveAddresses,
+): GuardedTransport {
   let proxyUri: string | undefined;
   let proxyToken: string | undefined;
   if (proxy !== undefined) {
@@ -64,7 +128,43 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
   return {
     delaysDispatch: true,
     async send(url, init, beforeDispatch = () => {}) {
+      const configured = (init as LearnedRequestInit)[learnedDestination];
+      let pinned: LookupAddress | undefined;
+      if (configured && url.origin !== configured.origin) {
+        const refuse = () =>
+          new OAuthRequestNotSentError(
+            "connector_call_failed",
+            "The learned URL resolved to an unsafe destination; nothing was sent.",
+            { retryable: false },
+          );
+        if (learnedUrlRefusal(configured, url)) throw refuse();
+        const hostname = url.hostname.replace(/^\[|\]$/g, "");
+        let addresses: readonly LookupAddress[];
+        try {
+          addresses = isIP(hostname)
+            ? [{ address: hostname, family: isIP(hostname) }]
+            : await boundedLookup(lookup, hostname, init.signal);
+        } catch {
+          init.signal?.throwIfAborted();
+          throw refuse();
+        }
+        init.signal?.throwIfAborted();
+        if (
+          addresses.length === 0 ||
+          addresses.some(({ address, family }) => {
+            if (!isIP(address) || isIP(address) !== family) return true;
+            const resolved = new URL(url);
+            resolved.hostname = family === 6 ? `[${address}]` : address;
+            return learnedUrlRefusal(configured, resolved) !== undefined;
+          })
+        )
+          throw refuse();
+        pinned = addresses[0];
+      }
+      const destination = new URL(url);
+      if (pinned && proxyUri) destination.hostname = pinned.family === 6 ? `[${pinned.address}]` : pinned.address;
       const framed = new Request(url, init);
+      if (pinned) framed.headers.set("host", url.host);
       if (!framed.headers.has("user-agent")) framed.headers.set("user-agent", "connecta");
       let dispatched = false;
       const dispatch = () => {
@@ -80,6 +180,7 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
             uri: proxyUri,
             ...(proxyToken ? { token: proxyToken } : {}),
             proxyTunnel: true,
+            ...(pinned ? { requestTls: { servername: isIP(url.hostname) ? "" : url.hostname } } : {}),
             ...clientOptions,
             interceptors: { Agent: [], Client: [] },
             // Neither side of CONNECT uses a Pool, interceptor or global dispatcher.
@@ -94,7 +195,7 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
                   // Node 26 rejects IP SNI. Omit it for literal IPs; tls.connect
                   // still checks the certificate against its connection host.
                   connect(
-                    { ...parameters, ...(name && isIP(name.replace(/^\[|\]$/g, "")) ? { servername: "" } : {}) },
+                    { ...parameters, ...(name ? { servername: isIP(name.replace(/^\[|\]$/g, "")) ? "" : name } : {}) },
                     callback,
                   );
                 },
@@ -130,7 +231,19 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
               });
             },
           })
-        : new Client(url.origin, clientOptions);
+        : new Client(url.origin, {
+            ...clientOptions,
+            ...(pinned
+              ? {
+                  connect: {
+                    // No second resolver can replace the checked address. The Client
+                    // retains the URL hostname for SNI and certificate verification.
+                    lookup: (_hostname, _options, callback) => callback(null, pinned!.address, pinned!.family),
+                    autoSelectFamily: false,
+                  },
+                }
+              : {}),
+          });
       const destroy = () => Promise.allSettled([tunnelClient?.destroy(), client.destroy()]);
       const abort = () => {
         void destroy();
@@ -140,7 +253,7 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
         framed.signal.throwIfAborted();
         if (!proxyUri) dispatch();
         const answer = await client.request({
-          origin: url.origin,
+          origin: destination.origin,
           path: `${url.pathname}${url.search}`,
           method: framed.method as Parameters<Client["request"]>[0]["method"],
           headers: Object.fromEntries(framed.headers),

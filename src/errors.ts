@@ -41,6 +41,7 @@ export type ConnectorCallErrorCode =
   | "conflict"
   | "resource_template_ambiguous"
   | "resource_match_budget_exceeded"
+  | "unsupported_capability"
   | "input_required_unsupported"
   | "input_required_invalid"
   | "input_required_limit"
@@ -85,6 +86,7 @@ const CLASSIFICATION_CODE_TABLE = {
   conflict: true,
   resource_template_ambiguous: true,
   resource_match_budget_exceeded: true,
+  unsupported_capability: true,
   input_required_unsupported: true,
   input_required_invalid: true,
   input_required_limit: true,
@@ -514,6 +516,7 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   conflict: false,
   resource_template_ambiguous: false,
   resource_match_budget_exceeded: false,
+  unsupported_capability: false,
   input_required_unsupported: false,
   input_required_invalid: false,
   input_required_limit: false,
@@ -673,6 +676,11 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
   writeOutcome?: "unknown";
   /** The single model-facing entry point for every credential class. */
   nextAction?:
+    | { tool: "skills"; arguments: Record<string, never>; purpose: string }
+    | {
+        action: "reconnect_host" | "contact_operator" | "inspect_capabilities" | "recover_result";
+        purpose: string;
+      }
     | {
         tool: "authorize_connector";
         arguments: { connector: string };
