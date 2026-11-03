@@ -237,8 +237,33 @@ export function errorLabel(failure: unknown): string | undefined {
 // ---------------------------------------------------------------------------
 // Facts attached by identity
 
+interface IdentityLookupFact {
+  outcome: "timeout" | "rejected";
+  durationMs: number;
+  cold: boolean;
+  inFlight: number;
+}
+
+function identityLookupFact(value: IdentityLookupFact | undefined): IdentityLookupFact | undefined {
+  if (
+    !value ||
+    (value.outcome !== "timeout" && value.outcome !== "rejected") ||
+    count(value.durationMs, 86_400_000) === undefined ||
+    typeof value.cold !== "boolean" ||
+    count(value.inFlight, 1_000) === undefined
+  )
+    return undefined;
+  return {
+    outcome: value.outcome,
+    durationMs: Math.round(value.durationMs),
+    cold: value.cold,
+    inFlight: Math.round(value.inFlight),
+  };
+}
+
 /** Facts connecta derived about a failure where it saw it. */
 export interface FailureFacts {
+  identityLookup?: IdentityLookupFact;
   /** Inbound refusal classification attached to its Response, never its body. */
   reason?: AuthDenialReason;
   step?: FailureStep;
@@ -280,6 +305,7 @@ function checkedFacts(facts: CarriedFacts | undefined): CarriedFacts {
   return {
     ...defined("reason", member(facts.reason, AUTH_DENIAL_REASONS) as AuthDenialReason | undefined),
     ...defined("step", member(facts.step, STEPS) as FailureStep | undefined),
+    ...defined("identityLookup", identityLookupFact(facts.identityLookup)),
     ...defined("origin", origin(facts.origin)),
     ...defined("httpStatus", httpStatus(facts.httpStatus)),
     ...defined("oauthError", member(facts.oauthError, OAUTH_ERROR_CODES)),
@@ -345,6 +371,7 @@ declare const recordBrand: unique symbol;
 
 /** One failure as an operator may read it. Only `failureRecord` makes one. */
 export interface FailureRecord {
+  readonly identityLookup?: IdentityLookupFact;
   readonly [recordBrand]: true;
   readonly reason?: AuthDenialReason;
   readonly accessContext?: boolean;

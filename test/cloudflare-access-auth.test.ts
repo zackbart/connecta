@@ -261,6 +261,7 @@ describe("cloudflareAccessAuth", () => {
     const getIdentity = vi
       .fn()
       .mockRejectedValueOnce(new Error("identity-lookup-secret"))
+      .mockRejectedValueOnce(new Error("identity-lookup-secret"))
       .mockResolvedValue({ user_uuid: "operator-1" });
     const context = { waitUntil() {}, access: { aud: "app", getIdentity } };
     try {
@@ -273,6 +274,12 @@ describe("cloudflareAccessAuth", () => {
           "[connecta] Cloudflare Access verification unavailable",
           {
             reason: "access_identity_unavailable",
+            identityLookup: {
+              outcome: "rejected",
+              durationMs: expect.any(Number),
+              cold: expect.any(Boolean),
+              inFlight: expect.any(Number),
+            },
             accessContext: true,
             authorizationHeader: "absent",
           },
@@ -398,5 +405,82 @@ describe("cloudflareAccessAuth", () => {
       context,
     );
     expect(response.status).toBe(200);
+  });
+});
+
+describe("Access identity lookup recovery", () => {
+  it("INV-4: 20 concurrent admitted contexts recover transient rejection without crossing identities", async () => {
+    vi.useFakeTimers();
+    try {
+      const auth = cloudflareAccessAuth();
+      const lookups = Array.from({ length: 20 }, (_, i) =>
+        vi
+          .fn()
+          .mockRejectedValueOnce(new Error("private identity failure"))
+          .mockResolvedValue({ user_uuid: `human-${i}` }),
+      );
+      const pending = Promise.all(
+        lookups.map((getIdentity, i) =>
+          auth.authorize(
+            new Request(`${BASE}/mcp`, { headers: { "Cf-Access-Jwt-Assertion": "same-caller-supplied-header" } }),
+            BASE,
+            { access: { aud: `app-${i % 2}`, getIdentity } },
+          ),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      const results = await pending;
+      results.forEach((result, i) => {
+        expect(result).toMatchObject({ ok: true, userId: `human-${i}` });
+        expect(lookups[i]).toHaveBeenCalledTimes(2);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("INV-4: one retry cannot admit a failed identity or reuse an earlier success", async () => {
+    vi.useFakeTimers();
+    try {
+      const auth = cloudflareAccessAuth();
+      const getIdentity = vi
+        .fn()
+        .mockResolvedValueOnce({ user_uuid: "alice" })
+        .mockRejectedValue(new Error("private vendor failure"));
+      const context = { access: { aud: "app", getIdentity } };
+      expect(await auth.authorize(request, BASE, context)).toMatchObject({ ok: true, userId: "alice" });
+      for (let i = 0; i < 2; i++) {
+        const pending = auth.authorize(request, BASE, context);
+        await vi.advanceTimersByTimeAsync(300);
+        const result = await pending;
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.response.status).toBe(503);
+          expect(result.response.headers.get("Retry-After")).toBe("1");
+          expect(await result.response.text()).not.toContain("private vendor failure");
+        }
+      }
+      expect(getIdentity).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("INV-7: a rejected lookup followed by a stall shares the original deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const getIdentity = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("transient"))
+        .mockImplementation(() => new Promise(() => {}));
+      const pending = cloudflareAccessAuth().authorize(request, BASE, { access: { aud: "app", getIdentity } });
+      await vi.advanceTimersByTimeAsync(5001);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(503);
+      expect(getIdentity).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
