@@ -1,5 +1,7 @@
 {
   "notes": [
+    "2026-11-03: More temporary batch headroom. CI measured root at 419,015 B and examples/worker at 801,303 B on #1280, with more of the batch still open. The root cap moves to 425,000 B and the examples/worker cap to 808,000 B. These get tightened to measured sizes plus normal headroom when the batch lands.",
+    "2026-11-03: The opt-in timing trace (#1270) puts the root at 418,224 B on CI before merging later main changes, over the 418,000 B batch cap. The root cap moves to 420,000 B, under the same plan: tighten to measured sizes when the batch lands.",
     "2026-11-03: Temporary headroom for the performance, security and guidance batch (see #1259, #1260, #1264 and later PRs), which otherwise collide on these two caps one PR at a time. CI measured root at 416,003 B and examples/worker at 797,134 B on #1259. The root cap moves 416,000 to 418,000 B and the examples/worker cap to 801,000 B. Each PR's size change still shows in the CI bundle table, and these caps get tightened to measured sizes plus normal headroom when the batch lands.",
     "Scoped instruction prefixes and compact routing (#1244): same-toolchain Node 24.22.2 / esbuild 0.28.2 / Linux system zlib gzip-9 comparison against origin/main 11799205 measures examples/worker 800137 -> 800254 B (+117). CI Node 22 measures 797098 B; raise only its cap to 797125 B. Unchanged main already exceeds local caps because gzip toolchains differ; do not raise caps for that standing difference.",
     "Release 0.40.0: CI measures the root at 415,751 B against its 415,750 B cap. #1231 left the root within about 2 B of the cap, and the release version text moves its compressed size by 1 B. The root cap moves to 416,000 B to give the release room; baselineGzip and every other cap are unchanged.",
@@ -54,7 +56,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 418000
+      "maxGzip": 425000
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -137,7 +139,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 801000
+      "maxGzip": 808000
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

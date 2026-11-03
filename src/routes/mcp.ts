@@ -1,3 +1,4 @@
+import { startTimingTrace } from "../timing-trace.js";
 import { routeNames } from "../agent-routes.js";
 import { upwardStep } from "../upward.js";
 import { bindDiscoveryEndpoint } from "../discovery-health.js";
@@ -779,17 +780,22 @@ export function createMcpRoute(opts: ServerOptions): {
     const onCallerAbort = () => localAbort.abort(request.signal.reason);
     request.signal.addEventListener("abort", onCallerAbort, { once: true });
     if (request.signal.aborted) onCallerAbort();
+    const finishTiming = startTimingTrace(requestScope, opts.config.timingTraceSampleRate, opts.config.logger);
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     return scopedToBody(
       Effect.gen(function* () {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
-            requestOwner(requestScope).close();
-            if (!localAbort.signal.aborted) {
-              localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
+            try {
+              requestOwner(requestScope).close();
+            } finally {
+              finishTiming?.();
+              if (!localAbort.signal.aborted) {
+                localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
+              }
+              request.signal.removeEventListener("abort", onCallerAbort);
+              if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
             }
-            request.signal.removeEventListener("abort", onCallerAbort);
-            if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
           }),
         );
         // A request naming `subscriptions/listen` defers its permit: nothing of
@@ -798,7 +804,9 @@ export function createMcpRoute(opts: ServerOptions): {
         // modern listen goes without a permit; trusting the header alone would
         // let a legacy tools/call bypass the pool, so anything else takes one
         // after classification. Every other request takes its permit here,
-        // before auth, and no body is read before auth on any path.
+        // before auth, and this route reads no body before auth on any path.
+        // The Node adapter has already buffered up to its own pre-auth cap
+        // (`listen`'s `maxBodyBytes`) before a request reaches core.
         const startedAt = Date.now();
         const maxDurationMs = opts.requestAdmission.maxDurationMs;
         const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";

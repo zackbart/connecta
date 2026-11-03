@@ -33,14 +33,38 @@ export interface ListenOptions {
 
 const BODY_TOO_LARGE = Symbol("body-too-large");
 
+/** A name, IPv4 or bracketed IPv6 host with an optional port, and nothing else. */
+const REQUEST_HOST = /^(?:[a-z0-9._-]+|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
+
+/** `Host`, `X-Forwarded-Proto` or the request target is not a URL part; answered 400. */
+class InvalidRequestUrl extends Error {}
+
+/**
+ * The request's URL, read from values a client chooses. Each is checked on its
+ * own and the origin is parsed before the target joins it, so no value can move
+ * the boundary between authority, path and query for the routes behind it.
+ */
+function requestUrl(req: IncomingMessage): string {
+  const host = req.headers.host ?? "localhost";
+  const proto = req.headers["x-forwarded-proto"] ?? "http";
+  // Origin-form only. Absolute-form and `*` have no path to route.
+  const target = req.url ?? "/";
+  if (!REQUEST_HOST.test(host) || typeof proto !== "string" || !/^https?$/i.test(proto) || !target.startsWith("/")) {
+    throw new InvalidRequestUrl();
+  }
+  try {
+    return `${new URL(`${proto}://${host}`).origin}${target}`;
+  } catch {
+    throw new InvalidRequestUrl();
+  }
+}
+
 async function toRequest(
   req: IncomingMessage,
   maxBodyBytes: number,
   signal: AbortSignal,
 ): Promise<Request | typeof BODY_TOO_LARGE> {
-  const host = req.headers.host ?? "localhost";
-  const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
-  const url = `${proto}://${host}${req.url ?? "/"}`;
+  const url = requestUrl(req);
   const method = req.method ?? "GET";
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
@@ -157,6 +181,13 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
         const response = await connecta.fetch(request, undefined, ctx);
         await writeResponse(res, response);
       } catch (error) {
+        if (error instanceof InvalidRequestUrl) {
+          res.statusCode = 400;
+          // Refused before reading the body, so the connection cannot be reused.
+          res.setHeader("Connection", "close");
+          res.end("Bad Request");
+          return;
+        }
         // A client that deliberately went away can make either the request
         // handler or response pipeline reject. The request's abort signal is
         // the authoritative classification: there is no caller left to answer,
