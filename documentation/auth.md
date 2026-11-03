@@ -1370,17 +1370,17 @@ Each owner of an OAuth connector (the deployment when shared, each principal
 when personal) has one **grant record**, `oauth:grant` in the connector's
 namespace: the live **epoch**, the latest consent's state digest, and one
 authorization server's client registration, tokens, and discovery. Each
-consent has a **flow record**, `oauth:flow:<sha256(state)>`, holding its
-epoch, consent URL, and PKCE verifier for fifteen minutes; the state itself is
-stored nowhere.
+consent has a **flow record**, `oauth:flow:<sha256(state)>`, holding its epoch
+and timestamp, its binding to the selected server and client, its consent URL,
+and its PKCE verifier for fifteen minutes; the state itself is stored nowhere
+outside that URL.
 
-With a vault, the grant's body and each verifier are sealed with its AES-GCM
-key, the additional authenticated data naming the connector, owner partition,
+With a vault, the grant's body and each flow record's binding, consent URL and
+verifier are sealed with its AES-GCM key, the additional authenticated data naming the connector, owner partition,
 record, and epoch, so ciphertext moved to another connector, principal,
 record, or epoch does not open. Anything that fails to open (tampered, or
 under a rotated key) reads as absent: `auth_required` and a logged warning.
-The epoch, consent URL, and state digest stay plaintext and authenticate
-nothing. A plaintext body written before the vault could seal is sealed where
+The epoch, timestamp, and state digest stay plaintext and authenticate nothing. A plaintext body written before the vault could seal is sealed where
 it lies on first read, by compare-and-set. An [`api()` OAuth
 connector](#downstream-oauth-on-api) stores no client.
 
@@ -1388,7 +1388,16 @@ connector](#downstream-oauth-on-api) stores no client.
 connector has `startAuth`. A vault without them still works for deployments with
 no OAuth connector. To migrate, use `encryptedCredentialVault(storage, key)` or
 add both methods; grants stored plaintext are then sealed on first read as above.
-With no vault at all, OAuth state stays plaintext.
+
+**With no vault, the guarantee is narrower.** Nothing is encrypted at rest: the
+grant's body and the PKCE verifier are plaintext, and a configured URL's path can
+appear in them. The flow record is minimized instead. It stores no consent URL,
+and its binding keeps no URL userinfo, query or fragment, in plaintext or in its
+unkeyed discovery digest. Connect, callback and restart still work, and two things
+differ. A repeated non-forced start mints a fresh consent rather than handing the
+pending URL back; earlier links stay valid until their epoch ends. A change confined
+to a URL's query or fragment does not fence a pending consent.
+Use a vault wherever stored OAuth state must be protected.
 
 The body also holds `expiresAt`, the epoch milliseconds the stored access token
 expires: its `expires_in`, counted from just before the request that issued it
