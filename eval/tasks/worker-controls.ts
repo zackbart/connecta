@@ -24,7 +24,7 @@ import { evalConfig } from "../deploy/compose.js";
 import { withD1Latency } from "../deploy/d1-latency.js";
 import { isInjected, NO_INJECTION, parseInjection, type Injection } from "../fakes/injection.js";
 import { World, type WorldOptions } from "../fakes/world.js";
-import { serveFetch, freePort, retryBind } from "../support/serve.js";
+import { serveFetch, retryBind } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
 import { ACTIVE_TASKS } from "./index.js";
 import { PROVIDER_EVALS } from "./providers.generated.js";
@@ -594,10 +594,10 @@ export async function injectionControls() {
   if (isInjected(parseInjection(flags([])))) throw new Error("Injection is not off by default");
 }
 
-/** Force the released-port gap to lose to another listener, then recover before serving. */
+/** Force a candidate to be occupied by another listener, then recover before serving. */
 export async function portCollisionControls() {
-  const port = await freePort();
-  const competitor = await serveFetch(async () => new Response("competitor"), port);
+  const competitor = await serveFetch(async () => new Response("competitor"));
+  const port = competitor.port;
   let attempts = 0;
   let served: Awaited<ReturnType<typeof serveFetch>> | undefined;
   try {
