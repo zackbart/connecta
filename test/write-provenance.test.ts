@@ -681,7 +681,7 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
     expect(state.applied).toBe(2);
     if (served.ok) throw new Error("expected the served write to fail");
     expect(served.error).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
-    expect(served.error.retry).toBeUndefined();
+    expect(served.error.retry).toContain("No safe replay action exists.");
     expect(classifyWriteOutcome(served)).toBe("unknown");
 
     // A program that catches the failure still reports the unknown write.
@@ -950,7 +950,7 @@ describe("a served write's unknown outcome is final before any advice (round 12)
       expect(state.applied).toBe(1);
       if (served.ok) throw new Error("expected the served write to fail");
       expect(served.error).toMatchObject({ code: failure().code, retryable: false, writeOutcome: "unknown" });
-      expect(served.error.retry).toBeUndefined();
+      expect(served.error.retry).toContain("No safe replay action exists.");
       expect(served.error.nextAction).toBeUndefined();
       expect(classifyWriteOutcome(served)).toBe("unknown");
 
@@ -1066,7 +1066,7 @@ describe("refusal evidence holds only for its whole logical call (round 13)", ()
     expect(served.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
     // Stripe's own back-off advice held only for the refused request.
     expect(served.error.message).toBe("Stripe rate_limit_error: Rate limit");
-    expect(served.error.retry).toBeUndefined();
+    expect(served.error.retry).toContain("No safe replay action exists.");
     expect(classifyWriteOutcome(served)).toBe("unknown");
 
     const program = await catchingProgram(registry, "billing.delete_pair");
