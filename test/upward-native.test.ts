@@ -1,4 +1,4 @@
-import { readAgentAdmission } from "../src/agent-observation.js";
+import { observeAgentAdmission, readAgentAdmission } from "../src/agent-observation.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
@@ -355,4 +355,57 @@ it("INV-4 INV-7: frozen agent observation follows scope admission and precedes b
   } finally {
     await app.close();
   }
+});
+
+it("observation sampling skips 99 reads, expires, and partitions stores and agents", async () => {
+  const storage = memoryStorage();
+  const get = vi.spyOn(storage, "get");
+  const cas = vi.spyOn(storage, "compareAndSet");
+  const at = "2026-11-03T00:00:00.000Z";
+  for (let i = 0; i < 100; i++) await runEdge(observeAgentAdmission(storage, "assistant", at, 500));
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(cas).toHaveBeenCalledTimes(1);
+  await runEdge(observeAgentAdmission(storage, "alice", at, 500));
+  expect(get).toHaveBeenCalledTimes(2);
+  const other = memoryStorage();
+  await runEdge(observeAgentAdmission(other, "assistant", at, 500));
+  expect(await runEdge(readAgentAdmission(other, "assistant"))).toBe(at);
+  await runEdge(observeAgentAdmission(storage, "assistant", "2026-11-03T00:01:00.000Z", 500));
+  expect(cas).toHaveBeenCalledTimes(3);
+});
+
+it.each([false, true])(
+  "uncertain observation writes do not suppress the recovery read (committed=%s)",
+  async (committed) => {
+    const storage = memoryStorage();
+    const original = storage.compareAndSet.bind(storage);
+    const cas = vi.spyOn(storage, "compareAndSet").mockImplementationOnce(async (...args) => {
+      if (committed) await original(...args);
+      throw new Error("uncertain commit");
+    });
+    const get = vi.spyOn(storage, "get");
+    const at = "2026-11-03T00:00:00.000Z";
+    await runEdge(observeAgentAdmission(storage, "assistant", at, 500));
+    await runEdge(observeAgentAdmission(storage, "assistant", at, 500));
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(cas).toHaveBeenCalledTimes(committed ? 1 : 2);
+    expect(await runEdge(readAgentAdmission(storage, "assistant"))).toBe(at);
+  },
+);
+
+it("bounds observation entries and trusts only valid recent stored timestamps", async () => {
+  const storage = memoryStorage();
+  const get = vi.spyOn(storage, "get");
+  const cas = vi.spyOn(storage, "compareAndSet");
+  const at = "2026-11-03T00:00:00.000Z";
+  await storage.set("agent-observation:v1:assistant", "invalid");
+  await runEdge(observeAgentAdmission(storage, "assistant", at, 500));
+  expect(cas).toHaveBeenCalledTimes(1);
+  for (let i = 0; i < 256; i++) await runEdge(observeAgentAdmission(storage, `agent${i}`, at, 500));
+  get.mockClear();
+  await runEdge(observeAgentAdmission(storage, "assistant", at, 500));
+  expect(get).toHaveBeenCalledTimes(1); // evicted scalar; stored observation is recent
+  expect(cas).toHaveBeenCalledTimes(257);
+  await runEdge(observeAgentAdmission(storage, "assistant", "2026-11-02T23:59:59.000Z", 500));
+  expect(cas).toHaveBeenCalledTimes(257); // never moves persisted time backwards
 });

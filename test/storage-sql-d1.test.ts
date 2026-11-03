@@ -252,8 +252,8 @@ describe.skipIf(!bindings)("agent D1 round trips with injected latency", () => {
     const storage = d1Storage(structural(db, hooks));
     const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant")).token;
     for (const [mode, expected] of [
-      ["sequential", 4],
-      ["snapshot", 2],
+      ["sequential", 3],
+      ["snapshot", 1],
     ] as const) {
       // A plain adapter exercises the pre-optimization three-get algorithm
       // against the same native D1, including its separate observation read.
