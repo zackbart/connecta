@@ -6,9 +6,14 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { gzipSync } from "node:zlib";
 import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createNodeGuardedTransport } from "../src/http/node-transport.js";
-import { configureGuardedTransport, sendGuarded } from "../src/guarded-transport.js";
+import {
+  configureGuardedTransport,
+  learnedDestination,
+  type LearnedRequestInit,
+  sendGuarded,
+} from "../src/guarded-transport.js";
 import { listen } from "../src/node.js";
 import type { Connecta } from "../src/index.js";
 import { connectProxy } from "./fixtures/connect-proxy.js";
@@ -182,3 +187,128 @@ it(
     expect(child.stdout).toContain("certificate hostname verification preserved");
   },
 );
+
+it.each(["127.0.0.1", "::1"])("pins learned DNS answers without resolving twice (%s)", async (address) => {
+  const hosts: string[] = [];
+  const server = createServer((request, response) => {
+    hosts.push(request.headers.host!);
+    response.end("pinned");
+  });
+  server.listen(0, address);
+  await once(server, "listening");
+  onTestFinished(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+  const port = (server.address() as { port: number }).port;
+  let lookups = 0;
+  const sender = createNodeGuardedTransport(undefined, async () => {
+    lookups++;
+    return [{ address: lookups === 1 ? address : "10.0.0.1", family: address.includes(":") ? 6 : 4 }];
+  });
+  const target = new URL(`http://learned.localhost:${port}`);
+  const init: LearnedRequestInit = { [learnedDestination]: new URL("http://localhost:1") };
+  expect(await (await sender.send(target, init)).text()).toBe("pinned");
+  expect(lookups).toBe(1);
+  expect(hosts).toEqual([target.host]);
+  await expect(sender.send(target, init)).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+  expect(hosts).toHaveLength(1);
+});
+
+it.each([
+  [{ address: "10.0.0.1", family: 4 }],
+  [{ address: "fd00::1", family: 6 }],
+  [
+    { address: "8.8.8.8", family: 4 },
+    { address: "127.0.0.1", family: 4 },
+  ],
+  [
+    { address: "2606:4700:4700::1111", family: 6 },
+    { address: "::1", family: 6 },
+  ],
+  [],
+])("refuses every unsafe learned answer set before dispatch: %j", async (...answers) => {
+  let dispatched = 0;
+  const sender = createNodeGuardedTransport(undefined, async () => answers);
+  const init: LearnedRequestInit = { [learnedDestination]: new URL("https://configured.test") };
+  await expect(
+    sender.send(new URL("https://learned.test"), init, () => {
+      dispatched++;
+    }),
+  ).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+  expect(dispatched).toBe(0);
+});
+
+it("keeps configured origins exempt from DNS policy", async () => {
+  const server = createServer((_request, response) => response.end("configured"));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  onTestFinished(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+  const url = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+  const sender = createNodeGuardedTransport(undefined, async () => {
+    throw new Error("must not resolve");
+  });
+  const init: LearnedRequestInit = { [learnedDestination]: url };
+  expect(await (await sender.send(url, init)).text()).toBe("configured");
+});
+
+it("cancels stalled learned DNS before dispatch and aborts its resolver", async () => {
+  const controller = new AbortController();
+  let resolverSignal: AbortSignal | undefined;
+  let dispatched = 0;
+  const sender = createNodeGuardedTransport(undefined, async (_hostname, signal) => {
+    resolverSignal = signal;
+    return new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  });
+  const pending = sender.send(
+    new URL("https://learned.test"),
+    {
+      [learnedDestination]: new URL("https://configured.test"),
+      signal: controller.signal,
+    } as LearnedRequestInit,
+    () => {
+      dispatched++;
+    },
+  );
+  const reason = new Error("request ended");
+  controller.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+  expect(resolverSignal?.aborted).toBe(true);
+  expect(dispatched).toBe(0);
+});
+
+it("bounds stalled learned DNS without a caller deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    let resolverSignal: AbortSignal | undefined;
+    let dispatched = 0;
+    const sender = createNodeGuardedTransport(undefined, async (_hostname, signal) => {
+      resolverSignal = signal;
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    const pending = sender.send(
+      new URL("https://learned.test"),
+      {
+        [learnedDestination]: new URL("https://configured.test"),
+      } as LearnedRequestInit,
+      () => {
+        dispatched++;
+      },
+    );
+    const refused = expect(pending).rejects.toMatchObject({ retryable: false });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await refused;
+    expect(resolverSignal?.aborted).toBe(true);
+    expect(dispatched).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});

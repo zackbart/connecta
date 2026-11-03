@@ -1,3 +1,4 @@
+import { learnedUrlSafeFetch } from "../src/connectors/remote-mcp/transport.js";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, oauthStateDigest } from "../src/auth/downstream-oauth.js";
@@ -446,4 +447,21 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     await c.finishAuth!("code-123", callback, new URLSearchParams({ code: "code-123", state: state! }));
     expect(server.requests.some((url) => url.href === "http://localhost:9000/token")).toBe(true);
   });
+});
+
+it("learned redirects check every hop and never transfer headers across origins", async () => {
+  const sent: string[] = [];
+  const fetch = learnedUrlSafeFetch("crm", new URL("https://configured.test"), async (input, init) => {
+    sent.push(String(input));
+    expect(init?.redirect).toBe("manual");
+    return new Response(null, {
+      status: 302,
+      headers: { location: sent.length === 1 ? "/next" : "https://127.0.0.1/private" },
+    });
+  });
+  await expect(fetch("https://learned.test/start")).rejects.toMatchObject({
+    code: "connector_call_failed",
+    retryable: false,
+  });
+  expect(sent).toEqual(["https://learned.test/start", "https://learned.test/next"]);
 });
