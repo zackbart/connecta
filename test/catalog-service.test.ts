@@ -260,6 +260,47 @@ describe("request-scoped catalog cache", () => {
     mutate(described[0] as ToolDef);
     await expect(service.loadConnector("owned")).resolves.toEqual([expected]);
   });
+  it("keeps private lexical visibility and cache partitions separate across fresh principal requests", async () => {
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    await vault.set("private", "alice-token", "test", "alice");
+    await vault.set("private", "bob-token", "test", "bob");
+    const registry = makeRegistry(
+      [
+        connectorWith({
+          id: "private",
+          authScope: "personal",
+          credential: { label: "Key" },
+          tools: async (ctx) => [
+            {
+              name: "read_record",
+              description: (await ctx.credential!.get()) === "alice-token" ? "Orchard inventory" : "Harbor inventory",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+      ],
+      { storage, credentialVault: vault },
+    );
+    const prepared = vi.spyOn(lexicalCatalog, "prepareLexicalCatalog");
+    const partitions: string[] = [];
+    try {
+      for (const principal of ["alice", "bob", "alice"]) {
+        const service = new CatalogService(registry.scoped({ connectorIds: "all", principalKey: principal }), BASE);
+        try {
+          const result = await service.search({ connector: "private", query: "orchard" });
+          expect(result.entries).toHaveLength(principal === "alice" ? 1 : 0);
+          partitions.push(prepared.mock.calls.at(-1)![1]);
+        } finally {
+          openRequest(service.requestScope).close();
+        }
+      }
+      expect(partitions[0]).toBe(partitions[2]);
+      expect(partitions[0]).not.toBe(partitions[1]);
+    } finally {
+      prepared.mockRestore();
+    }
+  });
   it("reuses the indexed arrays per request and safety view without sharing caller definitions", async () => {
     const tools: ToolDef[] = [
       {

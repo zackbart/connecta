@@ -227,6 +227,70 @@ describe("native tool surface", () => {
     expect(meta.result.ttlMs).toBe(3_600_000);
   });
 
+  it("states connector restrictions for fully restricted and mixed admitted pools", async () => {
+    for (const mixed of [false, true]) {
+      const storage = memoryStorage();
+      const app = createTestConnecta({
+        storage,
+        accessTokens: accessTokens(storage),
+        agents: ["assistant"],
+        connectors: [
+          { id: "notes", readOnly: true, listTools: async () => [], callTool: async () => ({}) },
+          { id: "crm", listTools: async () => [], callTool: async () => ({}) },
+        ],
+        pools: Object.fromEntries(
+          ["meta", "native", "code"].map((name) => [
+            name,
+            {
+              tools: mixed ? ["notes", "crm"] : ["notes"],
+              members: ["agent:assistant"],
+              ...(name === "meta" ? {} : { surface: "native" as const, executeCode: name === "code" }),
+            },
+          ]),
+        ),
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        for (const pool of ["meta", "native", "code"]) {
+          const init = await rpc(
+            app,
+            token,
+            pool,
+            "initialize",
+            {
+              protocolVersion: "2026-07-28",
+              capabilities: {},
+              clientInfo: { name: "test", version: "1" },
+            },
+            false,
+          );
+          const instructions = init.result.instructions;
+          expect(instructions).toContain(mixed ? "subject to connector restrictions" : "can't perform writes");
+          expect(instructions).not.toContain("notes.");
+          expect(instructions).not.toContain("crm.");
+          expect(
+            (
+              await rpc(
+                app,
+                token,
+                pool,
+                "initialize",
+                {
+                  protocolVersion: "2026-07-28",
+                  capabilities: {},
+                  clientInfo: { name: "test", version: "1" },
+                },
+                false,
+              )
+            ).result.instructions,
+          ).toBe(instructions);
+        }
+      } finally {
+        await app.close();
+      }
+    }
+  });
+
   it("INV-1: annotates a tool the deployment reclassifies as a write as destructive", async () => {
     const deployed = deployment({ classification: { crm: { get_person: "write" } } });
     const token = await issueAgentToken(deployed.storage, "assistant");

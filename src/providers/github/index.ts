@@ -49,7 +49,7 @@ export const github = defineProvider<GitHubOptions>({
         "The App identity is already configured. Installation access is resolved on use; ask the operator to repair configuration only after an auth failure.",
         ...(options.readOnly === true ? ["This connection is read-only; every write is refused."] : []),
       ],
-      summary: "GitHub App repository reads, scoped data search, release writes and guarded merges.",
+      summary: "Load for GitHub repository searches, releases and guarded merges.",
       required: true,
     });
     const credential =

@@ -114,7 +114,7 @@ export const forms = defineApiProvider<FormsOptions>({
       ...(options.readOnly ? ["This connection is read-only."] : []),
     ],
     instructions: options.instructions,
-    summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
+    summary: "Load for form questions, labeled responses and revision-checked batch edits.",
     // Required: whose forms they are, that Drive lists them, and the
     // revision-checked edit sequence are conventions no schema can carry.
     required: true,
