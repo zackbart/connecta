@@ -3936,3 +3936,16 @@ Admission observation sampling retains at most 256 scalar deadlines per live
 physical storage identity in an isolate. Only a recent valid stored timestamp
 or confirmed CAS populates it, for at most one minute. This telemetry cache
 never answers token admission; every request still checks current credentials.
+
+### Lexical token reuse (contributor)
+
+Search may retain four complete accepted catalog token indexes, bounded by an
+8 MiB estimate including key text, token strings, postings and structural slots.
+Identity includes complete served content (including schemas, classification and
+order), connector, physical store, owner partition/revisions and the downstream catalog
+generation observed by the current successful listing. The generation marker
+is request-local primitive evidence; it grants no cache acceptance or authority. Only immutable
+strings and numeric positions cross requests. Search views map positions to the
+current request's definitions after owner visibility, classification, redaction
+and endpoint restrictions; no query results are retained. Partial failed
+catalogs cannot enter this cache. Eviction changes cost only, never results.

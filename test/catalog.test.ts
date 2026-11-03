@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
-import { compactDiscoverySchema, compactSchema } from "../src/catalog.js";
-import type { JsonSchema } from "../src/types.js";
+import {
+  compactDiscoverySchema,
+  compactSchema,
+  prepareLexicalCatalog,
+  carryLexicalCatalog,
+  rankTools,
+} from "../src/catalog.js";
+import type { JsonSchema, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE } from "./fixtures/meta-tools.js";
 import { calcConnector, makeRegistry } from "./helpers.js";
@@ -296,6 +302,100 @@ describe("2020-12 schemas in search and describe", () => {
     for (const tool of [exactPage.entries[0]!.tool, exactDescription!]) {
       expect(tool.inputSchema).toEqual(schema);
       expect(tool.inputSchemaTruncated).toBeUndefined();
+    }
+  });
+});
+
+describe("request-free lexical reuse", () => {
+  const catalog = (): ToolDef[] => [
+    {
+      name: "list_tickets",
+      description: "Find open support tickets",
+      classification: "read",
+      inputSchema: { type: "object" },
+    },
+    {
+      name: "delete_ticket",
+      description: "Remove a support ticket",
+      classification: "write",
+      inputSchema: { type: "object" },
+    },
+  ];
+  it("reuses tokens but returns only the current request's definitions with identical rankings", () => {
+    const first = catalog();
+    prepareLexicalCatalog(first, "crm:alice:g1");
+    const current = catalog();
+    const tokenize = vi.spyOn(String.prototype, "toLowerCase");
+    prepareLexicalCatalog(current, "crm:alice:g1");
+    expect(tokenize).not.toHaveBeenCalled();
+    tokenize.mockRestore();
+    for (const query of ["support ticket", "list tickets", "remove", "", "unmatched"])
+      for (const mode of ["all", "partial"] as const) {
+        const actual = rankTools(current, query, mode);
+        expect(actual).toEqual(rankTools(catalog(), query, mode));
+        for (const match of actual) {
+          expect(current).toContain(match.tool);
+          expect(first).not.toContain(match.tool);
+        }
+      }
+    const visible = current.filter((tool) => tool.classification === "read");
+    carryLexicalCatalog(current, visible);
+    expect(rankTools(visible, "ticket")).toEqual(rankTools(structuredClone(visible), "ticket"));
+    expect(rankTools(visible, "remove")).toEqual([]);
+  });
+  it("partitions even identical private facts by connector, owner and generation", () => {
+    prepareLexicalCatalog(catalog(), "crm:alice:g2");
+    for (const partition of ["crm:bob:g2", "notes:alice:g2", "crm:alice:g3"]) {
+      const tools = catalog();
+      const tokenize = vi.spyOn(String.prototype, "toLowerCase");
+      prepareLexicalCatalog(tools, partition);
+      expect(tokenize).toHaveBeenCalled();
+      tokenize.mockRestore();
+      const visible = tools.filter((tool) => tool.classification === "read");
+      carryLexicalCatalog(tools, visible);
+      expect(rankTools(visible, "remove")).toEqual([]);
+      expect(rankTools(visible, "ticket").map((match) => match.tool)).toEqual([tools[0]]);
+    }
+  });
+  it("evicts beyond four entries and refuses indexes above the byte budget", () => {
+    prepareLexicalCatalog(catalog(), "eviction:first");
+    for (let i = 0; i < 4; i++) prepareLexicalCatalog(catalog(), `eviction:${i}`);
+    const tokenize = vi.spyOn(String.prototype, "toLowerCase");
+    prepareLexicalCatalog(catalog(), "eviction:first");
+    expect(tokenize).toHaveBeenCalled();
+    tokenize.mockRestore();
+    const oversized = catalog();
+    oversized[0]!.inputSchema = { description: "x".repeat(4 * 1024 * 1024) };
+    prepareLexicalCatalog(oversized, "oversized");
+    const fresh = structuredClone(oversized);
+    const again = vi.spyOn(String.prototype, "toLowerCase");
+    prepareLexicalCatalog(fresh, "oversized");
+    expect(again).toHaveBeenCalled();
+    again.mockRestore();
+  });
+  it("does not reuse changed descriptions, classification, schema or order", () => {
+    prepareLexicalCatalog(catalog(), "crm:alice:g4");
+    for (const change of [
+      (tools: ToolDef[]) => {
+        tools[0]!.description = "Invoices only";
+      },
+      (tools: ToolDef[]) => {
+        tools[0]!.classification = "write";
+      },
+      (tools: ToolDef[]) => {
+        tools[0]!.inputSchema = { type: "object", required: ["id"] };
+      },
+      (tools: ToolDef[]) => {
+        tools.reverse();
+      },
+    ]) {
+      const tools = catalog();
+      change(tools);
+      const tokenize = vi.spyOn(String.prototype, "toLowerCase");
+      prepareLexicalCatalog(tools, "crm:alice:g4");
+      expect(tokenize).toHaveBeenCalled();
+      tokenize.mockRestore();
+      expect(rankTools(tools, "ticket", "partial")).toEqual(rankTools(structuredClone(tools), "ticket", "partial"));
     }
   });
 });

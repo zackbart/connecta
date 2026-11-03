@@ -1,3 +1,4 @@
+import { markCatalogGeneration } from "./catalog-freshness.js";
 import { detach, runEdge } from "./runtime/run.js";
 import { Deferred, Effect } from "effect";
 import {
@@ -1338,7 +1339,9 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                   );
                 }
               }
-              return yield authCall<T>(read, []);
+              const result = yield authCall<T>(read, []);
+              markCatalogGeneration(listingCtx.requestScope, connectorId, listing.generation.value);
+              return result;
             } finally {
               listing.ended = true;
               active = undefined;
