@@ -439,7 +439,12 @@ Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.
 
 The local document URIs are `skill://connecta/usage/SKILL.md` and
 `skill://connecta/connectors/<slug>/SKILL.md`. A valid Agent Skills connector ID
-is its slug; other IDs use `connector-` followed by a stable SHA-256 prefix.
+is its slug; other IDs use a readable normalized ID slug plus a 12-character SHA-256 suffix.
+The former `connector-<48-character-hash>` names, roots and file URIs remain
+resolvable aliases. Construction warns, without rejecting a guide, when its
+summary has no English task verb or operation noun from the advisory heuristic
+(for example, a credential-only scope statement). Set `usageGuide.summary`
+to say when to load it; non-English prose may produce a false-positive warning.
 The suffix makes each
 document a valid Agent Skills file; the roots `skill://connecta/usage` and
 `skill://connecta/connectors/<connector-id>` also resolve. Provider guides are

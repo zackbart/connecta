@@ -123,8 +123,7 @@ export const sheets = defineApiProvider<SheetsOptions>({
       ...(options.readOnly ? ["This connection is read-only."] : []),
     ],
     instructions: options.instructions,
-    summary:
-      "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, formatting and structure.",
+    summary: "Load for spreadsheet A1 ranges, paged cells, RAW/USER_ENTERED writes and formatting.",
     // Whose spreadsheets they are, how Drive finds them, and the cell-write
     // meanings of null and "" are conventions no schema carries.
     required: true,

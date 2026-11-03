@@ -148,7 +148,7 @@ export const overflow = defineApiProvider<OverflowOptions>({
         ? [`Paged lists return ${options.defaultPageSize} items by default on this connection.`]
         : []),
     ],
-    summary: "Giving records: asset-specific status, per-field money units, donor joins and deposit reconciliation.",
+    summary: "Load for giving statuses, money units, donor joins and deposit reconciliation.",
     required: true,
   }),
   hatch: {

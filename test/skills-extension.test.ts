@@ -587,3 +587,22 @@ it("advertises private local TTLs without crossing caller catalogs", async () =>
   expect(await remote.resources()).toMatchObject({ ttlMs: 0 });
   expect(await remote.read("usage")).toMatchObject({ ttlMs: 0 });
 });
+
+it("keeps old hash names and URIs resolvable after readable slug naming", async () => {
+  const id = "crm_alice";
+  const registry = new SkillsRegistry(makeRegistry([guided(id)]), BASE);
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(id))), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  const entry = (await registry.list()).skills[1]!;
+  expect(entry.frontmatter.name).toBe(`crm-alice-${hash.slice(0, 12)}`);
+  for (const alias of [
+    `connector-${hash.slice(0, 48)}`,
+    `skill://connecta/connectors/connector-${hash.slice(0, 48)}`,
+    `skill://connecta/connectors/connector-${hash.slice(0, 48)}/SKILL.md`,
+    `connector:${id}`,
+    id,
+  ]) {
+    expect((await registry.get(alias)).skill.uri).toBe(entry.uri);
+  }
+});

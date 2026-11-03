@@ -409,21 +409,33 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (
             content?: string;
             files?: Map<string, string>;
           }>(function* () {
-            const name = validSkillName(connector.id)
-              ? connector.id
-              : `connector-${bytesToHex(
+            const digest = validSkillName(connector.id)
+              ? ""
+              : bytesToHex(
                   new Uint8Array(
                     yield* upwardStep(
                       authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", encoder.encode(connector.id)]),
                     ),
                   ),
-                ).slice(0, 48)}`;
+                );
+            const legacy = `connector-${digest.slice(0, 48)}`;
+            const slug =
+              connector.id
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-|-$/g, "")
+                .slice(0, 42)
+                .replace(/-$/g, "") || "connector";
+            const name = validSkillName(connector.id) ? connector.id : `${slug}-${digest.slice(0, 12)}`;
             const description = connectorGuideSummary(connector)!;
             const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
             const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${connectorGuide(connector)!}`;
             return {
               ...localRecord(name, `${root}/SKILL.md`, description, content, [
                 connectorSkillName(connector.id),
+                ...(name !== connector.id
+                  ? [legacy, `skill://connecta/connectors/${legacy}`, `skill://connecta/connectors/${legacy}/SKILL.md`]
+                  : []),
                 `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
                 root,
               ]),
