@@ -369,6 +369,12 @@ including refusal checks; those probes cannot affect the grade.
 
 ## Latency and fault injection
 
+Selftest probes exercise exact-once physical HTTP waits through both real
+Node and Worker targets, disabled fault membership, and hung-request/listener
+cleanup. D1 probes count each batch, statement method and exec wait; wall-clock
+checks enforce only the lower delay bound, so a busy host cannot manufacture a
+duplicate delay by exceeding an upper bound.
+
 Both `eval:agent` and `eval:smoke` accept opt-in injection
 ([fakes/injection.ts](fakes/injection.ts)). Every default is zero, so a run
 without these flags measures what earlier runs measured.

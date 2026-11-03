@@ -46,16 +46,28 @@ export function stampServed(request: Request): Request {
 }
 
 /** Injected per-request latency by served port; see eval/fakes/injection.ts. */
-const latencies = new Map<number, number>();
+const latencies = new Map<number, { ms: number; requests: number; waits: number }>();
+
+/** Plain counters for exact-once injection probes, independent of host load. */
+export function servedDelayStats(url: string) {
+  const state = latencies.get(Number(new URL(url).port));
+  return state ? { ...state } : undefined;
+}
+
+function waitInjected(state: { ms: number; waits: number }) {
+  state.waits++;
+  return new Promise<void>((resolve) => setTimeout(resolve, state.ms));
+}
 
 /** Delay every request the fake at `url` answers by `ms`, until the release runs. */
 export function delayServed(url: string, ms: number): () => void {
   const port = Number(new URL(url).port);
   if (ms <= 0) return () => {};
   if (latencies.has(port)) throw new Error(`Latency already injected for ${url}`);
-  latencies.set(port, ms);
+  const state = { ms, requests: 0, waits: 0 };
+  latencies.set(port, state);
   return () => {
-    if (latencies.get(port) === ms) latencies.delete(port);
+    if (latencies.get(port) === state) latencies.delete(port);
   };
 }
 
@@ -73,7 +85,10 @@ export async function serveFetch(handler: (request: Request) => Promise<Response
       }
       try {
         const delay = latencies.get((server.address() as AddressInfo).port);
-        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        if (delay) {
+          delay.requests++;
+          await waitInjected(delay);
+        }
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const headers = new Headers();
