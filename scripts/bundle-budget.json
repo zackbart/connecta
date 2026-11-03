@@ -1,5 +1,6 @@
 {
   "notes": [
+    "Downstream skill origin prefixes (#1245): same-toolchain Node 24.22.2 / esbuild 0.28.2 / Linux system zlib gzip-9 comparison against origin/main 11799205 measures examples/worker 800137 -> 800170 B (+33). CI Node 22 measures 797009 B; raise only its cap to 797025 B. The standing local gzip difference on unchanged main is not included.",
     "Release 0.40.0: CI measures the root at 415,751 B against its 415,750 B cap. #1231 left the root within about 2 B of the cap, and the release version text moves its compressed size by 1 B. The root cap moves to 416,000 B to give the release room; baselineGzip and every other cap are unchanged.",
     "Agent admission (#1226), same-toolchain origin/main b864736e comparison on Node 26.13.0, esbuild 0.28.2 and system zlib gzip-9: examples/worker grows from 799,538 B to 799,721 B (+183 B) for one fresh SQL lookup/record/slot snapshot instead of three round trips. Root grows 22 B (415,841 to 415,863 B); ./ui is unchanged at 346,344 B. All three already exceed their caps locally with this zlib; CI remains authoritative. Raise only examples/worker from 796,500 to 797,000 B (+500 B) to cover the measured admission optimization and compression variation over its 73 B CI headroom; leave root and UI caps unchanged.",
     "Gzip-9 measurements cover each Web-facing entry. Caps move only with an explicit rationale; standalone provider graphs include the shared Effect core and are reported, not capped.",
@@ -134,7 +135,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 797000
+      "maxGzip": 797025
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

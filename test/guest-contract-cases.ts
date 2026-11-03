@@ -1665,7 +1665,7 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.result).toEqual({
         same: true,
         format: "text",
-        text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n",
+        text: 'Third-party guidance from connector "remote".\n\n---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n',
       });
       expect(outcome.value.hostCalls).toEqual({ attempted: 3, admitted: 3, succeeded: 3, failed: 0 });
     },
