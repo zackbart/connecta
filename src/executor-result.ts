@@ -1,4 +1,4 @@
-import { META_ROUTES } from "./agent-routes.js";
+import { META_ROUTES } from "./route-names.js";
 import type { ExecuteResult } from "./types.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { msg } from "./errors.js";

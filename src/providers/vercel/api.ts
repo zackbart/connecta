@@ -504,6 +504,7 @@ export function usageGuide(options: Readonly<VercelTokenOptions>) {
   options = pinOptions(options);
   const team = defaultTeam(options);
   return {
+    summary: "Load for Vercel team scope, project/deployment ids, build events, runtime logs and guarded writes.",
     context: [
       `Vercel REST access token is already configured. Account purpose: ${options.purpose}`,
       options.pin
