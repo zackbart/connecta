@@ -1,5 +1,6 @@
 // The downstream OAuth surface: bounded SDK flows, early renewal before a
 // call, unchallenged consent starts, and the connector's auth operations.
+import { retainCleanup } from "./connection.js";
 import { authView } from "../../auth/native-call.js";
 import { authFlow, authCall, authInvoke, authMethod } from "../../auth/native.js";
 import { viewSignal } from "../../runtime/call.js";
@@ -18,7 +19,6 @@ import { byteReadResponse } from "../../byte-read-response.js";
 import { requestSentSecrets, sentSecretsFor } from "../../sent-secrets.js";
 import { ConnectorCallError, resendAdvice, WithheldTextError } from "../../errors.js";
 import { attachFailureFacts, carryFailureFacts, OAUTH_ERROR_CODES } from "../../operator-record.js";
-import { detach } from "../../runtime/run.js";
 import { retryAfterMs } from "../../http-policy.js";
 import { sendCredentialPost } from "../../guarded-transport.js";
 import type { Connector, ConnectorContext, ConnectorStatus } from "../../types.js";
@@ -517,7 +517,7 @@ export function remoteMcpOAuth(
                   [signal, ctx.signal],
                 ])) as unknown;
               } finally {
-                detach(rt.closeConnection(null, t, ctx.logger));
+                retainCleanup(state, rt.closeConnection(null, t, ctx.logger));
               }
             }),
           ),

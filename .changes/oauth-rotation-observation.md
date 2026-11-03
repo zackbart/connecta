@@ -2,4 +2,4 @@
 type: fixed
 ---
 
-Observe OAuth rotation assertions from the injected grant mutation, allowing only pre-mutation legacy session teardown before resetting the test log.
+Retain remote MCP cleanup settlement across owner and connector close, including abandoned leases, so bounded session termination remains owned by runtime deferred work. Await explicit warmup termination in OAuth rotation tests, including cleanup gated before fetch accounting.

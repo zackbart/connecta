@@ -1,3 +1,5 @@
+import { closeConnectorScope } from "../src/connector-scope.js";
+import { requestOwner } from "../src/runtime/request-scope.js";
 import { StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { z } from "zod";
@@ -919,6 +921,59 @@ describe("downstream session termination", () => {
       ]);
       releaseDelete.resolve(new Response(null, { status: 200 }));
       await connector.closeScope!(context);
+    },
+  );
+
+  it.each(["owner", "rotation", "owner-defer"] as const)(
+    "INV-7: deferred cleanup joins an already-started %s release",
+    async (path) => {
+      const deleting = deferred<void>();
+      const release = deferred<Response>();
+      const { connector, requests } = makeHttpDownstream({
+        sessionId: "held-session",
+        credential: path === "rotation",
+        onDelete: () => {
+          deleting.resolve();
+          return release.promise;
+        },
+      });
+      let secret = "first";
+      const waits: Promise<unknown>[] = [];
+      const context = {
+        ...ctx(),
+        requestScope: {},
+        credential: { get: async () => secret, getAll: async () => ({ value: secret }) },
+        ...(path === "owner-defer"
+          ? {
+              defer: (pending: Promise<unknown>) => {
+                waits.push(pending);
+              },
+            }
+          : {}),
+      };
+      try {
+        await connector.status!(context);
+        if (path === "rotation") {
+          secret = "second";
+          await connector.status!(context);
+        } else requestOwner(context.requestScope).close();
+        await deleting.promise;
+        if (path === "owner-defer") expect(waits.length).toBeGreaterThan(0);
+        await closeConnectorScope(connector, context, (pending) => {
+          waits.push(pending);
+        });
+        const deletes = requests.filter((request) => request.method === "DELETE");
+        expect(deletes.length).toBeGreaterThan(0);
+        // The 100ms caller window ends while DELETE is held. The registered
+        // tail must keep ownership until termination's own deadline aborts it.
+        expect(deletes[0]!.signal!.aborted).toBe(false);
+        await Promise.all(waits);
+        expect(deletes.every((request) => request.signal!.aborted)).toBe(true);
+        await connector.closeScope!(context);
+      } finally {
+        release.resolve(new Response(null, { status: 200 }));
+        await connector.closeScope!(context);
+      }
     },
   );
 

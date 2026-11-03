@@ -6,7 +6,7 @@ import { viewServices, viewSignal } from "../runtime/call.js";
 import { declareSelfHostedClient, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import { Client, isInputRequiredResult } from "@modelcontextprotocol/client";
 import type { FetchLike, OAuthTokens, Transport } from "@modelcontextprotocol/client";
-import { Duration, Effect, Exit, Scope } from "effect";
+import { Duration, Effect } from "effect";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactSentSecrets, requestSentSecrets, sentSecretsFor } from "../sent-secrets.js";
 import { closeCatalogCacheScope } from "../catalog-cache.js";
@@ -45,7 +45,7 @@ import { downstreamCallError, hasSdkPayload, payloadFree, remoteMcpErrors } from
 import { LOCAL_CLOSE_BUDGET_MS, REDIRECT_STATUSES, remoteMcpTransport } from "./remote-mcp/transport.js";
 import { remoteMcpConfig } from "./remote-mcp/config.js";
 import type { RemoteMcpRuntime } from "./remote-mcp/runtime.js";
-import { remoteMcpConnection } from "./remote-mcp/connection.js";
+import { closeConnectionScope, remoteMcpConnection } from "./remote-mcp/connection.js";
 import { remoteMcpOAuth } from "./remote-mcp/oauth.js";
 import { remoteMcpCatalog } from "./remote-mcp/catalog.js";
 import { remoteMcpResources } from "./remote-mcp/resources.js";
@@ -518,13 +518,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // Revocation and all finalizers start before any caller guard. Cleanup
         // retains its own bounded settlement even after the request has closed.
         const state = entryFor(ctx);
-        const release = Scope.closeUnsafe(state.scope, Exit.void);
+        const release = closeConnectionScope(state);
         const cacheClosing = closeCatalogCacheScope(ctx, id, cacheOwner);
         reset(state);
         const closing = runEdge(
           Effect.all(
             [
-              release ?? Effect.void,
+              Effect.promise(() => release),
               cacheClosing
                 ? Effect.raceAllFirst([
                     Effect.promise(() => cacheClosing),
