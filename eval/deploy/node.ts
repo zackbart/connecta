@@ -29,7 +29,7 @@ import { observedExecutor, type ProgramObservation } from "./observed-executor.j
 import { operatorUi } from "@zackbart/connecta/ui";
 import type { FakeOAuth } from "../fakes/oauth.js";
 import type { ConnectorSpec } from "../fakes/world.js";
-import { freePort } from "../support/serve.js";
+import type { AddressInfo } from "node:net";
 
 export interface Deployment {
   kind: string;
@@ -93,8 +93,23 @@ export async function startNodeDeployment(
     }
   };
   try {
-    const port = await freePort();
-    const origin = `http://127.0.0.1:${port}`;
+    // Keep the listener bound while constructing publicUrl-dependent config.
+    server = listen(
+      {
+        fetch: (...args) =>
+          connecta
+            ? forSurface(connecta, surface).fetch(...args)
+            : Promise.resolve(new Response(null, { status: 503 })),
+        close: async () => {
+          await connecta?.close();
+        },
+      } as ReturnType<typeof createConnecta>,
+      { port: 0, host: "127.0.0.1", gracefulShutdown: false },
+    );
+    // Pin before yielding: another active trial may dispatch during startup.
+    releaseTransport = holdFakeKitTransport();
+    await once(server, "listening");
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const storage = sqliteStorage((database = openSqlite(join(dir, "connecta.sqlite"))));
     const { token } = await new AccessTokenManager(storage, { agents: ["eval-machine"] }).rotate(
       "eval-machine",
@@ -134,18 +149,6 @@ export async function startNodeDeployment(
       );
     connecta = guidanceSurface(build());
     await presetCredentials(vault, connectors);
-    server = listen(
-      { ...connecta, fetch: (...args) => forSurface(connecta!, surface).fetch(...args) },
-      {
-        port,
-        host: "127.0.0.1",
-        gracefulShutdown: false,
-      },
-    );
-    // listen() just installed Node's owned sender, which bypasses the fake
-    // routing. Re-pin it in the same tick, before any request can dispatch.
-    releaseTransport = holdFakeKitTransport();
-    await once(server, "listening");
     await connectCcb(connecta, connectors, origin);
     return {
       kind: "node-template-shape",

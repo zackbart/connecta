@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimental_readRawConfig } from "wrangler";
+import { retryBind } from "./serve.js";
 import { ROOT } from "./meta.js";
 
 /**
@@ -155,6 +156,7 @@ export const WRANGLER_ENV = {
 export async function waitForHealth(origin: string, child: ChildProcess, output: () => string, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (/EADDRINUSE|address already in use/i.test(output())) throw new Error(`Startup bind collision:\n${output()}`);
     if (child.exitCode !== null) throw new Error(`process exited before /health was ready:\n${output().slice(-4_000)}`);
     try {
       const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1_000) });
@@ -227,6 +229,9 @@ export async function wranglerDev(options: {
   const choosePorts = async () => {
     port = await unclaimedPort();
     // Concurrent workerd processes must not share the default devtools port.
+    // Landlock computes its allowlist before workerd starts. Keep explicit ports
+    // for inspector/proxy callbacks; retryBind retries the whole startup if a
+    // competing process claims a selected port before Wrangler binds it.
     inspector = await unclaimedPort();
     proxyPort = await unclaimedPort();
     origin = `http://127.0.0.1:${port}`;
@@ -278,29 +283,31 @@ export async function wranglerDev(options: {
     await rm(persist, { recursive: true, force: true });
   };
   try {
-    for (let attempt = 1; ; attempt++) {
+    await retryBind(async () => {
       await choosePorts();
       started.push((proc = boot()));
       try {
         await waitForHealth(origin, proc.child, proc.output, bootMs);
-        break;
       } catch (error) {
         await stopProcess(proc.child);
-        if (attempt >= 3 || !/EADDRINUSE|address already in use/i.test(proc.output())) throw error;
+        throw new Error(`${String(error)}\n${proc.output()}`);
       }
-    }
+    });
   } catch (error) {
     await close();
     throw error;
   }
   let live = proc!;
   return {
-    origin,
+    get origin() {
+      return origin;
+    },
     persist,
     process: () => live,
     transcripts: () => started.map((entry) => entry.transcript()),
     restart: async () => {
       await stopProcess(live.child);
+      // A live trial has already served requests: preserve its public origin.
       live = proc = boot();
       started.push(live);
       await waitForHealth(origin, live.child, live.output, bootMs);

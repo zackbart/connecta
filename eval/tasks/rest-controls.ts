@@ -1,3 +1,4 @@
+import { startNodeDeployment } from "../deploy/node.js";
 /** Negative controls for #801's safety and paging acceptance criteria. */
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import type { ActiveTask } from "./types.js";
@@ -16,15 +17,10 @@ import { FakeGoogle, ALICE } from "../fakes/google.js";
 import { FakeGranola } from "../../src/providers/granola/eval/fake.js";
 import { FakeQuickBooks } from "../fakes/quickbooks.js";
 import { QB_COMPANIES, QB_SECRET } from "../deploy/quickbooks.js";
-import {
-  fakeTransportState,
-  holdFakeKitTransport,
-  repinFakeKitTransport,
-  routeFakeVendor,
-} from "../fakes/transport.js";
+import { fakeTransportState, holdFakeKitTransport, routeFakeVendor } from "../fakes/transport.js";
 import { serveFetch } from "../support/serve.js";
 import { randomUUID, sign } from "node:crypto";
-import { createServer, get as httpGet } from "node:http";
+import { Server as HttpServer, createServer, get as httpGet } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 
@@ -246,10 +242,49 @@ export async function fakeTransportInterleaving() {
     await Promise.all(googles.map((world) => world.start()));
     holds.push(holdFakeKitTransport());
     await Promise.all([...stripes, ...granolas, ...qbs].map((world) => world.start()));
-    // A deployment that serves no fake vendor reinstalls Node's sender in listen().
-    configureGuardedTransport(nodeSender);
-    repinFakeKitTransport();
-    if (guardedTransport(false) === nodeSender) throw new Error("A plain listen() unpinned the fake kit transport");
+    // Exercise the real listen() path and dispatch from another trial at its
+    // first yield. Check the pin before sending, so this negative control
+    // itself cannot leak a physical write onto the real network.
+    const pinned = guardedTransport(true);
+    const listen = HttpServer.prototype.listen;
+    const probes: Promise<void>[] = [];
+    HttpServer.prototype.listen = function (this: HttpServer, ...args: Parameters<typeof listen>) {
+      const result = listen.apply(this, args);
+      const probe = Promise.resolve().then(async () => {
+        if (guardedTransport(true) !== pinned)
+          throw new Error("Real deployment startup displaced the fake transport across a yield");
+        const response = await guardedTransport(true).send(new URL("https://api.stripe.com/v1/refunds"), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${stripes[0]!.token}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: "charge=ch_interleaved&amount=1",
+        });
+        if (!response.ok) throw new Error("Interleaved fake write failed");
+        await response.body?.cancel();
+      });
+      void probe.catch(() => {});
+      probes.push(probe);
+      return result;
+    } as typeof listen;
+    let deployment: Awaited<ReturnType<typeof startNodeDeployment>> | undefined;
+    try {
+      const startup = startNodeDeployment([
+        { id: "notes", title: "Notes", description: "Startup control", url: "http://127.0.0.1:1/mcp" },
+      ]);
+      deployment = await startup;
+      await Promise.all(probes);
+      if (
+        probes.length !== 1 ||
+        stripes[0]!.state.refunds.length !== 1 ||
+        routed(stripeLedgers[0]!, "/v1/refunds") !== 1
+      )
+        throw new Error("Startup interleaving escaped the fake physical-write ledger");
+    } finally {
+      HttpServer.prototype.listen = listen;
+      await deployment?.close();
+    }
     if (
       googles[0]!.serviceAccount.clientEmail === googles[1]!.serviceAccount.clientEmail ||
       qbs[0]!.clientId === qbs[1]!.clientId ||

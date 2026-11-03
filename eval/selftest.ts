@@ -52,6 +52,7 @@ import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
 import {
+  portCollisionControls,
   comparatorTargetControls,
   egressGuardControls,
   injectionControls,
@@ -102,6 +103,10 @@ if (process.argv.includes("--workerd-isolation-only")) {
   process.exit(0);
 }
 
+const runtimeControl = spawnSync(process.execPath, ["--test", "scripts/eval-runtime.test.mjs"], { stdio: "inherit" });
+assert.equal(runtimeControl.status, 0, "Runtime lock collision/crash controls failed");
+await portCollisionControls();
+console.log("ok   startup collisions recover before serving; failed join reads stop before posting");
 await gatewayControls();
 await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");
