@@ -1169,10 +1169,8 @@ describe("request budgets", () => {
         // Warmup session teardown is detached from the response and may arrive
         // after settle()'s idle sample. It is still allowed to use the old grant
         // before this mutation. Drain it deliberately and reject any earlier
-        // application dispatch, then observe every request after the change.
+        // application dispatch, then observe every request after the change commits.
         await d.settle();
-        for (const request of d.oauthRequests) expect(request.method).toBe("DELETE");
-        d.oauthRequests.length = 0;
         // A separate provider and SQL storage instance publishes between reads,
         // without notifying this request's storage memo.
         const other = d.otherProvider();
@@ -1194,6 +1192,8 @@ describe("request budgets", () => {
           }
           d.oauth.token = tokens.access_token;
         }
+        for (const request of d.oauthRequests) expect(request.method).toBe("DELETE");
+        d.oauthRequests.length = 0;
       });
       const refused = change === "disconnect" || (oauthModern && boundary === "chunks" && change === "rotation");
       const text = await d.tool(app, "call_tool", { address: "oauth.echo", args: { text: "hi" } }, refused);
