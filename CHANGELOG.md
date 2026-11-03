@@ -2,6 +2,93 @@
 
 All notable changes to this package are documented here.
 
+## 0.41.0 — 2026-11-03
+
+This release fixes a production outage on Workers, tightens auth and network defaults, and makes warm requests cheaper. Three changes can stop an existing deployment at startup or at validation, so check them before upgrading.
+
+**Upgrade if you run Workers on `@cloudflare/codemode` 0.5.5 or later.** On Connecta 0.40.0, those codemode releases make every `execute_code` host call fail with "The code execution finished before this tool call settled". `workerExecutor()` now works with them. Deployments that pinned codemode to 0.5.4 to avoid this can drop the pin after upgrading; deployments that stay on 0.40.0 must keep it.
+
+**Breaking:** `clerkAuth` now requires a resolved `publicUrl`, set on `clerkAuth({ publicUrl })` or `ConnectaConfig.publicUrl`, and no longer falls back to the request origin. A configured vault must have `seal` and `open` when any connector has `startAuth`; use `encryptedCredentialVault(storage, key)` or add both methods, and existing plaintext grants are sealed on first read. Pool descriptions are limited to 500 UTF-16 code units after trimming. The public activity kind union adds `operation`, which affects exhaustive consumers of activity records.
+
+**Security:** learned OAuth URLs on non-public addresses are refused, including transitional IPv6 forms carrying non-public IPv4 addresses, learned Node URL connections are pinned to validated DNS answers, and the Node adapter answers `400` to a malformed `Host`, `X-Forwarded-Proto` or request target before reading the body. Pending OAuth flow records store less: with a sealing vault the consent URL, binding and PKCE verifier are sealed together, and with no vault the record keeps no consent URL, so a repeated start mints fresh consent. Sealed consents pending from 0.40.0 still complete; a legacy no-vault consent restarts fresh.
+
+**Performance:** warm catalog resolution locates manifests, negotiation and generation in one bounded read. Lexical indexes are reused across requests in an isolate, result-stash writes are batched, and last-seen observation skips redundant reads in its sampling window. Local-only skill catalogs now advertise a five-minute private TTL. Node gains a cap on request body bytes held in flight together, set with `listen(..., { maxInFlightBodyBytes })`. It defaults to the larger of 64 MiB and `maxBodyBytes`, and an explicit value must be at least `maxBodyBytes`; past it, requests get `503` with `Retry-After`.
+
+**Reliability and agent guidance:** a rejected Cloudflare Access identity lookup retries once within its original deadline and records payload-free diagnostics. API OAuth status now comes from typed call outcomes fenced by grant revision. Endpoint instructions lead with pool scope and the guide pointer and state the effective write policy, native tools point at connector guides, skills have readable names with legacy aliases, and downstream skill text is labeled with its third-party origin. Typed failures carry recovery steps across host, availability, utility and result-handle errors.
+
+**Opt-in, ignore unless you want them:** `activityHistory({ operations: true })` for payload-free operation history; `timingTraceSampleRate` for sampled payload-free MCP timing logs; QuickBooks `update_unsent_invoice`, enabled with `readOnly: false`, for sparse `DocNumber` updates on observed unsent US-company USD invoices, an inference from Intuit's documented autosend prerequisites and not a vendor no-email guarantee; and, in `@zackbart/connecta-eve`, a caller or turn `when` predicate on `connectaConnection` and `connectaInstructions`, plus `connectaSkill({ name, description, ... })` for deferred connector instructions as Eve skills.
+
+The downstream Skills extension remains Beta, and unknown Skills revisions are now rejected.
+
+### Added
+
+- Add opt-in sparse DocNumber updates for observed unsent US-company USD QuickBooks invoices, refusing unknown delivery state, enabled payments and stale versions.
+- **Breaking:** Opt in to payload-free operation history with activityHistory({ operations: true }). Search, describe, result, skill and whole-program rows use conservative scope and owner disclosure, remain detached from responses, and do not inflate call or friction counts. The public activity kind union adds operation, which may require updates to exhaustive consumers. Typed operation failures retain their checked codes, and activity reuses existing page byte measurements without serializing operation returns.
+- The Eve helper accepts a caller/turn `when` predicate for instructions and connections. False or a policy failure omits the value before fetching guidance or selecting a pool, including when guidance is cached.
+- `listen(..., { maxInFlightBodyBytes })` bounds the request body bytes all in-flight requests hold together on Node. It defaults to 64 MiB, or `maxBodyBytes` when that is larger. Past it a request is answered `503` with `Retry-After` and `Connection: close`. `maxBodyBytes` and its `413` are unchanged, and Workers are unaffected.
+- Point guided native tool descriptions at the connector guide through the serving skills route.
+- Add eval-only guidance delivery interventions for pointer, summary, inline convention and instruction-led fetch comparisons, with deterministic arm controls and guide-fetch metrics. Inline conventions use the advertised guideSummary field, and wire controls list tools first so the SDK validates every arm's output schema.
+- Offer opt-in deferred connector instructions as Eve skills with caller selection before fetching. Network, timeout and malformed-response failures omit the skill while preserving turn cancellation. Successful content is reused only while Eve retains the endpoint/guide/turn memo; failed later turns serve no stale guide.
+- Opt-in sampled payload-free MCP timing logs with request-read cache outcomes and D1 trip/statement totals. Workers durations are I/O-spanning elapsed observations, not CPU attribution; CPU-only catalog stages report counts and decoded bytes. Trace finalization survives throwing downstream cleanup.
+
+### Changed
+
+- **Breaking:** `createConnecta` throws when `clerkAuth` has no resolved `publicUrl`: neither `clerkAuth({ publicUrl })` nor `ConnectaConfig.publicUrl`. Clerk's token `resource` and session `azp` checks no longer fall back to the request origin. To migrate, set either option to the URL clients reach, or name the loopback origin locally, such as `http://localhost:8787`. A `clerkAuth` `publicUrl` that is not an absolute http(s) URL without credentials also throws. The unset-`publicUrl` startup warning now also fires with inbound auth and describes every URL that follows the request origin.
+- **Breaking:** `createConnecta` throws when a configured vault lacks `seal` or `open` and any connector has `startAuth`, replacing a startup warning that left downstream OAuth tokens, client registrations and PKCE verifiers as plaintext beside encrypted credentials. To migrate, use `encryptedCredentialVault(storage, key)` or add both methods to the custom vault; grants already stored as plaintext are sealed on first read. `encryptedCredentialVault`, deployments with no vault, and non-sealing vaults with no OAuth connector are unaffected.
+- Skip redundant last-seen observation reads during the one-minute sampling window while continuing fresh token admission.
+- Raise the root bundle cap to 422,500 B gzip and `examples/worker` to 806,500 B gzip for this release's measured growth, ending the batch's temporary headroom.
+- Locate catalog manifests alongside negotiation and generation in one bounded SQL read, retaining complete chunk verification and a separate fresh acceptance fence.
+  
+  Keep locator layout metadata and key construction in the shared key builders. Prove expired generation/manifest handling and literal punctuation against both SQL drivers, and pin measured combined warm agent read counts after admission observation sampling.
+- Run CI static/package build phases and two isolated Node test shards in parallel, checking complete shard coverage and every matrix leg's completion at the aggregate gate.
+- Prefix downstream skill text with its third-party connector origin on tool and program surfaces while preserving native manifest bytes.
+- Reuse bounded immutable lexical tokens and postings across complete request catalogs while applying visibility on each request.
+- Advertise a five-minute private TTL for local-only skill catalogs and reads; downstream-enabled caller views retain zero TTL.
+- Use pinned native TypeScript for core and operator UI no-emit feedback, with explicit shared result types accepted by both compilers. Keep TypeScript 6 for AST analysis, emitted builds, declarations and installed consumers.
+- Verify sealed pending OAuth consents from 0.40.0 through callback validation, binding, claim, exchange and token persistence. Cover fresh-start recovery for legacy no-vault consents whose discovery URLs include userinfo, queries or fragments.
+- **Breaking:** Put pool scope and the guide pointer before routing rules in meta and native endpoint instructions, preserving unscoped instructions.
+  
+  Pool descriptions are limited to 500 UTF-16 code units after trimming so accepted text fits the instruction budget and first 512 units in every mode. This tightens validation: previously accepted descriptions with at most 500 Unicode code points but more than 500 UTF-16 units (for example, 500 emoji) now fail construction. Shorten those descriptions before upgrading; required routing rules remain intact.
+- Keep server orchestration and Effect out of the QuickJS child startup graph.
+- Use readable skill slugs with legacy aliases, actionable provider summaries and advisory construction warnings for weak guide summaries.
+  
+  Generated readable names resolve on every skill surface; canonical identities take priority over legacy aliases, ambiguous aliases fail explicitly, and generated names avoid configured connector IDs.
+- Batch SQL result-stash trailing chunks before separate header publication, reducing storage trips while preserving expiry and uncertain-write accounting.
+- Strengthen stash fault probes for delayed SQL batch commits and transactional expiry sweeps.
+
+### Fixed
+
+- Clarify that the redaction guarantee excludes occurrences made entirely of reserved replacement text, including runs across the seam between adjacent markers. Settling behavior is unchanged.
+- QuickBooks write evals now explicitly grade the destination and final answer evidence, completing the selftest check classification without weakening outcome checks.
+- Let `eval:selftest`'s D1 latency control accept a timer that fires just under its delay, so the full selftest no longer fails on a 49.8 ms round trip.
+- QuickBooks eval setup now probes personal credential isolation through a program and checks read-only pools using the tools the selected eval surface serves, so code-only selftests retain their safety checks without calling hidden meta-tools.
+- Attribute eval fake dispatches through a per-server transport marker, retaining unrelated loopback probes separately from vendor ledgers.
+- Probe exact-once eval latency on both deployment targets, disabled fault membership, stopped listening sockets, and each D1 round trip. Count D1 batch waits instead of imposing a load-sensitive upper timing bound.
+- Retry a rejected Cloudflare Access identity lookup once within its original deadline and record checked, payload-free lookup failure diagnostics. Identity failures continue to refuse admission.
+- Restrict native eval workerd TCP connections with fail-closed Linux Landlock port rules and raw-socket controls for disallowed ports and the known allowed-port address limit. Add a model-free check of all eligible Worker references. Document the remaining address and UDP limits.
+- Report API OAuth status from typed real-call outcomes fenced by the token grant's revision. Consent and refresh replace their observation atomically, and passive status reads do not write grant state. Later invocations can recover from transient API refusals; Connect starts fresh consent for a refused grant. Maintained provider middleware records initial and replayed outcomes, and unchanged observations do not rewrite grants. Normal Connect preserves concurrent recovery, and oversized 401 responses record refusal without reading their bodies, including after replay.
+- `workerExecutor()` works with `@cloudflare/codemode` 0.5.5 and later. Those releases close a call gate when the SDK's `execute()` settles, and Connecta's inert loader settled it before the real program ran, so every `execute_code` host call failed with "The code execution finished before this tool call settled". The gate now stays open for the whole native run and closes when it ends or its lease is released. Development and CI use codemode 0.5.6.
+- State effective write policy in endpoint instructions and connector guides, and explain that read-only refusals have no write route.
+- Supply schema recovery for typed argument failures without validation details and explicit safe recovery limits for missing resources, unavailable connectors and uncertain writes.
+- Reuse one observation age for stored connector details and their overlays, keeping both fields consistent across a clock rollover.
+- Corrected the Cloudflare Access `identityLookup.inFlight` documentation: it counts lookup attempts still pending, so a hung lookup counts itself, and a rejected lookup or a deadline during retry backoff does not.
+- Prevent eval startup port reservation races, retry child bind collisions before trials start, and protect a checkout's build with crash-released OS locks while allowing concurrent eval readers. Report failed cross-connector reference reads before attempting the answer post.
+  
+  Restore the fake vendor transport before deployment startup yields, preserving containment and physical-write evidence across interleaved trials.
+  
+  Use descriptor-mode locking on Linux and macOS, retaining the lease when the wrapper dies while its command runs. Keep explicit Wrangler inspector/proxy ports for Landlock and retry native startup collisions with fresh ports. Document the lock's reader/writer fairness limit.
+- Retain remote MCP cleanup settlement across owner and connector close, including abandoned leases, so bounded session termination remains owned by runtime deferred work. Await explicit warmup termination in OAuth rotation tests, including cleanup gated before fetch accounting.
+- `eval:selftest` exits after its last check instead of idling on the egress control's unclosed UDP probe socket.
+- Reject unknown downstream Skills revisions and record the extension’s Beta lifecycle.
+- Complete typed host, availability, utility and result-handle recovery, with continuation actions taking precedence over generic retry advice.
+
+### Security
+
+- Pending downstream OAuth flow records store less. With a sealing vault, the consent URL, server and client binding, and PKCE verifier are sealed together. With no vault, the record stores no consent URL and its binding keeps no URL userinfo, query or fragment, so a repeated non-forced start mints a fresh consent instead of reusing the pending URL. `documentation/auth.md` states the narrower no-vault guarantee. Sealed consents already in flight across the upgrade still complete. A no-vault consent whose discovery URL holds userinfo, a query or a fragment fails cleanly and needs a fresh start.
+- Learned OAuth URLs naming reserved or transitional addresses are refused: IPv4 special-purpose ranges (`192.0.0/24`, `198.18/15`, multicast, reserved and broadcast among them), IPv6 outside global unicast, and IPv4 carried in compatible, translated, NAT64 or 6to4 form, judged by the address it carries. A public address in those forms stays public. A `publicUrl` on such an address no longer offers a self-hosted client metadata document.
+- The Node adapter answers `400` for a `Host` that is not a host with an optional port, an `X-Forwarded-Proto` other than `http` or `https`, or a request target that does not start with `/`, before reading any body. No such value can change the path or host routes see. A malformed value used to fail as a `500` or be parsed into another URL.
+- Pin learned Node URL connections to validated DNS addresses while preserving TLS hostname verification.
+
 ## 0.40.0 — 2026-11-02
 
 This release makes warm Connecta calls on Workers cheaper in storage and closes a credential gap on OAuth remote MCP connectors. Deployments need no configuration change or migration, unless they use the Eve helper.
