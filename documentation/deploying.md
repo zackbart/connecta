@@ -61,6 +61,12 @@ authenticated `admission.requests.maxBodyBytes` default. To accept larger MCP
 bodies, configure both core and `listen(..., { maxBodyBytes })`; a smaller
 platform, proxy or adapter cap still wins. See
 [request body limits](./architecture.md#admission-in-two-places).
+`listen(..., { maxInFlightBodyBytes })` caps the body bytes all in-flight
+requests hold together, counted from the first chunk until the response finishes
+or the client leaves. It defaults to 64 MiB, or `maxBodyBytes` when that is
+larger, and may not be set below `maxBodyBytes`. Past it a request gets `503` with
+`Retry-After: 1` and `Connection: close`. Raise it when legitimate concurrent
+large bodies are refused, keeping it within the process's memory budget.
 A Node host serving `connecta.fetch` without `listen()` has no owned sender:
 every maintained-provider write, every reviewed POST read and every remote MCP
 write is refused before sending. Downstream OAuth credential POSTs also require

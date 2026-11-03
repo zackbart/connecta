@@ -109,7 +109,9 @@ MCP request bodies default to a 4 MiB limit on every endpoint. Deployment code
 can set `admission.requests.maxBodyBytes`; `describeConfig()` reports its value
 and source. An oversized body returns 413 before tool dispatch. See
 [request admission and body limits](./architecture.md#admission-in-two-places)
-for Node's separate pre-auth buffer and the listen-classification bound.
+for Node's separate pre-auth buffer and the listen-classification bound. A `503`
+from Node before auth means all in-flight bodies together passed
+[`maxInFlightBodyBytes`](./deploying.md#start-on-node).
 
 Direct calls may return a preview and a result handle. Page the handle through
 `connecta.result` in a program using the returned offset and byte limits, or

@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { build } from "esbuild";
 import { once } from "node:events";
+import { connect, type Socket } from "node:net";
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -46,6 +47,135 @@ describe("Node listen adapter", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await core.close();
     }
+  });
+
+  describe("in-flight body capacity", () => {
+    const withServer = async (
+      run: (port: number, release: () => void) => Promise<void>,
+      options: { hold?: boolean } = {},
+    ) => {
+      const core = createTestConnecta({ connectors: [] });
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const app = {
+        ...core,
+        fetch: async (request: Request) => {
+          const { byteLength } = await request.arrayBuffer();
+          if (options.hold && byteLength === 900) await held;
+          return new Response(String(byteLength));
+        },
+      };
+      const server = listen(app, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        maxBodyBytes: 1024,
+        maxInFlightBodyBytes: 1500,
+      });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      try {
+        await run(address.port, release);
+      } finally {
+        release();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    };
+    const post = async (port: number, size: number) => {
+      const response = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST", body: " ".repeat(size) });
+      await response.text();
+      return response;
+    };
+    /** A connection with `sent` of `declared` body bytes written and the rest withheld. */
+    const partial = (port: number, declared: number, sent: number) => {
+      const socket: Socket = connect(port, "127.0.0.1");
+      let received = "";
+      socket.on("data", (data) => {
+        received += String(data);
+      });
+      socket.on("error", () => {});
+      socket.write(
+        `POST /mcp HTTP/1.1\r\nHost: connecta.example\r\nContent-Length: ${declared}\r\n\r\n${" ".repeat(sent)}`,
+      );
+      return { socket, received: () => received };
+    };
+    const refused = (port: number) => vi.waitFor(async () => expect((await post(port, 700)).status).toBe(503));
+    const admitted = (port: number) => vi.waitFor(async () => expect((await post(port, 700)).status).toBe(200));
+
+    it("answers 503 past the aggregate cap, to a client still uploading, and frees bytes on completion", async () => {
+      await withServer(async (port) => {
+        const first = partial(port, 1000, 900);
+        await refused(port);
+
+        const second = partial(port, 1000, 700);
+        await vi.waitFor(() => expect(second.received()).toMatch(/^HTTP\/1\.1 503 /));
+        expect(second.received()).toMatch(/retry-after: 1\r\n/i);
+        expect(second.received()).toMatch(/connection: close\r\n/i);
+
+        // Exactly at the cap is admitted: 900 held plus 600 is 1500.
+        expect((await post(port, 600)).status).toBe(200);
+
+        first.socket.write(" ".repeat(100));
+        await vi.waitFor(() => expect(first.received()).toMatch(/^HTTP\/1\.1 200 /));
+        first.socket.destroy();
+        second.socket.destroy();
+        await admitted(port);
+      });
+    });
+
+    it("holds a request's bytes until its response finishes", async () => {
+      await withServer(
+        async (port, release) => {
+          const pending = post(port, 900);
+          await refused(port);
+          release();
+          expect((await pending).status).toBe(200);
+          await admitted(port);
+        },
+        { hold: true },
+      );
+    });
+
+    it("frees a departed client's bytes", async () => {
+      await withServer(async (port) => {
+        const { socket } = partial(port, 1000, 900);
+        await refused(port);
+        socket.destroy();
+        await admitted(port);
+      });
+    });
+
+    it("keeps the per-request 413 ahead of the aggregate cap", async () => {
+      await withServer(async (port) => {
+        expect((await post(port, 1024)).status).toBe(200);
+        expect((await post(port, 1025)).status).toBe(413);
+      });
+    });
+
+    it.each([0, -1, 1.5, Number.NaN, 1023])("refuses maxInFlightBodyBytes %s at listen", (maxInFlightBodyBytes) => {
+      const core = createTestConnecta({ connectors: [] });
+      expect(() =>
+        listen(core, { port: 0, gracefulShutdown: false, maxBodyBytes: 1024, maxInFlightBodyBytes }),
+      ).toThrow(/maxInFlightBodyBytes/);
+    });
+
+    it("defaults to at least one full body when maxBodyBytes is larger than 64 MiB", async () => {
+      const core = createTestConnecta({ connectors: [] });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        maxBodyBytes: 128 * 1024 * 1024,
+      });
+      await once(server, "listening");
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await core.close();
+    });
   });
 
   it.each([undefined, 256])(
