@@ -867,6 +867,11 @@ export interface InboundAuth {
   /** This provider may admit a human identity to operator mutation routes. */
   interactiveOperator?: true;
   /**
+   * This provider checks credentials against the deployment's own URL and was
+   * given none, so construction refuses a configuration without `publicUrl`.
+   */
+  requiresPublicUrl?: true;
+  /**
    * Recognize credential syntax or trusted runtime context, without verifying
    * it or doing I/O. The first recognizing provider owns the verdict, including
    * refusals. Human routes reject recognized machine credentials without

@@ -109,10 +109,10 @@ const BASE = "https://connecta.test";
 const domain = "clerk.example.com$";
 const publishableKey = "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
 // Browser-flow setup enters through MCP with a resource-bound OAuth token.
-function browserFlowMcpAuth(userId: string) {
+function browserFlowMcpAuth(userId: string, audience = `${BASE}/mcp`) {
   const token = [
     btoa(JSON.stringify({ alg: "RS256", typ: "at+jwt" })),
-    btoa(JSON.stringify({ sub: userId, aud: `${BASE}/mcp` })),
+    btoa(JSON.stringify({ sub: userId, aud: audience })),
     btoa("signature"),
   ]
     .map((part) => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"))
@@ -745,5 +745,94 @@ describe("clerkAuth inbound auth", () => {
         expect(() => construct(key)).not.toThrowError(new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       }
     });
+  });
+});
+
+describe("resolved publicUrl", () => {
+  const auth = (publicUrl?: string) =>
+    clerkAuth({ publishableKey, secretKey: "sk_test_fake", ...(publicUrl !== undefined ? { publicUrl } : {}) });
+  const deployment = (config: Partial<Parameters<typeof createTestConnecta>[0]>) =>
+    createTestConnecta({ connectors: [], logger: "silent", maintainers: ["alice"], ...config });
+
+  it("INV-11: refuses Clerk with neither its own publicUrl nor the deployment's", () => {
+    expect(() => deployment({ auth: auth() })).toThrow(/publicUrl is required with clerkAuth/);
+    expect(() => deployment({ auth: [auth()] })).toThrow(/clerkAuth\({ publicUrl }\)/);
+  });
+
+  it.each(["", "not a url", "ftp://connecta.example", "https://user:pass@connecta.example"])(
+    "INV-11: refuses the clerkAuth publicUrl %j",
+    (publicUrl) => {
+      expect(() => auth(publicUrl)).toThrow(/clerkAuth: `publicUrl` must be an absolute http\(s\) URL/);
+    },
+  );
+
+  it.each([
+    ["the deployment's", { publicUrl: BASE, auth: auth() }, BASE],
+    ["Clerk's own", { auth: auth(BASE) }, BASE],
+    ["an explicit loopback", { publicUrl: "http://localhost:8787", auth: auth() }, "http://localhost:8787"],
+  ])("resolves %s publicUrl whatever Host the request names", async (_name, config, resource) => {
+    const app = deployment(config);
+    try {
+      const response = await app.fetch(
+        new Request("https://attacker.example/.well-known/oauth-protected-resource/mcp"),
+      );
+      expect(await response.json()).toMatchObject({ resource: `${resource}/mcp` });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-4: checks a token's resource against the configured URL, not the Host", async () => {
+    const attacker = "https://attacker.example";
+    const app = deployment({ publicUrl: BASE, auth: auth() });
+    const post = () =>
+      app.fetch(
+        new Request(`${attacker}/mcp`, {
+          method: "POST",
+          headers: { Authorization: "Bearer mcp-oauth-token", "Content-Type": "application/json" },
+          body: "{}",
+        }),
+      );
+    const signedInWith = (audience: string) =>
+      mocks.authenticateRequest.mockResolvedValue({
+        status: "signed-in",
+        headers: new Headers(),
+        toAuth: () => browserFlowMcpAuth("alice", audience),
+      });
+    try {
+      // A token minted for the origin the request names is not for this deployment.
+      signedInWith(`${attacker}/mcp`);
+      expect((await post()).status).toBe(401);
+      signedInWith(`${BASE}/mcp`);
+      expect((await post()).status).not.toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-4: pins a session's azp to the configured URL, not the Host", async () => {
+    const attacker = "https://attacker.example";
+    const provider = auth();
+    const authorize = vi.spyOn(provider, "authorize");
+    const app = deployment({ publicUrl: BASE, auth: provider });
+    const signedInWith = (azp: string) =>
+      mocks.authenticateRequest.mockResolvedValue({
+        toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp } }),
+      });
+    try {
+      signedInWith(attacker);
+      await app.fetch(new Request(`${attacker}/mcp`, { method: "POST", headers: { Authorization: "Bearer session" } }));
+      expect(authorize.mock.calls.at(-1)?.[1]).toBe(BASE);
+      const session = () =>
+        provider.authorize(
+          new Request(`${attacker}/ui/data`, { method: "POST", headers: { Authorization: "Bearer session" } }),
+          BASE,
+        );
+      expect((await session()).ok).toBe(false);
+      signedInWith(BASE);
+      expect((await session()).ok).toBe(true);
+    } finally {
+      await app.close();
+    }
   });
 });
