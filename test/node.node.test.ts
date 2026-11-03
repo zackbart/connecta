@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { build } from "esbuild";
 import { once } from "node:events";
+import { connect, type Socket } from "node:net";
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -91,7 +92,7 @@ describe("Node listen adapter", () => {
       return response;
     };
     /** A connection with `sent` of `declared` body bytes written and the rest withheld. */
-    const partial = (port: number, declared: number, sent: number) => {
+    const partial = (port: number, declared: number, sent: number, path = "/mcp") => {
       const socket: Socket = connect(port, "127.0.0.1");
       let received = "";
       socket.on("data", (data) => {
@@ -99,7 +100,7 @@ describe("Node listen adapter", () => {
       });
       socket.on("error", () => {});
       socket.write(
-        `POST /mcp HTTP/1.1\r\nHost: connecta.example\r\nContent-Length: ${declared}\r\n\r\n${" ".repeat(sent)}`,
+        `POST ${path} HTTP/1.1\r\nHost: connecta.example\r\nContent-Length: ${declared}\r\n\r\n${" ".repeat(sent)}`,
       );
       return { socket, received: () => received };
     };
@@ -149,6 +150,84 @@ describe("Node listen adapter", () => {
       });
     });
 
+    it.each([false, true])("releases disconnected metadata streams once when cancel settles: %s", async (settles) => {
+      let finishCancel = () => {};
+      const cancellation = new Promise<void>((resolve) => {
+        finishCancel = resolve;
+      });
+      const cancel = vi.fn(() => (settles ? Promise.resolve() : cancellation));
+      const path = "/.well-known/oauth-protected-resource";
+      const core = createTestConnecta({
+        connectors: [],
+        maintainers: [{ namespace: "custom", id: "alice" }],
+        auth: [
+          {
+            kind: "custom",
+            activityActorNamespace: "custom",
+            authorize: () => ({ ok: false, response: new Response(null, { status: 401 }) }),
+            handleMetadata: (request) =>
+              new URL(request.url).pathname === `${path}/held`
+                ? new Response(
+                    new ReadableStream({
+                      start(controller) {
+                        controller.enqueue(new TextEncoder().encode("started"));
+                      },
+                      cancel,
+                    }),
+                  )
+                : new Response("probe"),
+          },
+        ],
+      });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        maxBodyBytes: 1024,
+        maxInFlightBodyBytes: 1500,
+      });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      const probe = async (size: number) => {
+        const response = await fetch(`http://127.0.0.1:${address.port}${path}/probe`, {
+          method: "POST",
+          body: " ".repeat(size),
+        });
+        await response.text();
+        return response.status;
+      };
+      const sockets: Socket[] = [];
+      try {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const held = partial(address.port, 900, 900, `${path}/held`);
+          sockets.push(held.socket);
+          await vi.waitFor(() => expect(held.received()).toContain("started"));
+          // Upload completion must not release a live response's reservation.
+          expect(await probe(700)).toBe(503);
+          expect(await probe(600)).toBe(200);
+          held.socket.destroy();
+          await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(attempt));
+          expect(await probe(700)).toBe(200);
+          // Repeated close/abort/finally must not make the count negative.
+          // A partial upload remains counted until it is actually abandoned.
+          const upload = partial(address.port, 1000, 900, `${path}/probe`);
+          sockets.push(upload.socket);
+          await vi.waitFor(async () => expect(await probe(700)).toBe(503));
+          expect(await probe(600)).toBe(200);
+          expect(await probe(700)).toBe(503);
+          upload.socket.destroy();
+          await vi.waitFor(async () => expect(await probe(700)).toBe(200));
+        }
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        finishCancel();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    });
+
     it("keeps the per-request 413 ahead of the aggregate cap", async () => {
       await withServer(async (port) => {
         expect((await post(port, 1024)).status).toBe(200);
@@ -156,12 +235,20 @@ describe("Node listen adapter", () => {
       });
     });
 
-    it.each([0, -1, 1.5, Number.NaN, 1023])("refuses maxInFlightBodyBytes %s at listen", (maxInFlightBodyBytes) => {
-      const core = createTestConnecta({ connectors: [] });
-      expect(() =>
-        listen(core, { port: 0, gracefulShutdown: false, maxBodyBytes: 1024, maxInFlightBodyBytes }),
-      ).toThrow(/maxInFlightBodyBytes/);
-    });
+    it.each([null, 0, -1, 1.5, Number.NaN, 1023])(
+      "refuses maxInFlightBodyBytes %s at listen",
+      (maxInFlightBodyBytes) => {
+        const core = createTestConnecta({ connectors: [] });
+        expect(() =>
+          listen(core, {
+            port: 0,
+            gracefulShutdown: false,
+            maxBodyBytes: 1024,
+            maxInFlightBodyBytes: maxInFlightBodyBytes as number,
+          }),
+        ).toThrow(/maxInFlightBodyBytes/);
+      },
+    );
 
     it("defaults to at least one full body when maxBodyBytes is larger than 64 MiB", async () => {
       const core = createTestConnecta({ connectors: [] });

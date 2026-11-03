@@ -129,7 +129,10 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
   const opts: ListenOptions = typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
   configureGuardedTransport(createNodeGuardedTransport(opts.proxy));
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
-  const maxInFlightBodyBytes = opts.maxInFlightBodyBytes ?? Math.max(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, maxBodyBytes);
+  const maxInFlightBodyBytes =
+    opts.maxInFlightBodyBytes === undefined
+      ? Math.max(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, maxBodyBytes)
+      : opts.maxInFlightBodyBytes;
   if (!Number.isSafeInteger(maxInFlightBodyBytes) || maxInFlightBodyBytes < 1 || maxInFlightBodyBytes < maxBodyBytes) {
     throw new ConfigError("listen: maxInFlightBodyBytes must be a whole number of bytes, at least maxBodyBytes.");
   }
@@ -171,7 +174,18 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
     res.once("close", finished);
     void (async () => {
       const controller = new AbortController();
+      let heldBodyBytes = 0;
+      let bodyBytesReleased = false;
+      // Pipeline teardown can wait forever on a response stream's cancel().
+      // Release on the HTTP lifecycle too, and forbid late upload reservations.
+      const releaseBodyBytes = () => {
+        if (bodyBytesReleased) return;
+        bodyBytesReleased = true;
+        inFlightBodyBytes -= heldBodyBytes;
+        heldBodyBytes = 0;
+      };
       const abortRequest = () => {
+        releaseBodyBytes();
         if (!controller.signal.aborted) {
           controller.abort(new Error("HTTP client disconnected."));
         }
@@ -185,9 +199,10 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
       req.once("aborted", abortRequest);
       req.once("close", abortIncompleteRequest);
       res.once("close", abortIncompleteResponse);
-      let heldBodyBytes = 0;
+      res.once("finish", releaseBodyBytes);
+      res.once("close", releaseBodyBytes);
       const holdBodyBytes = (bytes: number): boolean => {
-        if (inFlightBodyBytes + bytes > maxInFlightBodyBytes) return false;
+        if (bodyBytesReleased || inFlightBodyBytes + bytes > maxInFlightBodyBytes) return false;
         inFlightBodyBytes += bytes;
         heldBodyBytes += bytes;
         return true;
@@ -239,7 +254,9 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
         res.statusCode = 500;
         res.end("Internal Server Error");
       } finally {
-        inFlightBodyBytes -= heldBodyBytes;
+        releaseBodyBytes();
+        res.removeListener("finish", releaseBodyBytes);
+        res.removeListener("close", releaseBodyBytes);
         req.removeListener("aborted", abortRequest);
         req.removeListener("close", abortIncompleteRequest);
         res.removeListener("close", abortIncompleteResponse);
