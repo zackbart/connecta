@@ -736,10 +736,18 @@ export class SkillsRegistry {
                   cacheScope: "private";
                 }>(self, "read", [record.entry.uri]),
               )).contents[0]!;
-              if (typeof content.text === "string") return content.text;
+              // A prefix has no closing delimiter for downstream content to forge.
+              // Connector IDs are deployment-authored and strictly bounded here.
+              const origin = record.files
+                ? `Third-party guidance from connector ${JSON.stringify(record.connector!.id.slice(0, 128))}.\n\n`
+                : "";
+              if (typeof content.text === "string") return origin + content.text;
               try {
-                return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-                  Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
+                return (
+                  origin +
+                  new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+                    Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
+                  )
                 );
               } catch {
                 throw new ConnectorCallError("unavailable", "Skill instructions are not UTF-8 text.");
