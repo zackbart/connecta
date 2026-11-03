@@ -61,6 +61,17 @@ authenticated `admission.requests.maxBodyBytes` default. To accept larger MCP
 bodies, configure both core and `listen(..., { maxBodyBytes })`; a smaller
 platform, proxy or adapter cap still wins. See
 [request body limits](./architecture.md#admission-in-two-places).
+`listen(..., { maxInFlightBodyBytes })` caps the body bytes all in-flight
+requests hold together, counted from the first chunk until the response finishes
+or the client leaves. It defaults to 64 MiB, or `maxBodyBytes` when that is
+larger, and may not be set below `maxBodyBytes`. Past it a request gets `503` with
+`Retry-After: 1` and `Connection: close`. Raise it when legitimate concurrent
+large bodies are refused, keeping it within the process's memory budget.
+`listen()` answers `400` with `Connection: close`, before reading any body, when
+`Host` is anything but a host with an optional port, when `X-Forwarded-Proto` is
+anything but `http` or `https`, or when the request target does not start with
+`/`. A reverse proxy must overwrite `X-Forwarded-Proto` with one value; a
+comma-separated chain such as `https,http` is refused.
 A Node host serving `connecta.fetch` without `listen()` has no owned sender:
 every maintained-provider write, every reviewed POST read and every remote MCP
 write is refused before sending. Downstream OAuth credential POSTs also require
@@ -199,7 +210,9 @@ and `describeConfig()`, and [optional modules](./architecture.md#optional-deploy
 owns their composition contracts.
 
 Enable `encryptedCredentialVault(storage, key)` before persisting downstream
-OAuth credentials. Without a sealing vault, OAuth grants are stored as plaintext.
+OAuth credentials. With no vault, OAuth grants are stored as plaintext. A
+configured vault without `seal` and `open` refuses construction when any connector
+uses OAuth.
 The platform templates describe the base64 32-byte encryption key. Keep it
 outside the database and source control, and preserve it across upgrades.
 [OAuth state at rest](./auth.md#downstream-oauth-state-at-rest) owns sealing and
@@ -301,6 +314,17 @@ paste a token or raw downstream failure body into a committed diagnostic log.
 Bump the exact package pin, read the [changelog](../CHANGELOG.md) for every
 intervening release, and apply the relevant migration before startup. `init`
 does not merge changes into an existing deployment.
+
+A custom vault without `seal` and `open` now refuses construction when any
+connector has OAuth. Before upgrading, add both methods or switch to
+`encryptedCredentialVault(storage, key)`. Existing plaintext grants are sealed on
+first read; see [OAuth state at rest](./auth.md#downstream-oauth-state-at-rest).
+
+A deployment using `clerkAuth` must set a fixed URL before upgrading:
+`ConnectaConfig.publicUrl`, or `clerkAuth({ publicUrl })`. Startup otherwise fails
+with a configuration error. Use the origin clients reach, because tokens' `resource`
+must match it exactly; see
+[Clerk OAuth tokens](./auth.md#clerk-oauth-tokens-and-operator-sessions).
 
 Before upgrading past 0.37.1 with pre-0.29 state, follow
 [Retired layout migrations](./migration-retired-layouts.md). Version 0.37.1 is

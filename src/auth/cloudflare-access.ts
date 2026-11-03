@@ -4,7 +4,7 @@ import { validIdentityReference } from "../identity.js";
 import { authorizationCredential } from "../inbound-credential.js";
 import { attachFailureFacts, type AuthDenialReason } from "../operator-record.js";
 import type { AuthResult, InboundAuth, InboundAuthRuntimeContext } from "../types.js";
-import { authCall, authFlow, authInvoke, authMethod } from "./native.js";
+import { authCall, authFlow, authMethod } from "./native.js";
 
 function identityString(identity: Record<string, unknown>, field: string): string | undefined {
   const value = identity[field];
@@ -28,6 +28,7 @@ function unauthorized(reason: AuthDenialReason): AuthResult {
 
 function unavailable(
   problem: "access_context_unavailable" | "access_audience_invalid" | "identity_unavailable",
+  identityLookup?: { outcome: "timeout" | "rejected"; durationMs: number; cold: boolean; inFlight: number },
 ): AuthResult {
   return {
     ok: false,
@@ -36,9 +37,27 @@ function unavailable(
         { error: "Cloudflare Access identity unavailable", problem },
         { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "1" } },
       ),
-      { reason: problem === "identity_unavailable" ? "access_identity_unavailable" : problem },
+      {
+        reason: problem === "identity_unavailable" ? "access_identity_unavailable" : problem,
+        ...(identityLookup ? { identityLookup } : {}),
+      },
     ),
   };
+}
+
+let lookups = 0;
+let isolateCold = true;
+const lookupSettled = () => {
+  lookups--;
+};
+function lookupIdentity(access: NonNullable<InboundAuthRuntimeContext["access"]>) {
+  lookups++;
+  try {
+    return Promise.resolve(access.getIdentity()).finally(lookupSettled);
+  } catch (error) {
+    lookups--;
+    throw error;
+  }
 }
 
 /**
@@ -76,18 +95,39 @@ export function cloudflareAccessAuth(): InboundAuth {
         if (typeof access.aud !== "string" || !/^[\x21-\x7e]{1,256}$/.test(access.aud))
           return unavailable("access_audience_invalid");
         let identity: Record<string, unknown> | undefined;
+        const started = performance.now();
+        const cold = isolateCold;
+        isolateCold = false;
+        let rejected = false;
         try {
           identity = (yield authCall(withAuthenticationDeadline, [
             request,
-            authMethod(() => {
-              return authInvoke(access, "getIdentity", []) as Effect.Effect<
-                Record<string, unknown> | undefined,
-                unknown
-              >;
-            }),
+            authMethod((signal: AbortSignal) =>
+              authFlow(function* () {
+                for (let attempt = 0; ; attempt++) {
+                  signal.throwIfAborted();
+                  try {
+                    return (yield authCall(lookupIdentity, [access])) as Record<string, unknown> | undefined;
+                  } catch (error) {
+                    if (attempt === 1) {
+                      rejected = true;
+                      throw error;
+                    }
+                  }
+                  // Only a rejected identity lookup retries. A hung lookup never
+                  // overlaps a second one; this sleep shares the original deadline.
+                  yield Effect.sleep(100 + Math.floor(Math.random() * 151));
+                }
+              }),
+            ),
           ])) as Record<string, unknown> | undefined;
         } catch {
-          return unavailable("identity_unavailable");
+          return unavailable("identity_unavailable", {
+            outcome: rejected ? "rejected" : "timeout",
+            durationMs: Math.max(0, Math.round(performance.now() - started)),
+            cold,
+            inFlight: lookups,
+          });
         }
         // Access binds ctx.access.aud to its Worker application at the edge.
         // Service credentials can pass that edge, but connecta machines must

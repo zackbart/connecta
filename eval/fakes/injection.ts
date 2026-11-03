@@ -88,11 +88,16 @@ export function describeInjection(injection: Injection): string {
 /** The injected connectors' servers, owned by one world. */
 export class InjectedConnectors {
   private hung?: Served;
+  hungRequests = 0;
   private revoked?: Served;
   constructor(private readonly injection: Injection) {}
 
   async start(): Promise<void> {
-    if (this.injection.hungConnector) this.hung = await serveFetch(() => new Promise<Response>(() => {}));
+    if (this.injection.hungConnector)
+      this.hung = await serveFetch(() => {
+        this.hungRequests++;
+        return new Promise<Response>(() => {});
+      });
     if (this.injection.unauthorizedConnector)
       this.revoked = await serveFetch(async (request) => {
         await request.body?.cancel();

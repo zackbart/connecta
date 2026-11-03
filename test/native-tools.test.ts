@@ -227,6 +227,166 @@ describe("native tool surface", () => {
     expect(meta.result.ttlMs).toBe(3_600_000);
   });
 
+  it("points guided native tools at the serving skills route with bounded overhead", async () => {
+    const storage = memoryStorage();
+    const app = createTestConnecta({
+      storage,
+      accessTokens: accessTokens(storage),
+      agents: ["assistant"],
+      connectors: [
+        {
+          id: "crm",
+          usageGuide: "Use stable person ids.",
+          listTools: async () => [{ name: "read", description: "Read person", annotations: { readOnlyHint: true } }],
+          callTool: async () => ({}),
+        },
+      ],
+      pools: {
+        native: { tools: ["crm"], members: ["agent:assistant"], surface: "native", executeCode: true },
+        nocode: { tools: ["crm"], members: ["agent:assistant"], surface: "native", executeCode: false },
+      },
+    });
+    try {
+      const token = await issueAgentToken(storage, "assistant");
+      for (const pool of ["native", "nocode"]) {
+        const listed = await rpc(app, token, pool, "tools/list", {});
+        const description = listed.result.tools.find((t: { name: string }) => t.name === "crm__read").description;
+        expect(description).toContain("Guide: skills crm");
+        expect(description.split("Guide: ")[1].length).toBeLessThan(64);
+        expect(description).not.toContain("search_tools");
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("uses allocated readable guide names, including collisions, with measured 200-tool overhead", async () => {
+    const { resolvedConnectorGuides } = await import("../src/skills.js");
+    const connector = (id: string, guided = true): Connector => ({
+      id,
+      ...(guided ? { usageGuide: "Use stable ids." } : {}),
+      listTools: async () =>
+        Array.from({ length: id === "crm" ? 200 : 1 }, (_, i) => ({
+          name: `read${i}`,
+          description: "Read",
+          annotations: { readOnlyHint: true },
+        })),
+      callTool: async () => ({}),
+    });
+    const original = connector("notes_alice");
+    const allocated = (await resolvedConnectorGuides([original]))[0]!.name;
+    const connectors = [
+      connector("crm"),
+      original,
+      connector(allocated),
+      connector("long_".repeat(40)),
+      connector("usage"),
+      connector("plain", false),
+    ];
+    const expected = await resolvedConnectorGuides(connectors);
+    expect(expected.find((g) => g.connector.id === original.id)!.name).toBe(`${allocated}-1`);
+    const awaitName = new Map(
+      await Promise.all(connectors.map(async (c) => [c.id, await nativeToolName(c.id, "read0")] as const)),
+    );
+    const storage = memoryStorage();
+    const app = createTestConnecta({
+      storage,
+      accessTokens: accessTokens(storage),
+      agents: ["assistant"],
+      connectors,
+      pools: {
+        native: {
+          tools: connectors.map((c) => c.id),
+          members: ["agent:assistant"],
+          surface: "native",
+          executeCode: false,
+        },
+      },
+    });
+    try {
+      const token = await issueAgentToken(storage, "assistant");
+      const listed = await rpc(app, token, "native", "tools/list", {});
+      expect(await rpc(app, token, "native", "tools/list", {})).toEqual(listed);
+      for (const { connector: c, reference: name } of expected) {
+        const tool = listed.result.tools.find((t: { name: string }) => t.name === awaitName.get(c.id));
+        expect(tool.description).toBe(`Read\n\nGuide: skills ${name}`);
+        const fetched = await rpc(app, token, "native", "tools/call", { name: "skills", arguments: { name } });
+        expect(fetched.result.isError).toBeFalsy();
+      }
+      const crm = listed.result.tools.filter((t: { name: string }) => t.name.startsWith("crm__"));
+      const overhead = crm.map((t: { description: string }) => t.description.length - "Read".length);
+      expect(overhead).toEqual(Array(200).fill(19));
+      expect(overhead.reduce((a: number, b: number) => a + b, 0)).toBe(3800);
+      expect(listed.result.tools.find((t: { name: string }) => t.name === "plain__read0").description).toBe("Read");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("states connector restrictions for fully restricted and mixed admitted pools", async () => {
+    for (const mixed of [false, true]) {
+      const storage = memoryStorage();
+      const app = createTestConnecta({
+        storage,
+        accessTokens: accessTokens(storage),
+        agents: ["assistant"],
+        connectors: [
+          { id: "notes", readOnly: true, listTools: async () => [], callTool: async () => ({}) },
+          { id: "crm", listTools: async () => [], callTool: async () => ({}) },
+        ],
+        pools: Object.fromEntries(
+          ["meta", "native", "code"].map((name) => [
+            name,
+            {
+              tools: mixed ? ["notes", "crm"] : ["notes"],
+              members: ["agent:assistant"],
+              ...(name === "meta" ? {} : { surface: "native" as const, executeCode: name === "code" }),
+            },
+          ]),
+        ),
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        for (const pool of ["meta", "native", "code"]) {
+          const init = await rpc(
+            app,
+            token,
+            pool,
+            "initialize",
+            {
+              protocolVersion: "2026-07-28",
+              capabilities: {},
+              clientInfo: { name: "test", version: "1" },
+            },
+            false,
+          );
+          const instructions = init.result.instructions;
+          expect(instructions).toContain(mixed ? "subject to connector restrictions" : "can't perform writes");
+          expect(instructions).not.toContain("notes.");
+          expect(instructions).not.toContain("crm.");
+          expect(
+            (
+              await rpc(
+                app,
+                token,
+                pool,
+                "initialize",
+                {
+                  protocolVersion: "2026-07-28",
+                  capabilities: {},
+                  clientInfo: { name: "test", version: "1" },
+                },
+                false,
+              )
+            ).result.instructions,
+          ).toBe(instructions);
+        }
+      } finally {
+        await app.close();
+      }
+    }
+  });
+
   it("INV-1: annotates a tool the deployment reclassifies as a write as destructive", async () => {
     const deployed = deployment({ classification: { crm: { get_person: "write" } } });
     const token = await issueAgentToken(deployed.storage, "assistant");

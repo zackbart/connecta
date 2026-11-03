@@ -928,3 +928,28 @@ describe("catalog intake finding lifecycle", () => {
     for (const text of [...lines, ...consoleLines]) expect(text).not.toMatch(ANY_PLANTED);
   });
 });
+
+it("INV-6: Access identity lookup diagnostics copy only checked facts", () => {
+  const failure = new Error(planted("lookup-error"));
+  const identityLookup = {
+    outcome: "rejected" as const,
+    durationMs: 12.4,
+    cold: false,
+    inFlight: 2,
+    assertion: planted("lookup-assertion"),
+    email: planted("lookup-email"),
+  };
+  attachFailureFacts(failure, { identityLookup });
+  const record = failureRecord({}, failure);
+  expect(record.identityLookup).toEqual({ outcome: "rejected", durationMs: 12, cold: false, inFlight: 2 });
+  expect(JSON.stringify(record)).not.toMatch(ANY_PLANTED);
+  for (const invalid of [
+    { ...identityLookup, outcome: planted("lookup-outcome") },
+    { ...identityLookup, durationMs: NaN },
+    { ...identityLookup, inFlight: -1 },
+    { ...identityLookup, cold: planted("lookup-cold") },
+  ]) {
+    const error = attachFailureFacts(new Error("refused"), { identityLookup: invalid as never });
+    expect(failureRecord({}, error).identityLookup).toBeUndefined();
+  }
+});

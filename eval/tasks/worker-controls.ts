@@ -23,7 +23,7 @@ import { evalConfig } from "../deploy/compose.js";
 import { withD1Latency } from "../deploy/d1-latency.js";
 import { isInjected, NO_INJECTION, parseInjection, type Injection } from "../fakes/injection.js";
 import { World, type WorldOptions } from "../fakes/world.js";
-import { serveFetch } from "../support/serve.js";
+import { servedDelayStats, serveFetch } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
 import { ACTIVE_TASKS } from "./index.js";
 import { PROVIDER_EVALS } from "./providers.generated.js";
@@ -485,7 +485,67 @@ export async function injectionControls() {
     }
   };
   const [plain, delayed] = [await timed(NO_INJECTION), await timed({ ...NO_INJECTION, latencyMs: 300 })];
-  if (delayed < 300 || plain >= 300) throw new Error(`Latency not delivered: ${plain} ms plain, ${delayed} ms at 300`);
+  if (delayed < 300) throw new Error(`Latency not delivered: ${plain} ms plain, ${delayed} ms at 300`);
+
+  // Both real deployment targets traverse the shared fake-side delay exactly
+  // once for every physical HTTP request, including MCP setup requests.
+  const task = ACTIVE_TASKS.find((candidate) => candidate.id === "p5-known-read-routing")!;
+  for (const target of ["node", "worker"] as const) {
+    await playReference(
+      task,
+      { mode: "reference", target, injection: { ...NO_INJECTION, latencyMs: 25 } },
+      ({ world, trace }) => {
+        const failed = gradeTask(task, { world, trace }, "six", "outcome").filter(
+          (check) => !check.pass && !check.advisory,
+        );
+        if (failed.length)
+          throw new Error(`${target} latency probe failed its journey: ${failed.map((check) => check.id).join(", ")}`);
+        let requests = 0;
+        for (const service of world.services.values()) {
+          const stats = servedDelayStats(service.url);
+          const physical = world.ledger.requests.filter((request) => request.service === service.name).length;
+          if (!stats || stats.ms !== 25 || stats.requests < physical || stats.waits !== stats.requests)
+            throw new Error(
+              `${target}/${service.name}: each physical request must wait once: ${JSON.stringify(stats)} vs ${physical}`,
+            );
+          requests += physical;
+        }
+        if (!requests) throw new Error(`${target} latency probe dispatched no requests`);
+      },
+    );
+  }
+
+  // Disabled injection contributes neither connectors nor pool membership.
+  for (const options of [{}, { quickbooks: true }] as WorldOptions[]) {
+    const world = new World(options, NO_INJECTION);
+    await world.start();
+    try {
+      if (
+        world.injected.ids().length ||
+        world.connectorSpecs().some((spec) => ["stalled", "revoked"].includes(spec.id))
+      )
+        throw new Error("Disabled fault injection contributed connectors");
+      const config = evalConfig(
+        {
+          connectors: world.connectorSpecs(),
+          extra: {},
+          fixtures: { alice: "alice@example.com", accountA: "a", shopZone: "z" },
+          readOnly: false,
+          everyPool: world.injected.ids(),
+        },
+        { storage: undefined as never, executor: undefined as never, publicUrl: "http://127.0.0.1:1" },
+      );
+      if (
+        config.connectors.some((connector) => ["stalled", "revoked"].includes(connector.id)) ||
+        Object.values(config.pools ?? {}).some((pool) => pool.tools.some((id) => ["stalled", "revoked"].includes(id)))
+      )
+        throw new Error("Disabled fault injection reached the deployment configuration");
+      if ([...world.services.values()].some((service) => servedDelayStats(service.url) !== undefined))
+        throw new Error("Disabled latency injection installed a timer");
+    } finally {
+      await world.stop();
+    }
+  }
 
   // Injected connectors join every pool, the task's own and QuickBooks' included.
   const faults = { ...NO_INJECTION, hungConnector: true, unauthorizedConnector: true };
@@ -527,16 +587,46 @@ export async function injectionControls() {
     () => "answered",
     () => "closed",
   );
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  const listening = hung.connectorSpecs().map((spec) => spec.url);
+  const arrivalDeadline = Date.now() + 5_000;
+  while (!hung.injected.hungRequests) {
+    if (Date.now() >= arrivalDeadline) {
+      await hung.stop();
+      throw new Error("Hung request never reached its server");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const stopped = await Promise.race([
     hung.stop().then(() => "stopped"),
-    new Promise((resolve) => setTimeout(() => resolve("timeout"), 5_000)),
-  ]);
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), 5_000);
+    }),
+  ]).finally(() => clearTimeout(timer));
   if (stopped !== "stopped" || (await pending) !== "closed")
     throw new Error("The hung connector's server outlived its world");
+  for (const endpoint of listening) {
+    await new Promise<void>((resolve, reject) => {
+      const url = new URL(endpoint);
+      const socket = connectNet({ host: url.hostname, port: Number(url.port) });
+      socket.setTimeout(1_000, () => {
+        socket.destroy();
+        reject(new Error("Stopped fake socket probe timed out"));
+      });
+      socket.once("connect", () => {
+        socket.destroy();
+        reject(new Error(`Stopped world still listens at ${url.origin}`));
+      });
+      socket.once("error", (error: NodeJS.ErrnoException) =>
+        error.code === "ECONNREFUSED" ? resolve() : reject(error),
+      );
+    });
+  }
 
   // One D1 batch is one delayed round trip carrying the original statements.
   const delay = 50;
+  // A timer can fire just under its delay as performance.now() measures it.
+  const atLeastDelay = delay - 1;
   const inner = { bind: (...values: unknown[]) => ({ ...inner, values }), all: async () => ({ results: [] }) };
   let batched: unknown[] = [];
   const db = {
@@ -549,13 +639,42 @@ export async function injectionControls() {
   let started = performance.now();
   await wrapped.batch(statements);
   const batchMs = performance.now() - started;
-  if (batchMs < delay || batchMs >= delay * 2)
-    throw new Error(`A 3-statement batch took ${batchMs} ms, not one round trip`);
+  if (batchMs < atLeastDelay) throw new Error(`A 3-statement batch took ${batchMs} ms, not one round trip`);
   if (batched.length !== 3 || batched.some((statement) => (statement as { values?: unknown[] }).values === undefined))
     throw new Error("The batch did not receive the bound inner statements");
   started = performance.now();
   await wrapped.prepare("SELECT 1").bind(1).all();
-  if (performance.now() - started < delay) throw new Error("A statement round trip was not delayed");
+  if (performance.now() - started < atLeastDelay) throw new Error("A statement round trip was not delayed");
+
+  // Count waits instead of imposing an upper wall-clock bound on a busy host.
+  let waits = 0;
+  const countWait = async () => {
+    waits++;
+  };
+  const one = {
+    bind: (...values: unknown[]) => ({ ...one, values }),
+    all: async () => ({}),
+    run: async () => ({}),
+    first: async () => null,
+    raw: async () => [],
+  };
+  const countedDb = {
+    prepare: () => ({ ...one }),
+    batch: async (statements: D1PreparedStatement[]) => Promise.all(statements.map((statement) => statement.all())),
+    exec: async () => ({}),
+  } as unknown as D1Database;
+  const counted = withD1Latency(countedDb, delay, countWait);
+  await counted.batch([1, 2, 3].map((n) => counted.prepare(`SELECT ${n}`).bind(n)));
+  if (waits !== 1) throw new Error(`D1 batch waited ${waits} times instead of once`);
+  for (const method of ["all", "run", "first", "raw"] as const) {
+    waits = 0;
+    const statement = counted.prepare("SELECT 1").bind(1);
+    await (statement[method] as () => Promise<unknown>).call(statement);
+    if (waits !== 1) throw new Error(`D1 ${method} waited ${waits} times instead of once`);
+  }
+  waits = 0;
+  await counted.exec("SELECT 1");
+  if (waits !== 1) throw new Error(`D1 exec waited ${waits} times instead of once`);
 
   // Differing injection never pairs, in either comparison; equal injection does.
   const injected = async (target: "node" | "worker", surface: "six" | "code", injection: Partial<Injection>) => {

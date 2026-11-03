@@ -1,3 +1,7 @@
+// Node-only: uses node:sqlite to verify physical D1 counters.
+import { hasTimingTraces, startTimingTrace, traceFor, type TimingFamily } from "../src/timing-trace.js";
+import { RequestScope } from "../src/runtime/request-scope.js";
+import { getNativeStorage } from "../src/runtime/native-storage.js";
 // Node-only: node:sqlite stands in for D1 so every round trip and statement is counted, and QuickJS runs programs.
 //
 // The request read memo (src/runtime/request-reads.ts), then request budgets:
@@ -139,6 +143,44 @@ describe("SQL stash batch budgets and faults", () => {
     expect(d1.count.statements).toBe(40);
     expect(d1.count.log.filter((line) => line.startsWith("batch(32)"))).toHaveLength(1);
     d1.db.close();
+  });
+
+  it("retains a delayed batch's charge at capacity until its reservation expires", async () => {
+    const d1 = counted();
+    const binding = d1.binding();
+    const batch = binding.batch.bind(binding);
+    let commit: (() => Promise<unknown>) | undefined;
+    binding.batch = async (statements) => {
+      if (statements.length === 3 && !commit) {
+        commit = () => batch(statements);
+        throw new Error("lost batch response");
+      }
+      return batch(statements);
+    };
+    const storage = d1Storage(binding);
+    const registry = new Registry([], {
+      storage,
+      logger: silentLogger,
+      results: { maxStashEntries: 1, maxStashBytes: 12 },
+    });
+    try {
+      await expect(registry.stashResult("delayed", ["header", "one", "two"], 900)).rejects.toThrow(
+        "lost batch response",
+      );
+      expect(commit).toBeDefined();
+      expect(await registry.stashResult("replacement", ["x"], 900)).toBe(false);
+      await commit!();
+      expect(await storage.get(scopes.results + resultKeys.chunk("delayed", 1))).toBe("one");
+      expect(await registry.stashResult("still-full", ["x"], 900)).toBe(false);
+      // Age storage's authoritative deadlines as well as the caller's clock.
+      const now = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(now + 931_000);
+      d1.db.prepare("UPDATE connecta_kv SET expires_at_ms = 1 WHERE expires_at_ms IS NOT NULL").run();
+      expect(await registry.stashResult("recovered", ["x"], 900)).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+      d1.db.close();
+    }
   });
 
   it.each(["partial", "ambiguous", "ambiguous header"])(
@@ -726,11 +768,13 @@ describe("request budgets", () => {
       credentialRemote?: boolean;
       oauthModern?: boolean;
       oauthWriteProbe?: boolean;
+      trace?: boolean;
       agent?: boolean;
       d1LatencyMs?: number;
     } = {},
   ) {
     installOwnedTransport();
+    const traceLogs: unknown[] = [];
     const origins = {
       legacy: "https://legacy-budget.example",
       modern: "https://modern-budget.example",
@@ -820,7 +864,15 @@ describe("request budgets", () => {
               }),
             }),
         ui: operatorUi(),
-        logger: "silent",
+        logger: options.trace
+          ? {
+              ...silentLogger,
+              info: (...args: unknown[]) => {
+                if (args[0] === "connecta.timing") traceLogs.push(args[1]);
+              },
+            }
+          : "silent",
+        timingTraceSampleRate: options.trace ? 1 : 0,
         connectors: [
           remoteMcp("legacy", { url: `${origins.legacy}/mcp`, auth: headers }),
           remoteMcp("modern", { url: `${origins.modern}/mcp`, auth: headers }),
@@ -937,6 +989,7 @@ describe("request budgets", () => {
         vaultOAuthSealer(encryptedCredentialVault(otherStorage, CREDENTIAL_KEY), "oauth", undefined, silentLogger),
       );
     return {
+      traceLogs,
       build,
       call,
       tool,
@@ -956,6 +1009,49 @@ describe("request budgets", () => {
       },
     };
   }
+
+  it("emits complete warm-request timing records through the configured logger", async () => {
+    const d = await production({ trace: true });
+    const app = d.build();
+    await d.call(app, "modern.echo");
+    await d.call(app, "modern.echo");
+    await d.settle();
+    expect(d.traceLogs).toHaveLength(2);
+    const record = d.traceLogs[1] as { operations: Record<string, { count: number; items: number }> };
+    expect(record.operations["catalog.cache.hit"]?.count).toBeGreaterThan(0);
+    expect(record.operations["catalog.accepted"]?.items).toBeGreaterThan(0);
+    expect(record.operations["d1.read"]?.count).toBeGreaterThan(0);
+    expect(record.operations["catalog"]?.count).toBe(1);
+    const text = JSON.stringify(d.traceLogs);
+    for (const secret of ["modern", "echo", TOKEN, "access-1", "operator-1"]) expect(text).not.toContain(secret);
+  });
+
+  it("finalizes timing when an owned downstream response throws during disposal", async () => {
+    const d = await production({ trace: true });
+    const app = d.build();
+    const send = globalThis.fetch;
+    const failure = new Error("disposal fault");
+    const disposed = vi.fn(() => {
+      throw failure;
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await send(input, init);
+      Object.defineProperty(response, Symbol.dispose, { value: disposed });
+      return response;
+    });
+    expect(hasTimingTraces()).toBe(false);
+    await d.call(app, "modern.echo");
+    await d.settle();
+    expect(disposed).toHaveBeenCalled();
+    expect(d.traceLogs).toHaveLength(1);
+    expect(hasTimingTraces()).toBe(false);
+    // The next unsampled request must not inherit the failed trace's active state.
+    const unsampled = await production();
+    await unsampled.call(unsampled.build(), "modern.echo");
+    await unsampled.settle();
+    expect(hasTimingTraces()).toBe(false);
+    expect(d.traceLogs).toHaveLength(1);
+  });
 
   it("pins warm agent call, program and search reads with injected D1 latency", async () => {
     const d = await production({ agent: true, d1LatencyMs: 25 });
@@ -1387,4 +1483,58 @@ it("pins warm agent admission and observation to one D1 read, without a catalog"
   } finally {
     await app.close();
   }
+});
+
+describe("payload-free timing trace", () => {
+  it("counts physical D1 trips/statements and memo outcomes without retaining keys or payloads", async () => {
+    const identity = {};
+    const info = vi.fn();
+    const logger = { ...silentLogger, info };
+    const finish = startTimingTrace(identity, 1, logger)!;
+    const db = new DatabaseSync(":memory:");
+    const count: Count = { roundTrips: 0, statements: 0, log: [] };
+    const storage = d1Storage(countingD1(db, count));
+    const native = getNativeStorage(storage)!;
+    const owner = requestOwner(identity);
+    const reads = requestReads(identity);
+    const run = <A>(operation: Effect.Effect<A, unknown>) =>
+      runEdge(operation.pipe(Effect.provideService(RequestScope, owner)));
+    await run(native.set("private-owner-secret-key", "secret-payload"));
+    const read = () => run(reads.read(storage, "private-owner-secret-key", native.get("private-owner-secret-key")));
+    expect(await read()).toBe("secret-payload");
+    expect(await read()).toBe("secret-payload");
+    await run(reads.read(storage, "missing-secret-key", native.get("missing-secret-key"), true));
+    const trace = traceFor(identity)!;
+    trace.record("attacker-payload" as TimingFamily, 1);
+    trace.record("catalog", Number.NaN, Number.POSITIVE_INFINITY);
+    owner.close();
+    finish();
+    finish();
+    expect(info).toHaveBeenCalledTimes(1);
+    const record = info.mock.calls[0]![1] as {
+      operations: Record<string, { count: number; statements: number; bytes: number; absent: number }>;
+    };
+    const ops = record.operations;
+    expect(ops["memo.hit"]?.count).toBe(1);
+    expect(ops["memo.miss"]?.count).toBe(1);
+    expect(ops["memo.fresh"]?.absent).toBe(1);
+    expect(ops["memo.miss"]?.bytes).toBe(14);
+    const d1 = Object.entries(ops).filter(([family]) => family.startsWith("d1."));
+    expect(d1.reduce((n, [, op]) => n + op.count, 0)).toBe(count.roundTrips);
+    expect(d1.reduce((n, [, op]) => n + op.statements, 0)).toBe(count.statements);
+    const text = JSON.stringify(info.mock.calls);
+    for (const secret of ["private-owner", "secret-key", "secret-payload", "missing-secret", "attacker-payload"])
+      expect(text).not.toContain(secret);
+    expect(traceFor(identity)).toBeUndefined();
+    db.close();
+  });
+  it("does no logging when disabled or not sampled", () => {
+    const info = vi.fn();
+    const logger = { ...silentLogger, info };
+    expect(startTimingTrace({}, 0, logger)).toBeUndefined();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.75);
+    expect(startTimingTrace({}, 0.5, logger)).toBeUndefined();
+    random.mockRestore();
+    expect(info).not.toHaveBeenCalled();
+  });
 });

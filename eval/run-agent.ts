@@ -1,3 +1,4 @@
+import { guidanceArm } from "./deploy/guidance.js";
 /**
  * `pnpm run eval:agent [options]` runs fake-only tasks through Codex or Claude Code.
  *
@@ -46,6 +47,9 @@ const args = flags(process.argv.slice(2));
 const surface = parseSurface(args.get("surface"));
 const grading = parseGrading(args.get("grading"));
 const target = parseTarget(args.get("target"));
+const guidance = guidanceArm();
+if (guidance && (target !== "node" || surface !== "six" || grading !== "outcome"))
+  throw new Error("Guidance comparison requires node, six, outcome grading");
 const injection = parseInjection(args);
 if (injection.d1LatencyMs && target !== "worker") throw new Error("--d1-latency-ms needs --target worker");
 const runner = args.get("runner") ?? "codex";
@@ -122,6 +126,7 @@ const file: AgentResultFile = {
     // Always recorded, zeros included, so a comparison can prove it matched.
     injection,
     surface,
+    ...(guidance ? { guidanceArm: guidance } : {}),
     grading,
     models,
     repeats,

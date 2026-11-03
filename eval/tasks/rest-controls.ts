@@ -1,7 +1,7 @@
 /** Negative controls for #801's safety and paging acceptance criteria. */
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import type { ActiveTask } from "./types.js";
-import type { World } from "../fakes/world.js";
+import { World } from "../fakes/world.js";
 import type { AgentTrace } from "../agent/trace.js";
 import { saveGradeInputs, restoreGradeInputs, type SavedGradeInputs } from "../agent/saved.js";
 import { ACCOUNT_B, OLD_ENV, ZONE, FakeRestService, restState } from "../fakes/rest.js";
@@ -24,7 +24,7 @@ import {
 } from "../fakes/transport.js";
 import { serveFetch } from "../support/serve.js";
 import { randomUUID, sign } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, get as httpGet } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 
@@ -777,4 +777,34 @@ export function restCounterexamples(task: ActiveTask, world: World, trace: Agent
     );
   }
   return cases;
+}
+
+/** Unrelated sockets cannot affect ledgers, but bad deployment requests must. */
+export async function attributionControls() {
+  const world = new World({ granola: true });
+  await world.start();
+  const release = holdFakeKitTransport();
+  try {
+    const rawProbe = (url: string) =>
+      new Promise<void>((resolve, reject) => {
+        const request = httpGet(url, (response) => {
+          response.resume();
+          response.on("end", resolve);
+        });
+        request.on("error", reject);
+      });
+    const urls = [world.fakes.granola.url, ...[...world.services.values()].map((service) => service.url)];
+    await Promise.all(urls.map(rawProbe));
+    if (world.ledger.calls.length || world.ledger.requests.length)
+      throw new Error("Unattributed loopback probes entered the vendor ledger");
+    if (world.traffic.reduce((n, traffic) => n + traffic.unattributed.length, 0) !== urls.length)
+      throw new Error("Unattributed probes were not retained separately");
+    // Authorization is deliberately wrong: transport attribution must still count it.
+    const response = await fetch(world.fakes.granola.url);
+    if (response.status !== 401 || world.ledger.calls.length !== 1 || world.ledger.requests.length !== 1)
+      throw new Error("Transport-attributed unauthorized request escaped grading");
+  } finally {
+    release();
+    await world.stop();
+  }
 }

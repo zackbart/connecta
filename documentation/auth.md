@@ -295,7 +295,7 @@ It has no queue and no configuration option. When full, a request receives HTTP
 `error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true }`.
 The operator log records only the checked `authentication_busy` reason, never
 credentials or identity-provider diagnostics. Retry after the indicated delay;
-Connecta does not automatically retry the authentication.
+Connecta does not automatically retry authentication, except for one rejected Cloudflare Access identity lookup inside its existing deadline (see [Access on Workers](#cloudflare-access-on-workers)).
 
 Underlying work stays charged until it settles, including cancellation cleanup.
 A caller leaving alone never releases capacity. After an authorization's hard
@@ -399,7 +399,9 @@ This bound is independent of MCP request/program admission and downstream call
 limits. `Mcp-Method: subscriptions/listen` still defers its MCP request permit:
 after authentication and endpoint admission, a body-confirmed modern listen is
 refused promptly even when execution capacity is full. It always passes the
-authentication bound, and no request body is read before authentication.
+authentication bound, and the MCP route reads no request body before
+authentication. On Node, `listen()` has already buffered the body up to its own
+[pre-auth cap](./deploying.md#start-on-node) before core sees the request.
 
 Routes that do not invoke an inbound verifier consume no authentication slot:
 health, public OAuth discovery and client metadata, UI shells and static assets,
@@ -558,6 +560,7 @@ createConnecta({
   storage,
   agents: ["assistant", "ci"],
   accessTokens: accessTokens(storage),
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   ui: operatorUi(),
   maintainers: ["your-operator-id"],
@@ -948,6 +951,7 @@ cache entries remain partitioned by the admitted pool.
 createConnecta({
   storage,
   accessTokens: accessTokens(storage),
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   readOnly: false, // required; pools without their own readOnly inherit it
   maintainers: ["user_owner"],
@@ -1102,6 +1106,7 @@ const team = [
   { handle: "bob", id: "user_bob", email: "bob@example.com" },
 ];
 createConnecta({
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   storage,
   accessTokens: accessTokens(storage),
@@ -1250,6 +1255,7 @@ const workspace: GoogleWorkspaceOptions = {
 };
 
 createConnecta({
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   storage,
   accessTokens: accessTokens(storage),
@@ -1364,21 +1370,34 @@ Each owner of an OAuth connector (the deployment when shared, each principal
 when personal) has one **grant record**, `oauth:grant` in the connector's
 namespace: the live **epoch**, the latest consent's state digest, and one
 authorization server's client registration, tokens, and discovery. Each
-consent has a **flow record**, `oauth:flow:<sha256(state)>`, holding its
-epoch, consent URL, and PKCE verifier for fifteen minutes; the state itself is
-stored nowhere.
+consent has a **flow record**, `oauth:flow:<sha256(state)>`, holding its epoch
+and timestamp, its binding to the selected server and client, its consent URL,
+and its PKCE verifier for fifteen minutes; the state itself is stored nowhere
+outside that URL.
 
-With a vault, the grant's body and each verifier are sealed with its AES-GCM
-key, the additional authenticated data naming the connector, owner partition,
+With a vault, the grant's body and each flow record's binding, consent URL and
+verifier are sealed with its AES-GCM key, the additional authenticated data naming the connector, owner partition,
 record, and epoch, so ciphertext moved to another connector, principal,
 record, or epoch does not open. Anything that fails to open (tampered, or
 under a rotated key) reads as absent: `auth_required` and a logged warning.
-The epoch, consent URL, and state digest stay plaintext and authenticate
-nothing. A plaintext body written before the vault could seal is sealed where
+The epoch, timestamp, and state digest stay plaintext and authenticate nothing. A plaintext body written before the vault could seal is sealed where
 it lies on first read, by compare-and-set. An [`api()` OAuth
-connector](#downstream-oauth-on-api) stores no client. A vault without the
-optional `seal`/`open` members keeps the body plaintext with a startup
-warning; no vault, plaintext as always.
+connector](#downstream-oauth-on-api) stores no client.
+
+`createConnecta` throws when a configured vault lacks `seal` or `open` and any
+connector has `startAuth`. A vault without them still works for deployments with
+no OAuth connector. To migrate, use `encryptedCredentialVault(storage, key)` or
+add both methods; grants stored plaintext are then sealed on first read as above.
+
+**With no vault, the guarantee is narrower.** Nothing is encrypted at rest: the
+grant's body and the PKCE verifier are plaintext, and a configured URL's path can
+appear in them. The flow record is minimized instead. It stores no consent URL,
+and its binding keeps no URL userinfo, query or fragment, in plaintext or in its
+unkeyed discovery digest. Connect, callback and restart still work, and two things
+differ. A repeated non-forced start mints a fresh consent rather than handing the
+pending URL back; earlier links stay valid until their epoch ends. A change confined
+to a URL's query or fragment does not fence a pending consent.
+Use a vault wherever stored OAuth state must be protected.
 
 The body also holds `expiresAt`, the epoch milliseconds the stored access token
 expires: its `expires_in`, counted from just before the request that issued it
@@ -2083,11 +2102,17 @@ targeting the host's private network:
 - A URL on the connector's configured origin is trusted; the operator wrote it.
 - Any other URL must be `https` and must not name a private host: `localhost`
   and `*.localhost`, `127/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`,
-  `100.64/10`, `0/8`, `::`, `::1`, `fc00::/7`, `fe80::/10`, or an IPv4-mapped
-  IPv6 form of any of those.
+  `100.64/10`, `0/8`, `192.0.0/24`, `192.0.2/24`, `192.88.99/24`, `198.18/15`,
+  `198.51.100/24`, `203.0.113/24`, `224/4`, `240/4`, `::`, `::1`, any IPv6
+  address outside global unicast `2000::/3` (which covers `fc00::/7`,
+  `fe80::/10`, `fec0::/10`, `ff00::/8` and `64:ff9b:1::/48`), `2001::/23`,
+  `2001:db8::/32`, or `3fff::/20`. An IPv6 address carrying an IPv4 address in
+  mapped, compatible, translated, NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`)
+  form is judged by the address it carries.
 - A connector configured on a loopback host may also learn loopback URLs, over
   `http` too, so a local MCP server with a local authorization server keeps
-  working. LAN and link-local addresses stay refused.
+  working. Of the IPv4-carrying forms, only IPv4-mapped loopback counts as
+  loopback. LAN and link-local addresses stay refused.
 
 A refused URL is never requested. Discovery, registration, and code exchange
 fail with a non-retryable `connector_call_failed`. Resource-metadata origin
@@ -2228,7 +2253,9 @@ the first request on a fresh instance. It grants no identity and never falls
 back to another provider. Missing context without an assertion still returns 401. An unusable trusted AUD returns retryable 503 with
 `problem: "access_audience_invalid"`; it never proceeds to identity lookup.
 A rejected human identity, including a service identity or an unusable user
-id, returns 403. A thrown identity lookup or its five-second deadline returns retryable
+id, returns 403. A thrown identity lookup gets one retry after 100–250 ms of
+jitter, within the original five-second deadline. A hanging lookup is never
+retried concurrently. The second rejection or the deadline returns retryable
 503 with `problem: "identity_unavailable"` and `Retry-After: 1`. Every refusal
 carries `Cache-Control: no-store`; every unavailable-verification 503 carries
 `Retry-After: 1` and no `WWW-Authenticate` challenge. None of these failures admits an identity,
@@ -2246,8 +2273,21 @@ identifies the generic route fallthrough, `authorization_header_invalid` a
 malformed header, and `authentication_failed` an unclassified provider refusal.
 Access verification 503s emit `[connecta] Cloudflare Access verification unavailable`
 with the same facts and `access_context_unavailable`, `access_audience_invalid`,
-or `access_identity_unavailable`. These records contain no header values,
+or `access_identity_unavailable`. Identity lookup failures additionally carry
+checked `identityLookup` facts: `outcome` (`timeout` or `rejected`), `durationMs`,
+`cold` (whether this was the isolate's first identity lookup), and `inFlight`
+(the isolate's other active lookup attempts when the failure was recorded).
+These records contain no header values,
 assertions, cookies, identities, URLs, response bodies, or exception text.
+
+Identity lookups stay request-owned: Connecta neither coalesces them across
+requests nor caches identity results. A caller-supplied assertion header is
+not an identity cache key. Failed identity lookups always refuse admission.
+
+After an authorized release, validate this mitigation with about 20 concurrent
+sessions. Count runs containing `identity_unavailable`, targeting fewer than
+1% of runs; distinguish `timeout` from `rejected` in the checked lookup facts.
+A passing local concurrency fixture does not establish production acceptance.
 
 Protect the Worker with a Worker-level Access application whose destination is
 `{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
@@ -2293,7 +2333,15 @@ tokens by default, both JWT and opaque. Verified `aud` or `resource` must
 contain the endpoint's exact canonical URL from protected-resource metadata.
 If both claims are present, both must match. Trailing slashes, case, queries,
 and fragments are not normalized. `/mcp` and `/mcp/support` are distinct
-resources. Set `publicUrl` behind an internal origin.
+resources.
+
+Clerk needs a fixed deployment URL. Set `ConnectaConfig.publicUrl`, or
+`clerkAuth({ publicUrl })` when only Clerk should use it; `createConnecta` throws
+when neither is set, on Node and on Workers. Both token `resource` checks and the
+session `azp` pin read this value, so a request's `Host` and `X-Forwarded-Proto`
+never decide them. There is no implicit loopback default: a local deployment names
+its origin, such as `http://localhost:8787`. The Node template does this when
+`PUBLIC_URL` is unset.
 
 ```ts
 clerkAuth({ publishableKey, secretKey,

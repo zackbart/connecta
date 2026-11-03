@@ -231,22 +231,23 @@ describe("KvOAuthProvider over memoryStorage", () => {
 
   it("hands the latest consent back for Continue only while fresh and naming the grant's client", async () => {
     const storage = memoryStorage();
-    const p = provider(storage);
+    const sealed = () => provider(storage, { sealer: sealerFor() });
+    const p = sealed();
     await p.saveClientInformation(client, ctxA);
     const { url } = await publish(p);
-    expect(await provider(storage).reusablePendingAuthorizationUrl()).toBe(url);
+    expect(await sealed().reusablePendingAuthorizationUrl()).toBe(url);
 
     // Past ten minutes it is only pending.
     const now = Date.now();
     vi.spyOn(Date, "now").mockReturnValue(now + 10 * 60 * 1000);
-    expect(await provider(storage).reusablePendingAuthorizationUrl()).toBeUndefined();
-    expect(await provider(storage).pendingAuthorizationUrl()).toBe(url);
+    expect(await sealed().reusablePendingAuthorizationUrl()).toBeUndefined();
+    expect(await sealed().pendingAuthorizationUrl()).toBe(url);
     vi.restoreAllMocks();
 
     // A consent naming another client is not handed back.
-    const other = await publish(provider(storage), "v", `${ISSUER}/authorize?client_id=other`);
-    expect(await provider(storage).reusablePendingAuthorizationUrl()).toBeUndefined();
-    expect(await provider(storage).pendingAuthorizationUrl()).toBe(other.url);
+    const other = await publish(sealed(), "v", `${ISSUER}/authorize?client_id=other`);
+    expect(await sealed().reusablePendingAuthorizationUrl()).toBeUndefined();
+    expect(await sealed().pendingAuthorizationUrl()).toBe(other.url);
   });
 });
 
@@ -444,10 +445,80 @@ describe("KvOAuthProvider epochs", () => {
   });
 });
 
-// Tokens, client registration, and discovery (the grant body) and the PKCE
-// verifier are ciphertext at rest when the deployment has a vault that seals.
+// With no vault there is nothing to seal with, so the pending flow record keeps
+// only what its callback needs: no consent URL, no URL userinfo, query or
+// fragment, and a discovery digest that does not cover them.
+describe("KvOAuthProvider pending flow without a vault", () => {
+  const SECRET = "config-secret";
+  const metadata = (token_endpoint: string) =>
+    ({
+      authorizationServerUrl: ISSUER,
+      authorizationServerMetadata: {
+        issuer: ISSUER,
+        authorization_endpoint: `${ISSUER}/authorize`,
+        token_endpoint,
+        response_types_supported: ["code"],
+      },
+    }) as OAuthDiscoveryState;
+  const secretDiscovery = metadata(`https://user:${SECRET}@auth.example/token?key=${SECRET}#${SECRET}`);
+
+  it("stores no consent URL and no URL secret in the binding or its digest", async () => {
+    const storage = memoryStorage();
+    const p = provider(storage);
+    await p.saveDiscoveryState(secretDiscovery);
+    await p.saveClientInformation({ ...client, client_id: `https://client.example/meta?key=${SECRET}` }, ctxA);
+    const { state, url } = await publish(p, "secret-verifier", `${ISSUER}/authorize?resource=${SECRET}`);
+    expect(await p.consentUrl()).toBe(url);
+
+    const raw = required((await storage.get(await consentKey(state))) ?? undefined);
+    expect(raw).not.toContain(SECRET);
+    expect(raw).not.toContain(state);
+    const stored = JSON.parse(raw) as Record<string, unknown>;
+    expect(stored).toEqual({
+      connectaOAuthFlow: 1,
+      epoch: "initial",
+      at: expect.any(Number),
+      verifier: "secret-verifier",
+      binding: {
+        issuer: ISSUER,
+        clientId: "https://client.example/meta",
+        tokenEndpoint: "https://auth.example/token",
+        discovery: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    expect(raw).not.toContain(await oauthStateDigest(JSON.stringify(secretDiscovery)));
+    expect(await provider(storage).pendingAuthorizationUrl()).toBeUndefined();
+    expect(await provider(storage).reusablePendingAuthorizationUrl()).toBeUndefined();
+  });
+
+  it("completes its callback against the minimized binding and fences a changed server", async () => {
+    const storage = memoryStorage();
+    const p = provider(storage);
+    await p.saveDiscoveryState(secretDiscovery);
+    await p.saveClientInformation(client, ctxA);
+    const { state } = await publish(p, "secret-verifier");
+
+    const callback = provider(storage);
+    expect(await callback.verifyState(state)).toBe(true);
+    expect(await callback.codeVerifier()).toBe("secret-verifier");
+    callback.validateCallbackIssuer(ISSUER);
+    expect(() => callback.validateCallbackIssuer("https://other.example")).toThrow(/issuer does not match/);
+    await expect(callback.consumeAuthError()).resolves.toBeUndefined();
+
+    const moved = provider(storage);
+    const next = await publish(moved, "v2", `${ISSUER}/authorize?client_id=dcr-client`);
+    await provider(storage).saveDiscoveryState(metadata("https://auth.example/elsewhere"));
+    const late = provider(storage);
+    expect(await late.verifyState(next.state)).toBe(true);
+    await expect(late.consumeAuthError()).rejects.toMatchObject({ code: expect.any(String) });
+  });
+});
+
+// Tokens, client registration, and discovery (the grant body) and the pending
+// flow's binding, URL and verifier are ciphertext at rest when the deployment
+// has a vault that seals.
 describe("KvOAuthProvider sealed state", () => {
-  it("seals the grant body and the verifier; the flow's URL and epoch stay plaintext", async () => {
+  it("seals the grant body and the whole pending flow; only its epoch and time stay plaintext", async () => {
     const storage = memoryStorage();
     const sealer = sealerFor();
     const p = provider(storage, { sealer });
@@ -467,17 +538,23 @@ describe("KvOAuthProvider sealed state", () => {
     });
     expect(JSON.parse(flowRaw)).toEqual({
       connectaOAuthFlow: 1,
-      binding: { issuer: ISSUER, clientId: "dcr-client", discovery: expect.stringMatching(/^[a-f0-9]{64}$/) },
       epoch: "initial",
       at: expect.any(Number),
-      url,
-      verifier: expect.stringMatching(/^v1\./),
-      sealed: true,
+      record: expect.stringMatching(/^v1\./),
     });
     for (const secret of ["secret-access", "secret-refresh", "dcr-secret", "dcr-client", ISSUER]) {
       expect(grantRaw).not.toContain(secret);
     }
-    expect(flowRaw).not.toContain("secret-verifier");
+    for (const secret of [
+      "secret-verifier",
+      "dcr-client",
+      ISSUER,
+      url,
+      state,
+      await oauthStateDigest(JSON.stringify(discovery)),
+    ]) {
+      expect(flowRaw).not.toContain(secret);
+    }
 
     const reader = provider(storage, { sealer: sealerFor() });
     expect(await reader.tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
@@ -485,15 +562,64 @@ describe("KvOAuthProvider sealed state", () => {
     expect(await reader.discoveryState()).toEqual(discovery);
     expect(await reader.verifyState(state)).toBe(true);
     expect(await reader.codeVerifier()).toBe("secret-verifier");
+    expect(await reader.pendingAuthorizationUrl()).toBe(url);
 
-    // Without the sealer the ciphertext is nothing a caller could use; the
-    // pending URL, plaintext, is still there.
+    // Without the sealer the ciphertext is nothing a caller could use.
     const unsealed = provider(storage);
     expect(await unsealed.tokens()).toBeUndefined();
     expect(await unsealed.clientInformation()).toBeUndefined();
     expect(await unsealed.discoveryState()).toBeUndefined();
     expect(await unsealed.verifyState(state)).toBe(false);
-    expect(await unsealed.pendingAuthorizationUrl()).toBe(url);
+    expect(await unsealed.pendingAuthorizationUrl()).toBeUndefined();
+  });
+
+  it("still completes a consent written before the whole flow was sealed", async () => {
+    const storage = memoryStorage();
+    const sealer = sealerFor();
+    const p = provider(storage, { sealer });
+    await p.saveDiscoveryState(discovery);
+    await p.saveClientInformation(client, ctxA);
+    const { state, url } = await publish(p, "secret-verifier");
+    const key = await consentKey(state);
+    const { epoch, at } = JSON.parse(required((await storage.get(key)) ?? undefined)) as { epoch: string; at: number };
+    await storage.set(
+      key,
+      JSON.stringify({
+        connectaOAuthFlow: 1,
+        epoch,
+        at,
+        url,
+        binding: { issuer: ISSUER, clientId: "dcr-client" },
+        verifier: await sealer.seal(`${key}:${epoch}`, "secret-verifier"),
+        sealed: true,
+      }),
+    );
+    const reader = provider(storage, { sealer: sealerFor() });
+    expect(await reader.pendingAuthorizationUrl()).toBe(url);
+    expect(await reader.verifyState(state)).toBe(true);
+    expect(await reader.codeVerifier()).toBe("secret-verifier");
+  });
+
+  it("does not open a sealed verifier moved into the record slot, or a record into the verifier slot", async () => {
+    const storage = memoryStorage();
+    const { state } = await publish(provider(storage, { sealer: sealerFor() }), "secret-verifier");
+    const key = await consentKey(state);
+    const stored = JSON.parse(required((await storage.get(key)) ?? undefined)) as {
+      epoch: string;
+      at: number;
+      record: string;
+    };
+    await storage.set(
+      key,
+      JSON.stringify({
+        connectaOAuthFlow: 1,
+        epoch: stored.epoch,
+        at: stored.at,
+        verifier: stored.record,
+        sealed: true,
+      }),
+    );
+    expect(await provider(storage, { sealer: sealerFor() }).verifyState(state)).toBe(false);
   });
 
   it("reads tampered or foreign-key ciphertext as absent, and warns without the secret", async () => {
@@ -520,8 +646,8 @@ describe("KvOAuthProvider sealed state", () => {
 
     // A tampered verifier refuses its callback.
     const key = await consentKey(state);
-    const flow = JSON.parse(required((await storage.get(key)) ?? undefined)) as { verifier: string };
-    await storage.set(key, JSON.stringify({ ...flow, verifier: flip(flow.verifier) }));
+    const flow = JSON.parse(required((await storage.get(key)) ?? undefined)) as { record: string };
+    await storage.set(key, JSON.stringify({ ...flow, record: flip(flow.record) }));
     const consent = spyLogger();
     expect(await provider(storage, { sealer: sealerFor(CREDENTIAL_KEY, consent.logger) }).verifyState(state)).toBe(
       false,
@@ -532,7 +658,7 @@ describe("KvOAuthProvider sealed state", () => {
       expect(warning).not.toContain("secret-access");
       expect(warning).not.toContain("secret-verifier");
       expect(warning).not.toContain(envelope.sealed);
-      expect(warning).not.toContain(flow.verifier);
+      expect(warning).not.toContain(flow.record);
     }
   });
 

@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { build } from "esbuild";
 import { once } from "node:events";
+import { connect, type Socket } from "node:net";
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -46,6 +47,330 @@ describe("Node listen adapter", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await core.close();
     }
+  });
+
+  describe("in-flight body capacity", () => {
+    const withServer = async (
+      run: (port: number, release: () => void) => Promise<void>,
+      options: { hold?: boolean } = {},
+    ) => {
+      const core = createTestConnecta({ connectors: [] });
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const app = {
+        ...core,
+        fetch: async (request: Request) => {
+          const { byteLength } = await request.arrayBuffer();
+          if (options.hold && byteLength === 900) await held;
+          return new Response(String(byteLength));
+        },
+      };
+      const server = listen(app, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        maxBodyBytes: 1024,
+        maxInFlightBodyBytes: 1500,
+      });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      try {
+        await run(address.port, release);
+      } finally {
+        release();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    };
+    const post = async (port: number, size: number) => {
+      const response = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST", body: " ".repeat(size) });
+      await response.text();
+      return response;
+    };
+    /** A connection with `sent` of `declared` body bytes written and the rest withheld. */
+    const partial = (port: number, declared: number, sent: number, path = "/mcp") => {
+      const socket: Socket = connect(port, "127.0.0.1");
+      let received = "";
+      socket.on("data", (data) => {
+        received += String(data);
+      });
+      socket.on("error", () => {});
+      socket.write(
+        `POST ${path} HTTP/1.1\r\nHost: connecta.example\r\nContent-Length: ${declared}\r\n\r\n${" ".repeat(sent)}`,
+      );
+      return { socket, received: () => received };
+    };
+    const refused = (port: number) => vi.waitFor(async () => expect((await post(port, 700)).status).toBe(503));
+    const admitted = (port: number) => vi.waitFor(async () => expect((await post(port, 700)).status).toBe(200));
+
+    it("answers 503 past the aggregate cap, to a client still uploading, and frees bytes on completion", async () => {
+      await withServer(async (port) => {
+        const first = partial(port, 1000, 900);
+        await refused(port);
+
+        const second = partial(port, 1000, 700);
+        await vi.waitFor(() => expect(second.received()).toMatch(/^HTTP\/1\.1 503 /));
+        expect(second.received()).toMatch(/retry-after: 1\r\n/i);
+        expect(second.received()).toMatch(/connection: close\r\n/i);
+
+        // Exactly at the cap is admitted: 900 held plus 600 is 1500.
+        expect((await post(port, 600)).status).toBe(200);
+
+        first.socket.write(" ".repeat(100));
+        await vi.waitFor(() => expect(first.received()).toMatch(/^HTTP\/1\.1 200 /));
+        first.socket.destroy();
+        second.socket.destroy();
+        await admitted(port);
+      });
+    });
+
+    it("holds a request's bytes until its response finishes", async () => {
+      await withServer(
+        async (port, release) => {
+          const pending = post(port, 900);
+          await refused(port);
+          release();
+          expect((await pending).status).toBe(200);
+          await admitted(port);
+        },
+        { hold: true },
+      );
+    });
+
+    it("frees a departed client's bytes", async () => {
+      await withServer(async (port) => {
+        const { socket } = partial(port, 1000, 900);
+        await refused(port);
+        socket.destroy();
+        await admitted(port);
+      });
+    });
+
+    it.each([false, true])("releases disconnected metadata streams once when cancel settles: %s", async (settles) => {
+      let finishCancel = () => {};
+      const cancellation = new Promise<void>((resolve) => {
+        finishCancel = resolve;
+      });
+      const cancel = vi.fn(() => (settles ? Promise.resolve() : cancellation));
+      const path = "/.well-known/oauth-protected-resource";
+      const core = createTestConnecta({
+        connectors: [],
+        maintainers: [{ namespace: "custom", id: "alice" }],
+        auth: [
+          {
+            kind: "custom",
+            activityActorNamespace: "custom",
+            authorize: () => ({ ok: false, response: new Response(null, { status: 401 }) }),
+            handleMetadata: (request) =>
+              new URL(request.url).pathname === `${path}/held`
+                ? new Response(
+                    new ReadableStream({
+                      start(controller) {
+                        controller.enqueue(new TextEncoder().encode("started"));
+                      },
+                      cancel,
+                    }),
+                  )
+                : new Response("probe"),
+          },
+        ],
+      });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        maxBodyBytes: 1024,
+        maxInFlightBodyBytes: 1500,
+      });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      const probe = async (size: number) => {
+        const response = await fetch(`http://127.0.0.1:${address.port}${path}/probe`, {
+          method: "POST",
+          body: " ".repeat(size),
+        });
+        await response.text();
+        return response.status;
+      };
+      const sockets: Socket[] = [];
+      try {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const held = partial(address.port, 900, 900, `${path}/held`);
+          sockets.push(held.socket);
+          await vi.waitFor(() => expect(held.received()).toContain("started"));
+          // Upload completion must not release a live response's reservation.
+          expect(await probe(700)).toBe(503);
+          expect(await probe(600)).toBe(200);
+          held.socket.destroy();
+          await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(attempt));
+          expect(await probe(700)).toBe(200);
+          // Repeated close/abort/finally must not make the count negative.
+          // A partial upload remains counted until it is actually abandoned.
+          const upload = partial(address.port, 1000, 900, `${path}/probe`);
+          sockets.push(upload.socket);
+          await vi.waitFor(async () => expect(await probe(700)).toBe(503));
+          expect(await probe(600)).toBe(200);
+          expect(await probe(700)).toBe(503);
+          upload.socket.destroy();
+          await vi.waitFor(async () => expect(await probe(700)).toBe(200));
+        }
+        // A queued pipelined response sees no close of its own when the socket
+        // drops, and both uploads have already completed.
+        const pipelined = connect(address.port, "127.0.0.1");
+        sockets.push(pipelined);
+        await once(pipelined, "connect");
+        const message = (size: number) =>
+          `POST ${path}/held HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${size}\r\n\r\n${" ".repeat(size)}`;
+        pipelined.write(message(600) + message(900));
+        await vi.waitFor(async () => expect(await probe(1)).toBe(503));
+        pipelined.destroy();
+        await vi.waitFor(async () => expect(await probe(1024)).toBe(200));
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        finishCancel();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    });
+
+    it("keeps the per-request 413 ahead of the aggregate cap", async () => {
+      await withServer(async (port) => {
+        expect((await post(port, 1024)).status).toBe(200);
+        expect((await post(port, 1025)).status).toBe(413);
+      });
+    });
+
+    it.each([null, 0, -1, 1.5, Number.NaN, 1023])(
+      "refuses maxInFlightBodyBytes %s at listen",
+      (maxInFlightBodyBytes) => {
+        const core = createTestConnecta({ connectors: [] });
+        expect(() =>
+          listen(core, {
+            port: 0,
+            gracefulShutdown: false,
+            maxBodyBytes: 1024,
+            maxInFlightBodyBytes: maxInFlightBodyBytes as number,
+          }),
+        ).toThrow(/maxInFlightBodyBytes/);
+      },
+    );
+
+    it("defaults to at least one full body when maxBodyBytes is larger than 64 MiB", async () => {
+      const core = createTestConnecta({ connectors: [] });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        maxBodyBytes: 128 * 1024 * 1024,
+      });
+      await once(server, "listening");
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await core.close();
+    });
+  });
+
+  describe("request URL validation", () => {
+    const send = async (
+      port: number,
+      options: { host?: string; proto?: string; path?: string; method?: string; body?: string },
+    ) =>
+      await new Promise<{ status: number; connection: string | undefined }>((resolve, reject) => {
+        const request = httpRequest(
+          {
+            port,
+            host: "127.0.0.1",
+            setHost: false,
+            method: options.method ?? "GET",
+            path: options.path ?? "/mcp",
+            headers: {
+              Host: options.host ?? "connecta.example",
+              ...(options.proto !== undefined ? { "X-Forwarded-Proto": options.proto } : {}),
+            },
+          },
+          (response) => {
+            response.resume();
+            response.once("end", () =>
+              resolve({ status: response.statusCode ?? 0, connection: response.headers.connection }),
+            );
+          },
+        );
+        request.once("error", reject);
+        request.end(options.body);
+      });
+
+    const withServer = async (run: (port: number, seen: string[]) => Promise<void>) => {
+      const core = createTestConnecta({ connectors: [], publicUrl: "https://connecta.example" });
+      const seen: string[] = [];
+      const app = {
+        ...core,
+        fetch: async (request: Request) => {
+          seen.push(request.url);
+          return new Response("forwarded");
+        },
+      };
+      const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      try {
+        await run(address.port, seen);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    };
+
+    it.each([
+      ["a Host with a path", { host: "connecta.example/health?" }],
+      ["a Host with a query", { host: "connecta.example?x=" }],
+      ["a Host with a fragment", { host: "connecta.example#x" }],
+      ["a Host with userinfo", { host: "user@connecta.example" }],
+      ["a Host with a backslash", { host: "connecta.example\\x" }],
+      ["a Host list", { host: "connecta.example,other.example" }],
+      ["an empty Host", { host: "" }],
+      ["a Host with a named port", { host: "connecta.example:http" }],
+      ["a Host with an empty port", { host: "connecta.example:" }],
+      ["a Host with an out-of-range port", { host: "connecta.example:70000" }],
+      ["a Host with an invalid IPv4 address", { host: "256.256.256.256" }],
+      ["a Host with an invalid IPv6 literal", { host: "[::zz]:8787" }],
+      ["an unbracketed IPv6 Host", { host: "::1" }],
+      ["an unknown X-Forwarded-Proto", { proto: "javascript" }],
+      ["an empty X-Forwarded-Proto", { proto: "" }],
+      ["an X-Forwarded-Proto list", { proto: "https,http" }],
+      ["an X-Forwarded-Proto carrying a URL", { proto: "https://other.example/" }],
+      ["an absolute-form request target", { path: "http://other.example/mcp" }],
+      ["an asterisk-form request target", { method: "OPTIONS", path: "*" }],
+    ])("answers %s 400 without reaching core", async (_name, options) => {
+      await withServer(async (port, seen) => {
+        expect(await send(port, options)).toEqual({ status: 400, connection: "close" });
+        // The same refusal when a body follows: the adapter reads none of it.
+        expect(await send(port, { ...options, method: "POST", body: "{}" })).toMatchObject({ status: 400 });
+        expect(seen).toEqual([]);
+      });
+    });
+
+    it.each([
+      [{ host: "connecta.example" }, "http://connecta.example/mcp"],
+      [{ host: "CONNECTA.example:8443" }, "http://connecta.example:8443/mcp"],
+      [{ host: "connecta_app:8787" }, "http://connecta_app:8787/mcp"],
+      [{ host: "127.0.0.1:8787" }, "http://127.0.0.1:8787/mcp"],
+      [{ host: "[::1]:8787" }, "http://[::1]:8787/mcp"],
+      [{ host: "connecta.example.", proto: "https" }, "https://connecta.example./mcp"],
+      [{ proto: "http" }, "http://connecta.example/mcp"],
+      [{ proto: "HTTPS" }, "https://connecta.example/mcp"],
+      [{ proto: "https", path: "/mcp/pool?x=1&y=/a?b" }, "https://connecta.example/mcp/pool?x=1&y=/a?b"],
+    ])("forwards %j with the URL it names", async (options, url) => {
+      await withServer(async (port, seen) => {
+        expect((await send(port, options)).status).toBe(200);
+        expect(seen).toEqual([url]);
+      });
+    });
   });
 
   it.each([undefined, 256])(

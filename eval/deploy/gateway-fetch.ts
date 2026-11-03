@@ -18,7 +18,12 @@ const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const CROSS_ORIGIN_SENSITIVE = ["authorization", "cookie", "proxy-authorization"];
 const BODY_HEADERS = ["content-type", "content-length", "content-encoding"];
 
-export function viaGateway(native: typeof fetch, gateway: string, token: string): typeof fetch {
+export function viaGateway(
+  native: typeof fetch,
+  gateway: string,
+  token: string,
+  markers: Record<string, string> = {},
+): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const original = new Request(input, init);
     const mode = original.redirect;
@@ -30,7 +35,16 @@ export function viaGateway(native: typeof fetch, gateway: string, token: string)
     for (let hops = 0; ; hops++) {
       let response: Response;
       if (LOOPBACK.has(url.hostname)) {
-        response = await native(url, { method, headers, body, redirect: "manual", signal: original.signal });
+        const localHeaders = new Headers(headers);
+        const marker = markers[url.origin];
+        if (marker) localHeaders.set("x-eval-transport-marker", marker);
+        response = await native(url, {
+          method,
+          headers: localHeaders,
+          body,
+          redirect: "manual",
+          signal: original.signal,
+        });
       } else {
         const forwarded = new Headers(headers);
         forwarded.set(VENDOR_URL_HEADER, url.href);

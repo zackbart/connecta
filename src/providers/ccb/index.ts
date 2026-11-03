@@ -206,7 +206,7 @@ export const ccb = defineApiProvider<CcbOptions>({
         ? [`Named lists default to ${options.defaultPerPage} rows on this connection.`]
         : []),
     ],
-    summary: `${options.environment === "sandbox" ? "Sandbox" : "Production"} CCB, ${options.mode === "identity" ? "per person" : "church-wide"}: id resolution, sensitive data, paging, rate limits, hatches.`,
+    summary: "Load for CCB person ids, sensitive data, paging, rate limits and guarded writes.",
     required: true,
   }),
   pageSize: { default: 25, max: 100 },

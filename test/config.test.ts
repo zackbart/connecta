@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { ConfigError } from "../src/config-schema.js";
+import type { CredentialVault } from "../src/credential-contract.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { createConnecta, customExecutor } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
@@ -314,5 +317,70 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(Object.getPrototypeOf(resolved.pools)).toBeNull();
     expect(resolved.pools?.["constructor"]).toBeUndefined();
     expect(resolved.pools?.["toString"]).toBeUndefined();
+  });
+});
+
+describe("timing trace configuration", () => {
+  it.each([-1, 1.1, Number.NaN, Number.POSITIVE_INFINITY, "1"])(
+    "rejects invalid sample rate %s at construction",
+    (rate) => {
+      expect(() =>
+        unsafeCreateConnecta({ connectors: [], executor, storage: memoryStorage(), timingTraceSampleRate: rate }),
+      ).toThrow(/timingTraceSampleRate/);
+    },
+  );
+});
+
+describe("vault sealing with OAuth connectors", () => {
+  const plainVault = (): CredentialVault => ({
+    get: async () => null,
+    getAll: async () => null,
+    metadata: async () => null,
+    set: async () => ({ configured: true as const, updatedAt: "" }),
+    setAll: async () => ({ configured: true as const, updatedAt: "" }),
+    delete: async () => {},
+  });
+  const sealing = { seal: async () => "sealed", open: async () => "opened" };
+  const connector = (id: string, oauth: boolean): Connector => ({
+    id,
+    listTools: async () => [],
+    callTool: async () => null,
+    ...(oauth ? { startAuth: async () => ({ state: "auth_required" as const }) } : {}),
+  });
+  const deployment = (vault: CredentialVault | undefined, connectors: Connector[]) =>
+    createConnecta({
+      readOnly: false,
+      connectors,
+      executor,
+      logger: "silent",
+      ...(vault ? { vault } : {}),
+    });
+
+  it.each([
+    ["neither method", {}],
+    ["only seal", { seal: sealing.seal }],
+    ["only open", { open: sealing.open }],
+  ])("INV-5 INV-11: refuses a vault with %s beside an OAuth connector", (_name, methods) => {
+    const build = () =>
+      deployment({ ...plainVault(), ...methods }, [connector("static", false), connector("crm", true)]);
+    expect(build).toThrow(ConfigError);
+    expect(build).toThrow(/vault must implement both seal and open: connector "crm"/);
+    expect(build).toThrow(/encryptedCredentialVault/);
+  });
+
+  it("accepts a sealing vault, no vault, and a non-sealing vault with no OAuth connector", async () => {
+    for (const app of [
+      deployment({ ...plainVault(), ...sealing }, [connector("crm", true)]),
+      deployment(undefined, [connector("crm", true)]),
+      deployment(plainVault(), [connector("static", false)]),
+    ]) {
+      await app.close();
+    }
+  });
+
+  it("accepts the shipped encrypted vault beside an OAuth connector", async () => {
+    const storage = memoryStorage();
+    const vault = encryptedCredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    await deployment(vault, [connector("crm", true)]).close();
   });
 });

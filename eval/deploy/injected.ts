@@ -9,6 +9,7 @@ import { withD1Latency } from "./d1-latency.js";
 
 export interface InjectedEnv {
   EVAL_INJECTED?: string;
+  EVAL_TRANSPORT_MARKERS?: string;
   EVAL_D1_LATENCY_MS?: string;
 }
 
@@ -59,4 +60,19 @@ export function withInjectedPools<T extends Record<string, { tools: string[] }>>
   return Object.fromEntries(
     Object.entries(pools).map(([id, pool]) => [id, { ...pool, tools: [...new Set([...pool.tools, ...ids])] }]),
   ) as T;
+}
+
+const installed = new WeakSet<object>();
+/** Install before fixed-origin interception captures fetch. */
+export function installFakeAttribution(env: InjectedEnv): void {
+  if (!env.EVAL_TRANSPORT_MARKERS || installed.has(env)) return;
+  installed.add(env);
+  const markers = JSON.parse(env.EVAL_TRANSPORT_MARKERS) as Record<string, string>;
+  const forward = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    const request = new Request(input, init);
+    const marker = markers[new URL(request.url).origin];
+    if (marker) request.headers.set("x-eval-transport-marker", marker);
+    return forward(request);
+  }) as typeof fetch;
 }

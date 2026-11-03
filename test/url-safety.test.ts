@@ -42,6 +42,40 @@ describe("classifyHost", () => {
     "http://[fc00::1]/",
     "http://[fe80::1]/",
     "http://[::ffff:a9fe:a9fe]/",
+    // IPv4 special-purpose and reserved space.
+    "http://192.0.0.1/",
+    "http://192.0.2.1/",
+    "http://192.88.99.1/",
+    "http://198.18.0.1/",
+    "http://198.19.255.255/",
+    "http://198.51.100.1/",
+    "http://203.0.113.1/",
+    "http://224.0.0.1/",
+    "http://239.255.255.255/",
+    "http://240.0.0.1/",
+    "http://255.255.255.255/",
+    // IPv4 carried in IPv6, whichever form spells it.
+    "http://[::7f00:1]/",
+    "http://[::127.0.0.1]/",
+    "http://[::a9fe:a9fe]/",
+    "http://[::ffff:0:7f00:1]/",
+    "http://[64:ff9b::7f00:1]/",
+    "http://[64:ff9b::a9fe:a9fe]/",
+    "http://[64:ff9b::10.0.0.1]/",
+    "http://[64:ff9b:1::808:808]/",
+    "http://[2002:7f00:1::]/",
+    "http://[2002:a9fe:a9fe::1]/",
+    "http://[2002:0a00:0001:ffff::1]/",
+    "http://[::ffff:c612:1]/",
+    // IPv6 outside global unicast or inside its special-purpose ranges.
+    "http://[fec0::1]/",
+    "http://[ff02::1]/",
+    "http://[100::1]/",
+    "http://[2001::1]/",
+    "http://[2001:1ff:ffff::1]/",
+    "http://[2001:db8::1]/",
+    "http://[3fff::1]/",
+    "http://[4000::1]/",
   ])("%s is private", (href) => {
     expect(classifyHost(hostOf(href))).toBe("private");
     expect(classifyHost(hostOf(href)) !== "public").toBe(true);
@@ -53,8 +87,25 @@ describe("classifyHost", () => {
     "https://172.15.255.255/",
     "https://172.32.0.1/",
     "https://100.128.0.1/",
-    "https://[2001:db8::1]/",
     "https://[::ffff:8.8.8.8]/",
+    // Just outside each special-purpose IPv4 range.
+    "https://192.0.1.1/",
+    "https://192.0.3.1/",
+    "https://192.88.98.1/",
+    "https://198.17.255.255/",
+    "https://198.20.0.1/",
+    "https://198.51.99.1/",
+    "https://203.0.112.1/",
+    "https://223.255.255.255/",
+    // Ordinary global IPv6, and transitional forms carrying a public address.
+    "https://[2606:4700:4700::1111]/",
+    "https://[2001:200::1]/",
+    "https://[2001:4860:4860::8888]/",
+    "https://[3fff:1000::1]/",
+    "https://[::808:808]/",
+    "https://[::ffff:0:808:808]/",
+    "https://[64:ff9b::808:808]/",
+    "https://[2002:808:808::1]/",
   ])("%s is public", (href) => {
     expect(classifyHost(hostOf(href))).toBe("public");
     expect(classifyHost(hostOf(href)) !== "public").toBe(false);
@@ -85,10 +136,28 @@ describe("learnedUrlRefusal", () => {
     expect(refusal(loopbackConfig, target)).toMatch(/HTTPS/);
   });
 
-  it.each(["https://169.254.169.254/latest/meta-data", "https://[fd00::1]/token", "https://[::ffff:a9fe:a9fe]/token"])(
-    "refuses the private https URL %s behind a public config",
+  it.each([
+    "https://169.254.169.254/latest/meta-data",
+    "https://[fd00::1]/token",
+    "https://[::ffff:a9fe:a9fe]/token",
+    "https://[::7f00:1]/token",
+    "https://[64:ff9b::7f00:1]/token",
+    "https://[64:ff9b::a9fe:a9fe]/latest/meta-data",
+    "https://[2002:7f00:1::]/token",
+    "https://[fec0::1]/token",
+    "https://192.0.0.1/token",
+    "https://198.18.0.1/token",
+    "https://224.0.0.1/token",
+    "https://240.0.0.1/token",
+    "https://255.255.255.255/token",
+  ])("refuses the private https URL %s behind a public config", (target) => {
+    expect(refusal(publicConfig, target)).toMatch(/private/);
+  });
+
+  it.each(["https://192.0.1.1/token", "https://[2606:4700:4700::1111]/token", "https://[64:ff9b::808:808]/token"])(
+    "keeps the public https URL %s learnable",
     (target) => {
-      expect(refusal(publicConfig, target)).toMatch(/private/);
+      expect(refusal(publicConfig, target)).toBeUndefined();
     },
   );
 
@@ -102,6 +171,17 @@ describe("learnedUrlRefusal", () => {
       expect(refusal(loopbackConfig, target)).toBeUndefined();
     }
     expect(refusal(new URL("http://localhost:3000/mcp"), "http://127.0.0.1:9000/token")).toBeUndefined();
+  });
+
+  it("keeps a mapped loopback learnable from a loopback config, and no other carrier", () => {
+    expect(refusal(loopbackConfig, "http://[::ffff:7f00:1]:9000/token")).toBeUndefined();
+    for (const target of [
+      "http://[::7f00:1]/token",
+      "http://[64:ff9b::7f00:1]/token",
+      "http://[2002:7f00:1::]/token",
+    ]) {
+      expect(refusal(loopbackConfig, target)).toMatch(/private/);
+    }
   });
 
   it.each(["http://169.254.169.254/latest/meta-data", "https://[fe80::1]/token"])(
@@ -224,29 +304,32 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     requestScope: {},
   });
 
-  it.each(["http://169.254.169.254", "https://169.254.169.254", "https://10.0.0.8", "https://[::ffff:a9fe:a9fe]"])(
-    "refuses protected-resource metadata naming %s as the authorization server",
-    async (authorizationServer) => {
-      const server = downstream({
-        mcpUrl: "https://downstream.example/mcp",
-        authorizationServer,
-      });
-      vi.stubGlobal("fetch", server.fetchStub);
-      const c = connector(server.mcpUrl);
-      const started = await c.startAuth!(scope(memoryStorage()));
+  it.each([
+    "http://169.254.169.254",
+    "https://169.254.169.254",
+    "https://10.0.0.8",
+    "https://[::ffff:a9fe:a9fe]",
+    "https://[64:ff9b::a9fe:a9fe]",
+    "https://[2002:7f00:1::]",
+    "https://198.18.0.1",
+  ])("refuses protected-resource metadata naming %s as the authorization server", async (authorizationServer) => {
+    const server = downstream({
+      mcpUrl: "https://downstream.example/mcp",
+      authorizationServer,
+    });
+    vi.stubGlobal("fetch", server.fetchStub);
+    const c = connector(server.mcpUrl);
+    const started = await c.startAuth!(scope(memoryStorage()));
 
-      const host = new URL(authorizationServer).hostname;
-      expect(started.state).toBe("error");
-      expect(started.authorizationUrl).toBeUndefined();
-      expect(started.message).toMatch(/refused an OAuth URL/);
-      expect(started.message).toContain(host);
-      expect(reached(server, host)).toBe(0);
-      // Discovery itself ran: the refusal is the guard, not a dead fixture.
-      expect(server.requests.some((url) => url.pathname.startsWith("/.well-known/oauth-protected-resource"))).toBe(
-        true,
-      );
-    },
-  );
+    const host = new URL(authorizationServer).hostname;
+    expect(started.state).toBe("error");
+    expect(started.authorizationUrl).toBeUndefined();
+    expect(started.message).toMatch(/refused an OAuth URL/);
+    expect(started.message).toContain(host);
+    expect(reached(server, host)).toBe(0);
+    // Discovery itself ran: the refusal is the guard, not a dead fixture.
+    expect(server.requests.some((url) => url.pathname.startsWith("/.well-known/oauth-protected-resource"))).toBe(true);
+  });
 
   it("refuses a registration endpoint on a private literal", async () => {
     const server = downstream({

@@ -12,7 +12,7 @@ import type { CallErrorDetails } from "../errors.js";
 
 import { getQuickJS, type QuickJSContext, type QuickJSDeferredPromise, type QuickJSHandle } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
-import { InvocationFailure } from "../invocation.js";
+import { InvocationFailure } from "../invocation-failure.js";
 import { msg } from "../errors.js";
 import { withoutProgramTerminator } from "../program-source.js";
 import { hostCallLabel, MAX_QUICKJS_LOG_TRANSPORT_BYTES, serializedBytes } from "./quickjs-protocol.js";

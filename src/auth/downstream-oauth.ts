@@ -23,7 +23,7 @@ import {
 import { authMethods } from "./native.js";
 import { type RefreshFailure } from "./oauth-token-response.js";
 import { OAUTH_REFRESH_SKEW_MS, type OAuthGrantBody } from "./oauth-grant.js";
-import { type Flow, type FlowBinding, consentMethods } from "./downstream-oauth/consent.js";
+import { type Flow, type FlowBinding, consentMethods, withoutUrlSecrets } from "./downstream-oauth/consent.js";
 import {
   ACTIVE_EPOCH_PREFIX,
   GRANT,
@@ -318,7 +318,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       !this.callback ||
       (issuer === null
         ? this.callback.flow.binding?.issRequired === true
-        : issuer !== this.callback.flow.binding?.issuer)
+        : this.flowValue(issuer) !== this.flowValue(this.callback.flow.binding?.issuer))
     ) {
       throw new ConnectorCallError(
         "connector_call_failed",
@@ -331,6 +331,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   flowLabel(key: string, epoch: string): string {
     return `${key}:${epoch}`;
+  }
+
+  /** The sealed record's own label, so a verifier's ciphertext cannot stand in for it. */
+  flowRecordLabel(key: string, epoch: string): string {
+    return `${this.flowLabel(key, epoch)}:record`;
+  }
+
+  /** A binding value as this provider's flow records hold it, for comparison. */
+  flowValue<T>(value: T): T {
+    return this.sealer ? value : withoutUrlSecrets(value);
   }
 
   declare private encodeFlow: (key: string, flow: Flow) => Promise<string>;

@@ -6,6 +6,7 @@ beforeTransportTest(() => {
 });
 
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/client";
+import type { KVStorage } from "../src/types.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { trackRemoteClientRequest } from "../src/auth/downstream-client-metadata.js";
 import { failureRecord } from "../src/operator-record.js";
@@ -19,9 +20,22 @@ import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { consentKey, seedGrant } from "./fixtures/oauth.js";
+import { CredentialVault } from "../src/credentials.js";
+import { vaultOAuthSealer } from "../src/oauth-sealing.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 
 const BASE = "https://connecta.test";
+/** A pending consent's URL is stored only sealed, so reuse needs a sealing vault. */
+const sealedProvider = (storage: KVStorage) =>
+  new KvOAuthProvider(
+    "remote",
+    storage,
+    `${BASE}/oauth/callback/remote`,
+    undefined,
+    undefined,
+    vaultOAuthSealer(new CredentialVault(memoryStorage(), CREDENTIAL_KEY), "remote", undefined, console),
+  );
 const logger = { debug() {}, info() {}, warn() {}, error() {} };
 
 const ISSUER = "https://authorization.test";
@@ -323,7 +337,7 @@ it("INV-5: refuses discovery after invalid_grant removes the sent token, and lat
     }),
   ).rejects.toMatchObject({ code: "connector_call_failed" });
   expect(await storage.get(oauthGrantKeys.grant)).not.toContain(TOKEN);
-  const later = new KvOAuthProvider("remote", storage, `${BASE}/oauth/callback/remote`);
+  const later = sealedProvider(storage);
   await later.saveDiscoveryState(discovery);
   expect(await later.discoveryState()).toEqual(discovery);
   const url = new URL(`${ISSUER}/authorize?state=later&client_id=public-client`);
@@ -382,7 +396,7 @@ it("INV-5: consent preserves the bound client_id while refusing echoes elsewhere
     client: { value: { client_id: clientId, client_secret: secret } },
     discovery: { ...discovery },
   });
-  const provider = new KvOAuthProvider("remote", storage, `${BASE}/oauth/callback/remote`);
+  const provider = sealedProvider(storage);
   const url = new URL(`${ISSUER}/authorize?state=client-identity`);
   url.searchParams.set("client_id", clientId);
   await provider.redirectToAuthorization(url);
@@ -433,7 +447,7 @@ it.each(encodedUrls)(
       }),
     ).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(await storage.get(oauthGrantKeys.grant)).toBe(before);
-    const later = new KvOAuthProvider("remote", storage, `${BASE}/oauth/callback/remote`);
+    const later = sealedProvider(storage);
     expect(await later.discoveryState()).toBeUndefined();
     await later.saveDiscoveryState(discovery);
     const consent = new URL(`${ISSUER}/authorize?state=clean-later`);

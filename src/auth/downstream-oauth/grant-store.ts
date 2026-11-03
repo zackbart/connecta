@@ -461,7 +461,10 @@ export const grantStoreMethods = {
           : {
               ...((yield authInvoke(this, "wait", [
                 authMethod(() => {
-                  return authCall(discoveryBinding, [grant.body.discovery]) as Effect.Effect<FlowBinding, unknown>;
+                  return authCall(discoveryBinding, [grant.body.discovery, !this.sealer]) as Effect.Effect<
+                    FlowBinding,
+                    unknown
+                  >;
                 }),
               ])) as FlowBinding),
               issuer: grant.body.issuer,
@@ -476,7 +479,8 @@ export const grantStoreMethods = {
         const binding = this.callback?.flow.binding;
         if (
           !binding ||
-          fingerprint(binding) !== fingerprint((yield authInvoke(this, "bindingForGrant", [grant])) as FlowBinding)
+          fingerprint(this.flowValue(binding)) !==
+            fingerprint(this.flowValue((yield authInvoke(this, "bindingForGrant", [grant])) as FlowBinding))
         ) {
           throw this.flowSuperseded();
         }
