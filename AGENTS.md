@@ -61,6 +61,13 @@ instructions in `examples/` and `documentation/`.
 
 ## Verification
 
+Local `typecheck` uses the pinned `typescript-native` alias (TypeScript 7) for
+core and operator UI no-emit checks. TypeScript 6 remains installed for its AST
+API, emitting builds, declaration validation and installed-consumer/example
+checks. Scripts name each compiler by package path because both expose `tsc`;
+do not use bare `tsc` in core scripts or move emitting/consumer checks to the
+native compiler without proving equivalent output and validation.
+
 `pnpm run check:fast` runs `check:static`, then Vitest's built-in
 `--changed origin/main` selection on Node. Fetch `origin/main` first. This is a
 partial inner loop. Configuration changes and deleted modules need the full
