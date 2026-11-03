@@ -2288,7 +2288,9 @@ with the same facts and `access_context_unavailable`, `access_audience_invalid`,
 or `access_identity_unavailable`. Identity lookup failures additionally carry
 checked `identityLookup` facts: `outcome` (`timeout` or `rejected`), `durationMs`,
 `cold` (whether this was the isolate's first identity lookup), and `inFlight`
-(the isolate's other active lookup attempts when the failure was recorded).
+(the isolate's lookup attempts still pending when the failure was recorded; this
+request's own attempt counts only while it is pending, so a hung lookup counts
+itself, and a rejected lookup or a deadline during retry backoff does not).
 These records contain no header values,
 assertions, cookies, identities, URLs, response bodies, or exception text.
 
