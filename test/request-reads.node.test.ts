@@ -1,5 +1,5 @@
 // Node-only: uses node:sqlite to verify physical D1 counters.
-import { startTimingTrace, traceFor, type TimingFamily } from "../src/timing-trace.js";
+import { hasTimingTraces, startTimingTrace, traceFor, type TimingFamily } from "../src/timing-trace.js";
 import { RequestScope } from "../src/runtime/request-scope.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 // Node-only: node:sqlite stands in for D1 so every round trip and statement is counted, and QuickJS runs programs.
@@ -986,6 +986,33 @@ describe("request budgets", () => {
     expect(record.operations["catalog"]?.count).toBe(1);
     const text = JSON.stringify(d.traceLogs);
     for (const secret of ["modern", "echo", TOKEN, "access-1", "operator-1"]) expect(text).not.toContain(secret);
+  });
+
+  it("finalizes timing when an owned downstream response throws during disposal", async () => {
+    const d = await production({ trace: true });
+    const app = d.build();
+    const send = globalThis.fetch;
+    const failure = new Error("disposal fault");
+    const disposed = vi.fn(() => {
+      throw failure;
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await send(input, init);
+      Object.defineProperty(response, Symbol.dispose, { value: disposed });
+      return response;
+    });
+    expect(hasTimingTraces()).toBe(false);
+    await d.call(app, "modern.echo");
+    await d.settle();
+    expect(disposed).toHaveBeenCalled();
+    expect(d.traceLogs).toHaveLength(1);
+    expect(hasTimingTraces()).toBe(false);
+    // The next unsampled request must not inherit the failed trace's active state.
+    const unsampled = await production();
+    await unsampled.call(unsampled.build(), "modern.echo");
+    await unsampled.settle();
+    expect(hasTimingTraces()).toBe(false);
+    expect(d.traceLogs).toHaveLength(1);
   });
 
   it("pins warm agent call, program and search reads with injected D1 latency", async () => {

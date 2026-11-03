@@ -24,6 +24,7 @@ export type TimingFamily =
   | "memo.fresh";
 interface Totals {
   count: number;
+  // I/O-spanning elapsed observation on Workers; zero is ambiguous, not zero CPU.
   durationMs: number;
   bytes: number;
   statements: number;

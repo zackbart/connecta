@@ -781,13 +781,16 @@ export function createMcpRoute(opts: ServerOptions): {
       Effect.gen(function* () {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
-            requestOwner(requestScope).close();
-            finishTiming?.();
-            if (!localAbort.signal.aborted) {
-              localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
+            try {
+              requestOwner(requestScope).close();
+            } finally {
+              finishTiming?.();
+              if (!localAbort.signal.aborted) {
+                localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
+              }
+              request.signal.removeEventListener("abort", onCallerAbort);
+              if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
             }
-            request.signal.removeEventListener("abort", onCallerAbort);
-            if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
           }),
         );
         // A request naming `subscriptions/listen` defers its permit: nothing of

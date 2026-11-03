@@ -1174,9 +1174,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             let accepted = validatedCatalogs.get(reuseKey)?.value;
             trace?.record(accepted ? "catalog.validated.hit" : "catalog.validated.miss");
             if (!accepted) {
-              const decodeStarted = trace ? performance.now() : 0;
               const result = JSON.parse(value) as CatalogResult;
-              trace?.record("catalog.decode", performance.now() - decodeStarted);
+              trace?.record("catalog.decode", 0, fingerprint.byteLength);
               const items = catalogItems(method, result);
               if (
                 !Array.isArray(items) ||
@@ -1185,19 +1184,17 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                 (result.resultType !== undefined && result.resultType !== "complete")
               )
                 return undefined;
-              const validationStarted = trace ? performance.now() : 0;
               const validated = (yield authInvoke(catalogSchema(method)["~standard"], "validate", [result])) as
                 | StandardSchemaV1.FailureResult
                 | StandardSchemaV1.SuccessResult<CatalogResult>;
-              trace?.record("catalog.validate", performance.now() - validationStarted);
+              trace?.record("catalog.validate");
               if (stopped() || validated.issues) return undefined;
               accepted = validated.value;
             }
             // Redaction depends on this request's sent credentials. It must
             // still run, and returns detached objects from the frozen facts.
-            const intakeStarted = trace ? performance.now() : 0;
             const clean = intake(ctx, method, accepted);
-            trace?.record("catalog.intake", performance.now() - intakeStarted);
+            trace?.record("catalog.intake");
             trace?.record("catalog.chunks", 0, fingerprint.byteLength, 0, 0, m.chunkCount);
             rememberValidated(reuseKey, accepted, fingerprint.byteLength);
             if (m.expiresAt <= Date.now()) {

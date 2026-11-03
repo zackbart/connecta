@@ -193,29 +193,38 @@ weak-reference availability and aggregate operation families. Each family has
 `diagnostics` segments. `catalog.cache.lookup` counts cache probes; `catalog.cache.hit` counts accepted
 unexpired entries. Lookups without hits can include misses, expiry, invalid
 entries or interrupted reads; they are not proof of live relisting.
-`catalog.validated.hit`/`miss` report immutable validation reuse; decode,
-validation and intake durations measure the corresponding stages, and
+`catalog.validated.hit`/`miss` report immutable validation reuse.
+`catalog.decode` counts JSON decodes and their UTF-8 input bytes;
+`catalog.validate` and `catalog.intake` count those stages without timing them.
+These three count-only families always have `durationMs: 0`.
 `catalog.chunks` records accepted chunk bytes and counts. These counters do not
 identify a connector, owner or private/public partition.
-Concurrent spans can overlap; do not sum them as wall
-time. `memo.hit`, `memo.miss` and `memo.fresh` describe the request-read memo
+Concurrent spans can overlap; do not sum them as wall time.
+`memo.hit`, `memo.miss` and `memo.fresh` describe the request-read memo
 (`absent` counts null values, not cache failures). `d1.read`, `d1.write` and
-`d1.batch` count physical native D1 operations and SQL statements, including
+`d1.batch` count physical native D1 trips and SQL statements, including
 failed attempts. Batch count is one trip; statements is the batch length.
+All native D1 work carrying the request context shares these totals, including
+admission, credential and catalog work. Comparing them with `catalog` duration
+(the diagnostics `catalogMs` segment) does not isolate catalog storage.
 Returned D1 bytes measure serialized application results, not Cloudflare's wire
 encoding. Memo bytes measure UTF-8 stored values. Result bytes use the existing
 invocation measurement. No keys, tool names, owner identity, arguments, results,
 credentials or error text enter the record. Records retain totals only.
 
+On production Workers, `performance.now()` advances only across I/O. Durations
+are I/O-spanning elapsed observations, not CPU attribution: zero is ambiguous,
+and CPU work can appear in a later I/O interval. D1 durations are therefore not
+pure storage latency. Use counts, sizes, cache outcomes and the isolate-first-request
+flag to compare warm direct and one-call program requests with the same catalog.
+For per-invocation CPU, use Workers' invocation telemetry field
+[`$workers.cpuTimeMs`](https://developers.cloudflare.com/workers/observability/query-builder/).
+Deeper attribution requires [CPU profiling](https://developers.cloudflare.com/workers/runtime-apis/performance/).
+
 Only work carrying the MCP request's native context contributes D1 counters;
 standalone operator/background or custom Promise adapter work is outside that
 request trace. Sampling does not add reads, change TTLs, bypass generation or
-credential fences, or start authorization. Compare warm direct and one-call
-program requests with the same catalog, then compare catalog time against D1
-waits, returned bytes and memo misses. High catalog time with low D1 time points
-toward CPU/intake work; it is an inference until measured with further spans.
-The trace is measurement infrastructure; it does not resolve #1220 without a
-real deployment measurement.
+credential fences, or start authorization.
 
 For example, query a ten-minute window for a neutral Worker `assistant` (replace
 the millisecond timestamps with the window you need):
@@ -225,9 +234,14 @@ cf --profile assistant o11y telemetry query \
   --query-id 00000000-0000-4000-8000-000000000001 \
   --view events --limit 100 \
   --timeframe-from 1793700000000 --timeframe-to 1793700600000 \
+  --parameters-order-by-value count --parameters-order-by-order desc \
+  --parameters-calculations '[{"operator":"count","alias":"count"}]' \
   --parameters-filters '[{"key":"$workers.scriptName","operation":"eq","type":"string","value":"assistant"}]'
 ```
 
 Select `connecta.timing` messages in the returned events and inspect their
 structured operation totals. Use the profile belonging to your deployment.
 The example reads telemetry only; it changes no Worker settings.
+
+The example passes CLI dry-run validation; server acceptance has not been verified.
+Use `--dry-run` to validate the request locally without querying telemetry.

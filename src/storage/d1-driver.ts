@@ -3,6 +3,8 @@ import { RequestScope } from "../runtime/request-scope.js";
 import { hasTimingTraces, traceFor, type TimingFamily } from "../timing-trace.js";
 import { utf8Length } from "../bytes.js";
 
+// Request-wide totals include admission, credentials and catalog work. These
+// I/O-spanning observations are not pure storage latency or CPU attribution.
 function timedD1<A, E>(family: TimingFamily, statements: number, operation: Effect.Effect<A, E>): Effect.Effect<A, E> {
   return Effect.suspend(() => {
     if (!hasTimingTraces()) return operation;
