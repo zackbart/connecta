@@ -53,7 +53,7 @@ const lookupSettled = () => {
 function lookupIdentity(access: NonNullable<InboundAuthRuntimeContext["access"]>) {
   lookups++;
   try {
-    return access.getIdentity().finally(lookupSettled);
+    return Promise.resolve(access.getIdentity()).finally(lookupSettled);
   } catch (error) {
     lookups--;
     throw error;
