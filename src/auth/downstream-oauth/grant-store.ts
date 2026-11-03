@@ -40,7 +40,23 @@ export type GrantBody = OAuthGrantBody & {
  * never mixes servers and nothing it holds is sent to one that did not
  * issue it.
  */
+export interface GrantObservation {
+  revision: number;
+  outcome: "accepted" | "refused";
+}
+
+/** Token commits and their status fence are the same CAS, never separate writes. */
+export function nextTokenGrant(grant: Grant, body: GrantBody): Grant {
+  const revision = (grant.tokenRevision ?? 0) + 1;
+  if (!Number.isSafeInteger(revision)) throw new Error("OAuth grant revision exhausted");
+  const next = { ...grant, body, tokenRevision: revision };
+  delete next.observation;
+  return next;
+}
+
 export interface Grant {
+  tokenRevision?: number;
+  observation?: GrantObservation;
   epoch: string;
   flow?: string;
   body: GrantBody;
@@ -48,6 +64,8 @@ export interface Grant {
 
 /** A grant as stored: the body sealed when the vault can seal. */
 interface StoredGrant {
+  tokenRevision?: number;
+  observation?: GrantObservation;
   connectaOAuth: typeof GRANT_VERSION;
   epoch: string;
   flow?: string;
@@ -72,6 +90,8 @@ function storedGrant(raw: string): StoredGrant | undefined {
   return plainObject(value) &&
     value.connectaOAuth === GRANT_VERSION &&
     typeof value.epoch === "string" &&
+    (value.tokenRevision === undefined ||
+      (Number.isSafeInteger(value.tokenRevision) && (value.tokenRevision as number) >= 0)) &&
     (value.flow === undefined || typeof value.flow === "string") &&
     (value.sealed === undefined || typeof value.sealed === "string")
     ? (value as unknown as StoredGrant)
@@ -148,6 +168,8 @@ export const grantStoreMethods = {
         const stored: StoredGrant = {
           connectaOAuth: GRANT_VERSION,
           epoch: grant.epoch,
+          ...(grant.tokenRevision !== undefined ? { tokenRevision: grant.tokenRevision } : {}),
+          ...(grant.observation ? { observation: grant.observation } : {}),
           ...(grant.flow !== undefined ? { flow: grant.flow } : {}),
         };
         if (Object.keys(grant.body).length > 0) {
@@ -207,6 +229,11 @@ export const grantStoreMethods = {
         }
         const grant: Grant = {
           epoch: stored.epoch,
+          ...(stored.tokenRevision !== undefined ? { tokenRevision: stored.tokenRevision } : {}),
+          ...(stored.observation?.revision === (stored.tokenRevision ?? 0) &&
+          (stored.observation.outcome === "accepted" || stored.observation.outcome === "refused")
+            ? { observation: { revision: stored.observation.revision, outcome: stored.observation.outcome } }
+            : {}),
           ...(stored.flow !== undefined ? { flow: stored.flow } : {}),
           body: grantBody(body),
         };
@@ -235,13 +262,18 @@ export const grantStoreMethods = {
     ).pipe(Effect.catch(() => Effect.succeed(false)));
   },
   peekGrant: function (this: KvOAuthProvider) {
-    return authFlow<{ epoch: string; tokens?: OAuthTokens }>(
+    return authFlow<{ epoch: string; tokens?: OAuthTokens; issuer?: string; observation?: GrantObservation }>(
       function* (this: KvOAuthProvider) {
         const raw = (yield authInvoke(this, "wait", [
           authMethod(() => authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>),
         ])) as string | null;
         const grant = (yield authInvoke(this, "openGrant", [raw])) as Grant;
-        return { epoch: grant.epoch, ...(grant.body.tokens ? { tokens: grant.body.tokens } : {}) };
+        return {
+          epoch: grant.epoch,
+          ...(grant.body.tokens ? { tokens: grant.body.tokens } : {}),
+          ...(grant.body.issuer !== undefined ? { issuer: grant.body.issuer } : {}),
+          ...(grant.observation ? { observation: grant.observation } : {}),
+        };
       }.bind(this),
     );
   },
@@ -395,7 +427,8 @@ export const grantStoreMethods = {
               delete body.refreshConsent;
               if (refreshConsent) body.refreshConsent = refreshConsent;
             }
-            return this.withIssuer(grant, body);
+            const next = this.withIssuer(grant, body);
+            return field === "tokens" ? nextTokenGrant(next, body) : next;
           },
         ])) as boolean;
         if (field === "tokens") this.tokenRequestSent = undefined;
@@ -403,6 +436,21 @@ export const grantStoreMethods = {
         this.seen[field] = fingerprint(field === "client" ? (value as NonNullable<GrantBody["client"]>).value : value);
       }.bind(this),
     );
+  },
+  recordTokenOutcome: function (
+    this: KvOAuthProvider,
+    snapshot: { epoch: string; revision: number },
+    outcome: GrantObservation["outcome"],
+  ) {
+    if (outcome !== "accepted" && outcome !== "refused") return Effect.void;
+    return authInvoke(this, "updateGrant", [
+      (grant: Grant) => {
+        if (grant.epoch !== snapshot.epoch || (grant.tokenRevision ?? 0) !== snapshot.revision || !grant.body.tokens)
+          return undefined;
+        return { ...grant, observation: { revision: snapshot.revision, outcome } };
+      },
+      { epoch: snapshot.epoch, quiet: true },
+    ]);
   },
   bindingForGrant: function (this: KvOAuthProvider, grant: Grant) {
     return authFlow<FlowBinding>(

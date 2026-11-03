@@ -1283,7 +1283,10 @@ describe("api() oauth early renewal", () => {
 
     await connector.callTool("whoami", {}, ctx());
     expect(refreshes(provider)).toBe(0);
-    expect(await storage.get(grantKey)).toBe(stored);
+    expect(JSON.parse((await storage.get(grantKey))!)).toEqual({
+      ...JSON.parse(stored!),
+      observation: { revision: JSON.parse(stored!).tokenRevision, outcome: "accepted" },
+    });
     provider.expireAccess();
     expect(await connector.callTool("whoami", {}, ctx())).toEqual({ status: 200, body: { owner: "alice" } });
     expect(refreshes(provider)).toBe(1);
@@ -2040,4 +2043,89 @@ describe("api() oauth reset and disconnect", () => {
     ).rejects.toThrow();
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
+});
+
+describe("API OAuth outcome status", () => {
+  it("INV-6 INV-10: real 2xx/401 outcomes survive reconstruction and status reads write nothing", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const storage = memoryStorage();
+    const connector = ccb();
+    const registry = makeRegistry([connector], { storage });
+    const ctx = () => registry.contextFor("ccb", BASE);
+    await authorize(connector, ctx, provider);
+    await connector.callTool("whoami", {}, ctx());
+    const key = `${scopes.connector("ccb")}${oauthGrantKeys.grant}`;
+    const accepted = JSON.parse((await storage.get(key))!);
+    expect(accepted.observation).toEqual({ revision: accepted.tokenRevision, outcome: "accepted" });
+    provider.control.apiRejects = true;
+    provider.control.refresh = "outage";
+    await expect(connector.callTool("whoami", {}, ctx())).rejects.toBeDefined();
+    const refused = JSON.parse((await storage.get(key))!);
+    expect(refused.observation).toEqual({ revision: refused.tokenRevision, outcome: "refused" });
+    const fresh = ccb();
+    const freshRegistry = makeRegistry([fresh], { storage });
+    const cas = vi.spyOn(storage, "compareAndSet");
+    const before = await Promise.all((await storage.list!("")).map(async (key) => [key, await storage.get(key)]));
+    expect((await fresh.status!(freshRegistry.contextFor("ccb", BASE))).state).toBe("auth_required");
+    expect(await Promise.all((await storage.list!("")).map(async (key) => [key, await storage.get(key)]))).toEqual(
+      before,
+    );
+    expect(cas).not.toHaveBeenCalled();
+  });
+
+  it("a delayed clock-ahead refusal cannot change a reconsented grant or prevent its next observation", async () => {
+    const provider = fakeProvider();
+    const arrived = deferred<void>();
+    const release = deferred<void>();
+    let held = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (!held && url.origin === API && url.href !== TOKEN) {
+          held = true;
+          arrived.resolve();
+          await release.promise;
+          return new Response(null, { status: 401 });
+        }
+        return provider.fetchStub(input, init);
+      }),
+    );
+    const storage = memoryStorage();
+    const connector = ccb();
+    const registry = makeRegistry([connector], { storage });
+    const ctx = () => registry.contextFor("ccb", BASE);
+    await authorize(connector, ctx, provider);
+    const pending = connector.callTool("whoami", {}, ctx()).catch(() => undefined);
+    await arrived.promise;
+    await connector.startAuth!(ctx(), { force: true });
+    await authorize(connector, ctx, provider);
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 5000);
+    release.resolve();
+    await pending;
+    expect((await connector.status!(ctx())).state).toBe("ok");
+    await connector.callTool("whoami", {}, ctx());
+    const stored = JSON.parse((await storage.get(`${scopes.connector("ccb")}${oauthGrantKeys.grant}`))!);
+    expect(stored.observation).toEqual({ revision: stored.tokenRevision, outcome: "accepted" });
+    vi.restoreAllMocks();
+  });
+});
+
+it("API refresh commits advance the revision and fence the superseded token's observations", async () => {
+  const provider = fakeProvider();
+  install(provider);
+  const storage = memoryStorage();
+  const connector = ccb();
+  const registry = makeRegistry([connector], { storage });
+  const ctx = () => registry.contextFor("ccb", BASE);
+  await authorize(connector, ctx, provider);
+  const key = `${scopes.connector("ccb")}${oauthGrantKeys.grant}`;
+  const before = JSON.parse((await storage.get(key))!);
+  provider.expireAccess();
+  await connector.callTool("whoami", {}, ctx());
+  const after = JSON.parse((await storage.get(key))!);
+  expect(after.tokenRevision).toBe(before.tokenRevision + 1);
+  expect(after.observation).toEqual({ revision: after.tokenRevision, outcome: "accepted" });
 });

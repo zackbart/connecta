@@ -122,6 +122,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await storedGrant(storage)).toEqual({
       connectaOAuth: 3,
       epoch: "initial",
+      tokenRevision: 1,
       body: { issuer: ISSUER, client: { value: client, registrationPath: "dcr" }, tokens },
     });
   });
@@ -460,6 +461,7 @@ describe("KvOAuthProvider sealed state", () => {
     expect(JSON.parse(grantRaw)).toEqual({
       connectaOAuth: 3,
       epoch: "initial",
+      tokenRevision: 1,
       flow: await oauthStateDigest(state),
       sealed: expect.stringMatching(/^v1\./),
     });
@@ -663,5 +665,66 @@ describe("retired OAuth layouts", () => {
     expect(await p.reusablePendingAuthorizationUrl()).toBeUndefined();
     expect(await p.verifyState("anything")).toBe(false);
     expect(await storage.list("")).toEqual([used]);
+  });
+});
+
+describe("grant revision observations", () => {
+  it("INV-6 INV-10: same-epoch reconsent fences clock-ahead refusal with one atomic token commit", async () => {
+    const storage = memoryStorage();
+    const a = provider(storage);
+    await a.saveTokens(tokens, ctxA);
+    await a.tokens(ctxA);
+    const old = { epoch: a.observed!.epoch, revision: a.observed!.revision };
+    const b = provider(storage);
+    await b.saveTokens(tokens, ctxA); // Even an identical token is a new consent revision.
+    await b.tokens(ctxA);
+    const current = { epoch: b.observed!.epoch, revision: b.observed!.revision };
+    expect(current.epoch).toBe(old.epoch);
+    expect(current.revision).toBe(old.revision + 1);
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 5000);
+    await a.recordTokenOutcome(old, "refused");
+    await b.recordTokenOutcome(current, "accepted");
+    const raw = await storage.get(GRANT);
+    expect(JSON.parse(raw!).observation).toEqual({ revision: current.revision, outcome: "accepted" });
+    await b.peekGrant();
+    expect(await storage.get(GRANT)).toBe(raw);
+    vi.restoreAllMocks();
+  });
+
+  it("a delayed old observation CAS cannot overwrite the replacement's fence or block its observations", async () => {
+    const inner = memoryStorage();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let held = false;
+    const storage: KVStorage = {
+      ...inner,
+      compareAndSet: async (key, expected, value, options) => {
+        if (!held && key === GRANT && value && JSON.parse(value).observation?.outcome === "refused") {
+          held = true;
+          entered.resolve();
+          await release.promise;
+        }
+        return inner.compareAndSet!(key, expected, value, options);
+      },
+    };
+    const a = provider(storage);
+    await a.saveTokens(tokens, ctxA);
+    await a.tokens(ctxA);
+    const pending = a.recordTokenOutcome({ epoch: a.observed!.epoch, revision: a.observed!.revision }, "refused");
+    await entered.promise;
+    const b = provider(storage);
+    await b.saveTokens({ ...tokens, access_token: "replacement-access" }, ctxA);
+    await b.tokens(ctxA);
+    const snapshot = { epoch: b.observed!.epoch, revision: b.observed!.revision };
+    await b.recordTokenOutcome(snapshot, "accepted");
+    release.resolve();
+    await pending;
+    expect(JSON.parse((await inner.get(GRANT))!).observation).toEqual({
+      revision: snapshot.revision,
+      outcome: "accepted",
+    });
+    await b.recordTokenOutcome(snapshot, "refused");
+    expect(JSON.parse((await inner.get(GRANT))!).observation.outcome).toBe("refused");
   });
 });

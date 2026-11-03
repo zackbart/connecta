@@ -14,7 +14,7 @@ import {
 import { authCall, authCatch, authFlow, authInvoke, authMethod, authStorage, authStorageMany } from "../native.js";
 import { type RefreshFailure } from "../oauth-token-response.js";
 import { tokenExpiry } from "../oauth-grant.js";
-import { GRANT, type Grant, MAX_GRANT_WRITES, epochOf, parsed, plainObject } from "./grant-store.js";
+import { nextTokenGrant, GRANT, type Grant, MAX_GRANT_WRITES, epochOf, parsed, plainObject } from "./grant-store.js";
 import type { KvOAuthProvider } from "../downstream-oauth.js";
 import { type RefreshWait, aborted, refreshTokensDigest, refreshWait } from "./refresh-coordinator.js";
 import { oauthStateDigest } from "./consent.js";
@@ -479,10 +479,11 @@ export const refreshRecordMethods = {
             const committed = issuer !== undefined ? { ...tokens, issuer } : tokens;
             const { expiresAt: _previous, ...body } = grant.body;
             const expiresAt = tokenExpiry(committed, issuedAt);
-            const next: Grant = {
-              ...grant,
-              body: { ...body, tokens: committed, ...(expiresAt !== undefined ? { expiresAt } : {}) },
-            };
+            const next = nextTokenGrant(grant, {
+              ...body,
+              tokens: committed,
+              ...(expiresAt !== undefined ? { expiresAt } : {}),
+            });
             const encoded = (yield authInvoke(this, "encodeGrant", [next, null])) as string;
             if ((yield authStorage(this.storage, "compareAndSet", [GRANT, raw, encoded])) as boolean) {
               this.observe(next);

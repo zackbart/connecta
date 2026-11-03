@@ -132,7 +132,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * The tokens of the grant this provider last opened or wrote, as facts
    * only: no credential beyond the access token it already handed out.
    */
-  observed: { epoch: string; accessToken: string; refreshable: boolean; expiresAt?: number } | undefined;
+  observed:
+    | { epoch: string; revision: number; accessToken: string; refreshable: boolean; expiresAt?: number }
+    | undefined;
 
   constructor(
     readonly connectorId: string,
@@ -175,7 +177,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * reads a flow makes, it never seals a plaintext record in place, binds an
    * epoch, records what it handed out, refreshes or discovers (INV-10).
    */
-  declare peekGrant: () => Promise<{ epoch: string; tokens?: OAuthTokens }>;
+  declare peekGrant: () => Promise<{
+    epoch: string;
+    tokens?: OAuthTokens;
+    issuer?: string;
+    observation?: { revision: number; outcome: "accepted" | "refused" };
+  }>;
+  declare recordTokenOutcome: (
+    snapshot: { epoch: string; revision: number },
+    outcome: "accepted" | "refused",
+  ) => Promise<void>;
 
   /**
    * @internal The access token a call should renew before sending it: the
@@ -196,6 +207,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     this.observed = tokens
       ? {
           epoch: grant.epoch,
+          revision: grant.tokenRevision ?? 0,
           accessToken: tokens.access_token,
           refreshable: typeof tokens.refresh_token === "string" && tokens.refresh_token !== "",
           ...(expiresAt !== undefined ? { expiresAt } : {}),

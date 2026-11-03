@@ -776,7 +776,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * `renewAgain` is the invocation's check, which renews any due token,
    * even one this request's earlier renewal produced.
    */
-  const grantFor = (ctx: ConnectorContext, requestOwned = false, renewAgain = false): RenewableGrant => {
+  type ApiGrant = RenewableGrant & { observe(token: string, outcome: "accepted" | "refused"): Promise<void> };
+  const grantFor = (ctx: ConnectorContext, requestOwned = false, renewAgain = false): ApiGrant => {
+    const observations = new Map<string, { epoch: string; revision: number }>();
+    const capture = (provider: StaticOAuthProvider, token: string) => {
+      const seen = provider.observed;
+      if (seen?.accessToken === token) observations.set(token, { epoch: seen.epoch, revision: seen.revision });
+      return token;
+    };
     let provider: SharedRead<StaticOAuthProvider> | undefined;
     const use = authMethod(<A>(work: (provider: StaticOAuthProvider, live: ConnectorContext) => Promise<A>) => {
       return authView(
@@ -855,9 +862,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                   true,
                 ])) as string;
                 earlyRenewed.record(scope, tokens.access_token, fresh, provider.observedExpiry(fresh));
-                return fresh;
+                return capture(provider, fresh);
               }
-              return tokens.access_token;
+              return capture(provider, tokens.access_token);
             });
           }),
         ]) as Effect.Effect<string, unknown>;
@@ -865,9 +872,24 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       refresh: authMethod((stale: string) => {
         return authCall(use, [
           authMethod((provider: StaticOAuthProvider, live: ConnectorContext) => {
-            return authCall(renewedToken, [provider, live, stale, requestOwned]) as Effect.Effect<string, unknown>;
+            return authFlow<string>(function* () {
+              const token = (yield authCall(renewedToken, [provider, live, stale, requestOwned])) as string;
+              return capture(provider, token);
+            });
           }),
         ]) as Effect.Effect<string, unknown>;
+      }),
+      observe: authMethod((token: string, outcome: "accepted" | "refused") => {
+        const snapshot = observations.get(token);
+        if (!snapshot) return Effect.void;
+        return authCall(use, [
+          authMethod((provider: StaticOAuthProvider) =>
+            authInvoke(provider, "recordTokenOutcome", [snapshot, outcome]),
+          ),
+        ]).pipe(
+          Effect.asVoid,
+          Effect.catch(() => Effect.void),
+        );
       }),
       rejected: authMethod(() => {
         return authView(
@@ -1000,6 +1022,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 response: Response;
                 dispatch: ProviderRequest;
               };
+              if (first.status === 401 || (first.status >= 200 && first.status < 300))
+                yield authInvoke(grant, "observe", [stale, first.status === 401 ? "refused" : "accepted"]);
+              if (signal.aborted) throw signal.reason;
               if (first.status !== 401) return first;
               try {
                 (yield authCall(readChallenge, [first, signal, init.method])) as void;
@@ -1039,6 +1064,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
                 response: Response;
                 dispatch: ProviderRequest;
               };
+              if (second.status === 401 || (second.status >= 200 && second.status < 300))
+                yield authInvoke(grant, "observe", [accessToken, second.status === 401 ? "refused" : "accepted"]);
+              if (signal.aborted) throw signal.reason;
               if (second.status !== 401) return second;
               void second.body?.cancel().catch(() => {});
               return (yield authInvoke(grant, "rejected", [])) as never;
@@ -1072,26 +1100,20 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           message: "Authorization required \u2014 the downstream rejected this connector's OAuth grant.",
         };
       }
-      // A status read never starts authorization: this provider cannot, and
-      // nothing here calls the SDK. A stored grant for the configured token
-      // endpoint is healthy until a call says otherwise — the downstream is
-      // asked nothing.
-      if ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean) {
+      // Peek opens the current grant without migration writes or authorization.
+      const grant = (yield authInvoke(provider, "peekGrant", [])) as Awaited<
+        ReturnType<StaticOAuthProvider["peekGrant"]>
+      >;
+      if (provider.isOperatorDisconnectedEpoch(grant.epoch))
         return { state: "auth_required", message: disconnectedMessage };
-      }
-      return ((yield authInvoke(provider, "tokens", [issuerContext])) as
-        | {
-            access_token: string;
-            token_type: string;
-            id_token?: string | undefined;
-            expires_in?: number | undefined;
-            scope?: string | undefined;
-            refresh_token?: string | undefined;
-            issuer?: string | undefined;
+      if (!grant.tokens || grant.issuer !== settings.identity)
+        return { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
+      return grant.observation?.outcome === "refused"
+        ? {
+            state: "auth_required",
+            message: "Authorization required — the downstream rejected this connector's OAuth grant.",
           }
-        | undefined)
-        ? { state: "ok" }
-        : { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
+        : { state: "ok" };
     });
   });
   const status = authMethod((ctx: ConnectorContext) => {

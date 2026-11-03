@@ -2923,9 +2923,18 @@ grant with different consent settings.
 
 The grant record and consents, epoch fencing, vault sealing, shared/personal ownership,
 callback state/principal checks, `authorize_connector`, Connect, Restart, and
-Disconnect match `remoteMcp()`. Status calls report a stored grant for the
-configured token endpoint healthy without downstream probes and never start
-authorization. `oauth` and
+Disconnect match `remoteMcp()`. Status reads do not probe tokens, start OAuth,
+or write grant state. A grant for the configured token endpoint starts as `ok`;
+a real API 401 records `refused` and status becomes `auth_required`. A real API
+2xx records `accepted`. Other HTTP statuses do not establish an auth outcome.
+Each consent and refresh advances a monotonic token revision within its grant
+epoch and clears the prior observation in the same compare-and-set write.
+Call observations carry the epoch and revision read with their token and are
+accepted only while both still match the live grant. No wall clock orders
+observations. Reconsent with an identical token still advances the revision.
+The observation stores only its revision and the `accepted`/`refused` enum;
+arguments, response bodies, code and error text are excluded. An observation
+storage failure does not replace the already received API response. `oauth` and
 `credential` are exclusive per connector, giving `auth_required` one recovery.
 For providers offering both, deployment config chooses; handlers check `ctx.oauth`.
 
