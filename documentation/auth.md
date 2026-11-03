@@ -560,6 +560,7 @@ createConnecta({
   storage,
   agents: ["assistant", "ci"],
   accessTokens: accessTokens(storage),
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   ui: operatorUi(),
   maintainers: ["your-operator-id"],
@@ -950,6 +951,7 @@ cache entries remain partitioned by the admitted pool.
 createConnecta({
   storage,
   accessTokens: accessTokens(storage),
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   readOnly: false, // required; pools without their own readOnly inherit it
   maintainers: ["user_owner"],
@@ -1104,6 +1106,7 @@ const team = [
   { handle: "bob", id: "user_bob", email: "bob@example.com" },
 ];
 createConnecta({
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   storage,
   accessTokens: accessTokens(storage),
@@ -1252,6 +1255,7 @@ const workspace: GoogleWorkspaceOptions = {
 };
 
 createConnecta({
+  publicUrl: "https://connecta.example.com",
   auth: clerkAuth({ publishableKey, secretKey }),
   storage,
   accessTokens: accessTokens(storage),
@@ -2301,7 +2305,15 @@ tokens by default, both JWT and opaque. Verified `aud` or `resource` must
 contain the endpoint's exact canonical URL from protected-resource metadata.
 If both claims are present, both must match. Trailing slashes, case, queries,
 and fragments are not normalized. `/mcp` and `/mcp/support` are distinct
-resources. Set `publicUrl` behind an internal origin.
+resources.
+
+Clerk needs a fixed deployment URL. Set `ConnectaConfig.publicUrl`, or
+`clerkAuth({ publicUrl })` when only Clerk should use it; `createConnecta` throws
+when neither is set, on Node and on Workers. Both token `resource` checks and the
+session `azp` pin read this value, so a request's `Host` and `X-Forwarded-Proto`
+never decide them. There is no implicit loopback default: a local deployment names
+its origin, such as `http://localhost:8787`. The Node template does this when
+`PUBLIC_URL` is unset.
 
 ```ts
 clerkAuth({ publishableKey, secretKey,

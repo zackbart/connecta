@@ -494,8 +494,9 @@ const connectaConfig = {
     resolve: (value) => value ?? memoryStorage(),
   }),
   /**
-   * Public base URL. Defaults to the request origin per-request. Configuring an
-   * HTTPS URL also redirects matching inbound HTTP requests to HTTPS.
+   * Public base URL. Defaults to the request origin per-request, except that
+   * clerkAuth requires it here or as its own `publicUrl`. Configuring an HTTPS
+   * URL also redirects matching inbound HTTP requests to HTTPS.
    */
   publicUrl: opaque<string>({ check: httpUrl }),
   /**
@@ -695,6 +696,12 @@ function assertCoherent(config: Parsed): void {
     throw new ConfigError(
       "ConnectaConfig.agents needs accessTokens: accessTokens(storage) from @zackbart/connecta/auth/access-tokens " +
         "holds each agent's token slot.",
+    );
+  }
+  if (!config.publicUrl && config.auth.some((provider) => provider.requiresPublicUrl)) {
+    throw new ConfigError(
+      "ConnectaConfig.publicUrl is required with clerkAuth, which checks tokens and sessions against it: " +
+        "set it, or clerkAuth({ publicUrl }), to this deployment's URL, http://localhost:<port> for local development.",
     );
   }
 }

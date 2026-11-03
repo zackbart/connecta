@@ -33,7 +33,12 @@ function logDenial(reason: AuthDenialReason, failure?: unknown): void {
 export interface ClerkAuthOptions {
   publishableKey: string;
   secretKey: string;
-  /** Public base URL of this deployment. Defaults to the request origin. */
+  /**
+   * Public base URL of this deployment: what tokens' resource and sessions'
+   * `azp` are checked against. Defaults to `ConnectaConfig.publicUrl`. One of
+   * the two is required; a request's Host never substitutes for it. A local
+   * deployment names its loopback origin, such as `http://localhost:8787`.
+   */
   publicUrl?: string;
   /**
    * OAuth client IDs dedicated to this deployment, used only when a verified
@@ -569,7 +574,21 @@ function mcpPoolSuffix(pathname: string): string | null {
   return match ? match[1]! : null;
 }
 
+function assertPublicUrl(value: unknown): void {
+  if (value === undefined) return;
+  let url: URL | undefined;
+  try {
+    url = typeof value === "string" ? new URL(value) : undefined;
+  } catch {
+    url = undefined;
+  }
+  if (!url || (url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+    throw new Error("clerkAuth: `publicUrl` must be an absolute http(s) URL without credentials.");
+  }
+}
+
 export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
+  assertPublicUrl(opts.publicUrl);
   assertNoRetiredToolkitOptions("clerkAuth", opts);
   // Before the Clerk client, so a malformed key fails as a connecta
   // configuration error rather than however the SDK happens to treat it.
@@ -907,6 +926,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   return {
     kind: "clerk",
     interactiveOperator: true,
+    ...(opts.publicUrl === undefined ? { requiresPublicUrl: true as const } : {}),
     recognizesCredential: (request) => {
       if (authorizationCredential(request).kind !== "absent") return !isMachineCredential(request);
       return (
