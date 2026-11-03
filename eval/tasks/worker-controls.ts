@@ -187,6 +187,11 @@ export async function gatewayRedirectControls() {
  * wrangler Node process runs with the egress guard and no update banner.
  */
 export async function workerdProcessControls() {
+  const unavailable = spawnSync(join(ROOT, "eval", "support", "workerd-landlock.py"), ["--version"], {
+    env: { PATH: process.env.PATH },
+  });
+  if (unavailable.status !== 125 || !String(unavailable.stderr).includes("REFUSED"))
+    throw new Error("Isolation helper did not fail closed before exec");
   const dir = await mkdtemp(join(tmpdir(), "connecta-workerd-control-"));
   try {
     const main = join(dir, "worker.js");
@@ -227,6 +232,14 @@ export default { async fetch(request) {
         const response = await fetch(dev.origin + "/probe");
         if ((await response.text()) !== "refused" || received !== 0)
           throw new Error("Native workerd escaped TCP isolation");
+        console.log(
+          dev
+            .process()
+            .output()
+            .split("\n")
+            .filter((line) => line.startsWith("[eval isolation]"))
+            .join("\n"),
+        );
         if (!dev.process().output().includes("Landlock ABI="))
           throw new Error("Native workerd lacks isolation evidence");
       } finally {

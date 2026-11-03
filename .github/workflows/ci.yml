@@ -97,7 +97,7 @@ jobs:
           cache: pnpm
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - name: Verify native workerd isolation on this kernel
-        run: pnpm run eval:selftest --workerd-isolation-only
+        run: pnpm run build:operator-ui && pnpm run eval:selftest --workerd-isolation-only
       - run: pnpm run eval:outcomes
       - name: Install Chromium and system dependencies
         timeout-minutes: 16
