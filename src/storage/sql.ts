@@ -46,6 +46,11 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
   const root = {};
   const native: NativeStorage = {
     ...store,
+    setMany: (entries, options) => {
+      let write = store.setMany!(entries, options);
+      for (const [key] of entries) write = observedWrite(root, key, write);
+      return write;
+    },
     set: (key, value, options) => observedWrite(root, key, store.set(key, value, options)),
     delete: (key) => observedWrite(root, key, store.delete(key)),
     compareAndSet: (key, expected, next, options) =>

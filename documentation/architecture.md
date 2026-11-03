@@ -3926,3 +3926,8 @@ cache. Exact authored names and complete authored matches precede API pointers;
 ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
 The published discovery contract states compilation, query and cache bounds.
 No request identity, signal, credential or promise enters a vocabulary cache.
+
+SQL result stashes write at most 64 trailing rows per awaited transaction, with one
+expiry sweep per batch. Header publication follows confirmed trailing writes in a
+separate transaction; uncertain writes retain their ledger charge until expiry.
+Custom storage keeps sequential writes.

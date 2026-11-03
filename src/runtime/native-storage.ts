@@ -10,6 +10,11 @@ export interface NativeStorage {
   accessToken?: ((hash: string) => Effect.Effect<Map<string, string | null> | undefined, unknown>) | undefined;
   /** Several keys in one round trip, each as `get` would read it. */
   getMany?(keys: readonly string[]): Effect.Effect<(string | null)[], unknown>;
+  /** Bounded internal writes; publication fences remain separate. */
+  setMany?(
+    entries: readonly (readonly [string, string])[],
+    options?: Parameters<KVStorage["set"]>[2],
+  ): Effect.Effect<void, unknown>;
   set(key: string, value: string, options?: Parameters<KVStorage["set"]>[2]): Effect.Effect<void, unknown>;
   delete(key: string): Effect.Effect<void, unknown>;
   list(prefix: string): Effect.Effect<string[], unknown>;
@@ -72,6 +77,20 @@ export function registerNativeStorage(edge: KVStorage, native: NativeStorage): K
               Reflect.get(edge, "get") === own.get
                 ? getMany(keys)
                 : Effect.forEach(keys, (key) => current(edge, "get", own.get, [key], () => native.get(key))),
+            ),
+        }
+      : {}),
+    ...(native.setMany
+      ? {
+          setMany: (entries: readonly (readonly [string, string])[], options?: Parameters<KVStorage["set"]>[2]) =>
+            typed(() =>
+              getNativeStorage(edge)
+                ? native.setMany!(entries, options)
+                : Effect.asVoid(
+                    Effect.forEach(entries, ([key, value]) =>
+                      current(edge, "set", own.set, [key, value, options], () => native.set(key, value, options)),
+                    ),
+                  ),
             ),
         }
       : {}),
