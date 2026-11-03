@@ -26,9 +26,14 @@ export interface ConnectaEndpointOptions {
 /** App-owned pool policy; use `ctx.memo` when its result should stay fixed. */
 export type ConnectaPoolSelector = (ctx: DynamicContext) => string | Promise<string>;
 
+/** App-owned caller/turn policy, evaluated before selecting a pool or fetching guidance. */
+export type ConnectaPredicate = (ctx: DynamicContext) => boolean | Promise<boolean>;
+
 export interface ConnectaConnectionOptions extends Omit<ConnectaEndpointOptions, "pool"> {
   /** A fixed pool, or a policy Eve evaluates before every model call. */
   pool?: string | ConnectaPoolSelector;
+  /** Omit this value when false or when the policy throws. Evaluated every model call. */
+  when?: ConnectaPredicate;
   /** What the connection offers, for the model choosing which connection to search. */
   description: string;
   /** Eve's approval for every Connecta tool: a policy or configuration. Defaults to `never()`. */
@@ -44,6 +49,8 @@ export interface ConnectaConnectionOptions extends Omit<ConnectaEndpointOptions,
 export interface ConnectaInstructionsOptions extends Omit<ConnectaEndpointOptions, "pool"> {
   /** A fixed pool, or the same policy used by the connection. */
   pool?: string | ConnectaPoolSelector;
+  /** Omit this value when false or when the policy throws. Evaluated every model call. */
+  when?: ConnectaPredicate;
   /** MCP client name for instruction requests. Default `connecta-eve-instructions`. */
   clientName?: string;
   /** How long fetched instructions are reused. Default ten minutes. */
@@ -90,21 +97,34 @@ export const gateConnectaWrites: ApprovalPolicy = ({ toolAnnotations }) =>
  * one agent token, sent as a bearer and re-read on every request.
  */
 export function connectaConnection(
+  options: ConnectaConnectionOptions & { when: ConnectaPredicate },
+): ReturnType<typeof defineDynamicConnection>;
+export function connectaConnection(
   options: ConnectaConnectionOptions & { pool: ConnectaPoolSelector },
 ): ReturnType<typeof defineDynamicConnection>;
 export function connectaConnection(
-  options: ConnectaConnectionOptions & { pool?: string },
+  options: ConnectaConnectionOptions & { pool?: string; when?: undefined },
 ): McpClientConnectionDefinition;
 export function connectaConnection(
   options: ConnectaConnectionOptions,
 ): McpClientConnectionDefinition | ReturnType<typeof defineDynamicConnection>;
 export function connectaConnection(options: ConnectaConnectionOptions) {
   const { pool, ...rest } = options;
-  if (typeof pool === "function") {
+  if (typeof pool === "function" || options.when) {
     return defineDynamicConnection(async (ctx) => {
-      const selected = await pool(ctx);
-      validatePool(selected);
-      return connectionDefinition(options, connectaEndpoint({ ...rest, pool: selected }), selected);
+      if (!(await enabled(options.when, ctx))) return null;
+      // Only a static `pool` may be omitted; connectaEndpoint validates it. A
+      // selector must name a valid pool, or the turn fails instead of using the base URL.
+      let selected = pool as string | undefined;
+      if (typeof pool === "function") {
+        selected = await pool(ctx);
+        validatePool(selected);
+      }
+      return connectionDefinition(
+        options,
+        connectaEndpoint({ ...rest, ...(selected === undefined ? {} : { pool: selected }) }),
+        selected,
+      );
     });
   }
   return connectionDefinition(options, connectaEndpoint(pool === undefined ? rest : { ...rest, pool }));
@@ -125,6 +145,14 @@ function connectionDefinition(
     },
     approval: options.approval ?? (options.gateWrites ? gateConnectaWrites : never()),
   });
+}
+
+async function enabled(when: ConnectaPredicate | undefined, ctx: DynamicContext): Promise<boolean> {
+  try {
+    return when ? (await when(ctx)) === true : true;
+  } catch {
+    return false;
+  }
 }
 
 /** Connecta's MCP `instructions` for one endpoint, or null when unavailable. */
@@ -221,6 +249,7 @@ export function connectaInstructions(options: ConnectaInstructionsOptions = {}) 
     return fresh ?? cached?.content ?? null;
   };
   return defineDynamic(async (ctx) => {
+    if (!(await enabled(options.when, ctx))) return null;
     const { pool, ...rest } = options;
     let endpoint: string;
     if (typeof pool === "function") {
