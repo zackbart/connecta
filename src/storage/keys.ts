@@ -226,6 +226,10 @@ export const connectorHealthKeys = {
     validateStorageKey(`connector-health:v1:${connectorId}:${partitionDigest}:status`),
 } as const satisfies Keyed;
 
+const responseCacheLocatorPrefix = (id: string, config: string) =>
+  validateStorageKey(`response-cache:v1:${id}:${config}:`);
+const responseCacheLocatorSeparator = ":";
+
 /**
  * SDK catalog response cache, complete manifests published after their chunks.
  * Secret-bearing inputs reach these keys only through `secretDigest`.
@@ -246,7 +250,12 @@ export const responseCacheKeys = {
   prefix: (id: string) => validateStorageKey(`response-cache:v1:${id}:`),
   generation: (id: string) => validateStorageKey(`response-cache:v1:${id}:generation`),
   namespace: (id: string, config: string, generation: string) =>
-    validateStorageKey(`response-cache:v1:${id}:${config}:${generation}:`),
+    validateStorageKey(`${responseCacheLocatorPrefix(id, config)}${generation}${responseCacheLocatorSeparator}`),
+  /** SQL binds these layout parts around the stored generation; it owns no delimiters. */
+  locatorPrefix: responseCacheLocatorPrefix,
+  locatorSeparator: responseCacheLocatorSeparator,
+  locatedEntry: (prefix: string, generation: string, partition: string) =>
+    validateStorageKey(`${prefix}${generation}${responseCacheLocatorSeparator}${partition}`),
   entry: (namespace: string, partition: string) => validateStorageKey(`${namespace}${partition}`),
   refreshDigest: (id: string, config: string, partition: string) =>
     validateStorageKey(`response-cache:v1:${id}:refresh-digest:${config}:${partition}`),

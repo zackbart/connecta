@@ -1,6 +1,6 @@
 import { AccessTokenManager } from "../src/access-tokens.js";
 import { agentAdmissionFixture } from "./helpers/agent-tokens.js";
-import { accessTokenKeys, agentObservationKeys } from "../src/storage/keys.js";
+import { accessTokenKeys, agentObservationKeys, responseCacheKeys } from "../src/storage/keys.js";
 import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
 import { INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
@@ -306,6 +306,91 @@ export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | 
  */
 /** Several keys in one statement read exactly as one `get` each would. */
 export function sqlGetManyContract(open: () => Promise<Pick<SqlFixture, "storage" | "exec" | "rows">>): void {
+  it("locates bounded generation-derived candidates including absent partitions", async () => {
+    const db = await open();
+    const storage = db.storage();
+    const generationKey = responseCacheKeys.generation("crm");
+    const prefix = responseCacheKeys.locatorPrefix("crm", "config");
+    const entry = (generation: string, partition: string) =>
+      responseCacheKeys.entry(responseCacheKeys.namespace("crm", "config", generation), partition);
+    await storage.set(generationKey, "first");
+    await storage.set(entry("first", "public"), "complete\0manifest");
+    await storage.set(entry("first", "other-owner"), "private");
+    const snapshot = () =>
+      runEdge(
+        getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["private", "public"]),
+      );
+    expect(await snapshot()).toEqual(
+      new Map([
+        [generationKey, "first"],
+        [entry("first", "private"), null],
+        [entry("first", "public"), "complete\0manifest"],
+      ]),
+    );
+    await storage.set(generationKey, "second");
+    const after = await snapshot();
+    expect(after.get(generationKey)).toBe("second");
+    expect(after.has(entry("first", "public"))).toBe(false);
+    expect(after.get(entry("second", "public"))).toBeNull();
+    await expect(
+      runEdge(getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["a", "b", "c"])),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it("excludes expired generations and manifests from locating snapshots", async () => {
+    const db = await open();
+    const storage = db.storage();
+    const generationKey = responseCacheKeys.generation("crm");
+    const prefix = responseCacheKeys.locatorPrefix("crm", "config");
+    const key = responseCacheKeys.entry(responseCacheKeys.namespace("crm", "config", "gen"), "private");
+    await storage.set(generationKey, "gen");
+    await storage.set(key, "manifest");
+    const snapshot = () =>
+      runEdge(getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["private"]));
+    expect((await snapshot()).get(key)).toBe("manifest");
+    await db.exec("UPDATE connecta_kv SET expires_at_ms = 1 WHERE key = ?", key);
+    expect(await snapshot()).toEqual(
+      new Map([
+        [generationKey, "gen"],
+        [key, null],
+      ]),
+    );
+    // Keep a live manifest behind the expired generation: it must not be located.
+    await db.exec("UPDATE connecta_kv SET expires_at_ms = NULL WHERE key = ?", key);
+    await db.exec("UPDATE connecta_kv SET expires_at_ms = 1 WHERE key = ?", generationKey);
+    expect(await snapshot()).toEqual(new Map([[generationKey, null]]));
+  });
+
+  it("locates literal punctuation in every key component without matching adjacent partitions", async () => {
+    const db = await open();
+    const storage = db.storage();
+    const id = "crm:%_?'";
+    const config = "config:%_?'";
+    const generation = "gen:%_?'";
+    const partitions = ["owner:%_?'", "public:%_?'"];
+    const generationKey = responseCacheKeys.generation(id);
+    const prefix = responseCacheKeys.locatorPrefix(id, config);
+    const entry = (partition: string) =>
+      responseCacheKeys.entry(responseCacheKeys.namespace(id, config, generation), partition);
+    await storage.set(generationKey, generation);
+    await storage.set(entry(partitions[0]!), "private");
+    await storage.set(entry(partitions[1]!), "public");
+    await storage.set(entry("owner:other"), "other owner");
+    await storage.set(
+      responseCacheKeys.entry(responseCacheKeys.namespace(id, "other config", generation), partitions[0]!),
+      "other config",
+    );
+    expect(
+      await runEdge(getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, partitions)),
+    ).toEqual(
+      new Map([
+        [generationKey, generation],
+        [entry(partitions[0]!), "private"],
+        [entry(partitions[1]!), "public"],
+      ]),
+    );
+  });
+
   it("reads several keys in one statement, as one get each would", async () => {
     const db = await open();
     const storage = db.storage();
