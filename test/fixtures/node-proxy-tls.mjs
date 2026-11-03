@@ -30,7 +30,11 @@ try {
   origin.on('connection', track);
   origin.listen(0, '127.0.0.1');
   await once(origin, 'listening');
-  proxy = createServer(tls, (_req, res) => res.writeHead(405).end());
+  await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${dir}/proxy-key.pem`, '-out', `${dir}/proxy-cert.pem`, '-days', '1', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1']);
+  const proxyTls = { key: await readFile(`${dir}/proxy-key.pem`), cert: await readFile(`${dir}/proxy-cert.pem`) };
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(`${dir}/ca.pem`, Buffer.concat([tls.cert, proxyTls.cert]));
+  proxy = createServer(proxyTls, (_req, res) => res.writeHead(405).end());
   proxy.on('connection', track);
   proxy.on('connect', (req, incoming, head) => {
     tunnels++;
@@ -55,7 +59,7 @@ try {
   for (const runtime of [process.version]) {
     const before = { bodies, reads, tunnels };
     let result;
-    try { result = await run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], { cwd, env: { ...process.env, NODE_EXTRA_CA_CERTS: `${dir}/cert.pem` }, timeout: 20_000 }); } catch (error) { console.error(JSON.stringify({runtime,phase:'child failed',stderr:error.stderr,code:error.code})); throw new Error('TLS smoke child failed'); }
+    try { result = await run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], { cwd, env: { ...process.env, NODE_EXTRA_CA_CERTS: `${dir}/ca.pem` }, timeout: 20_000 }); } catch (error) { console.error(JSON.stringify({runtime,phase:'child failed',stderr:error.stderr,code:error.code})); throw new Error('TLS smoke child failed'); }
     assert.deepEqual(JSON.parse(result.stdout), { statuses: [421, 'reset', 503, 200], dispatched: 4 });
     assert.equal(bodies-before.bodies, 3);
     assert.equal(reads-before.reads, 1);
@@ -65,7 +69,7 @@ try {
     // the learned hostname, rather than the checked IP or proxy hostname.
     const learned = `https://learned.localhost:${origin.address().port}`;
     const pinned = `const {createNodeGuardedTransport}=await import(${JSON.stringify(`${cwd}/src/http/node-transport.ts`)}); const {learnedDestination}=await import(${JSON.stringify(`${cwd}/src/guarded-transport.ts`)}); for (const proxy of [undefined, ${JSON.stringify(proxyUrl)}]) { let lookups=0; const sender=createNodeGuardedTransport(proxy, async()=>{lookups++; return [{address:'127.0.0.1',family:4},{address:'127.0.0.2',family:4}];}); const init={[learnedDestination]:new URL('https://localhost:1')}; const r=await sender.send(new URL(${JSON.stringify(learned)}),init); if(await r.text()!=='reply'||lookups!==1) throw new Error('pinning failed'); try {const r=await sender.send(new URL(${JSON.stringify(learned)}.replace('learned.localhost','wrong.localhost')),init); await r.text(); throw new Error('hostname accepted');} catch(e) {if(e.message==='hostname accepted') throw e;} } console.log('learned TLS hostname validation preserved');`;
-    const learnedResult = await run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', pinned], { cwd, env: { ...process.env, NODE_EXTRA_CA_CERTS: `${dir}/cert.pem` }, timeout: 20_000 });
+    const learnedResult = await run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', pinned], { cwd, env: { ...process.env, NODE_EXTRA_CA_CERTS: `${dir}/ca.pem` }, timeout: 20_000 });
     assert.match(learnedResult.stdout, /learned TLS hostname validation preserved/);
     // The extra learned read and refused certificate tunnels are independent
     // of the original four-request accounting above.

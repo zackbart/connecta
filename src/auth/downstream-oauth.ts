@@ -70,7 +70,7 @@ export function authorizingContext(ctx: ConnectorContext): ConnectorContext {
 }
 
 /** A local destination guard proved that no OAuth HTTP request left. */
-export class OAuthRequestNotSentError extends ConnectorCallError {}
+export { OAuthRequestNotSentError } from "./oauth-request-not-sent.js";
 
 /**
  * OAuthClientProvider over one owner's grant record and its consents' flow

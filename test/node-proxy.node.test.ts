@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { gzipSync } from "node:zlib";
 import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createNodeGuardedTransport } from "../src/http/node-transport.js";
 import {
   configureGuardedTransport,
@@ -244,4 +244,62 @@ it("keeps configured origins exempt from DNS policy", async () => {
   });
   const init: LearnedRequestInit = { [learnedDestination]: url };
   expect(await (await sender.send(url, init)).text()).toBe("configured");
+});
+
+it("cancels stalled learned DNS before dispatch and aborts its resolver", async () => {
+  const controller = new AbortController();
+  let resolverSignal: AbortSignal | undefined;
+  let dispatched = 0;
+  const sender = createNodeGuardedTransport(undefined, async (_hostname, signal) => {
+    resolverSignal = signal;
+    return new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  });
+  const pending = sender.send(
+    new URL("https://learned.test"),
+    {
+      [learnedDestination]: new URL("https://configured.test"),
+      signal: controller.signal,
+    } as LearnedRequestInit,
+    () => {
+      dispatched++;
+    },
+  );
+  const reason = new Error("request ended");
+  controller.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+  expect(resolverSignal?.aborted).toBe(true);
+  expect(dispatched).toBe(0);
+});
+
+it("bounds stalled learned DNS without a caller deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    let resolverSignal: AbortSignal | undefined;
+    let dispatched = 0;
+    const sender = createNodeGuardedTransport(undefined, async (_hostname, signal) => {
+      resolverSignal = signal;
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    const pending = sender.send(
+      new URL("https://learned.test"),
+      {
+        [learnedDestination]: new URL("https://configured.test"),
+      } as LearnedRequestInit,
+      () => {
+        dispatched++;
+      },
+    );
+    const refused = expect(pending).rejects.toMatchObject({ retryable: false });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await refused;
+    expect(resolverSignal?.aborted).toBe(true);
+    expect(dispatched).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -2128,6 +2128,11 @@ On Node, the owned transport also resolves learned hosts immediately before
 connecting, refuses the whole answer set if any IPv4 or IPv6 address violates
 the same rules, and pins the connection to a checked address. TLS SNI and
 certificate validation retain the original hostname, including through a proxy.
+Proxy TLS authenticates the proxy hostname separately from destination TLS.
+Resolution uses request-owned A/AAAA queries, cancelled when the request ends
+and bounded to ten seconds even without a caller deadline. Only absent address
+families may be omitted; resolver failures refuse the request. These DNS queries
+do not consult OS hosts-file aliases.
 Each redirect hop is checked. Configured origins remain exempt. Resolution
 refusals are typed, non-retryable, and send no destination request.
 

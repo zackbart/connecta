@@ -1,15 +1,71 @@
 // Node-only: owned undici dispatcher and Node stream adapters, reached via /node.
-import { lookup as dnsLookup } from "node:dns/promises";
+import { Resolver } from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
 import { learnedDestination, type LearnedRequestInit } from "../guarded-transport.js";
 import { learnedUrlRefusal } from "../url-safety.js";
-import { OAuthRequestNotSentError } from "../auth/downstream-oauth.js";
+import { OAuthRequestNotSentError } from "../auth/oauth-request-not-sent.js";
 import { Readable } from "node:stream";
 import { isIP } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Client, ProxyAgent, type Dispatcher, type buildConnector } from "undici";
 import { ConnectorCallError } from "../errors.js";
 import type { GuardedTransport } from "../guarded-transport.js";
+
+/** Each lookup owns its DNS channels; cancellation closes them before returning. */
+async function resolveAddresses(hostname: string, signal: AbortSignal): Promise<readonly LookupAddress[]> {
+  const resolver = new Resolver();
+  const cancel = () => resolver.cancel();
+  signal.throwIfAborted();
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    const results = await Promise.allSettled([resolver.resolve4(hostname), resolver.resolve6(hostname)]);
+    signal.throwIfAborted();
+    for (const result of results) {
+      if (result.status === "rejected" && !["ENODATA", "ENOTFOUND"].includes(result.reason?.code)) throw result.reason;
+    }
+    return results.flatMap((result, index) =>
+      result.status === "fulfilled" ? result.value.map((address) => ({ address, family: index === 0 ? 4 : 6 })) : [],
+    );
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    resolver.cancel();
+  }
+}
+
+/** Observe even a misbehaving injected resolver, without holding the request open. */
+async function boundedLookup(
+  lookup: (hostname: string, signal: AbortSignal) => Promise<readonly LookupAddress[]>,
+  hostname: string,
+  requestSignal?: AbortSignal | null,
+) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(requestSignal?.reason);
+  const timer = setTimeout(() => controller.abort(new Error("DNS resolution timed out.")), 10_000);
+  requestSignal?.addEventListener("abort", abort, { once: true });
+  let onAbort: (() => void) | undefined;
+  let resolution: Promise<readonly LookupAddress[]> | undefined;
+  try {
+    if (requestSignal?.aborted) abort();
+    controller.signal.throwIfAborted();
+    resolution = lookup(hostname, controller.signal);
+    return await Promise.race([
+      resolution,
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(controller.signal.reason);
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        if (controller.signal.aborted) onAbort();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    requestSignal?.removeEventListener("abort", abort);
+    if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+    controller.abort();
+    // Drain the owned resolver after cancelling its channels (INV-7). Test
+    // injections may ignore cancellation, but cannot hold send() open.
+    if (lookup === resolveAddresses) await resolution?.catch(() => {});
+  }
+}
 
 /** Pull-based bridge: Node 22's Readable.toWeb can enqueue after Web cancellation. */
 function responseBody(body: Readable, signal: AbortSignal): ReadableStream<Uint8Array> {
@@ -48,7 +104,7 @@ function responseBody(body: Readable, signal: AbortSignal): ReadableStream<Uint8
  */
 export function createNodeGuardedTransport(
   proxy?: string,
-  lookup: (hostname: string) => Promise<readonly LookupAddress[]> = (hostname) => dnsLookup(hostname, { all: true }),
+  lookup: (hostname: string, signal: AbortSignal) => Promise<readonly LookupAddress[]> = resolveAddresses,
 ): GuardedTransport {
   let proxyUri: string | undefined;
   let proxyToken: string | undefined;
@@ -85,8 +141,11 @@ export function createNodeGuardedTransport(
         const hostname = url.hostname.replace(/^\[|\]$/g, "");
         let addresses: readonly LookupAddress[];
         try {
-          addresses = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }] : await lookup(hostname);
+          addresses = isIP(hostname)
+            ? [{ address: hostname, family: isIP(hostname) }]
+            : await boundedLookup(lookup, hostname, init.signal);
         } catch {
+          init.signal?.throwIfAborted();
           throw refuse();
         }
         init.signal?.throwIfAborted();
@@ -131,7 +190,7 @@ export function createNodeGuardedTransport(
                 ...options,
                 ...clientOptions,
                 connect: (parameters, callback) => {
-                  const name = pinned ? url.hostname.replace(/^\[|\]$/g, "") : parameters.servername;
+                  const name = parameters.servername;
                   // ProxyAgent 6 explicitly sets SNI to the proxy hostname.
                   // Node 26 rejects IP SNI. Omit it for literal IPs; tls.connect
                   // still checks the certificate against its connection host.
