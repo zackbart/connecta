@@ -7,6 +7,7 @@
 // batch of two is one round trip and two statements. Workers Free allows 50 D1
 // queries per invocation. The numbers are ceilings: lower is fine, higher is a
 // regression to explain. `D1_BUDGET_REPORT=1` prints each measurement.
+import { withD1Latency } from "../eval/deploy/d1-latency.js";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { WebStandardStreamableHTTPServerTransport, McpServer } from "@modelcontextprotocol/server";
@@ -32,7 +33,7 @@ import { requestOwner, requestReads } from "../src/runtime/request-scope.js";
 import { runEdge } from "../src/runtime/run.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { KVStorage } from "../src/types.js";
-import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, responseCacheKeys, scopes } from "../src/storage/keys.js";
 import { CLERK_OPTIONS, CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -100,13 +101,15 @@ function report(label: string, count: Count, extra: Record<string, number> = {})
     console.log(JSON.stringify({ label, roundTrips: count.roundTrips, statements: count.statements, ...extra }));
 }
 
-function counted() {
+function counted(latencyMs = 0) {
   const db = new DatabaseSync(":memory:");
   const count: Count = { roundTrips: 0, statements: 0, log: [] };
+  const binding = () =>
+    latencyMs ? withD1Latency(countingD1(db, count) as unknown as D1Database, latencyMs) : countingD1(db, count);
   return {
     count,
-    storage: () => d1Storage(countingD1(db, count)),
-    binding: () => countingD1(db, count),
+    storage: () => d1Storage(binding()),
+    binding,
     reset: () => {
       count.roundTrips = 0;
       count.statements = 0;
@@ -663,7 +666,13 @@ describe("request budgets", () => {
   });
 
   async function production(
-    options: { credentialRemote?: boolean; oauthModern?: boolean; oauthWriteProbe?: boolean } = {},
+    options: {
+      credentialRemote?: boolean;
+      oauthModern?: boolean;
+      oauthWriteProbe?: boolean;
+      agent?: boolean;
+      d1LatencyMs?: number;
+    } = {},
   ) {
     installOwnedTransport();
     const origins = {
@@ -724,8 +733,9 @@ describe("request budgets", () => {
       }
     });
 
-    const d1 = counted();
+    const d1 = counted(options.d1LatencyMs);
     const storage = d1.storage();
+    const agentToken = options.agent ? await issueAgentToken(storage, "assistant") : undefined;
     const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
     await vault.set("rest", "rest-credential-value", "operator");
     await vault.set("keyed", "keyed-credential-value", "operator");
@@ -745,10 +755,14 @@ describe("request budgets", () => {
         auth: [cloudflareAccessAuth()],
         maintainers: ["operator-1"],
         accessTokens: accessTokens(storage),
-        activity: activityHistory({
-          store: d1ActivityStore(d1.binding(), { retentionDays: 90 }),
-          deploymentId: "budget",
-        }),
+        ...(options.agent
+          ? { agents: ["assistant"], pools: { machine: { tools: ["modern"], members: ["agent:assistant"] } } }
+          : {
+              activity: activityHistory({
+                store: d1ActivityStore(d1.binding(), { retentionDays: 90 }),
+                deploymentId: "budget",
+              }),
+            }),
         ui: operatorUi(),
         logger: "silent",
         connectors: [
@@ -798,9 +812,10 @@ describe("request budgets", () => {
       expectError: boolean | null = false,
     ) => {
       const response = await app.fetch(
-        new Request(`${BASE}/mcp`, {
+        new Request(options.agent ? `${BASE}/agent/machine` : `${BASE}/mcp`, {
           method: "POST",
           headers: {
+            ...(agentToken ? { authorization: `Bearer ${agentToken}` } : {}),
             "content-type": "application/json",
             accept: "application/json, text/event-stream",
             "mcp-protocol-version": "2025-06-18",
@@ -842,13 +857,12 @@ describe("request budgets", () => {
       const log = [...requests, ...d1.count.log].join("\n");
       if (["legacy call, warm", "modern call, warm", "OAuth call, warm"].includes(label)) {
         const catalog = d1.count.log.filter((line) => line.includes("response-cache:"));
-        expect(catalog).toHaveLength(4);
+        expect(catalog, catalog.join("\n")).toHaveLength(3);
         expect(catalog[0]).toContain("negotiation:");
         expect(catalog[0]).toContain(":generation");
-        expect(catalog[1]).not.toContain(":chunk:");
-        expect(catalog[2]).toContain(":chunk:");
+        expect(catalog[1]).toContain(":chunk:");
         // This SELECT must follow the chunks, separate from the locating batch.
-        expect(catalog[3]).toMatch(/^all \["response-cache:.*:generation"\]$/);
+        expect(catalog[2]).toMatch(/^all \["response-cache:.*:generation"\]$/);
       }
       const budget = BUDGETS[label];
       expect(measured.downstream, `${label}: downstream\n${log}`).toBeLessThanOrEqual(budget.downstream);
@@ -877,12 +891,70 @@ describe("request budgets", () => {
       grantKey,
       oauthRequests,
       otherProvider,
+      otherStorage,
+      d1,
+      requests,
       settle,
       afterRead: (hook: Count["afterRead"]) => {
         d1.count.afterRead = hook;
       },
     };
   }
+
+  it("pins warm agent call, program and search reads with injected D1 latency", async () => {
+    const d = await production({ agent: true, d1LatencyMs: 25 });
+    const app = d.build();
+    await d.call(app, "modern.echo");
+    for (const [name, args, expected] of [
+      ["call_tool", { address: "modern.echo", args: { text: "hi" } }, 4],
+      ["execute_code", { code: 'async () => connecta.call("modern.echo", {text: "hi"})' }, 4],
+      ["search_tools", { query: "echo" }, 5],
+    ] as const) {
+      await d.settle();
+      d.d1.reset();
+      const start = performance.now();
+      await d.tool(app, name, args);
+      const elapsedMs = Math.round(performance.now() - start);
+      const reads = d.d1.count.log.filter((line) => line.startsWith("all "));
+      const observationReads = reads.filter((line) => line.includes("agent-observation:")).length;
+      // This PR is independent of #1249. Its one redundant telemetry SELECT
+      // disappears when that item lands; admission and catalog are pinned here.
+      expect(reads.length - observationReads, reads.join("\n")).toBe(expected);
+      expect(observationReads).toBeLessThanOrEqual(1);
+      console.log(
+        JSON.stringify({ route: name, injectedD1LatencyMs: 25, reads: reads.length, observationReads, elapsedMs }),
+      );
+    }
+  }, 60_000);
+
+  it.each([
+    ["legacy", "invalidation"],
+    ["modern", "invalidation"],
+    ["legacy", "lost response"],
+    ["modern", "lost response"],
+  ] as const)("refuses stale locating candidates after %s %s and recovers", async (kind, fault) => {
+    const d = await production();
+    const app = d.build();
+    await d.call(app, `${kind}.echo`);
+    await d.settle();
+    d.requests.length = 0;
+    let changed = false;
+    d.afterRead(async (params) => {
+      if (
+        !params.includes(responseCacheKeys.generation(kind)) ||
+        !params.some((key) => typeof key === "string" && key.includes("negotiation:"))
+      )
+        return;
+      d.afterRead(undefined);
+      changed = true;
+      if (fault === "lost response") throw new Error("lost locating response");
+      await d.otherStorage.set(responseCacheKeys.generation(kind), crypto.randomUUID());
+    });
+    await d.call(app, `${kind}.echo`);
+    expect(changed).toBe(true);
+    if (fault === "invalidation") expect(d.requests.some((request) => request.endsWith("tools/list"))).toBe(true);
+    await d.call(app, `${kind}.echo`);
+  });
 
   it.each(["legacy", "modern"] as const)(
     "a header-auth call to a %s remote MCP server, warm and cold",
@@ -891,13 +963,13 @@ describe("request budgets", () => {
       const app = d.build();
       await d.call(app, `${kind}.echo`);
       const warm = await d.measure(`${kind} call, warm`, () => d.call(app, `${kind}.echo`));
-      expect([warm.roundTrips, warm.statements]).toEqual([5, 6]);
+      expect([warm.roundTrips, warm.statements]).toEqual([4, 5]);
       const program = await d.measure(`${kind} call, warm`, () =>
         d.tool(app, "execute_code", {
           code: `async () => connecta.call("${kind}.echo", { text: "hi" })`,
         }),
       );
-      expect([program.roundTrips, program.statements]).toEqual([5, 6]);
+      expect([program.roundTrips, program.statements]).toEqual([4, 5]);
       await d.measure(`${kind} call, cold isolate`, () => d.call(d.build(), `${kind}.echo`));
     },
   );
@@ -909,13 +981,13 @@ describe("request budgets", () => {
     // The first connect sealed the seeded plaintext grant.
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
     const warm = await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
-    expect([warm.roundTrips, warm.statements]).toEqual([17, 18]);
+    expect([warm.roundTrips, warm.statements]).toEqual([16, 17]);
     const program = await d.measure("OAuth call, warm", () =>
       d.tool(app, "execute_code", {
         code: 'async () => connecta.call("oauth.echo", { text: "hi" })',
       }),
     );
-    expect([program.roundTrips, program.statements]).toEqual([17, 18]);
+    expect([program.roundTrips, program.statements]).toEqual([16, 17]);
     expect(warm.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
     expect(program.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
     await d.measure("OAuth call, cold isolate", () => d.call(d.build(), "oauth.echo"));
@@ -953,7 +1025,7 @@ describe("request budgets", () => {
       );
       expect(measured.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(9);
       expect(measured.downstream).toBe(1);
-      expect([measured.roundTrips, measured.statements]).toEqual([14, 15]);
+      expect([measured.roundTrips, measured.statements]).toEqual([13, 14]);
     }
   });
 
@@ -1222,11 +1294,11 @@ describe("request budgets", () => {
 // call took 21 round trips and a refresh 51 statements without the vault or
 // activity sink.
 const BUDGETS = {
-  "legacy call, warm": { downstream: 5, roundTrips: 5, statements: 6 },
+  "legacy call, warm": { downstream: 5, roundTrips: 4, statements: 5 },
   "legacy call, cold isolate": { downstream: 5, roundTrips: 10, statements: 13 },
-  "modern call, warm": { downstream: 1, roundTrips: 5, statements: 6 },
+  "modern call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
   "modern call, cold isolate": { downstream: 1, roundTrips: 11, statements: 14 },
-  "OAuth call, warm": { downstream: 5, roundTrips: 17, statements: 18 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 16, statements: 17 },
   "OAuth call, cold isolate": { downstream: 5, roundTrips: 24, statements: 27 },
   "OAuth call, 401 refresh": { downstream: 9, roundTrips: 42, statements: 52 },
   "OAuth call, proactive refresh": { downstream: 6, roundTrips: 38, statements: 47 },

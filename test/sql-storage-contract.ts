@@ -1,6 +1,6 @@
 import { AccessTokenManager } from "../src/access-tokens.js";
 import { agentAdmissionFixture } from "./helpers/agent-tokens.js";
-import { accessTokenKeys, agentObservationKeys } from "../src/storage/keys.js";
+import { accessTokenKeys, agentObservationKeys, responseCacheKeys } from "../src/storage/keys.js";
 import { nativeSqlDriver } from "../src/storage/sql-driver.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
 import { INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
@@ -285,6 +285,36 @@ export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | 
  */
 /** Several keys in one statement read exactly as one `get` each would. */
 export function sqlGetManyContract(open: () => Promise<Pick<SqlFixture, "storage" | "exec" | "rows">>): void {
+  it("locates bounded generation-derived candidates including absent and expired partitions", async () => {
+    const db = await open();
+    const storage = db.storage();
+    const generationKey = responseCacheKeys.generation("crm");
+    const prefix = responseCacheKeys.namespace("crm", "config", "").slice(0, -1);
+    const entry = (generation: string, partition: string) => prefix + generation + ":" + partition;
+    await storage.set(generationKey, "first");
+    await storage.set(entry("first", "public"), "complete\0manifest");
+    await storage.set(entry("first", "other-owner"), "private");
+    const snapshot = () =>
+      runEdge(
+        getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["private", "public"]),
+      );
+    expect(await snapshot()).toEqual(
+      new Map([
+        [generationKey, "first"],
+        [entry("first", "private"), null],
+        [entry("first", "public"), "complete\0manifest"],
+      ]),
+    );
+    await storage.set(generationKey, "second");
+    const after = await snapshot();
+    expect(after.get(generationKey)).toBe("second");
+    expect(after.has(entry("first", "public"))).toBe(false);
+    expect(after.get(entry("second", "public"))).toBeNull();
+    await expect(
+      runEdge(getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["a", "b", "c"])),
+    ).rejects.toThrow(RangeError);
+  });
+
   it("reads several keys in one statement, as one get each would", async () => {
     const db = await open();
     const storage = db.storage();

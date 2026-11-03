@@ -3926,3 +3926,9 @@ cache. Exact authored names and complete authored matches precede API pointers;
 ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
 The published discovery contract states compilation, query and cache bounds.
 No request identity, signal, credential or promise enters a vocabulary cache.
+
+SQL catalog locating snapshots derive at most two manifest candidates from the
+stored generation alongside negotiation and generation rows. These candidates
+are request-local hints with exact config, owner and credential partitions.
+Complete chunk verification and a separate later primary generation and identity
+fence decide acceptance. OAuth invocation and dispatch reads stay separate.
