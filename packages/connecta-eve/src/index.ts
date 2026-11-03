@@ -297,50 +297,56 @@ export function connectaSkill(options: ConnectaSkillOptions) {
     const content = await ctx.memo(
       ["connecta-skill", endpoint, options.name, ctx.turn?.id ?? null],
       async ({ abortSignal }) => {
-        const response = await (options.fetch ?? fetch)(endpoint, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${await tokenFor(options)}`,
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-            "MCP-Protocol-Version": "2026-07-28",
-            "Mcp-Method": "tools/call",
-            "Mcp-Name": "skills",
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: {
-              name: "skills",
-              arguments: { name: options.name },
-              _meta: {
-                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                "io.modelcontextprotocol/clientCapabilities": {},
-              },
+        try {
+          const response = await (options.fetch ?? fetch)(endpoint, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${await tokenFor(options)}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "MCP-Protocol-Version": "2026-07-28",
+              "Mcp-Method": "tools/call",
+              "Mcp-Name": "skills",
             },
-          }),
-          signal: AbortSignal.any([abortSignal, AbortSignal.timeout(5_000)]),
-        });
-        if (!response.ok) return null;
-        const text = await response.text();
-        const json = text.trimStart().startsWith("{")
-          ? text
-          : text
-              .split("\n")
-              .find((line) => line.startsWith("data:"))
-              ?.slice(5);
-        if (!json) return null;
-        const reply = JSON.parse(json) as {
-          result?: { isError?: boolean; content?: { type: string; text?: string }[] };
-        };
-        if (!reply.result || reply.result.isError) return null;
-        return (
-          reply.result.content
-            ?.filter((block) => block.type === "text")
-            .map((block) => block.text ?? "")
-            .join("\n") || null
-        );
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "skills",
+                arguments: { name: options.name },
+                _meta: {
+                  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                  "io.modelcontextprotocol/clientCapabilities": {},
+                },
+              },
+            }),
+            signal: AbortSignal.any([abortSignal, AbortSignal.timeout(5_000)]),
+          });
+          if (!response.ok) return null;
+          const text = await response.text();
+          const json = text.trimStart().startsWith("{")
+            ? text
+            : text
+                .split("\n")
+                .find((line) => line.startsWith("data:"))
+                ?.slice(5);
+          if (!json) return null;
+          const reply = JSON.parse(json) as {
+            result?: { isError?: boolean; content?: { type: string; text?: string }[] };
+          };
+          if (!reply.result || reply.result.isError) return null;
+          return (
+            reply.result.content
+              ?.filter((block) => block.type === "text")
+              .map((block) => block.text ?? "")
+              .join("\n") || null
+          );
+        } catch {
+          // Endpoint failures omit optional guidance; turn cancellation still propagates.
+          abortSignal.throwIfAborted();
+          return null;
+        }
       },
     );
     return content ? defineSkill({ description: options.description, content, deferred: true }) : null;

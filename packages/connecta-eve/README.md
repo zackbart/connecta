@@ -269,4 +269,7 @@ selector as the connection. A false or throwing predicate skips selection,
 token resolution and fetching. The public API accepts content rather than a
 load callback, so fetching happens once per endpoint/guide/turn through Eve's
 session memo; inclusion in model context is lazy. Failed responses omit the
-skill. The guide must already be visible through that endpoint's `skills` tool.
+skill, including network, timeout and malformed-response failures; turn
+cancellation still propagates. A successful guide can be reused while the same
+endpoint/guide/turn memo is retained. A new turn fetches again; failure removes
+the skill rather than serving the prior turn's guide. The guide must already be visible through that endpoint's `skills` tool.
