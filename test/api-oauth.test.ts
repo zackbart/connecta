@@ -1714,7 +1714,7 @@ describe("api() oauth replay is for reads only", () => {
               writeOutcome: "unknown",
               reconciliationRequired: undefined,
               handoff: undefined,
-              retry: undefined,
+              retry: "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
               reconciles: false,
               retriesOriginal: false,
               outcome: "unknown",
