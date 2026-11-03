@@ -447,6 +447,8 @@ export const grantStoreMethods = {
       (grant: Grant) => {
         if (grant.epoch !== snapshot.epoch || (grant.tokenRevision ?? 0) !== snapshot.revision || !grant.body.tokens)
           return undefined;
+        if (grant.observation?.revision === snapshot.revision && grant.observation.outcome === outcome)
+          return undefined;
         return { ...grant, observation: { revision: snapshot.revision, outcome } };
       },
       { epoch: snapshot.epoch, quiet: true },

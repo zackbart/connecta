@@ -51,6 +51,8 @@ export class Grant extends Context.Service<
     // Interruptible call use; after claim submission the storage coordinator commits
     // rotation under its own deadline, without returning it to a closed call.
     readonly refresh: (stale: string) => Effect.Effect<string, HttpFailure>;
+    /** Record a response for the epoch and revision captured when this token was issued. */
+    readonly observe?: (token: string, outcome: "accepted" | "refused") => Effect.Effect<void, HttpFailure>;
     /** The renewed token was refused too: latch the request scope and fail with the grant's own verdict. */
     readonly rejected: Effect.Effect<never, HttpFailure>;
     /**
@@ -83,6 +85,9 @@ export function grantFromOAuth(oauth: ApiOAuthAccess): Context.Service.Shape<typ
   return {
     token: use(grant ? () => grant.token() : missing),
     refresh: (stale) => use(grant ? () => grant.refresh(stale) : missing),
+    ...(grant?.observe
+      ? { observe: (token: string, outcome: "accepted" | "refused") => use(() => grant.observe!(token, outcome)) }
+      : {}),
     rejected: use(grant ? () => grant.rejected() : missing),
   };
 }
@@ -156,6 +161,9 @@ export function refreshOnce(
             : Effect.fail(failure);
         }),
       );
+      const grant = yield* Grant;
+      if (grant.observe && (response.status === 401 || (response.status >= 200 && response.status < 300)))
+        yield* grant.observe(sentToken(response.request), response.status === 401 ? "refused" : "accepted");
       if (response.status !== 401) return response;
       // Read under the ceiling now, so nothing is left open while renewing.
       const reply = yield* guarded
@@ -167,7 +175,6 @@ export function refreshOnce(
               : Effect.fail(failure),
           ),
         );
-      const grant = yield* Grant;
       const stale = sentToken(response.request);
       const entry = responseRequest(response);
       if (!readRequest(entry ?? {}) && options?.writeRenewal === "discard") {
@@ -226,6 +233,8 @@ export function refreshOnce(
               : Effect.fail(failure),
           ),
         );
+      if (grant.observe && (replay.status === 401 || (replay.status >= 200 && replay.status < 300)))
+        yield* grant.observe(sentToken(replay.request), replay.status === 401 ? "refused" : "accepted");
       if (replay.status !== 401) return replay;
       if (options?.replayRejection === "answer") {
         // The connection reads and redacts this answer like any other.

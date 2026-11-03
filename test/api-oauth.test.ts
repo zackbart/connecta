@@ -8,6 +8,8 @@ beforeTransportTest(() => {
 
 import { callbackAuth, bindCallback, consentKey, storedGrant } from "./fixtures/oauth.js";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { resolveInvocationAuthEffect } from "../src/invocation-auth.js";
+import { runEdge } from "../src/runtime/run.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import type { ApiOAuthConfig, ApiOptions } from "../src/connectors/api.js";
@@ -2066,6 +2068,24 @@ describe("api() oauth reset and disconnect", () => {
 });
 
 describe("API OAuth outcome status", () => {
+  it.each(["retry", "connect"])("recovers a persisted refusal through %s", async (recovery) => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb();
+    const registry = makeRegistry([connector]);
+    const ctx = () => registry.contextFor("ccb", BASE);
+    await authorize(connector, ctx, provider);
+    provider.control.apiRejects = true;
+    await expect(connector.callTool("whoami", {}, ctx())).rejects.toBeDefined();
+    expect((await connector.status!(ctx())).state).toBe("auth_required");
+    provider.control.apiRejects = false;
+    if (recovery === "connect") await authorize(connector, ctx, provider);
+    const next = ctx();
+    await runEdge(resolveInvocationAuthEffect(connector, connector.callTool, next));
+    expect(await connector.callTool("whoami", {}, next)).toMatchObject({ status: 200 });
+    expect((await connector.status!(ctx())).state).toBe("ok");
+  });
+
   it("INV-6 INV-10: real 2xx/401 outcomes survive reconstruction and status reads write nothing", async () => {
     const provider = fakeProvider();
     install(provider);

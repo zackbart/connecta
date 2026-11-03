@@ -1092,7 +1092,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     });
   });
 
-  const statusOf = authMethod((ctx: ConnectorContext, provider: StaticOAuthProvider) => {
+  const statusOf = authMethod((ctx: ConnectorContext, provider: StaticOAuthProvider, forCall = false) => {
     return authFlow<ConnectorStatus>(function* () {
       if (rejectedScopes.has(scopeOf(ctx))) {
         return {
@@ -1108,7 +1108,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         return { state: "auth_required", message: disconnectedMessage };
       if (!grant.tokens || grant.issuer !== settings.identity)
         return { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
-      return grant.observation?.outcome === "refused"
+      return !forCall && grant.observation?.outcome === "refused"
         ? {
             state: "auth_required",
             message: "Authorization required — the downstream rejected this connector's OAuth grant.",
@@ -1129,7 +1129,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const prepareCall = authMethod((ctx: ConnectorContext) => {
     return authFlow<ConnectorStatus>(function* () {
       const provider = providerFor(ctx);
-      const state = (yield authCall(statusOf, [ctx, provider])) as ConnectorStatus;
+      // A persisted API refusal is diagnostic, not proof the next request will fail.
+      // Keep the request-local latch, but let a later invocation observe recovery.
+      const state = (yield authCall(statusOf, [ctx, provider, true])) as ConnectorStatus;
       if (state.state === "ok" && provider.renewalDue() !== undefined)
         (yield authInvoke(grantFor(ctx, false, true), "token", [])) as string;
       return state;
@@ -1151,7 +1153,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           ? false
           : ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean);
         if (ctx.signal?.aborted) throw ctx.signal.reason;
-        if (opts?.force || disconnected) {
+        const refused =
+          ((yield authInvoke(provider, "peekGrant", [])) as Awaited<ReturnType<StaticOAuthProvider["peekGrant"]>>)
+            .observation?.outcome === "refused";
+        if (opts?.force || disconnected || refused || rejectedScopes.has(scopeOf(original))) {
           (yield authInvoke(provider, "resetAuthorization", [])) as void;
           rejectedScopes.delete(scopeOf(original));
         } else {

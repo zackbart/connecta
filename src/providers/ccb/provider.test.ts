@@ -3,6 +3,7 @@
 // POST renewal, paging, sensitive fields and grant isolation.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
+import { oauthGrantKeys } from "../../storage/keys.js";
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
@@ -638,5 +639,28 @@ describe("ccb() instance isolation", () => {
     await authorize(connector, as(pastor!), fake);
     expect((await connector.status!(as(pastor!)())).state).toBe("ok");
     expect((await connector.status!(as(deacon!)())).state).toBe("auth_required");
+  });
+});
+
+describe("ccb() OAuth outcome observations", () => {
+  it.each([true, false])("records initial and replay outcomes (refresh available: %s)", async (canRefresh) => {
+    const { fake, connector, ctx, call } = await connected();
+    const stored = async () => JSON.parse((await ctx().storage.get(oauthGrantKeys.grant))!);
+    fake.route(on("GET", "/groups/5", () => json({ id: 5, name: "Group" })));
+    await call("get_group", { groupId: 5 });
+    let grant = await stored();
+    expect(grant.observation).toEqual({ revision: grant.tokenRevision, outcome: "accepted" });
+    fake.expireAccess();
+    await call("get_group", { groupId: 5 });
+    const renewed = await stored();
+    expect(renewed.tokenRevision).toBe(grant.tokenRevision + 1);
+    expect(renewed.observation).toEqual({ revision: renewed.tokenRevision, outcome: "accepted" });
+    if (!canRefresh) fake.refresh.clear();
+    fake.route(on("GET", "/groups/5", () => new Response(null, { status: 401 })));
+    await expect(call("get_group", { groupId: 5 })).rejects.toBeDefined();
+    grant = await stored();
+    expect(grant.tokenRevision).toBe(renewed.tokenRevision + (canRefresh ? 1 : 0));
+    expect(grant.observation).toEqual({ revision: grant.tokenRevision, outcome: "refused" });
+    expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
 });

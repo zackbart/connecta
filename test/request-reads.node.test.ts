@@ -611,6 +611,56 @@ const seededGrant = (origin: string, epoch = "v3:seeded") =>
   });
 
 describe("request read memo and OAuth", () => {
+  it("warm API OAuth calls add no grant writes once accepted", async () => {
+    installOwnedTransport();
+    const d1 = counted();
+    const storage = d1.storage();
+    const origin = "https://api-budget.example";
+    await storage.set(`${scopes.connector("api")}${oauthGrantKeys.grant}`, seededGrant(`${origin}/token`));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ok: true })),
+    );
+    const connector = api("api", {
+      oauth: {
+        authorizationEndpoint: `${origin}/authorize`,
+        tokenEndpoint: `${origin}/token`,
+        clientId: "client-1",
+        apiOrigins: [origin],
+      },
+      tools: [
+        {
+          name: "read",
+          description: "Read",
+          annotations: { readOnlyHint: true },
+          handler: async (_args, ctx) => (await ctx.oauth!.fetch(`${origin}/data`)).json(),
+        },
+      ],
+    });
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      vault: new CredentialVault(storage, CREDENTIAL_KEY),
+      logger: "silent",
+    });
+    try {
+      const call = async () => {
+        const ctx = app.registry.contextFor("api", BASE);
+        expect(await connector.callTool("read", {}, ctx)).toEqual({ ok: true });
+      };
+      await call();
+      d1.reset();
+      await call();
+      report("API OAuth call, warm", d1.count);
+      expect(d1.count.log.filter((line) => !line.startsWith("all "))).toEqual([]);
+      expect(d1.count.roundTrips).toBeLessThanOrEqual(4);
+      expect(d1.count.statements).toBeLessThanOrEqual(4);
+    } finally {
+      await app.close();
+      d1.db.close();
+    }
+  });
+
   it("never sends a bearer token after another isolate disconnects the grant mid-listing", async () => {
     // Review of #1184: a disconnect between paginated tools/list responses,
     // written by another isolate the memo cannot observe, must stop the

@@ -2975,6 +2975,12 @@ Disconnect match `remoteMcp()`. Status reads do not probe tokens, start OAuth,
 or write grant state. A grant for the configured token endpoint starts as `ok`;
 a real API 401 records `refused` and status becomes `auth_required`. A real API
 2xx records `accepted`. Other HTTP statuses do not establish an auth outcome.
+A persisted refusal does not block a later invocation: the API may have recovered,
+and an accepted response restores `ok`. Within the failing request, a second 401
+still latches authorization failure. Connect on a refused grant begins fresh consent
+rather than reporting existing tokens as healthy. Maintained OAuth providers record
+these same outcomes for initial and replayed requests. Repeated identical outcomes
+for the current revision do not rewrite the grant.
 Each consent and refresh advances a monotonic token revision within its grant
 epoch and clears the prior observation in the same compare-and-set write.
 Call observations carry the epoch and revision read with their token and are
