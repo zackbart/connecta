@@ -122,7 +122,8 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   },
   guide: (options) => ({
     heading: "Planning Center usage",
-    summary: "People ids join reachable products; use their local dates, units, roles and documented status values.",
+    summary:
+      "Load when joining Planning Center products by person id or interpreting dates, units, roles and statuses.",
     required: true,
     context: [
       `Purpose: ${options.purpose.trim()}`,

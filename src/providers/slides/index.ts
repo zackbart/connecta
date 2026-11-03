@@ -150,7 +150,7 @@ export const slides = defineApiProvider<SlidesOptions>({
       "Generic thumbnails/preview links are refused; get_slide_thumbnail is the reviewed short-lived-link workflow. The generic batch retains only the 49 shipped request kinds; no extra preview methods are admitted.",
       ...(options.readOnly ? ["This connection is read-only; writes are refused."] : []),
     ],
-    summary: "Each caller's decks: text, notes, layouts, comments, guarded edits and indexed Slides JSON operations.",
+    summary: "Load for deck text, notes, layouts, comments and guarded Slides edits.",
     required: true,
   }),
   tools: slidesTools,

@@ -43,7 +43,7 @@ const RECOVERY = `When an auth error includes a handoff, give it to the user or 
 function writePolicy(readOnly: boolean, routes: AgentRouteNames): string {
   return readOnly
     ? "This endpoint can't perform writes; guide steps that change data will be refused. No write route exists on this endpoint."
-    : `This endpoint permits writes through ${routes.write}${routes.program === META_ROUTES.program ? ` and ${routes.program}` : ""}; the host owns approval.`;
+    : `This endpoint permits writes through ${routes.write}${routes.program === META_ROUTES.program ? ` and ${routes.program}` : ""}, subject to connector restrictions; the host owns approval.`;
 }
 
 export const CONNECTA_INSTRUCTIONS = `${ROUTE} ${writePolicy(false, META_ROUTES)} Never repeat a write to recover its output. ${RECOVERY}`;
@@ -75,7 +75,7 @@ export function endpointInstructions(
 /** Instructions for pools whose host searches the listed native tools. */
 export function nativeInstructions(executeCode: boolean, readOnly = false): string {
   const routes = routeNames(executeCode ? "native-code" : "native");
-  return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? `combine work in ${routes.program} using the program addresses in tool descriptions.` : "find tools with your host's search."} ${writePolicy(readOnly, routes)} Never repeat a write for output. Give auth handoffs to the user/operator. Tools missing? Ask the operator to repair the connection, then reconnect to refresh your list. Follow nextAction to page with ${executeCode ? `connecta.result in ${routes.program}` : "read_result"}. ${routes.skills} lists guidance.`;
+  return `Annotations classify reads/writes. Call known tools directly; ${executeCode ? `combine work in ${routes.program} using tool descriptions’ program addresses.` : "find tools with your host's search."} ${writePolicy(readOnly, routes)} Never repeat a write for output. Give auth handoffs to the user/operator. Tools missing? Ask the operator to repair, then reconnect. Follow nextAction to page with ${executeCode ? `connecta.result in ${routes.program}` : "read_result"}. ${routes.skills} lists guidance.`;
 }
 
 /** True when at least one of `connectors` carries a usage guide. */
@@ -409,69 +409,101 @@ function validSkillName(name: string): boolean {
 function localRecords(connectors: readonly Connector[], readOnly = false): Promise<SkillRecord[]> {
   return runEdge(localRecordsNative(connectors, readOnly));
 }
-const localRecordsNative = /* @__PURE__ */ registerAuth(
-  localRecords,
-  function (connectors: readonly Connector[], readOnly = false) {
-    return authFlow<SkillRecord[]>(function* () {
-      const builtIns = AVAILABLE_SKILLS.map((skill) =>
-        localRecord(skill.name, `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [
-          skill.name,
-          `skill://connecta/${skill.name}`,
-        ]),
-      );
-      const guides = yield* upwardStep(
-        Effect.forEach(
-          connectors
-            .filter((connector) => connectorGuide(connector) !== undefined)
-            .sort(
-              (a, b) =>
-                Number(connectorGuideRequired(b)) - Number(connectorGuideRequired(a)) ||
-                (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-            ),
-          (connector: Connector) =>
-            authFlow<{
-              connector: Connector;
-              entry: ConnectorSkill;
-              aliases: string[];
-              content?: string;
-              files?: Map<string, string>;
-            }>(function* () {
-              const name = validSkillName(connector.id)
-                ? connector.id
-                : `connector-${bytesToHex(
-                    new Uint8Array(
-                      yield* upwardStep(
-                        authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", encoder.encode(connector.id)]),
-                      ),
+const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (connectors: readonly Connector[], readOnly = false) {
+  return authFlow<SkillRecord[]>(function* () {
+    const builtIns = AVAILABLE_SKILLS.map((skill) =>
+      localRecord(skill.name, `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [
+        skill.name,
+        `skill://connecta/${skill.name}`,
+      ]),
+    );
+    const allocated = new Set(connectors.map((connector) => connector.id));
+    const guides = yield* upwardStep(
+      Effect.forEach(
+        connectors
+          .filter((connector) => connectorGuide(connector) !== undefined)
+          .sort(
+            (a, b) =>
+              Number(connectorGuideRequired(b)) - Number(connectorGuideRequired(a)) ||
+              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+          ),
+        (connector: Connector) =>
+          authFlow<{
+            connector: Connector;
+            entry: ConnectorSkill;
+            aliases: string[];
+            content?: string;
+            files?: Map<string, string>;
+          }>(function* () {
+            const digest = validSkillName(connector.id)
+              ? ""
+              : bytesToHex(
+                  new Uint8Array(
+                    yield* upwardStep(
+                      authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", encoder.encode(connector.id)]),
                     ),
-                  ).slice(0, 48)}`;
-              const description = connectorGuideSummary(connector)!;
-              const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
-              const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${readOnly ? `${writePolicy(true, META_ROUTES)}\n\n` : ""}${connectorGuide(connector)!}`;
-              return {
-                ...localRecord(name, `${root}/SKILL.md`, description, content, [
-                  connectorSkillName(connector.id),
-                  `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
-                  root,
-                ]),
-                connector,
-              };
-            }),
-          { concurrency: "unbounded" },
-        ),
-      );
-      if (new Set(guides.map((guide) => guide.entry.uri)).size !== guides.length)
-        throw new ConnectorCallError("unavailable", "Connector skill slugs collide.");
-      return [builtIns[0]!, ...guides, ...builtIns.slice(1)];
-    });
-  },
-);
+                  ),
+                );
+            const legacy = `connector-${digest.slice(0, 48)}`;
+            const slug =
+              connector.id
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-|-$/g, "")
+                .slice(0, 42)
+                .replace(/-$/g, "") || "connector";
+            let name = connector.id;
+            if (!validSkillName(name)) {
+              const base = `${slug}-${digest.slice(0, 12)}`;
+              name = base;
+              let suffix = 1;
+              while (allocated.has(name)) name = `${base}-${suffix++}`;
+              allocated.add(name);
+            }
+            const description = connectorGuideSummary(connector)!;
+            const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
+            const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${readOnly ? `${writePolicy(true, META_ROUTES)}\n\n` : ""}${connectorGuide(connector)!}`;
+            return {
+              ...localRecord(name, `${root}/SKILL.md`, description, content, [
+                connectorSkillName(connector.id),
+                ...(connector.id.includes(":") ? [] : [connector.id]),
+                ...(name !== connector.id
+                  ? [legacy, `skill://connecta/connectors/${legacy}`, `skill://connecta/connectors/${legacy}/SKILL.md`]
+                  : []),
+                `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
+                root,
+              ]),
+              connector,
+            };
+          }),
+        { concurrency: 1 },
+      ),
+    );
+    if (new Set(guides.map((guide) => guide.entry.uri)).size !== guides.length)
+      throw new ConnectorCallError("unavailable", "Connector skill slugs collide.");
+    return [builtIns[0]!, ...guides, ...builtIns.slice(1)];
+  });
+});
 
-/** `granola` names connector granola's guide; built-in names and URIs never do. */
-function bareConnectorGuide(records: readonly SkillRecord[], name: string): SkillRecord | undefined {
-  if (name.includes(":") || AVAILABLE_SKILLS.some((skill) => skill.name === name)) return undefined;
-  const alias = connectorSkillName(name);
-  return records.find((record) => record.connector !== undefined && record.aliases.includes(alias));
+/** Canonical identities win; an alias shared by different guides is ambiguous. */
+function localLookup(records: readonly SkillRecord[], key: string): SkillRecord | undefined {
+  const canonical = new Map<string, SkillRecord>();
+  for (const record of records) {
+    canonical.set(record.entry.uri, record);
+    canonical.set(record.entry.uri.slice(0, -"/SKILL.md".length), record);
+    const name = record.entry.frontmatter.name as string;
+    if (!record.connector || !AVAILABLE_SKILLS.some((skill) => skill.name === name)) canonical.set(name, record);
+  }
+  const aliases = new Map<string, SkillRecord | null>();
+  for (const record of records) {
+    for (const alias of record.aliases) {
+      if (canonical.has(alias)) continue;
+      aliases.set(alias, aliases.has(alias) && aliases.get(alias) !== record ? null : record);
+    }
+  }
+  const result = canonical.get(key) ?? aliases.get(key);
+  if (result === null) throw new ConnectorCallError("invalid_args", "Ambiguous skill alias; use its canonical URI.");
+  return result;
 }
 
 /** Keep the downstream path tree, so relative supporting-file references still resolve. */
@@ -803,9 +835,7 @@ export class SkillsRegistry {
               ttlMs: number;
               cacheScope: "private";
             }>(function* () {
-              const local = (yield* upwardStep(self.local)).find(
-                (record) => record.entry.uri === uri || record.aliases.includes(uri),
-              );
+              const local = localLookup(yield* upwardStep(self.local), uri);
               if (local) {
                 const record = yield* upwardStep(authCall<SkillRecord>(withManifest, [local]));
                 self.assertSafe([record]);
@@ -968,9 +998,7 @@ export class SkillsRegistry {
           () =>
             authFlow<SkillRecord>(function* () {
               const records = yield* upwardStep(self.local);
-              const local =
-                records.find((record) => record.entry.uri === uri || record.aliases.includes(uri)) ??
-                bareConnectorGuide(records, uri);
+              const local = localLookup(records, uri);
               if (local) {
                 const record = yield* upwardStep(authCall<SkillRecord>(withManifest, [local]));
                 self.assertSafe([record]);

@@ -1337,6 +1337,12 @@ receive a fixed description.
 
 ### Verification
 
+The QuickJS child imports only the guest runtime, IPC helpers and dependency-light
+error/route constants. `test/purity.node.test.ts` walks its emitted import graph
+to exclude server orchestration, Effect and the MCP SDK. The shared
+`InvocationFailure` constructor preserves host error identity across existing
+exports and typed IPC reconstruction.
+
 The earlier alternatives are in [decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)
 ([#267](https://github.com/zackbart/connecta/issues/267),
 [#270](https://github.com/zackbart/connecta/issues/270)).

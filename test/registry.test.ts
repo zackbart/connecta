@@ -155,3 +155,20 @@ describe("personal registry eviction", () => {
     );
   });
 });
+
+it("warns without leaking guide text or rejecting weak summaries", () => {
+  const warn = vi.fn();
+  for (const summary of ["", "This key reaches the CRM project only.", "REST access token is already configured."]) {
+    makeRegistry([{ ...calcConnector, usageGuide: { content: "# Guide", summary } }], {
+      logger: { ...silentLogger, warn },
+    });
+  }
+  expect(warn).toHaveBeenCalledTimes(3);
+  expect(JSON.stringify(warn.mock.calls)).not.toContain("REST access token");
+  warn.mockClear();
+  makeRegistry(
+    [{ ...calcConnector, usageGuide: { content: "# Guide", summary: "Load when querying CRM contacts." } }],
+    { logger: { ...silentLogger, warn } },
+  );
+  expect(warn).not.toHaveBeenCalled();
+});

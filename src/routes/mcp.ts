@@ -451,13 +451,12 @@ function serveMcp(
         // A request-local server cannot publish catalog changes. Set this before
         // tool registration, whose SDK default otherwise advertises listChanged.
         capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
-        // Instructions differ per endpoint only by the admitted pool's
-        // description. Every cache hint below is private, so a client keeps
+        // Instructions reflect the admitted pool and effective write policy. Every cache hint below is private, so a client keeps
         // what it learned per endpoint URL and never shares it across them.
         instructions: endpointInstructions(
           pool !== undefined ? opts.pools.get(pool)?.description : undefined,
           native,
-          readOnly,
+          readOnly || (registry.listConnectors().length > 0 && registry.listConnectors().every((connector) => connector.readOnly === true)),
         ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },

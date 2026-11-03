@@ -109,8 +109,8 @@ function usageGuide(options: Readonly<StripeOptions>): ProviderGuideInput {
     heading: "Stripe usage",
     summary:
       options.mode === "production"
-        ? "PRODUCTION: real money. One configured live-mode key over REST; resolve ids before acting."
-        : "Sandbox: test data only. One configured test-mode key over REST; resolve ids before acting.",
+        ? "Load for live Stripe payments, refunds and invoices; real money, resolve ids before acting."
+        : "Load for sandbox Stripe payments, refunds and invoices; test data, resolve ids before acting.",
     context: [
       `Mode: ${options.mode}. Connector purpose: ${options.purpose}`,
       copy.warning,
