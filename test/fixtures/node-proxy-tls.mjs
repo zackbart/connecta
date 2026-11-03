@@ -15,7 +15,7 @@ const sockets = new Set();
 const track = (socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); return socket; };
 let origin, proxy;
 try {
-  await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${dir}/key.pem`, '-out', `${dir}/cert.pem`, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1']);
+  await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${dir}/key.pem`, '-out', `${dir}/cert.pem`, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,DNS:learned.localhost,IP:127.0.0.1']);
   const tls = { key: await readFile(`${dir}/key.pem`), cert: await readFile(`${dir}/cert.pem`) };
   let bodies = 0, reads = 0, tunnels = 0;
   origin = createServer(tls, async (req, res) => {
@@ -61,6 +61,15 @@ try {
     assert.equal(reads-before.reads, 1);
     assert.equal(tunnels-before.tunnels, 4);
     console.log(JSON.stringify({runtime, bodyCount:3, readCount:1, tunnelCount:4, credentialsConfined:true, statuses:[421,'reset',503,200]}));
+    // Both direct and CONNECT destinations are pinned while TLS authenticates
+    // the learned hostname, rather than the checked IP or proxy hostname.
+    const learned = `https://learned.localhost:${origin.address().port}`;
+    const pinned = `const {createNodeGuardedTransport}=await import(${JSON.stringify(`${cwd}/src/http/node-transport.ts`)}); const {learnedDestination}=await import(${JSON.stringify(`${cwd}/src/guarded-transport.ts`)}); for (const proxy of [undefined, ${JSON.stringify(proxyUrl)}]) { let lookups=0; const sender=createNodeGuardedTransport(proxy, async()=>{lookups++; return [{address:'127.0.0.1',family:4},{address:'127.0.0.2',family:4}];}); const init={[learnedDestination]:new URL('https://localhost:1')}; const r=await sender.send(new URL(${JSON.stringify(learned)}),init); if(await r.text()!=='reply'||lookups!==1) throw new Error('pinning failed'); try {const r=await sender.send(new URL(${JSON.stringify(learned)}.replace('learned.localhost','wrong.localhost')),init); await r.text(); throw new Error('hostname accepted');} catch(e) {if(e.message==='hostname accepted') throw e;} } console.log('learned TLS hostname validation preserved');`;
+    const learnedResult = await run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', pinned], { cwd, env: { ...process.env, NODE_EXTRA_CA_CERTS: `${dir}/cert.pem` }, timeout: 20_000 });
+    assert.match(learnedResult.stdout, /learned TLS hostname validation preserved/);
+    // The extra learned read and refused certificate tunnels are independent
+    // of the original four-request accounting above.
+    const tunnelsAfterLearned = tunnels;
     await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${dir}/wrong-key.pem`, '-out', `${dir}/wrong-cert.pem`, '-days', '1', '-subj', '/CN=wrong.invalid', '-addext', 'subjectAltName=DNS:wrong.invalid']);
     proxy.setSecureContext({ key: await readFile(`${dir}/wrong-key.pem`), cert: await readFile(`${dir}/wrong-cert.pem`) });
     const refused = `const {createNodeGuardedTransport}=await import(${JSON.stringify(`${cwd}/src/http/node-transport.ts`)}); let dispatched=0; try { await createNodeGuardedTransport(${JSON.stringify(proxyUrl)}).send(new URL(${JSON.stringify(target)}), {method:'POST',body:'fixture-write'},()=>{dispatched++}); throw new Error('unexpected trusted mismatch'); } catch(error) { if(dispatched || !error.message.includes('was not sent')) throw error; console.log('certificate mismatch refused before dispatch'); }`;
@@ -69,7 +78,7 @@ try {
     const mismatch = await run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', refused], { cwd, env: { ...process.env, NODE_EXTRA_CA_CERTS: `${dir}/wrong-cert.pem` }, timeout: 20_000 });
     assert.match(mismatch.stdout, /certificate mismatch refused before dispatch/);
     assert.equal(bodies-before.bodies, 3);
-    assert.equal(tunnels-before.tunnels, 4);
+    assert.equal(tunnels, tunnelsAfterLearned);
     console.log('certificate hostname verification preserved');
   }
 } finally {

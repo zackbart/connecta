@@ -1,4 +1,9 @@
 // Node-only: owned undici dispatcher and Node stream adapters, reached via /node.
+import { lookup as dnsLookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
+import { learnedDestination, type LearnedRequestInit } from "../guarded-transport.js";
+import { learnedUrlRefusal } from "../url-safety.js";
+import { OAuthRequestNotSentError } from "../auth/downstream-oauth.js";
 import { Readable } from "node:stream";
 import { isIP } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
@@ -41,7 +46,10 @@ function responseBody(body: Readable, signal: AbortSignal): ReadableStream<Uint8
  * HTTP/2 REFUSED_STREAM and pipeline recovery paths, for every method.
  * The response/abort owns the client until the body ends or is cancelled.
  */
-export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
+export function createNodeGuardedTransport(
+  proxy?: string,
+  lookup: (hostname: string) => Promise<readonly LookupAddress[]> = (hostname) => dnsLookup(hostname, { all: true }),
+): GuardedTransport {
   let proxyUri: string | undefined;
   let proxyToken: string | undefined;
   if (proxy !== undefined) {
@@ -64,7 +72,40 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
   return {
     delaysDispatch: true,
     async send(url, init, beforeDispatch = () => {}) {
+      const configured = (init as LearnedRequestInit)[learnedDestination];
+      let pinned: LookupAddress | undefined;
+      if (configured && url.origin !== configured.origin) {
+        const refuse = () =>
+          new OAuthRequestNotSentError(
+            "connector_call_failed",
+            "The learned URL resolved to an unsafe destination; nothing was sent.",
+            { retryable: false },
+          );
+        if (learnedUrlRefusal(configured, url)) throw refuse();
+        const hostname = url.hostname.replace(/^\[|\]$/g, "");
+        let addresses: readonly LookupAddress[];
+        try {
+          addresses = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }] : await lookup(hostname);
+        } catch {
+          throw refuse();
+        }
+        init.signal?.throwIfAborted();
+        if (
+          addresses.length === 0 ||
+          addresses.some(({ address, family }) => {
+            if (!isIP(address) || isIP(address) !== family) return true;
+            const resolved = new URL(url);
+            resolved.hostname = family === 6 ? `[${address}]` : address;
+            return learnedUrlRefusal(configured, resolved) !== undefined;
+          })
+        )
+          throw refuse();
+        pinned = addresses[0];
+      }
+      const destination = new URL(url);
+      if (pinned && proxyUri) destination.hostname = pinned.family === 6 ? `[${pinned.address}]` : pinned.address;
       const framed = new Request(url, init);
+      if (pinned) framed.headers.set("host", url.host);
       if (!framed.headers.has("user-agent")) framed.headers.set("user-agent", "connecta");
       let dispatched = false;
       const dispatch = () => {
@@ -80,6 +121,7 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
             uri: proxyUri,
             ...(proxyToken ? { token: proxyToken } : {}),
             proxyTunnel: true,
+            ...(pinned ? { requestTls: { servername: isIP(url.hostname) ? "" : url.hostname } } : {}),
             ...clientOptions,
             interceptors: { Agent: [], Client: [] },
             // Neither side of CONNECT uses a Pool, interceptor or global dispatcher.
@@ -89,12 +131,12 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
                 ...options,
                 ...clientOptions,
                 connect: (parameters, callback) => {
-                  const name = parameters.servername;
+                  const name = pinned ? url.hostname.replace(/^\[|\]$/g, "") : parameters.servername;
                   // ProxyAgent 6 explicitly sets SNI to the proxy hostname.
                   // Node 26 rejects IP SNI. Omit it for literal IPs; tls.connect
                   // still checks the certificate against its connection host.
                   connect(
-                    { ...parameters, ...(name && isIP(name.replace(/^\[|\]$/g, "")) ? { servername: "" } : {}) },
+                    { ...parameters, ...(name ? { servername: isIP(name.replace(/^\[|\]$/g, "")) ? "" : name } : {}) },
                     callback,
                   );
                 },
@@ -130,7 +172,19 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
               });
             },
           })
-        : new Client(url.origin, clientOptions);
+        : new Client(url.origin, {
+            ...clientOptions,
+            ...(pinned
+              ? {
+                  connect: {
+                    // No second resolver can replace the checked address. The Client
+                    // retains the URL hostname for SNI and certificate verification.
+                    lookup: (_hostname, _options, callback) => callback(null, pinned!.address, pinned!.family),
+                    autoSelectFamily: false,
+                  },
+                }
+              : {}),
+          });
       const destroy = () => Promise.allSettled([tunnelClient?.destroy(), client.destroy()]);
       const abort = () => {
         void destroy();
@@ -140,7 +194,7 @@ export function createNodeGuardedTransport(proxy?: string): GuardedTransport {
         framed.signal.throwIfAborted();
         if (!proxyUri) dispatch();
         const answer = await client.request({
-          origin: url.origin,
+          origin: destination.origin,
           path: `${url.pathname}${url.search}`,
           method: framed.method as Parameters<Client["request"]>[0]["method"],
           headers: Object.fromEntries(framed.headers),

@@ -8,6 +8,10 @@ export interface GuardedTransport {
   readonly delaysDispatch?: true;
 }
 
+/** Internal request marker: only downstream-learned URL fetches set this. */
+export const learnedDestination = Symbol("connecta.learnedDestination");
+export type LearnedRequestInit = RequestInit & { [learnedDestination]?: URL };
+
 let owned: GuardedTransport | undefined;
 
 /** Runtime configuration, never request data. Returns the previous slot for isolated fixtures. */
