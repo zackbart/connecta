@@ -5,10 +5,15 @@ import { isAgentName } from "./agent-identity.js";
 import { agentObservationKeys } from "./storage/keys.js";
 import { Storage } from "./runtime/services.js";
 import { storageCompareAndSet, storageGet } from "./runtime/storage.js";
+import { physicalStorageAddress } from "./runtime/request-reads.js";
 import type { KVStorage } from "./types.js";
 
 const OBSERVATION_TIMEOUT_MS = 500;
 const OBSERVATION_FRESHNESS_MS = 60_000;
+// Only scalar telemetry deadlines survive requests. Weak physical-store ownership
+// and a bounded map prevent agent/config churn from retaining unbounded state.
+const observedUntil = new WeakMap<object, Map<string, number>>();
+const MAX_OBSERVED_AGENTS = 256;
 
 function timestamp(raw: string | null): string | null {
   if (!raw || raw.length !== 24) return null;
@@ -37,12 +42,29 @@ export function observeAgentAdmission(
   if (!storage.compareAndSet || !isAgentName(name) || !timestamp(at)) return Effect.void;
   return Effect.gen(function* () {
     const key = agentObservationKeys.agent(name);
+    const address = physicalStorageAddress(storage, key) ?? { store: storage, key };
+    const now = Date.parse(at);
+    let observations = observedUntil.get(address.store);
+    if (!observations) observedUntil.set(address.store, (observations = new Map()));
+    if ((observations.get(address.key) ?? -Infinity) > now) return;
+    const remember = (seen: number) => {
+      const until = Math.min(seen + OBSERVATION_FRESHNESS_MS, now + OBSERVATION_FRESHNESS_MS);
+      if (!observations.has(address.key) && observations.size >= MAX_OBSERVED_AGENTS)
+        observations.delete(observations.keys().next().value!);
+      observations.set(address.key, Math.max(observations.get(address.key) ?? -Infinity, until));
+    };
     for (let attempt = 0; attempt < 2; attempt++) {
       const previous = yield* storageGet(key);
       const seen = timestamp(previous);
       // Future and recently sampled observations both need no write.
-      if (seen && Date.parse(at) - Date.parse(seen) < OBSERVATION_FRESHNESS_MS) return;
-      if (yield* storageCompareAndSet(key, previous, at)) return;
+      if (seen && now - Date.parse(seen) < OBSERVATION_FRESHNESS_MS) {
+        remember(Date.parse(seen));
+        return;
+      }
+      if (yield* storageCompareAndSet(key, previous, at)) {
+        remember(now);
+        return;
+      }
     }
   }).pipe(
     Effect.provideService(Storage, storage),
