@@ -378,6 +378,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
               observedAt: Date.now(),
             }),
           );
+        const observedAgeMs = observation ? Math.max(0, Date.now() - observation.observedAt) : undefined;
         return {
           id: c.id,
           authScope: c.authScope ?? "shared",
@@ -400,9 +401,9 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
             ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
             catalogAgeMs: registry.catalogAgeMs(c.id),
             lastCall: null,
-            ...(observation ? { observedAgeMs: Math.max(0, Date.now() - observation.observedAt) } : {}),
+            ...(observedAgeMs !== undefined ? { observedAgeMs } : {}),
           },
-          ...(observation ? { observedAgeMs: Math.max(0, Date.now() - observation.observedAt) } : {}),
+          ...(observedAgeMs !== undefined ? { observedAgeMs } : {}),
           // Counts only, and only when a refresh in this runtime produced them.
           // `Registry.withCatalogObservations` rebuilt the report through
           ...(status.catalogAccess ? { catalogAccess: status.catalogAccess } : {}),
