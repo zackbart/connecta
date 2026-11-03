@@ -100,7 +100,10 @@ export function observeStorageWrites(storage: KVStorage, layer: Layer): KVStorag
 }
 
 /** The underlying store and key a read of `key` reaches, when every layer is observed. */
-function physical(storage: KVStorage, key: string): { store: StoreIdentity; key: string } | undefined {
+export function physicalStorageAddress(
+  storage: KVStorage,
+  key: string,
+): { store: StoreIdentity; key: string } | undefined {
   const entry = observed.get(storage);
   if (!entry) return undefined;
   const { own, layer } = entry;
@@ -112,7 +115,7 @@ function physical(storage: KVStorage, key: string): { store: StoreIdentity; key:
     own.compareAndSet !== storage.compareAndSet
   )
     return undefined;
-  return "root" in layer ? { store: layer.root, key } : physical(layer.storage, layer.prefix + key);
+  return "root" in layer ? { store: layer.root, key } : physicalStorageAddress(layer.storage, layer.prefix + key);
 }
 
 interface StoreEntries {
@@ -157,7 +160,7 @@ export class RequestReads {
     key: string,
     fresh: boolean,
   ): { hit: true; value: string | null } | { hit: false; record: (value: string | null) => void } | undefined {
-    const address = this.closed || !this.ref ? undefined : physical(storage, key);
+    const address = this.closed || !this.ref ? undefined : physicalStorageAddress(storage, key);
     if (!address) return undefined;
     const entries = this.entriesFor(address.store);
     if (!fresh && entries.values.has(address.key)) return { hit: true, value: entries.values.get(address.key)! };
@@ -202,7 +205,7 @@ export class RequestReads {
   ): Effect.Effect<void, E, R> {
     return Effect.suspend(() => {
       const pending = requests.map(({ storage, key }) => ({
-        address: physical(storage, key),
+        address: physicalStorageAddress(storage, key),
         found: this.lookup(storage, key, false),
       }));
       const root = pending[0]?.address?.store;

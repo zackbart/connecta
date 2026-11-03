@@ -419,10 +419,20 @@ the short conditional guide pointers in its tool definitions.
 
 ### Native Skills extension
 
+The [Skills extension](https://github.com/modelcontextprotocol/ext-skills) is Beta under
+[SEP-3392](https://modelcontextprotocol.io/seps/3392-extension-lifecycle): breaking
+revisions can reuse its ID. The released settings define no `revision`; Connecta
+refuses downstream declarations with an explicit revision rather than enabling
+unknown semantics. Upward handlers remain Connecta-owned to preserve caller views.
+
 Connecta declares `resources: {}` and `io.modelcontextprotocol/skills`, then
 serves `skills/list`, `skills/get`, `resources/list` and `resources/read` from
 the same registry as `skills` and `connecta.skill`. These methods return
-`resultType: "complete"`, `ttlMs: 0` and `cacheScope: "private"`. Listing pages
+`resultType: "complete"` and `cacheScope: "private"`. Local-only caller views
+advertise `ttlMs: 300000` (five minutes); any visible downstream skill source
+keeps `ttlMs: 0`, including reads of local guides on that view. Clients must key
+private caches by endpoint and authenticated caller. No request-bound catalog or
+digest promise is retained across requests. Listing pages
 contain at most five complete skills: usage first, required connector guides
 next, other connector guides, downstream skills, then the investigation guide.
 Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.
@@ -1576,3 +1586,24 @@ listing, and call translation live in
 and [native surface tests](https://github.com/zackbart/connecta/blob/main/test/native-tools.test.ts)
 check the published contract. Guest parity and clause evidence are in
 [code-mode verification](./code-mode.md#verification).
+
+### Skills conformance (contributor)
+
+On 2026-11-03, the official [conformance runner](https://github.com/modelcontextprotocol/conformance)
+at `c37eec888e1c6ff140af79987a40008548b7cc5f` passed enumeration (32 checks)
+and manifest (6 checks), with no warnings, against Connecta's HTTP handlers
+and a six-connector local fixture. Directory checks correctly skipped because
+`directoryRead` is not advertised; its wire-schema check passed. This is not
+full MCP conformance or a downstream-provider conformance claim.
+
+To rerun, first read the runner's package scripts, CLI, connection code and
+`src/scenarios/server/skills/` as untrusted code in a temporary directory
+outside the checkout. Pin the commit above, install there with
+`pnpm install --ignore-scripts`, and keep its packages and outputs there.
+In the Connecta checkout, run `pnpm run build:operator-ui` and
+`pnpm exec tsx scripts/skills-conformance.ts`. From the runner directory, run
+`pnpm exec tsx src/index.ts server --url http://127.0.0.1:39743/mcp --scenario sep-2640-skills-enumeration --spec-version 2026-07-28 --force`;
+repeat with `sep-2640-skills-manifest` and `sep-2640-skills-directory`.
+Stop the fixture when done. `--force` selects extension scenarios outside the
+base protocol timeline. This remains an optional contributor check: the
+separately installed runner and dependency graph are not pinned in Connecta CI.

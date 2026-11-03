@@ -3931,3 +3931,8 @@ SQL result stashes write at most 64 trailing rows per awaited transaction, with 
 expiry sweep per batch. Header publication follows confirmed trailing writes in a
 separate transaction; uncertain writes retain their ledger charge until expiry.
 Custom storage keeps sequential writes.
+
+Admission observation sampling retains at most 256 scalar deadlines per live
+physical storage identity in an isolate. Only a recent valid stored timestamp
+or confirmed CAS populates it, for at most one minute. This telemetry cache
+never answers token admission; every request still checks current credentials.
