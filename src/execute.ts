@@ -995,7 +995,9 @@ function sandboxProvider(
           return { name: skillName, format: "text", text: await skills.text(skillName) };
         },
         catch: (err) =>
-          err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
+          err instanceof ConnectorCallError
+            ? guestFailure(err.code, "Skills are unavailable.", err.code === "unavailable")
+            : err,
       }),
     read: (uri) =>
       Effect.suspend(() => {
