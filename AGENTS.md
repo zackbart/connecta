@@ -78,12 +78,17 @@ fabricated answers, duplicate writes and interrupted trials.
 CI runs `build`, `node`, `workers`, `behavior`, `browser`, `audit` and `eve` on
 every PR, main push, nightly and manual run:
 
-- `build` shares one install for static checks, build/declarations/bundle caps,
-  example typechecks, and packed-consumer/generated-deployment/Docker smoke.
-  Docker is required; an unavailable engine fails the job.
-- `node` runs all `test:node` suites through `vitest.config.node.ts`;
-  `workers` runs the binding-backed `WORKERS_SUITES` in `vitest.config.ts`.
-  Each uses four Vitest workers on the four-core CI runner.
+- `build` is a `fail-fast: false` matrix: `static` runs `check:static`;
+  `package` runs build/declarations/bundle caps, example typechecks and
+  packed-consumer/generated-deployment/Docker smoke. Each leg installs core.
+  Docker is required; an unavailable engine fails the package leg.
+- `node` is a `fail-fast: false` matrix of two `test:node --shard=N/2`
+  legs through `vitest.config.node.ts`, each with four workers and file isolation.
+  `check:node-shards` discovers the full Node suite and uses Vitest's configured
+  sequencer to require every file in exactly one shard; `vitest list --shard`
+  does not filter membership in Vitest 5.0.4.
+  `workers` runs the binding-backed `WORKERS_SUITES` in `vitest.config.ts`
+  with four Vitest workers on the four-core CI runner.
 - `behavior` runs `eval:outcomes` and `eval:smoke`, retaining `eval/results/`
   on failure.
 - `browser` runs Playwright. Visual comparisons never retry; behavior tests
@@ -96,7 +101,9 @@ every PR, main push, nightly and manual run:
 
 `check` is the single required status, with all seven jobs in `needs` and
 `if: always()`. Every job must succeed; failures, cancellations, missing jobs
-and unexpected skips fail the gate. Superseded PR runs are cancelled; each main
+and unexpected skips fail the gate. The gate also requires a unique success
+output from each build and Node matrix leg; a rolled-up job result alone is
+insufficient evidence that every leg completed. Superseded PR runs are cancelled; each main
 push retains a full run. Branch protection should require `check` and an
 up-to-date branch. Repository settings are managed separately.
 
