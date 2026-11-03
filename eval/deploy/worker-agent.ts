@@ -37,6 +37,7 @@ interface Env {
   EVAL_GATEWAY: string;
   /** This trial's gateway credential; the gateway refuses requests without it. */
   EVAL_GATEWAY_TOKEN: string;
+  EVAL_TRANSPORT_MARKERS: string;
   /** Injected D1 round-trip latency; "0" for none. */
   EVAL_D1_LATENCY_MS: string;
 }
@@ -54,7 +55,12 @@ interface Live {
 let live: Promise<Live> | undefined;
 
 async function setup(env: Env): Promise<Live> {
-  globalThis.fetch = viaGateway(globalThis.fetch.bind(globalThis), env.EVAL_GATEWAY, env.EVAL_GATEWAY_TOKEN);
+  globalThis.fetch = viaGateway(
+    globalThis.fetch.bind(globalThis),
+    env.EVAL_GATEWAY,
+    env.EVAL_GATEWAY_TOKEN,
+    JSON.parse(env.EVAL_TRANSPORT_MARKERS),
+  );
   const composition = JSON.parse(env.EVAL_COMPOSITION) as EvalComposition;
   const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
   const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);

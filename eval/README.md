@@ -360,6 +360,12 @@ even with `--allow-mismatch`.
 Fakes answer only for the `127.0.0.1:<port>` address they publish. A request
 naming any other host, such as another process on a shared machine sweeping
 `localhost` ports, gets `421 Misdirected Request` and never reaches a ledger.
+World-owned HTTP fakes also require a per-server transport marker. Both Node
+and Worker deployment transports attach it independently of vendor credentials,
+so unauthorized and malformed deployment requests still reach the ledger.
+Unmarked probes receive 421 and are retained separately in `world.traffic`.
+The Granola reference sends an unmarked raw-socket probe before each tool call,
+including refusal checks; those probes cannot affect the grade.
 
 ## Latency and fault injection
 

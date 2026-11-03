@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import type { TestProject } from "vitest/node";
 
@@ -15,7 +16,10 @@ export default async function setup(project: TestProject) {
   let sdkPeak = 0;
   const sdkHeld = new Map<string, ServerResponse>();
   const submissionHeld = new Map<string, ServerResponse>();
+  const prefix = `/trial-${randomUUID()}`;
   const server = createServer(async (req, res) => {
+    const attributed = req.url?.startsWith(`${prefix}/`) === true;
+    if (attributed) req.url = req.url!.slice(prefix.length);
     // A slow downstream for overlapping Worker programs: each host call is a
     // real TCP request answered only after its own delay.
     if (req.url?.startsWith("/executor/slow")) {
@@ -99,6 +103,7 @@ export default async function setup(project: TestProject) {
       held.forEach((response) => response.end("done"));
       res.end("{}");
     } else {
+      if (!attributed) { req.resume(); res.writeHead(421).end(); return; }
       calls++;
       const id = req.url!;
       held.set(id, res);
@@ -108,7 +113,7 @@ export default async function setup(project: TestProject) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing auth fixture address");
-  project.provide("authAdmissionServer", `http://127.0.0.1:${address.port}`);
+  project.provide("authAdmissionServer", `http://127.0.0.1:${address.port}${prefix}`);
   return async () => {
     bindingHeld.forEach((res) => res.end());
     held.forEach((res) => res.end());

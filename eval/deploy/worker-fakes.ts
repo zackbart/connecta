@@ -12,7 +12,14 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { operatorUi } from "@zackbart/connecta/ui";
 import { d1Storage } from "@zackbart/connecta/d1";
 import { withAccess } from "./access-shim.js";
-import { injectedConnectors, injectedD1, presetInjected, withInjectedPools, type InjectedEnv } from "./injected.js";
+import {
+  installFakeAttribution,
+  injectedConnectors,
+  injectedD1,
+  presetInjected,
+  withInjectedPools,
+  type InjectedEnv,
+} from "./injected.js";
 
 interface Env extends InjectedEnv {
   CONNECTA_DB: D1Database;
@@ -25,6 +32,7 @@ interface Env extends InjectedEnv {
 }
 
 function build(env: Env) {
+  installFakeAttribution(env);
   const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
   const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
   const connecta = createConnecta({

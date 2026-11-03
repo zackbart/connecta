@@ -59,7 +59,12 @@ import {
   gatewayRoutingControls,
   workerdProcessControls,
 } from "./tasks/worker-controls.js";
-import { fakeTransportInterleaving, fakeTransportRedirects, restTransportControls } from "./tasks/rest-controls.js";
+import {
+  attributionControls,
+  fakeTransportInterleaving,
+  fakeTransportRedirects,
+  restTransportControls,
+} from "./tasks/rest-controls.js";
 
 await gatewayControls();
 await gatewayRedirectControls();
@@ -77,6 +82,7 @@ console.log("ok   injection: latency delivery, pool membership, hung-server clea
 await googleTransportControls();
 await googleBoundaryControls();
 console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools, read-only and native reads");
+await attributionControls();
 await restTransportControls();
 console.log("ok   fake vendor transport: concurrent worlds, credential/host refusals and cleanup");
 await fakeTransportInterleaving();
