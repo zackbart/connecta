@@ -537,6 +537,8 @@ export async function injectionControls() {
 
   // One D1 batch is one delayed round trip carrying the original statements.
   const delay = 50;
+  // A timer can fire just under its delay as performance.now() measures it.
+  const atLeastDelay = delay - 1;
   const inner = { bind: (...values: unknown[]) => ({ ...inner, values }), all: async () => ({ results: [] }) };
   let batched: unknown[] = [];
   const db = {
@@ -549,13 +551,13 @@ export async function injectionControls() {
   let started = performance.now();
   await wrapped.batch(statements);
   const batchMs = performance.now() - started;
-  if (batchMs < delay || batchMs >= delay * 2)
+  if (batchMs < atLeastDelay || batchMs >= delay * 2)
     throw new Error(`A 3-statement batch took ${batchMs} ms, not one round trip`);
   if (batched.length !== 3 || batched.some((statement) => (statement as { values?: unknown[] }).values === undefined))
     throw new Error("The batch did not receive the bound inner statements");
   started = performance.now();
   await wrapped.prepare("SELECT 1").bind(1).all();
-  if (performance.now() - started < delay) throw new Error("A statement round trip was not delayed");
+  if (performance.now() - started < atLeastDelay) throw new Error("A statement round trip was not delayed");
 
   // Differing injection never pairs, in either comparison; equal injection does.
   const injected = async (target: "node" | "worker", surface: "six" | "code", injection: Partial<Injection>) => {
