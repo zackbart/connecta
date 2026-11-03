@@ -518,7 +518,10 @@ const connectaConfig = {
       }
     },
   }),
-  /** Replaceable owner-partitioned credential storage. Omit for config-owned secrets. */
+  /**
+   * Replaceable owner-partitioned credential storage. Omit for config-owned
+   * secrets. With any OAuth connector it must implement `seal` and `open`.
+   */
   vault: opaque<CredentialVault>({
     check: (value) => {
       if (
@@ -691,6 +694,15 @@ function assertCoherent(config: Parsed): void {
     config.discovery.catalogMaxTtlSeconds > 86_400
   ) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
+  }
+  const { vault } = config;
+  const oauth = config.connectors.find((connector) => connector.startAuth);
+  if (oauth && vault && (typeof vault.seal !== "function" || typeof vault.open !== "function")) {
+    throw new ConfigError(
+      `ConnectaConfig.vault must implement both seal and open: connector "${oauth.id}" stores downstream OAuth ` +
+        "tokens, client registration and PKCE verifiers through it. Use encryptedCredentialVault(storage, key) " +
+        "from @zackbart/connecta/credentials, or add both methods.",
+    );
   }
   if (config.agents.some((agent) => !agent.vercel) && !config.accessTokens) {
     throw new ConfigError(

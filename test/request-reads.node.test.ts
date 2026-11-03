@@ -145,6 +145,44 @@ describe("SQL stash batch budgets and faults", () => {
     d1.db.close();
   });
 
+  it("retains a delayed batch's charge at capacity until its reservation expires", async () => {
+    const d1 = counted();
+    const binding = d1.binding();
+    const batch = binding.batch.bind(binding);
+    let commit: (() => Promise<unknown>) | undefined;
+    binding.batch = async (statements) => {
+      if (statements.length === 3 && !commit) {
+        commit = () => batch(statements);
+        throw new Error("lost batch response");
+      }
+      return batch(statements);
+    };
+    const storage = d1Storage(binding);
+    const registry = new Registry([], {
+      storage,
+      logger: silentLogger,
+      results: { maxStashEntries: 1, maxStashBytes: 12 },
+    });
+    try {
+      await expect(registry.stashResult("delayed", ["header", "one", "two"], 900)).rejects.toThrow(
+        "lost batch response",
+      );
+      expect(commit).toBeDefined();
+      expect(await registry.stashResult("replacement", ["x"], 900)).toBe(false);
+      await commit!();
+      expect(await storage.get(scopes.results + resultKeys.chunk("delayed", 1))).toBe("one");
+      expect(await registry.stashResult("still-full", ["x"], 900)).toBe(false);
+      // Age storage's authoritative deadlines as well as the caller's clock.
+      const now = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(now + 931_000);
+      d1.db.prepare("UPDATE connecta_kv SET expires_at_ms = 1 WHERE expires_at_ms IS NOT NULL").run();
+      expect(await registry.stashResult("recovered", ["x"], 900)).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+      d1.db.close();
+    }
+  });
+
   it.each(["partial", "ambiguous", "ambiguous header"])(
     "refuses %s trailing publication and recovers",
     async (mode) => {
