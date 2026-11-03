@@ -1322,6 +1322,7 @@ describe("request budgets", () => {
           });
           // A later call retains the committed refresh and never redeems it again.
           await d.call(app, "oauth.echo");
+          await d.settle();
           expect(d.oauth.issued).toBe(1);
         }
       }
@@ -1339,6 +1340,7 @@ describe("request budgets", () => {
     const d = await production({ oauthModern, oauthWriteProbe: true });
     const app = d.build();
     await d.tool(app, "call_destructive_tool", { address: "oauth.echo", args: { text: "warmup" } });
+    if (!oauthModern) await d.oauthCleanup;
     await d.settle();
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
     d.oauthRequests.length = 0;
@@ -1398,6 +1400,7 @@ describe("request budgets", () => {
     const d = await production({ oauthModern });
     const app = d.build();
     await d.call(app, "oauth.echo");
+    if (!oauthModern) await d.oauthCleanup;
     await d.settle();
     const old = (await d.otherProvider().tokens())!;
     d.oauthRequests.length = 0;
@@ -1432,12 +1435,13 @@ describe("request budgets", () => {
     // The fresh admission read, rather than a later SDK read, must observe a
     // shortened expiry in time to renew without sending the stale access token.
     expect(d.oauth.issued).toBe(change === "expiry" ? 2 : 1);
-    expect(d.oauth.rejected).toBe(0);
+    expect(d.oauth.rejected, JSON.stringify(d.oauthRequests)).toBe(0);
     const stored = await d.otherProvider().tokens();
     expect(stored?.access_token).toBe(expectedToken);
     if (change === "scope") expect(stored?.scope).toBe("notes:write");
     if (change === "replacement") expect(stored?.refresh_token).toBe("replaced-refresh");
     await d.call(app, "oauth.echo");
+    await d.settle();
     expect(d.oauth.issued).toBe(change === "expiry" ? 2 : 1);
   });
 
