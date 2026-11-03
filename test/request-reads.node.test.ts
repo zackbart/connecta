@@ -1166,6 +1166,13 @@ describe("request budgets", () => {
         if (boundary === "chunks" ? !chunk : grantReads !== 2) return;
         d.afterRead(undefined);
         changed = true;
+        // Warmup session teardown is detached from the response and may arrive
+        // after settle()'s idle sample. It is still allowed to use the old grant
+        // before this mutation. Drain it deliberately and reject any earlier
+        // application dispatch, then observe every request after the change.
+        await d.settle();
+        for (const request of d.oauthRequests) expect(request.method).toBe("DELETE");
+        d.oauthRequests.length = 0;
         // A separate provider and SQL storage instance publishes between reads,
         // without notifying this request's storage memo.
         const other = d.otherProvider();
@@ -1214,7 +1221,10 @@ describe("request budgets", () => {
               change,
             ).toBe(true);
         }
-        for (const request of d.oauthRequests) expect(request.token).toBe("Bearer access-2");
+        for (const request of d.oauthRequests)
+          expect(request.token, JSON.stringify({ change, boundary, oauthModern, requests: d.oauthRequests })).toBe(
+            "Bearer access-2",
+          );
         expect(await d.otherProvider().tokens()).toMatchObject({
           access_token: "access-2",
           refresh_token: "refresh-2",
