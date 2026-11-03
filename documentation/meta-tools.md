@@ -407,10 +407,12 @@ or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
 The instructions are the same on every endpoint except one addition: at
 `/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
-[`description`](./auth.md#pools) has it appended after `This endpoint: `, so
+[`description`](./auth.md#pools) has it placed first after `Use skills. `, so
 the model learns that endpoint's scope, for example
-`This endpoint: Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
-Plain `/mcp` never carries one. The description changes no tool or tool
+`Use skills. Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
+The guide pointer precedes the scope so both appear in the first 512 characters
+for a description of up to 500 characters. The routing rules follow. Meta instructions use compact equivalent routing rules
+when a scope is present. Plain `/mcp` never carries one. The description changes no tool or tool
 description, and `initialize` and `server/discover` stay `cacheScope: "private"`,
 so a client keeps what it learned per endpoint. Connector
 guides stay scoped to the deployment that listed them even when two deployments
