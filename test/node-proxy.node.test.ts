@@ -1,4 +1,5 @@
 // Node-only: physical HTTP bodies through an owned undici CONNECT proxy.
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -22,9 +23,15 @@ it("INV-9 INV-5: owned CONNECT writes have one body under 421/reset/503; reads a
     setGlobalDispatcher(old);
     await hostile.close();
   });
+  const marker = randomUUID();
   const bodies: string[] = [];
   const headers: Array<Record<string, unknown>> = [];
   const server = createServer(async (request, response) => {
+    if (request.headers["x-test-transport"] !== marker) {
+      request.resume();
+      response.writeHead(421).end();
+      return;
+    }
     let body = "";
     for await (const chunk of request) body += chunk;
     bodies.push(body);
@@ -55,7 +62,7 @@ it("INV-9 INV-5: owned CONNECT writes have one body under 421/reset/503; reads a
       {
         method: "POST",
         body: "one-physical-write",
-        headers: { Authorization: "Bearer destination-secret" },
+        headers: { Authorization: "Bearer destination-secret", "x-test-transport": marker },
       },
       () => {
         dispatched++;
@@ -66,7 +73,9 @@ it("INV-9 INV-5: owned CONNECT writes have one body under 421/reset/503; reads a
     expect(dispatched).toBe(1);
     expect(bodies).toHaveLength(["421", "reset", "503"].indexOf(challenge) + 1);
   }
-  expect(await (await sender.send(new URL(`${base}/gzip`), {})).text()).toBe("streamed");
+  expect(await (await sender.send(new URL(`${base}/gzip`), { headers: { "x-test-transport": marker } })).text()).toBe(
+    "streamed",
+  );
   expect(bodies).toEqual(["one-physical-write", "one-physical-write", "one-physical-write", ""]);
   expect(headers.every((header) => header["proxy-authorization"] === undefined)).toBe(true);
   expect(headers[0]!.authorization).toBe("Bearer destination-secret");

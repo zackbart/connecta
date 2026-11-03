@@ -19,7 +19,7 @@ import { ACCOUNT_A, SHOP_ZONE } from "../fakes/rest.js";
 import { holdFakeRouting } from "../fakes/transport.js";
 import type { ConnectorSpec } from "../fakes/world.js";
 import { ROOT } from "../support/meta.js";
-import { serveFetch } from "../support/serve.js";
+import { servedMarkers, serveFetch } from "../support/serve.js";
 import { logDir, wranglerDev } from "../support/workerd.js";
 import { evalMcpPath, type EvalComposition } from "./compose.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER } from "./gateway-fetch.js";
@@ -151,6 +151,7 @@ export async function startWorkerDeployment(
   const secrets = {
     CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
     EVAL_GATEWAY_TOKEN: gateway.token,
+    EVAL_TRANSPORT_MARKERS: JSON.stringify(servedMarkers()),
   };
   let dev: Awaited<ReturnType<typeof wranglerDev>> | undefined;
   let closed = false;

@@ -6,7 +6,7 @@ import { activityHistory } from "@zackbart/connecta/activity";
 import { startNodeDeployment } from "../eval/deploy/node.js";
 import { FakeService, Ledger } from "../eval/fakes/service.js";
 import { connectMcp, type McpSession } from "../eval/support/mcp.js";
-import { serveFetch } from "../eval/support/serve.js";
+import { attributeServed, serveFetch } from "../eval/support/serve.js";
 import { echoForms, leakedRun, SECRET } from "./helpers/secret-echoes.js";
 
 const aliceKey = `alice_${SECRET}`;
@@ -73,9 +73,12 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     return Response.json({ owner: key === aliceKey ? "Alice" : "Bob", echo: echoForms(key).map(([, form]) => form) });
   });
   let deployment: Awaited<ReturnType<typeof startNodeDeployment>> | undefined;
+  const traffic: ReturnType<typeof attributeServed>[] = [];
   const sessions: McpSession[] = [];
   try {
     await vendor.start();
+    traffic.push(attributeServed(vendor.url));
+    traffic.push(attributeServed(accounts.url));
     deployment = await startNodeDeployment([], {
       auth,
       maintainers: ["alice"],
@@ -263,6 +266,7 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
   } finally {
     await Promise.all(sessions.map((client) => client.close()));
     await deployment?.close();
+    for (const item of traffic) item.release();
     await vendor.stop();
     await accounts.close();
   }
@@ -289,9 +293,11 @@ it("INV-2 INV-4 INV-9: an explicitly writable pool reopens a read-only deploymen
     ledger,
   );
   let deployment: Awaited<ReturnType<typeof startNodeDeployment>> | undefined;
+  const traffic: ReturnType<typeof attributeServed>[] = [];
   const sessions: McpSession[] = [];
   try {
     await vendor.start();
+    traffic.push(attributeServed(vendor.url));
     deployment = await startNodeDeployment([], {
       readOnly: true,
       pools: {
@@ -327,6 +333,7 @@ it("INV-2 INV-4 INV-9: an explicitly writable pool reopens a read-only deploymen
   } finally {
     await Promise.all(sessions.map((session) => session.close()));
     await deployment?.close();
+    for (const item of traffic) item.release();
     await vendor.stop();
   }
 }, 30_000);

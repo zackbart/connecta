@@ -9,6 +9,7 @@ import { interceptGranola } from "./deploy.js";
 import {
   injectedConnectors,
   injectedD1,
+  installFakeAttribution,
   presetInjected,
   withInjectedPools,
   type InjectedEnv,
@@ -27,6 +28,7 @@ let token: string | undefined;
 let installed = false;
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    installFakeAttribution(env);
     const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
     const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
     if (!installed) {

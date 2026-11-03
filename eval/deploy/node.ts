@@ -1,5 +1,5 @@
 import { ALICE } from "../fakes/google.js";
-import { holdFakeKitTransport, repinFakeKitTransport } from "../fakes/transport.js";
+import { holdFakeKitTransport } from "../fakes/transport.js";
 import { connectCcb, evalConfig, evalMcpPath, presetCredentials } from "./compose.js";
 /**
  * The Node deployment the agent evals run against uses the template's stored
@@ -143,9 +143,7 @@ export async function startNodeDeployment(
     );
     // listen() just installed Node's owned sender, which bypasses the fake
     // routing. Re-pin it in the same tick, before any request can dispatch.
-    if (qb || provided || connectors.some((spec) => spec.rest || spec.google))
-      releaseTransport = holdFakeKitTransport();
-    else repinFakeKitTransport();
+    releaseTransport = holdFakeKitTransport();
     await once(server, "listening");
     await connectCcb(connecta, connectors, origin);
     return {

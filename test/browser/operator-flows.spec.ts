@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -72,6 +73,8 @@ const test = base.extend<{ deployment: Deployment }>({
     const violations: unknown[] = [];
     const unexpectedNetwork: string[] = [];
     const codes = new Map<string, URL>();
+    const marker = randomUUID();
+    await context.setExtraHTTPHeaders({ "x-test-transport": marker });
     const originalFetch = globalThis.fetch;
 
     let providerOrigin: string;
@@ -154,7 +157,11 @@ const test = base.extend<{ deployment: Deployment }>({
     providerOrigin = `http://127.0.0.1:${providerAddress.port}`;
     globalThis.fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
-      if (url.origin === providerOrigin || url.origin === origin) return originalFetch(input, init);
+      if (url.origin === providerOrigin || url.origin === origin) {
+        const request = new Request(input, init);
+        request.headers.set("x-test-transport", marker);
+        return originalFetch(request);
+      }
       unexpectedNetwork.push(url.href);
       throw new Error(`Unexpected server fetch: ${url.href}`);
     };
@@ -222,12 +229,15 @@ const test = base.extend<{ deployment: Deployment }>({
       { ...app, fetch: (...args) => app.fetch(...args) },
       { port: 0, host: "127.0.0.1", gracefulShutdown: false },
     );
-    server.prependListener("request", (request) =>
-      requests.push({
-        method: request.method ?? "GET",
-        path: request.url ?? "/",
-        authorization: request.headers.authorization,
-      }),
+    server.prependListener(
+      "request",
+      (request) =>
+        request.headers["x-test-transport"] === marker &&
+        requests.push({
+          method: request.method ?? "GET",
+          path: request.url ?? "/",
+          authorization: request.headers.authorization,
+        }),
     );
     await once(server, "listening");
     const address = server.address();

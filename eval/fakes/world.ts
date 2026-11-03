@@ -17,7 +17,7 @@ import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
 import { FakeOAuth } from "./oauth.js";
 import { InjectedConnectors, NO_INJECTION, type Injection } from "./injection.js";
-import { delayServed } from "../support/serve.js";
+import { attributeServed, delayServed } from "../support/serve.js";
 import { assetTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
 import { FakeService, Ledger } from "./service.js";
 import {
@@ -220,12 +220,20 @@ export class World {
       .map((name) => ({ name, definition: PROVIDER_FAKES[name], fake: this.fakes[name] }));
   }
 
+  readonly traffic: ReturnType<typeof attributeServed>[] = [];
+
   async start(): Promise<void> {
     for (const { fake } of this.providerFakes()) await fake.start();
     if (this.options.quickbooks) await this.quickbooks.start();
     if (this.options.google) await this.google.start();
     await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
     await this.injected.start();
+    for (const url of [
+      ...[...this.services.values(), ...this.restServices].map((service) => service.url),
+      ...this.providerFakes().map(({ fake }) => fake.url),
+      ...(this.options.quickbooks ? [this.quickbooks.url] : []),
+    ])
+      this.traffic.push(attributeServed(url));
     if (this.injection.latencyMs) {
       const served = [
         ...[...this.services.values(), ...this.restServices].map((service) => service.url),
@@ -239,6 +247,7 @@ export class World {
   }
 
   async stop(): Promise<void> {
+    for (const traffic of this.traffic) traffic.release();
     for (const release of this.releaseLatency.splice(0)) release();
     await this.injected.stop();
     for (const { fake } of this.providerFakes()) await fake.stop();

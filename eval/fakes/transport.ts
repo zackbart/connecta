@@ -22,6 +22,8 @@
  */
 import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
 
+import { stampServed } from "../support/serve.js";
+
 export interface FakeRoute {
   /** Vendor hostnames this route answers for; https on the default port only. */
   readonly hosts: readonly string[];
@@ -114,7 +116,7 @@ async function credentials(request: Request): Promise<string[]> {
  */
 async function hop(forward: typeof fetch, request: Request): Promise<Response> {
   const url = new URL(request.url);
-  if (LOOPBACK.has(url.hostname)) return forward(new Request(request, { redirect: "manual" }));
+  if (LOOPBACK.has(url.hostname)) return forward(stampServed(new Request(request, { redirect: "manual" })));
   vendorHops += 1;
   if (!vendorHost(url.hostname))
     throw new EvalTransportRefusal(
@@ -143,7 +145,7 @@ async function hop(forward: typeof fetch, request: Request): Promise<Response> {
     duplex: "half",
   } as RequestInit);
   if (owner.stampVendorOrigin) rewritten.headers.set("x-eval-vendor-origin", url.origin);
-  return forward(rewritten);
+  return forward(stampServed(rewritten));
 }
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);

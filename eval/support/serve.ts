@@ -5,6 +5,7 @@
  * else's service, and a harness that borrowed connecta's own adapter to host
  * them would share a bug with the thing it measures.
  */
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -15,6 +16,33 @@ export interface Served {
   url: string;
   port: number;
   close(): Promise<void>;
+}
+
+/** Attribution is transport-only and independent of vendor authentication. */
+const TRANSPORT_MARKER = "x-eval-transport-marker";
+const attributed = new Map<string, { marker: string; unattributed: { method: string; path: string }[] }>();
+
+export function attributeServed(url: string) {
+  const origin = new URL(url).origin;
+  const state = { marker: randomUUID(), unattributed: [] as { method: string; path: string }[] };
+  if (attributed.has(origin)) throw new Error(`Already attributed: ${origin}`);
+  attributed.set(origin, state);
+  return {
+    unattributed: state.unattributed,
+    release: () => {
+      attributed.delete(origin);
+    },
+  };
+}
+
+export function servedMarkers(): Record<string, string> {
+  return Object.fromEntries([...attributed].map(([origin, state]) => [origin, state.marker]));
+}
+
+export function stampServed(request: Request): Request {
+  const state = attributed.get(new URL(request.url).origin);
+  if (state) request.headers.set(TRANSPORT_MARKER, state.marker);
+  return request;
 }
 
 /** Injected per-request latency by served port; see eval/fakes/injection.ts. */
@@ -61,6 +89,13 @@ export async function serveFetch(handler: (request: Request) => Promise<Response
             ? { body: new Uint8Array(Buffer.concat(chunks)) }
             : {}),
         });
+        const attribution = attributed.get(new URL(request.url).origin);
+        if (attribution && request.headers.get(TRANSPORT_MARKER) !== attribution.marker) {
+          attribution.unattributed.push({ method, path: new URL(request.url).pathname });
+          res.statusCode = 421;
+          res.end("Unattributed eval traffic");
+          return;
+        }
         const response = await handler(request);
         res.statusCode = response.status;
         response.headers.forEach((value, key) => res.setHeader(key, value));

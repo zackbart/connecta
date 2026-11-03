@@ -1,3 +1,4 @@
+import { get as httpGet } from "node:http";
 /**
  * A scripted MCP client playing a task's reference (or nothing) against a
  * fresh world and the published-edge Node deployment, shared by
@@ -105,6 +106,17 @@ export async function playReference<T>(
           transcript.push({ kind: "assistant", turn, text });
         },
         call: async (tool, args) => {
+          // Probe during the journey, including refusal checks. This raw socket
+          // intentionally bypasses the deployment transport's marker stamping.
+          if (world.options.granola) {
+            await new Promise<void>((resolve, reject) => {
+              const probe = httpGet(world.fakes.granola.url, (response) => {
+                response.resume();
+                response.on("end", resolve);
+              });
+              probe.on("error", reject);
+            });
+          }
           const result = await live.call(tool, args);
           toolUses.push({
             id: `ref-${toolUses.length + 1}`,
