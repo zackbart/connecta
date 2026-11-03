@@ -242,6 +242,10 @@ describe("operator config contract", () => {
           record() {},
           list: async () => ({
             events: [
+              event("svc", "program", "2099-10-08T01:03:00.000Z", {
+                kind: "operation",
+                operation: { name: "program", connectors: ["svc"], personal: false },
+              }),
               // Outside the tools the pool it was recorded in declares.
               event("svc", "write", "2026-10-08T01:03:00.000Z", { pool: "reader" }),
               // Recorded in a pool that is no longer declared.
@@ -362,4 +366,70 @@ describe("operator config contract", () => {
     expect(aborted).toBe(true);
     expect(JSON.stringify(data)).not.toContain("SENTINEL");
   });
+});
+
+it("INV-4 INV-6: operation history requires its owner and every full connector grant", async () => {
+  const operation = (
+    id: string,
+    connectors: string[],
+    extra: Partial<ToolCallActivityEvent> = {},
+  ): ToolCallActivityEvent => ({
+    schemaVersion: 1,
+    id,
+    occurredAt: "2026-10-08T01:00:00.000Z",
+    requestId: id,
+    actor: { kind: "access_token", id: "assistant" },
+    connectorId: connectors.length === 1 ? connectors[0]! : "$operation",
+    toolName: "search",
+    address: "fixed.search",
+    source: "execute_code",
+    outcome: "success",
+    durationMs: 1,
+    attempts: 1,
+    serverName: "connecta",
+    serverVersion: "0.1.0",
+    kind: "operation",
+    operation: { name: "search", connectors, personal: false },
+    ...extra,
+  });
+  const owner = { actorBasis: "principal" as const, actor: { kind: "human", id: "alice", namespace: "directory" } };
+  const rows = [
+    operation("shared", ["crm", "tickets"]),
+    operation("missing-pool-connector", ["crm", "tickets"], { pool: "partial" }),
+    operation("address-only", ["crm"], { pool: "address" }),
+    operation("human", ["crm"], { ...owner, operation: { name: "search", connectors: ["crm"], personal: true } }),
+    operation("personal", ["personal"], {
+      ...owner,
+      operation: { name: "search", connectors: ["personal"], personal: true },
+    }),
+    operation("mixed-personal", ["crm", "personal"], {
+      ...owner,
+      operation: { name: "search", connectors: ["crm", "personal"], personal: true },
+    }),
+    operation("unproved-owner", ["personal"]),
+    operation("removed", ["retired"]),
+    operation("malformed", ["crm"], {
+      operation: { name: "planted-name", connectors: ["crm"], personal: false } as never,
+    }),
+  ];
+  const app = deployment({
+    readOnly: false,
+    connectors: [connector("crm"), connector("tickets"), connector("personal", { authScope: "personal" })],
+    executor,
+    auth: human,
+    maintainers: ["alice", "bob"],
+    ui: operatorUi(),
+    logger: "silent",
+    pools: { partial: { tools: ["crm"], members: ["alice"] }, address: { tools: ["crm.read"], members: ["alice"] } },
+    activity: activityHistory({ operations: true, store: { record() {}, list: async () => ({ events: rows }) } }),
+  });
+  for (const user of ["alice", "bob"]) {
+    const response = await app.fetch(new Request(`${BASE}/ui/activity`, { headers: { "X-User": user } }));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { events: ToolCallActivityEvent[] };
+    expect(body.events.map((row) => row.id)).toEqual(
+      user === "alice" ? ["shared", "human", "personal", "mixed-personal"] : ["shared"],
+    );
+    expect(JSON.stringify(body)).not.toContain("planted-");
+  }
 });

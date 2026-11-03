@@ -1,3 +1,4 @@
+import { checkedActivityOperation } from "../operation-activity.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { recordedToolName } from "../operator-record.js";
 import type { RegistryView } from "../registry.js";
@@ -27,6 +28,38 @@ export function activityEventVisible(
   registry: RegistryView,
   event: ActivityPage["events"][number],
 ): boolean {
+  const pool = event.pool !== undefined ? context.opts.pools.get(event.pool) : undefined;
+  if (event.pool !== undefined && !pool) return false;
+  const access: ConnectorAccess = pool ? pool.access : { connectorIds: "all" };
+  if (event.kind === "operation") {
+    const operation = checkedActivityOperation(event.operation);
+    if (
+      !operation ||
+      event.toolName !== operation.name ||
+      event.connectorId !== (operation.connectors.length === 1 ? operation.connectors[0] : "$operation")
+    )
+      return false;
+    const ownerOnly =
+      operation.personal ||
+      event.actorBasis === "principal" ||
+      operation.connectors.some((id) => registry.getConnector(id)?.authScope === "personal");
+    if (ownerOnly) {
+      const owner = authz.identity.principal;
+      if (
+        !owner ||
+        event.actorBasis !== "principal" ||
+        event.actor.id !== owner.id ||
+        event.actor.namespace !== owner.namespace
+      )
+        return false;
+    }
+    return operation.connectors.every(
+      (id) =>
+        registry.canReadConnectorSkills(id) &&
+        (access.connectorIds === "all" || access.connectorIds.includes(id)) &&
+        !access.toolAccess?.has(id),
+    );
+  }
   const connector = registry.getConnector(event.connectorId);
   if (!connector) return false;
   if (connector.authScope === "personal" || (event.kind === "catalog_drift" && event.actorBasis === "principal")) {
@@ -39,9 +72,6 @@ export function activityEventVisible(
     )
       return false;
   }
-  const pool = event.pool !== undefined ? context.opts.pools.get(event.pool) : undefined;
-  if (event.pool !== undefined && !pool) return false;
-  const access: ConnectorAccess = pool ? pool.access : { connectorIds: "all" };
   if (access.connectorIds !== "all" && !access.connectorIds.includes(event.connectorId)) return false;
   // Connector-wide counts reveal tools outside an address-only grant.
   if (event.kind === "catalog_drift") return !access.toolAccess?.has(event.connectorId);

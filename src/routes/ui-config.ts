@@ -262,8 +262,7 @@ export function scanOperatorActivity(
           if (!isTimestamp(event.occurredAt)) continue;
           // A last call is a call; any row recorded for an agent, a catalog
           // refresh included, is a sign it was seen.
-          const row =
-            event.kind !== "catalog_drift" && OUTCOMES.has(event.outcome) ? byId.get(event.connectorId) : undefined;
+          const row = event.kind === undefined && OUTCOMES.has(event.outcome) ? byId.get(event.connectorId) : undefined;
           const agent =
             (event.actor.kind === "access_token" || event.actor.kind === "vercel_oidc") &&
             event.actor.namespace === AGENT_NAMESPACE &&

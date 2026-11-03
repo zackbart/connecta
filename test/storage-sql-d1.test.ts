@@ -10,6 +10,7 @@ import { sqlEffectContract } from "./sql-effect-contract.js";
 import {
   sqlAgentAdmissionContract,
   sqlActivityRollbackContract,
+  sqlOperationActivityContract,
   sqlBatchRollbackContract,
   sqlCasExpiryContract,
   sqlGetManyContract,
@@ -85,6 +86,7 @@ describe.skipIf(!bindings)("request read memo without weak references", () => {
 describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {
   sqlBatchRollbackContract(open);
   sqlActivityRollbackContract(open);
+  sqlOperationActivityContract(open);
   sqlEffectContract(open);
 });
 

@@ -69,6 +69,14 @@ function CallRow({
   title: string;
   showConnector: boolean;
 }) {
+  const operation = event.kind === "operation";
+  const operationLabels: Record<string, string> = {
+    search: "Search",
+    describe: "Describe",
+    result: "Result page",
+    skill: "Skill read",
+    program: "Program",
+  };
   const outcome = activityOutcomeClass(event.outcome);
   const badge = activityOutcomeBadge(event.outcome);
   const reason = activityReason(event);
@@ -76,7 +84,7 @@ function CallRow({
   const stable = event.actor?.kind === "access_token" ? null : actorStableId(event.actor);
   const client = [event.clientName, event.clientVersion].filter(Boolean).join(" ");
   return (
-    <details className={`activity-item ${outcome}`}>
+    <details className={`activity-item ${outcome}${operation ? " operation" : ""}`}>
       <summary className="activity-row">
         <span className={`activity-status ${outcome}`} title={badge.label}>
           <span className="visually-hidden">{badge.label}</span>
@@ -86,8 +94,10 @@ function CallRow({
         </time>
         <span className="activity-actor">{first ? <ActorChip actor={event.actor} /> : null}</span>
         <span className="activity-tool">
-          {showConnector ? <ConnectorMark id={event.connectorId} title={title} size="sm" /> : null}
-          <span className="activity-address">{event.address}</span>
+          {showConnector && !operation ? <ConnectorMark id={event.connectorId} title={title} size="sm" /> : null}
+          <span className="activity-address">
+            {operation ? `Connecta · ${operationLabels[event.toolName] ?? "Operation"}` : event.address}
+          </span>
           {event.classification === "write" ? <span className="activity-write">write</span> : null}
           {reason && outcome !== "success" ? <span className="activity-reason">{reason}</span> : null}
         </span>

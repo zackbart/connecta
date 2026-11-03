@@ -94,7 +94,8 @@ export interface UiActivityActor {
 }
 
 export interface UiActivityEvent {
-  kind?: "catalog_drift";
+  kind?: "catalog_drift" | "operation";
+  operation?: import("../activity.js").ActivityOperation | undefined;
   drift?: import("../activity.js").ActivityCatalogChange;
   id?: string;
   requestId?: string;
@@ -885,13 +886,14 @@ export function filterActivity(events: UiActivityEvent[], query: string): UiActi
 /** Counts only. What the deployment ran, never what it sent or received. */
 export function activitySummary(events: UiActivityEvent[]): string {
   if (events.length === 0) return "";
-  const calls = events.filter((event) => event.kind !== "catalog_drift");
+  const calls = events.filter((event) => event.kind === undefined);
   const failed = calls.filter((event) => ["error", "timeout"].includes(activityOutcomeClass(event.outcome))).length;
-  const changes = events.length - calls.length;
+  const changes = events.filter((event) => event.kind === "catalog_drift").length;
+  const operations = events.filter((event) => event.kind === "operation").length;
   const tools = new Set(calls.map((event) => event.address)).size;
   return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${failed} failed · ${tools} tool${
     tools === 1 ? "" : "s"
-  }${changes ? ` · ${changes} catalog change${changes === 1 ? "" : "s"}` : ""}`;
+  }${changes ? ` · ${changes} catalog change${changes === 1 ? "" : "s"}` : ""}${operations ? ` · ${operations} operation${operations === 1 ? "" : "s"}` : ""}`;
 }
 
 // A pause and an approval are neither success nor failure: each gets its own
@@ -961,6 +963,8 @@ export function activityReason(event: UiActivityEvent): string {
 /** The one-line detail under an address: where it ran, retries, and why it stalled. */
 export function activityDetail(event: UiActivityEvent): string {
   if (event.kind === "catalog_drift") return "Catalog changed";
+  if (event.kind === "operation")
+    return "Operation" + (event.operation?.hostCalls ? ` · ${event.operation.hostCalls.attempted} host calls` : "");
   const parts = [SOURCE_LABELS[event.source] ?? event.source];
   if (event.approval === "tool") parts.push("approved for the rest of the run");
   if (event.approval === "call") parts.push("approved for this call");

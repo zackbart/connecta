@@ -330,3 +330,83 @@ it("INV-2 INV-4 INV-9: an explicitly writable pool reopens a read-only deploymen
     await vendor.stop();
   }
 }, 30_000);
+
+it.each([false, true])(
+  "INV-6: operation history is opt-in and detached around a real program (enabled %s)",
+  async (operations) => {
+    const rows: import("../src/activity.js").ToolCallActivityEvent[] = [];
+    let release!: () => void;
+    const pendingWrites = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deployment = await startNodeDeployment([], {
+      connectors: [
+        api("notes", {
+          maxResultBytes: 128,
+          tools: [
+            {
+              name: "read",
+              description: "Read a retained note",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object", properties: { needle: { type: "string" } } },
+              handler: () => ({ text: "retained safe output ".repeat(500) }),
+            },
+          ],
+        }),
+      ],
+      pools: { eval: { tools: ["notes"], members: ["agent:eval-machine"] } },
+      activity: activityHistory({
+        operations,
+        store: {
+          record: (event) => {
+            rows.push(event);
+            return pendingWrites;
+          },
+        },
+      }),
+    });
+    const session = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+    try {
+      const seed = await session.call("call_tool", {
+        address: "notes.read",
+        args: { needle: "planted-argument-never-in-history" },
+      });
+      expect(seed.isError, seed.text).toBeFalsy();
+      const id = (JSON.parse(seed.text.split("\n")[0]!) as { resultId: string }).resultId;
+      expect(typeof id).toBe("string");
+      rows.splice(0);
+      const result = await session.call("execute_code", {
+        code: `async () => {
+      // planted-code-never-in-history
+      await connecta.search({query: "planted-query-never-in-history"});
+      await connecta.describe({address: "notes.read"});
+      await connecta.result(${JSON.stringify(id)}, {maxBytes: 1024});
+      await connecta.skill("usage");
+      return "completed";
+    }`,
+      });
+      expect(result.isError, result.text).toBeFalsy();
+      if (!operations) expect(rows).toHaveLength(0);
+      else {
+        expect(rows.map((row) => row.operation?.name)).toEqual(["search", "describe", "result", "skill", "program"]);
+        expect(rows.every((row) => row.kind === "operation" && row.connectorId === "notes")).toBe(true);
+        expect(rows.every((row) => typeof row.resultBytes === "number" && row.resultBytes > 0)).toBe(true);
+        const program = rows.at(-1)!;
+        expect(program.operation?.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 4, failed: 0 });
+        expect(program.durationMs).toBeGreaterThanOrEqual(
+          rows.slice(0, -1).reduce((ms, row) => ms + row.durationMs, 0),
+        );
+        expect(new Set(rows.map((row) => row.requestId)).size).toBe(1);
+        expect(JSON.stringify(rows)).not.toMatch(/planted-|retained safe output|resultId/);
+      }
+      // The response arrived while every activity storage promise was still held.
+      release();
+      await pendingWrites;
+    } finally {
+      release();
+      await session.close();
+      await deployment.close();
+    }
+  },
+  30_000,
+);
