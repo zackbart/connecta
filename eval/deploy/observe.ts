@@ -1,3 +1,4 @@
+import { guidanceValue } from "./guidance.js";
 /**
  * Observe real guest bridge calls while retaining the executor's branded
  * lifecycle. Node-free: the workerd composition wraps the Dynamic Worker
@@ -49,7 +50,7 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
               program.calls.push(call);
               if (call.name === "connecta.call") program.peakCalls = Math.max(program.peakCalls, ++pendingCalls);
               try {
-                const original = await fn(...args);
+                const original = guidanceValue(await fn(...args));
                 const result =
                   surface === "six"
                     ? original
