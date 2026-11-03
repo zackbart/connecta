@@ -1042,15 +1042,15 @@ run of K = 8 consecutive UTF-16 units of a registered form of a value at least K
 long, in the raw text or any JSON-decoded layer; text cut where the cut can end
 inside a form loses that unfinished tail, however short.** Runs formed from
 placeholder text and kept text or numbers are covered too; the placeholder
-itself is reserved replacement text. For a registered form that itself contains
-the literal `[redacted]` text, the guarantee excludes occurrences that overlap
-replacement-generated marker units, including seams with neighbouring parts.
-For example, register `secretsecret` and `[redacted][redacted]`, then redact
+itself is reserved replacement text. The guarantee excludes an occurrence made
+entirely of reserved replacement text, including a run across the seam between
+adjacent markers, whether or not the registered form contains a complete
+`[redacted]`. For example, register `secretsecret` and `ted][red`, then redact
 `["secretsecret", "secretsecret"]`: the returned leaves may be
 `["[redacted]", "[redacted]"]`. Their joined projection spells the second
 registered value using only reserved replacement text; no original secret
-units survive. Forms without that literal marker retain the seam guarantee
-above. Registered forms are
+units survive. An occurrence that includes retained original text stays covered.
+Registered forms are
 the raw value, its URL/form encodings (either percent hex case), base64 and
 base64url, and the `Bearer `/`token ` framings. The framing words are public, so
 no indexed run starts inside them; a run reaching K units of the value is

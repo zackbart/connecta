@@ -2,4 +2,4 @@
 type: fixed
 ---
 
-Clarify the redaction guarantee's reserved-marker exclusion for registered forms containing `[redacted]`, including overlaps with generated markers at seams between neighbouring parts. Settling behavior is unchanged.
+Clarify that the redaction guarantee excludes occurrences made entirely of reserved replacement text, including runs across the seam between adjacent markers. Settling behavior is unchanged.
