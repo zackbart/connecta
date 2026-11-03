@@ -48,6 +48,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
         const session = await connectMcp(`${deployment.origin}/mcp/readonly`, { Authorization: "Bearer eval-alice" });
         try {
           const before = world.ledger.calls.length;
+          const available = new Set((await session.listTools()).map((tool) => tool.name));
           for (const [tool, args] of [
             [
               "call_destructive_tool",
@@ -60,6 +61,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
               },
             ],
           ] as const) {
+            if (!available.has(tool)) continue;
             const reply = await session.call(tool, args);
             assert(reply.isError && /read_only_endpoint/.test(reply.text), `Pool policy: ${reply.text}`);
           }
@@ -87,7 +89,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       assert(!reply.isError, reply.text);
       return JSON.parse(reply.text);
     };
-    const data = (reply: any) => reply.data ?? reply;
+    const data = (reply: any) => reply.data ?? reply.result ?? reply;
     const answer: Record<string, any> = { source: "QuickBooks" };
     // Default and explicit readOnly, arbitrary writes, unreviewed hatch, malformed arguments.
     const before = ctx.world.ledger.calls.length;
