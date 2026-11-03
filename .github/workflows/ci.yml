@@ -24,9 +24,6 @@ jobs:
       fail-fast: false
       matrix:
         phase: [static, package]
-    outputs:
-      static: ${{ steps.complete.outputs.static }}
-      package: ${{ steps.complete.outputs.package }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -48,8 +45,6 @@ jobs:
         env:
           CONNECTA_REQUIRE_DOCKER: "1"
         run: pnpm run check:package
-      - id: complete
-        run: echo "${{ matrix.phase }}=success" >> "$GITHUB_OUTPUT"
 
   # Retained fault probes complement deployed behavior journeys.
   node:
@@ -57,9 +52,6 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2]
-    outputs:
-      shard1: ${{ steps.complete.outputs.shard1 }}
-      shard2: ${{ steps.complete.outputs.shard2 }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -74,8 +66,6 @@ jobs:
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run check:node-shards
       - run: pnpm run test:node --shard=${{ matrix.shard }}/2
-      - id: complete
-        run: echo "shard${{ matrix.shard }}=success" >> "$GITHUB_OUTPUT"
 
   # workerd runs only the suites vitest.config.ts lists for it.
   workers:
@@ -181,10 +171,11 @@ jobs:
 
   # Branch protection requires this name. Every job must finish successfully;
   # failures, cancellations, missing jobs and unexpected skips fail the gate.
-  # Matrix results are rolled up by GitHub. Unique completion outputs also
-  # require every leg to finish: never trust a rolled-up success alone.
-  # https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idoutputs
+  # Matrix results are rolled up by GitHub. Check each concrete job conclusion
+  # too: a sibling success must never hide a failed, cancelled or skipped leg.
   check:
+    permissions:
+      actions: read
     needs: [build, node, workers, behavior, browser, audit, eve]
     if: always()
     runs-on: ubuntu-latest
@@ -198,9 +189,21 @@ jobs:
           jq -e '
             . as $jobs |
             all(["build", "node", "workers", "behavior", "browser", "audit", "eve"][];
-              $jobs[.].result == "success") and
-            (.build.outputs.static == "success") and
-            (.build.outputs.package == "success") and
-            (.node.outputs.shard1 == "success") and
-            (.node.outputs.shard2 == "success")
+              $jobs[.].result == "success")
           ' <<< "$NEEDS" > /dev/null
+      - name: Require every matrix leg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" |
+            jq -e '
+              [.[].jobs[]] as $jobs |
+              all(["build (static)", "build (package)", "node (1)", "node (2)"][];
+                . as $name |
+                [$jobs[] | select(.name == $name)] |
+                length == 1 and all(.[]; .status == "completed" and .conclusion == "success"))
+            '
