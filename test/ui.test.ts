@@ -909,7 +909,16 @@ it("INV-6 INV-8 INV-10: answers a stored detail from the last live read at once,
     const first = await read();
     expect(first.observedAgeMs).toBeUndefined();
     expect(statuses).toBe(1);
-    const stored = await read();
+    // Force a millisecond rollover on every sample, including consecutive
+    // reads while building the connector and its overlay.
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => ++now);
+    let stored: Awaited<ReturnType<typeof read>>;
+    try {
+      stored = await read();
+    } finally {
+      clock.mockRestore();
+    }
     expect(statuses).toBe(1);
     expect(stored).toMatchObject({ status: "ok", toolCount: 1, permissions: { use: true } });
     expect(stored.observedAgeMs).toBeGreaterThanOrEqual(0);
