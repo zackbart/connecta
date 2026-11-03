@@ -13,6 +13,7 @@ import {
   authOwnMethod,
 } from "./auth/native.js";
 import { USAGE_SKILL } from "./usage-guide.js";
+import { downstreamOrigin, labeledDownstreamDescription } from "./skill-origin.js";
 import { boundedEchoText, ConnectorCallError } from "./errors.js";
 import { Effect } from "effect";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -711,7 +712,9 @@ export class SkillsRegistry {
               return (yield* upwardStep(authInvoke<SkillRecord[]>(self, "records", []))).map((record) => ({
                 name: record.aliases[0] ?? record.entry.uri,
                 uri: record.entry.uri,
-                description: String(record.entry.frontmatter.description),
+                description: record.files
+                  ? labeledDownstreamDescription(record.connector!.id, String(record.entry.frontmatter.description))
+                  : String(record.entry.frontmatter.description),
               }));
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as SkillsRegistry).scope)));
@@ -736,11 +739,7 @@ export class SkillsRegistry {
                   cacheScope: "private";
                 }>(self, "read", [record.entry.uri]),
               )).contents[0]!;
-              // A prefix has no closing delimiter for downstream content to forge.
-              // Connector IDs are deployment-authored and strictly bounded here.
-              const origin = record.files
-                ? `Third-party guidance from connector ${JSON.stringify(record.connector!.id.slice(0, 128))}.\n\n`
-                : "";
+              const origin = record.files ? `${downstreamOrigin(record.connector!.id)}\n\n` : "";
               if (typeof content.text === "string") return origin + content.text;
               try {
                 return (

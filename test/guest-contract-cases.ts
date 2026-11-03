@@ -2367,6 +2367,22 @@ return fs;
     },
   },
   {
+    clauses: "S10, INV-3",
+    name: "frames downstream skill text from connecta.read and leaves ordinary resources alone",
+    code: `async () => {
+      const read = (uri) => connecta.read("resource://reader/" + encodeURIComponent(uri));
+      return [await read("skill://review/SKILL.md"), await read("docs://guides/SKILL.md"), await read("docs://manual/start")];
+    }`,
+    check(outcome) {
+      const framed = 'Third-party guidance from connector "reader".\n\nmanual';
+      expect(record(outcome)).toEqual([
+        { contents: [{ uri: "skill://review/SKILL.md", text: framed }] },
+        { contents: [{ uri: "docs://guides/SKILL.md", text: framed }] },
+        { contents: [{ uri: "docs://manual/start", text: "manual" }] },
+      ]);
+    },
+  },
+  {
     clauses: "S10, E1",
     name: "uncaught resource failures retain their type",
     code: `async () => await connecta.read("resource://reader/" + encodeURIComponent("docs://missing"))`,
