@@ -406,21 +406,18 @@ function validSkillName(name: string): boolean {
   return name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
 }
 
-function localRecords(connectors: readonly Connector[], readOnly = false): Promise<SkillRecord[]> {
-  return runEdge(localRecordsNative(connectors, readOnly));
+/** Resolve guide names once from the admitted connector roster, including collisions. */
+export function resolvedConnectorGuides(
+  connectors: readonly Connector[],
+): Promise<{ connector: Connector; name: string; legacy: string; reference: string }[]> {
+  return runEdge(resolvedConnectorGuidesNative(connectors));
 }
-const localRecordsNative = /* @__PURE__ */ registerAuth(
-  localRecords,
-  function (connectors: readonly Connector[], readOnly = false) {
-    return authFlow<SkillRecord[]>(function* () {
-      const builtIns = AVAILABLE_SKILLS.map((skill) =>
-        localRecord(skill.name, `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [
-          skill.name,
-          `skill://connecta/${skill.name}`,
-        ]),
-      );
+const resolvedConnectorGuidesNative = /* @__PURE__ */ registerAuth(
+  resolvedConnectorGuides,
+  function (connectors: readonly Connector[]) {
+    return authFlow<{ connector: Connector; name: string; legacy: string; reference: string }[]>(function* () {
       const allocated = new Set(connectors.map((connector) => connector.id));
-      const guides = yield* upwardStep(
+      return yield* upwardStep(
         Effect.forEach(
           connectors
             .filter((connector) => connectorGuide(connector) !== undefined)
@@ -429,14 +426,8 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(
                 Number(connectorGuideRequired(b)) - Number(connectorGuideRequired(a)) ||
                 (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
             ),
-          (connector: Connector) =>
-            authFlow<{
-              connector: Connector;
-              entry: ConnectorSkill;
-              aliases: string[];
-              content?: string;
-              files?: Map<string, string>;
-            }>(function* () {
+          (connector) =>
+            authFlow<{ connector: Connector; name: string; legacy: string; reference: string }>(function* () {
               const digest = validSkillName(connector.id)
                 ? ""
                 : bytesToHex(
@@ -462,29 +453,57 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(
                 while (allocated.has(name)) name = `${base}-${suffix++}`;
                 allocated.add(name);
               }
-              const description = connectorGuideSummary(connector)!;
-              const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
-              const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${readOnly ? `${writePolicy(true, META_ROUTES)}\n\n` : ""}${connectorGuide(connector)!}`;
               return {
-                ...localRecord(name, `${root}/SKILL.md`, description, content, [
-                  connectorSkillName(connector.id),
-                  ...(connector.id.includes(":") ? [] : [connector.id]),
-                  ...(name !== connector.id
-                    ? [
-                        legacy,
-                        `skill://connecta/connectors/${legacy}`,
-                        `skill://connecta/connectors/${legacy}/SKILL.md`,
-                      ]
-                    : []),
-                  `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
-                  root,
-                ]),
                 connector,
+                name,
+                legacy,
+                reference: AVAILABLE_SKILLS.some((skill) => skill.name === name)
+                  ? `skill://connecta/connectors/${name}`
+                  : name,
               };
             }),
           { concurrency: 1 },
         ),
       );
+    });
+  },
+);
+
+function localRecords(connectors: readonly Connector[], readOnly = false): Promise<SkillRecord[]> {
+  return runEdge(localRecordsNative(connectors, readOnly));
+}
+const localRecordsNative = /* @__PURE__ */ registerAuth(
+  localRecords,
+  function (connectors: readonly Connector[], readOnly = false) {
+    return authFlow<SkillRecord[]>(function* () {
+      const builtIns = AVAILABLE_SKILLS.map((skill) =>
+        localRecord(skill.name, `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [
+          skill.name,
+          `skill://connecta/${skill.name}`,
+        ]),
+      );
+      const identities = yield* upwardStep(
+        authCall<{ connector: Connector; name: string; legacy: string; reference: string }[]>(resolvedConnectorGuides, [
+          connectors,
+        ]),
+      );
+      const guides = identities.map(({ connector, name, legacy }) => {
+        const description = connectorGuideSummary(connector)!;
+        const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
+        const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${readOnly ? `${writePolicy(true, META_ROUTES)}\n\n` : ""}${connectorGuide(connector)!}`;
+        return {
+          ...localRecord(name, `${root}/SKILL.md`, description, content, [
+            connectorSkillName(connector.id),
+            ...(connector.id.includes(":") ? [] : [connector.id]),
+            ...(name !== connector.id
+              ? [legacy, `skill://connecta/connectors/${legacy}`, `skill://connecta/connectors/${legacy}/SKILL.md`]
+              : []),
+            `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
+            root,
+          ]),
+          connector,
+        };
+      });
       if (new Set(guides.map((guide) => guide.entry.uri)).size !== guides.length)
         throw new ConnectorCallError("unavailable", "Connector skill slugs collide.");
       return [builtIns[0]!, ...guides, ...builtIns.slice(1)];
