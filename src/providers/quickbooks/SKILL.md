@@ -67,8 +67,15 @@ and Affirm payment flags are fixed false. No email field or send operation is
 exposed. Company invoice-autosend opt-in does not supply the documented
 NeedToSend request state. This prevents this creation request from asking Intuit
 to email the invoice, including when the customer has an email on file.
-Invoice updates are unavailable: preserving an existing send-ready state has
-not been established safe, while resetting it would change payment settings.
+`update_unsent_invoice` changes only DocNumber, with caller-observed Id and
+SyncToken. It reads the US company and invoice before dispatch and requires USD,
+explicit NotSet, no DeliveryInfo and every payment flag explicitly false.
+Missing state, send-ready and delivered invoices are refused. It preserves all
+omitted settings through sparse:true and never substitutes a newer version.
+No date edits are exposed. This removes documented autosend prerequisites;
+applying them to updates is an inference, not an Intuit update-specific no-email
+guarantee. NotSet cannot prove that no historical delivery ever occurred.
+Read the known Id after an uncertain response; never blindly resend.
 Deletes, voids, email delivery, charges, refunds, other accounting writes and
 arbitrary mutations are unavailable.
 

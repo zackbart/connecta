@@ -109,6 +109,87 @@ export function quickbooksWrites(connection: Connection, realmId: string) {
           .pipe(Effect.map(({ data }) => namedRecord(object(data)["Customer"]))),
     }),
     write(connection, {
+      name: "update_unsent_invoice",
+      destructive: true,
+      idempotent: false,
+      description:
+        "Sparsely change only DocNumber on an observed unsent US-company USD invoice. Requires caller-observed Id and SyncToken. Preflight refuses unknown, send-ready, delivered or payment-enabled state and stale versions. No delivery/payment settings are changed. Reconcile unknown outcomes by reading the Id; never replay.",
+      input: Schema.Struct({
+        requestId: RequestId,
+        Id: PublicId,
+        SyncToken,
+        docNumber: Schema.String.check(matches("^[A-Za-z0-9][A-Za-z0-9_-]{0,20}$")),
+      }),
+      check: (args, problems) => {
+        if (args.docNumber === "AUTO_GENERATE")
+          problems.add("docNumber", "an explicit document number other than AUTO_GENERATE");
+      },
+      output: NamedRecordShape,
+      writeSteps: { company: "once", invoice: "once", write: "once" },
+      run: (args) =>
+        Effect.gen(function* () {
+          const company = object(
+            object(
+              (yield* connection.send(
+                companyInfo,
+                { params: { id: realmId }, query: version },
+                { step: "company", effect: "read" },
+              )).data,
+            )["CompanyInfo"],
+          );
+          if (company["Id"] !== realmId || company["Country"] !== "US")
+            return yield* refuse("Invoice number updates require a verified US company.");
+          yield* charge;
+          const invoice = object(
+            object(
+              (yield* connection.send(
+                recordReads["invoices"]!,
+                { params: { id: args.Id }, query: version },
+                { step: "invoice", effect: "read" },
+              )).data,
+            )["Invoice"],
+          );
+          if (invoice["Id"] !== args.Id || invoice["SyncToken"] !== args.SyncToken)
+            return yield* refuse("Invoice version changed; read and review the current invoice before a new intent.");
+          if (
+            invoice["EmailStatus"] !== "NotSet" ||
+            invoice["DeliveryInfo"] !== undefined ||
+            object(invoice["CurrencyRef"])["value"] !== "USD" ||
+            ![
+              "AllowIPNPayment",
+              "AllowOnlinePayment",
+              "AllowOnlineCreditCardPayment",
+              "AllowOnlineACHPayment",
+              "AllowOnlinePayPalPayment",
+              "AllowOnlineAffirmPayment",
+            ].every((key) => invoice[key] === false)
+          )
+            return yield* refuse(
+              "Only observed unsent USD invoices with explicit NotSet, no delivery information and all payment flags false qualify. Unknown state is refused.",
+            );
+          yield* charge;
+          const { data, status } = yield* connection.send(invoiceWrite, {
+            query: { ...version, requestid: args.requestId },
+            payload: { Id: args.Id, SyncToken: args.SyncToken, sparse: true, DocNumber: args.docNumber },
+          });
+          const updated = object(object(data)["Invoice"]);
+          if (
+            updated["Id"] !== args.Id ||
+            updated["DocNumber"] !== args.docNumber ||
+            updated["SyncToken"] === args.SyncToken
+          )
+            return yield* Effect.fail(
+              new StatusFailure({
+                status,
+                headers: new Headers(),
+                body: undefined,
+                operation: { method: "POST", template: "/invoice" },
+              }),
+            );
+          return namedRecord(updated);
+        }),
+    }),
+    write(connection, {
       name: "create_invoice",
       destructive: true,
       idempotent: false,

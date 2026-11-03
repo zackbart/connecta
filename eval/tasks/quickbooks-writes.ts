@@ -99,6 +99,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
     for (const address of [
       "qb_readonly_0.create_customer",
       "qb_readonly_1.create_customer",
+      "qb_readonly_0.update_unsent_invoice",
+      "qb_readonly_1.update_unsent_invoice",
       "qb_alice.quickbooks_api_write",
       "qb_alice.update_invoice",
     ]) {
@@ -175,6 +177,62 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
     const goodInvoice = await write("create_invoice", invoiceArgs("invoice-create"));
     assert(!goodInvoice.isError, goodInvoice.text);
     answer.invoice = data(JSON.parse(goodInvoice.text));
+    // Both native runtimes exercise the same published update surface and physical fake state.
+    const observed = data(await read("get_record", { entity: "invoices", id: answer.invoice.Id }));
+    const stored = company.Invoice.find((row) => row.Id === observed.Id)!;
+    const updateArgs = {
+      requestId: "invoice-update",
+      Id: observed.Id,
+      SyncToken: observed.SyncToken,
+      docNumber: "SERVICES-EDIT",
+    };
+    for (const state of [
+      { EmailStatus: "NeedToSend" },
+      { EmailStatus: "EmailSent" },
+      { DeliveryInfo: { DeliveryType: "Email", DeliveryTime: "2026-10-27" } },
+      { AllowOnlineACHPayment: true },
+      { EmailStatus: undefined },
+    ]) {
+      const saved = { ...stored };
+      Object.assign(stored, state);
+      const at = ctx.world.ledger.calls.length;
+      assert((await write("update_unsent_invoice", updateArgs)).isError, "Unsafe invoice update admitted");
+      assert(!ctx.world.ledger.calls.slice(at).some((call) => call.kind === "write"), "Unsafe state dispatched POST");
+      for (const key of Object.keys(stored)) delete stored[key];
+      Object.assign(stored, saved);
+    }
+    const updated = await ctx.call("execute_code", {
+      code: `async () => (await connecta.call("qb_alice.update_unsent_invoice", ${JSON.stringify(updateArgs)})).data`,
+    });
+    assert(!updated.isError, updated.text);
+    const staleAt = ctx.world.ledger.calls.length;
+    assert(
+      (await write("update_unsent_invoice", { ...updateArgs, requestId: "invoice-stale" })).isError,
+      "Stale update accepted",
+    );
+    assert(
+      !ctx.world.ledger.calls.slice(staleAt).some((call) => call.kind === "write"),
+      "Stale preflight dispatched POST",
+    );
+    const latest = data(await read("get_record", { entity: "invoices", id: observed.Id }));
+    ctx.world.quickbooks.state.failures["invoice-update-lost"] = "500";
+    const lost = await write("update_unsent_invoice", {
+      ...updateArgs,
+      SyncToken: latest.SyncToken,
+      requestId: "invoice-update-lost",
+      docNumber: "SERVICES-OK",
+    });
+    assert(lost.isError && /unknown/.test(lost.text), "Committed update failure was not ambiguous");
+    answer.updateFailure = JSON.parse(lost.text);
+    answer.invoice = data(await read("get_record", { entity: "invoices", id: observed.Id }));
+    assert(
+      answer.invoice.DocNumber === "SERVICES-OK" && answer.invoice.SyncToken !== latest.SyncToken,
+      "Lost update did not reconcile through read",
+    );
+    assert(
+      stored.EmailStatus === "NotSet" && stored.AllowOnlineACHPayment === false && stored.sent === false,
+      "Update changed delivery/payment settings",
+    );
     // Four bounded failures; committed failures are reconciled, never resent.
     ctx.world.quickbooks.state.failures = {
       "customer-401": "401",
@@ -254,7 +312,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
     // Published Bob endpoint has its own personal credential and company.
     await ctx.nextTurn();
     const refusedAt = ctx.world.ledger.calls.length;
-    for (const tool of ["create_customer", "update_customer", "create_invoice"]) {
+    for (const tool of ["create_customer", "update_customer", "create_invoice", "update_unsent_invoice"]) {
       const reply = await write(tool, { requestId: "endpoint-refused" });
       assert(reply.isError && /read_only_endpoint/.test(reply.text), `Endpoint policy: ${reply.text}`);
     }
@@ -281,6 +339,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       "customer-race-A",
       "customer-race-B",
       "invoice-create",
+      "invoice-update",
+      "invoice-update-lost",
       "customer-401",
       "customer-transport",
       "customer-malformed",
@@ -444,7 +504,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
               ...seed[QB_COMPANIES.alice]!.Invoice[0],
               ...(sent(id)?.args.body as object),
               Id: String(61 + index),
-              SyncToken: "0",
+              SyncToken: index === 0 ? "2" : "0",
               TotalAmt: 21.75,
               Balance: 21.75,
               TxnTaxDetail: { TotalTax: 1.66 },
@@ -469,6 +529,28 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
               (c.args.query as any).query ===
                 "SELECT * FROM Invoice WHERE DocNumber = 'SERVICES-RECOVER' STARTPOSITION 1 MAXRESULTS 26",
           ),
+      ),
+      check(
+        "invoice-update",
+        "Only sparse DocNumber intent, unchanged delivery controls, lost reply reconciled without replay",
+        same(sent("invoice-update")?.args.body, {
+          Id: "61",
+          SyncToken: "0",
+          sparse: true,
+          DocNumber: "SERVICES-EDIT",
+        }) &&
+          same(sent("invoice-update-lost")?.args.body, {
+            Id: "61",
+            SyncToken: "1",
+            sparse: true,
+            DocNumber: "SERVICES-OK",
+          }) &&
+          sent("invoice-update-lost")?.args.committed === true &&
+          /unknown/.test(JSON.stringify(answer.updateFailure)) &&
+          /"retryable":false/.test(JSON.stringify(answer.updateFailure)) &&
+          answer.invoice?.SyncToken === "2" &&
+          answer.invoice?.DocNumber === "SERVICES-OK" &&
+          company.Invoice.find((row) => row.Id === "61")?.EmailStatus === "NotSet",
       ),
       check(
         "invoice-body",
@@ -582,6 +664,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
           [
             "qb_readonly_0.create_customer",
             "qb_readonly_1.create_customer",
+            "qb_readonly_0.update_unsent_invoice",
+            "qb_readonly_1.update_unsent_invoice",
             "qb_alice.quickbooks_api_write",
             "qb_alice.update_invoice",
           ].every((address) => refusedCalls.some((call) => call.address === address)) &&

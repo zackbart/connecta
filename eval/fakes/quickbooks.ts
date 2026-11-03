@@ -258,6 +258,22 @@ export class FakeQuickBooks {
             result = { Customer: row };
             committed = true;
           }
+        } else if (payload.Id) {
+          const current = company.Invoice.find((row: Row) => row.Id === payload!.Id);
+          if (!current || current.SyncToken !== payload.SyncToken) {
+            status = 400;
+            result = { Fault: { Error: [{ code: "5010", Message: QB_PRIVATE, Detail: auth }] } };
+          } else if (
+            payload.sparse !== true ||
+            Object.keys(payload).some((key) => !["Id", "SyncToken", "sparse", "DocNumber"].includes(key))
+          )
+            status = 400;
+          else {
+            current.DocNumber = payload.DocNumber;
+            current.SyncToken = String(Number(current.SyncToken) + 1);
+            result = { Invoice: current };
+            committed = true;
+          }
         } else {
           const customer = company.Customer.find((r: Row) => r.Id === payload!.CustomerRef?.value);
           const cents = (value: number) => Math.round(value * 100);

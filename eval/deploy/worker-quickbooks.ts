@@ -25,7 +25,7 @@ interface Env extends InjectedEnv {
   QUICKBOOKS_CLIENT: string;
 }
 let connecta: ReturnType<typeof createConnecta> | undefined;
-let token: string | undefined;
+let token: Promise<string> | undefined;
 let installed = false;
 let endpointReadOnly = false;
 export default {
@@ -38,9 +38,12 @@ export default {
       await presetInjected(vault, env);
       installed = true;
     }
-    token ??= (
-      await new AccessTokenManager(storage, { agents: ["eval-machine"] }).rotate("eval-machine", "eval-provisioning")
-    ).token;
+    // Health polls can overlap while D1 is cold. Provision once rather than
+    // rotating away a token that another startup request is about to return.
+    token ??= new AccessTokenManager(storage, { agents: ["eval-machine"] })
+      .rotate("eval-machine", "eval-provisioning")
+      .then((issued) => issued.token);
+    const accessToken = await token;
     // Local-only process controls; not a product route or configuration option.
     if (new URL(request.url).pathname === "/__eval/restart") {
       endpointReadOnly = new URL(request.url).searchParams.get("readOnly") === "true";
@@ -48,7 +51,7 @@ export default {
       connecta = undefined;
       return new Response(null, { status: 204 });
     }
-    if (new URL(request.url).pathname === "/__eval/token") return Response.json({ token });
+    if (new URL(request.url).pathname === "/__eval/token") return Response.json({ token: accessToken });
     connecta ??= createConnecta({
       publicUrl: env.PUBLIC_URL,
       readOnly: endpointReadOnly,

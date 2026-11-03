@@ -27,6 +27,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
       "customer-state",
       "invoice-state",
       "invoice-body",
+      "invoice-update",
       "unknown-no-replay",
       "refusal",
       "privacy",
