@@ -305,6 +305,35 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
     const delivered = deliveredValues(trace);
     return [
       check(
+        "correct-destination",
+        "All named write intents target Alice's company; Bob is read independently",
+        writes.length === ids.length &&
+          writes.every((call) => call.args.realm === QB_COMPANIES.alice) &&
+          calls.some((call) => call.kind === "read" && call.args.realm === QB_COMPANIES.bob),
+      ),
+      check(
+        "answer-evidence",
+        "Final answer identifies QuickBooks and the committed customer and invoices",
+        answer.source === "QuickBooks" &&
+          customer !== undefined &&
+          same(answer.customer, projection(customer)) &&
+          invoices.length === 5 &&
+          invoices.every((invoice) =>
+            [
+              answer.invoice,
+              answer.recovered?.items?.[0],
+              ...(answer.contradictions ?? []).flatMap((row: any) => row.items ?? []),
+              answer.budgetInvoice,
+            ].some(
+              (row) =>
+                row?.Id === invoice.Id &&
+                row.SyncToken === invoice.SyncToken &&
+                row.DocNumber === invoice.DocNumber &&
+                row.TotalAmt === invoice.TotalAmt,
+            ),
+          ),
+      ),
+      check(
         "delivered-data",
         "Observed customer version and every committed invoice were delivered over MCP",
         customer !== undefined &&
