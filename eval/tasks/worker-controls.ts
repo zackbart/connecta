@@ -346,7 +346,9 @@ export async function egressGuardControls() {
           })
           .once("error", reject),
       );
-      await new Promise<void>((resolve) => createDgramSocket("udp4").send("x", udpPort, address, () => resolve()));
+      const udpProbe = createDgramSocket("udp4");
+      await new Promise<void>((resolve) => udpProbe.send("x", udpPort, address, () => resolve()));
+      udpProbe.close();
       await new Promise((resolve) => setTimeout(resolve, 200));
       if (connections !== 1 || datagrams !== 1)
         throw new Error("Probe precondition: the non-loopback sink is unreachable");
