@@ -1665,7 +1665,7 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.result).toEqual({
         same: true,
         format: "text",
-        text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n",
+        text: 'Third-party guidance from connector "remote".\n\n---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n',
       });
       expect(outcome.value.hostCalls).toEqual({ attempted: 3, admitted: 3, succeeded: 3, failed: 0 });
     },
@@ -2364,6 +2364,22 @@ return fs;
       });
       expect(state.calls["reader.resources/read"]).toBe(2);
       expect(outcome.value.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 1, failed: 3 });
+    },
+  },
+  {
+    clauses: "S10, INV-3",
+    name: "frames downstream skill text from connecta.read and leaves ordinary resources alone",
+    code: `async () => {
+      const read = (uri) => connecta.read("resource://reader/" + encodeURIComponent(uri));
+      return [await read("skill://review/SKILL.md"), await read("docs://guides/SKILL.md"), await read("docs://manual/start")];
+    }`,
+    check(outcome) {
+      const framed = 'Third-party guidance from connector "reader".\n\nmanual';
+      expect(record(outcome)).toEqual([
+        { contents: [{ uri: "skill://review/SKILL.md", text: framed }] },
+        { contents: [{ uri: "docs://guides/SKILL.md", text: framed }] },
+        { contents: [{ uri: "docs://manual/start", text: "manual" }] },
+      ]);
     },
   },
   {

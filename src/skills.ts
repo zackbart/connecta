@@ -13,6 +13,7 @@ import {
   authOwnMethod,
 } from "./auth/native.js";
 import { USAGE_SKILL } from "./usage-guide.js";
+import { downstreamOrigin, labeledDownstreamDescription } from "./skill-origin.js";
 import { boundedEchoText, ConnectorCallError } from "./errors.js";
 import { Effect } from "effect";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -36,15 +37,19 @@ const RECOVERY = `When an auth error includes a handoff, give it to the user or 
 export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and ${META_ROUTES.write} may write. On a read-only endpoint, search omits write tools and every write call is refused; guides may still name them. The ${META_ROUTES.program} description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
 
 /**
- * The instructions one endpoint serves: {@link CONNECTA_INSTRUCTIONS}, then
- * the admitted pool's `description` after a fixed lead-in. Plain `/mcp` and a
+ * The instructions one endpoint serves: pool scope and guide pointer first,
+ * then stable routing rules. Plain `/mcp` and a
  * pool without a description serve the constant unchanged. The description
  * comes from deployment config for the pool the request was admitted through;
  * nothing a request sends reaches it.
  */
 export function endpointInstructions(description?: string, native?: { executeCode: boolean }): string {
   const instructions = native ? nativeInstructions(native.executeCode) : CONNECTA_INSTRUCTIONS;
-  return description === undefined ? instructions : `${instructions} This endpoint: ${description}`;
+  if (description === undefined) return instructions;
+  const routing = native
+    ? instructions
+    : `Known read: ${META_ROUTES.read}; known write: ${META_ROUTES.write}. Unknown reads, reductions, joins, loops and dependent calls: ${META_ROUTES.program}; discover and call together, return answers, sample unfamiliar reads. Programs may write only on writable endpoints; read-only endpoints hide writes and refuse every write. See ${META_ROUTES.program} for endpoint mode. Never repeat writes for output. Give auth handoffs to user/operator; ${META_ROUTES.authorize} refreshes links. Page resultId/format:"paged" with connecta.result(handleOrId,{page?}).`;
+  return `Use skills. ${description} ${routing}`;
 }
 
 /** Instructions for pools whose host searches the listed native tools. */
@@ -751,7 +756,9 @@ export class SkillsRegistry {
               return (yield* upwardStep(authInvoke<SkillRecord[]>(self, "records", []))).map((record) => ({
                 name: record.aliases[0] ?? record.entry.uri,
                 uri: record.entry.uri,
-                description: String(record.entry.frontmatter.description),
+                description: record.files
+                  ? labeledDownstreamDescription(record.connector!.id, String(record.entry.frontmatter.description))
+                  : String(record.entry.frontmatter.description),
               }));
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as SkillsRegistry).scope)));
@@ -776,10 +783,14 @@ export class SkillsRegistry {
                   cacheScope: "private";
                 }>(self, "read", [record.entry.uri]),
               )).contents[0]!;
-              if (typeof content.text === "string") return content.text;
+              const origin = record.files ? `${downstreamOrigin(record.connector!.id)}\n\n` : "";
+              if (typeof content.text === "string") return origin + content.text;
               try {
-                return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-                  Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
+                return (
+                  origin +
+                  new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+                    Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
+                  )
                 );
               } catch {
                 throw new ConnectorCallError("unavailable", "Skill instructions are not UTF-8 text.");

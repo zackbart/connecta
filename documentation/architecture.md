@@ -3927,6 +3927,11 @@ ordinary result limits, offsets, catalog failure disclosure and byte bounds appl
 The published discovery contract states compilation, query and cache bounds.
 No request identity, signal, credential or promise enters a vocabulary cache.
 
+SQL result stashes write at most 64 trailing rows per awaited transaction, with one
+expiry sweep per batch. Header publication follows confirmed trailing writes in a
+separate transaction; uncertain writes retain their ledger charge until expiry.
+Custom storage keeps sequential writes.
+
 Admission observation sampling retains at most 256 scalar deadlines per live
 physical storage identity in an isolate. Only a recent valid stored timestamp
 or confirmed CAS populates it, for at most one minute. This telemetry cache

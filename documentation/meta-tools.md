@@ -407,10 +407,12 @@ or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
 The instructions are the same on every endpoint except one addition: at
 `/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
-[`description`](./auth.md#pools) has it appended after `This endpoint: `, so
+[`description`](./auth.md#pools) has it placed first after `Use skills. `, so
 the model learns that endpoint's scope, for example
-`This endpoint: Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
-Plain `/mcp` never carries one. The description changes no tool or tool
+`Use skills. Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
+The guide pointer precedes the scope so both appear in the first 512 characters
+for a description of up to 500 characters. The routing rules follow. Meta instructions use compact equivalent routing rules
+when a scope is present. Plain `/mcp` never carries one. The description changes no tool or tool
 description, and `initialize` and `server/discover` stay `cacheScope: "private"`,
 so a client keeps what it learned per endpoint. Connector
 guides stay scoped to the deployment that listed them even when two deployments
@@ -475,6 +477,19 @@ resource reads. The SDK's auth-partitioned resource inventories remain separate
 from skill manifests; neither skill catalogs nor file bodies enter its response
 cache. A failed or malformed opted-in listing fails the entire skills catalog,
 with no partial cache. Known local guides remain readable during an outage.
+
+On `skills` and program `connecta.skill` reads, downstream text is prefixed with
+a fixed third-party origin sentence naming the connector (bounded to 128 ID
+characters). This prefix has no closing delimiter. `skills` listings carry the
+same sentence before each downstream description, collapsed to one line, in text
+and structured output. Program `connecta.read` applies it to text contents whose
+URI uses the `skill:` scheme or ends in `SKILL.md`; a downstream's other resources
+are returned as ordinary data, and binary contents are not labeled. Maintained and
+deployment guides remain unlabeled. Native `skills/get` metadata and `resources/read`
+contents stay unchanged so original manifest digests remain verifiable; adding a
+label there would break integrity checks. A native host must attach its own origin
+label when it loads verified content into model context, as the Skills extension
+requires.
 
 Downstream files are proxied byte-exact, including CRLF and binary supporting
 files, within 512 files and 16 MiB per skill. Catalog metadata is bounded to

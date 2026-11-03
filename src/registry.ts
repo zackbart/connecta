@@ -44,7 +44,7 @@ import {
   setViewService,
   duringViewEffect,
 } from "./runtime/call.js";
-import { hasNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
+import { getNativeStorage, hasNativeStorage, registerNativeStorage } from "./runtime/native-storage.js";
 import { observeStorageWrites } from "./runtime/request-reads.js";
 import { attachStorageDigestKey } from "./storage-digest.js";
 import { requestReads } from "./runtime/request-scope.js";
@@ -1278,11 +1278,23 @@ export class Registry implements RegistryView {
           // ID after failure or timeout, including a late header commit.
           const remaining = Math.max(0, writeDeadline - (yield* Clock.currentTimeMillis));
           const written = yield* Effect.gen(function* () {
-            for (let index = keys.length - 1; index >= 0; index--) {
+            const multi = getNativeStorage(self.opts.storage)?.setMany;
+            for (let index = keys.length - 1; index >= 0;) {
+              const first = multi && index > 0 ? Math.max(1, index - 63) : index;
               const before = yield* Clock.currentTimeMillis;
               if (before >= writeDeadline || before >= chunkExpiry) return false;
               pendingWrite = true;
-              yield* storageSet(keys[index]!, chunks[index]!, { expiresAtMs: chunkExpiry }).pipe(
+              yield* (
+                multi && index > 0
+                  ? multi(
+                      Array.from(
+                        { length: index - first + 1 },
+                        (_, offset) => [keys[index - offset]!, chunks[index - offset]!] as const,
+                      ),
+                      { expiresAtMs: chunkExpiry },
+                    )
+                  : storageSet(keys[index]!, chunks[index]!, { expiresAtMs: chunkExpiry })
+              ).pipe(
                 Effect.tap(() =>
                   Effect.sync(() => {
                     pendingWrite = false;
@@ -1290,6 +1302,7 @@ export class Registry implements RegistryView {
                 ),
               );
               if ((yield* Clock.currentTimeMillis) >= writeDeadline) return false;
+              index = first - 1;
             }
             return true;
           }).pipe(

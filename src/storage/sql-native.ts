@@ -197,6 +197,29 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
         return values;
       });
     },
+    setMany(entries, opts) {
+      return Effect.gen(function* () {
+        if (entries.length > 64) throw new RangeError("setMany accepts at most 64 rows");
+        for (const [key] of entries) validateStorageKey(key);
+        const expiry = expiryOptions(opts);
+        if (!entries.length) return;
+        yield* ensure();
+        const changes = yield* driver.batch([
+          expirySweep(),
+          ...entries.map(([key, value]) =>
+            sql(
+              `INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, ${expiry.expression})
+           ON CONFLICT (key) DO UPDATE SET value = excluded.value, expires_at_ms = excluded.expires_at_ms`,
+              key,
+              value,
+              expiry.value,
+            ),
+          ),
+        ]);
+        if (changes.length !== entries.length + 1 || changes.slice(1).some((changed) => changed !== 1))
+          throw new Error("SQL multi-set confirmation is incomplete");
+      });
+    },
     set(key, value, opts) {
       return Effect.gen(function* () {
         validateStorageKey(key);
