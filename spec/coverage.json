@@ -336,7 +336,7 @@
       "id": "io.modelcontextprotocol/skills",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/extensions/skills/overview",
-      "notes": "Native skills/list and skills/get share one registry with skill-only resources and both text readers. Local manifests, five-entry pages, opt-in downstream proxying, whole-connector grants, byte preservation and the credential-redaction exception are enforced. Directory reading is not declared.",
+      "notes": "Beta under SEP-3392 (SEP-2640); breaking revisions may reuse the extension ID. The released settings define no revision; explicit downstream revisions are refused. Native skills/list and skills/get share one registry with skill-only resources and both text readers. Local manifests, five-entry pages, opt-in downstream proxying, whole-connector grants, byte preservation and the credential-redaction exception are enforced. Directory reading is not declared.",
       "evidence": ["test/skills-extension.test.ts", "test/remote-mcp-skills.test.ts"]
     },
     {

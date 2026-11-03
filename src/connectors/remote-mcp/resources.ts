@@ -384,6 +384,9 @@ export function remoteMcpResources(
             client.getProtocolEra() !== "modern" ||
             !skillObject(capabilities?.resources) ||
             !skillObject(extension) ||
+            // The released Beta specification defines no revision setting.
+            // Never enable a future breaking revision under the same ID.
+            extension.revision !== undefined ||
             (extension.directoryRead !== undefined && typeof extension.directoryRead !== "boolean")
           ) {
             throw new ConnectorCallError(
