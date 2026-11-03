@@ -89,7 +89,10 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       assert(!reply.isError, reply.text);
       return JSON.parse(reply.text);
     };
-    const data = (reply: any) => reply.data ?? reply.result ?? reply;
+    const data = (reply: any) => {
+      const value = reply.result ?? reply;
+      return value.data ?? value;
+    };
     const answer: Record<string, any> = { source: "QuickBooks" };
     // Default and explicit readOnly, arbitrary writes, unreviewed hatch, malformed arguments.
     const before = ctx.world.ledger.calls.length;
