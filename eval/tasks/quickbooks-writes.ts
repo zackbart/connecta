@@ -201,6 +201,15 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       for (const key of Object.keys(stored)) delete stored[key];
       Object.assign(stored, saved);
     }
+    ctx.world.quickbooks.state.failures["invoice-version-race"] = "stale";
+    const raceAt = ctx.world.ledger.calls.length;
+    const conflict = await write("update_unsent_invoice", { ...updateArgs, requestId: "invoice-version-race" });
+    assert(conflict.isError && /conflict/.test(conflict.text), "Post-preflight invoice version race did not conflict");
+    const raceCalls = ctx.world.ledger.calls.slice(raceAt);
+    assert(raceCalls.length === 3 && raceCalls[2]?.kind === "write", "Version race fetched again or replayed");
+    assert(stored.DocNumber === "SERVICES-OK", "Version conflict overwrote invoice");
+    const reviewed = data(await read("get_record", { entity: "invoices", id: observed.Id }));
+    updateArgs.SyncToken = reviewed.SyncToken;
     const updated = await ctx.call("execute_code", {
       code: `async () => (await connecta.call("qb_alice.update_unsent_invoice", ${JSON.stringify(updateArgs)})).data`,
     });
@@ -340,6 +349,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       "customer-race-B",
       "invoice-create",
       "invoice-update",
+      "invoice-version-race",
       "invoice-update-lost",
       "customer-401",
       "customer-transport",
@@ -486,7 +496,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
               DisplayName: `Workshop ${suffix}`,
             }),
           ) &&
-          writes.filter((c) => c.args.status === 400).length === 1 &&
+          writes.filter((c) => c.args.status === 400 && String(c.args.path).endsWith("/customer")).length === 1 &&
           winners.length === 1 &&
           losers.length === 1 &&
           winners[0].value.SyncToken === "1" &&
@@ -504,7 +514,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
               ...seed[QB_COMPANIES.alice]!.Invoice[0],
               ...(sent(id)?.args.body as object),
               Id: String(61 + index),
-              SyncToken: index === 0 ? "2" : "0",
+              SyncToken: index === 0 ? "3" : "0",
               TotalAmt: 21.75,
               Balance: 21.75,
               TxnTaxDetail: { TotalTax: 1.66 },
@@ -535,20 +545,22 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
         "Only sparse DocNumber intent, unchanged delivery controls, lost reply reconciled without replay",
         same(sent("invoice-update")?.args.body, {
           Id: "61",
-          SyncToken: "0",
+          SyncToken: "1",
           sparse: true,
           DocNumber: "SERVICES-EDIT",
         }) &&
           same(sent("invoice-update-lost")?.args.body, {
             Id: "61",
-            SyncToken: "1",
+            SyncToken: "2",
             sparse: true,
             DocNumber: "SERVICES-OK",
           }) &&
+          sent("invoice-version-race")?.args.status === 400 &&
+          sent("invoice-version-race")?.args.committed === false &&
           sent("invoice-update-lost")?.args.committed === true &&
           /unknown/.test(JSON.stringify(answer.updateFailure)) &&
           /"retryable":false/.test(JSON.stringify(answer.updateFailure)) &&
-          answer.invoice?.SyncToken === "2" &&
+          answer.invoice?.SyncToken === "3" &&
           answer.invoice?.DocNumber === "SERVICES-OK" &&
           company.Invoice.find((row) => row.Id === "61")?.EmailStatus === "NotSet",
       ),
