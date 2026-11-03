@@ -1,3 +1,4 @@
+import { traceFor } from "../timing-trace.js";
 // One owner per existing upstream request identity. Facts survive revocation;
 // retaining them never reconstitutes a call capability or a live operation.
 import { Context, Exit, Scope, type Effect } from "effect";
@@ -77,7 +78,7 @@ export function requestReads(identity: object): RequestReads {
 export function ownerReads(owner: RequestOwner): RequestReads {
   const retained = owner.retained;
   if (!retained.reads) {
-    retained.reads = new RequestReads();
+    retained.reads = new RequestReads(traceFor(owner.identity));
     if (!owner.open) retained.reads.close();
   }
   return retained.reads;

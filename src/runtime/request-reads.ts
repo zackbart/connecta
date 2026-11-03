@@ -1,3 +1,5 @@
+import type { TimingTrace } from "../timing-trace.js";
+import { utf8Length } from "../bytes.js";
 // Request-scoped memo of storage reads (INV-7).
 //
 // One request often reads the same key many times: a catalog listing reads its
@@ -130,6 +132,16 @@ interface StoreEntries {
 const weakReferences = () => typeof WeakRef === "function" && typeof FinalizationRegistry === "function";
 
 export class RequestReads {
+  constructor(private readonly trace?: TimingTrace) {}
+  private note(fresh: boolean, hit: boolean, value: string | null, started: number): void {
+    this.trace?.record(
+      fresh ? "memo.fresh" : hit ? "memo.hit" : "memo.miss",
+      performance.now() - started,
+      value === null ? 0 : utf8Length(value),
+      0,
+      value === null ? 1 : 0,
+    );
+  }
   private closed = false;
   private readonly stores = new Map<StoreIdentity, StoreEntries>();
   private readonly ref: WeakRef<RequestReads> | undefined = weakReferences() ? new WeakRef(this) : undefined;
@@ -193,9 +205,18 @@ export class RequestReads {
   ): Effect.Effect<string | null, E, R> {
     return Effect.suspend(() => {
       const found = this.lookup(storage, key, fresh);
-      if (!found) return load;
-      if (found.hit) return Effect.succeed(found.value);
-      return Effect.tap(load, (value) => Effect.sync(() => found.record(value)));
+      if (!found && !this.trace) return load;
+      const started = this.trace ? performance.now() : 0;
+      if (found?.hit) {
+        if (this.trace) this.note(fresh, true, found.value, started);
+        return Effect.succeed(found.value);
+      }
+      return Effect.tap(load, (value) =>
+        Effect.sync(() => {
+          found?.record(value);
+          if (this.trace) this.note(fresh, false, value, started);
+        }),
+      );
     });
   }
 
@@ -210,6 +231,9 @@ export class RequestReads {
         address: physicalStorageAddress(storage, key),
         found: this.lookup(storage, key, false),
       }));
+      if (this.trace)
+        for (const { found } of pending) if (found?.hit) this.note(false, true, found.value, performance.now());
+      const started = this.trace ? performance.now() : 0;
       const root = pending[0]?.address?.store;
       const storage = root && roots.get(root);
       if (!storage || pending.some(({ address, found }) => !found || address?.store !== root)) return Effect.void;
@@ -248,7 +272,11 @@ export class RequestReads {
         ),
         (values) => {
           misses.forEach(({ found }, i) => {
-            if (found && !found.hit) found.record(values[i] ?? null);
+            if (found && !found.hit) {
+              const value = values[i] ?? null;
+              found.record(value);
+              if (this.trace) this.note(false, false, value, started);
+            }
           });
         },
       );
@@ -263,10 +291,14 @@ export class RequestReads {
     fresh = false,
   ): Promise<string | null> {
     const found = this.lookup(storage, key, fresh);
-    if (!found) return load();
-    if (found.hit) return found.value;
+    const started = this.trace ? performance.now() : 0;
+    if (found?.hit) {
+      if (this.trace) this.note(fresh, true, found.value, started);
+      return found.value;
+    }
     const value = await load();
-    found.record(value);
+    found?.record(value);
+    if (this.trace) this.note(fresh, false, value, started);
     return value;
   }
 
