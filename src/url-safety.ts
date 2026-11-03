@@ -18,14 +18,15 @@
  */
 
 /**
- * `loopback` reaches this host; `private` reaches this host's networks
- * (RFC 1918, link-local, carrier-grade NAT, unique-local, unspecified);
- * `public` is everything else, including every name that is not `localhost`.
+ * `loopback` reaches this host; `private` reaches this host's networks or is
+ * not a global destination (RFC 1918, link-local, carrier-grade NAT,
+ * unique-local, unspecified, and special-purpose or reserved space); `public`
+ * is everything else, including every name that is not `localhost`.
  */
 export type HostClass = "loopback" | "private" | "public";
 
 function classifyIpv4(octets: readonly number[]): HostClass {
-  const [a = 0, b = 0] = octets;
+  const [a = 0, b = 0, c = 0] = octets;
   if (a === 127) return "loopback";
   if (
     a === 0 ||
@@ -33,7 +34,13 @@ function classifyIpv4(octets: readonly number[]): HostClass {
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 168) ||
     (a === 169 && b === 254) ||
-    (a === 100 && b >= 64 && b <= 127)
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) || // IETF protocol, documentation
+    (a === 192 && b === 88 && c === 99) || // 6to4 relay anycast
+    (a === 198 && (b === 18 || b === 19)) || // benchmarking
+    (a === 198 && b === 51 && c === 100) || // documentation
+    (a === 203 && b === 0 && c === 113) || // documentation
+    a >= 224 // multicast, reserved, broadcast
   ) {
     return "private";
   }
@@ -69,20 +76,30 @@ function ipv6Pieces(host: string): number[] | undefined {
 }
 
 function classifyIpv6(pieces: readonly number[]): HostClass {
-  const [first = 0] = pieces;
-  const leadingZeros = pieces.slice(0, 5).every((piece) => piece === 0);
-  if (leadingZeros && pieces[5] === 0 && pieces[6] === 0) {
-    if (pieces[7] === 0) return "private"; // ::
-    if (pieces[7] === 1) return "loopback"; // ::1
+  const [p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0, p7 = 0] = pieces;
+  const v4 = (high: number, low: number) => classifyIpv4([high >> 8, high & 0xff, low >> 8, low & 0xff]);
+  // A transitional form reaches, at most, the IPv4 address it carries. Only a
+  // mapped address can reach this host, so only it stays `loopback`; every
+  // other non-public carrier is `private`, keeping it out of a loopback
+  // connector's learned URLs.
+  const carried = (high: number, low: number): HostClass => (v4(high, low) === "public" ? "public" : "private");
+  const zeros = p0 === 0 && p1 === 0 && p2 === 0 && p3 === 0;
+  if (zeros && p4 === 0) {
+    if (p5 === 0xffff) return v4(p6, p7); // ::ffff:a.b.c.d mapped
+    if (p5 === 0) {
+      if (p6 === 0 && p7 === 1) return "loopback"; // ::1
+      return carried(p6, p7); // :: and ::a.b.c.d compatible
+    }
   }
-  // ::ffff:a.b.c.d reaches the mapped IPv4 destination; classify that.
-  if (leadingZeros && pieces[5] === 0xffff) {
-    const high = pieces[6] ?? 0;
-    const low = pieces[7] ?? 0;
-    return classifyIpv4([high >> 8, high & 0xff, low >> 8, low & 0xff]);
+  if (zeros && p4 === 0xffff && p5 === 0) return carried(p6, p7); // ::ffff:0:a.b.c.d translated
+  if (p0 === 0x64 && p1 === 0xff9b && p2 === 0 && p3 === 0 && p4 === 0 && p5 === 0) return carried(p6, p7); // NAT64
+  if (p0 === 0x2002) return carried(p1, p2); // 6to4
+  // Global unicast is 2000::/3. Outside it: unique-local, link-local,
+  // site-local, multicast, local-use NAT64, reserved. Inside it, special-purpose
+  // 2001::/23 and documentation 2001:db8::/32 and 3fff::/20 are not destinations.
+  if ((p0 & 0xe000) !== 0x2000 || (p0 === 0x2001 && (p1 < 0x200 || p1 === 0xdb8)) || (p0 === 0x3fff && p1 < 0x1000)) {
+    return "private";
   }
-  if ((first & 0xfe00) === 0xfc00) return "private"; // fc00::/7
-  if ((first & 0xffc0) === 0xfe80) return "private"; // fe80::/10
   return "public";
 }
 

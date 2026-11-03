@@ -2083,11 +2083,17 @@ targeting the host's private network:
 - A URL on the connector's configured origin is trusted; the operator wrote it.
 - Any other URL must be `https` and must not name a private host: `localhost`
   and `*.localhost`, `127/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`,
-  `100.64/10`, `0/8`, `::`, `::1`, `fc00::/7`, `fe80::/10`, or an IPv4-mapped
-  IPv6 form of any of those.
+  `100.64/10`, `0/8`, `192.0.0/24`, `192.0.2/24`, `192.88.99/24`, `198.18/15`,
+  `198.51.100/24`, `203.0.113/24`, `224/4`, `240/4`, `::`, `::1`, any IPv6
+  address outside global unicast `2000::/3` (which covers `fc00::/7`,
+  `fe80::/10`, `fec0::/10`, `ff00::/8` and `64:ff9b:1::/48`), `2001::/23`,
+  `2001:db8::/32`, or `3fff::/20`. An IPv6 address carrying an IPv4 address in
+  mapped, compatible, translated, NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`)
+  form is judged by the address it carries.
 - A connector configured on a loopback host may also learn loopback URLs, over
   `http` too, so a local MCP server with a local authorization server keeps
-  working. LAN and link-local addresses stay refused.
+  working. Of the IPv4-carrying forms, only IPv4-mapped loopback counts as
+  loopback. LAN and link-local addresses stay refused.
 
 A refused URL is never requested. Discovery, registration, and code exchange
 fail with a non-retryable `connector_call_failed`. Resource-metadata origin
