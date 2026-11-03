@@ -101,9 +101,10 @@ every PR, main push, nightly and manual run:
 
 `check` is the single required status, with all seven jobs in `needs` and
 `if: always()`. Every job must succeed; failures, cancellations, missing jobs
-and unexpected skips fail the gate. The gate also reads the current run
-attempt's concrete jobs with `actions: read` and requires exactly one completed,
-successful job for each expected build and Node matrix leg. A rolled-up job
+and unexpected skips fail the gate. The gate also reads the current run's
+concrete jobs with `actions: read` and requires exactly one completed,
+successful job in the latest attempt for each expected build and Node matrix
+leg (retaining successful legs when only failures are rerun). A rolled-up job
 result alone is insufficient evidence that every leg completed; the API check
 also covers cancellation after a leg's last successful step. Superseded PR runs are cancelled; each main
 push retains a full run. Branch protection should require `check` and an
