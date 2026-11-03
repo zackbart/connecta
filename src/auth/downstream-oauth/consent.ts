@@ -124,12 +124,37 @@ export interface FlowBinding {
   discovery?: string | undefined;
 }
 
-export function discoveryBinding(state: OAuthDiscoveryState | undefined): Promise<FlowBinding> {
-  return runEdge(authProgram<FlowBinding>(discoveryBindingNative, [state]));
+/**
+ * What a flow record without a sealer may keep of a URL: everything but its
+ * userinfo, query and fragment. Non-URLs and clean URLs stay exact, so an
+ * ordinary issuer or client id still compares byte for byte.
+ */
+export function withoutUrlSecrets<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withoutUrlSecrets) as T;
+  if (plainObject(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withoutUrlSecrets(item)])) as T;
+  }
+  if (typeof value !== "string") return value;
+  try {
+    const url = new URL(value);
+    if (!url.username && !url.password && !url.search && !url.hash) return value;
+    url.username = url.password = url.search = url.hash = "";
+    return url.href as T;
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * `minimized` binds the discovery metadata without its URL secrets, for a
+ * record no key protects: that digest is unkeyed, so it may not cover them.
+ */
+export function discoveryBinding(state: OAuthDiscoveryState | undefined, minimized = false): Promise<FlowBinding> {
+  return runEdge(authProgram<FlowBinding>(discoveryBindingNative, [state, minimized]));
 }
 const discoveryBindingNative = /* @__PURE__ */ registerAuth(
   discoveryBinding,
-  function (state: OAuthDiscoveryState | undefined) {
+  function (state: OAuthDiscoveryState | undefined, minimized = false) {
     return authFlow<FlowBinding>(function* () {
       return state
         ? {
@@ -138,7 +163,9 @@ const discoveryBindingNative = /* @__PURE__ */ registerAuth(
             ...(state.authorizationServerMetadata?.authorization_response_iss_parameter_supported === true
               ? { issRequired: true as const }
               : {}),
-            discovery: (yield authCall(oauthStateDigest, [JSON.stringify(state)])) as string,
+            discovery: (yield authCall(oauthStateDigest, [
+              JSON.stringify(minimized ? withoutUrlSecrets(state) : state),
+            ])) as string,
           }
         : {};
     });
@@ -157,15 +184,19 @@ export interface Flow {
 }
 
 interface StoredFlow {
-  binding?: FlowBinding;
   connectaOAuthFlow: typeof FLOW_VERSION;
   epoch: string;
   at: number;
-  url?: string;
+  /** Ciphertext of the consent's binding, URL and verifier. */
+  record?: string;
+  /** Without a sealer: the binding minus URL secrets, and the verifier. */
+  binding?: FlowBinding;
   verifier?: string;
-  /** The verifier is ciphertext. */
-  sealed?: true;
   consumed?: true;
+  /** A record written before `record`: the plaintext consent URL. */
+  url?: string;
+  /** A record written before `record`: the verifier is ciphertext. */
+  sealed?: true;
 }
 
 /** KvOAuthProvider's consent and code exchange methods; `authMethods` installs them. */
@@ -173,22 +204,23 @@ export const consentMethods = {
   encodeFlow: function (this: KvOAuthProvider, key: string, flow: Flow) {
     return authFlow<string>(
       function* (this: KvOAuthProvider) {
-        const { verifier, ...rest } = flow;
+        const { binding, url, verifier, ...rest } = flow;
         const stored: StoredFlow = { connectaOAuthFlow: FLOW_VERSION, ...rest };
-        if (verifier !== undefined) {
-          if (this.sealer) {
-            stored.verifier = (yield authInvoke(this, "wait", [
-              authMethod(() => {
-                return authInvoke(this.sealer!, "seal", [this.flowLabel(key, flow.epoch), verifier]) as Effect.Effect<
-                  string,
-                  unknown
-                >;
-              }),
-            ])) as string;
-            stored.sealed = true;
-          } else {
-            stored.verifier = verifier;
-          }
+        if (this.sealer) {
+          stored.record = (yield authInvoke(this, "wait", [
+            authMethod(() => {
+              return authInvoke(this.sealer!, "seal", [
+                this.flowRecordLabel(key, flow.epoch),
+                JSON.stringify({ binding, url, verifier }),
+              ]) as Effect.Effect<string, unknown>;
+            }),
+          ])) as string;
+        } else {
+          // No key to protect it with: keep only what the callback must read.
+          // The consent URL is the first thing to go, so a repeated start mints
+          // a fresh consent rather than handing this one back.
+          if (binding) stored.binding = withoutUrlSecrets(binding);
+          if (verifier !== undefined) stored.verifier = verifier;
         }
         return JSON.stringify(stored);
       }.bind(this),
@@ -204,7 +236,8 @@ export const consentMethods = {
           typeof value.epoch !== "string" ||
           typeof value.at !== "number" ||
           (value.url !== undefined && typeof value.url !== "string") ||
-          (value.verifier !== undefined && typeof value.verifier !== "string")
+          (value.verifier !== undefined && typeof value.verifier !== "string") ||
+          (value.record !== undefined && typeof value.record !== "string")
         ) {
           return undefined;
         }
@@ -215,20 +248,27 @@ export const consentMethods = {
           ...(typeof value.url === "string" ? { url: value.url } : {}),
           ...(value.consumed === true ? { consumed: true as const } : {}),
         };
-        if (!withVerifier || typeof value.verifier !== "string") return flow;
-        if (value.sealed !== true) return { ...flow, verifier: value.verifier };
+        const sealedRecord = typeof value.record === "string";
+        if (!sealedRecord && (!withVerifier || typeof value.verifier !== "string")) return flow;
+        if (!sealedRecord && value.sealed !== true) return { ...flow, verifier: value.verifier as string };
         try {
           if (!this.sealer) return undefined;
+          const opened = (yield authInvoke(this, "wait", [
+            authMethod(() => {
+              return authInvoke(this.sealer!, "open", [
+                sealedRecord ? this.flowRecordLabel(key, flow.epoch) : this.flowLabel(key, flow.epoch),
+                (sealedRecord ? value.record : value.verifier) as string,
+              ]) as Effect.Effect<string, unknown>;
+            }),
+          ])) as string;
+          if (!sealedRecord) return { ...flow, verifier: opened };
+          const record = parsed(opened);
+          if (!plainObject(record)) return undefined;
           return {
             ...flow,
-            verifier: (yield authInvoke(this, "wait", [
-              authMethod(() => {
-                return authInvoke(this.sealer!, "open", [
-                  this.flowLabel(key, flow.epoch),
-                  value.verifier as string,
-                ]) as Effect.Effect<string, unknown>;
-              }),
-            ])) as string,
+            ...(plainObject(record.binding) ? { binding: record.binding as FlowBinding } : {}),
+            ...(typeof record.url === "string" ? { url: record.url } : {}),
+            ...(withVerifier && typeof record.verifier === "string" ? { verifier: record.verifier } : {}),
           };
         } catch {
           if (this.signal?.aborted) throw aborted(this.signal);
@@ -325,10 +365,10 @@ export const consentMethods = {
         const binding = this.configuredAuthorizationBinding() ?? {
           ...((yield authInvoke(this, "wait", [
             authMethod(() => {
-              return authCall(discoveryBinding, [this.consentDiscovery ?? grant.body.discovery]) as Effect.Effect<
-                FlowBinding,
-                unknown
-              >;
+              return authCall(discoveryBinding, [
+                this.consentDiscovery ?? grant.body.discovery,
+                !this.sealer,
+              ]) as Effect.Effect<FlowBinding, unknown>;
             }),
           ])) as FlowBinding),
           issuer: discoveryIssuer(this.consentDiscovery) ?? grant.body.issuer,
@@ -554,7 +594,10 @@ export const consentMethods = {
         const grant = (yield authInvoke(this, "openGrant", [raw])) as Grant;
         if (grant.epoch !== epoch) throw this.flowSuperseded();
         (yield authInvoke(this, "checkFlowBinding", [grant])) as void;
-        if (endpoint !== undefined && this.callback?.flow.binding?.tokenEndpoint !== String(endpoint)) {
+        if (
+          endpoint !== undefined &&
+          this.flowValue(this.callback?.flow.binding?.tokenEndpoint) !== this.flowValue(String(endpoint))
+        ) {
           throw this.flowSuperseded();
         }
         // Opening ciphertext may yield. Re-read the exact record after opening,

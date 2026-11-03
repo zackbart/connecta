@@ -682,8 +682,8 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
         })),
       );
     /**
-     * The sealed records present now: the grant's body and each consent's
-     * verifier, every one of them ciphertext.
+     * The sealed records present now: the grant's body and each pending
+     * consent's whole flow, every one of them ciphertext.
      */
     const sealedKinds = async () => {
       const kinds: string[] = [];
@@ -695,9 +695,13 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
           kinds.push("grant");
         } else if (key.includes(`:${oauthFlowKeys.prefix}`)) {
           const record = JSON.parse(value) as Record<string, unknown>;
-          if (!("verifier" in record)) continue;
-          expect(record.sealed).toBe(true);
-          kinds.push("verifier");
+          if (record.consumed === true) {
+            expect(Object.keys(record).sort()).toEqual(["at", "connectaOAuthFlow", "consumed", "epoch"]);
+            continue;
+          }
+          expect(Object.keys(record).sort()).toEqual(["at", "connectaOAuthFlow", "epoch", "record"]);
+          expect(typeof record.record).toBe("string");
+          kinds.push("flow");
         }
       }
       return kinds.sort();
@@ -711,7 +715,7 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
     const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer operator" } }));
     expect(begun.status).toBe(302);
     const authorizationUrl = begun.headers.get("Location")!;
-    expect(await sealedKinds()).toEqual(["grant", "verifier"]);
+    expect(await sealedKinds()).toEqual(["flow", "grant"]);
 
     const state = required(new URL(authorizationUrl).searchParams.get("state") ?? undefined);
     const callback = await connecta.fetch(
@@ -721,7 +725,7 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
     );
     expect(callback.status).toBe(200);
     expect(verifiers).toHaveLength(1);
-    // The claimed consent keeps no verifier.
+    // The claimed consent keeps nothing but its epoch.
     expect(await sealedKinds()).toEqual(["grant"]);
 
     for (const { value } of await stored()) {

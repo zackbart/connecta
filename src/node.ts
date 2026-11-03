@@ -8,9 +8,12 @@ import { failureRecord, logFailure } from "./operator-record.js";
 import { configureGuardedTransport } from "./guarded-transport.js";
 import { createNodeGuardedTransport } from "./http/node-transport.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
+import { ConfigError } from "./config-schema.js";
 
 /** The adapter buffers before auth, bounded by the same default as the core. */
 const DEFAULT_MAX_BODY_BYTES = CONFIG_DEFAULTS.admission.requests.maxBodyBytes;
+/** Sixteen full default bodies; well above ordinary MCP traffic, whose bodies are small. */
+const DEFAULT_MAX_IN_FLIGHT_BODY_BYTES = 64 * 1024 * 1024;
 
 export interface ListenOptions {
   port: number;
@@ -20,6 +23,13 @@ export interface ListenOptions {
   host?: string;
   /** Pre-auth buffer cap, independent of the authenticated MCP cap. Default 4 MiB. */
   maxBodyBytes?: number;
+  /**
+   * Cap on the body bytes all in-flight requests hold together, counted as
+   * each arrives and released when its response finishes or its client leaves.
+   * Past it a request is answered 503 with `Retry-After`. Default 64 MiB, or
+   * `maxBodyBytes` when larger. May not be below `maxBodyBytes`.
+   */
+  maxInFlightBodyBytes?: number;
   /**
    * Stop accepting connections on SIGTERM/SIGINT, let in-flight requests
    * finish, drain deferred work, then exit. Default true — Docker sends
@@ -32,6 +42,7 @@ export interface ListenOptions {
 }
 
 const BODY_TOO_LARGE = Symbol("body-too-large");
+const BODIES_AT_CAPACITY = Symbol("bodies-at-capacity");
 
 /** A name, IPv4 or bracketed IPv6 host with an optional port, and nothing else. */
 const REQUEST_HOST = /^(?:[a-z0-9._-]+|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
@@ -62,8 +73,9 @@ function requestUrl(req: IncomingMessage): string {
 async function toRequest(
   req: IncomingMessage,
   maxBodyBytes: number,
+  holdBodyBytes: (bytes: number) => boolean,
   signal: AbortSignal,
-): Promise<Request | typeof BODY_TOO_LARGE> {
+): Promise<Request | typeof BODY_TOO_LARGE | typeof BODIES_AT_CAPACITY> {
   const url = requestUrl(req);
   const method = req.method ?? "GET";
   const headers = new Headers();
@@ -80,6 +92,7 @@ async function toRequest(
       // Stop reading as soon as the cap is passed rather than buffering the
       // rest of a body we have already decided to reject.
       if (size > maxBodyBytes) return BODY_TOO_LARGE;
+      if (!holdBodyBytes((chunk as Buffer).length)) return BODIES_AT_CAPACITY;
       chunks.push(chunk as Buffer);
     }
     if (chunks.length) body = new Uint8Array(Buffer.concat(chunks));
@@ -116,6 +129,14 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
   const opts: ListenOptions = typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
   configureGuardedTransport(createNodeGuardedTransport(opts.proxy));
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const maxInFlightBodyBytes =
+    opts.maxInFlightBodyBytes === undefined
+      ? Math.max(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, maxBodyBytes)
+      : opts.maxInFlightBodyBytes;
+  if (!Number.isSafeInteger(maxInFlightBodyBytes) || maxInFlightBodyBytes < 1 || maxInFlightBodyBytes < maxBodyBytes) {
+    throw new ConfigError("listen: maxInFlightBodyBytes must be a whole number of bytes, at least maxBodyBytes.");
+  }
+  let inFlightBodyBytes = 0;
 
   // Node has no ExecutionContext, so deferred work (activity sinks) would
   // otherwise be an untracked floating promise. Track it here and drain it on
@@ -153,7 +174,18 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
     res.once("close", finished);
     void (async () => {
       const controller = new AbortController();
+      let heldBodyBytes = 0;
+      let bodyBytesReleased = false;
+      // Pipeline teardown can wait forever on a response stream's cancel().
+      // Release on the HTTP lifecycle too, and forbid late upload reservations.
+      const releaseBodyBytes = () => {
+        if (bodyBytesReleased) return;
+        bodyBytesReleased = true;
+        inFlightBodyBytes -= heldBodyBytes;
+        heldBodyBytes = 0;
+      };
       const abortRequest = () => {
+        releaseBodyBytes();
         if (!controller.signal.aborted) {
           controller.abort(new Error("HTTP client disconnected."));
         }
@@ -167,8 +199,27 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
       req.once("aborted", abortRequest);
       req.once("close", abortIncompleteRequest);
       res.once("close", abortIncompleteResponse);
+      res.once("finish", releaseBodyBytes);
+      res.once("close", releaseBodyBytes);
+      // A queued pipelined response gets neither finish nor close when the
+      // socket goes away, and its completed upload's request is already closed.
+      socket.once("close", abortRequest);
+      const holdBodyBytes = (bytes: number): boolean => {
+        if (bodyBytesReleased || inFlightBodyBytes + bytes > maxInFlightBodyBytes) return false;
+        inFlightBodyBytes += bytes;
+        heldBodyBytes += bytes;
+        return true;
+      };
       try {
-        const request = await toRequest(req, maxBodyBytes, controller.signal);
+        const request = await toRequest(req, maxBodyBytes, holdBodyBytes, controller.signal);
+        if (request === BODIES_AT_CAPACITY) {
+          res.statusCode = 503;
+          res.setHeader("Retry-After", "1");
+          // Abandoned mid-body, like the 413 below.
+          res.setHeader("Connection", "close");
+          res.end("Service Unavailable");
+          return;
+        }
         if (request === BODY_TOO_LARGE) {
           res.statusCode = 413;
           // The request stream was abandoned mid-body, so this connection
@@ -206,6 +257,10 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
         res.statusCode = 500;
         res.end("Internal Server Error");
       } finally {
+        releaseBodyBytes();
+        res.removeListener("finish", releaseBodyBytes);
+        res.removeListener("close", releaseBodyBytes);
+        socket.removeListener("close", abortRequest);
         req.removeListener("aborted", abortRequest);
         req.removeListener("close", abortIncompleteRequest);
         res.removeListener("close", abortIncompleteResponse);

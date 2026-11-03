@@ -1,3 +1,4 @@
+import { guidanceArm } from "../deploy/guidance.js";
 /**
  * One trial = a fresh world, a fresh deployment, one Codex conversation,
  * a grade over the fakes. A batch runs task × model × repeat through a small
@@ -40,6 +41,8 @@ interface ApprovalUse {
 }
 
 interface TrialMetrics {
+  guidanceArm?: string;
+  guideFetches?: number;
   wallMs: number;
   apiMs: number | undefined;
   modelTurns: number | undefined;
@@ -262,6 +265,25 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     }
     const surfaceNames = new Set(surface.map((tool) => tool.name));
     const metrics: TrialMetrics = {
+      ...(guidanceArm()
+        ? {
+            guidanceArm: guidanceArm()!,
+            guideFetches:
+              trace.toolUses.filter(
+                (t) =>
+                  t.tool.endsWith("skills") &&
+                  typeof t.input.name === "string" &&
+                  t.input.name.startsWith("connector:"),
+              ).length +
+              world.programs.reduce(
+                (n, p) =>
+                  n +
+                  p.calls.filter((c) => c.name === "connecta.skill" && String(c.args[0]).startsWith("connector:"))
+                    .length,
+                0,
+              ),
+          }
+        : {}),
       wallMs: run.wallMs,
       apiMs: trace.apiMs,
       modelTurns: trace.modelTurns,

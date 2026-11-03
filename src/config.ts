@@ -494,8 +494,9 @@ const connectaConfig = {
     resolve: (value) => value ?? memoryStorage(),
   }),
   /**
-   * Public base URL. Defaults to the request origin per-request. Configuring an
-   * HTTPS URL also redirects matching inbound HTTP requests to HTTPS.
+   * Public base URL. Defaults to the request origin per-request, except that
+   * clerkAuth requires it here or as its own `publicUrl`. Configuring an HTTPS
+   * URL also redirects matching inbound HTTP requests to HTTPS.
    */
   publicUrl: opaque<string>({ check: httpUrl }),
   /**
@@ -517,7 +518,10 @@ const connectaConfig = {
       }
     },
   }),
-  /** Replaceable owner-partitioned credential storage. Omit for config-owned secrets. */
+  /**
+   * Replaceable owner-partitioned credential storage. Omit for config-owned
+   * secrets. With any OAuth connector it must implement `seal` and `open`.
+   */
   vault: opaque<CredentialVault>({
     check: (value) => {
       if (
@@ -691,10 +695,25 @@ function assertCoherent(config: Parsed): void {
   ) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
   }
+  const { vault } = config;
+  const oauth = config.connectors.find((connector) => connector.startAuth);
+  if (oauth && vault && (typeof vault.seal !== "function" || typeof vault.open !== "function")) {
+    throw new ConfigError(
+      `ConnectaConfig.vault must implement both seal and open: connector "${oauth.id}" stores downstream OAuth ` +
+        "tokens, client registration and PKCE verifiers through it. Use encryptedCredentialVault(storage, key) " +
+        "from @zackbart/connecta/credentials, or add both methods.",
+    );
+  }
   if (config.agents.some((agent) => !agent.vercel) && !config.accessTokens) {
     throw new ConfigError(
       "ConnectaConfig.agents needs accessTokens: accessTokens(storage) from @zackbart/connecta/auth/access-tokens " +
         "holds each agent's token slot.",
+    );
+  }
+  if (!config.publicUrl && config.auth.some((provider) => provider.requiresPublicUrl)) {
+    throw new ConfigError(
+      "ConnectaConfig.publicUrl is required with clerkAuth, which checks tokens and sessions against it: " +
+        "set it, or clerkAuth({ publicUrl }), to this deployment's URL, http://localhost:<port> for local development.",
     );
   }
 }

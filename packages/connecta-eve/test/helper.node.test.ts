@@ -18,7 +18,13 @@ import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { api } from "../../../src/connectors/api.js";
 import { memoryStorage } from "../../../src/storage/memory.js";
-import { connectaConnection, connectaEndpoint, connectaInstructions, gateConnectaWrites } from "../src/index.js";
+import {
+  connectaConnection,
+  connectaEndpoint,
+  connectaInstructions,
+  connectaSkill,
+  gateConnectaWrites,
+} from "../src/index.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -290,6 +296,7 @@ it("loads scoped instructions from a real local Connecta agent endpoint", async 
     pools: { assistant: { description: "CRM for the assistant", members: ["agent:assistant"], tools: ["crm"] } },
     connectors: [
       api("crm", {
+        usageGuide: "Use stable CRM ids.",
         tools: [
           { name: "read", description: "Read CRM", annotations: { readOnlyHint: true }, handler: () => ({ ok: true }) },
         ],
@@ -323,6 +330,21 @@ it("loads scoped instructions from a real local Connecta agent endpoint", async 
     const instructions = connectaInstructions({ url, pool: "assistant", getToken: () => token });
     const result = await turn(instructions);
     expect(result?.content).toContain("CRM for the assistant");
+    const skill = connectaSkill({
+      url,
+      pool: "assistant",
+      getToken: () => token,
+      name: "connector:crm",
+      description: "CRM conventions",
+    });
+    const frame = {
+      memo: async (_key: unknown, fn: (ctx: unknown) => unknown) => fn({ abortSignal: new AbortController().signal }),
+      turn: { id: "real" },
+    } as unknown as DynamicContext;
+    expect(await dynamicEvaluate(skill)(frame)).toMatchObject({
+      deferred: true,
+      content: expect.stringContaining("Use stable CRM ids."),
+    });
     expect(Object.getOwnPropertySymbols(instructions).some((s) => String(s).includes("eve."))).toBe(true);
     expect(await turn(connectaInstructions({ url, pool: "assistant", getToken: () => "cta_invalid" }))).toBeNull();
   } finally {
@@ -330,4 +352,35 @@ it("loads scoped instructions from a real local Connecta agent endpoint", async 
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await app.close();
   }
+});
+
+it("projects opt-in deferred skills through real Eve with caller policy before any fetch", async () => {
+  let allowed = false;
+  const fetcher = vi.fn<typeof fetch>(async () =>
+    Response.json({ result: { content: [{ type: "text", text: "Use stable CRM ids." }] } }),
+  );
+  const skill = connectaSkill({
+    url: "https://connecta.example.com",
+    pool: "crm",
+    name: "connector:crm",
+    description: "CRM conventions",
+    getToken: () => "cta_test",
+    when: () => allowed,
+    fetch: fetcher,
+  });
+  const resolve = dynamicEvaluate(skill);
+  const frame = {
+    memo: async (_key: unknown, fn: (ctx: unknown) => unknown) => fn({ abortSignal: new AbortController().signal }),
+    turn: { id: "one" },
+  } as unknown as DynamicContext;
+  expect(await resolve(frame)).toBeNull();
+  expect(fetcher).not.toHaveBeenCalled();
+  allowed = true;
+  const projected = await resolve(frame);
+  expect(projected).toMatchObject({ deferred: true, description: "CRM conventions", content: "Use stable CRM ids." });
+  expect(projected).not.toHaveProperty("tools");
+  expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string)).toMatchObject({
+    method: "tools/call",
+    params: { name: "skills", arguments: { name: "connector:crm" } },
+  });
 });

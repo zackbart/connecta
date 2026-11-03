@@ -1106,3 +1106,33 @@ PATCH commits then answers HTTP 500. The graders use state, HTTP requests and
 final answers across either surface. No vendor account is used. The historical
 #801 fake replies remain unchanged. Paired evidence lives in
 [the Cloudflare notes](baselines/notes-cloudflare-step2.md).
+
+## Guidance delivery comparison (not yet measured)
+
+`CONNECTA_EVAL_GUIDANCE` selects an eval-only intervention on the Node six-tool
+surface. `pointer` removes guide summaries; `summary` retains them; `inline`
+replaces the summary with the full prerequisite convention; `instruction-fetch`
+removes summaries and instructs the agent to fetch the relevant guide first.
+All retain the same guide pointer, tools, fake state, and outcome grading.
+The initial comparison covers the RevenueCat and Supabase prerequisite guides;
+it does not measure arbitrary provider guides or native host skill discovery.
+
+Run `pnpm run eval:selftest` for deterministic delivery controls without a model.
+For an optional paid comparison, select the prerequisite task ids from
+`eval/tasks/` and run the same tasks and model in every arm:
+
+```sh
+for arm in pointer summary inline instruction-fetch; do
+  CONNECTA_EVAL_GUIDANCE="$arm" pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --target node --surface six --grading outcome --tasks p5-revenuecat-text,p5-supabase-project-ref --repeats 3 --concurrency 1 --max-budget-usd 1 --out "eval/results/guidance-$arm.json"
+done
+```
+
+Budget roughly $24 for two tasks × three repeats × four arms at the $1/trial
+ceiling (actual usage varies; interrupted and failed work still costs). No
+paid trials were run to build these arms. Keep baseline files unchanged.
+Record outcome checks as answer quality, `metrics.tokens`, `metrics.metaTools`
+and `metrics.downstream` as call counts, and `metrics.guideFetches` for actual
+skills-tool or guest skill requests. Guide fetch rate is trials with at least
+one fetch divided by completed trials. Missing trials, interrupted conversations,
+fabricated answers and duplicate writes retain the existing fail-closed controls;
+never count an unavailable trial as a pass.

@@ -46,7 +46,9 @@ export interface CredentialVault {
    * Encrypt downstream OAuth state (tokens, a registered client, a PKCE
    * verifier) before it enters storage. `purpose` is the storage key the value
    * is written under, so the result is bound to one connector, owner, and key.
-   * Without both `seal` and `open`, that state is stored as plaintext.
+   * Construction refuses a vault without both `seal` and `open` when any
+   * connector has `startAuth`, so that state is never left plaintext beside
+   * credentials this vault encrypts.
    */
   seal?(connectorId: string, purpose: string, plaintext: string, owner?: string): Promise<string>;
   /** Sign browser OAuth handoffs with a purpose-specific key; nothing is stored. */
