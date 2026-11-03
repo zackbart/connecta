@@ -51,6 +51,7 @@ import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
 import {
+  portCollisionControls,
   comparatorTargetControls,
   egressGuardControls,
   injectionControls,
@@ -61,6 +62,8 @@ import {
 } from "./tasks/worker-controls.js";
 import { fakeTransportInterleaving, fakeTransportRedirects, restTransportControls } from "./tasks/rest-controls.js";
 
+await portCollisionControls();
+console.log("ok   startup collisions recover before serving; failed join reads stop before posting");
 await gatewayControls();
 await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");

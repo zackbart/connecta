@@ -1,5 +1,14 @@
 # Agent evaluations
 
+Eval commands acquire a checkout-local runtime lock before importing the package.
+Builds and same-checkout eval commands wait for the active run to finish so builds cannot replace
+`dist/` beneath another eval. Use separate checkouts for parallel runs. Nested builds reuse the owning eval
+lease; independent builds wait for it. After a hard kill,
+check the PID in `node_modules/.cache/connecta-eval-runtime.lock/owner` before
+removing a stale lock. Node and fake listeners bind port 0. Child deployments
+that need a public URL before startup retry bind collisions at most three times,
+only during initial startup. Wrangler assigns its inspector port itself.
+
 ## Required behavioral checks
 
 Two commands run on every PR in CI's `behavior` job. Neither needs a login,
