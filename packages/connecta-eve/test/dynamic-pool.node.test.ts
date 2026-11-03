@@ -259,6 +259,16 @@ it("fails the turn for an invalid or throwing selector, even after cached guidan
         : { instructions: connectaInstructions({ url, pool: () => "" }) },
     );
     await expect(empty.evaluate()).rejects.toThrow("must match");
+    // Neither may a selector that returns nothing at runtime.
+    const missing = (() => undefined) as unknown as () => string;
+    const absent = eveSession(
+      kind === "connection"
+        ? {
+            connection: connectaConnection({ url, description: "Notes", pool: missing }),
+          }
+        : { instructions: connectaInstructions({ url, pool: missing }) },
+    );
+    await expect(absent.evaluate()).rejects.toThrow("must match");
   }
 });
 

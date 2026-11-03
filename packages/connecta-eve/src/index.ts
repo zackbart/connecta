@@ -113,8 +113,13 @@ export function connectaConnection(options: ConnectaConnectionOptions) {
   if (typeof pool === "function" || options.when) {
     return defineDynamicConnection(async (ctx) => {
       if (!(await enabled(options.when, ctx))) return null;
-      const selected = typeof pool === "function" ? await pool(ctx) : pool;
-      if (selected !== undefined) validatePool(selected);
+      // Only a static `pool` may be omitted; connectaEndpoint validates it. A
+      // selector must name a valid pool, or the turn fails instead of using the base URL.
+      let selected = pool as string | undefined;
+      if (typeof pool === "function") {
+        selected = await pool(ctx);
+        validatePool(selected);
+      }
       return connectionDefinition(
         options,
         connectaEndpoint({ ...rest, ...(selected === undefined ? {} : { pool: selected }) }),
