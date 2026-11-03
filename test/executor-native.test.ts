@@ -138,8 +138,15 @@ describe.skipIf(!inWorkerd)("Worker native resource ownership", () => {
     const host = dispatcher.call("wait", "[]");
     await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
     lease.release();
-    expect(JSON.parse(await host)).toMatchObject({ result: { ok: false } });
-    expect(JSON.parse(await dispatcher.call("wait", "[]"))).toMatchObject({ result: { ok: false } });
+    // Upstream 0.5.5+ refuses through its own call gate once the lease ends;
+    // earlier releases refuse through the detached forwarder. Either way the
+    // guest sees a failure and the host is never called again.
+    const refused = (reply: string) => {
+      const value = JSON.parse(reply) as { result?: { ok?: unknown }; error?: unknown };
+      return value.result?.ok === false || typeof value.error === "string";
+    };
+    expect(refused(await host)).toBe(true);
+    expect(refused(await dispatcher.call("wait", "[]"))).toBe(true);
     expect(called).toHaveBeenCalledOnce();
     await pending;
     await h.executor.close?.();
@@ -190,6 +197,31 @@ const nativeLoader = inWorkerd
       return env.LOADER;
     })()
   : undefined;
+describe.skipIf(!nativeLoader)("Worker host calls on the native Worker Loader", () => {
+  it("INV-7: the upstream call gate stays open while a program awaits sequential and parallel host calls", async () => {
+    if (!workerModule || !nativeLoader) throw new Error("Worker tests require workerd and its Loader.");
+    const read = vi.fn(async (...args: unknown[]) => {
+      const value = Number(args[0]);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return value;
+    });
+    const executor = workerModule.workerExecutor({ loader: nativeLoader });
+    const outcome = await executor.execute(
+      `async () => {
+        const first = await host.read(1);
+        const second = await host.read(2);
+        const [third, fourth] = await Promise.all([host.read(3), host.read(4)]);
+        return first + second + third + fourth;
+      }`,
+      [{ name: "host", fns: { read } }],
+    );
+    expect(outcome).toMatchObject({ result: 10 });
+    expect(outcome.error).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(4);
+    await executor.close?.();
+  });
+});
+
 describe.skipIf(!nativeLoader)("Worker shutdown on the native Worker Loader", () => {
   it("INV-7: a slot granted just before close() never starts its program", async () => {
     if (!workerModule || !nativeLoader) throw new Error("Worker tests require workerd and its Loader.");

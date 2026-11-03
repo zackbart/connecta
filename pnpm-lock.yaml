@@ -190,7 +190,7 @@ importers:
         version: 3.12.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@cloudflare/codemode':
         specifier: ^0.5.0
-        version: 0.5.4(zod@4.6.7)
+        version: 0.5.6(zod@4.6.7)
       '@cloudflare/vitest-plugin':
         specifier: ^1.4.3
         version: 1.4.3(@cloudflare/workers-types@5.20260804.1)(@types/node@22.20.5)(vitest@5.0.4(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0)))
@@ -345,11 +345,11 @@ packages:
       react-dom:
         optional: true
 
-  '@cloudflare/codemode@0.5.4':
-    resolution: {integrity: sha512-/iyoiYNKYai961R1m704hmLbzg280C7ut3zZ2GIgaA1VSQMetjUmsS2t9YPCuLu2TZ8bOSoUtEz9UmNS4QmbFQ==}
+  '@cloudflare/codemode@0.5.6':
+    resolution: {integrity: sha512-86CoZvDrXWpcmieDoFqHvt1NWt3F75LnsxlUteIzftbU2GZCoLn3yB4n7Jd+7OcMfsA4lNxDBrNcOYcBuINv7A==}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.0
-      '@tanstack/ai': '>=0.8.0 <1.0.0'
+      '@tanstack/ai': '>=0.8.0 <2.0.0'
       ai: ^6.0.0 || ^7.0.0
       zod: ^4.0.0
     peerDependenciesMeta:
@@ -3361,7 +3361,7 @@ snapshots:
       react: 19.3.1
       react-dom: 19.3.1(react@19.3.1)
 
-  '@cloudflare/codemode@0.5.4(zod@4.6.7)':
+  '@cloudflare/codemode@0.5.6(zod@4.6.7)':
     dependencies:
       '@types/json-schema': 7.0.15
       acorn: 8.19.0
