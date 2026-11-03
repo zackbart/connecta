@@ -115,7 +115,7 @@ export const drive = defineApiProvider<DriveOptions>({
       `Connection purpose: ${options.purpose}`,
       "Acts as the Workspace user deployment config maps from the admitted caller or pool owner. No caller argument selects an account. An unmapped or ownerless caller has no access unless the deployment fixes a shared account.",
     ],
-    summary: "Each caller's Drive files, bounded content, recoverable trash and quiet sharing.",
+    summary: "Load for Drive file discovery, bounded content, recoverable trash and sharing.",
     required: true,
   }),
   tools: driveTools,

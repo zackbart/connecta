@@ -61,6 +61,11 @@ authenticated `admission.requests.maxBodyBytes` default. To accept larger MCP
 bodies, configure both core and `listen(..., { maxBodyBytes })`; a smaller
 platform, proxy or adapter cap still wins. See
 [request body limits](./architecture.md#admission-in-two-places).
+`listen()` answers `400` with `Connection: close`, before reading any body, when
+`Host` is anything but a host with an optional port, when `X-Forwarded-Proto` is
+anything but `http` or `https`, or when the request target does not start with
+`/`. A reverse proxy must overwrite `X-Forwarded-Proto` with one value; a
+comma-separated chain such as `https,http` is refused.
 A Node host serving `connecta.fetch` without `listen()` has no owned sender:
 every maintained-provider write, every reviewed POST read and every remote MCP
 write is refused before sending. Downstream OAuth credential POSTs also require

@@ -92,7 +92,7 @@ export const quickbooks = defineApiProvider<QuickBooksOptions>({
         : "This connection is read-only. Set readOnly: false in deployment code to enable bounded named writes.",
       "Contact details, bank/card/tax identifiers, credentials and private links are withheld on every read.",
     ],
-    summary: "QuickBooks Online accounting reads and explicitly enabled customer/service-invoice writes.",
+    summary: "Load for QuickBooks accounting reads and enabled customer or service-invoice writes.",
     required: true,
   }),
   hatch: {

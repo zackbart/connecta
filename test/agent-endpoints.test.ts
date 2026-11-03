@@ -328,6 +328,7 @@ describe("agent endpoint admission", () => {
     const bot = await issueAgentToken(storage, "bot");
     const refused = await rpc(c, "/agent/readers", bot, "call_destructive_tool", { address: "notes.delete", args: {} });
     expect(JSON.stringify(refused)).toContain("read_only_endpoint");
+    expect(JSON.stringify(refused)).toContain("No write route exists on this endpoint");
     expect(await searchText(c, "/agent/readers", bot)).not.toContain("notes.delete");
     expect(deleted.count).toBe(0);
     const written = await rpc(c, "/agent/writers", bot, "call_destructive_tool", { address: "notes.delete", args: {} });

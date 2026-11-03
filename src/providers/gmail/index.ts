@@ -144,7 +144,7 @@ export const gmail = defineApiProvider<GmailOptions>({
       "A missing subject fails auth_required; ask the operator to repair configuration after an auth failure.",
       ...(options.readOnly ? ["This connection is read-only; draft writes are refused."] : []),
     ],
-    summary: "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
+    summary: "Load for Gmail search, capped message bodies, threaded replies and drafts that never send.",
     required: true,
   }),
   tools: gmailTools,

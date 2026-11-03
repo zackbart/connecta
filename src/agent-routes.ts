@@ -29,54 +29,9 @@
 import { Context } from "effect";
 import type { AgentRouteNames } from "./types.js";
 
-/**
- * `meta`: the six meta-tools. `code`: in-program wording, selected only by the
- * eval code arm. `native` and `native-code`: native pools without and with
- * `execute_code`.
- */
+import { META_ROUTES, routeNames } from "./route-names.js";
+export { META_ROUTES, routeNames } from "./route-names.js";
 export type RouteSurface = "meta" | "code" | "native" | "native-code";
-
-const NAMES: Readonly<Record<RouteSurface, AgentRouteNames>> = {
-  meta: Object.freeze({
-    search: "search_tools",
-    read: "call_tool",
-    write: "call_destructive_tool",
-    program: "execute_code",
-    authorize: "authorize_connector",
-    skills: "skills",
-  }),
-  code: Object.freeze({
-    search: "connecta.search inside execute_code",
-    read: "connecta.call inside execute_code",
-    write: "connecta.call inside execute_code",
-    program: "execute_code",
-    authorize: "authorize_connector",
-    skills: "skills",
-  }),
-  native: Object.freeze({
-    search: "your host's tool search",
-    read: "the original native tool",
-    write: "the original native tool",
-    program: "your host's tool search",
-    authorize: "the returned authorization handoff",
-    skills: "skills",
-  }),
-  "native-code": Object.freeze({
-    search: "your host's tool search",
-    read: "the original native tool",
-    write: "the original native tool",
-    program: "execute_code",
-    authorize: "the returned authorization handoff",
-    skills: "skills",
-  }),
-};
-
-/** The six-tool surface's names: the default wherever no other surface applies. */
-export const META_ROUTES: AgentRouteNames = NAMES.meta;
-
-export function routeNames(surface: RouteSurface): AgentRouteNames {
-  return NAMES[surface];
-}
 
 /** The names for the surface a connector operation serves; meta for contexts Connecta did not build. */
 export function routesOf(ctx: { routes?: AgentRouteNames | undefined } | undefined): AgentRouteNames {
@@ -171,7 +126,7 @@ const PHRASES: Readonly<Record<RouteSurface, RoutePhrases>> = {
 };
 
 const SURFACES = new Map<AgentRouteNames, RouteSurface>(
-  (Object.keys(NAMES) as RouteSurface[]).map((surface) => [NAMES[surface], surface]),
+  (["meta", "code", "native", "native-code"] as RouteSurface[]).map((surface) => [routeNames(surface), surface]),
 );
 
 /** The surface a names table belongs to; meta for a table Connecta did not build. */
@@ -286,5 +241,5 @@ export function renderRoutesAsPrograms(config: object): void {
 
 /** The names every reply of a deployment built from `config` uses outside native pools. */
 export function deploymentRoutes(config: object): AgentRouteNames {
-  return programRouteConfigs.has(config) ? NAMES.code : NAMES.meta;
+  return programRouteConfigs.has(config) ? routeNames("code") : META_ROUTES;
 }
