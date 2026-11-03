@@ -201,6 +201,9 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
       res.once("close", abortIncompleteResponse);
       res.once("finish", releaseBodyBytes);
       res.once("close", releaseBodyBytes);
+      // A queued pipelined response gets neither finish nor close when the
+      // socket goes away, and its completed upload's request is already closed.
+      socket.once("close", abortRequest);
       const holdBodyBytes = (bytes: number): boolean => {
         if (bodyBytesReleased || inFlightBodyBytes + bytes > maxInFlightBodyBytes) return false;
         inFlightBodyBytes += bytes;
@@ -257,6 +260,7 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
         releaseBodyBytes();
         res.removeListener("finish", releaseBodyBytes);
         res.removeListener("close", releaseBodyBytes);
+        socket.removeListener("close", abortRequest);
         req.removeListener("aborted", abortRequest);
         req.removeListener("close", abortIncompleteRequest);
         res.removeListener("close", abortIncompleteResponse);

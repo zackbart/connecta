@@ -219,6 +219,17 @@ describe("Node listen adapter", () => {
           upload.socket.destroy();
           await vi.waitFor(async () => expect(await probe(700)).toBe(200));
         }
+        // A queued pipelined response sees no close of its own when the socket
+        // drops, and both uploads have already completed.
+        const pipelined = connect(address.port, "127.0.0.1");
+        sockets.push(pipelined);
+        await once(pipelined, "connect");
+        const message = (size: number) =>
+          `POST ${path}/held HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${size}\r\n\r\n${" ".repeat(size)}`;
+        pipelined.write(message(600) + message(900));
+        await vi.waitFor(async () => expect(await probe(1)).toBe(503));
+        pipelined.destroy();
+        await vi.waitFor(async () => expect(await probe(1024)).toBe(200));
       } finally {
         for (const socket of sockets) socket.destroy();
         finishCancel();
