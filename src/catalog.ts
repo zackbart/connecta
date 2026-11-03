@@ -197,8 +197,9 @@ interface SearchView {
   tools: ReadonlyMap<number, ToolDef>;
 }
 const searchIndexes = new WeakMap<ToolDef[], SearchView>();
-// Only immutable token strings and numeric positions cross requests. The full
-// content key avoids hash collisions and charges its UTF-16 storage as well.
+// Only immutable token strings and numeric positions cross requests. The key
+// holds exactly what buildIndex reads, in order, so schemas cost nothing here;
+// it avoids hash collisions and charges its UTF-16 storage as well.
 const retainedIndexes = new Map<string, { index: SearchIndex; bytes: number }>();
 const INDEX_BYTES = 8 * 1024 * 1024;
 let retainedBytes = 0;
@@ -243,7 +244,7 @@ function bindIndex(tools: ToolDef[], index: SearchIndex): SearchView {
 /** Only call after complete catalog acceptance, redaction and classification. */
 export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void {
   if (searchIndexes.has(tools)) return;
-  const key = JSON.stringify([partition, tools]);
+  const key = JSON.stringify([partition, tools.map((tool) => [tool.name, tool.description ?? ""])]);
   const retained = retainedIndexes.get(key);
   if (retained) {
     bindIndex(tools, retained.index);

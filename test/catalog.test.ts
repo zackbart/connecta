@@ -365,7 +365,7 @@ describe("request-free lexical reuse", () => {
     expect(tokenize).toHaveBeenCalled();
     tokenize.mockRestore();
     const oversized = catalog();
-    oversized[0]!.inputSchema = { description: "x".repeat(4 * 1024 * 1024) };
+    oversized[0]!.description = "x".repeat(4 * 1024 * 1024);
     prepareLexicalCatalog(oversized, "oversized");
     const fresh = structuredClone(oversized);
     const again = vi.spyOn(String.prototype, "toLowerCase");
@@ -373,17 +373,27 @@ describe("request-free lexical reuse", () => {
     expect(again).toHaveBeenCalled();
     again.mockRestore();
   });
-  it("does not reuse changed descriptions, classification, schema or order", () => {
+  it("keeps positions over changed classification and schema, which the index never reads", () => {
+    prepareLexicalCatalog(catalog(), "crm:alice:g5");
+    const tools = catalog();
+    tools[0]!.classification = "write";
+    tools[0]!.inputSchema = { type: "object", required: ["id"] };
+    const tokenize = vi.spyOn(String.prototype, "toLowerCase");
+    prepareLexicalCatalog(tools, "crm:alice:g5");
+    expect(tokenize).not.toHaveBeenCalled();
+    tokenize.mockRestore();
+    const ranked = rankTools(tools, "ticket", "partial");
+    expect(ranked).toEqual(rankTools(structuredClone(tools), "ticket", "partial"));
+    for (const match of ranked) expect(tools).toContain(match.tool);
+  });
+  it("does not reuse changed names, descriptions or order", () => {
     prepareLexicalCatalog(catalog(), "crm:alice:g4");
     for (const change of [
       (tools: ToolDef[]) => {
         tools[0]!.description = "Invoices only";
       },
       (tools: ToolDef[]) => {
-        tools[0]!.classification = "write";
-      },
-      (tools: ToolDef[]) => {
-        tools[0]!.inputSchema = { type: "object", required: ["id"] };
+        tools[0]!.name = "get_invoice";
       },
       (tools: ToolDef[]) => {
         tools.reverse();
