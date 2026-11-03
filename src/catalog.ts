@@ -172,20 +172,18 @@ export function lexicalSearchContent(query: string): string {
 }
 
 interface SearchDocument {
-  tool: ToolDef;
   name: string;
-  nameTokens: string[];
-  descriptionTokens: string[];
+  nameTokens: readonly string[];
+  descriptionTokens: readonly string[];
 }
 
 interface SearchIndex {
-  documents: SearchDocument[];
-  nameTokenDocuments: ReadonlyMap<string, readonly ToolDef[]>;
-  descriptionTokenDocuments: ReadonlyMap<string, readonly ToolDef[]>;
+  documents: readonly SearchDocument[];
+  nameTokenDocuments: ReadonlyMap<string, readonly number[]>;
+  descriptionTokenDocuments: ReadonlyMap<string, readonly number[]>;
 }
 
 export type LexicalMatchMode = "all" | "partial";
-
 export interface RankedTool {
   tool: ToolDef;
   score: number;
@@ -194,40 +192,97 @@ export interface RankedTool {
   matchedTermCount: number;
 }
 
-const searchIndexes = new WeakMap<ToolDef[], SearchIndex>();
+interface SearchView {
+  index: SearchIndex;
+  tools: ReadonlyMap<number, ToolDef>;
+}
+const searchIndexes = new WeakMap<ToolDef[], SearchView>();
+// Only immutable token strings and numeric positions cross requests. The key
+// holds exactly what buildIndex reads, in order, so schemas cost nothing here;
+// it avoids hash collisions and charges its UTF-16 storage as well.
+const retainedIndexes = new Map<string, { index: SearchIndex; bytes: number }>();
+const INDEX_BYTES = 8 * 1024 * 1024;
+let retainedBytes = 0;
 
-function indexFor(tools: ToolDef[]): SearchIndex {
-  let index = searchIndexes.get(tools);
-  if (!index) {
-    const nameTokenDocuments = new Map<string, ToolDef[]>();
-    const descriptionTokenDocuments = new Map<string, ToolDef[]>();
-    const addTokens = (target: Map<string, ToolDef[]>, tokens: string[], tool: ToolDef) => {
-      for (const token of new Set(tokens)) {
-        const documents = target.get(token) ?? [];
-        documents.push(tool);
-        target.set(token, documents);
-      }
-    };
-    const documents = tools.map((tool) => {
-      const nameTokens = lexicalTokens(tool.name);
-      const descriptionTokens = lexicalTokens(tool.description ?? "");
-      addTokens(nameTokenDocuments, nameTokens, tool);
-      addTokens(descriptionTokenDocuments, descriptionTokens, tool);
-      return {
-        tool,
-        name: nameTokens.join(" "),
-        nameTokens,
-        descriptionTokens,
-      };
+function buildIndex(tools: ToolDef[]): SearchIndex {
+  const nameTokenDocuments = new Map<string, number[]>();
+  const descriptionTokenDocuments = new Map<string, number[]>();
+  const addTokens = (target: Map<string, number[]>, tokens: string[], position: number) => {
+    for (const token of new Set(tokens)) {
+      const documents = target.get(token) ?? [];
+      documents.push(position);
+      target.set(token, documents);
+    }
+  };
+  const documents = tools.map((tool, position) => {
+    const nameTokens = lexicalTokens(tool.name);
+    const descriptionTokens = [...new Set(lexicalTokens(tool.description ?? ""))];
+    addTokens(nameTokenDocuments, nameTokens, position);
+    addTokens(descriptionTokenDocuments, descriptionTokens, position);
+    return Object.freeze({
+      name: nameTokens.join(" "),
+      nameTokens: Object.freeze(nameTokens),
+      descriptionTokens: Object.freeze(descriptionTokens),
     });
-    index = {
-      documents,
-      nameTokenDocuments,
-      descriptionTokenDocuments,
-    };
-    searchIndexes.set(tools, index);
+  });
+  for (const map of [nameTokenDocuments, descriptionTokenDocuments])
+    for (const positions of map.values()) Object.freeze(positions);
+  // Maps remain private to this module and are never mutated after construction.
+  return Object.freeze({
+    documents: Object.freeze(documents),
+    nameTokenDocuments,
+    descriptionTokenDocuments,
+  });
+}
+
+function bindIndex(tools: ToolDef[], index: SearchIndex): SearchView {
+  const view = { index, tools: new Map(tools.map((tool, position) => [position, tool])) };
+  searchIndexes.set(tools, view);
+  return view;
+}
+
+/** Only call after complete catalog acceptance, redaction and classification. */
+export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void {
+  if (searchIndexes.has(tools)) return;
+  const key = JSON.stringify([partition, tools.map((tool) => [tool.name, tool.description ?? ""])]);
+  const retained = retainedIndexes.get(key);
+  if (retained) {
+    bindIndex(tools, retained.index);
+    return;
   }
-  return index;
+  const index = buildIndex(tools);
+  bindIndex(tools, index);
+  let bytes = key.length * 2 + 128;
+  for (const doc of index.documents) {
+    bytes += 128 + doc.name.length * 2;
+    for (const tokens of [doc.nameTokens, doc.descriptionTokens])
+      for (const token of tokens) bytes += 32 + token.length * 2;
+  }
+  for (const map of [index.nameTokenDocuments, index.descriptionTokenDocuments])
+    for (const [token, positions] of map) bytes += 96 + token.length * 2 + positions.length * 8;
+  if (bytes > INDEX_BYTES) return;
+  while (retainedIndexes.size >= 4 || retainedBytes + bytes > INDEX_BYTES) {
+    const oldest = retainedIndexes.keys().next().value!;
+    retainedBytes -= retainedIndexes.get(oldest)!.bytes;
+    retainedIndexes.delete(oldest);
+  }
+  retainedIndexes.set(key, { index, bytes });
+  retainedBytes += bytes;
+}
+
+/** Project immutable positions onto this request's currently visible objects. */
+export function carryLexicalCatalog(source: ToolDef[], visible: ToolDef[]): void {
+  const view = searchIndexes.get(source);
+  if (!view || source === visible) return;
+  const allowed = new Set(visible);
+  searchIndexes.set(visible, {
+    index: view.index,
+    tools: new Map([...view.tools].filter(([, tool]) => allowed.has(tool))),
+  });
+}
+
+function indexFor(tools: ToolDef[]): SearchView {
+  return searchIndexes.get(tools) ?? bindIndex(tools, buildIndex(tools));
 }
 
 /**
@@ -333,11 +388,13 @@ export function lexicalCorpusStatistics(
     for (const tools of toolSets) {
       const index = indexFor(tools);
       for (const candidate of synonymCandidates(term, synonymsFor?.(tools))) {
-        for (const tool of index.nameTokenDocuments.get(candidate) ?? []) {
-          termNameMatches.add(tool);
+        for (const position of index.index.nameTokenDocuments.get(candidate) ?? []) {
+          const tool = index.tools.get(position);
+          if (tool) termNameMatches.add(tool);
         }
-        for (const tool of index.descriptionTokenDocuments.get(candidate) ?? []) {
-          termDescriptionMatches.add(tool);
+        for (const position of index.index.descriptionTokenDocuments.get(candidate) ?? []) {
+          const tool = index.tools.get(position);
+          if (tool) termDescriptionMatches.add(tool);
         }
       }
     }
@@ -364,7 +421,7 @@ function inverseDocumentFrequency(term: string, statistics: LexicalCorpusStatist
 }
 
 function scoreDocument(
-  doc: SearchDocument,
+  doc: SearchDocument & { tool: ToolDef },
   phrase: string,
   terms: string[],
   mode: LexicalMatchMode,
@@ -423,13 +480,18 @@ export function rankTools(
   const exactNamePhrase = normalized(exactNameQuery);
   const terms = [...new Set(phrase.split(/\s+/).filter(Boolean))];
   const ranked: RankedTool[] = [];
-  indexFor(tools).documents.forEach((doc, order) => {
-    const scored = scoreDocument(doc, phrase, terms, mode, statistics);
+  const view = indexFor(tools);
+  let order = 0;
+  view.index.documents.forEach((doc, position) => {
+    const tool = view.tools.get(position);
+    if (!tool) return;
+    const visibleOrder = order++;
+    const scored = scoreDocument({ ...doc, tool }, phrase, terms, mode, statistics);
     if (scored !== null) {
       ranked.push({
-        tool: doc.tool,
+        tool,
         score: scored.score,
-        order,
+        order: visibleOrder,
         exactName: queryContainsExactName(doc, exactNamePhrase),
         matchedTermCount: scored.matchedTermCount,
       });

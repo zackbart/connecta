@@ -114,7 +114,7 @@ export const docs = defineApiProvider<DocsOptions>({
       "Workspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; document access follows that user's Drive sharing.",
       ...(options.readOnly ? ["This connection is read-only."] : []),
     ],
-    summary: "Docs by id: tabs, UTF-16 edit indexes, revisions and partial-create recovery.",
+    summary: "Load for Docs tabs, UTF-16 edit indexes, revision checks and partial-create recovery.",
     required: true,
   }),
   hatch: {

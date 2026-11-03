@@ -1,5 +1,5 @@
 import { prepareExecuteResultForTransport } from "../executor-result.js";
-import { InvocationFailure } from "../invocation.js";
+import { InvocationFailure } from "../invocation-failure.js";
 import { msg } from "../errors.js";
 import type { ExecutorProvider } from "../types.js";
 import {

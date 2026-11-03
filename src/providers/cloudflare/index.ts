@@ -168,8 +168,7 @@ function usageGuide(options: Readonly<CloudflareOptions>): ProviderGuideInput {
   const { auth, accountId, zoneId, pin } = settings(options);
   return {
     heading: "Cloudflare usage",
-    summary:
-      "Configured Cloudflare REST credential: resolve domain/account ids, then inspect DNS, Workers, R2, KV or analytics.",
+    summary: "Load for Cloudflare DNS, Workers, R2, KV and analytics; resolve account and zone ids before calls.",
     context: [
       `Connector purpose: ${options.purpose}`,
       `This connection already has an operator-configured ${auth === "apiToken" ? "scoped API token" : "Global API Key"}; there is no sign-in step.`,
