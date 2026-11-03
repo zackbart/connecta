@@ -20,7 +20,7 @@ import { api } from "../src/connectors/api.js";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
 import { d1ActivityStore, d1Storage, type D1DatabaseBinding } from "../src/d1.js";
 import { agentAdmissionFixture, issueAgentToken } from "./helpers/agent-tokens.js";
-import { accessTokens } from "../src/access-tokens.js";
+import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
@@ -1245,7 +1245,7 @@ const BUDGETS = {
   "UI stored detail, oauth": { downstream: 0, roundTrips: 3, statements: 3 },
 };
 
-it("pins warm agent admission and observation to two D1 reads, without a catalog", async () => {
+it("pins warm agent admission and observation to one D1 read, without a catalog", async () => {
   const d1 = counted();
   const storage = d1.storage();
   const token = await issueAgentToken(storage, "assistant");
@@ -1254,8 +1254,10 @@ it("pins warm agent admission and observation to two D1 reads, without a catalog
     expect((await ping(token)).status).toBe(200);
     d1.reset();
     expect((await ping(token)).status).toBe(200);
-    expect(d1.count.roundTrips).toBe(2);
-    expect(d1.count.statements).toBe(2);
+    expect(d1.count.roundTrips).toBe(1);
+    expect(d1.count.statements).toBe(1);
+    await new AccessTokenManager(storage, { agents: ["assistant"] }).revoke("assistant");
+    expect((await ping(token)).status).toBe(401);
   } finally {
     await app.close();
   }

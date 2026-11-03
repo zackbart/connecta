@@ -3926,3 +3926,8 @@ cache. Exact authored names and complete authored matches precede API pointers;
 ordinary result limits, offsets, catalog failure disclosure and byte bounds apply.
 The published discovery contract states compilation, query and cache bounds.
 No request identity, signal, credential or promise enters a vocabulary cache.
+
+Admission observation sampling retains at most 256 scalar deadlines per live
+physical storage identity in an isolate. Only a recent valid stored timestamp
+or confirmed CAS populates it, for at most one minute. This telemetry cache
+never answers token admission; every request still checks current credentials.
