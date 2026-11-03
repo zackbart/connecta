@@ -780,8 +780,8 @@ attach its promise to `waitUntil`; Node does not await it in the response path.
 This adds storage writes and retention cleanup work for every operation.
 
 Rows use `kind: "operation"`, `source: "execute_code"`, and a fixed operation
-name. They contain duration, outcome, a checked error code, serialized return
-byte count when known, and host-call counts for a program. No query, tool
+name. They contain duration, outcome, a checked error code, returned page
+byte count when already measured, and host-call counts for a program. No query, tool
 address supplied by a caller, skill name, result ID, code, arguments, result
 contents or raw error text enters the row. Custom history readers must exclude
 operation rows from call/friction counts. The public kind union adds

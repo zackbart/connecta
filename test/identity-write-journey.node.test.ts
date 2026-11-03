@@ -397,7 +397,10 @@ it.each([false, true])(
       else {
         expect(rows.map((row) => row.operation?.name)).toEqual(["search", "describe", "result", "skill", "program"]);
         expect(rows.every((row) => row.kind === "operation" && row.connectorId === "notes")).toBe(true);
-        expect(rows.every((row) => typeof row.resultBytes === "number" && row.resultBytes > 0)).toBe(true);
+        expect(rows.find((row) => row.operation?.name === "result")?.resultBytes).toBeGreaterThan(0);
+        expect(
+          rows.filter((row) => row.operation?.name !== "result").every((row) => row.resultBytes === undefined),
+        ).toBe(true);
         const program = rows.at(-1)!;
         expect(program.operation?.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 4, failed: 0 });
         expect(program.durationMs).toBeGreaterThanOrEqual(
@@ -406,6 +409,24 @@ it.each([false, true])(
         expect(new Set(rows.map((row) => row.requestId)).size).toBe(1);
         expect(JSON.stringify(rows)).not.toMatch(/planted-|retained safe output|resultId/);
       }
+      rows.splice(0);
+      const invalid = await session.call("execute_code", {
+        code: `async () => {
+          const codes = [];
+          for (const operation of [() => connecta.result(123), () => connecta.skill(123)]) {
+            try { await operation(); } catch (error) { codes.push(error.code); }
+          }
+          return codes;
+        }`,
+      });
+      expect(invalid.isError, invalid.text).toBeFalsy();
+      expect(invalid.text).toContain('"invalid_args","invalid_args"');
+      if (operations) {
+        expect(rows.slice(0, 2)).toMatchObject([
+          { operation: { name: "result" }, errorCode: "invalid_args", outcome: "error" },
+          { operation: { name: "skill" }, errorCode: "invalid_args", outcome: "error" },
+        ]);
+      } else expect(rows).toHaveLength(0);
       // The response arrived while every activity storage promise was still held.
       release();
       await pendingWrites;

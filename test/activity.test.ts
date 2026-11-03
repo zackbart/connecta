@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { operationActivity } from "../src/operation-activity.js";
+import { InvocationFailure } from "../src/invocation-failure.js";
 import { runEdge } from "../src/runtime/run.js";
 import { describe, expect, it } from "vitest";
 import {
@@ -236,4 +237,40 @@ it("records an interrupted meta operation as cancelled without its abort payload
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ kind: "operation", outcome: "cancelled", errorCode: "cancelled" });
   expect(JSON.stringify(rows)).not.toContain("planted-");
+});
+
+it.each(["invalid_args", "cancelled"])("preserves the internal %s operation failure", async (code) => {
+  const rows: ToolCallActivityEvent[] = [];
+  const module = activityHistory({
+    operations: true,
+    store: {
+      record: (row) => {
+        rows.push(row);
+      },
+    },
+  });
+  const context: ActivityRequestContext = {
+    sink: module.store,
+    recordOperation: module.recordOperation,
+    actor: { kind: "access_token", id: "assistant" },
+    requestId: "request",
+    serverInfo: { name: "connecta", version: "0.1.0" },
+    logger: silentLogger,
+  };
+  const failure = new InvocationFailure({ code, message: "planted-private-message", retryable: false });
+  await expect(runEdge(operationActivity(context, makeRegistry([]), "result", Effect.fail(failure)))).rejects.toBe(
+    failure,
+  );
+  expect(rows).toMatchObject([{ errorCode: code, outcome: code === "cancelled" ? "cancelled" : "error" }]);
+  expect(JSON.stringify(rows)).not.toContain("planted-");
+  let serializations = 0;
+  const value = {
+    toJSON() {
+      serializations++;
+      throw new Error("activity must not serialize a return");
+    },
+  };
+  expect(await runEdge(operationActivity(context, makeRegistry([]), "search", Effect.succeed(value)))).toBe(value);
+  expect(rows[1]?.resultBytes).toBeUndefined();
+  expect(serializations).toBe(0);
 });

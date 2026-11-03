@@ -1,5 +1,8 @@
 // The root graph calls the optional recorder, never the /activity implementation.
 import { Cause, Effect, Exit } from "effect";
+import { InvocationFailure } from "./invocation-failure.js";
+import { ExecutorAdmissionError } from "./executor-admission.js";
+import { DiscoveryPolicyError } from "./catalog-service.js";
 import { classificationCode, classifyCallError } from "./errors.js";
 import { usesCallerIdentity } from "./connector-caller.js";
 import type { ActivityOperation, ActivityRequestContext } from "./activity.js";
@@ -37,23 +40,28 @@ export function operationActivity<A, E, R>(
             : undefined;
           const failed = Exit.isFailure(exit) || result?.isError === true;
           const interrupted = Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isInterruptReason);
+          const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
           const errorCode = interrupted
             ? "cancelled"
             : classificationCode(
                 Exit.isFailure(exit)
-                  ? classifyCallError(Cause.squash(exit.cause)).code
+                  ? failure instanceof InvocationFailure ||
+                    failure instanceof ExecutorAdmissionError ||
+                    failure instanceof DiscoveryPolicyError
+                    ? failure.code
+                    : classifyCallError(failure).code
                   : result?.structuredContent?.error?.code,
               );
           try {
-            let resultBytes: number | undefined;
-            if (Exit.isSuccess(exit)) {
-              try {
-                const text = JSON.stringify(exit.value);
-                if (text !== undefined) resultBytes = new TextEncoder().encode(text).length;
-              } catch {
-                /* Byte size is unknown when the return cannot serialize. */
-              }
-            }
+            // Result pages already measure their payload. Other operations have no
+            // reusable measurement: never serialize discovery or media for telemetry.
+            const page =
+              name === "result" && Exit.isSuccess(exit)
+                ? (exit.value as { bytes?: unknown; structuredContent?: { bytes?: unknown } } | undefined)
+                : undefined;
+            const bytes = page?.structuredContent?.bytes ?? page?.bytes;
+            const resultBytes =
+              typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : undefined;
             context.recordOperation!(context, {
               operation: {
                 name,
