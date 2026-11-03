@@ -80,7 +80,10 @@ export const quickbooksState = () => ({
       },
     ]),
   ),
-  failures: {} as Record<string, "401" | "transport" | "500" | "malformed" | "contradictory" | "invalid-rate">,
+  failures: {} as Record<
+    string,
+    "401" | "transport" | "500" | "malformed" | "contradictory" | "invalid-rate" | "stale"
+  >,
   hour: 0,
   grants: [] as Array<{
     realm: string;
@@ -256,6 +259,24 @@ export class FakeQuickBooks {
             if (current) row.SyncToken = String(Number(row.SyncToken) + 1);
             else company.Customer.push(row);
             result = { Customer: row };
+            committed = true;
+          }
+        } else if (payload.Id) {
+          const current = company.Invoice.find((row: Row) => row.Id === payload!.Id);
+          // A competing actor commits after preflight and before this POST.
+          if (current && failure === "stale") current.SyncToken = String(Number(current.SyncToken) + 1);
+          if (!current || current.SyncToken !== payload.SyncToken) {
+            status = 400;
+            result = { Fault: { Error: [{ code: "5010", Message: QB_PRIVATE, Detail: auth }] } };
+          } else if (
+            payload.sparse !== true ||
+            Object.keys(payload).some((key) => !["Id", "SyncToken", "sparse", "DocNumber"].includes(key))
+          )
+            status = 400;
+          else {
+            current.DocNumber = payload.DocNumber;
+            current.SyncToken = String(Number(current.SyncToken) + 1);
+            result = { Invoice: current };
             committed = true;
           }
         } else {

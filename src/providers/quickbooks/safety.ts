@@ -6,6 +6,13 @@ import { QUICKBOOKS_INDEX } from "./api.js";
 import type { QuickBooksOptions } from "./index.js";
 
 const scalars = [
+  "EmailStatus",
+  "AllowIPNPayment",
+  "AllowOnlinePayment",
+  "AllowOnlineCreditCardPayment",
+  "AllowOnlineACHPayment",
+  "AllowOnlinePayPalPayment",
+  "AllowOnlineAffirmPayment",
   "Id",
   "SyncToken",
   "DisplayName",
@@ -76,6 +83,7 @@ export const RecordShape = Schema.Struct({
   ...optional(scalars),
   ...optional(references),
   ...optional(details),
+  DeliveryInfo: Schema.optionalKey(Schema.Unknown),
   MetaData: Schema.optionalKey(Schema.Unknown),
   Line: Schema.optionalKey(Schema.Unknown),
   LinkedTxn: Schema.optionalKey(Schema.Unknown),
@@ -142,6 +150,8 @@ function safeRecord(value: unknown): Record<string, unknown> {
   const source = object(value),
     out = pick(source, scalars);
   for (const key of references) if (source[key]) out[key] = pick(source[key], ["value", "name", "type"]);
+  if (source["DeliveryInfo"] !== undefined)
+    out["DeliveryInfo"] = pick(source["DeliveryInfo"], ["DeliveryType", "DeliveryTime"]);
   if (source["MetaData"]) out["MetaData"] = pick(source["MetaData"], ["CreateTime", "LastUpdatedTime"]);
   for (const key of details) if (source[key]) out[key] = safeRecord(source[key]);
   if (Array.isArray(source["Line"])) out["Line"] = source["Line"].map(safeRecord);
@@ -206,11 +216,13 @@ function recordPath(path: readonly string[]): Kept {
   const picked =
     head === "MetaData"
       ? ["CreateTime", "LastUpdatedTime"]
-      : head === "LinkedTxn"
-        ? ["TxnId", "TxnType", "TxnLineId"]
-        : (references as readonly string[]).includes(head)
-          ? ["value", "name", "type"]
-          : undefined;
+      : head === "DeliveryInfo"
+        ? ["DeliveryType", "DeliveryTime"]
+        : head === "LinkedTxn"
+          ? ["TxnId", "TxnType", "TxnLineId"]
+          : (references as readonly string[]).includes(head)
+            ? ["value", "name", "type"]
+            : undefined;
   if (!picked) return "dropped";
   if (rest.length === 0) return "trimmed";
   return rest.length === 1 && picked.includes(rest[0]!) ? "whole" : "dropped";

@@ -275,12 +275,12 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>QuickBooks Online (10 tools)</summary>
+<summary>QuickBooks Online (11 tools)</summary>
 
 [Setup](#quickbooks-online). **API source:** Hand-authored endpoint contracts. No vendored OpenAPI document.
 
 - **Named reads:** `get_company_info`, `get_record`, `get_report`, `search_records`.
-- **Named writes:** `create_customer`, `create_invoice`, `update_customer`.
+- **Named writes:** `create_customer`, `create_invoice`, `update_customer`, `update_unsent_invoice`.
 - **API reads:** `quickbooks_api_details`, `quickbooks_api_read`, `quickbooks_api_search`.
 - **API writes:** None.
 
@@ -1520,18 +1520,20 @@ Creation fixes EmailStatus to `NotSet` and IPN/online/card/ACH/PayPal/Affirm
 payment flags to false, accepts no email fields, and never calls a send endpoint.
 Intuit's documented autosend path requires company opt-in, enabled online
 payments and `NeedToSend` with BillEmail; the fixed creation body withholds
-those request conditions. Invoice updates remain unavailable because retaining
-an existing send-ready state is not established safe, and resetting that state
-would change existing payment settings. Deletes, voids, delivery, payment
-execution, batch and other accounting writes remain unavailable. The API hatch
-refuses POSTs even when named writes are enabled.
+those request conditions.
 
-Sparse field preservation, a current SyncToken and requestid do not establish
-that an invoice update cannot send email. For example, changing only DueDate
-on an invoice with NeedToSend and enabled card/ACH payments retains those
-settings; omitting email fields does not disable them. Do not reset delivery or
-payment settings to work around the unavailable update, or replace the invoice
-with a new one. No unsent-only update tool is currently exposed either.
+`update_unsent_invoice` changes only DocNumber. Supply caller-observed Id and
+SyncToken and an explicit docNumber. It reads the US company and invoice,
+requires USD, explicit NotSet, no DeliveryInfo and every IPN/online/card/ACH/
+PayPal/Affirm payment flag explicitly false. Unknown state, send-ready or
+delivered state and stale versions fail before POST; no newer version is
+substituted. The sparse body preserves omitted delivery/payment fields.
+No date edits are exposed. Applying autosend prerequisites to updates is an
+inference, not an update-specific Intuit no-email guarantee. NotSet and absent
+delivery information cannot prove there was never historical delivery.
+Do not reset state to qualify or replace an invoice to bypass a refusal.
+Deletes, voids, delivery, payment execution, batch and other accounting writes
+remain unavailable. The API hatch refuses POSTs even when named writes are enabled.
 
 Each write requires `requestId`, a stable identifier for the exact intent,
 unique across all requests/tools for this company: 1–50 ASCII letters, digits,

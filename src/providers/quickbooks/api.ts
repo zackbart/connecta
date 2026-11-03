@@ -66,34 +66,40 @@ export const customerWrite = post("writeCustomer", "/customer", {
 }).annotate(Summary, "Create a customer or sparsely update naming fields through named tools only");
 export const invoiceWrite = post("createInvoice", "/invoice", {
   query: { minorversion: Schema.Literal("75"), requestid: Schema.String },
-  payload: Schema.Struct({
-    CustomerRef: Schema.Struct({ value: PublicId }),
-    CurrencyRef: Schema.Struct({ value: Schema.String }),
-    ExchangeRate: Schema.Number,
-    TxnDate: Schema.String,
-    DueDate: Schema.String,
-    DocNumber: Schema.String,
-    Line: Schema.Array(
-      Schema.Struct({
-        Amount: Schema.Number,
-        DetailType: Schema.Literal("SalesItemLineDetail"),
-        SalesItemLineDetail: Schema.Struct({
-          ItemRef: Schema.Struct({ value: PublicId }),
-          Qty: Schema.Literal(1),
-          UnitPrice: Schema.Number,
+  payload: Schema.Union([
+    Schema.Struct({
+      CustomerRef: Schema.Struct({ value: PublicId }),
+      CurrencyRef: Schema.Struct({ value: Schema.String }),
+      ExchangeRate: Schema.Number,
+      TxnDate: Schema.String,
+      DueDate: Schema.String,
+      DocNumber: Schema.String,
+      Line: Schema.Array(
+        Schema.Struct({
+          Amount: Schema.Number,
+          DetailType: Schema.Literal("SalesItemLineDetail"),
+          SalesItemLineDetail: Schema.Struct({
+            ItemRef: Schema.Struct({ value: PublicId }),
+            Qty: Schema.Literal(1),
+            UnitPrice: Schema.Number,
+          }),
         }),
-      }),
-    ),
-    EmailStatus: Schema.Literal("NotSet"),
-    AllowIPNPayment: Schema.Literal(false),
-    AllowOnlinePayment: Schema.Literal(false),
-    AllowOnlineCreditCardPayment: Schema.Literal(false),
-    AllowOnlineACHPayment: Schema.Literal(false),
-    AllowOnlinePayPalPayment: Schema.Literal(false),
-    AllowOnlineAffirmPayment: Schema.Literal(false),
-  }),
+      ),
+      EmailStatus: Schema.Literal("NotSet"),
+      AllowIPNPayment: Schema.Literal(false),
+      AllowOnlinePayment: Schema.Literal(false),
+      AllowOnlineCreditCardPayment: Schema.Literal(false),
+      AllowOnlineACHPayment: Schema.Literal(false),
+      AllowOnlinePayPalPayment: Schema.Literal(false),
+      AllowOnlineAffirmPayment: Schema.Literal(false),
+    }),
+    Schema.Struct({ Id: PublicId, SyncToken, sparse: Schema.Literal(true), DocNumber: Schema.String }),
+  ]),
   success: Schema.Struct({ Invoice: RecordShape }),
-}).annotate(Summary, "Create a real unsent service invoice through create_invoice only");
+}).annotate(
+  Summary,
+  "Create an unsent service invoice or sparsely update an eligible unsent invoice number through named tools only",
+);
 export const QuickBooksApi = vendor(
   "QuickBooks Online",
   companyInfo,
