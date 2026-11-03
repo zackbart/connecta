@@ -782,7 +782,7 @@ export class InvocationService {
           if (refusal === "read_only_endpoint") {
             return framingError(
               "read_only_endpoint",
-              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. Nothing here can send it.`,
+              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. No write route exists ${connectorReadOnly ? "for this connection" : "on this endpoint"}. Ask the operator for a writable connection if writes are required.`,
             );
           }
           if (refusal === "destructive_tool_requires_approval") {

@@ -454,7 +454,11 @@ function serveMcp(
         // Instructions differ per endpoint only by the admitted pool's
         // description. Every cache hint below is private, so a client keeps
         // what it learned per endpoint URL and never shares it across them.
-        instructions: endpointInstructions(pool !== undefined ? opts.pools.get(pool)?.description : undefined, native),
+        instructions: endpointInstructions(
+          pool !== undefined ? opts.pools.get(pool)?.description : undefined,
+          native,
+          readOnly,
+        ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },
         cacheHints: {

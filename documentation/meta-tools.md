@@ -120,9 +120,11 @@ read-only endpoint nothing writes: `search_tools`, `connecta.search`, and
 `connecta.describe` omit write tools as if the connector lacked them, and
 every write call through `call_tool`, `call_destructive_tool`, or a program is
 refused before validation or dispatch with `read_only_endpoint`,
-`retryable: false`, and no `nextAction`. Connector guides are not filtered and
-may still name such a write. No route on that endpoint writes; the agent
-reports it. Connecta
+`retryable: false`, and an explicit statement that no write route exists here.
+Bootstrap instructions state the serving endpoint’s actual write policy. Connector
+guides preserve their authored Markdown and prepend the effective read-only
+endpoint or connection restriction: steps that change data will be refused.
+The agent reports the limitation and can ask the operator for a writable connection. Connecta
 never pauses, replays, or approves a program.
 
 Both search routes return the flat page specified under
