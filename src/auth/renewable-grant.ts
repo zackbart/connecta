@@ -2,6 +2,7 @@
 export interface RenewableGrant {
   readonly token: () => Promise<string>;
   readonly refresh: (stale: string) => Promise<string>;
+  readonly observe?: (token: string, outcome: "accepted" | "refused") => Promise<void>;
   readonly rejected: () => Promise<never>;
 }
 

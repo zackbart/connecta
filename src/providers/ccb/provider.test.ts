@@ -3,6 +3,7 @@
 // POST renewal, paging, sensitive fields and grant isolation.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
+import { oauthGrantKeys } from "../../storage/keys.js";
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
@@ -640,3 +641,57 @@ describe("ccb() instance isolation", () => {
     expect((await connector.status!(as(deacon!)())).state).toBe("auth_required");
   });
 });
+
+describe("ccb() OAuth outcome observations", () => {
+  it.each([true, false])("records initial and replay outcomes (refresh available: %s)", async (canRefresh) => {
+    const { fake, connector, ctx, call } = await connected();
+    const stored = async () => JSON.parse((await ctx().storage.get(oauthGrantKeys.grant))!);
+    fake.route(on("GET", "/groups/5", () => json({ id: 5, name: "Group" })));
+    await call("get_group", { groupId: 5 });
+    let grant = await stored();
+    expect(grant.observation).toEqual({ revision: grant.tokenRevision, outcome: "accepted" });
+    fake.expireAccess();
+    await call("get_group", { groupId: 5 });
+    const renewed = await stored();
+    expect(renewed.tokenRevision).toBe(grant.tokenRevision + 1);
+    expect(renewed.observation).toEqual({ revision: renewed.tokenRevision, outcome: "accepted" });
+    if (!canRefresh) fake.refresh.clear();
+    fake.route(on("GET", "/groups/5", () => new Response(null, { status: 401 })));
+    await expect(call("get_group", { groupId: 5 })).rejects.toBeDefined();
+    grant = await stored();
+    expect(grant.tokenRevision).toBe(renewed.tokenRevision + (canRefresh ? 1 : 0));
+    expect(grant.observation).toEqual({ revision: grant.tokenRevision, outcome: "refused" });
+    expect((await connector.status!(ctx())).state).toBe("auth_required");
+  });
+});
+
+it.each(["initial", "replay"])(
+  "INV-6: records an oversized declared 401 on the %s attempt without reading its body",
+  async (attempt) => {
+    const { fake, connector, ctx, call } = await connected();
+    const read = vi.fn();
+    const cancel = vi.fn();
+    const before = JSON.parse((await ctx().storage.get(oauthGrantKeys.grant))!);
+    let requests = 0;
+    fake.route(
+      on("GET", "/groups/5", () => {
+        requests++;
+        if (attempt === "replay" && requests === 1) return new Response(null, { status: 401 });
+        return new Response(new ReadableStream({ pull: read, cancel }, { highWaterMark: 0 }), {
+          status: 401,
+          headers: { "content-length": String(2 * 1024 * 1024), "x-provider-detail": "private-oversized-error" },
+        });
+      }),
+    );
+    await expect(call("get_group", { groupId: 5 })).rejects.toBeDefined();
+    expect(requests).toBe(attempt === "initial" ? 1 : 2);
+    expect(read).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+    const raw = (await ctx().storage.get(oauthGrantKeys.grant))!;
+    const grant = JSON.parse(raw);
+    expect(grant.tokenRevision).toBe(before.tokenRevision + (attempt === "replay" ? 1 : 0));
+    expect(grant.observation).toEqual({ revision: grant.tokenRevision, outcome: "refused" });
+    expect(raw).not.toContain("private-oversized-error");
+    expect((await connector.status!(ctx())).state).toBe("auth_required");
+  },
+);
