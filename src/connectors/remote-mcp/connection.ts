@@ -3,8 +3,8 @@
 // served without connecting (INV-10).
 import { routePhrases } from "../../agent-routes.js";
 import { authView } from "../../auth/native-call.js";
-import { authFlow, authCall, authInvoke, authMethod, authStorageMany } from "../../auth/native.js";
-import { openRequest, viewServices, viewSignal, viewReads, serviceFor } from "../../runtime/call.js";
+import { authFlow, authCall, authInvoke, authMethod } from "../../auth/native.js";
+import { openRequest, viewServices, viewSignal } from "../../runtime/call.js";
 import { secretDigest } from "../../storage-digest.js";
 import {
   downstreamClientMetadata,
@@ -18,7 +18,7 @@ import { Deferred, Effect, Exit, Scope } from "effect";
 import { KvOAuthProvider, refreshCoordinatorsByPartition } from "../../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../../auth/oauth-start-reset.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
-import { catalogClientOptions, observeCatalogChange } from "../../catalog-cache.js";
+import { catalogClientOptions, prefetchCatalog, observeCatalogChange } from "../../catalog-cache.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { carryFailureFacts, failureRecord, logFailure } from "../../operator-record.js";
 import { CONNECTA_VERSION } from "../../version.js";
@@ -30,8 +30,7 @@ import { detach, runEdge } from "../../runtime/run.js";
 import type { RequestPrincipal } from "../../request-token.js";
 import { requestPrincipalFor } from "../../request-principal.js";
 import { callerOf } from "../../connector-caller.js";
-import { CatalogPolicy } from "../../catalog-policy.js";
-import { negotiationKeys, responseCacheKeys } from "../../storage/keys.js";
+import { negotiationKeys } from "../../storage/keys.js";
 import { forgetNegotiation, readNegotiation, storeNegotiation } from "../negotiation-cache.js";
 import type { ConnectorContext } from "../../types.js";
 import type { CallDispatch } from "./transport.js";
@@ -442,6 +441,7 @@ export function remoteMcpConnection(
       try {
         let epoch = "";
         let identity: (() => Promise<string>) | undefined;
+        let pinnedIdentity: string | undefined;
         if (isOauth) {
           // Read-only grant snapshots: no in-place sealing, epoch binding or
           // refresh. Every identity check during cache acceptance re-reads the
@@ -451,6 +451,7 @@ export function remoteMcpConnection(
           const snapshot = (yield authInvoke(provider, "peekGrant", [])) as { epoch: string; tokens?: OAuthTokens };
           epoch = snapshot.epoch;
           if (provider.isOperatorDisconnectedEpoch(epoch) || !snapshot.tokens) return preread;
+          pinnedIdentity = yield authCall<string>(secretDigest, [ctx, JSON.stringify(snapshot.tokens)]);
           const bound = epoch;
           identity = authMethod(() =>
             authFlow<string>(function* () {
@@ -465,16 +466,15 @@ export function remoteMcpConnection(
           const digest = (yield authCall(negotiationKey, [ctx, credentialDigest, epoch])) as string;
           // Both reads only locate cached data. Acceptance and dispatch keep
           // their fresh generation and credential checks.
-          yield viewReads(ctx).prefetch(
-            [
-              { storage: ctx.storage, key: negotiationKeys.verdict(digest) },
-              {
-                storage: serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage,
-                key: responseCacheKeys.generation(id),
-              },
-            ],
-            (storage, keys) => authStorageMany(storage, keys),
-          );
+          yield authCall(prefetchCatalog, [
+            ctx,
+            id,
+            (yield authCall(catalogConfigFor, [ctx])) as string,
+            JSON.stringify([epoch, credentialDigest]),
+            catalogSharing,
+            pinnedIdentity,
+            negotiationKeys.verdict(digest),
+          ]);
           const prior = (yield authCall(readNegotiation, [ctx, digest])) as PriorDiscovery | undefined;
           preread.negotiation = { digest, prior };
           if (prior?.kind === "modern") return preread;

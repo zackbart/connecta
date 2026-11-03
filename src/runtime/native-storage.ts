@@ -10,6 +10,15 @@ export interface NativeStorage {
   accessToken?: ((hash: string) => Effect.Effect<Map<string, string | null> | undefined, unknown>) | undefined;
   /** Several keys in one round trip, each as `get` would read it. */
   getMany?(keys: readonly string[]): Effect.Effect<(string | null)[], unknown>;
+  /** Locating snapshot only; callers must retain a later acceptance fence. */
+  catalogSnapshot?:
+    | ((
+        keys: readonly string[],
+        generationKey: string,
+        prefix: string,
+        suffixes: readonly string[],
+      ) => Effect.Effect<Map<string, string | null>, unknown>)
+    | undefined;
   /** Bounded internal writes; publication fences remain separate. */
   setMany?(
     entries: readonly (readonly [string, string])[],
@@ -65,6 +74,14 @@ export function registerNativeStorage(edge: KVStorage, native: NativeStorage): K
   storageMethods.set(edge, own);
   const getMany = native.getMany;
   storage.set(edge, {
+    catalogSnapshot: native.catalogSnapshot
+      ? (keys, generationKey, prefix, suffixes) =>
+          typed(() =>
+            getNativeStorage(edge)
+              ? native.catalogSnapshot!(keys, generationKey, prefix, suffixes)
+              : Effect.succeed(new Map()),
+          )
+      : undefined,
     accessToken: native.accessToken
       ? (hash) => typed(() => (getNativeStorage(edge) ? native.accessToken!(hash) : Effect.succeed(undefined)))
       : undefined,

@@ -417,7 +417,7 @@ describe("native tool surface", () => {
       clientInfo: { name: "native-test", version: "0" },
     };
     const native = await rpc(connecta, token, "native", "initialize", initialize, false);
-    expect(native.result.instructions).toBe(`${nativeInstructions(true)} This endpoint: Team tier.`);
+    expect(native.result.instructions).toBe(`Use skills. Team tier. ${nativeInstructions(true)}`);
     const nocode = await rpc(connecta, token, "nocode", "initialize", initialize, false);
     expect(nocode.result.instructions).toBe(nativeInstructions(false));
     const meta = await rpc(connecta, token, "meta", "initialize", initialize, false);

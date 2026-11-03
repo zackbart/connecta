@@ -244,7 +244,7 @@ function assertFlag(value: unknown, path: string): void {
   if (typeof value !== "boolean") throw new ConfigError(`${path} must be true or false.`);
 }
 
-/** Longest pool `description`, in characters, after trimming. */
+/** Longest pool `description`, in UTF-16 code units, after trimming. */
 const MAX_POOL_DESCRIPTION_LENGTH = 500;
 
 /**
@@ -266,11 +266,11 @@ function assertPoolDescription(value: unknown, path: string): void {
   if (
     trimmed === undefined ||
     trimmed.length === 0 ||
-    [...trimmed].length > MAX_POOL_DESCRIPTION_LENGTH ||
+    trimmed.length > MAX_POOL_DESCRIPTION_LENGTH ||
     hasLineBreakOrControlCharacter(trimmed)
   ) {
     throw new ConfigError(
-      `${path} must be text of 1 to ${MAX_POOL_DESCRIPTION_LENGTH} characters after trimming, with no line breaks or control characters.`,
+      `${path} must be text of 1 to ${MAX_POOL_DESCRIPTION_LENGTH} UTF-16 code units after trimming, with no line breaks or control characters.`,
     );
   }
 }
@@ -331,7 +331,7 @@ const pool = {
    * What this pool is for, in plain words for the model: appended to the MCP
    * `initialize` instructions at `/mcp/<name>` and `/agent/<name>`, so a
    * caller learns its scope ("Team tier: shared tools only."). Trimmed, 1 to
-   * 500 characters, no line breaks or control characters. It grants and hides nothing; plain
+   * 500 UTF-16 code units, no line breaks or control characters. It grants and hides nothing; plain
    * `/mcp` never shows it.
    */
   description: opaque<string>({ check: assertPoolDescription }),

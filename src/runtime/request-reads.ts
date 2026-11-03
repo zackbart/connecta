@@ -38,6 +38,7 @@ import { utf8Length } from "../bytes.js";
 // `FinalizationRegistry` (workerd before compatibility date 2025-05-05 without
 // `enable_weak_ref`) memoizes nothing: every read goes to storage.
 import { Effect } from "effect";
+import { getNativeStorage } from "./native-storage.js";
 import type { KVStorage } from "../types.js";
 
 /** One physical store's identity. */
@@ -223,7 +224,8 @@ export class RequestReads {
   prefetch<E, R>(
     requests: readonly { storage: KVStorage; key: string }[],
     load: (storage: KVStorage, keys: readonly string[]) => Effect.Effect<(string | null)[], E, R>,
-  ): Effect.Effect<void, E, R> {
+    linked?: { storage: KVStorage; generationKey: string; prefix: string; suffixes: readonly string[] },
+  ): Effect.Effect<void, unknown, R> {
     return Effect.suspend(() => {
       const pending = requests.map(({ storage, key }) => ({
         address: physicalStorageAddress(storage, key),
@@ -235,6 +237,32 @@ export class RequestReads {
       const root = pending[0]?.address?.store;
       const storage = root && roots.get(root);
       if (!storage || pending.some(({ address, found }) => !found || address?.store !== root)) return Effect.void;
+      if (pending.every(({ found }) => found?.hit)) return Effect.void;
+      const generation = linked && physicalStorageAddress(linked.storage, linked.generationKey);
+      const prefix = linked && physicalStorageAddress(linked.storage, linked.prefix);
+      const snapshot = getNativeStorage(storage)?.catalogSnapshot;
+      if (linked && snapshot && generation?.store === root && prefix?.store === root) {
+        // Candidates only locate entries. An intervening external write can make
+        // these stale, so consumers retain the separate post-chunk primary fence.
+        return Effect.map(
+          snapshot(
+            pending.map(({ address }) => address!.key),
+            generation.key,
+            prefix.key,
+            linked.suffixes,
+          ),
+          (values) => {
+            pending.forEach(({ address, found }) => {
+              if (found && !found.hit) found.record(values.get(address!.key) ?? null);
+            });
+            for (const [key, value] of values) {
+              if (pending.some(({ address }) => address!.key === key)) continue;
+              const found = this.lookup(storage, key, false);
+              if (found && !found.hit) found.record(value);
+            }
+          },
+        );
+      }
       const misses = pending.filter(({ found }) => found && !found.hit);
       if (!misses.length) return Effect.void;
       return Effect.map(
