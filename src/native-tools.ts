@@ -1,4 +1,4 @@
-import { connectorGuide, connectorSkillName } from "./skills.js";
+import { resolvedConnectorGuides } from "./skills.js";
 import { bytesToHex } from "./bytes.js";
 import { routeNames } from "./agent-routes.js";
 import { duringViewEffect } from "./runtime/call.js";
@@ -169,14 +169,10 @@ function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJS
   } as StandardSchemaWithJSON;
 }
 
-function describe(entry: NativeTool, executeCode: boolean): string {
+function describe(entry: NativeTool, executeCode: boolean, guideName?: string): string {
   const lines = [entry.tool.description?.trim() || entry.tool.title || entry.tool.name];
   if (executeCode) lines.push(`Program address: ${entry.connector.id}.${entry.tool.name}`);
-  if (connectorGuide(entry.connector)) {
-    const routes = routeNames(executeCode ? "native-code" : "native");
-    const pointer = `Guide: ${routes.skills}({name:${JSON.stringify(connectorSkillName(entry.connector.id))}}).`;
-    lines.push(pointer.length <= 160 ? pointer : `Guide: ${routes.skills} lists this connector’s guidance.`);
-  }
+  if (guideName) lines.push(`Guide: skills ${guideName}`);
   return lines.join("\n\n");
 }
 
@@ -269,12 +265,12 @@ export class NativeSurface {
     return runEdge(authOwnMethod<unknown>(NativeSurface.prototype, this, "call", [name, args, request]));
   }
 
-  private registerTool(server: McpServer, name: string, entry?: NativeTool): void {
+  private registerTool(server: McpServer, name: string, entry?: NativeTool, guideName?: string): void {
     server.registerTool(
       name,
       {
         ...(entry?.tool.title ? { title: entry.tool.title } : {}),
-        ...(entry ? { description: describe(entry, this.options.executeCode) } : {}),
+        ...(entry ? { description: describe(entry, this.options.executeCode, guideName) } : {}),
         inputSchema: passThroughSchema(entry?.tool.inputSchema),
         ...(entry ? { annotations: annotationsFor(entry.tool) } : {}),
         ...(entry ? { _meta: { "dev.connecta/address": `${entry.connector.id}.${entry.tool.name}` } } : {}),
@@ -331,7 +327,14 @@ export class NativeSurface {
                 });
                 return;
               }
-              for (const entry of tools) self.registerTool(server, entry.name, entry);
+              const guides = yield* upwardStep(
+                authCall<Awaited<ReturnType<typeof resolvedConnectorGuides>>>(resolvedConnectorGuides, [
+                  self.registry.listConnectors(),
+                ]),
+              );
+              const guideNames = new Map(guides.map(({ connector, reference }) => [connector.id, reference]));
+              for (const entry of tools)
+                self.registerTool(server, entry.name, entry, guideNames.get(entry.connector.id));
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
       },

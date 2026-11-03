@@ -1486,6 +1486,13 @@ pool's surface.
 
 `search_tools`, `call_tool`, and `call_destructive_tool` are not listed. Auth failures still carry their handoff in the error envelope.
 
+Native tool descriptions append `Guide: skills <name>` when their connector has
+guidance. Call `skills` with `{name:"<name>"}` to read it. The name is the same
+allocated readable name listed by `skills`, including collision suffixes; a
+name reserved for a built-in guide uses its canonical connector skill URI. This
+compact pointer repeats on each tool so host search results retain it; connectors
+without guides add nothing. It depends only on the admitted connector roster.
+
 **Names.** A name is a pure function of the connector id and downstream tool
 name, so it survives catalog refreshes. It is `<connector>__<tool>` when the
 tool name uses only `[A-Za-z0-9_-]`, contains no `__`, does not start with `_`,
@@ -1631,6 +1638,3 @@ repeat with `sep-2640-skills-manifest` and `sep-2640-skills-directory`.
 Stop the fixture when done. `--force` selects extension scenarios outside the
 base protocol timeline. This remains an optional contributor check: the
 separately installed runner and dependency graph are not pinned in Connecta CI.
-
-Native tool descriptions append a short `skills({name:"connector:crm"})` guide
-pointer when their connector declares guidance. Guide-free descriptions are unchanged.
