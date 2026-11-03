@@ -1,3 +1,4 @@
+import { InvocationService } from "../src/invocation.js";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { inputRequired } from "@modelcontextprotocol/server";
@@ -391,6 +392,7 @@ describe("downstream input relay", { tags: ["node"] }, () => {
       });
       expect(error.nextAction.arguments).toEqual({ address: "service.read", ...echo });
       expect(error.nextAction.purpose).toContain("original arguments");
+      expect(error).not.toHaveProperty("retry");
       expect(JSON.stringify(result)).not.toContain(PRIVATE_MARKER);
       expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
       expect(flow.continuationSend).toHaveBeenCalledOnce();
@@ -1111,6 +1113,29 @@ describe("downstream input relay", { tags: ["node"] }, () => {
       }
     },
   );
+
+  it("specific fresh-read recovery wins over generic retry advice", async () => {
+    const flow = setup({ failureStatus: 503 });
+    const first = (await flow.rpc()).result;
+    const invoke = InvocationService.prototype.invoke;
+    vi.spyOn(InvocationService.prototype, "invoke").mockImplementation(async function (
+      this: InvocationService,
+      ...args
+    ) {
+      const outcome = await invoke.apply(this, args);
+      return outcome.ok
+        ? outcome
+        : { ...outcome, error: { ...outcome.error, retry: "Generic availability retry advice" } };
+    });
+    const result = (
+      await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })
+    ).result;
+    expect(result.structuredContent.error).toMatchObject({
+      retryable: false,
+      nextAction: { tool: "call_tool", purpose: expect.stringContaining("fresh input round") },
+    });
+    expect(result.structuredContent.error).not.toHaveProperty("retry");
+  });
 
   it("INV-4 INV-9: preserves auth recovery prerequisites for a failed read continuation", async () => {
     const flow = setup({ failContinuationAuth: true });

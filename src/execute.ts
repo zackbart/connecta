@@ -1,3 +1,4 @@
+import { utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
@@ -427,7 +428,11 @@ function serializedDiagnosticBytes(value: unknown): number {
 }
 
 function guestFailure(code: string, message: string, retryable = false): InvocationFailure {
-  return new InvocationFailure({ code, message, retryable });
+  return new InvocationFailure(
+    ["unavailable", "unsupported_capability", "input_required_unsupported"].includes(code)
+      ? utilityRecovery(code, message, retryable)
+      : { code, message, retryable },
+  );
 }
 
 /**
@@ -912,7 +917,9 @@ function sandboxProvider(
             (!options && options !== undefined) ||
             (options !== undefined && (typeof options !== "object" || Array.isArray(options)))
           ) {
-            throw guestFailure("invalid_args", "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }).");
+            throw new InvocationFailure(
+              utilityRecovery("invalid_args", "Use connecta.result(handleOrId, { page?, offset?, maxBytes? })."),
+            );
           }
           const args = { ...((options ?? {}) as Record<string, unknown>) };
           if (
@@ -927,9 +934,11 @@ function sandboxProvider(
             (args.maxBytes !== undefined &&
               (typeof args.maxBytes !== "number" || !Number.isSafeInteger(args.maxBytes) || args.maxBytes < 1))
           ) {
-            throw guestFailure(
-              "invalid_args",
-              "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }) with whole page/offset >= 0 and maxBytes >= 1; page and offset are mutually exclusive.",
+            throw new InvocationFailure(
+              utilityRecovery(
+                "invalid_args",
+                "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }) with whole page/offset >= 0 and maxBytes >= 1; page and offset are mutually exclusive.",
+              ),
             );
           }
           // A page must fit every shipped bridge even when the connector cap is raised.

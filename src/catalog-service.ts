@@ -1,3 +1,4 @@
+import { utilityRecovery } from "./utility-recovery.js";
 import { traceFor } from "./timing-trace.js";
 import { utf8Length } from "./bytes.js";
 import { catalogOwnerPartition } from "./catalog-policy.js";
@@ -432,7 +433,7 @@ function schemaKeyMetadata(
  * classifier cannot widen this discovery-surface field by accident.
  */
 interface CatalogFailureDetail extends Partial<import("./errors.js").AuthorizationHandoff> {
-  nextAction?: CallErrorDetails["nextAction"];
+  nextAction?: NonNullable<CallErrorDetails["nextAction"]>;
   retry?: string;
   code: string;
   message: string;
@@ -449,7 +450,7 @@ interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
 
 interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
-  nextAction?: Extract<NonNullable<CallErrorDetails["nextAction"]>, { tool: "authorize_connector" }>;
+  nextAction?: NonNullable<CallErrorDetails["nextAction"]>;
   retry?: string;
 }
 
@@ -560,19 +561,32 @@ const catalogFailureProperties = {
   },
   retry: { type: "string" },
   nextAction: {
-    type: "object",
-    required: ["tool", "arguments", "operatorHandoff"],
-    additionalProperties: false,
-    properties: {
-      tool: { const: "authorize_connector" },
-      arguments: {
+    anyOf: [
+      {
         type: "object",
-        required: ["connector"],
+        required: ["tool", "arguments", "operatorHandoff"],
         additionalProperties: false,
-        properties: { connector: { type: "string" } },
+        properties: {
+          tool: { const: "authorize_connector" },
+          arguments: {
+            type: "object",
+            required: ["connector"],
+            additionalProperties: false,
+            properties: { connector: { type: "string" } },
+          },
+          operatorHandoff: { type: "string" },
+        },
       },
-      operatorHandoff: { type: "string" },
-    },
+      {
+        type: "object",
+        required: ["action", "purpose"],
+        additionalProperties: false,
+        properties: {
+          action: { enum: ["contact_operator", "inspect_capabilities", "recover_result", "reconnect_host"] },
+          purpose: { type: "string" },
+        },
+      },
+    ],
   },
 };
 
@@ -1258,6 +1272,9 @@ export class CatalogService {
           message: `Connector "${connector.id}" was skipped because its catalog lookup failed recently (${failure.code}). Search with connector "${connector.id}" to try it now.`,
           retryable: true,
           retryAfterMs: failure.retryAfterMs,
+          ...(["unavailable", "catalog_lookup_failed", "unsupported_capability"].includes(failure.code)
+            ? { nextAction: utilityRecovery(failure.code, "Catalog lookup is unavailable.").nextAction }
+            : {}),
         };
       }
       const classified = classifyCallError(failure, "catalog_lookup_failed");
@@ -1294,6 +1311,9 @@ export class CatalogService {
       } else if (error.code === "provider_permission_denied") {
         error.retry =
           "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Reconnecting alone will not grant access.";
+      }
+      if (["unavailable", "catalog_lookup_failed", "unsupported_capability"].includes(error.code)) {
+        error.nextAction = utilityRecovery(error.code, error.message).nextAction;
       }
       return yield* withAuthorizationHandoffEffect(this.requestScope, error);
     });

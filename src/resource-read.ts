@@ -1,3 +1,4 @@
+import { utilityRecovery } from "./utility-recovery.js";
 import { Effect } from "effect";
 import { classifyCallError, ConnectorCallError } from "./errors.js";
 import { InvocationFailure, timed } from "./invocation.js";
@@ -28,7 +29,8 @@ function resourceTarget(registry: RegistryView, raw: unknown): { connector: Conn
   const connector = registry.getResourceConnector(match[1]!);
   if (!connector?.readResource) {
     throw new InvocationFailure({
-      code: "unknown_address",
+      ...utilityRecovery(connector ? "unsupported_capability" : "unknown_address", "No resource reader is available."),
+      code: connector ? "unsupported_capability" : "unknown_address",
       message: `No resource reader is available for this address. ${URI_HINT}`,
       retryable: false,
     });
@@ -149,6 +151,12 @@ export function readResource(
           },
           retry: "Retry connecta.read with the same resource URI after the operator completes recovery.",
         };
+      }
+      if (
+        ["unavailable", "unsupported_capability", "input_required_unsupported"].includes(details.code) &&
+        !details.nextAction
+      ) {
+        details = { ...details, nextAction: utilityRecovery(details.code, details.message).nextAction };
       }
       return Effect.fail(new InvocationFailure(options.sentSecrets.redact(details)));
     }),

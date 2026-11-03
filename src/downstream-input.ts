@@ -507,12 +507,20 @@ export class DownstreamElicitation {
               // The nonce is spent even when the downstream failure would normally
               // allow a retry. Preserve write reconciliation and auth prerequisites.
               const echoed = downstreamArgumentEcho(self.options.requestScope);
+              const recoveryError = { ...error };
+              const freshRead =
+                state.tool === "call_tool" &&
+                error.nextAction === undefined &&
+                error.recovery === undefined &&
+                error.writeOutcome !== "unknown" &&
+                error.uncertainCall === undefined;
+              if (freshRead) delete recoveryError.retry;
               const structuredContent = {
                 ...result.structuredContent,
                 error: {
-                  ...error,
+                  ...recoveryError,
                   retryable: false,
-                  ...(state.tool === "call_tool" && error.nextAction === undefined && error.retry === undefined
+                  ...(freshRead
                     ? {
                         nextAction: {
                           tool: state.tool,

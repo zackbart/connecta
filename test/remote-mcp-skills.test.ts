@@ -281,8 +281,11 @@ describe("remote MCP Skills transport", () => {
     async (capabilities) => {
       const f = fixture(() => complete({ skills: [] }), { capabilities });
       const ctx = f.context();
-      await expect(f.downstream.list(ctx)).rejects.toThrow();
-      await expect(f.downstream.read(skill().uri, ctx)).rejects.toThrow();
+      await expect(f.downstream.list(ctx)).rejects.toMatchObject({ code: "unsupported_capability", retryable: false });
+      await expect(f.downstream.read(skill().uri, ctx)).rejects.toMatchObject({
+        code: "unsupported_capability",
+        retryable: false,
+      });
       expect(f.requests.map(({ rpc }) => rpc.method)).toEqual(["server/discover"]);
     },
   );

@@ -1172,6 +1172,22 @@ large to return inline is the one exception: it is friction
 (`result_too_large`) on a call whose `outcome` is still `"success"`, so it
 carries no `errorCode`.
 
+Recovery actions outside the tool namespace use `nextAction.action` and a
+`purpose`: `reconnect_host` repairs inbound HTTP authentication (separate from
+connector OAuth), `contact_operator` reports catalog or utility availability,
+`inspect_capabilities` requests a supporting client/operation, and
+`recover_result` requests a retained handle or an honest missing-output report.
+Unsupported task, Skills, and resource capabilities use the non-retryable
+`unsupported_capability` code with `inspect_capabilities`. Missing or expired handles have `code: not_found`; storage outages retain
+`code: unavailable`. Neither action authorizes anything or replays writes.
+A spent read continuation's fresh-call action takes precedence over generic
+retry advice, while auth prerequisites and unknown-write reconciliation remain
+in force. HTTP 401/403 responses preserve the adapter status and challenge. JSON responses
+carry the host recovery envelope. Custom non-JSON responses preserve their body
+and lifetime, with the same typed facts in `Connecta-Error-Code`,
+`Connecta-Recovery`, and JSON-encoded `Connecta-Next-Action` headers (also exposed
+to cross-origin hosts).
+
 ## Recovery limits
 
 Typed `invalid_args` failures without validation findings point to scoped schema
