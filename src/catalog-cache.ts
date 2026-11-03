@@ -1,3 +1,4 @@
+import { traceFor } from "./timing-trace.js";
 import { markCatalogGeneration } from "./catalog-freshness.js";
 import { detach, runEdge } from "./runtime/run.js";
 import { Deferred, Effect } from "effect";
@@ -1082,6 +1083,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           >(function* () {
             const operation = capture();
             const { ctx, stopped, io } = operation;
+            const trace = traceFor(ctx.requestScope);
+            trace?.record("catalog.cache.lookup");
             const root = (yield authCall(address, [key, operation])) as string | undefined;
             if (!root || stopped()) return undefined;
             // The SDK probes private, then public. Derive both addresses from
@@ -1170,8 +1173,10 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             // Hash the chunks again above, never trust the manifest alone.
             const reuseKey = JSON.stringify([storeIdentity, root, partition, m.fingerprint]);
             let accepted = validatedCatalogs.get(reuseKey)?.value;
+            trace?.record(accepted ? "catalog.validated.hit" : "catalog.validated.miss");
             if (!accepted) {
               const result = JSON.parse(value) as CatalogResult;
+              trace?.record("catalog.decode", 0, fingerprint.byteLength);
               const items = catalogItems(method, result);
               if (
                 !Array.isArray(items) ||
@@ -1183,18 +1188,23 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const validated = (yield authInvoke(catalogSchema(method)["~standard"], "validate", [result])) as
                 | StandardSchemaV1.FailureResult
                 | StandardSchemaV1.SuccessResult<CatalogResult>;
+              trace?.record("catalog.validate");
               if (stopped() || validated.issues) return undefined;
               accepted = validated.value;
             }
             // Redaction depends on this request's sent credentials. It must
             // still run, and returns detached objects from the frozen facts.
             const clean = intake(ctx, method, accepted);
+            trace?.record("catalog.intake");
+            trace?.record("catalog.chunks", 0, fingerprint.byteLength, 0, 0, m.chunkCount);
             rememberValidated(reuseKey, accepted, fingerprint.byteLength);
             if (m.expiresAt <= Date.now()) {
+              trace?.record("catalog.cache.expired");
               if (method === "tools/list" && (!staleTools || staleTools.manifest.fetchedAt < m.fetchedAt))
                 staleTools = { result: clean as ListToolsResult, manifest: m };
               return undefined;
             }
+            trace?.record("catalog.cache.hit");
             observeCatalogFetch(ctx, m.fetchedAt, method);
             observeCatalogExpiry(ctx, method, clean.ttlMs, m.expiresAt);
             return { value: JSON.stringify(clean), stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };

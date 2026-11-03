@@ -399,7 +399,9 @@ This bound is independent of MCP request/program admission and downstream call
 limits. `Mcp-Method: subscriptions/listen` still defers its MCP request permit:
 after authentication and endpoint admission, a body-confirmed modern listen is
 refused promptly even when execution capacity is full. It always passes the
-authentication bound, and no request body is read before authentication.
+authentication bound, and the MCP route reads no request body before
+authentication. On Node, `listen()` has already buffered the body up to its own
+[pre-auth cap](./deploying.md#start-on-node) before core sees the request.
 
 Routes that do not invoke an inbound verifier consume no authentication slot:
 health, public OAuth discovery and client metadata, UI shells and static assets,
