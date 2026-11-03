@@ -74,9 +74,8 @@ async function prepare(world: World, deployment: Deployment) {
   const alice = await connectMcp(`${deployment.origin}/mcp`, { Authorization: "Bearer eval-alice" });
   try {
     const before = world.ledger.calls.length;
-    const refused = await alice.call("call_tool", {
-      address: "qb_bob.get_record",
-      args: { entity: "invoices", id: "41" },
+    const refused = await alice.call("execute_code", {
+      code: 'async () => (await connecta.call("qb_bob.get_record", { entity: "invoices", id: "41" })).data',
     });
     requireThat(
       refused.isError && /auth_required/.test(refused.text) && world.ledger.calls.length === before,
