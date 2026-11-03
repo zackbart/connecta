@@ -152,3 +152,14 @@ export async function freePort(): Promise<number> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   return port;
 }
+
+/** Retry only startup bind collisions; callers clean up each failed attempt before retrying. */
+export async function retryBind<T>(start: (attempt: number) => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await start(attempt);
+    } catch (error) {
+      if (attempt >= 3 || !/EADDRINUSE|address already in use/i.test(String(error))) throw error;
+    }
+  }
+}

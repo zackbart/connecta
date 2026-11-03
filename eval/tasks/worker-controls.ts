@@ -4,6 +4,7 @@
  * process-group cleanup after a launcher crash, the egress guard on wrangler's
  * own Node processes, and comparator provenance across targets.
  */
+import { Server as HttpServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
 import { createSocket as createDgramSocket } from "node:dgram";
 import { existsSync } from "node:fs";
@@ -23,7 +24,7 @@ import { evalConfig } from "../deploy/compose.js";
 import { withD1Latency } from "../deploy/d1-latency.js";
 import { isInjected, NO_INJECTION, parseInjection, type Injection } from "../fakes/injection.js";
 import { World, type WorldOptions } from "../fakes/world.js";
-import { servedDelayStats, serveFetch } from "../support/serve.js";
+import { servedDelayStats, serveFetch, retryBind } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
 import { ACTIVE_TASKS } from "./index.js";
 import { PROVIDER_EVALS } from "./providers.generated.js";
@@ -708,4 +709,79 @@ export async function injectionControls() {
   refused(() => parseInjection(flags(["--latency-ms", "-1"])), "Negative latency accepted");
   refused(() => parseInjection(flags(["--hung-connector", "stalled"])), "A toggle accepted a value");
   if (isInjected(parseInjection(flags([])))) throw new Error("Injection is not off by default");
+}
+
+/** Force a candidate to be occupied by another listener, then recover before serving. */
+export async function portCollisionControls() {
+  const competitor = await serveFetch(async () => new Response("competitor"));
+  const port = competitor.port;
+  let attempts = 0;
+  let served: Awaited<ReturnType<typeof serveFetch>> | undefined;
+  try {
+    served = await retryBind(async () => {
+      attempts++;
+      return serveFetch(async () => new Response("trial"), attempts === 1 ? port : 0);
+    });
+    if (attempts !== 2 || (await (await fetch(served.url)).text()) !== "trial")
+      throw new Error("Port collision did not recover with a fresh listener");
+    let failures = 0;
+    await rejects(
+      () =>
+        retryBind(async () => {
+          failures++;
+          throw new Error("EADDRINUSE");
+        }),
+      /EADDRINUSE/,
+      "Repeated collisions must fail boundedly",
+    );
+    if (failures !== 3) throw new Error("Collision retries were not bounded");
+    const task = ACTIVE_TASKS.find((task) => task.id === "cross-connector-join")!;
+    // Reproduce #1303 at the old freePort close callback, before startup
+    // resumes. With port 0 there is no reservation release to intercept.
+    const close = HttpServer.prototype.close;
+    const squatters: ReturnType<typeof createNetServer>[] = [];
+    HttpServer.prototype.close = function (callback) {
+      const address = this.address();
+      if (this.listenerCount("request") || !address || typeof address === "string") return close.call(this, callback);
+      return close.call(this, (error) => {
+        if (error) {
+          callback?.(error);
+          return;
+        }
+        const squatter = createNetServer();
+        squatters.push(squatter);
+        squatter.listen(address.port, "127.0.0.1", () => callback?.());
+      });
+    };
+    try {
+      await playReference(task, { mode: "reference" }, ({ world, trace }) => {
+        const failures = gradeTask(task, { world, trace }, "six", "outcome").filter(
+          (check) => !check.pass && !check.advisory,
+        );
+        if (failures.length) throw new Error(`Collision trial failed: ${failures.map((check) => check.id)}`);
+      });
+    } finally {
+      HttpServer.prototype.close = close;
+      await Promise.all(squatters.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+    }
+    const calls: string[] = [];
+    await rejects(
+      () =>
+        task.reference({
+          world: new World(),
+          answer: () => {},
+          call: async (tool) => {
+            calls.push(tool);
+            return { isError: true, text: "interrupted read", structured: undefined, content: [] };
+          },
+          nextTurn: async () => true,
+        }),
+      /read failed: interrupted read/,
+      "Reference must surface the read failure",
+    );
+    if (calls.length !== 1) throw new Error("Reference posted after its failed read");
+  } finally {
+    await served?.close();
+    await competitor.close();
+  }
 }

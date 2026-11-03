@@ -115,7 +115,7 @@ const crossConnectorJoin: ActiveTask = {
     ];
   },
   reference: async ({ call }) => {
-    await call("execute_code", {
+    const read = await call("execute_code", {
       code: `async () => {
   const bugs = [];
   let cursor;
@@ -142,6 +142,7 @@ const crossConnectorJoin: ActiveTask = {
   return rows[0];
 }`,
     });
+    if (read.isError) throw new Error(`cross-connector-join read failed: ${read.text}`);
     await call("call_destructive_tool", {
       address: "chat.post_message",
       args: { channel: "triage", text: "API-207 Stark Industries $56,500" },

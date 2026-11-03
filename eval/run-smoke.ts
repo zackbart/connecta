@@ -48,7 +48,7 @@ import { describeInjection, isInjected, parseInjection } from "./fakes/injection
 import type { SmokeCheck, SmokeResultFile, SmokeTarget } from "./report/summary.js";
 import { connectMcp, parseJson, type McpSession } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
-import { freePort } from "./support/serve.js";
+import { freePort, retryBind } from "./support/serve.js";
 import {
   killChildrenOnSignal,
   startProcess,
@@ -301,8 +301,8 @@ async function nodeTemplate(): Promise<SmokeTarget> {
       );
       if (result.status !== 0) throw new Error((result.stderr || result.stdout).slice(-1_000));
     });
-    const port = await freePort();
-    const origin = `http://127.0.0.1:${port}`;
+    let port = await freePort();
+    let origin = `http://127.0.0.1:${port}`;
     const database = join(work, "connecta.sqlite");
     let token = "";
     const provisioned = await step(checks, "rotate-token local-machine", async () => {
@@ -328,9 +328,21 @@ async function nodeTemplate(): Promise<SmokeTarget> {
           CONNECTA_DATABASE: database,
         },
       });
-    proc = boot();
-    const running = proc;
-    const booted = await step(checks, "boot", () => waitForHealth(origin, running.child, running.output));
+    const start = () =>
+      retryBind(async (attempt) => {
+        if (attempt > 1) {
+          port = await freePort();
+          origin = `http://127.0.0.1:${port}`;
+        }
+        proc = boot();
+        try {
+          await waitForHealth(origin, proc.child, proc.output);
+        } catch (error) {
+          await stopProcess(proc.child);
+          throw error;
+        }
+      });
+    const booted = await step(checks, "boot", start);
     if (!booted) return target;
     await step(checks, "/agent/local-machine refuses a request without the token", async () => {
       const response = await fetch(`${origin}/agent/local-machine`, { method: "POST" });
@@ -371,8 +383,7 @@ async function nodeTemplate(): Promise<SmokeTarget> {
       } finally {
         db.close();
       }
-      proc = boot();
-      await waitForHealth(origin, proc.child, proc.output);
+      await start();
       const client = await connectMcp(`${origin}/agent/local-machine`, headers);
       try {
         const result = await client.call("call_tool", { address: "time.get_now", args: {} });
