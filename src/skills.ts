@@ -409,81 +409,88 @@ function validSkillName(name: string): boolean {
 function localRecords(connectors: readonly Connector[], readOnly = false): Promise<SkillRecord[]> {
   return runEdge(localRecordsNative(connectors, readOnly));
 }
-const localRecordsNative = /* @__PURE__ */ registerAuth(localRecords, function (connectors: readonly Connector[], readOnly = false) {
-  return authFlow<SkillRecord[]>(function* () {
-    const builtIns = AVAILABLE_SKILLS.map((skill) =>
-      localRecord(skill.name, `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [
-        skill.name,
-        `skill://connecta/${skill.name}`,
-      ]),
-    );
-    const allocated = new Set(connectors.map((connector) => connector.id));
-    const guides = yield* upwardStep(
-      Effect.forEach(
-        connectors
-          .filter((connector) => connectorGuide(connector) !== undefined)
-          .sort(
-            (a, b) =>
-              Number(connectorGuideRequired(b)) - Number(connectorGuideRequired(a)) ||
-              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-          ),
-        (connector: Connector) =>
-          authFlow<{
-            connector: Connector;
-            entry: ConnectorSkill;
-            aliases: string[];
-            content?: string;
-            files?: Map<string, string>;
-          }>(function* () {
-            const digest = validSkillName(connector.id)
-              ? ""
-              : bytesToHex(
-                  new Uint8Array(
-                    yield* upwardStep(
-                      authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", encoder.encode(connector.id)]),
+const localRecordsNative = /* @__PURE__ */ registerAuth(
+  localRecords,
+  function (connectors: readonly Connector[], readOnly = false) {
+    return authFlow<SkillRecord[]>(function* () {
+      const builtIns = AVAILABLE_SKILLS.map((skill) =>
+        localRecord(skill.name, `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [
+          skill.name,
+          `skill://connecta/${skill.name}`,
+        ]),
+      );
+      const allocated = new Set(connectors.map((connector) => connector.id));
+      const guides = yield* upwardStep(
+        Effect.forEach(
+          connectors
+            .filter((connector) => connectorGuide(connector) !== undefined)
+            .sort(
+              (a, b) =>
+                Number(connectorGuideRequired(b)) - Number(connectorGuideRequired(a)) ||
+                (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+            ),
+          (connector: Connector) =>
+            authFlow<{
+              connector: Connector;
+              entry: ConnectorSkill;
+              aliases: string[];
+              content?: string;
+              files?: Map<string, string>;
+            }>(function* () {
+              const digest = validSkillName(connector.id)
+                ? ""
+                : bytesToHex(
+                    new Uint8Array(
+                      yield* upwardStep(
+                        authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", encoder.encode(connector.id)]),
+                      ),
                     ),
-                  ),
-                );
-            const legacy = `connector-${digest.slice(0, 48)}`;
-            const slug =
-              connector.id
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/^-|-$/g, "")
-                .slice(0, 42)
-                .replace(/-$/g, "") || "connector";
-            let name = connector.id;
-            if (!validSkillName(name)) {
-              const base = `${slug}-${digest.slice(0, 12)}`;
-              name = base;
-              let suffix = 1;
-              while (allocated.has(name)) name = `${base}-${suffix++}`;
-              allocated.add(name);
-            }
-            const description = connectorGuideSummary(connector)!;
-            const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
-            const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${readOnly ? `${writePolicy(true, META_ROUTES)}\n\n` : ""}${connectorGuide(connector)!}`;
-            return {
-              ...localRecord(name, `${root}/SKILL.md`, description, content, [
-                connectorSkillName(connector.id),
-                ...(connector.id.includes(":") ? [] : [connector.id]),
-                ...(name !== connector.id
-                  ? [legacy, `skill://connecta/connectors/${legacy}`, `skill://connecta/connectors/${legacy}/SKILL.md`]
-                  : []),
-                `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
-                root,
-              ]),
-              connector,
-            };
-          }),
-        { concurrency: 1 },
-      ),
-    );
-    if (new Set(guides.map((guide) => guide.entry.uri)).size !== guides.length)
-      throw new ConnectorCallError("unavailable", "Connector skill slugs collide.");
-    return [builtIns[0]!, ...guides, ...builtIns.slice(1)];
-  });
-});
+                  );
+              const legacy = `connector-${digest.slice(0, 48)}`;
+              const slug =
+                connector.id
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "-")
+                  .replace(/^-|-$/g, "")
+                  .slice(0, 42)
+                  .replace(/-$/g, "") || "connector";
+              let name = connector.id;
+              if (!validSkillName(name)) {
+                const base = `${slug}-${digest.slice(0, 12)}`;
+                name = base;
+                let suffix = 1;
+                while (allocated.has(name)) name = `${base}-${suffix++}`;
+                allocated.add(name);
+              }
+              const description = connectorGuideSummary(connector)!;
+              const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
+              const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${readOnly ? `${writePolicy(true, META_ROUTES)}\n\n` : ""}${connectorGuide(connector)!}`;
+              return {
+                ...localRecord(name, `${root}/SKILL.md`, description, content, [
+                  connectorSkillName(connector.id),
+                  ...(connector.id.includes(":") ? [] : [connector.id]),
+                  ...(name !== connector.id
+                    ? [
+                        legacy,
+                        `skill://connecta/connectors/${legacy}`,
+                        `skill://connecta/connectors/${legacy}/SKILL.md`,
+                      ]
+                    : []),
+                  `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
+                  root,
+                ]),
+                connector,
+              };
+            }),
+          { concurrency: 1 },
+        ),
+      );
+      if (new Set(guides.map((guide) => guide.entry.uri)).size !== guides.length)
+        throw new ConnectorCallError("unavailable", "Connector skill slugs collide.");
+      return [builtIns[0]!, ...guides, ...builtIns.slice(1)];
+    });
+  },
+);
 
 /** Canonical identities win; an alias shared by different guides is ambiguous. */
 function localLookup(records: readonly SkillRecord[], key: string): SkillRecord | undefined {

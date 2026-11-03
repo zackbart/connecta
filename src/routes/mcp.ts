@@ -456,7 +456,9 @@ function serveMcp(
         instructions: endpointInstructions(
           pool !== undefined ? opts.pools.get(pool)?.description : undefined,
           native,
-          readOnly || (registry.listConnectors().length > 0 && registry.listConnectors().every((connector) => connector.readOnly === true)),
+          readOnly ||
+            (registry.listConnectors().length > 0 &&
+              registry.listConnectors().every((connector) => connector.readOnly === true)),
         ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },
