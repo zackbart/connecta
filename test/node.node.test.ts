@@ -2,7 +2,6 @@
 import { createRequire } from "node:module";
 import { build } from "esbuild";
 import { once } from "node:events";
-import { connect, type Socket } from "node:net";
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -175,6 +174,104 @@ describe("Node listen adapter", () => {
       await once(server, "listening");
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await core.close();
+    });
+  });
+
+  describe("request URL validation", () => {
+    const send = async (
+      port: number,
+      options: { host?: string; proto?: string; path?: string; method?: string; body?: string },
+    ) =>
+      await new Promise<{ status: number; connection: string | undefined }>((resolve, reject) => {
+        const request = httpRequest(
+          {
+            port,
+            host: "127.0.0.1",
+            setHost: false,
+            method: options.method ?? "GET",
+            path: options.path ?? "/mcp",
+            headers: {
+              Host: options.host ?? "connecta.example",
+              ...(options.proto !== undefined ? { "X-Forwarded-Proto": options.proto } : {}),
+            },
+          },
+          (response) => {
+            response.resume();
+            response.once("end", () =>
+              resolve({ status: response.statusCode ?? 0, connection: response.headers.connection }),
+            );
+          },
+        );
+        request.once("error", reject);
+        request.end(options.body);
+      });
+
+    const withServer = async (run: (port: number, seen: string[]) => Promise<void>) => {
+      const core = createTestConnecta({ connectors: [], publicUrl: "https://connecta.example" });
+      const seen: string[] = [];
+      const app = {
+        ...core,
+        fetch: async (request: Request) => {
+          seen.push(request.url);
+          return new Response("forwarded");
+        },
+      };
+      const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      try {
+        await run(address.port, seen);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      }
+    };
+
+    it.each([
+      ["a Host with a path", { host: "connecta.example/health?" }],
+      ["a Host with a query", { host: "connecta.example?x=" }],
+      ["a Host with a fragment", { host: "connecta.example#x" }],
+      ["a Host with userinfo", { host: "user@connecta.example" }],
+      ["a Host with a backslash", { host: "connecta.example\\x" }],
+      ["a Host list", { host: "connecta.example,other.example" }],
+      ["an empty Host", { host: "" }],
+      ["a Host with a named port", { host: "connecta.example:http" }],
+      ["a Host with an empty port", { host: "connecta.example:" }],
+      ["a Host with an out-of-range port", { host: "connecta.example:70000" }],
+      ["a Host with an invalid IPv4 address", { host: "256.256.256.256" }],
+      ["a Host with an invalid IPv6 literal", { host: "[::zz]:8787" }],
+      ["an unbracketed IPv6 Host", { host: "::1" }],
+      ["an unknown X-Forwarded-Proto", { proto: "javascript" }],
+      ["an empty X-Forwarded-Proto", { proto: "" }],
+      ["an X-Forwarded-Proto list", { proto: "https,http" }],
+      ["an X-Forwarded-Proto carrying a URL", { proto: "https://other.example/" }],
+      ["an absolute-form request target", { path: "http://other.example/mcp" }],
+      ["an asterisk-form request target", { method: "OPTIONS", path: "*" }],
+    ])("answers %s 400 without reaching core", async (_name, options) => {
+      await withServer(async (port, seen) => {
+        expect(await send(port, options)).toEqual({ status: 400, connection: "close" });
+        // The same refusal when a body follows: the adapter reads none of it.
+        expect(await send(port, { ...options, method: "POST", body: "{}" })).toMatchObject({ status: 400 });
+        expect(seen).toEqual([]);
+      });
+    });
+
+    it.each([
+      [{ host: "connecta.example" }, "http://connecta.example/mcp"],
+      [{ host: "CONNECTA.example:8443" }, "http://connecta.example:8443/mcp"],
+      [{ host: "connecta_app:8787" }, "http://connecta_app:8787/mcp"],
+      [{ host: "127.0.0.1:8787" }, "http://127.0.0.1:8787/mcp"],
+      [{ host: "[::1]:8787" }, "http://[::1]:8787/mcp"],
+      [{ host: "connecta.example.", proto: "https" }, "https://connecta.example./mcp"],
+      [{ proto: "http" }, "http://connecta.example/mcp"],
+      [{ proto: "HTTPS" }, "https://connecta.example/mcp"],
+      [{ proto: "https", path: "/mcp/pool?x=1&y=/a?b" }, "https://connecta.example/mcp/pool?x=1&y=/a?b"],
+    ])("forwards %j with the URL it names", async (options, url) => {
+      await withServer(async (port, seen) => {
+        expect((await send(port, options)).status).toBe(200);
+        expect(seen).toEqual([url]);
+      });
     });
   });
 
