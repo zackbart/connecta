@@ -1,3 +1,6 @@
+import { operationActivity } from "./operation-activity.js";
+import { SkillLookupError } from "./skills.js";
+import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
@@ -427,7 +430,11 @@ function serializedDiagnosticBytes(value: unknown): number {
 }
 
 function guestFailure(code: string, message: string, retryable = false): InvocationFailure {
-  return new InvocationFailure({ code, message, retryable });
+  return new InvocationFailure(
+    ["unavailable", "unsupported_capability", "input_required_unsupported"].includes(code)
+      ? utilityRecovery(code, message, retryable)
+      : { code, message, retryable },
+  );
 }
 
 /**
@@ -912,7 +919,9 @@ function sandboxProvider(
             (!options && options !== undefined) ||
             (options !== undefined && (typeof options !== "object" || Array.isArray(options)))
           ) {
-            throw guestFailure("invalid_args", "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }).");
+            throw new InvocationFailure(
+              utilityRecovery("invalid_args", "Use connecta.result(handleOrId, { page?, offset?, maxBytes? })."),
+            );
           }
           const args = { ...((options ?? {}) as Record<string, unknown>) };
           if (
@@ -927,9 +936,11 @@ function sandboxProvider(
             (args.maxBytes !== undefined &&
               (typeof args.maxBytes !== "number" || !Number.isSafeInteger(args.maxBytes) || args.maxBytes < 1))
           ) {
-            throw guestFailure(
-              "invalid_args",
-              "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }) with whole page/offset >= 0 and maxBytes >= 1; page and offset are mutually exclusive.",
+            throw new InvocationFailure(
+              utilityRecovery(
+                "invalid_args",
+                "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }) with whole page/offset >= 0 and maxBytes >= 1; page and offset are mutually exclusive.",
+              ),
             );
           }
           // A page must fit every shipped bridge even when the connector cap is raised.
@@ -986,7 +997,11 @@ function sandboxProvider(
           return { name: skillName, format: "text", text: await skills.text(skillName) };
         },
         catch: (err) =>
-          err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
+          err instanceof SkillLookupError
+            ? new InvocationFailure(skillLookupRecovery(err.message))
+            : err instanceof ConnectorCallError
+              ? guestFailure(err.code, "Skills are unavailable.", err.retryable)
+              : err,
       }),
     read: (uri) =>
       Effect.suspend(() => {
@@ -1184,8 +1199,12 @@ function sandboxProvider(
                   },
                 )
               : invoke;
+            const operationEffect =
+              activity?.recordOperation && ["search", "describe", "result", "skill"].includes(name)
+                ? operationActivity(activity, registry, name as "search" | "describe" | "result" | "skill", guarded)
+                : guarded;
             const settled = runEdge(
-              guarded.pipe(
+              operationEffect.pipe(
                 Effect.catch((error) => {
                   if (deadline && hostAccessSignal?.aborted)
                     return typedFailure(
@@ -1639,21 +1658,27 @@ export function createExecuteTool(
             programWrites,
           );
         });
-        return response.pipe(
-          Effect.provideService(RequestScope, owner),
-          Effect.map((unfinished) => {
-            // Every response, including intake refusals, crosses accounting and
-            // exactly one envelope check at this operation boundary.
-            const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
-            // Calls abandoned by the guest are failed when the run cancels them.
-            // Connecta attaches its own integers after the envelope check.
-            const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-            result.structuredContent = { ...result.structuredContent, hostCalls: counts };
-            if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
-            return result;
-          }),
-          Effect.catchDefect(Effect.fail),
-          Effect.mapError((error) => redactAgentOutput(sentSecrets, error)),
+        return operationActivity(
+          activity,
+          registry,
+          "program",
+          response.pipe(
+            Effect.provideService(RequestScope, owner),
+            Effect.map((unfinished) => {
+              // Every response, including intake refusals, crosses accounting and
+              // exactly one envelope check at this operation boundary.
+              const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
+              // Calls abandoned by the guest are failed when the run cancels them.
+              // Connecta attaches its own integers after the envelope check.
+              const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
+              result.structuredContent = { ...result.structuredContent, hostCalls: counts };
+              if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
+              return result;
+            }),
+            Effect.catchDefect(Effect.fail),
+            Effect.mapError((error) => redactAgentOutput(sentSecrets, error)),
+          ),
+          () => ({ ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded }),
         );
       }),
   );

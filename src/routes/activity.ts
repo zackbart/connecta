@@ -49,6 +49,8 @@ function enrichActivityActorLabels(page: ActivityPage, auth: readonly InboundAut
           resultBytes: _resultBytes,
           kind: _kind,
           drift: _drift,
+          operation: _operation,
+          friction: suppliedFriction,
           pool: _pool,
           actorBasis: _actorBasis,
           ...record
@@ -58,6 +60,7 @@ function enrichActivityActorLabels(page: ActivityPage, auth: readonly InboundAut
         const clientVersion = activityClientFact(suppliedVersion, "version");
         return {
           ...record,
+          ...(event.kind !== "operation" && suppliedFriction !== undefined ? { friction: suppliedFriction } : {}),
           ...activityBehaviorFacts(event),
           ...(packageVersion !== undefined ? { packageVersion } : {}),
           ...(clientName !== undefined ? { clientName } : {}),

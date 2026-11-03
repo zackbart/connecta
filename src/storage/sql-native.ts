@@ -502,11 +502,21 @@ function activityRow(read: Record<string, unknown>): ActivityRow {
   }
   return row as unknown as ActivityRow;
 }
+// Operation metadata shares the existing kind-tagged text slot; no new columns.
+function parseOperation(raw: string | null): unknown {
+  try {
+    return raw === null ? undefined : JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
   // Rows written before `friction` had a column derive it from the code.
   // Friction without a code — an oversized but successful result — exists
   // only in the column, which is why the column exists.
-  const friction = row.friction ?? agentFrictionForCode(row.error_code ?? undefined);
+  const friction =
+    row.event_kind === "operation" ? undefined : (row.friction ?? agentFrictionForCode(row.error_code ?? undefined));
   const packageVersion = activityPackageVersion(row.package_version);
   const clientName = activityClientFact(row.client_name, "name");
   const clientVersion = activityClientFact(row.client_version, "version");
@@ -519,6 +529,7 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
       classification: row.classification,
       resultBytes: row.result_bytes,
       kind: row.event_kind,
+      operation: row.event_kind === "operation" ? parseOperation(row.drift_kind) : undefined,
       pool: row.pool_name,
       actorBasis: row.actor_basis,
       drift: {
@@ -660,7 +671,7 @@ export function nativeSqlActivityStore(
             // Stored beside the code rather than derived from it: a truncated
             // result is friction on a call that succeeded, and
             // `error_code IS NOT NULL` stays an honest count of failures.
-            event.friction ?? null,
+            event.kind === "operation" ? null : (event.friction ?? null),
             event.approval ?? null,
             activityPackageVersion(event.packageVersion) ?? null,
             event.serverName,
@@ -671,7 +682,7 @@ export function nativeSqlActivityStore(
             facts.classification ?? null,
             facts.resultBytes ?? null,
             facts.kind ?? null,
-            facts.drift?.kind ?? null,
+            facts.kind === "operation" ? JSON.stringify(facts.operation ?? null) : (facts.drift?.kind ?? null),
             facts.drift?.addedTools ?? null,
             facts.drift?.removedTools ?? null,
             facts.drift?.changedTools ?? null,

@@ -36,13 +36,14 @@ import { connectMcp } from "./support/mcp.js";
 import type { AgentTrace } from "./agent/trace.js";
 import { counterexamples, positiveVariants } from "./tasks/counterexamples.js";
 import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
+import { workerRefusal } from "./deploy/targets.js";
 import { playReference } from "./agent/reference.js";
 import { flags, runProtocol } from "./support/meta.js";
 import type { ActiveTask, Check } from "./tasks/types.js";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { saveGradeInputs, restoreGradeInputs } from "./agent/saved.js";
 import { regradeTrial } from "./agent/regrade.js";
 import { summarize } from "./report/summary.js";
@@ -66,6 +67,41 @@ import {
   fakeTransportRedirects,
   restTransportControls,
 } from "./tasks/rest-controls.js";
+
+if (process.argv.includes("--worker-references-only")) {
+  const only = flags(process.argv.slice(2)).get("tasks")?.split(",");
+  const selected = only ? ACTIVE_TASKS.filter((task) => only.includes(task.id)) : ACTIVE_TASKS;
+  if (only && selected.length !== only.length) throw new Error(`Unknown --tasks entry in ${only.join(",")}`);
+  const results = [];
+  for (const task of selected) {
+    const reason = workerRefusal(task) ?? task.skip?.reason;
+    if (reason) {
+      results.push({ task: task.id, status: "not-run", reason });
+    } else {
+      try {
+        const checks = await playReference(task, { mode: "reference", target: "worker" }, ({ world, trace }) =>
+          gradeTask(task, { world, trace }, "six", "outcome"),
+        );
+        const failed = checks.filter((check) => !check.pass && !check.advisory && check.kind !== "route");
+        results.push({ task: task.id, status: failed.length ? "fail" : "pass", failed });
+      } catch (error) {
+        results.push({ task: task.id, status: "error", reason: String(error) });
+      }
+    }
+    console.log(JSON.stringify(results.at(-1)));
+  }
+  await mkdir(join("eval", "results"), { recursive: true });
+  const path = join("eval", "results", `worker-references-${Date.now()}.json`);
+  await writeFile(path, JSON.stringify(results, null, 2) + "\n");
+  console.log(`Worker reference results: ${path}`);
+  process.exit(results.some((result) => result.status === "fail" || result.status === "error") ? 1 : 0);
+}
+
+if (process.argv.includes("--workerd-isolation-only")) {
+  await workerdProcessControls();
+  console.log("ok   native workerd TCP port hardening and lifecycle");
+  process.exit(0);
+}
 
 const runtimeControl = spawnSync(process.execPath, ["--test", "scripts/eval-runtime.test.mjs"], { stdio: "inherit" });
 assert.equal(runtimeControl.status, 0, "Runtime lock collision/crash controls failed");

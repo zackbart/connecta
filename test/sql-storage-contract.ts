@@ -426,6 +426,7 @@ export function sqlGetManyContract(open: () => Promise<Pick<SqlFixture, "storage
 }
 
 export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
+  sqlOperationActivityContract(open);
   sqlGetManyContract(open);
   sqlCasExpiryContract(open);
   sqlBatchRollbackContract(open);
@@ -846,5 +847,51 @@ export function sqlAgentAdmissionContract(open: () => Promise<SqlFixture>): void
     } finally {
       await app.close();
     }
+  });
+}
+
+/** The existing table accepts operation rows without adding columns on either driver. */
+export function sqlOperationActivityContract(open: () => Promise<SqlFixture>): void {
+  it("INV-6: operation rows reuse existing columns and persist only checked metadata", async () => {
+    const fixture = await open();
+    const oldStore = fixture.activity();
+    await oldStore.record(event(1));
+    const columns = await fixture.rows("PRAGMA table_info(tool_call_activity)");
+    const store = fixture.activity();
+    await store.record(
+      event(2, {
+        kind: "operation",
+        connectorId: "$operation",
+        toolName: "program",
+        address: "$operation.program",
+        source: "execute_code",
+        operation: {
+          name: "program",
+          connectors: ["notes", "tickets"],
+          personal: false,
+          hostCalls: { attempted: 4, admitted: 4, succeeded: 4, failed: 0 },
+          query: "planted-query",
+          code: "planted-code",
+          arguments: "planted-arguments",
+        } as never,
+      }),
+    );
+    expect(await fixture.rows("PRAGMA table_info(tool_call_activity)")).toEqual(columns);
+    const recorded = (await store.list!({ limit: 10 })).events.find((row) => row.kind === "operation")!;
+    expect(recorded.operation).toEqual({
+      name: "program",
+      connectors: ["notes", "tickets"],
+      personal: false,
+      hostCalls: { attempted: 4, admitted: 4, succeeded: 4, failed: 0 },
+    });
+    expect(JSON.stringify(await fixture.rows("SELECT * FROM tool_call_activity"))).not.toContain("planted-");
+    await fixture.exec(
+      "UPDATE tool_call_activity SET drift_kind = ? WHERE event_kind = ?",
+      '{"name":"planted-name","connectors":[],"personal":false}',
+      "operation",
+    );
+    const malformed = (await store.list!({ limit: 10 })).events.find((row) => row.kind === "operation")!;
+    expect(malformed.kind).toBe("operation");
+    expect(malformed.operation).toBeUndefined();
   });
 }

@@ -1167,10 +1167,35 @@ Activity records each of these refusals with the coarse `friction` class derived
 from its typed error code — `tool_not_found`, `schema_retry`,
 `destructive_reroute`, `auth_required` — and clamps the caller-authored
 `connectorId`, `toolName`, and `address` it keeps, both under
-[code mode](./code-mode.md#activity)'s `V2` and `V3`. A `call_tool` result too
+[code mode](./code-mode.md#activity)'s `V2` and `V3`. Optional
+[operation history](./operator-ui.md#opt-in-to-operation-history) records
+search, skill and result reads with fixed names, without arguments or payloads;
+it is off by default and separate from downstream-call counts. A `call_tool` result too
 large to return inline is the one exception: it is friction
 (`result_too_large`) on a call whose `outcome` is still `"success"`, so it
 carries no `errorCode`.
+
+Recovery actions outside the tool namespace use `nextAction.action` and a
+`purpose`: `reconnect_host` repairs inbound HTTP authentication (separate from
+connector OAuth), `contact_operator` reports catalog or utility availability,
+`inspect_capabilities` requests a supporting client/operation, and
+`recover_result` requests a retained handle or an honest missing-output report.
+Unsupported task, Skills, and resource capabilities use the non-retryable
+`unsupported_capability` code with `inspect_capabilities`. Missing or expired handles have `code: not_found`; storage outages retain
+`code: unavailable`. Neither action authorizes anything or replays writes.
+Unknown skill names and connectors without a guide retain their local lookup
+diagnostic with `code: not_found` and a `nextAction` calling `skills` with no
+name to discover available names. They do not request service restoration.
+The search output schema describes action discriminators compactly; action
+advice is additive, while catalog error and authorization handoff fields retain
+their detailed contracts.
+A spent read continuation's fresh-call action takes precedence over generic
+retry advice, while auth and provider permission repair prerequisites and unknown-write reconciliation remain
+in force. HTTP 401/403 responses preserve the adapter status and challenge. JSON responses
+carry the host recovery envelope. Custom non-JSON responses preserve their body
+and lifetime, with the same typed facts in `Connecta-Error-Code`,
+`Connecta-Recovery`, and JSON-encoded `Connecta-Next-Action` headers (also exposed
+to cross-origin hosts).
 
 ## Recovery limits
 

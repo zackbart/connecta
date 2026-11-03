@@ -3780,6 +3780,16 @@ change. All 88 declarations still exclude Effect and have complete references.
 
 ### Native remote MCP programs (contributor)
 
+Legacy session termination may read a token before rotation and send its DELETE
+on the wire after rotation. This is accepted only for bounded, headers-only
+termination of the old session, never for application traffic (`tools/call`,
+`tools/list`, or other RPCs). Connection scope close retains the same cleanup
+completion after revocation; later connector close joins it so the runtime's
+deferred hook (Workers `waitUntil`) owns the bounded tail. Abandoned leases from
+rotation and failed connects, and authorization exchange transports, retain their
+cleanup in that same request state. Termination and local close keep their
+existing one-second budgets; the caller-facing close window remains 100 ms.
+
 Remote MCP connection joins, credential and epoch checks, catalog intake,
 negotiation, calls, resources, Skills, auth and status compose native programs.
 `connectors/remote-mcp.ts` keeps the published options, the redirect guard and

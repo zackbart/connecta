@@ -136,6 +136,7 @@ export interface ConnectaConfigDescription {
     vault: { enabled: boolean; sealsOAuth?: boolean };
     activity: {
       enabled: boolean;
+      operations?: true;
       readable?: boolean;
       deploymentId?: string;
       store?: { kind: DescribedStoreKind; retentionDays?: number };
@@ -475,6 +476,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
         ? {
             enabled: true,
             readable: typeof config.activity.store.list === "function",
+            ...(config.activity.operations ? { operations: true as const } : {}),
             ...(str(config.activity.deploymentId) !== undefined ? { deploymentId: config.activity.deploymentId! } : {}),
             store: {
               kind: storeKind(activityStore),

@@ -550,7 +550,7 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
           : `await connecta.call(${JSON.stringify(scenario === "unknown-address" ? "missing.read" : scenario === "unknown-tool" ? "remote.missing" : "remote.read")})`;
       const code = local
         ? 'async () => { await connecta.skill("connector:remote"); return (await connecta.call("remote.read")).data; }'
-        : `async () => { try { ${operation}; } catch (e) { return ${scenario === "unknown-address" ? "JSON.stringify(e.details)" : "e.message"}.repeat(${scenario === "catalog" ? 120 : 1000}); } }`;
+        : `async () => { try { ${operation}; } catch (e) { return ${scenario === "unknown-address" ? "JSON.stringify(e.details)" : "e.message"}.padEnd(40, "x").repeat(${scenario === "catalog" ? 120 : 1000}); } }`;
       const original = await run(code, pool);
       expect(original.isError, JSON.stringify(original)).toBeFalsy();
       const id = (original.structuredContent!.result as { resultId: string }).resultId;

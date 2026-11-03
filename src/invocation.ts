@@ -1,3 +1,4 @@
+import { utilityRecovery } from "./utility-recovery.js";
 import { traceFor } from "./timing-trace.js";
 import { routePhrases } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
@@ -402,7 +403,10 @@ export class InvocationService {
         });
       };
       const enrich = (error: CallErrorDetails, target: typeof activityTarget, settled: boolean): CallErrorDetails => {
-        if (!target) return error;
+        if (!target)
+          return ["unavailable", "catalog_lookup_failed", "unsupported_capability"].includes(error.code)
+            ? { ...error, nextAction: error.nextAction ?? utilityRecovery(error.code, error.message).nextAction }
+            : error;
         const recovery = recoveryState.facts;
         const enteredWrite =
           dispatchedToConnector &&
@@ -509,8 +513,23 @@ export class InvocationService {
           error = { ...error, code: "downstream_oauth_required" };
         }
         switch (error.code) {
+          case "unsupported_capability":
+            return unknownWrite
+              ? error
+              : {
+                  ...error,
+                  nextAction: utilityRecovery(error.code, "The requested capability is unsupported.").nextAction,
+                };
           case "input_required_unsupported":
-            if (context.processInputRequired) return error;
+            if (context.processInputRequired)
+              return unknownWrite
+                ? error
+                : {
+                    ...error,
+                    nextAction:
+                      error.nextAction ??
+                      utilityRecovery(error.code, "The requested input capability is unsupported.").nextAction,
+                  };
             // Resending could apply the write twice: reconcile first.
             if (unknownWrite)
               return {
@@ -636,6 +655,7 @@ export class InvocationService {
               return error;
             return {
               ...error,
+              nextAction: error.nextAction ?? utilityRecovery(error.code, error.message).nextAction,
               retry:
                 "No immediate repair action exists on this endpoint. Ask the operator to check connector availability; a read can be tried again after recovery.",
             };

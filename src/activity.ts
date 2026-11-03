@@ -1,3 +1,4 @@
+import { checkedActivityOperation } from "./operation-activity.js";
 import { CONNECTA_VERSION } from "./version.js";
 import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import { routeActivity } from "./routes/activity.js";
@@ -114,7 +115,7 @@ export interface ActivityActor {
 }
 
 /**
- * Privacy-minimal history of one resolved downstream connector call.
+ * Privacy-minimal history of a resolved call, catalog change or opt-in operation.
  *
  * Arguments, results, generated code, search text, and raw errors are excluded
  * by construction. Deployments that need a safe human summary can add a
@@ -127,6 +128,15 @@ export interface ActivityCatalogChange {
   changedTools: number;
 }
 
+export type ActivityOperationName = "search" | "describe" | "result" | "skill" | "program";
+export interface ActivityOperation {
+  name: ActivityOperationName;
+  /** Conservative endpoint scope, never caller-supplied addresses. */
+  connectors: string[];
+  personal: boolean;
+  hostCalls?: { attempted: number; admitted: number; succeeded: number; failed: number };
+}
+
 /** Integer metadata is checked at every write and read boundary. */
 export function activityCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
@@ -137,9 +147,13 @@ export function activityBehaviorFacts(event: {
   resultBytes?: unknown;
   kind?: unknown;
   drift?: unknown;
+  operation?: unknown;
   pool?: unknown;
   actorBasis?: unknown;
-}): Pick<ToolCallActivityEvent, "classification" | "resultBytes" | "kind" | "drift" | "pool" | "actorBasis"> {
+}): Pick<
+  ToolCallActivityEvent,
+  "classification" | "resultBytes" | "kind" | "drift" | "operation" | "pool" | "actorBasis"
+> {
   const classification =
     event.classification === "read" || event.classification === "write" ? event.classification : undefined;
   const resultBytes = activityCount(event.resultBytes);
@@ -170,6 +184,7 @@ export function activityBehaviorFacts(event: {
     ...(classification !== undefined ? { classification } : {}),
     ...(resultBytes !== undefined ? { resultBytes } : {}),
     ...(drift ? { kind: "catalog_drift", drift } : {}),
+    ...(event.kind === "operation" ? { kind: "operation", operation: checkedActivityOperation(event.operation) } : {}),
     ...(pool !== undefined ? { pool } : {}),
   };
 }
@@ -180,7 +195,8 @@ export interface ToolCallActivityEvent {
   occurredAt: string;
   requestId: string;
   /** Absent on legacy tool rows. Catalog changes use the same paging envelope. */
-  kind?: "catalog_drift";
+  kind?: "catalog_drift" | "operation";
+  operation?: ActivityOperation | undefined;
   drift?: ActivityCatalogChange;
   /** The final registry verdict captured when resolution succeeded. */
   classification?: "read" | "write";
@@ -293,6 +309,7 @@ export interface CatalogDriftActivityContext {
 
 /** Request-scoped context shared by direct, batch, and code-mode call paths. */
 export interface ActivityRequestContext {
+  recordOperation?: typeof recordOperationActivity | undefined;
   recordTool?: typeof recordToolActivity | undefined;
   sink: ActivitySink;
   actor: ActivityActor;
@@ -321,6 +338,7 @@ export type ActivityEventInput = Pick<
   | "resultBytes"
   | "kind"
   | "drift"
+  | "operation"
 > & {
   /**
    * A code connecta assigns. Rows written by older deployments may hold
@@ -343,7 +361,7 @@ export function recordToolActivity(context: ActivityRequestContext | undefined, 
   // Checked here as well as by type: a handler can put any string in a
   // `ConnectorCallError`'s code, and a downstream's own code is not recorded.
   const errorCode = classificationCode(input.errorCode);
-  const friction = input.friction ?? agentFrictionForCode(errorCode);
+  const friction = input.kind === "operation" ? undefined : (input.friction ?? agentFrictionForCode(errorCode));
   // Re-check client grammars at the record boundary; never spread the envelope.
   const clientName = activityClientFact(context.clientInfo?.name, "name");
   const clientVersion = activityClientFact(context.clientInfo?.version, "version");
@@ -419,23 +437,60 @@ export function recordCatalogChangeActivity(
 }
 
 export interface ActivityHistoryOptions {
+  /** Opt in to one detached storage write per meta operation and program. */
+  operations?: boolean;
   store: ActivityStore;
   deploymentId?: string;
   readGate?: ActivityReadGate;
 }
 /** Attach payload-free history without changing tool results on store failure. */
 /** The closed options activityHistory() accepts; see `assertKnownOptions`. */
-const ACTIVITY_HISTORY_OPTIONS = optionsOf<ActivityHistoryOptions>()(keys("store", "deploymentId", "readGate"));
+const ACTIVITY_HISTORY_OPTIONS = optionsOf<ActivityHistoryOptions>()(
+  keys("store", "deploymentId", "readGate", "operations"),
+);
 
 export function activityHistory(options: ActivityHistoryOptions): ActivityModule {
   options = assertKnownOptions(options, "activityHistory()", ACTIVITY_HISTORY_OPTIONS);
   if (!options || typeof options.store?.record !== "function") {
     throw new Error("activityHistory.store must implement record(event)");
   }
+  if (options.operations !== undefined && typeof options.operations !== "boolean")
+    throw new Error("activityHistory.operations must be a boolean");
   return {
     ...options,
+    ...(options.operations ? { recordOperation: recordOperationActivity } : {}),
     handle: routeActivity,
     recordTool: recordToolActivity,
     recordChange: recordCatalogChangeActivity,
   };
+}
+
+/** Operation records reuse the detached sink and accept no payload fields. */
+export function recordOperationActivity(
+  context: ActivityRequestContext,
+  input: {
+    operation: ActivityOperation;
+    durationMs: number;
+    resultBytes?: number | undefined;
+    outcome: ActivityOutcome;
+    errorCode?: ClassificationCode | undefined;
+  },
+): void {
+  const operation = checkedActivityOperation(input.operation);
+  if (!operation) return;
+  const connectorId = operation.connectors.length === 1 ? operation.connectors[0]! : "$operation";
+  recordToolActivity(context, {
+    kind: "operation",
+    operation,
+    connectorId,
+    toolName: operation.name,
+    address: `${connectorId}.${operation.name}`,
+    source: "execute_code",
+    outcome: input.outcome,
+    durationMs: input.durationMs,
+    ...(input.resultBytes !== undefined ? { resultBytes: input.resultBytes } : {}),
+    attempts: 1,
+    ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+    ...(operation.personal ? { privateCatalog: true } : {}),
+  });
 }

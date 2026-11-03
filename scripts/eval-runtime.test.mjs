@@ -72,3 +72,74 @@ test(
     }
   },
 );
+
+test("a command retains its lease after wrapper SIGKILL", { timeout: 30_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "connecta-orphan-lock-"));
+  const wrapper = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { withRuntimeLock } from ${JSON.stringify(runtime)};
+    await withRuntimeLock(true, process.execPath, ["-e",
+      'console.log(process.pid); setInterval(() => {}, 1000)']);
+  `,
+    ],
+    { cwd: dir, stdio: ["ignore", "pipe", "inherit"] },
+  );
+  let pid;
+  try {
+    const lines = createInterface({ input: wrapper.stdout });
+    [pid] = await once(lines, "line");
+    const exited = once(wrapper, "exit");
+    wrapper.kill("SIGKILL");
+    await exited;
+    const lock = join(dir, "node_modules/.cache/connecta-eval-runtime.flock");
+    assert.equal(
+      spawnSync("flock", ["-n", "-s", lock, "true"]).status,
+      1,
+      "wrapper death must not unlock a still-running command",
+    );
+    process.kill(Number(pid), "SIGKILL");
+    // Wait for the kernel to close the dying command's descriptors.
+    let status;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      status = spawnSync("flock", ["-n", "-x", lock, "true"]).status;
+      if (status === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(status, 0, "last holder death must release the lease");
+  } finally {
+    wrapper.kill("SIGKILL");
+    if (pid) {
+      try {
+        process.kill(Number(pid), "SIGKILL");
+      } catch {}
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("missing flock refuses to run the command", { timeout: 10_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "connecta-missing-flock-"));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import { withRuntimeLock } from ${JSON.stringify(runtime)};
+      await withRuntimeLock(false, process.execPath, ["-e", 'console.log("UNLOCKED")']);
+    `,
+      ],
+      { cwd: dir, env: { ...process.env, PATH: dir }, encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /requires flock.*brew install flock/);
+    assert.doesNotMatch(result.stdout, /UNLOCKED/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -29,6 +29,9 @@ import type {
   AgentRouteNames,
 } from "./types.js";
 
+/** Trusted diagnostics constructed from the caller-visible local registry. */
+export class SkillLookupError extends ConnectorCallError {}
+
 // The meta instructions and built-in guides use the meta names: built-in guides
 // are byte-identical across deployments, and the eval code arm replaces usage.
 const ROUTE = `Choose a route before discovery. One known-address read uses ${META_ROUTES.read}; one known-address write uses ${META_ROUTES.write}. Unknown-address read-only work starts with ${META_ROUTES.program} to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.`;
@@ -727,7 +730,7 @@ export class SkillsRegistry {
       : name.startsWith(CONNECTOR_SKILL_PREFIX)
         ? `Unknown connector "${boundedEchoText(id)}".`
         : `Unknown skill "${boundedEchoText(name)}".`;
-    return new ConnectorCallError("not_found", `${message} Available skills: ${available}.`);
+    return new SkillLookupError("not_found", `${message} Available skills: ${available}.`);
   }
 
   list(cursor?: string) {
@@ -1178,9 +1181,15 @@ export class SkillsRegistry {
                     yield* closeScopeOnExit(connector, ctx, self.options.defer);
                     return yield* authCall<T>(read, [ctx]).pipe(
                       Effect.mapError((error) =>
-                        error instanceof ConnectorCallError && error.code === "auth_required"
-                          ? new ConnectorCallError("auth_required", "Downstream skills require authorization.")
-                          : new ConnectorCallError("unavailable", "Downstream skills are unavailable."),
+                        error instanceof ConnectorCallError && error.code === "unsupported_capability"
+                          ? new ConnectorCallError(
+                              "unsupported_capability",
+                              "Downstream Skills capability is not supported.",
+                              { retryable: false },
+                            )
+                          : error instanceof ConnectorCallError && error.code === "auth_required"
+                            ? new ConnectorCallError("auth_required", "Downstream skills require authorization.")
+                            : new ConnectorCallError("unavailable", "Downstream skills are unavailable."),
                       ),
                     );
                   }),

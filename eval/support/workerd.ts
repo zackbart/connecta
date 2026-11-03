@@ -7,6 +7,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimental_readRawConfig } from "wrangler";
@@ -132,7 +133,14 @@ export async function stopAllProcesses(): Promise<void> {
  * Wrangler's own Node process may not reach the network: no update check, no
  * metrics, and a preload that refuses every non-loopback TCP/TLS connect.
  */
+const wranglerRequire = createRequire(createRequire(import.meta.url).resolve("wrangler"));
+const miniflareRequire = createRequire(wranglerRequire.resolve("miniflare"));
+const nativeWorkerd = (miniflareRequire("workerd") as { default: string }).default;
+
 export const WRANGLER_ENV = {
+  MINIFLARE_WORKERD_PATH: join(ROOT, "eval", "support", "workerd-landlock.py"),
+  EVAL_NATIVE_WORKERD: nativeWorkerd,
+  EVAL_NETWORK_OWNER_PID: String(process.pid),
   WRANGLER_SEND_METRICS: "false",
   // The startup banner is the update check's unconditional trigger.
   WRANGLER_HIDE_BANNER: "true",
@@ -215,12 +223,17 @@ export async function wranglerDev(options: {
     await writeFile(join(persist, ".dev.vars"), lines.join(""), { mode: 0o600 });
   }
   let port = 0;
-  const inspector = 0;
+  let inspector = 0;
+  let proxyPort = 0;
   let origin = "";
   const choosePorts = async () => {
     port = await unclaimedPort();
     // Concurrent workerd processes must not share the default devtools port.
-    // Wrangler/Miniflare accepts 0 and reads its actual inspector address.
+    // Landlock computes its allowlist before workerd starts. Keep explicit ports
+    // for inspector/proxy callbacks; retryBind retries the whole startup if a
+    // competing process claims a selected port before Wrangler binds it.
+    inspector = await unclaimedPort();
+    proxyPort = await unclaimedPort();
     origin = `http://127.0.0.1:${port}`;
   };
   await writeFile(
@@ -256,7 +269,10 @@ export async function wranglerDev(options: {
         ),
       ],
       // wrangler's debug log stays in this trial's directory and is removed with it.
-      { cwd: ROOT, env: { ...WRANGLER_ENV, WRANGLER_LOG_PATH: logDir(persist) } },
+      {
+        cwd: ROOT,
+        env: { ...WRANGLER_ENV, EVAL_WORKERD_PROXY_PORT: String(proxyPort), WRANGLER_LOG_PATH: logDir(persist) },
+      },
     );
   const bootMs = options.bootMs ?? 90_000;
   let proc: ReturnType<typeof startProcess> | undefined;

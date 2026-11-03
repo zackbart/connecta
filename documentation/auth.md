@@ -2123,10 +2123,22 @@ and the grant requires re-consent. Redirects cannot route around the
 rule; token requests never follow them, and resource redirects follow only
 same-origin hops.
 
-The check is syntactic: it reads the host after the WHATWG URL parser folds
-`2130706433` and `0x7f.1` into `127.0.0.1`, and never resolves a name — the
-Workers-safe core has no DNS. A public name resolving or rebinding to a private
-address is out of scope; a host that must stop that needs an egress policy.
+The shared check reads canonical URL syntax (including legacy IPv4 spellings).
+On Node, the owned transport also resolves learned hosts immediately before
+connecting, refuses the whole answer set if any IPv4 or IPv6 address violates
+the same rules, and pins the connection to a checked address. TLS SNI and
+certificate validation retain the original hostname, including through a proxy.
+Proxy TLS authenticates the proxy hostname separately from destination TLS.
+Resolution uses request-owned A/AAAA queries, cancelled when the request ends
+and bounded to ten seconds even without a caller deadline. Only absent address
+families may be omitted; resolver failures refuse the request. These DNS queries
+do not consult OS hosts-file aliases.
+Each redirect hop is checked. Configured origins remain exempt. Resolution
+refusals are typed, non-retryable, and send no destination request.
+
+Workers exposes no connection-time DNS hook and has no route to private networks;
+its behavior remains the shared syntactic check. The shared core never imports
+Node networking or the optional undici peer.
 
 Downstream advertisements choose consent destinations, never destinations for
 existing grants. Tokens and registered clients bind to their issuing server;

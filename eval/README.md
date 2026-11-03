@@ -10,7 +10,11 @@ checkouts have independent locks. Install the `flock` CLI with Homebrew
 including SIGKILL; never delete the persistent `.flock` file (that would split the
 lock). No stale owner directory or PID recovery is needed. Node and fake listeners bind port 0. Child deployments
 that need a public URL before startup retry bind collisions at most three times,
-only during initial startup. Wrangler assigns its inspector port itself.
+only during initial startup. Wrangler's inspector and internal proxy use explicit
+ports so Landlock can allow callbacks before workerd starts; a startup collision
+retries the entire process group with fresh ports. Reader and writer fairness is
+not guaranteed: sustained readers can delay a build up to the 1,800 s lock
+acquisition timeout.
 
 ## Required behavioral checks
 
@@ -143,6 +147,14 @@ appears exactly once, completed normally and passed under the batch's grading.
 Missing, duplicated, skipped, errored, timed-out, interrupted and stopped
 trials fail the batch, and a cached `pass` status cannot override failing
 checks or runner observations. Each problem is printed with the results path.
+
+Run every eligible scripted reference against isolated native workerd, without
+models, with `pnpm run eval:selftest --worker-references-only` after building.
+This checks the six-tool surface with outcome grading, writes each task's
+result and refusal/skip reason to `eval/results/worker-references-<time>.json`,
+and exits nonzero on failed grades or execution errors. OAuth/host tasks and
+non-serializable deployments retain the Worker target's explicit refusal;
+opt-in skipped tasks remain excluded.
 
 ## Historical baselines
 
@@ -319,18 +331,26 @@ because the Worker imports the package by name from `dist/`.
     nothing. This is a JavaScript-level guard: it does not stop native addons
     or raw bindings.
 
-  - **The native workerd process is not network-sandboxed.** A Node preload
-    cannot cover a native binary, and no OS-level isolation (a network
-    namespace or firewall) is applied. The Worker code under test (connecta's
-    fetch, provider calls and OAuth) uses `globalThis.fetch`, which the Worker
-    replaces with the gateway wrapper before any request.
-    - A selftest control runs worker trials for REST, Google, GitHub App, CCB
-      OAuth and Granola providers. It asserts that every vendor request the
-      fake transport handled arrived through the authenticated gateway.
-    - Code inside workerd that bypasses that wrapper, for example a fetch
-      captured before the wrapper is installed or a raw socket, is not
-      blocked at the OS level and could reach the network. OS-level isolation
-      is a tracked follow-up.
+  - **Native workerd TCP connections are port-restricted by Linux Landlock.**
+    [support/workerd-landlock.py](support/workerd-landlock.py) requires Linux
+    x86_64/aarch64, Python 3 and Landlock ABI 4 or newer. It fails closed before
+    exec if unavailable. No root or user namespace is needed. The restriction
+    survives exec and applies to descendants. Each launch records kernel, ABI
+    and allowed ports, so CI verifies its actual host capability.
+    The proxy entry port is reserved before either workerd starts, since the
+    main runtime calls back into that later proxy. In addition, only loopback TCP listener ports held by the
+    eval harness and its descendants are allowed (runtime services, fakes and gateway). Concurrent
+    worlds in one harness share this port boundary. New listeners require a
+    fresh launch. The Node guard and authenticated gateway remain required.
+    A native `cloudflare:sockets` control bypasses the fetch wrapper and targets
+    a reachable non-loopback sink on a disallowed port; no connection arrives.
+    A second, explicitly named allowed-port address-limit case asserts a raw connection reaches a non-loopback sink on an allowed
+    port.
+    **Remaining limits:** Landlock filters ports, not addresses. A remote host
+    on an allowed port remains reachable by raw native code. ABI 4–9 do not
+    restrict UDP; this helper claims no UDP isolation. This is TCP port
+    hardening. The #1197 boundary of only the trial's own fakes and gateway remains unimplemented. See the
+    [kernel contract](https://docs.kernel.org/userspace-api/landlock.html).
 - **Secrets stay hidden.** The gateway credential and the vault key reach the
   Worker through a `.dev.vars` file (mode 0600) in the trial directory.
   Wrangler binds them as secrets and prints them only as `(hidden)`. Its debug

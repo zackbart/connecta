@@ -13,8 +13,8 @@
  * legacy IPv4 spelling (`2130706433`, `0x7f.1`, `0177.0.0.1`) into dotted
  * decimal and every IPv6 literal into compressed hex, so one canonical form is
  * all this module reads. It never resolves a name: that needs DNS, which the
- * Workers-safe core cannot do, and a name that resolves somewhere private — or
- * rebinds after the check — is out of scope. Pure Web API, no `node:` import.
+ * Workers-safe core cannot do. The owned Node transport additionally resolves
+ * and pins learned destinations at connect time. Pure Web API, no `node:` import.
  */
 
 /**

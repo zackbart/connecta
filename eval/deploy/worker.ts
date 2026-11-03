@@ -6,7 +6,8 @@
  * The gateway dispatches through `globalThis.fetch` with the fake transport
  * held installed, so the Worker's fetch gets exactly the Node deployment's
  * credential routing and fail-closed refusals. The native workerd process is
- * not network-sandboxed (see eval/README.md).
+ * restricted to launch-time TCP destination ports by Landlock. Addresses on
+ * allowed ports and UDP remain unrestricted (see eval/README.md).
  * It forwards with `redirect: "manual"`; the Worker sends every followed hop
  * back through the gateway.
  */
