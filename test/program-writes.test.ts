@@ -1,6 +1,7 @@
 import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fixtures/misc.js";
 // Focused program accounting/drain and classification-drift fault probes.
 // HTTP policy, private payloads and one-send recovery live in identity-write-journey.node.test.ts.
+import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
@@ -9,7 +10,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
-import { CompletedCalls } from "../src/program-completed.js";
+import { CompletedCalls, type OwnEntry, type SealOperations } from "../src/program-completed.js";
 import type { ResolvedCatalogTool } from "../src/catalog-service.js";
 import { createConnecta, customExecutor } from "../src/index.js";
 import { InvocationService } from "../src/invocation.js";
@@ -469,51 +470,124 @@ describe("CompletedCalls", () => {
   const write = tool("write", { readOnlyHint: false });
   const add = (calls: CompletedCalls, target: ResolvedCatalogTool, kib: number) =>
     calls.record(target, "x".repeat(kib * KIB - 2), "text", kib * KIB);
-  const kept = (calls: CompletedCalls) => {
+  interface Report {
+    resultId?: string;
+    calls: { address: string; dropped?: true; resultId?: string }[];
+    callsOmitted?: number;
+    note: string;
+  }
+  const kept = async (calls: CompletedCalls, reseal: SealOperations["reseal"] = () => Effect.succeed(undefined)) => {
     const closed = required(calls.close());
-    return { closed, report: closed.report("id") as { calls: { address: string; dropped?: true }[] } };
+    let stashed: { calls: unknown[] } | undefined;
+    await Effect.runPromise(
+      closed.seal({
+        stash: (outputs) => {
+          stashed = outputs as { calls: unknown[] };
+          return Effect.succeed("id");
+        },
+        reseal,
+      }),
+    );
+    return { stashed, report: closed.report() as Report };
   };
+  const handle = (resultId: string, valueFormat = "json") => ({ format: "paged", valueFormat, resultId });
 
-  it("R9: drops the oldest reads first and never a write before a read", () => {
+  it("R9: drops the oldest reads first and never a write before a read", async () => {
     const calls = new CompletedCalls();
     add(calls, write, 200);
     add(calls, read, 300);
     add(calls, read, 300);
     add(calls, write, 400);
-    const { report } = kept(calls);
+    const { report } = await kept(calls);
     expect(report.calls.map(({ dropped }) => dropped === true)).toEqual([false, true, false, false]);
   });
 
-  it("R9: a read that cannot fit beside writes gives way, and writes evict the oldest write last", () => {
+  it("R9: a read that cannot fit beside writes gives way, and writes evict the oldest write last", async () => {
     const reads = new CompletedCalls();
     add(reads, write, 600);
     add(reads, write, 400);
     add(reads, read, 100);
-    expect(kept(reads).report.calls.map(({ dropped }) => dropped === true)).toEqual([false, false, true]);
+    expect((await kept(reads)).report.calls.map(({ dropped }) => dropped === true)).toEqual([false, false, true]);
     const writes = new CompletedCalls();
     add(writes, write, 600);
     add(writes, read, 200);
     add(writes, write, 500);
     add(writes, write, 500);
-    expect(kept(writes).report.calls.map(({ dropped }) => dropped === true)).toEqual([true, true, false, false]);
+    expect((await kept(writes)).report.calls.map(({ dropped }) => dropped === true)).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
   });
 
-  it("R9: an output over the limit displaces nothing and is never serialized", () => {
+  it("R9: an output over the limit displaces nothing and is never serialized", async () => {
     const calls = new CompletedCalls();
     add(calls, read, 100);
     const toJSON = vi.fn(() => "never");
     calls.record(write, { toJSON }, "json", 1024 * KIB + 1);
     expect(toJSON).not.toHaveBeenCalled();
-    const { closed, report } = kept(calls);
+    const { stashed, report } = await kept(calls);
     expect(report.calls.map(({ dropped }) => dropped === true)).toEqual([false, true]);
-    expect((closed.stashed as { calls: unknown[] }).calls).toHaveLength(1);
+    expect(stashed?.calls).toHaveLength(1);
   });
 
-  it("R9: lists every write and the newest reads, with an omission count", () => {
+  it("R9: charges an output's retained JSON, however small its raw measure", async () => {
+    const calls = new CompletedCalls();
+    add(calls, read, 1);
+    // 180 KiB raw is 1080 KiB once escaped, so it fits nowhere and displaces nothing.
+    calls.record(read, "\0".repeat(180 * KIB), "text", 180 * KIB);
+    const charged = new CompletedCalls();
+    // 200 KiB raw and over 1 MiB held: a charge of the raw size would keep all five.
+    for (let i = 0; i < 5; i++) charged.record(read, "\0".repeat(40 * KIB), "text", 40 * KIB);
+    const multibyte = new CompletedCalls();
+    // UTF-8 bytes, not string length: 1080 KiB in 360 KiB of code units.
+    for (let i = 0; i < 2; i++) multibyte.record(read, "\u20ac".repeat(180 * KIB), "text", 540 * KIB);
+    const retained = async (ledger: CompletedCalls) =>
+      (await kept(ledger)).report.calls.map(({ dropped }) => dropped !== true);
+    expect(await retained(calls)).toEqual([true, false]);
+    expect(await retained(charged)).toEqual([false, true, true, true, true]);
+    expect(await retained(multibyte)).toEqual([false, true]);
+  });
+
+  it("INV-5: publishes an output's own entry only through what sealing answered", async () => {
+    const stored = new CompletedCalls();
+    const reseal = vi.fn((entry: OwnEntry) =>
+      entry.id === "pending" ? Effect.fail(new Error("storage")) : Effect.succeed(`sealed-${entry.id}`),
+    );
+    stored.presented(stored.record(read, "r", "text", 3), handle("read-entry", "text"));
+    stored.presented(stored.record(write, "w", "text", 3), { value: { transfer: "t", handle: handle("write-entry") } });
+    stored.presented(stored.record(read, "n", "text", 3), { native: { value: handle("pending") } });
+    const { stashed, report } = await kept(stored, reseal);
+    // The write first, because an interrupted seal should still have reached it.
+    expect(reseal.mock.calls.map(([entry]) => entry)).toEqual([
+      { id: "write-entry", format: "json" },
+      { id: "read-entry", format: "text" },
+      { id: "pending", format: "json" },
+    ]);
+    expect(stashed).toBeUndefined();
+    expect(report.resultId).toBeUndefined();
+    expect(report.calls).toEqual([
+      { address: "books.read", resultId: "sealed-read-entry" },
+      { address: "books.write", write: true, resultId: "sealed-write-entry" },
+      { address: "books.read", dropped: true },
+    ]);
+    expect(report.note).toContain("only addresses survive");
+    expect(JSON.stringify(report)).not.toMatch(/"(?:read|write)-entry"|pending/);
+
+    // Unsealed, an entry is never named: a cancelled caller, stalled storage or an interrupted run.
+    const unsealed = new CompletedCalls();
+    unsealed.presented(unsealed.record(write, "w", "text", 3), handle("write-entry"));
+    expect(required(unsealed.close()).report()).toMatchObject({
+      calls: [{ address: "books.write", write: true, dropped: true }],
+    });
+  });
+
+  it("R9: lists every write and the newest reads, with an omission count", async () => {
     const calls = new CompletedCalls();
     for (let i = 0; i < 40; i++) calls.record(tool(`read${i}`, { readOnlyHint: true }), i, "json", 2);
     calls.record(write, 1, "json", 1);
-    const report = required(calls.close()).report("id") as { calls: { address: string }[]; callsOmitted: number };
+    const { report } = await kept(calls);
     expect(report.calls).toHaveLength(32);
     expect(report.callsOmitted).toBe(9);
     expect(report.calls.at(0)!.address).toBe("books.read9");

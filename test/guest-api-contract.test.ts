@@ -493,11 +493,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
 
   it("[R9] INV-9: a failed run keeps finished outputs, and recovering them sends nothing again", async () => {
     await checkCompletedOutputs(required(workerExecutor), required(workerReadDeadlineExecutor));
-  });
+  }, 120_000);
 
   it("[R9] INV-5 INV-6: kept outputs reach only the stash, under the run's redaction", async () => {
     await checkCompletedPrivacy(required(workerExecutor));
-  });
+  }, 120_000);
 
   it("[R4, R9] INV-2 INV-3 INV-4: a failed run's stash rechecks identity, endpoint, pool and live authentication", async () => {
     await checkStashAuthority(required(workerExecutor), false, true);

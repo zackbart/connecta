@@ -175,11 +175,11 @@ describe("guest API contract (QuickJS executor)", () => {
 
   it("[R9] INV-9: a failed run keeps finished outputs, and recovering them sends nothing again", async () => {
     await checkCompletedOutputs(executor, readDeadlineExecutor);
-  });
+  }, 120_000);
 
   it("[R9] INV-5 INV-6: kept outputs reach only the stash, under the run's redaction", async () => {
     await checkCompletedPrivacy(executor);
-  });
+  }, 120_000);
 
   it("[R4, R9] INV-2 INV-3 INV-4: a failed run's stash rechecks identity, endpoint, pool and live authentication", async () => {
     await checkStashAuthority(executor, false, true);

@@ -834,15 +834,15 @@ finished call, and any run that succeeds, has no such field.
 }
 ```
 
-| Field              | Meaning                                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `resultId`         | Stash entry holding the kept outputs. Absent when nothing was kept or storage could not keep it                                      |
-| `calls[].address`  | Canonical address, in call order. Never arguments or output                                                                          |
-| `calls[].write`    | Write-like, a source write overridden to read included (`W9`). Not to be repeated                                                    |
-| `calls[].resultId` | The call's own stash entry, for an output too large to inline. It is not also in the kept outputs                                    |
-| `calls[].dropped`  | The output is gone: it did not fit, could not serialize, or could not be stored                                                      |
-| `callsOmitted`     | Calls past the envelope's limit of 32, which lists every write first and then the newest reads. Their kept outputs stay in the stash |
-| `note`             | Fixed recovery text, including when storage could not keep the outputs and only addresses survive                                    |
+| Field              | Meaning                                                                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resultId`         | Stash entry holding the kept outputs. Absent when nothing was kept or storage could not keep it                                               |
+| `calls[].address`  | Canonical address, in call order. Never arguments or output                                                                                   |
+| `calls[].write`    | Write-like, a source write overridden to read included (`W9`). Not to be repeated                                                             |
+| `calls[].resultId` | Stash entry for an output too large to inline, after the check below. It may differ from any id the call showed. Not also in the kept outputs |
+| `calls[].dropped`  | The output is gone: it did not fit, could not serialize, could not be stored, or its stash entry could not finish the check below             |
+| `callsOmitted`     | Calls past the envelope's limit of 32, which lists every write first and then the newest reads. Their kept outputs stay in the stash          |
+| `note`             | Fixed recovery text, including when storage could not keep the outputs and only addresses survive                                             |
 
 Recovery is a new program. `connecta.result(resultId)` pages UTF-8 text that
 parses as `{ calls: [{ address, write?, format, data }] }`, and nothing is sent
@@ -850,9 +850,12 @@ again (`W9`), so never repeat a write to recover its output. One program pages
 only what its host-call budget allows; continue from `nextOffset` in the next.
 
 The host holds at most 1 MiB of serialized outputs in memory for the length of
-the run. Past that it drops the oldest read, and only an incoming write may then
-displace the oldest write. A read never displaces a write, and an output over
-1 MiB displaces nothing. Memory ends with the run, and a run that succeeds writes
+the run, charged at the UTF-8 size of the JSON it holds and later stashes: a
+control character costs its six escaped bytes and a multibyte character its
+UTF-8, so the kept outputs' stash entry stays within that 1 MiB plus each call's
+address and format. Past that it drops the oldest read, and only an incoming
+write may then displace the oldest write. A read never displaces a write, and an
+output over 1 MiB displaces nothing. Memory ends with the run, and a run that succeeds writes
 nothing to the stash. A failure writes once, after the executor has finished,
 bounded by `execute.hostCallTimeoutMs`. A cancelled caller starts no storage
 work, and neither does a run in which result processing already failed on a live
@@ -863,8 +866,26 @@ every secret the run sent, even one sent after the output arrived; the same
 15-minute expiry and capacity charges; and the same binding to the admitted
 subject, principal, endpoint or pool, origin and every contributing connector
 and tool, rechecked on each page. Outputs reach only that stash, never activity,
-logs or status (INV-6). Measured size is what is charged, so holding an output
-costs one `JSON.stringify` of it, and an output over the limit costs none.
+logs or status (INV-6). Holding an output costs one `JSON.stringify` of it and a
+measure of the result, and an output whose raw size is already over the limit
+costs neither.
+
+Every id in `error.completed` names bytes that passed every secret the run sent,
+in every output shape. An output too large to inline was stashed when its call
+answered, under the secrets known then, so before its id is listed the host reads
+that entry back and checks it against the full set, one entry at a time and only
+for calls the envelope lists. This briefly costs that entry's size in memory, at
+most `results.maxStashBytes`. An entry nothing matched keeps its id, with no second
+write. Otherwise the host writes the sanitized bytes as a new entry under the same
+binding, lists that id, and makes a best-effort removal of the old bytes. If the
+read, the write or the failure's deadline cannot finish, the call is `dropped`
+rather than listed: an id is never published unchecked.
+
+This covers `error.completed`. A `format: "paged"` handle a program received,
+for an output over 1 MiB, still names the entry written when its call answered.
+Within the run its pages pass the current secrets on the way to the guest. An id
+the program returned or put in an error is read later without them, so bytes
+stored before a later call registered a credential are not re-checked there.
 
 ## Emitted output
 
@@ -1480,7 +1501,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `M6`, `M9`             | verdicts; `R2`'s guard, `M1`'s strict typing, and `M2`'s collect-then-deliver are their enforcement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `R5`                   | `test/guest-api-contract.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `R6`–`R8`              | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion)                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `R9`                   | `test/guest-api-contract.test.ts` and `test/guest-api-contract-quickjs.node.test.ts` (every way a run fails, recovery with no second physical write, stash authority, redaction and payload-free records), `test/program-writes.test.ts` (retention order and limits)                                                                                                                                                                                                                                                                                                                         |
+| `R9`                   | `test/guest-api-contract.test.ts` and `test/guest-api-contract-quickjs.node.test.ts` (every way a run fails, recovery with no second physical write, stash authority, redaction across every output shape and fail-closed sealing, and payload-free records), `test/program-writes.test.ts` (retention order, the charge for retained JSON, and listing only sealed ids)                                                                                                                                                                                                                      |
 | `Y1`, `Y2`, `Y3`       | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `Y4`                   | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                                                                                     |

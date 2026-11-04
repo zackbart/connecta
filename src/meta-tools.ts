@@ -52,6 +52,7 @@ import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
+import type { OwnEntry } from "./program-completed.js";
 import type { Logger, ToolDef } from "./types.js";
 import { PROGRAM_RESULT_PAGE_BYTES, PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
 import type { NativeCallRoute } from "./native-tools.js";
@@ -507,6 +508,87 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     });
   },
 );
+
+/**
+ * Pass a stash entry through `secrets`, which may have grown since it was written.
+ * The id it answers with always names bytes that passed: the same entry if nothing
+ * matched, or a new one under the same binding if something did, after which the
+ * old bytes are removed. It answers undefined when any of that cannot finish.
+ */
+export function resealResult(
+  registry: RegistryView,
+  entry: OwnEntry,
+  secrets: SentSecrets,
+  logger: Logger,
+): Promise<string | undefined> {
+  return runEdge(resealResultNative(registry, entry, secrets, logger));
+}
+const resealResultNative = /* @__PURE__ */ registerAuth(
+  resealResult,
+  function (registry: RegistryView, entry: OwnEntry, secrets: SentSecrets, logger: Logger) {
+    return authFlow<string | undefined>(function* () {
+      const results = registry.resultsStorage();
+      const read = (index: number) =>
+        upwardStep(authStorage<string | null>(results, "get", [resultKeys.chunk(entry.id, index)]));
+      const stored = yield* read(0);
+      const header = stored ? RESULT_ENVELOPE_V4_HEADER.exec(stored) : null;
+      if (!stored || !header) return undefined;
+      const total = Number(header[2]);
+      const chunkBytes = Number(header[3]);
+      if (!Number.isSafeInteger(total) || !Number.isSafeInteger(chunkBytes) || chunkBytes < 3) return undefined;
+      const bytes = new Uint8Array(total);
+      for (let index = 0; index * chunkBytes < total; index++) {
+        const encoded = index === 0 ? stored.slice(header[0].length) : yield* read(index);
+        if (encoded === null) return undefined;
+        const binary = atob(encoded);
+        for (let at = 0; at < binary.length; at++) bytes[index * chunkBytes + at] = binary.charCodeAt(at);
+      }
+      const text = dec.decode(bytes);
+      const sealed = sanitizedStash(text, entry.format, secrets);
+      if (sealed === text) return entry.id;
+      const binding = JSON.parse(dec.decode(Uint8Array.from(atob(header[1]!), (char) => char.charCodeAt(0))));
+      const notice = yield* upwardStep(
+        stashResult(
+          enc.encode(sealed),
+          {
+            routes: META_ROUTES,
+            binding,
+            write: binding.classification === "write",
+            cap: Number(header[4]),
+            set: authMethod((id: string, chunks: string[], ttl: number) =>
+              registryProgram(registry, "stashResult", id, chunks, ttl),
+            ),
+            warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
+          },
+          { kind: "none" },
+          entry.format === "text" ? sealed : undefined,
+        ),
+      );
+      if (!notice.resultId) return undefined;
+      // Nothing names the old id now, but its bytes hold a known secret until they expire.
+      for (let index = 0; index * chunkBytes < total; index++) {
+        try {
+          yield* upwardStep(authStorage<void>(results, "delete", [resultKeys.chunk(entry.id, index)]));
+        } catch {
+          // Removal is best effort: the id is no longer published either way.
+        }
+      }
+      return notice.resultId;
+    });
+  },
+);
+
+/** A stored text under `secrets`, structured first so a secret split across a JSON value's blocks still matches. */
+function sanitizedStash(text: string, format: "json" | "text", secrets: SentSecrets): string {
+  if (format === "json") {
+    try {
+      return secrets.text(serializeResultText(secrets.redact(JSON.parse(text))));
+    } catch {
+      // Not JSON after all: the text pass below still applies.
+    }
+  }
+  return secrets.text(text);
+}
 
 /** Program returns share the direct stash, with all host-admitted call dependencies. */
 export function guardProgramReturn(

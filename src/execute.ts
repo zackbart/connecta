@@ -34,6 +34,7 @@ import {
   jsonResult,
   pageProgramResult,
   type ProgramResultDependency,
+  resealResult,
   type ResultReadStage,
   type ToolResult,
 } from "./meta-tools.js";
@@ -1766,44 +1767,53 @@ export function createExecuteTool(
             const kept = completedCalls.close();
             const error = result.structuredContent?.error;
             if (!kept || !result.isError || error === null || typeof error !== "object") return Effect.succeed(result);
-            const stashed: Effect.Effect<unknown, unknown> =
-              kept.stashed === undefined || kept.storageStalled || options.signal?.aborted
+            const sealing: Effect.Effect<unknown, unknown> =
+              kept.storageStalled || options.signal?.aborted
                 ? Effect.void
                 : withDeadlineEffect(
                     () =>
-                      authCall<unknown>(guardProgramReturn, [
-                        kept.stashed,
-                        registry,
-                        baseUrl,
-                        [
-                          ...new Map(
-                            [...resultDependencies, ...kept.dependencies].map((dependency) => [
-                              JSON.stringify(dependency),
-                              dependency,
-                            ]),
-                          ).values(),
-                        ],
-                        sentSecrets,
-                        logger,
-                        0,
-                        programWrites.hasSucceeded,
-                        maxResultChars,
-                      ]),
+                      kept.seal({
+                        stash: (outputs) =>
+                          authCall<unknown>(guardProgramReturn, [
+                            sentSecrets.redact(outputs),
+                            registry,
+                            baseUrl,
+                            [
+                              ...new Map(
+                                [...resultDependencies, ...kept.dependencies].map((dependency) => [
+                                  JSON.stringify(dependency),
+                                  dependency,
+                                ]),
+                              ).values(),
+                            ],
+                            sentSecrets,
+                            logger,
+                            0,
+                            programWrites.hasSucceeded,
+                            maxResultChars,
+                          ]).pipe(
+                            Effect.map((notice) => {
+                              const { resultId } = notice as { resultId?: unknown };
+                              return typeof resultId === "string" ? resultId : undefined;
+                            }),
+                          ),
+                        reseal: (entry) =>
+                          authCall<string | undefined>(resealResult, [registry, entry, sentSecrets, logger]),
+                      }),
                     {
                       timeoutMs: hostCallTimeoutMs,
                       ...(options.signal ? { signal: options.signal } : {}),
                       timeoutError: new Error("Result storage did not answer."),
                     },
                   );
-            return stashed.pipe(
+            return sealing.pipe(
               Effect.catchCause(() => Effect.void),
-              Effect.map((notice) => {
-                const resultId = (notice as { resultId?: unknown } | undefined)?.resultId;
+              Effect.map(() => {
                 result.structuredContent = {
                   ...result.structuredContent,
                   error: {
                     ...(error as object),
-                    completed: kept.report(typeof resultId === "string" ? resultId : undefined),
+                    completed: kept.report(),
                   },
                 };
                 return result;

@@ -1059,6 +1059,42 @@ export async function checkCompletedOutputs(executor: Executor, shortDeadline: E
     });
     expect(required(tail.structuredContent).result).toContain('"id":"inv_1"');
   }
+  // The limit charges what is held and stashed: its JSON, not the output's raw size.
+  for (const [unit, chars, escapedBytes] of [
+    ["\u0000", 40_000, 6],
+    ["\u001f", 40_000, 6],
+    ["\u20ac", 70_000, 3],
+    ["\u{1f600}", 25_000, 4],
+  ] as const) {
+    const { connector } = completedFixture();
+    const reads = 20;
+    const repeated: Connector = {
+      ...connector,
+      async callTool(name, args) {
+        return name === "note" ? unit.repeat(chars) : connector.callTool(name, args, undefined as never);
+      },
+    };
+    const execute = createExecuteTool(makeRegistry([repeated]), CONTRACT_BASE, executor, silentLogger);
+    const failed = await execute({
+      code: `async () => {
+        for (let i = 0; i < ${reads}; i++) await connecta.call("books.note");
+        throw new Error("later step failed");
+      }`,
+    });
+    const completed = completedOf(failed);
+    const size = await execute({
+      code: `async () => (await connecta.result(${JSON.stringify(completed.resultId)}, { maxBytes: 16 })).totalBytes`,
+    });
+    const stored = required(size.structuredContent).result as number;
+    // One call's addressing and format, on top of the outputs the limit charged.
+    expect(stored).toBeLessThanOrEqual(1024 * 1024 + reads * 64);
+    const each = chars * escapedBytes;
+    expect(stored).toBeGreaterThanOrEqual(Math.floor((1024 * 1024) / each - 1) * each);
+    const dropped = completed.calls.filter((call) => call.dropped).length;
+    expect(dropped).toBeGreaterThan(0);
+    expect(completed.calls.slice(-1)[0]!.dropped).toBeUndefined();
+    expect(completed.calls.slice(0, dropped).every((call) => call.dropped)).toBe(true);
+  }
   // A full stash leaves only addresses, and says so.
   {
     const { connector, physical } = completedFixture();
@@ -1186,6 +1222,227 @@ export async function checkCompletedPrivacy(executor: Executor): Promise<void> {
     expect(JSON.stringify(events)).not.toContain(OUTPUT_SENTINEL);
   }
   expect(events.length).toBeGreaterThan(0);
+  await checkCompletedLateSecrets(executor);
+}
+
+/**
+ * INV-5: an id `error.completed` publishes names bytes that passed every secret the
+ * run sent, whichever way the output was stored: an output's own stash entry was
+ * written before a later call registered the credential it echoes.
+ */
+async function checkCompletedLateSecrets(executor: Executor): Promise<void> {
+  const plain = "late-registered-credential";
+  const quoted = 'late"registered\\credential';
+  const tail = "tail-marker";
+  const halves = ["late-regist", "ered-credential"];
+  const padded = (chars: number, secret: string) => ({ pad: "p".repeat(chars), secret, tail });
+  let scope = {};
+  const physical: Record<string, number> = {};
+  const outputs: Record<string, (secret: string) => unknown> = {
+    inline: (secret) => padded(16, secret),
+    inline_write: (secret) => padded(16, secret),
+    inline_text: (secret) => `text ${secret} ${tail}`,
+    oversized: (secret) => padded(300_000, secret),
+    oversized_write: (secret) => padded(300_000, secret),
+    oversized_text: (secret) => `${"p".repeat(300_000)} ${secret} ${tail}`,
+    paged: (secret) => padded(1_200_000, secret),
+    paged_write: (secret) => padded(1_200_000, secret),
+  };
+  const writes = new Set(["inline_write", "oversized_write", "paged_write", "structured_write"]);
+  const books = (secret: string): Connector => ({
+    id: "books",
+    kind: "api",
+    async listTools() {
+      return [
+        readOnly("authenticate"),
+        ...Object.keys(outputs).map((name) =>
+          writes.has(name) ? { name, annotations: { readOnlyHint: false } } : readOnly(name),
+        ),
+      ];
+    },
+    async callTool(name) {
+      physical[name] = (physical[name] ?? 0) + 1;
+      if (name !== "authenticate") return outputs[name]!(secret);
+      sentSecretsForRequest(scope).add(secret);
+      return { authenticated: true };
+    },
+  });
+  // Native presentation: blocks of their own, and a secret only their join spells.
+  const image = { type: "image", data: "aGkA", mimeType: "image/png" };
+  const native = (secret: string): Connector => ({
+    id: "native",
+    kind: "mcp",
+    async listTools() {
+      return [
+        readOnly("blocks"),
+        readOnly("split_blocks"),
+        readOnly("small_blocks"),
+        { name: "structured_write", annotations: { readOnlyHint: false } },
+      ];
+    },
+    async callTool(name) {
+      physical[name] = (physical[name] ?? 0) + 1;
+      const text = (value: string) => ({ type: "text", text: value });
+      if (name === "small_blocks") return { content: [text(`${secret} ${tail}`), image] };
+      if (name === "split_blocks")
+        return { content: [text("p".repeat(300_000) + halves[0]), text(`${halves[1]} ${tail}`), image] };
+      if (name === "blocks") return { content: [text(`${"p".repeat(300_000)} ${secret} ${tail}`), image] };
+      return {
+        structuredContent: padded(300_000, secret),
+        content: [text(`${"p".repeat(300_000)} ${secret} ${tail}`), image],
+      };
+    },
+  });
+  const executeWith = (registry: ReturnType<typeof makeRegistry>, config = {}) => {
+    scope = {};
+    return createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
+      requestScope: scope,
+      ...config,
+    });
+  };
+  /** Page an id the way an agent would, in as many programs as its host calls need. */
+  const pageAll = async (registry: ReturnType<typeof makeRegistry>, id: string, label: string) => {
+    let offset = 0;
+    let hasMore = true;
+    const seen = { leaked: false, tail: false, redacted: false };
+    while (hasMore) {
+      // Each program overlaps the last, so nothing can hide across a program boundary.
+      const out = await executeWith(registry)({
+        code: `async () => {
+          let text = "", offset = ${Math.max(0, offset - 256)}, page, pages = 0;
+          do {
+            page = await connecta.result(${JSON.stringify(id)}, { offset });
+            text += page.text;
+            offset = page.nextOffset;
+          } while (page.hasMore && ++pages < 15);
+          return { offset, hasMore: page.hasMore, text: [
+            /regist|credential/.test(text),
+            text.includes(${JSON.stringify(tail)}),
+            text.includes("[redacted]"),
+          ] };
+        }`,
+      });
+      expect(out.isError, `${label}: ${out.content[0]?.text}`).toBeFalsy();
+      const page = required(out.structuredContent).result as { offset: number; hasMore: boolean; text: boolean[] };
+      seen.leaked ||= page.text[0]!;
+      seen.tail ||= page.text[1]!;
+      seen.redacted ||= page.text[2]!;
+      offset = page.offset;
+      hasMore = page.hasMore;
+    }
+    return seen;
+  };
+  const shapes = [
+    ...Object.keys(outputs).map((name) => `books.${name}`),
+    "native.small_blocks",
+    "native.blocks",
+    "native.split_blocks",
+    "native.structured_write",
+  ];
+  for (const secret of [plain, quoted]) {
+    for (const address of shapes) {
+      // A join of blocks only spells the plain secret.
+      if (address === "native.split_blocks" && secret !== plain) continue;
+      const label = `${address} with ${secret}`;
+      const registry = makeRegistry([books(secret), native(secret)]);
+      const failed = await executeWith(registry)({
+        code: `async () => {
+          await connecta.call(${JSON.stringify(address)});
+          await connecta.call("books.authenticate");
+          throw new Error("later step failed");
+        }`,
+      });
+      expect(failed.isError, label).toBe(true);
+      expect(JSON.stringify(failed), label).not.toMatch(/regist(?!er)|credential/);
+      const completed = completedOf(failed);
+      const call = completed.calls[0]!;
+      expect(call.dropped, `${label}: ${completed.note}`).toBeUndefined();
+      const id = required(call.resultId ?? completed.resultId);
+      expect(await pageAll(registry, id, label), label).toEqual({ leaked: false, tail: true, redacted: true });
+    }
+  }
+  expect(Object.values(physical).every((count) => count >= 1)).toBe(true);
+  // A second entry only when something matched, and the superseded bytes go with it.
+  {
+    const registry = makeRegistry([books(plain)]);
+    const stash = vi.spyOn(registry, "stashResult");
+    const clean = await executeWith(registry)({
+      code: `async () => {
+        const made = await connecta.call("books.paged");
+        throw new Error(made.resultId);
+      }`,
+    });
+    const reused = required(completedOf(clean).calls[0]!.resultId);
+    expect(JSON.stringify(required(clean.structuredContent).error)).toContain(reused);
+    expect(stash).toHaveBeenCalledTimes(1);
+    expect((await pageAll(registry, reused, "unchanged")).tail).toBe(true);
+
+    stash.mockClear();
+    const failed = await executeWith(registry)({
+      code: `async () => {
+        const made = await connecta.call("books.paged");
+        await connecta.call("books.authenticate");
+        throw new Error(made.resultId);
+      }`,
+    });
+    const message = required(failed.structuredContent).error as { message: string };
+    const superseded = message.message.match(/[a-f0-9-]{36}/)![0];
+    expect(completedOf(failed).calls[0]!.resultId).not.toBe(superseded);
+    // The output's own entry, the authenticate output held for the run's, and the rewrite.
+    expect(stash).toHaveBeenCalledTimes(3);
+    const gone = await executeWith(registry)({
+      code: `async () => { try { return await connecta.result(${JSON.stringify(superseded)}); } catch (error) { return error.code; } }`,
+    });
+    expect(required(gone.structuredContent).result).toBe("not_found");
+  }
+  // Fail closed: no id unless the pass finished, and the note says what survives.
+  const closed = async (label: string, options: Parameters<typeof makeRegistry>[1], config = {}, onLate = () => {}) => {
+    const connector = books(plain);
+    const callTool = connector.callTool.bind(connector);
+    const registry = makeRegistry(
+      [
+        {
+          ...connector,
+          callTool: async (name, args, ctx) => {
+            const out = await callTool(name, args, ctx);
+            if (name === "authenticate") onLate();
+            return out;
+          },
+        },
+      ],
+      options,
+    );
+    const failed = await executeWith(
+      registry,
+      config,
+    )({
+      code: `async () => {
+        await connecta.call("books.oversized_write");
+        await connecta.call("books.authenticate");
+        throw new Error("later step failed");
+      }`,
+    });
+    const completed = completedOf(failed);
+    expect(completed.calls[0], label).toEqual({ address: "books.oversized_write", write: true, dropped: true });
+    expect(completed.note, label).toContain("only addresses survive");
+    expect(JSON.stringify(failed), label).not.toMatch(/regist(?!er)|credential/);
+  };
+  // The stash has no room for the rewritten entry.
+  await closed("full stash", { results: { maxStashEntries: 1 } });
+  // Storage stops answering, or fails, once the run has its secret.
+  for (const fault of ["rejects", "hangs"] as const) {
+    const storage = memoryStorage();
+    const get = storage.get.bind(storage);
+    let faulted = false;
+    storage.get = async (key) => {
+      if (faulted && key.includes("result")) {
+        if (fault === "rejects") throw new Error("storage unavailable");
+        return new Promise<never>(() => {});
+      }
+      return get(key);
+    };
+    await closed(`storage ${fault}`, { storage }, { hostCallTimeoutMs: 2_000 }, () => (faulted = true));
+  }
 }
 
 /**
