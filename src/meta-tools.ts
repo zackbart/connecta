@@ -33,7 +33,14 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import {
+  boundedEchoText,
+  clipText,
+  ConnectorCallError,
+  MAX_TOOL_ERROR_BYTES,
+  msg,
+  type CallErrorDetails,
+} from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { guardExecuteResultValue, MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import { InvocationService, type InvocationTiming } from "./invocation.js";
@@ -47,7 +54,7 @@ import {
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
-import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
+import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
@@ -1176,10 +1183,11 @@ function metaToolsForRequest(
         // both copies and JSON escaping when the bounded provider reason is large.
         if (!recoveryRequired) {
           const cap = resolveMaxResultBytes(outcome.resolved?.connector.maxResultBytes, globalCap);
-          let budget = 512;
+          const { message } = outcome.error;
+          let budget = 2 * MAX_TOOL_ERROR_BYTES;
           while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
             budget = Math.floor(budget / 2);
-            outcome.error.message = boundedEchoText(outcome.error.message, budget);
+            outcome.error.message = clipText(message, budget);
             failedResult = makeFailedResult();
           }
         }
@@ -1234,7 +1242,8 @@ function metaToolsForRequest(
             };
           }
           const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
-          return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
+          // Guidance is text-only: a structured copy would double every fetch on the wire (result-representation).
+          return { content: [{ type: "text", text }] };
         } catch (error) {
           if (error instanceof SkillLookupError) return toolError(skillLookupRecovery(error.message));
           return toolError(
@@ -1780,7 +1789,6 @@ export function registerMetaTools(
       description: describedFor(registry, SKILLS_DESC, "skills"),
       ...(ctx.native ? { _meta: { "dev.connecta/surface": { surface: "native", ...ctx.native } } } : {}),
       inputSchema: SKILLS_INPUT,
-      outputSchema: SKILLS_OUTPUT,
       annotations: READ_ONLY_LOCAL,
     },
     authMethod((args: { name?: string | undefined }, request: ServerContext) =>

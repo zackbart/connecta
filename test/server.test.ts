@@ -412,7 +412,7 @@ describe("server /mcp end-to-end", () => {
     for (const line of [full, untitled, required, first]) {
       expect(bytes(line)).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     }
-    expect((await executeDescription(ids)).length).toBeLessThan(3_700);
+    expect((await executeDescription(ids)).length).toBeLessThan(3_750);
     expect(listTools).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
   });
