@@ -20,6 +20,7 @@ import {
   checkQueuedWriteAtExhaustion,
   checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -174,6 +175,10 @@ describe("guest API contract (QuickJS executor)", () => {
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(readDeadlineExecutor);
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(readDeadlineExecutor, "for (;;) {}");
   });
 
   it("[L3] the default run deadline ends below the response ceiling", () => {

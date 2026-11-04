@@ -27,6 +27,7 @@ import {
   checkQueuedWriteAtExhaustion,
   checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -488,6 +489,10 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(required(workerReadDeadlineExecutor));
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(required(workerReadDeadlineExecutor), "await new Promise(() => {});");
   });
 
   it("[L3] the default run deadline ends below the response ceiling", () => {

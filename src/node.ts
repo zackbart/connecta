@@ -153,6 +153,8 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
   const activeResponses = new Map<Socket, number>();
   let shuttingDown = false;
   const server = createServer((req, res) => {
+    // Before the body: a client's timer has been running through its upload too.
+    const requestArrivedAt = Date.now();
     awaitingRequest.delete(req.socket);
     const socket = req.socket;
     activeResponses.set(socket, (activeResponses.get(socket) ?? 0) + 1);
@@ -229,7 +231,7 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
           res.end("Payload Too Large");
           return;
         }
-        const response = await connecta.fetch(request, undefined, ctx);
+        const response = await connecta.fetch(request, undefined, { ...ctx, requestArrivedAt });
         await writeResponse(res, response);
       } catch (error) {
         if (error instanceof InvalidRequestUrl) {

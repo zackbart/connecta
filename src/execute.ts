@@ -103,7 +103,37 @@ interface ResponseCeiling {
   ms: number;
   at: number;
   startedAt: number;
+  /**
+   * The absolute deadline for work after the run that may still hold its
+   * response, such as storing what it leaves for recovery. Past `at`, because a
+   * run the ceiling ended has this to do too; still short of the client's limit.
+   */
+  answerBy: number;
 }
+
+/** Past the ceiling, room to store what a run leaves behind. Default 57 s against a 60 s client. */
+const RESPONSE_STORAGE_MARGIN_MS = 2_000;
+
+function responseCeiling(startedAt: number, ms: number): ResponseCeiling {
+  const at = startedAt + ms;
+  return { ms, at, startedAt, answerBy: at + Math.min(RESPONSE_STORAGE_MARGIN_MS, Math.floor(ms / 10)) };
+}
+
+/** Refuse a run with no time left to start. Nothing has run, so running it again is safe. */
+const startable = (ceiling: ResponseCeiling): Effect.Effect<void, InvocationFailure> =>
+  Effect.suspend(() => {
+    const elapsedMs = Date.now() - ceiling.startedAt;
+    return elapsedMs < ceiling.ms
+      ? Effect.void
+      : Effect.fail(
+          new InvocationFailure({
+            code: "timeout",
+            message: `Operation "execute_code" used its ${ceiling.ms}ms response ceiling before it started, so it did not run and sent nothing. Run it again.`,
+            retryable: true,
+            details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs: ceiling.ms },
+          }),
+        );
+  });
 /**
  * Room to name every connector of a typical deployment. Past it, complete
  * entries plus an exact omission count stay inside this byte cap.
@@ -1561,6 +1591,7 @@ export function createExecuteTool(
     hostCalls: HostCalls,
     programWrites: ProgramWrites,
     unawaited: { read: boolean },
+    ceiling: ResponseCeiling,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
@@ -1581,8 +1612,6 @@ export function createExecuteTool(
       // closing it releases the lease and then aborts the signal, so
       // nothing the run started outlives the request.
       const run = Effect.gen(function* () {
-        const startedAt = config.requestStartedAt ?? Date.now();
-        const ceiling: ResponseCeiling = { ms: watchdog.ms, at: startedAt + watchdog.ms, startedAt };
         // Per-call signals cancel individual fetches, but do not close the
         // shared transport. Close its scope after the run's signal ends, on
         // every exit, using the existing bounded cleanup and deferred tail.
@@ -1595,6 +1624,7 @@ export function createExecuteTool(
           ),
         );
         const signal = yield* runSignal(callerSignal);
+        yield* startable(ceiling);
         // Admission comes before provider construction: queued calls retain
         // no catalogs or provider closures.
         let lease: ExecutorLease | undefined;
@@ -1655,6 +1685,7 @@ export function createExecuteTool(
             new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled during sandbox setup."),
           );
         }
+        yield* startable(ceiling);
         const admitted = lease;
         // A program write may still be on the wire when the program settles:
         // close, so a write gated after this is not sent, then let the ones
@@ -1725,6 +1756,7 @@ export function createExecuteTool(
             maxResultChars - emitted.textChars,
             programWrites.hasSucceeded,
             maxResultChars,
+            ceiling.answerBy,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -1778,6 +1810,7 @@ export function createExecuteTool(
         const hostCalls: HostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
         const programWrites = new ProgramWrites();
         const unawaited = { read: false };
+        const ceiling = responseCeiling(config.requestStartedAt ?? Date.now(), watchdog.ms);
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
           // that first so a huge direct-call string is never encoded in full.
@@ -1798,6 +1831,7 @@ export function createExecuteTool(
             hostCalls,
             programWrites,
             unawaited,
+            ceiling,
           );
         });
         return operationActivity(
@@ -2133,7 +2167,7 @@ export function registerExecuteTool(
     maxHostCalls?: number | undefined;
     /** Deadline per host call in milliseconds. Default 15_000. */
     hostCallTimeoutMs?: number | undefined;
-    /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
+    /** The response ceiling, enforced outside the sandbox. Default 55_000. */
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
     /** The endpoint refuses every write. Resolved by the host route; default writable. */

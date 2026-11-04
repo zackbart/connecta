@@ -814,6 +814,8 @@ export function createMcpRoute(opts: ServerOptions): {
         // The Node adapter has already buffered up to its own pre-auth cap
         // (`listen`'s `maxBodyBytes`) before a request reaches core.
         const startedAt = Date.now();
+        // The response ceiling counts from here; a future stamp could only extend it.
+        const arrivedAt = Math.min(context.runtimeContext?.requestArrivedAt ?? startedAt, startedAt);
         const maxDurationMs = opts.requestAdmission.maxDurationMs;
         const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
         const refuseAdmission = (error: unknown): Effect.Effect<Response, unknown> => {
@@ -1144,7 +1146,7 @@ export function createMcpRoute(opts: ServerOptions): {
             yield* serveMcp(
               localRequest,
               localAbort.signal,
-              startedAt,
+              arrivedAt,
               requestScope,
               opts,
               baseUrl,

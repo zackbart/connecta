@@ -12,7 +12,7 @@ import type { DownstreamInputResult } from "./downstream-input-context.js";
 import type { AuthorizeConnectorResult } from "./authorization-handoff.js";
 import { authCall, authInvoke, authFlow, authMethod, authStorage, registerAuth } from "./auth/native.js";
 import { registryProgram } from "./runtime/registry.js";
-import { runEdge } from "./runtime/run.js";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
@@ -565,6 +565,7 @@ export function guardProgramReturn(
   maxChars: number,
   completedWrite: boolean,
   programChars?: number,
+  storeBy?: number,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -577,6 +578,7 @@ export function guardProgramReturn(
       maxChars,
       completedWrite,
       programChars,
+      storeBy,
     ),
   );
 }
@@ -592,6 +594,8 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     maxChars: number,
     completedWrite: boolean,
     programChars?: number,
+    // Stalled storage costs the paging, never the answer.
+    storeBy?: number,
   ) {
     return authFlow<unknown>(function* () {
       const serialized = serializeResultText(value);
@@ -619,7 +623,12 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         cap,
         ...(programChars !== undefined ? { programChars } : {}),
         set: authMethod((id: string, chunks: string[], ttl: number) =>
-          registryProgram(registry, "stashResult", id, chunks, ttl),
+          storeBy === undefined
+            ? registryProgram(registry, "stashResult", id, chunks, ttl)
+            : withDeadlineEffect(() => registryProgram(registry, "stashResult", id, chunks, ttl), {
+                timeoutMs: Math.max(1, storeBy - Date.now()),
+                timeoutError: new Error("Result storage did not answer."),
+              }),
         ),
         warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
       };
@@ -993,10 +1002,8 @@ function metaToolsForRequest(
     return authFlow<RunCallOutcome>(function* () {
       // A deadline past the client's would trade a typed result for its transport timeout.
       const now = Date.now();
-      const timeoutMs = Math.min(
-        normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs,
-        Math.max(1, (opts.requestStartedAt ?? now) + responseCeilingMs - now),
-      );
+      const remainingMs = (opts.requestStartedAt ?? now) + responseCeilingMs - now;
+      const timeoutMs = Math.min(normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs, Math.max(1, remainingMs));
       const outcome = yield* upwardStep(
         authInvoke<InvocationOutcome<ProcessedCallResult>>(invocation, "invoke", [
           call.address,
@@ -1008,6 +1015,23 @@ function metaToolsForRequest(
             readOnly: opts.readOnly,
             routes,
             timeoutMs,
+            // Auth or queueing spent the time, and a 1 ms deadline could still lose
+            // to a dispatch. A known "not sent" beats an answer the client won't hear.
+            ...(remainingMs <= 0
+              ? {
+                  refusal: {
+                    code: "timeout",
+                    message: `This request used its ${responseCeilingMs}ms response ceiling before ${boundedEchoText(call.address, 512)} started, so it was not sent. Send it again.`,
+                    retryable: true,
+                    details: {
+                      operation: boundedEchoText(call.address, 512),
+                      stage: "response ceiling",
+                      elapsedMs: responseCeilingMs - remainingMs,
+                      deadlineMs: responseCeilingMs,
+                    },
+                  },
+                }
+              : {}),
             ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
             unwrapResult: call.resultMode === "value",
             ...(opts.downstreamInput
