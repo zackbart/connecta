@@ -539,6 +539,10 @@ function scoreDocument(
     else if (inHead(term)) score += 1.5 * weight;
     else if (statistics.descriptionMatches.get(term)?.has(doc.tool)) score += 0.25 * weight;
   }
+  // Partial evidence earns only its squared share of the query's rarity, wherever
+  // it appears, so a common verb in a name cannot outweigh rare words in a tail.
+  const covered = matchedTerms.reduce((total, term) => total + inverseDocumentFrequency(term, statistics), 0);
+  score *= (covered / phraseWeight) ** 2;
   const averageWeight = phraseWeight / terms.length;
   const nameTerms = matchedTerms.filter((term) => statistics.nameMatches.get(term)?.has(doc.tool));
   return {

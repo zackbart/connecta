@@ -822,7 +822,10 @@ and a few unambiguous abbreviations (`config`/`configuration`, `db`/`database`,
 arbitrary mid-word substrings. Document frequency weights rare domain terms above
 ubiquitous action terms. A term weighs most in the name, then the summary, then
 the title (`title` or `annotations.title`), and least in the rest of the
-description, which stays searchable but is weak evidence.
+description, which stays searchable but is weak evidence. A tool's score is then
+multiplied by the square of the share of the query's total rarity it covers in
+any zone, so rare words in a description's tail outrank a common verb in a name,
+and a tool covering every term is unaffected.
 
 Exact tool names and canonical addresses rank first, so `get_issue` beats
 `get_issue_status` even when a connector is named `issue`. A tool named only by

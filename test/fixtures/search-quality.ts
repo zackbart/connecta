@@ -192,6 +192,43 @@ export const LABELLED_QUERIES: readonly LabelledQuery[] = [
   { query: "has my email been delivered", expect: ["mailer.get_delivery_status"] },
 ];
 
+/**
+ * A separate group, so `LABELLED_QUERIES` and its held-out half stay as they
+ * were. Each operation is served only by a hatch, or the later sentences of a
+ * hatch's description are the only text naming it, and a common verb competes
+ * with a rare noun. The last three are guards: a stuffed description must not
+ * beat the tools that name the answer. Written from descriptions and operation
+ * indexes before any ranking change for them, and split as above; only the
+ * `tune` half was inspected per query. `heldOut` was scored in aggregate.
+ */
+export const HATCH_QUERIES: readonly LabelledQuery[] = [
+  // The review's reproduction, whose failure was already known.
+  { query: "get repository contents", expect: ["github.github_api_read", "github.github_api_search"], audit: true },
+  { query: "read repository contents", expect: ["github.github_api_read", "github.github_api_search"] },
+  { query: "list repository commits", expect: ["github.github_api_read", "github.github_api_search"] },
+  { query: "delete a release", expect: ["github.github_api_write", "github.github_api_search", "vercel.vercel_api_search"] },
+  { query: "get r2 buckets", expect: ["cloudflare.cloudflare_api_read", "cloudflare.cloudflare_api_search"] },
+  { query: "list kv namespaces", expect: ["cloudflare.cloudflare_api_read", "cloudflare.cloudflare_api_search"] },
+  { query: "update dns records", expect: ["cloudflare.cloudflare_api_write", "cloudflare.cloudflare_api_search", "vercel.vercel_api_search"] },
+  { query: "purge cache urls", expect: ["cloudflare.cloudflare_api_write", "cloudflare.cloudflare_api_search"] },
+  { query: "upload kv values", expect: ["cloudflare.cloudflare_api_upload"] },
+  { query: "import dns records", expect: ["cloudflare.cloudflare_api_upload", "cloudflare.cloudflare_api_search"] },
+  { query: "deploy a worker", expect: ["cloudflare.cloudflare_api_write", "cloudflare.cloudflare_api_upload", "cloudflare.cloudflare_api_search"] },
+  { query: "list pledges", expect: ["ccb.ccb_api_read", "breeze.breeze_api_search", "planning-center.pco_api_search"] },
+  { query: "get process queues", expect: ["ccb.ccb_api_read", "ccb.ccb_api_search"] },
+  { query: "list campuses", expect: ["ccb.ccb_api_read", "ccb.ccb_api_search", "overflow.overflow_api_search", "planning-center.pco_api_search"] },
+  { query: "change group role", expect: ["ccb.ccb_api_write", "ccb.ccb_api_search"] },
+  { query: "record attendance", expect: ["ccb.ccb_api_write", "ccb.ccb_api_search", "breeze.breeze_api_search"] },
+  { query: "get raw mime message", expect: ["gmail.gmail_api_read"] },
+  { query: "get meeting transcripts", expect: ["granola.granola_api_read", "granola.granola_api_search"] },
+  { query: "get developer metadata", expect: ["sheets.sheets_api_read", "sheets.sheets_api_search"] },
+  { query: "get quote pdf", expect: ["stripe.stripe_api_read", "stripe.stripe_api_search"] },
+  // Guards: the admin console's stuffed description mentions all of these.
+  { query: "get refunds", expect: ["overflow.list_refunds", "stripe.stripe_api_search", "planning-center.pco_api_search"] },
+  { query: "get audit logs", expect: ["audit.op_1042", "cloudflare.cloudflare_api_search", "breeze.breeze_api_search"] },
+  { query: "get deployment logs", expect: ["vercel.get_deployment_build_logs", "vercel.get_runtime_logs"] },
+];
+
 function fnv1a(text: string): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index += 1) {

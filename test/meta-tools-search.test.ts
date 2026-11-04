@@ -9,7 +9,7 @@ import {
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, connectorIds, textOf, toolsByConnector, type SearchResult } from "./fixtures/meta-tools.js";
 import { calcConnector, makeRegistry, remoteConnector, required } from "./helpers.js";
@@ -19,7 +19,13 @@ import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js"
 import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
 import { fixture as cloudflareFixture } from "../src/providers/cloudflare/fixtures.js";
-import { LABELLED_QUERIES, lookalikeConnectors, queryHalf, rankingScore } from "./fixtures/search-quality.js";
+import {
+  HATCH_QUERIES,
+  LABELLED_QUERIES,
+  lookalikeConnectors,
+  queryHalf,
+  rankingScore,
+} from "./fixtures/search-quality.js";
 import { providerFixtures } from "./providers.generated.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
@@ -52,8 +58,8 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(text).not.toContain("\uFFFD");
 }
 
-/** Below the measured 0.868, 27 and 0.854, 39, and above the scores the fix replaced: 0.797, 24 and 0.766, 37. */
-const FLOOR = { tune: { mrr: 0.84, top3: 26 }, heldOut: { mrr: 0.83, top3: 38 } };
+/** Just below the measured 0.879, 28 and 0.845, 38, and above main's 0.797, 24 and 0.766, 37. */
+const FLOOR = { tune: { mrr: 0.87, top3: 28 }, heldOut: { mrr: 0.84, top3: 38 } };
 
 describe("description summaries", () => {
   it("takes the first complete sentence, extends it to 40 characters and caps it at 160", () => {
@@ -179,6 +185,34 @@ describe("description summaries", () => {
     });
     expect(unabridged.every((entry) => entry.descriptionTruncated === undefined)).toBe(true);
     expect(unabridged[1]?.description?.length).toBeGreaterThan(MAX_DESCRIBE_DESCRIPTION_BYTES - 100);
+  });
+
+  it("bounds full descriptions by the budget and fallback summaries by their own allowance", async () => {
+    const utf8 = (text: string | undefined) => new TextEncoder().encode(text ?? "").length;
+    for (const unit of ["x", "€"]) {
+      const description = unit.repeat(Math.floor(MAX_DESCRIBE_DESCRIPTION_BYTES / utf8(unit)));
+      const tools = Array.from({ length: 100 }, (_, index) => ({
+        name: `tool_${index}`,
+        description,
+        annotations: { readOnlyHint: true },
+      }));
+      const conn = connectorWith({ id: "desk", kind: "api", tools });
+      const entries = await new CatalogService(makeRegistry([conn]), BASE).describe({
+        addresses: tools.map((tool) => `desk.${tool.name}`),
+      });
+      const full = entries.filter((entry) => entry.descriptionTruncated === undefined);
+      const summaries = entries.filter((entry) => entry.descriptionTruncated === true);
+      expect(full.length).toBe(1);
+      expect(full.reduce((total, entry) => total + utf8(entry.description), 0)).toBeLessThanOrEqual(
+        MAX_DESCRIBE_DESCRIPTION_BYTES,
+      );
+      expect(summaries.length).toBe(99);
+      for (const entry of summaries) {
+        expect(entry.description!.length).toBeGreaterThan(0);
+        expect(entry.description!.length).toBeLessThanOrEqual(160);
+        expect(utf8(entry.description)).toBeLessThanOrEqual(480);
+      }
+    }
   });
 });
 
@@ -662,6 +696,122 @@ describe("search_tools", () => {
     expect(tune.top3).toBeGreaterThanOrEqual(FLOOR.tune.top3);
     expect(heldOut.mrr).toBeGreaterThanOrEqual(FLOOR.heldOut.mrr);
     expect(heldOut.top3).toBeGreaterThanOrEqual(FLOOR.heldOut.top3);
+  }, 60_000);
+
+  const rankOf = (page: SearchResult, address: string) => page.tools.findIndex((tool) => tool.address === address) + 1;
+
+  it("keeps every hatch-only query of the separate group on its first ranks", async () => {
+    const mt = createMetaTools(
+      makeRegistry([
+        ...Object.values(providerFixtures).map((fixture) => fixture.create(fixture.name)),
+        ...lookalikeConnectors(),
+      ]),
+      BASE,
+    );
+    expect(HATCH_QUERIES.length).toBeGreaterThanOrEqual(11);
+    for (const { query, expect: answers } of HATCH_QUERIES) {
+      const page = textOf(await mt.searchTools({ query })) as SearchResult;
+      const rank = page.tools.findIndex((tool) => answers.includes(tool.address)) + 1;
+      expect(rank, query).toBeGreaterThan(0);
+      // `get refunds`: two deposit getters state both words, so they rightly lead.
+      expect(rank, query).toBeLessThanOrEqual(query === "get refunds" ? 4 : 3);
+      // The stuffed console mentions every guard's words and names none of them.
+      expect(page.tools[0]?.address, query).not.toBe("admin.admin_console");
+    }
+  }, 60_000);
+
+  it("ranks a hatch whose tail states rare words above unrelated getters, at any catalog size", async () => {
+    const fixtures = Object.values(providerFixtures);
+    const query = "get repository contents";
+    const unrelated = ["breeze.get_person", "planning-center.get_person", "overflow.get_contribution", "ccb.get_me"];
+    const providers = textOf(
+      await createMetaTools(makeRegistry(fixtures.map((fixture) => fixture.create(fixture.name))), BASE).searchTools({
+        query,
+        limit: MAX_SEARCH_LIMIT,
+      }),
+    ) as SearchResult;
+    expect(rankOf(providers, "github.github_api_search")).toBe(1);
+    expect(rankOf(providers, "github.github_api_read")).toBeLessThanOrEqual(5);
+    for (const address of unrelated)
+      expect(rankOf(providers, address), address).toBeGreaterThan(rankOf(providers, "github.github_api_read"));
+    // Clones double every document frequency; a crowd of getters makes `get` commoner still.
+    const crowd = connectorWith({
+      id: "crowd",
+      kind: "api",
+      tools: Array.from({ length: 50 }, (_, index) => ({
+        name: `get_record_${index}`,
+        description: `Get one record of kind ${index} by id.`,
+        annotations: { readOnlyHint: true },
+      })),
+    });
+    const connectors = [
+      ...fixtures.map((fixture) => fixture.create(fixture.name)),
+      ...fixtures.map((fixture) => fixture.create(`${fixture.name}-copy`)),
+      crowd,
+    ];
+    const toolCount = (await Promise.all(connectors.map((connector) => connector.listTools({} as never)))).flat()
+      .length;
+    expect(toolCount).toBe(494);
+    const cloned = textOf(
+      await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query, limit: MAX_SEARCH_LIMIT }),
+    ) as SearchResult;
+    expect(cloned.tools.slice(0, 2).map((tool) => tool.name)).toEqual(["github_api_search", "github_api_search"]);
+    const readRank = Math.min(
+      ...["github.github_api_read", "github-copy.github_api_read"].map((address) => rankOf(cloned, address)),
+    );
+    expect(readRank).toBeGreaterThan(0);
+    expect(readRank).toBeLessThanOrEqual(8);
+    expect(cloned.tools.findIndex((tool) => tool.name.startsWith("get_record_"))).toBeGreaterThan(readRank - 1);
+  }, 60_000);
+
+  it("weighs rare evidence over a common verb, without letting a long description pass a named tool", async () => {
+    const getter = (name: string) => ({
+      name,
+      description: `Get one ${name.replace("get_", "")} by id.`,
+      annotations: { readOnlyHint: true },
+    });
+    const crowd = Array.from({ length: 20 }, (_, index) => getter(`get_thing_${index}`));
+    const console = {
+      name: "console",
+      description: "Administer the workspace from one place. Covers zeppelin manifests among much else.",
+      annotations: { readOnlyHint: true },
+    };
+    const search = async (tools: ToolDef[], query: string) =>
+      textOf(
+        await createMetaTools(makeRegistry([connectorWith({ id: "desk", kind: "api", tools })]), BASE).searchTools({
+          query,
+          limit: 100,
+        }),
+      ) as SearchResult;
+    const named = await search([...crowd, console, getter("get_zeppelin_manifest")], "get zeppelin manifest");
+    expect(named.tools.slice(0, 2).map((tool) => tool.name)).toEqual(["get_zeppelin_manifest", "console"]);
+    // Only a tail states the rare word: it still leads the getters that state the verb.
+    const rare = await search([...crowd, console], "get zeppelin");
+    expect(rare.tools[0]?.name).toBe("console");
+    expect(rare.matchMode).toBe("partial");
+  });
+
+  it("keeps honest absence and no-match guidance, and filters before ranking", async () => {
+    const connectors = () => Object.values(providerFixtures).map((fixture) => fixture.create(fixture.name));
+    const mt = createMetaTools(makeRegistry(connectors()), BASE);
+    const nonsense = textOf(await mt.searchTools({ query: "zxqv frobnicate" })) as SearchResult;
+    expect(nonsense.tools).toEqual([]);
+    expect(nonsense.total).toBe(0);
+    expect(nonsense.queryAnalysis?.unmatchedTerms).toEqual(["zxqv", "frobnicate"]);
+    const withoutGithub = connectors().filter((connector) => connector.id !== "github");
+    const absent = textOf(
+      await createMetaTools(makeRegistry(withoutGithub), BASE).searchTools({ query: "github get repository contents" }),
+    ) as SearchResult;
+    expect(absent.tools).toEqual([]);
+    expect(absent.absence?.service).toBe("GitHub");
+    // A read-only endpoint hides writes before ranking, whatever their rare words.
+    const readOnly = textOf(
+      await createMetaTools(makeRegistry(connectors()), BASE, { readOnly: true }).searchTools({
+        query: "purge cache urls",
+      }),
+    ) as SearchResult;
+    expect(readOnly.tools.map((tool) => tool.address)).not.toContain("cloudflare.cloudflare_api_write");
+    expect(readOnly.tools.every((tool) => tool.classification === "read")).toBe(true);
   }, 60_000);
 
   it("does not load unrelated catalogs for a connector-scoped search", async () => {

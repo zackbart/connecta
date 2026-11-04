@@ -80,7 +80,7 @@ export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
-/** UTF-8 bytes of tool purposes one describe call returns before falling back to summaries. */
+/** UTF-8 bytes of full tool purposes one describe call returns; fallback summaries have their own bound. */
 export const MAX_DESCRIBE_DESCRIPTION_BYTES = 32 * 1024;
 const MAX_QUERY_TERMS = 8;
 const MAX_QUERY_TERM_LENGTH = 64;
@@ -2002,8 +2002,9 @@ export class CatalogService {
         ),
       );
 
-      // Prose shares one budget in address order, so a large batch keeps its
-      // schemas and a repeated describe renders the same text.
+      // Full prose shares one budget in address order, so a large batch keeps its
+      // schemas and a repeated describe renders the same text. A fallback summary
+      // spends none of it: every entry keeps its purpose, within 480 bytes each.
       let descriptionBytes = MAX_DESCRIBE_DESCRIPTION_BYTES;
       return resolved.map(({ address, resolved: addressResolution }) => {
         if (!addressResolution) {

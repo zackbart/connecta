@@ -357,10 +357,13 @@ clamps its caller-authored `address` to 512 UTF-8 bytes with an `…` marker, an
 entry order correlates a clipped address with its request; successes keep
 canonical addresses. More than 100 addresses is `invalid_args`, and the same
 256,000-byte ceiling applies. `description` is the tool's full text. One call
-returns at most 32 KiB of UTF-8 description text in address order; an entry that
-does not fit in what remains gets the search summary and
-`descriptionTruncated: true`, and a later, shorter entry may still fit.
-`fullDescriptions: true` lifts that budget, leaving the ceiling. Compact describe keeps property prose within a
+returns at most 32 KiB of UTF-8 full description text in address order; an entry
+that does not fit in what remains gets the search summary, with
+`descriptionTruncated: true` when that summary leaves text out, and a later,
+shorter entry may still fit. Summaries have their own allowance and spend none of
+that budget: each is at most 160 UTF-16 code units, at most 480 UTF-8 bytes, so
+100 addresses return at most 80,288 bytes of description text.
+`fullDescriptions: true` lifts the budget, leaving the ceiling. Compact describe keeps property prose within a
 separate 8,192-byte UTF-8 shape cap and shares search's 2,000-visit budget; a
 capped shape sets `inputSchemaTruncated` or `outputSchemaTruncated`, and
 `format: "json"` gives the exact schema. `format: "typescript"` returns a
