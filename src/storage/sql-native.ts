@@ -168,7 +168,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
     },
     catalogSnapshot(keys, generationKey, prefix, suffixes) {
       return Effect.gen(function* () {
-        if (keys.length < 1 || keys.length > 4 || suffixes.length > 2)
+        if (keys.length < 1 || keys.length > 4 || suffixes.length > 3)
           throw new RangeError("Catalog locator exceeds bounds");
         for (const key of [...keys, generationKey, prefix, ...suffixes]) validateStorageKey(key);
         yield* ensure();

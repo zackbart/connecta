@@ -23,11 +23,12 @@ import {
   type CatalogResult,
   observeCatalogFetch,
   observeCatalogExpiry,
+  type CatalogPeekEntry,
 } from "../../catalog-cache.js";
-import { ConnectorCallError, msg } from "../../errors.js";
+import { ConnectorCallError, isAccessRefusal, msg } from "../../errors.js";
 import { carryFailureFacts, failureRecord, logFailure } from "../../operator-record.js";
 import { assertDownstreamOutputSafe } from "../../downstream-input-context.js";
-import type { ConnectorContext, ToolDef } from "../../types.js";
+import type { ConnectorCatalogPeek, ConnectorContext, ToolDef } from "../../types.js";
 import type { RemoteMcpRuntime, RemoteMcpShared } from "./runtime.js";
 import type { Preread } from "./connection.js";
 import { hasSdkPayload, ownAbortReason, requiresAuthorization } from "./errors.js";
@@ -84,7 +85,10 @@ function isCursorShapeError(err: unknown): boolean {
 /** One connector's catalog intake and listTools operation. */
 export function remoteMcpCatalog(
   rt: RemoteMcpRuntime,
-): Pick<RemoteMcpShared, "installCatalogIntake" | "listingContexts" | "liveListings" | "listToolsOperation"> {
+): Pick<
+  RemoteMcpShared,
+  "installCatalogIntake" | "listingContexts" | "liveListings" | "listToolsOperation" | "peekCatalogOperation"
+> {
   const { id } = rt;
   // Listings that must reach the downstream: a credential test proves the
   // stored value against the server, never against a cached catalog.
@@ -137,6 +141,9 @@ export function remoteMcpCatalog(
           authMethod(() =>
             authFlow<ListToolsResult>(function* () {
               const before = toolPages;
+              // The one write that follows no cache read, which is what
+              // otherwise captures the fence this listing may lift.
+              if (options?.cacheMode === "refresh") (yield authInvoke(cache, "captureFence", [])) as void;
               let result: ListToolsResult;
               try {
                 result = (yield authCall(listTools, [params, options])) as ListToolsResult;
@@ -144,6 +151,9 @@ export function remoteMcpCatalog(
                 const bounded = rt.atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [
                   cache.currentContext().signal,
                 ]);
+                // Fenced as this listing was bound, whatever is current by now.
+                if (requiresAuthorization(bounded) || isAccessRefusal(bounded))
+                  (yield authInvoke(cache, "fenceListing", [])) as void;
                 const transient =
                   (error instanceof SdkHttpError && [502, 503, 504].includes(error.status)) ||
                   (bounded instanceof ConnectorCallError && bounded.code === "unavailable");
@@ -415,33 +425,51 @@ export function remoteMcpCatalog(
         }
       }
       state.toolDefinitions = new Map(clean.map((tool: Tool) => [tool.name, tool]));
-      return clean.map((t: Tool) => ({
-        name: t.name,
-        ...(t.title !== undefined ? { title: t.title } : {}),
-        ...(t.icons !== undefined
-          ? {
-              icons: t.icons.filter((icon) => !/^data:/i.test(icon.src)) as NonNullable<ToolDef["icons"]>,
-            }
-          : {}),
-        ...(t.execution !== undefined ? { execution: t.execution as NonNullable<ToolDef["execution"]> } : {}),
-        ...(t.description !== undefined ? { description: t.description } : {}),
-        ...(t.inputSchema !== undefined
-          ? {
-              inputSchema: t.inputSchema as NonNullable<ToolDef["inputSchema"]>,
-            }
-          : {}),
-        ...(t.outputSchema !== undefined
-          ? {
-              outputSchema: t.outputSchema as NonNullable<ToolDef["outputSchema"]>,
-            }
-          : {}),
-        ...(t.annotations !== undefined
-          ? {
-              annotations: t.annotations as NonNullable<ToolDef["annotations"]>,
-            }
-          : {}),
-      }));
+      return toolDefinitions(clean);
     }),
   );
-  return { installCatalogIntake, listingContexts, liveListings, listToolsOperation };
+  // Served by discovery only, marked by the caller; the listing above stays
+  // the only source a call resolves through.
+  const peekCatalogOperation = authMethod((ctx: ConnectorContext) =>
+    authFlow<ConnectorCatalogPeek | undefined>(function* () {
+      if (liveListings.has(ctx)) return undefined;
+      const entry = (yield authCall(rt.peekCatalog, [ctx])) as CatalogPeekEntry | undefined;
+      if (!entry) return undefined;
+      return {
+        tools: toolDefinitions(redactCatalog(ctx, entry.result.tools)),
+        fetchedAt: entry.fetchedAt,
+        expiresAt: entry.expiresAt,
+      };
+    }),
+  );
+  return { installCatalogIntake, listingContexts, liveListings, listToolsOperation, peekCatalogOperation };
+}
+
+function toolDefinitions(tools: readonly Tool[]): ToolDef[] {
+  return tools.map((t: Tool) => ({
+    name: t.name,
+    ...(t.title !== undefined ? { title: t.title } : {}),
+    ...(t.icons !== undefined
+      ? {
+          icons: t.icons.filter((icon) => !/^data:/i.test(icon.src)) as NonNullable<ToolDef["icons"]>,
+        }
+      : {}),
+    ...(t.execution !== undefined ? { execution: t.execution as NonNullable<ToolDef["execution"]> } : {}),
+    ...(t.description !== undefined ? { description: t.description } : {}),
+    ...(t.inputSchema !== undefined
+      ? {
+          inputSchema: t.inputSchema as NonNullable<ToolDef["inputSchema"]>,
+        }
+      : {}),
+    ...(t.outputSchema !== undefined
+      ? {
+          outputSchema: t.outputSchema as NonNullable<ToolDef["outputSchema"]>,
+        }
+      : {}),
+    ...(t.annotations !== undefined
+      ? {
+          annotations: t.annotations as NonNullable<ToolDef["annotations"]>,
+        }
+      : {}),
+  }));
 }

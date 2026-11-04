@@ -428,6 +428,7 @@ export function executorName(executor: Executor): string | undefined {
  */
 export function withExecutorAdmission(executor: Executor, admission: AdmissionController): AdmittingExecutor {
   return {
+    ...(executor.deadlineMs !== undefined ? { deadlineMs: executor.deadlineMs } : {}),
     async acquire(options = {}): Promise<ExecutorLease> {
       const token = await admission.acquire(options);
       let released = false;

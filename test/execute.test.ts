@@ -9,6 +9,8 @@ import {
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
 } from "../src/meta-tools.js";
+import { assertExecutor, customExecutor } from "../src/executor-contract.js";
+import type { CallErrorDetails } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   AdmittingExecutor,
@@ -20,7 +22,7 @@ import type {
 } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { scriptedExecutor } from "./fixtures/misc.js";
+import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -301,6 +303,203 @@ it("a bridge may send the uncounted missing-await notice only once per run", asy
   expect(out.structuredContent).not.toHaveProperty("result");
 });
 
+describe("execute_code run deadline", () => {
+  /** Calls one provider function directly, as a sandbox would, with the run's deadline published. */
+  const running = (
+    deadlineMs: number | undefined,
+    program: (fns: ExecutorProvider["fns"]) => Promise<unknown>,
+  ): Executor => ({
+    ...(deadlineMs === undefined ? {} : { deadlineMs }),
+    execute: async (_code, [provider]) => ({ result: await program(required(provider).fns) }),
+  });
+  const failure = (error: unknown) => (error as InvocationFailure).details;
+  const hanging: Connector = {
+    id: "slow",
+    kind: "api",
+    async listTools() {
+      return [
+        { name: "read", annotations: { readOnlyHint: true } },
+        { name: "update", annotations: { readOnlyHint: false } },
+      ];
+    },
+    callTool: () => new Promise<never>(() => {}),
+  };
+
+  it("L3: caps a read below the deadline, by the smaller of 1 s and a tenth", async () => {
+    let seen: CallErrorDetails | undefined;
+    const execute = createExecuteTool(
+      makeRegistry([hanging]),
+      "https://example.test",
+      running(300, async (fns) => {
+        seen = (await fns.call!("slow.read", {}, { timeoutMs: 600_000 }).catch(failure)) as CallErrorDetails;
+        return "kept";
+      }),
+      silentLogger,
+    );
+    const out = await execute({ code: "async () => {}" });
+    expect(out.isError).toBeFalsy();
+    expect(required(seen)).toMatchObject({ code: "timeout", retryable: true });
+    expect(required(required(seen).details).deadlineMs).toBeLessThanOrEqual(270);
+  });
+
+  it("L3: a read stops before a ceiling that queueing already spent", async () => {
+    let seen: CallErrorDetails | undefined;
+    const execute = createExecuteTool(
+      makeRegistry([hanging]),
+      "https://example.test",
+      running(5_000, async (fns) => {
+        seen = (await fns.call!("slow.read", {}, { timeoutMs: 600_000 }).catch(failure)) as CallErrorDetails;
+      }),
+      silentLogger,
+      undefined,
+      { watchdogMs: 2_000, requestStartedAt: Date.now() - 1_700 },
+    );
+    const out = await execute({ code: "async () => {}" });
+    expect(out.isError, JSON.stringify(out.structuredContent)).toBeFalsy();
+    expect(required(seen)).toMatchObject({ code: "timeout", retryable: true });
+    expect(required(required(seen).details).deadlineMs).toBeLessThanOrEqual(300);
+  });
+
+  it("L3: a run with no time left is refused before admission, and never starts", async () => {
+    const execute = vi.fn(async () => ({ result: null }));
+    const acquire = vi.fn();
+    const out = await createExecuteTool(
+      makeRegistry([hanging]),
+      "https://example.test",
+      customExecutor({ execute, acquire } as unknown as Executor, { lifecycle: "self-managed" }),
+      silentLogger,
+      undefined,
+      { watchdogMs: 1_000, requestStartedAt: Date.now() - 2_000 },
+    )({ code: "async () => {}" });
+    expect(out.structuredContent?.error).toMatchObject({
+      code: "timeout",
+      retryable: true,
+      details: { operation: "execute_code", stage: "response ceiling", deadlineMs: 1_000 },
+    });
+    expect((required(out.structuredContent).error as CallErrorDetails).message).toContain(
+      "did not run and sent nothing",
+    );
+    expect(acquire).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("L3: a lease that arrives with no time left releases, and the run never starts", async () => {
+    const execute = vi.fn(async () => ({ result: null }));
+    const release = vi.fn();
+    const requestStartedAt = Date.now();
+    const executor = {
+      execute,
+      acquire: async () => {
+        // Admission spent the rest without yielding to a timer, so the lease wins the race.
+        while (Date.now() < requestStartedAt + 400);
+        return { waitMs: 400, execute, release };
+      },
+    } as unknown as Executor;
+    const out = await createExecuteTool(
+      makeRegistry([hanging]),
+      "https://example.test",
+      customExecutor(executor, { lifecycle: "self-managed" }),
+      silentLogger,
+      undefined,
+      { watchdogMs: 400, requestStartedAt },
+    )({ code: "async () => {}" });
+    expect(out.structuredContent?.error).toMatchObject({ code: "timeout", retryable: true });
+    expect(execute).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("L3: storage that stalls on a program's oversized return costs the paging, not the answer", async () => {
+    const stalled = memoryStorage();
+    stalled.set = () => new Promise<never>(() => {});
+    const started = Date.now();
+    const out = await createExecuteTool(
+      makeRegistry([hanging], { storage: stalled }),
+      "https://example.test",
+      fakeExecutor({ result: "x".repeat(100_000) }),
+      silentLogger,
+      undefined,
+      { watchdogMs: 2_000, requestStartedAt: started - 1_500 },
+    )({ code: "async () => {}" });
+    // 2 s ceiling, 200 ms of storage room past it: 700 ms left at the start.
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(out.isError, JSON.stringify(out.structuredContent)).toBeFalsy();
+    expect(out.structuredContent?.result).toMatchObject({ truncated: true });
+    expect(out.structuredContent?.result).not.toHaveProperty("resultId");
+  });
+
+  it("INV-11: warns when an executor's deadline does not end before the ceiling", () => {
+    const warn = vi.fn();
+    makeDeployment({
+      logger: { ...silentLogger, warn },
+      executor: { deadlineMs: 55_000, execute: async () => ({ result: null }) },
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("execute.watchdogMs"));
+  });
+
+  it("L3: an executor that publishes no deadline keeps the watchdog cap", async () => {
+    let seen: CallErrorDetails | undefined;
+    const execute = createExecuteTool(
+      makeRegistry([hanging]),
+      "https://example.test",
+      running(undefined, async (fns) => {
+        seen = (await fns.call!("slow.read", {}, { timeoutMs: 600_000 }).catch(failure)) as CallErrorDetails;
+      }),
+      silentLogger,
+      undefined,
+      { watchdogMs: 400 },
+    );
+    await execute({ code: "async () => {}" });
+    expect(required(required(seen).details).deadlineMs).toBeGreaterThan(300);
+  });
+
+  it("INV-1 INV-9 L3: a source write overridden to read keeps the write deadline", async () => {
+    const answered = deferred<void>();
+    let calls = 0;
+    const connector: Connector = {
+      ...hanging,
+      callTool: async () => {
+        calls++;
+        await answered.promise;
+        return { done: true };
+      },
+    };
+    const seen: unknown[] = [];
+    const execute = createExecuteTool(
+      makeRegistry([connector], { classification: { slow: { update: "read" } } }),
+      "https://example.test",
+      running(200, async (fns) => {
+        const pending = fns.call!("slow.update", {}, { timeoutMs: 600_000 });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        answered.resolve();
+        seen.push(await pending);
+      }),
+      silentLogger,
+      undefined,
+      { watchdogMs: 5_000 },
+    );
+    const out = await execute({ code: "async () => {}" });
+    expect(out.isError, JSON.stringify(out.structuredContent)).toBeFalsy();
+    expect(seen).toEqual([{ data: { done: true }, format: "json" }]);
+    expect(calls).toBe(1);
+  });
+
+  it("INV-11: refuses an unusable deadlineMs and carries a usable one through both wrappers", () => {
+    const execute = async () => ({ result: undefined });
+    for (const deadlineMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(() => assertExecutor(customExecutor({ deadlineMs, execute }, { lifecycle: "self-managed" }))).toThrow(
+        "ConnectaConfig.executor.deadlineMs must be a positive whole number",
+      );
+    expect(customExecutor({ deadlineMs: 5_000, execute }, { lifecycle: "self-managed" }).deadlineMs).toBe(5_000);
+    expect(customExecutor({ execute }, { lifecycle: "self-managed" }).deadlineMs).toBeUndefined();
+    expect(
+      withExecutorAdmission(
+        { deadlineMs: 5_000, execute },
+        new AdmissionController({ concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1 }),
+      ).deadlineMs,
+    ).toBe(5_000);
+  });
+});
+
 describe("execute_code executor watchdog", () => {
   // Ported from executor's wedge repro (UsefulSoftwareCo/executor,
   // runtime-dynamic-worker/src/wedge-repro.test.ts): an executor whose own
@@ -382,7 +581,8 @@ describe("execute_code executor watchdog", () => {
     // two wedged programs used to block every later execute_code.
     let executions = 0;
     const deployment = makeDeployment({
-      execute: { watchdogMs: 200 },
+      // Long enough to start both runs on a busy host; the ceiling also bounds queueing.
+      execute: { watchdogMs: 1_000 },
       executor: {
         execute: () => {
           executions++;

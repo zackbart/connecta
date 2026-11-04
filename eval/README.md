@@ -36,7 +36,9 @@ and named-write journeys, plus a Granola workspace meeting dossier. Provider jou
 CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
 write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal,
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
-Slides deck/comment save outcomes. The provider/HTTP cleanup also promotes
+Slides deck/comment save outcomes. `p5-slow-read` runs one fast read beside one
+that outlasts the run, on a six-second run deadline: the answer must hold the
+fast data with no second fast read. The provider/HTTP cleanup also promotes
 existing Tithe.ly cancellation recovery, a single GitHub draft release, a GitHub
 CI read that reports one repository's permission gap while finishing another,
 Cloudflare DNS and Vercel environment recovery, shared-drive permission
