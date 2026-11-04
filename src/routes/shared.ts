@@ -53,6 +53,12 @@ export interface ServerOptions {
 
 export interface RuntimeExecutionContext extends InboundAuthRuntimeContext {
   waitUntil(promise: Promise<unknown>): void;
+  /**
+   * When the Node adapter received this request's headers, before it buffered
+   * the body. It comes from the host, never from anything the request carries.
+   * Workers read the body lazily, so the route's own clock already counts upload.
+   */
+  readonly requestArrivedAt?: number;
 }
 
 export interface RouteContext {
