@@ -12,7 +12,7 @@ import { executeLimits } from "../config.js";
 import {
   oauthConnectUrl,
   oauthConnectLink,
-  oauthConnectLinkProgress,
+  oauthConnectLinkStarted,
   claimAuthRetry,
   oauthConnectUnavailable,
 } from "../oauth-handoff.js";
@@ -441,8 +441,8 @@ function serveMcp(
             flow,
           ]),
         ),
-        linkProgress: authMethod((id: string, nonce: string) =>
-          authCall<"claimed" | "started" | "failed" | undefined>(oauthConnectLinkProgress, [opts, baseUrl, id, nonce]),
+        linkStarted: authMethod((id: string, nonce: string) =>
+          authCall<boolean>(oauthConnectLinkStarted, [opts, baseUrl, id, nonce]),
         ),
         claimRetry: authMethod((id: string, nonce: string) =>
           authCall<boolean>(claimAuthRetry, [opts, baseUrl, id, nonce]),

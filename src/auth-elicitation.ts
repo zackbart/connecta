@@ -125,7 +125,7 @@ export class AuthElicitation {
       registry: RegistryView;
       canManage: (id: string) => boolean;
       connectLink: (id: string, force?: boolean, flow?: string) => Promise<{ url: string; nonce: string }>;
-      linkProgress: (id: string, nonce: string) => Promise<"claimed" | "started" | "failed" | undefined>;
+      linkStarted: (id: string, nonce: string) => Promise<boolean>;
       claimRetry: (id: string, nonce: string) => Promise<boolean>;
       unavailable: string | undefined;
       credentialUi: boolean;
@@ -617,19 +617,11 @@ export class AuthElicitation {
         const self = this as AuthElicitation;
         return authAwait(
           authFlow<boolean>(function* () {
-            let completed = false;
-            let pending = false;
-            for (const nonce of state.browserNonces) {
-              const progress = yield* upwardStep(
-                authInvoke<"claimed" | "started" | "failed" | undefined>(self.options, "linkProgress", [
-                  state.connector,
-                  nonce,
-                ]),
-              );
-              completed ||= progress === "started";
-              pending ||= progress === "claimed";
-            }
-            return completed && !pending;
+            // A reset never leaves "started", so no reset can be running behind this link.
+            for (const nonce of state.browserNonces)
+              if (yield* upwardStep(authInvoke<boolean>(self.options, "linkStarted", [state.connector, nonce])))
+                return true;
+            return false;
           }),
           (this as AuthElicitation).options.requestSignal,
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as AuthElicitation).options.requestScope)));

@@ -2670,9 +2670,9 @@ reads this key; connector contexts and guest APIs cannot reach the vault.
 Explicit authorization retries require a completed browser start (including
 its reset and consent binding), valid stored credential fields where declared,
 and a healthy passive connector status where available before completing.
-An in-progress start cannot complete against an old grant: a link still claimed
-holds completion back, and the next prompt carries the same flow, so it cannot
-restart pending consent. Failed starts remain single-use but do not block a later
+An in-progress start cannot complete against an old grant: only a link whose start
+finished counts toward completion, and the next prompt carries the same flow, so it
+cannot restart pending consent. Failed starts remain single-use but do not block a later
 successful attempt. A link visited during the completion check continues the
 attempt that check is judging, and cannot reset it.
 

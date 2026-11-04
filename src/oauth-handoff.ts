@@ -188,24 +188,25 @@ const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
 );
 
 /** A claim precedes OAuth reset; only a completed start can prove recovery. */
-export function oauthConnectLinkProgress(
+export function oauthConnectLinkStarted(
   opts: ServerOptions,
   baseUrl: string,
   id: string,
   nonce: string,
-): Promise<"claimed" | "started" | "failed" | undefined> {
-  return runEdge(oauthConnectLinkProgressNative(opts, baseUrl, id, nonce));
+): Promise<boolean> {
+  return runEdge(oauthConnectLinkStartedNative(opts, baseUrl, id, nonce));
 }
-const oauthConnectLinkProgressNative = /* @__PURE__ */ registerAuth(
-  oauthConnectLinkProgress,
+const oauthConnectLinkStartedNative = /* @__PURE__ */ registerAuth(
+  oauthConnectLinkStarted,
   function (opts: ServerOptions, baseUrl: string, id: string, nonce: string) {
-    return authFlow<"claimed" | "started" | "failed" | undefined>(function* () {
-      const stage = yield* upwardStep(
-        authStorage<string | null>(opts.registry.contextFor(id, baseUrl).storage, "get", [
-          oauthConnectKeys.used(nonce),
-        ]),
+    return authFlow<boolean>(function* () {
+      return (
+        (yield* upwardStep(
+          authStorage<string | null>(opts.registry.contextFor(id, baseUrl).storage, "get", [
+            oauthConnectKeys.used(nonce),
+          ]),
+        )) === "started"
       );
-      return stage === "used" ? "claimed" : stage === "started" || stage === "failed" ? stage : undefined;
     });
   },
 );

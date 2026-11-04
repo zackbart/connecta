@@ -690,7 +690,25 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
         const directory = mkdtempSync(join(tmpdir(), "connecta-forced-link-"));
         const databases = [openSqlite(join(directory, "shared.db")), openSqlite(join(directory, "shared.db"))];
         try {
-          const [first, second] = databases.map((database) => setup({ storage: sqliteStorage(database) }));
+          const stores = databases.map((database) => sqliteStorage(database));
+          const [first, second] = stores.map((storage) => setup({ storage }));
+          // node:sqlite answers synchronously, so visitors would otherwise run one after another.
+          // Hold each racing visitor at its read until all have read, so they meet at the claim.
+          let racers = 0;
+          let arrive = () => {};
+          const met = () => new Promise<void>((resolve) => (arrive = resolve));
+          let meeting = met();
+          for (const store of stores) {
+            const get = store.get.bind(store);
+            vi.spyOn(store, "get").mockImplementation(async (key) => {
+              const value = await get(key);
+              if (racers > 0 && key.includes("oauth:connect-reset:")) {
+                if (--racers === 0) arrive();
+                await meeting;
+              }
+              return value;
+            });
+          }
           first!.connect();
           second!.connect();
           const pairing = { asking: first!, other: second!, flows: [first!, second!] as const };
@@ -698,6 +716,8 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
             vi.mocked(first!.connector.startAuth!).mockClear();
             vi.mocked(second!.connector.startAuth!).mockClear();
             const { links } = await rounds(pairing, 3);
+            racers = links.length;
+            meeting = met();
             const visits = await Promise.all(links.map((link, index) => (index % 2 ? second! : first!).browser(link)));
             const statuses = visits.map((visit) => visit.status);
             expect(statuses).toContain(302);

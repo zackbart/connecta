@@ -89,7 +89,9 @@ describe.skipIf(!bindings)("a forced flow's reset over native Workers D1", () =>
       expect(outcomes.filter((outcome) => outcome === "reset")).toHaveLength(1);
       for (const outcome of outcomes) expect(outcome).not.toBe("refused");
       const winner = links[order[outcomes.indexOf("reset")]!]!;
-      // A waiter spent nothing: once the winner settles, it continues rather than resetting.
+      // A waiter spent nothing, however often it asks: once the winner settles, it continues.
+      for (const [position, outcome] of outcomes.entries())
+        if (outcome === "pending") expect(await claim(order[position]!)).toBe("pending");
       await finishOAuthConnectStart(visitors[0]!, winner, "started");
       for (const [position, outcome] of outcomes.entries())
         if (outcome === "pending") expect(await claim(order[position]!)).toBe("continue");
