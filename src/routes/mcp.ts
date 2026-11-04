@@ -12,8 +12,7 @@ import { executeLimits } from "../config.js";
 import {
   oauthConnectUrl,
   oauthConnectLink,
-  oauthConnectLinkProgress,
-  closeOAuthConnectLinks,
+  oauthConnectLinkStarted,
   claimAuthRetry,
   oauthConnectUnavailable,
 } from "../oauth-handoff.js";
@@ -431,7 +430,7 @@ function serveMcp(
         principal: principalKey,
         registry,
         canManage: canManageAuth,
-        connectLink: authMethod((id: string, force?: boolean, after?: string) =>
+        connectLink: authMethod((id: string, force?: boolean, flow?: string) =>
           authCall<{ url: string; nonce: string }>(oauthConnectLink, [
             opts,
             opts.config.publicUrl ?? baseUrl,
@@ -439,14 +438,11 @@ function serveMcp(
             principalKey,
             force,
             Boolean(opts.config.vault?.seal && opts.config.vault.open),
-            after,
+            flow,
           ]),
         ),
-        linkProgress: authMethod((id: string, nonce: string) =>
-          authCall<"claimed" | "started" | "failed" | undefined>(oauthConnectLinkProgress, [opts, baseUrl, id, nonce]),
-        ),
-        closeLinks: authMethod((id: string, nonces: string[]) =>
-          authCall<void>(closeOAuthConnectLinks, [opts, baseUrl, id, nonces]),
+        linkStarted: authMethod((id: string, nonce: string) =>
+          authCall<boolean>(oauthConnectLinkStarted, [opts, baseUrl, id, nonce]),
         ),
         claimRetry: authMethod((id: string, nonce: string) =>
           authCall<boolean>(claimAuthRetry, [opts, baseUrl, id, nonce]),
