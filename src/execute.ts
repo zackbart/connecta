@@ -2043,7 +2043,7 @@ Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search and describe return objects, not arrays.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle: follow its hint. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call; over the limit the program ends with nothing returned, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction when paging is available.
+search and describe return objects, not arrays.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle: follow its hint. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call; over the limit the program returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction when paging is available.
 
 ${readOnly ? "" : "Never repeat writes for output. "}emit(result) or emit(block) forwards MCP blocks; authored image/audio data is base64. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; text shares the return cap. connecta.skill("usage"): repair.`;
 
