@@ -76,6 +76,12 @@ export interface GuardedOptions<R = never> {
   ) => Effect.Effect<void, HttpFailure, R | CallServices>;
   /** Headers proving identity, resolved per request and applied last. */
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, R | CallServices>;
+  /**
+   * `authenticate` headers the vendor documents as naming the account rather than proving it.
+   * Fixed by maintained provider code, never by a request. Each value is matched whole only, in
+   * output and outbound arguments, unless framing makes it a credential.
+   */
+  readonly publicIdentifierHeaders?: readonly Lowercase<string>[];
 }
 
 /** One answer, read under the ceiling. `text` is undefined when the body could not be read. */
@@ -189,6 +195,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           confined = HttpClientRequest.setHeader(confined, name, value);
       }
       const secrets = yield* Secrets;
+      const identifiers = new Set<string>();
       for (const [name, value] of Object.entries(yield* options.authenticate)) {
         if (confined.headers[name.toLowerCase()] !== undefined) {
           return yield* refuse(
@@ -196,13 +203,15 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           );
         }
         confined = HttpClientRequest.setHeader(confined, name, value);
-        secrets.namedHeader(name, value);
+        const lower = name.toLowerCase();
+        if (!options.publicIdentifierHeaders?.includes(lower as Lowercase<string>)) secrets.header(value);
+        else if (secrets.publicIdentifierHeader(value)) identifiers.add(lower);
       }
       // Registered as guarded-fetch registers: the final URL, headers, and a
       // text body (a form body's secrets are read from it).
       const text = bodyText(confined);
       secrets.request(wireUrl(confined), {
-        headers: Object.fromEntries(Object.entries(confined.headers)),
+        headers: Object.fromEntries(Object.entries(confined.headers).filter(([name]) => !identifiers.has(name))),
         ...(text === undefined ? {} : { body: text }),
       });
       preparedEntries.set(confined, entry);

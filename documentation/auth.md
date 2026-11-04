@@ -2013,11 +2013,13 @@ Identifiers sent beside a credential are matched whole only, because consent
 URLs and vendor metadata carry their parts by design: a confidential OAuth
 client's ID, a Basic username beside a password of at least eight characters,
 credential-slot fields named as identifiers (ending in `id`, `user`,
-`username`, `login`, or `email`, or starting with `public`), and auth headers and
-query parameters whose name is such a whole word (`X-Auth-Email`, `x-client-id`,
-`auth_user`, `public-key`), unless the name also holds `session`, `token`, or
-`signature` or an auth scheme frames the value. A Basic username
-beside a shorter or empty password is the credential itself and is fully
+`username`, `login`, or `email`, or starting with `public`), and the two headers
+maintained providers declare public from their vendors' contracts: Cloudflare's
+Global API Key `X-Auth-Email` and Overflow's `x-client-id`. A value in either
+that holds whitespace, as an auth scheme's framing does, is a credential. Any
+other header or query parameter is never public by name: `remoteMcp()` and
+`api()` auth headers under any name are credentials, fully matched. A Basic
+username beside a shorter or empty password is the credential itself and is fully
 matched. Query parameters named as continuation cursors (`pageToken`,
 `nextPageToken`, `next_token`, `continuationToken`, `syncToken`) are public
 result state and are not registered. Header values a connector adds to token

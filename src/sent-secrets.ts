@@ -16,12 +16,6 @@ const encoder = new TextEncoder();
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
 const explicitSecretName = /secret|password/i;
 const identifierName = /(?:id|user(?:name)?|login|email)$|^public/i;
-// A header or query parameter naming an account rather than proving it: `X-Auth-Email`,
-// `x-client-id`. Stricter than a config field's name, since anyone may name a header: a whole
-// word, and never one naming a session or a token, whose ID is itself the bearer value.
-const identifierParameter = /(?:^|[-_])(?:id|user(?:name)?|login|email)$|^public[-_]/i;
-const bearerParameter = /session|token|signature/i;
-const isIdentifierParameter = (name: string) => identifierParameter.test(name) && !bearerParameter.test(name);
 // Continuation cursors are named tokens but are public result state, returned changed on the
 // next page; matching their fragments would corrupt the cursor the agent pages with.
 const continuationName = /^(?:next_?)?page_?token$|^(?:next|continuation|sync)_?token$/i;
@@ -1328,18 +1322,23 @@ export class SentSecrets {
     } else this.secret(framed[1]!);
   }
 
-  /** An auth header under its name. One naming an account is an identifier, as a config field
-   * so named is, unless an auth scheme frames its value. */
-  namedHeader(name: string, value: string): void {
-    if (isIdentifierParameter(name) && !/^(?:Bearer|token|Basic)\s/i.test(value)) this.identifier(value);
-    else this.header(value);
+  /** A header maintained provider code declares a public identifier: matched whole only. A name
+   * alone never establishes this. Whitespace means an auth scheme or other framing, so that value
+   * is a credential whatever its header, and the answer is false. */
+  publicIdentifierHeader(value: string): boolean {
+    if (/\s/.test(value)) {
+      this.header(value);
+      return false;
+    }
+    this.identifier(value);
+    return true;
   }
 
   request(input: RequestInfo | URL, init?: RequestInit): void {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     for (const [name, value] of headers) {
       if (explicitSecretName.test(name)) this.secret(value);
-      else if (name === "cookie" || sensitiveName.test(name)) this.namedHeader(name, value);
+      else if (name === "cookie" || sensitiveName.test(name)) this.header(value);
       if (name === "cookie") {
         for (const cookie of value.split(";")) {
           const equals = cookie.indexOf("=");
@@ -1350,9 +1349,7 @@ export class SentSecrets {
     const url = new URL(input instanceof Request ? input.url : String(input));
     for (const [name, value] of url.searchParams) {
       if (explicitSecretName.test(name)) this.secret(value);
-      else if (isIdentifierParameter(name)) {
-        if (sensitiveName.test(name)) this.identifier(value);
-      } else if (sensitiveName.test(name) && !continuationName.test(name)) this.add(value);
+      else if (sensitiveName.test(name) && !continuationName.test(name)) this.add(value);
     }
     // The OAuth SDK sends token requests as form data. Do not read a body
     // stream or clone a Request: registration must not consume its payload.

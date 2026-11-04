@@ -172,54 +172,66 @@ describe("call-scoped sent credentials", () => {
     expect(secrets.redact(result)).toBe(result);
   });
 
-  describe("INV-5: a header or query parameter naming an account", () => {
-    const EMAIL = "alice@example.com";
-    const fragment = `alice example.com ${SECRET.slice(2, 12)}`;
+  describe("INV-5: a header or query parameter's name never makes its value public", () => {
+    const interior = SECRET.slice(2, 14);
+    const expectProtected = (secrets: SentSecrets) => {
+      expect(secrets.text(`note ${interior} end`)).not.toContain(interior);
+      expect(secrets.text(`note ${SECRET} end`)).not.toContain(SECRET);
+      expect(secrets.filterCredentials({ note: `note ${interior} end` }).changed).toBe(true);
+    };
 
-    it.each([["x-auth-email"], ["x-auth-user"], ["x-api-key-id"], ["x-client-id"]])(
-      "registers %s whole, keeping its parts in output and out of the outbound check",
+    it.each([["x-auth-email"], ["x-auth-user"], ["x-auth-id"], ["x-api-key-id"], ["public-key-auth"]])(
+      "keeps the whole value and every fragment of a %s header matched",
       (name) => {
         const secrets = new SentSecrets();
-        secrets.namedHeader(name, EMAIL);
-        expect(secrets.text("example.com alice")).toBe("example.com alice");
-        expect(secrets.text(EMAIL)).toBe("[redacted]");
-        expect(secrets.filterCredentials({ name: "example.com", owner: EMAIL })).toEqual({
-          value: { name: "example.com", owner: EMAIL },
-          changed: false,
-        });
+        secrets.request("https://api.example.com/", { headers: { [name]: SECRET } });
+        expectProtected(secrets);
       },
     );
 
-    it.each([
-      ["x-session-id"],
-      ["x-auth-sid"],
-      ["x-token-id"],
-      ["x-auth-signature-id"],
-      ["x-auth-key"],
-      ["authorization"],
-    ])("keeps every fragment of %s matched, on a name that may carry the bearer value", (name) => {
+    it.each([["auth_user"], ["auth_email"], ["x_auth_id"], ["public_key"]])(
+      "keeps the whole value and every fragment of a %s query parameter matched",
+      (name) => {
+        const secrets = new SentSecrets();
+        secrets.request(`https://api.example.com/?${name}=${encodeURIComponent(SECRET)}`);
+        expectProtected(secrets);
+      },
+    );
+
+    it("matches the unframed secret of a query value an auth scheme frames", () => {
       const secrets = new SentSecrets();
-      secrets.namedHeader(name, SECRET);
-      expect(secrets.text(fragment)).not.toContain(SECRET.slice(2, 12));
+      secrets.request(`https://api.example.com/?auth_user=Bearer%20${encodeURIComponent(SECRET)}`);
+      expectProtected(secrets);
+    });
+  });
+
+  describe("INV-5: a header maintained provider code declares a public identifier", () => {
+    const EMAIL = "alice@example.com";
+
+    it("matches the whole value in output only, leaving its parts and outbound arguments alone", () => {
+      const secrets = new SentSecrets();
+      expect(secrets.publicIdentifierHeader(EMAIL)).toBe(true);
+      expect(secrets.text("example.com alice")).toBe("example.com alice");
+      expect(secrets.text(EMAIL)).toBe("[redacted]");
+      expect(secrets.filterCredentials({ name: "example.com", owner: EMAIL })).toEqual({
+        value: { name: "example.com", owner: EMAIL },
+        changed: false,
+      });
+    });
+
+    it.each([["Bearer"], ["token"], ["Basic"], ["ApiKey"]])("treats a value %s frames as a credential", (scheme) => {
+      const secrets = new SentSecrets();
+      expect(secrets.publicIdentifierHeader(`${scheme} ${SECRET}`)).toBe(false);
+      const fragment = `note ${SECRET.slice(2, 14)} end`;
+      expect(secrets.text(fragment)).not.toContain(SECRET.slice(2, 14));
       expect(secrets.filterCredentials({ note: fragment }).changed).toBe(true);
     });
 
-    it("keeps a value an auth scheme frames a credential, whatever its header's name", () => {
+    it("gives way to the same value sent as a credential", () => {
       const secrets = new SentSecrets();
-      secrets.namedHeader("x-auth-email", `Bearer ${SECRET}`);
-      expect(secrets.filterCredentials({ note: fragment }).changed).toBe(true);
-    });
-
-    it("reads names on a request, in its headers and query", () => {
-      const secrets = new SentSecrets();
-      secrets.request(
-        `https://api.example.com/?auth_email=${encodeURIComponent(EMAIL)}&auth_key=${encodeURIComponent(SECRET)}`,
-        {
-          headers: { "X-Auth-Email": "bob@elsewhere.example.net" },
-        },
-      );
-      expect(secrets.filterCredentials({ name: "example.com", other: "elsewhere.example.net" }).changed).toBe(false);
-      expect(secrets.filterCredentials({ note: fragment }).changed).toBe(true);
+      secrets.publicIdentifierHeader(SECRET);
+      secrets.header(SECRET);
+      expect(secrets.filterCredentials({ note: SECRET.slice(2, 14) }).changed).toBe(true);
     });
   });
 

@@ -81,10 +81,11 @@ describe("INV-5: a program on a Global API Key connection", () => {
     globalThis.fetch = realFetch;
   });
 
-  const writes = async (...records: Record<string, unknown>[]) => {
+  const writes = async (...records: Record<string, unknown>[]) => writesAs(EMAIL, ...records);
+  const writesAs = async (email: string, ...records: Record<string, unknown>[]) => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
-    await vault.setAll("cf", { email: EMAIL, apiKey: API_KEY }, "operator");
+    await vault.setAll("cf", { email, apiKey: API_KEY }, "operator");
     const connector = cloudflare("cf", {
       purpose: "Legacy estate",
       auth: { type: "globalApiKey" },
@@ -123,8 +124,22 @@ describe("INV-5: a program on a Global API Key connection", () => {
 
   it("sends the whole account email unchanged as a value", async () => {
     const record = { type: "TXT", name: "owner.test", content: EMAIL };
-    await writes({ type: "A", name: "first.test", content: "192.0.2.1" }, record);
+    const out = await writes({ type: "A", name: "first.test", content: "192.0.2.1" }, record);
     expect(JSON.parse(bodies[1]!)).toEqual(record);
+    // The vendor's echo is output: the whole email stays withheld there.
+    expect(JSON.stringify(out)).not.toContain(EMAIL);
+    expect(JSON.stringify(out)).toContain("[redacted]");
+  });
+
+  it("treats a value an auth scheme frames in X-Auth-Email as a credential", async () => {
+    const framed = "aU7kP2xQ9mR4tV6n";
+    const out = await writesAs(
+      `Bearer ${framed}`,
+      { type: "A", name: "first.test", content: "192.0.2.1" },
+      { type: "TXT", name: "leak.test", content: `v=${framed.slice(2, 12)}` },
+    );
+    expect(bodies).toHaveLength(1);
+    expect(out[1]).toEqual({ refused: "invalid_args" });
   });
 
   it.each([

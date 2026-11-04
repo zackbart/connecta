@@ -1280,16 +1280,17 @@ Program arguments pass through the credentials this request has already sent. Th
 check matches a whole credential or eight consecutive characters of what follows
 its public framing: an auth scheme, a vendor prefix such as `sk_test_`, or a JWT's
 header segment. Naming a prefix is no match, an identifier sent beside a credential
-(a client ID, a Basic username, an account email in `X-Auth-Email`) is no match, and a private `writeOnly` value is
-no match. A read that matches is sent with the match replaced. A write that matches
+(a confidential client's ID, a Basic username, or a maintained provider's declared
+header: Cloudflare's `X-Auth-Email`, Overflow's `x-client-id`) is no match, and a
+private `writeOnly` value is no match. A read that matches is sent with the match replaced. A write that matches
 is refused before dispatch with `invalid_args`, because it is never sent altered:
 nothing leaves, and a value that is genuine can go as its own direct call. A
 program's first call has no such credentials yet, so this can first appear on a
 later call. Otherwise a refusal needs one of these: a value that shares eight
 characters past the prefix with a credential, such as a publishable key beside its
-secret key; a credential configured from a non-secret field not named as an
-identifier, or a non-secret value in a header or query parameter whose sensitive-looking
-name is not an identifier's (`X-Auth-Email` and `x-client-id` are); or text the check cannot finish (escaping
+secret key; a non-secret value configured as a credential, such as a field not
+named as an identifier, a `remoteMcp()` or `api()` auth header under any name, or a
+query parameter with a sensitive-looking name; or text the check cannot finish (escaping
 nested past eight layers, or past its work budget). The check is a backstop: fewer
 than eight characters past a prefix pass it, and a program never receives what
 output redaction withheld.

@@ -1,5 +1,6 @@
 // Node-only: runs the Node QuickJS child-process executor.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -387,5 +388,96 @@ describe("credential echoes reach the QuickJS guest only checked", () => {
     )({ code: 'async () => (await connecta.call("wire.read")).data.echo.slice(0, 7)' });
     expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
     expect(result.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
+  });
+});
+
+describe("INV-5: a remote connection's credential under any header or query name", () => {
+  const BASE = "https://connecta.test";
+  const SECRET = "q7Zx4Lm9Tp2Vb8Nc5Rk3Wd6H";
+  const INTERIOR = SECRET.slice(5, 17);
+  let executor: AdmittingExecutor;
+
+  beforeAll(() => {
+    executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+  });
+  afterAll(async () => {
+    await executor.close?.();
+    vi.unstubAllGlobals();
+  });
+
+  const run = async (answer: string, connection: { url?: string; headers?: Record<string, string> }) => {
+    const written: string[] = [];
+    const downstream = httpDownstream(
+      (server) => {
+        server.registerTool(
+          "read",
+          { description: "Read a record", annotations: { readOnlyHint: true } },
+          async () => ({ content: [{ type: "text", text: answer }] }),
+        );
+        server.registerTool(
+          "write",
+          { description: "Write a record", inputSchema: z.object({ note: z.string() }) },
+          async ({ note }) => {
+            written.push(note);
+            return { content: [{ type: "text", text: "saved" }] };
+          },
+        );
+      },
+      connection.url ? { url: connection.url } : {},
+    );
+    vi.stubGlobal("fetch", downstream.fetch);
+    const execute = createExecuteTool(
+      makeRegistry([
+        remoteMcp("remote", {
+          url: downstream.url,
+          ...(connection.headers ? { auth: { type: "headers", headers: connection.headers } } : {}),
+        }),
+      ]),
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      { readOnly: false },
+    );
+    const result = await execute({
+      code: `async () => {
+        const read = (await connecta.call("remote.read")).data;
+        const write = await connecta.call("remote.write", { note: ${JSON.stringify(`ref ${INTERIOR}`)} }).then(
+          () => "sent",
+          (error) => error.code,
+        );
+        return { read, write };
+      }`,
+    });
+    expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+    return { out: result.structuredContent?.result as { read: string; write: string }, written };
+  };
+
+  it.each([["x-user"], ["x-api-id"], ["x-client-id"], ["x-auth-email"], ["x-account-login"], ["public-key"]])(
+    "withholds a downstream answer holding interior characters of a %s header and refuses a write holding them",
+    async (name) => {
+      const { out, written } = await run(`row ${INTERIOR} end`, { headers: { [name]: SECRET } });
+      expect(out.read).not.toContain(INTERIOR);
+      expect(out.write).toBe("invalid_args");
+      expect(written).toEqual([]);
+    },
+  );
+
+  it("takes no public identifier declaration from a deployment", () => {
+    expect(() =>
+      remoteMcp("remote", {
+        url: "https://downstream.test/mcp",
+        publicIdentifierHeaders: ["x-user"],
+      } as Parameters<typeof remoteMcp>[1]),
+    ).toThrow(/publicIdentifierHeaders/);
+  });
+
+  it("withholds the unframed secret of a remote URL's scheme-framed query credential and refuses a write holding it", async () => {
+    const { out, written } = await run(`row ${SECRET} end`, {
+      url: `https://downstream.test/mcp?auth_user=Bearer%20${SECRET}`,
+    });
+    expect(out.read).not.toContain(SECRET);
+    expect(out.write).toBe("invalid_args");
+    expect(written).toEqual([]);
   });
 });
